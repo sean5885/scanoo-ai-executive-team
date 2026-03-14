@@ -1,0 +1,45 @@
+network:
+  enabled: false
+  mode: allowlist
+  allowed_domains:
+    - search.mycompany.internal
+    - api.openai.com
+    - open.larksuite.com
+    - larksuite.com
+  blocked_domains:
+    - "*"
+  allowed_protocols:
+    - https
+  block_ip_literals: true
+  block_localhost: true
+  block_private_networks: true
+  resolve_dns: true
+  allow_binary_downloads: false
+  max_content_length: 1048576
+  allowed_api_domains:
+    - search.mycompany.internal
+    - api.openai.com
+    - open.larksuite.com
+    - larksuite.com
+proxy:
+  bind_host: 127.0.0.1
+  port: 8787
+  timeout_seconds: 10
+  max_fetch_chars: 25000
+  remove_tracking_params: true
+  allowed_fetch_domains:
+    - search.mycompany.internal
+    - open.larksuite.com
+    - larksuite.com
+  search_backend:
+    mode: disabled
+    backend_url: https://search.mycompany.internal/search
+  prompt_injection_patterns:
+    - ignore previous instructions
+    - reveal secrets
+    - run this command
+    - download and execute
+audit:
+  root: ~/lobster-workspace/.lobster-security/audit
+snapshot:
+  root: ~/lobster-workspace/.lobster-security/snapshots

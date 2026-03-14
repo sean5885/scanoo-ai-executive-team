@@ -1,0 +1,24 @@
+flowchart TD
+    A["OpenClaw Runtime"] --> B["lark-kb Plugin"]
+    B --> C["Local HTTP API"]
+
+    C --> D["Lark Content Service"]
+    C --> E["Answer Service"]
+    C --> F["Comment Rewrite Service"]
+    C --> G["Security Bridge"]
+
+    H["Semantic Classifier"] --> I["Drive Organizer"]
+    I --> D
+    H --> J["OpenClaw Agent Session"]
+
+    E --> K["SQLite Retrieval"]
+    E --> L["Optional LLM"]
+
+    F --> D
+    F --> L
+
+    G --> M["lobster_security Python Wrapper"]
+
+    N["Lark Drive / Wiki / Doc / Message / Calendar / Task"] --> D
+    C --> O["Knowledge Sync and FTS Index"]
+    O --> K

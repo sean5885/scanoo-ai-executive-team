@@ -1,0 +1,19 @@
+{
+  "id": "lark-kb",
+  "name": "Lark Knowledge Base",
+  "description": "Query a user-authorized Lark knowledge base synced from Drive, Docs, and Wiki.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "baseUrl": {
+        "type": "string",
+        "description": "Base URL for the local Lark KB HTTP service."
+      },
+      "timeoutMs": {
+        "type": "number",
+        "description": "HTTP timeout in milliseconds for KB requests."
+      }
+    }
+  }
+}

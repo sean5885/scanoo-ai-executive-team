@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lobster-security"
+version = "0.1.0"
+description = "Security-first local agent wrapper for Lobster/Codex style executors."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Sean Han" }]
+dependencies = []
+
+[project.scripts]
+lobster-security = "lobster_security.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["lobster_security*"]

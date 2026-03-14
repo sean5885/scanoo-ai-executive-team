@@ -1,0 +1,90 @@
+policy:
+  workspace_root: ~/lobster-workspace
+  temp_root: /tmp/lobster-agent
+  max_bulk_file_writes_without_approval: 10
+  deny_commands:
+    - sudo
+    - rm -rf
+    - curl | sh
+    - wget | sh
+    - osascript
+    - launchctl
+    - scutil
+    - networksetup
+    - dscacheutil
+    - chflags
+  deny_substrings:
+    - ~/.ssh
+    - ~/.aws
+    - ~/.gnupg
+    - ~/Library/Keychains
+    - /etc/hosts
+    - /etc/resolv.conf
+    - /private/etc/hosts
+    - /private/etc/resolv.conf
+  allow_commands:
+    - ls
+    - cat
+    - rg
+    - grep
+    - sed
+    - awk
+    - python3
+    - python
+    - pytest
+    - npm
+    - pnpm
+    - yarn
+    - bun
+    - make
+  approval_commands:
+    - pip
+    - pip3
+    - npm install
+    - pnpm add
+    - yarn add
+    - brew
+    - mv
+    - rename
+    - open
+    - xdg-open
+    - start
+    - curl
+    - wget
+    - bash
+    - sh
+    - zsh
+  allow_subcommands:
+    npm:
+      - test
+      - run test
+      - run lint
+      - run build
+      - lint
+      - build
+    pnpm:
+      - test
+      - lint
+      - build
+    yarn:
+      - test
+      - lint
+      - build
+    python3:
+      - -m unittest
+    python:
+      - -m unittest
+approval:
+  mode: strict
+  interactive: false
+  require_for:
+    - network_enable
+    - package_install
+    - file_delete
+    - write_outside_workspace
+    - bulk_modify
+    - upload
+    - external_api
+    - risky_shell
+    - open_browser
+    - sensitive_read

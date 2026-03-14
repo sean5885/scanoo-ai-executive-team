@@ -1,0 +1,55 @@
+flowchart TD
+    subgraph Arch["Architecture View"]
+      A1["Presentation Layer
+HTTP API / OAuth / Optional Bot"]
+      A2["Application Layer
+Route dispatch / sync / organize / rewrite"]
+      A3["Service Layer
+Lark content / retrieval / security bridge / binding runtime"]
+      A4["Data Layer
+SQLite + local JSON state"]
+      A5["AI Layer
+OpenClaw classifier + OpenAI-compatible LLM"]
+
+      A1 --> A2
+      A2 --> A3
+      A3 --> A4
+      A3 --> A5
+    end
+
+    subgraph Run["Runtime View"]
+      R1["Lark User / OpenClaw Plugin"]
+      R2["Node HTTP Server
+src/http-server.mjs"]
+      R3["Optional Long Connection Bot
+src/index.mjs"]
+      R4["Binding + Session Scope
+binding-runtime + session-scope-store"]
+      R4A["Capability Lane Execution
+capability-lane + lane-executor"]
+      R5["Content / Rewrite / Search Services"]
+      R6["SQLite
+accounts / tokens / sources / chunks / FTS"]
+      R7[".data JSON State
+confirmations / comment watch / session scopes / poll watches"]
+      R8["Lark APIs"]
+      R9["OpenAI-compatible LLM"]
+      R10["OpenClaw Runtime"]
+      R11["Python lobster_security"]
+
+      R1 --> R2
+      R1 --> R3
+      R3 --> R4
+      R3 --> R4A
+      R3 --> R2
+      R2 --> R4
+      R2 --> R4A
+      R4A --> R5
+      R2 --> R5
+      R5 --> R6
+      R5 --> R7
+      R5 --> R8
+      R5 --> R9
+      R5 --> R10
+      R5 --> R11
+    end

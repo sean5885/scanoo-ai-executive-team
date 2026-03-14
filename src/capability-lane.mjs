@@ -1,0 +1,178 @@
+import { collectRelatedMessageIds, extractDocumentId, normalizeMessageText } from "./message-intent-utils.mjs";
+
+function hasAny(text, keywords) {
+  return keywords.some((keyword) => text.includes(keyword));
+}
+
+export function resolveCapabilityLane(scope, input = {}) {
+  const text = normalizeMessageText(input);
+  const hasDirectDocumentReference = Boolean(extractDocumentId(input));
+  const hasReplyChain = collectRelatedMessageIds(input).length > 0;
+
+  const docEditActionKeywords = [
+    "評論",
+    "评论",
+    "改稿",
+    "改文",
+    "修改",
+    "rewrite",
+    "段落",
+    "潤色",
+    "润色",
+    "覆寫",
+    "覆盖",
+    "append",
+    "apply",
+  ];
+
+  const docFollowUpKeywords = [
+    "看",
+    "看看",
+    "幫我看",
+    "帮我看",
+    "打開",
+    "打开",
+    "讀",
+    "读",
+    "摘要",
+    "總結",
+    "总结",
+    "整理",
+    "review",
+  ];
+
+  const docReferenceKeywords = [
+    "文件",
+    "文檔",
+    "文档",
+    "docx",
+    "doccn",
+    "comment",
+    "評論區",
+    "评论区",
+  ];
+
+  const knowledgeKeywords = [
+    "知識",
+    "知识",
+    "查一下",
+    "查詢",
+    "查询",
+    "搜尋",
+    "搜索",
+    "整理一下資料",
+    "根據文件",
+    "根据文件",
+    "根據知識",
+    "根据知识",
+    "search",
+    "answer",
+    "wiki 空間",
+    "drive",
+  ];
+
+  const wantsDocEdit =
+    hasDirectDocumentReference ||
+    hasAny(text, ["評論", "评论", "評論區", "评论区"]) ||
+    (hasAny(text, docEditActionKeywords) && hasAny(text, docReferenceKeywords)) ||
+    (hasReplyChain && hasAny(text, docFollowUpKeywords));
+
+  if (wantsDocEdit) {
+    return {
+      capability_lane: "doc-editor",
+      lane_label: "文檔編輯助手",
+      lane_reason: "message_mentions_doc_editing_or_comment_rewrite",
+      recommended_tools: [
+        "lark_doc_read",
+        "lark_doc_comments",
+        "lark_doc_comment_suggestion_card",
+        "lark_doc_rewrite_from_comments",
+        "lark_doc_update",
+      ],
+    };
+  }
+
+  if (hasAny(text, knowledgeKeywords)) {
+    return {
+      capability_lane: "knowledge-assistant",
+      lane_label: "知識助手",
+      lane_reason: "message_mentions_search_answer_or_knowledge_lookup",
+      recommended_tools: [
+        "lark_kb_search",
+        "lark_kb_answer",
+        "lark_doc_read",
+        "lark_drive_list",
+        "lark_wiki_spaces",
+        "lark_wiki_nodes",
+      ],
+    };
+  }
+
+  if (scope?.chat_type === "group") {
+    return {
+      capability_lane: "group-shared-assistant",
+      lane_label: "群組共享助手",
+      lane_reason: "group_chat_default_lane",
+      recommended_tools: [
+        "lark_message_reply_card",
+        "lark_messages_list",
+        "lark_calendar_primary",
+      ],
+    };
+  }
+
+  return {
+    capability_lane: "personal-assistant",
+    lane_label: "個人助手",
+    lane_reason: "direct_message_default_lane",
+    recommended_tools: [
+      "lark_messages_list",
+      "lark_calendar_primary",
+      "lark_tasks_list",
+      "lark_message_reply_card",
+    ],
+  };
+}
+
+export function buildLaneIntroReply(scope, lane) {
+  const laneLabel = lane?.lane_label || "助手";
+  const nextStep =
+    lane?.capability_lane === "doc-editor"
+      ? "我會先看正文、評論和待改位置，再給你改稿建議。"
+      : lane?.capability_lane === "knowledge-assistant"
+        ? "我會先查公司文件與知識資料，再整理成可讀結論。"
+        : lane?.capability_lane === "group-shared-assistant"
+          ? "我會先用群組共享上下文處理，避免和其他私聊記憶混在一起。"
+          : "我會先用你的私聊上下文處理，再決定要不要查文件或安排任務。";
+
+  return [
+    `結論：我先用「${laneLabel}」模式處理。`,
+    `重點：這次會使用 ${scope?.session_key || "當前 session"}，共享知識仍走 ${scope?.workspace_key || "共享 workspace"}。`,
+    `下一步：${nextStep}`,
+  ].join("\n");
+}
+
+export function buildLaneFailureReply(scope, lane) {
+  const laneLabel = lane?.lane_label || "助手";
+  const capabilityLane = lane?.capability_lane || scope?.capability_lane || "personal-assistant";
+
+  let detail = "我剛剛在處理這則訊息時遇到錯誤。";
+  let nextStep = "請直接再問一次；如果還是不行，我可以根據你貼的原文繼續查。";
+
+  if (capabilityLane === "doc-editor") {
+    detail = "我剛剛在讀文件、回覆鏈，或評論內容時遇到錯誤。";
+    nextStep = "請直接再貼一次文件卡片、文件連結或 document_id，我會重新讀取。";
+  } else if (capabilityLane === "knowledge-assistant") {
+    detail = "我剛剛在查知識與整理答案時遇到錯誤。";
+    nextStep = "你可以直接重問一次，或補一個更明確的關鍵字讓我縮小範圍。";
+  } else if (capabilityLane === "group-shared-assistant") {
+    detail = "我剛剛在處理群組共享上下文時遇到錯誤。";
+    nextStep = "你可以直接指定要我總結哪段討論，或再發一次問題。";
+  }
+
+  return [
+    `結論：${laneLabel} 這次處理失敗了。`,
+    `重點：${detail}`,
+    `下一步：${nextStep}`,
+  ].join("\n");
+}

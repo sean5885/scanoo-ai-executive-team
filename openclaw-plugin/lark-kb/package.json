@@ -1,0 +1,7 @@
+{
+  "name": "lark-kb",
+  "private": true,
+  "openclaw": {
+    "extensions": ["./index.ts"]
+  }
+}
