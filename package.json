@@ -1,0 +1,21 @@
+{
+  "name": "lobster-lark-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "AI-enabled Lark knowledge and assistant service for Lobster.",
+  "scripts": {
+    "start": "node src/http-only.mjs",
+    "start:full": "node src/index.mjs",
+    "test": "node --test",
+    "eval:long-task": "node scripts/evaluate-long-task-governance.mjs",
+    "auth:check": "node scripts/check-auth.mjs",
+    "sync:full": "curl -X POST http://localhost:3333/sync/full",
+    "sync:incremental": "curl -X POST http://localhost:3333/sync/incremental"
+  },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.59.0",
+    "better-sqlite3": "^12.6.2",
+    "dotenv": "^17.2.3"
+  }
+}
