@@ -22,6 +22,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - lane-specific execution strategies for DM / group / doc / knowledge requests
 - structured runtime logging for long-connection event handling and doc resolution debugging
 - prompt-budget governance, external workflow checkpoints, and tool-output compression for AI-heavy paths
+- `/meeting` command workflow for weekly/general meeting summarization, pending confirmation, doc write, and weekly todo tracking
 
 ## Architecture Overview
 
@@ -52,6 +53,7 @@ AI-like components exist, but they are limited:
 - LLM answer generator
 - LLM comment rewrite
 - shared token-governance / checkpoint layer for those AI paths
+- command-scoped `/meeting` workflow inside the capability-lane runtime
 
 No planner/router/specialist team is present in this repo.
 
@@ -79,6 +81,7 @@ No planner/router/specialist team is present in this repo.
 - stronger write safety
 - runtime contract hardening between Node and `lobster_security`
 - provider-side prompt caching cannot be confirmed from repo code, so the repo now uses stable prompt templates plus external checkpoints instead of re-sending large historical context each round
+- `/meeting` currently reuses lane execution plus HTTP workflow instead of a true slash-agent registry, because that registry does not exist in this repo
 
 ## Not Implemented
 

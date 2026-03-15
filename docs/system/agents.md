@@ -11,6 +11,7 @@ What exists:
 - OpenClaw plugin tools
 - binding-based capability lanes
 - lane-specific execution strategies
+- command-style `/meeting` workflow built on top of the lane executor
 - OpenClaw-backed semantic classifier
 - LLM answer generation
 - LLM comment rewrite
@@ -20,6 +21,7 @@ What does not exist in current code:
 - planner
 - router
 - specialist agents
+- slash-agent registry
 - memory orchestration layer
 - company_brain
 
@@ -107,6 +109,7 @@ What does not exist in current code:
   - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
 - Role:
   - run one concrete reply strategy after a lane is resolved
+  - also intercept `/meeting` as a command workflow before default lane replies
 - Input:
   - long-connection event
   - resolved lane scope
@@ -123,6 +126,35 @@ What does not exist in current code:
 - Calls:
   - lane-specific service functions
   - referenced-message lookups for doc share recovery
+
+### Meeting Command Workflow
+
+- Name:
+  - `/meeting`
+- Code:
+  - `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`
+  - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
+  - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
+- Role:
+  - classify meeting content into `weekly` or `general`
+  - generate a fixed summary format
+  - send summary to a target group
+  - attach a confirm-write button via interactive card
+  - hold a pending confirmation state
+  - write to meeting docs only after confirmation
+  - update weekly todo tracker for weekly meetings
+- Input:
+  - `/meeting` command text
+  - referenced doc content
+  - HTTP meeting payload
+- Output:
+  - group-safe summary
+  - confirmation id
+  - doc write result after confirm
+- Dependencies:
+  - `lark-content.mjs`
+  - `doc-update-confirmations.mjs`
+  - SQLite meeting mapping / tracker tables
 
 ### Semantic Classifier
 

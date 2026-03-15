@@ -885,17 +885,17 @@ export async function replyMessage(
   accessToken,
   messageId,
   content,
-  { replyInThread = false, cardTitle } = {},
+  { replyInThread = false, cardTitle, cardPayload } = {},
 ) {
   const normalized = String(content || "").trim();
-  if (!normalized) {
+  if (!normalized && !cardPayload) {
     throw new Error("missing_message_content");
   }
 
-  const isCard = Boolean(cardTitle);
+  const isCard = Boolean(cardTitle || cardPayload);
   const payloadContent = isCard
     ? JSON.stringify(
-        Lark.messageCard.defaultCard({
+        cardPayload || Lark.messageCard.defaultCard({
           title: String(cardTitle).trim() || "Lobster",
           content: normalized,
         }),
@@ -917,6 +917,47 @@ export async function replyMessage(
       Lark.withUserAccessToken(accessToken),
     ),
     "Failed to reply to Lark message",
+  );
+
+  return normalizeMessageItem(data);
+}
+
+export async function sendMessage(
+  accessToken,
+  receiveId,
+  content,
+  { receiveIdType = "chat", cardTitle, cardPayload } = {},
+) {
+  const normalized = String(content || "").trim();
+  if (!normalized && !cardPayload) {
+    throw new Error("missing_message_content");
+  }
+
+  const isCard = Boolean(cardTitle || cardPayload);
+  const payloadContent = isCard
+    ? JSON.stringify(
+        cardPayload || Lark.messageCard.defaultCard({
+          title: String(cardTitle).trim() || "Lobster",
+          content: normalized,
+        }),
+      )
+    : JSON.stringify({ text: normalized });
+
+  const data = unwrapResponse(
+    await userClient.im.v1.message.create(
+      {
+        params: {
+          receive_id_type: receiveIdType,
+        },
+        data: {
+          receive_id: receiveId,
+          msg_type: isCard ? "interactive" : "text",
+          content: payloadContent,
+        },
+      },
+      Lark.withUserAccessToken(accessToken),
+    ),
+    "Failed to send Lark message",
   );
 
   return normalizeMessageItem(data);

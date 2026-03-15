@@ -215,3 +215,78 @@ export async function consumeCommentRewriteConfirmation({
   await writeJsonFile(docUpdateConfirmationStorePath, store);
   return entry;
 }
+
+export async function createMeetingWriteConfirmation({
+  accountId,
+  projectKey,
+  projectName,
+  meetingType,
+  chatId,
+  summaryContent,
+  docEntryContent,
+  targetDocumentId,
+  targetDocumentTitle,
+  sourceMeetingId,
+  sourceDate,
+  weeklyTodos = [],
+}) {
+  const store = await loadStore();
+  const confirmationId = crypto.randomUUID();
+  const createdAt = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + CONFIRMATION_TTL_MS).toISOString();
+
+  store.items[confirmationId] = {
+    kind: "meeting_write",
+    account_id: accountId || null,
+    project_key: projectKey || "default",
+    project_name: projectName || null,
+    meeting_type: meetingType || "general",
+    chat_id: chatId || null,
+    summary_content: String(summaryContent || ""),
+    doc_entry_content: String(docEntryContent || ""),
+    target_document_id: targetDocumentId || null,
+    target_document_title: targetDocumentTitle || null,
+    source_meeting_id: sourceMeetingId || null,
+    source_date: sourceDate || null,
+    weekly_todos: Array.isArray(weeklyTodos) ? weeklyTodos : [],
+    workflow_state: "pending_confirmation",
+    created_at: createdAt,
+    expires_at: expiresAt,
+  };
+
+  await writeJsonFile(docUpdateConfirmationStorePath, store);
+
+  return {
+    confirmation_id: confirmationId,
+    confirmation_type: "meeting_write",
+    created_at: createdAt,
+    expires_at: expiresAt,
+    preview: {
+      meeting_type: meetingType || "general",
+      project_key: projectKey || "default",
+      project_name: projectName || null,
+      target_document_id: targetDocumentId || null,
+      target_document_title: targetDocumentTitle || null,
+      source_date: sourceDate || null,
+      summary_excerpt: buildExcerpt(summaryContent),
+    },
+  };
+}
+
+export async function consumeMeetingWriteConfirmation({
+  confirmationId,
+  accountId,
+}) {
+  const store = await loadStore();
+  const entry = store.items[confirmationId];
+  if (!entry || entry.kind !== "meeting_write") {
+    return null;
+  }
+  if ((entry.account_id || null) !== (accountId || null)) {
+    return null;
+  }
+
+  delete store.items[confirmationId];
+  await writeJsonFile(docUpdateConfirmationStorePath, store);
+  return entry;
+}

@@ -82,6 +82,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - Responsibility:
   - build human-readable replace/rewrite preview cards
   - persist confirmation artifacts for two-step apply
+  - persist `/meeting` preview-confirm artifacts before document write
   - track unseen document comments for suggestion-card workflows
   - run reusable suggestion-card generation flow
   - support watched-document polling
@@ -194,11 +195,27 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - normalize structured Lark message content into reusable intent signals
   - extract document IDs from raw message payloads, shared links, and reply-chain upstream messages
   - execute lane-specific reply and tool strategy for DM, group, doc, and knowledge requests
+  - intercept `/meeting` as a command-style workflow that runs before lane-specific fallback replies
   - for doc lane, also inspect referenced upstream messages when current message only contains a share/reply wrapper
   - keep group-summary prompts in the group lane instead of over-matching the knowledge lane
   - emit doc-resolution and auth-context runtime logs to support live payload debugging
 - Core path:
   - yes for long-connection assistant behavior
+
+### 10B. Meeting Workflow
+
+- Location:
+  - `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`
+- Responsibility:
+  - classify meetings into `weekly` or `general`
+  - format fixed weekly/general summaries
+  - send summary to a designated Lark group
+  - build a Lark interactive confirmation card with an open-url button
+  - persist pending confirmation state before any doc write
+  - find/create/prepend meeting docs with newest entry on top
+  - update weekly todo tracker after confirmation
+- Core path:
+  - yes for `/meeting`
 
 ### 11. OpenClaw Plugin
 

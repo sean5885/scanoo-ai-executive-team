@@ -77,6 +77,20 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 7. optional `message_id` path replies with the card
 8. optional `mark_seen=true` records those comments in local watch state
 
+### Meeting Flow
+
+1. User sends `/meeting ...` in a long-connection chat or calls `POST /api/meeting/process`
+2. `meeting-agent.mjs` classifies the content as `weekly` or `general`
+3. fixed-format summary is generated
+4. summary is sent to the designated Lark group using the message adapter
+   - current default is an interactive card with a confirm button that opens `/meeting/confirm`
+5. a pending confirmation artifact is stored locally
+6. no document write happens before confirmation
+7. user confirms via card button, `/meeting confirm <confirmation_id>`, or `POST /api/meeting/confirm`
+8. service finds an existing mapped meeting doc or creates a stable doc on demand
+9. new meeting entry is prepended to the top of the target document
+10. if meeting type is `weekly`, structured todo tracker rows are upserted after the doc write
+
 ## Event Flow
 
 ### Long Connection Event
@@ -89,10 +103,11 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
    - reply-chain follow-up text like "幫我看一下" can route into the doc lane when it is replying to a shared doc context
 5. session scope is persisted locally
 6. lane executor chooses one lane strategy:
-   - `group-shared-assistant`
-   - `personal-assistant`
-   - `doc-editor`
-   - `knowledge-assistant`
+  - `group-shared-assistant`
+  - `personal-assistant`
+  - `doc-editor`
+  - `knowledge-assistant`
+   - command-scoped `/meeting` workflow before the lane-specific default behavior
 7. lane-specific service calls run
    - doc lane may fetch referenced upstream messages to recover document tokens from shared cards or reply wrappers
    - upstream token recovery now accepts both prefixed doc tokens and plain `document_id` values from structured payloads

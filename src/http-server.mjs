@@ -79,8 +79,10 @@ import { runCommentSuggestionPollOnce } from "./comment-suggestion-poller.mjs";
 import {
   consumeCommentRewriteConfirmation,
   consumeDocumentReplaceConfirmation,
+  consumeMeetingWriteConfirmation,
   createCommentRewriteConfirmation,
   createDocumentReplaceConfirmation,
+  createMeetingWriteConfirmation,
 } from "./doc-update-confirmations.mjs";
 import {
   executeSecureAction,
@@ -96,8 +98,14 @@ import { applyDriveOrganization, previewDriveOrganization } from "./lark-drive-o
 import { applyWikiOrganization, previewWikiOrganization } from "./lark-wiki-organizer.mjs";
 import { getAllowedMethodsForPath } from "./http-route-contracts.mjs";
 import { listResolvedSessions } from "./session-scope-store.mjs";
+import { createMeetingCoordinator } from "./meeting-agent.mjs";
+import { normalizeText } from "./text-utils.mjs";
 
 const pendingOauthStates = new Map();
+const meetingCoordinator = createMeetingCoordinator({
+  createConfirmation: createMeetingWriteConfirmation,
+  consumeConfirmation: consumeMeetingWriteConfirmation,
+});
 
 function cleanupOauthStates() {
   const cutoff = Date.now() - 10 * 60 * 1000;
@@ -845,6 +853,126 @@ async function handleDocumentCommentSuggestionCard(res, requestUrl, body) {
 async function handleDocumentCommentSuggestionPoll(res) {
   const result = await runCommentSuggestionPollOnce();
   jsonResponse(res, 200, result);
+}
+
+async function handleMeetingProcess(res, requestUrl, body) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body));
+  if (!context) {
+    return;
+  }
+
+  const transcriptText = normalizeText(
+    body.content || body.transcript || body.text || body.merged_text || "",
+  );
+  if (!transcriptText) {
+    jsonResponse(res, 400, { ok: false, error: "missing_meeting_content" });
+    return;
+  }
+
+  const metadata = typeof body.metadata === "object" && body.metadata ? body.metadata : {};
+  const result = await meetingCoordinator.processMeetingPreview({
+    accountId: context.account.id,
+    accessToken: context.token.access_token,
+    transcriptText,
+    metadata,
+    chatId: String(body.chat_id || body.group_id || "").trim(),
+    groupChatId: String(body.group_chat_id || body.target_chat_id || body.chat_id || "").trim(),
+    projectName: String(body.project_name || "").trim(),
+    sourceMeetingId: String(body.source_meeting_id || "").trim(),
+  });
+
+  jsonResponse(res, 200, {
+    ok: true,
+    account_id: context.account.id,
+    auth_mode: "user_access_token",
+    action: "meeting_process_preview",
+    ...result,
+  });
+}
+
+async function handleMeetingConfirm(res, requestUrl, body) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body));
+  if (!context) {
+    return;
+  }
+
+  const confirmationId = String(body.confirmation_id || "").trim();
+  if (!confirmationId) {
+    jsonResponse(res, 400, { ok: false, error: "missing_confirmation_id" });
+    return;
+  }
+
+  const result = await meetingCoordinator.confirmMeetingWrite({
+    accountId: context.account.id,
+    accessToken: context.token.access_token,
+    confirmationId,
+  });
+  if (!result) {
+    jsonResponse(res, 400, {
+      ok: false,
+      error: "invalid_or_expired_confirmation",
+      message: "Meeting confirmation is missing, expired, or no longer matches this account.",
+    });
+    return;
+  }
+
+  jsonResponse(res, 200, {
+    ok: true,
+    account_id: context.account.id,
+    auth_mode: "user_access_token",
+    action: "meeting_confirm_write",
+    ...result,
+  });
+}
+
+async function handleMeetingConfirmPage(res, requestUrl, body) {
+  const accountId = getAccountId(requestUrl, body);
+  const context = await resolveAccountContext(accountId);
+  if (!context?.token?.access_token) {
+    htmlResponse(
+      res,
+      401,
+      [
+        "<h1>龍蝦需要先登入 Lark</h1>",
+        `<p><a href="${oauthBaseUrl}/oauth/lark/login">先完成授權</a>，再回來點一次確認按鈕。</p>`,
+      ].join(""),
+    );
+    return;
+  }
+
+  const confirmationId = String(requestUrl.searchParams.get("confirmation_id") || "").trim();
+  if (!confirmationId) {
+    htmlResponse(res, 400, "<h1>缺少 confirmation_id</h1>");
+    return;
+  }
+
+  const result = await meetingCoordinator.confirmMeetingWrite({
+    accountId: context.account.id,
+    accessToken: context.token.access_token,
+    confirmationId,
+  });
+
+  if (!result) {
+    htmlResponse(
+      res,
+      400,
+      "<h1>確認失效或已使用</h1><p>請重新執行 /meeting 產生新的待確認摘要。</p>",
+    );
+    return;
+  }
+
+  htmlResponse(
+    res,
+    200,
+    [
+      "<h1>已完成會議文檔寫入</h1>",
+      `<p>會議類型：${result.meeting_type}</p>`,
+      `<p>文檔：${result.target_document.title || result.target_document.document_id}</p>`,
+      result.write_result?.deduplicated
+        ? "<p>這次內容與現有紀要重複，因此未重複插入。</p>"
+        : "<p>新紀要已插在文檔最上方。</p>",
+    ].join(""),
+  );
 }
 
 async function handleMessagesList(res, requestUrl, body) {
@@ -2042,6 +2170,21 @@ export function startHttpServer() {
 
       if (requestUrl.pathname === "/api/doc/comments/poll-suggestion-cards" && req.method === "POST") {
         await handleDocumentCommentSuggestionPoll(res);
+        return;
+      }
+
+      if (requestUrl.pathname === "/api/meeting/process" && req.method === "POST") {
+        await handleMeetingProcess(res, requestUrl, body);
+        return;
+      }
+
+      if (requestUrl.pathname === "/api/meeting/confirm" && req.method === "POST") {
+        await handleMeetingConfirm(res, requestUrl, body);
+        return;
+      }
+
+      if (requestUrl.pathname === "/meeting/confirm" && req.method === "GET") {
+        await handleMeetingConfirmPage(res, requestUrl, body);
         return;
       }
 

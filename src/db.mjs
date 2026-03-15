@@ -165,6 +165,46 @@ db.exec(`
     updated_at TEXT NOT NULL,
     FOREIGN KEY (account_id) REFERENCES lark_accounts(id) ON DELETE SET NULL
   );
+
+  CREATE TABLE IF NOT EXISTS meeting_documents (
+    id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    project_key TEXT NOT NULL,
+    project_name TEXT,
+    meeting_type TEXT NOT NULL,
+    document_id TEXT NOT NULL,
+    title TEXT,
+    chat_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(account_id, project_key, meeting_type),
+    FOREIGN KEY (account_id) REFERENCES lark_accounts(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_meeting_documents_lookup
+  ON meeting_documents(account_id, project_key, meeting_type);
+
+  CREATE TABLE IF NOT EXISTS weekly_todo_tracker (
+    id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    project_key TEXT NOT NULL,
+    meeting_type TEXT NOT NULL DEFAULT 'weekly',
+    normalized_key TEXT NOT NULL,
+    title TEXT NOT NULL,
+    owner TEXT,
+    objective TEXT,
+    kr TEXT,
+    status TEXT NOT NULL,
+    source_date TEXT,
+    source_meeting_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(account_id, project_key, meeting_type, normalized_key),
+    FOREIGN KEY (account_id) REFERENCES lark_accounts(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_weekly_todo_tracker_lookup
+  ON weekly_todo_tracker(account_id, project_key, status);
 `);
 
 export default db;

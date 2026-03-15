@@ -104,6 +104,14 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
      - `/Users/seanhan/Documents/Playground/src/agent-workflow-state.mjs`
      - `/Users/seanhan/Documents/Playground/src/config.mjs`
 
+15. `/meeting` is now available, but it is implemented as a command-style lane/HTTP workflow because this repo still has no real slash-agent registry.
+   - Why it matters:
+     - future contributors should not describe `/meeting` as evidence of a broader planner/specialist agent framework
+   - Files:
+     - `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`
+     - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
+     - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
+
 ## Cannot Be Confirmed From Code Alone
 
 - whether any hosted deployment exists outside the local machine

@@ -55,6 +55,8 @@ export const oauthBaseUrl =
 export const oauthCallbackPath =
   process.env.LARK_OAUTH_CALLBACK_PATH || "/oauth/lark/callback";
 export const oauthRedirectUri = new URL(oauthCallbackPath, oauthBaseUrl).toString();
+export const meetingConfirmPath =
+  process.env.MEETING_CONFIRM_PATH || "/meeting/confirm";
 export const oauthScopes =
   process.env.LARK_OAUTH_SCOPES ||
   "offline_access drive:drive docs:document.content:read docx:document:create docx:document:readonly docx:document:write_only wiki:wiki:readonly im:message:send_as_bot im:message:readonly im:chat im:message.group_msg im:message.p2p_msg:readonly";
@@ -111,6 +113,9 @@ export const docRewriteDocumentMaxChars = Number.parseInt(process.env.DOC_REWRIT
 export const docRewriteCommentMaxChars = Number.parseInt(process.env.DOC_REWRITE_COMMENT_MAX_CHARS || "1800", 10);
 export const semanticClassifierPromptMaxTokens = Number.parseInt(process.env.SEMANTIC_CLASSIFIER_PROMPT_MAX_TOKENS || "2200", 10);
 export const openClawToolOutputMaxChars = Number.parseInt(process.env.OPENCLAW_TOOL_OUTPUT_MAX_CHARS || "2400", 10);
+export const meetingPromptMaxTokens = Number.parseInt(process.env.MEETING_PROMPT_MAX_TOKENS || "2200", 10);
+export const meetingDefaultChatId = String(process.env.MEETING_GROUP_CHAT_ID || "").trim();
+export const meetingDocFolderToken = String(process.env.MEETING_DOC_FOLDER_TOKEN || "").trim();
 
 export const lobsterSecurityProjectRoot =
   process.env.LOBSTER_SECURITY_PROJECT_ROOT || path.resolve(process.cwd(), "lobster_security");

@@ -11,6 +11,7 @@ import {
 import { getStoredAccountContext, getStoredAccountContextByOpenId, getValidUserToken } from "./lark-user-auth.mjs";
 import { buildLaneIntroReply } from "./capability-lane.mjs";
 import { formatIdentifierHint } from "./runtime-observability.mjs";
+import { createMeetingCoordinator, parseMeetingCommand } from "./meeting-agent.mjs";
 
 function incomingText(event) {
   return buildMessageText(event);
@@ -42,6 +43,8 @@ const noopLogger = {
     return { message: typeof error === "string" ? error : String(error) };
   },
 };
+
+const meetingCoordinator = createMeetingCoordinator();
 
 async function resolveReferencedDocumentId(event, accessToken, logger = noopLogger) {
   const directDocumentId = extractDocumentId(event);
@@ -149,6 +152,116 @@ async function executeKnowledgeAssistant({ event, scope, logger = noopLogger }) 
       "",
       "下一步",
       "- 如果要，我可以再把這題展開成更完整的整理版本。",
+    ].join("\n"),
+  };
+}
+
+function formatUnixDate(value) {
+  const numeric = Number.parseInt(String(value || ""), 10);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return "待確認";
+  }
+
+  const date = new Date(numeric);
+  if (Number.isNaN(date.getTime())) {
+    return "待確認";
+  }
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}${month}${day}`;
+}
+
+async function executeMeetingCommand({ event, scope, logger = noopLogger }) {
+  const command = parseMeetingCommand(normalizeMessageText(event));
+  if (!command) {
+    return null;
+  }
+
+  const context = await resolveAuthContext(event, logger);
+  if (!context) {
+    return { text: buildLaneIntroReply(scope, scope) };
+  }
+
+  if (command.action === "confirm") {
+    const result = await meetingCoordinator.confirmMeetingWrite({
+      accountId: context.account.id,
+      accessToken: context.token.access_token,
+      confirmationId: command.confirmation_id,
+    });
+    if (!result) {
+      return {
+        text: [
+          "結論",
+          "這個 meeting confirmation 不存在、已過期，或不屬於你目前的授權帳號。",
+          "",
+          "下一步",
+          "- 請重新執行一次 /meeting 生成新的摘要預覽。",
+        ].join("\n"),
+      };
+    }
+
+    return {
+      text: [
+        "結論",
+        "我已完成確認並寫入對應文檔。",
+        "",
+        "重點",
+        `- 會議類型：${result.meeting_type === "weekly" ? "weekly" : "general"}`,
+        `- 目標文檔：${result.target_document.title || result.target_document.document_id}`,
+        result.write_result?.deduplicated ? "- 這次內容與現有紀要重複，已略過重複插入。" : "- 新紀要已插入文檔最上方。",
+        result.meeting_type === "weekly"
+          ? `- 週會 Todo tracker 已更新 ${result.tracker_updates.length} 筆。`
+          : "- 本次不更新週會 Todo tracker。",
+      ].join("\n"),
+    };
+  }
+
+  const documentRef = await resolveReferencedDocumentId(event, context.token.access_token, logger);
+  let transcriptText = command.content;
+  let referencedDocument = null;
+  if (documentRef.documentId) {
+    referencedDocument = await getDocument(context.token.access_token, documentRef.documentId);
+    transcriptText = referencedDocument.content || transcriptText;
+  }
+
+  if (!cleanText(transcriptText)) {
+    return {
+      text: [
+        "結論",
+        "我已切到 /meeting，但這次沒有拿到可整理的會議內容。",
+        "",
+        "下一步",
+        "- 直接把逐字稿貼在 /meeting 後面，或回覆一份會議文件後再輸入 /meeting。",
+      ].join("\n"),
+    };
+  }
+
+  const result = await meetingCoordinator.processMeetingPreview({
+    accountId: context.account.id,
+    accessToken: context.token.access_token,
+    transcriptText,
+    metadata: {
+      date: formatUnixDate(event?.message?.create_time),
+      source: referencedDocument?.title || null,
+    },
+    chatId: cleanText(event?.message?.chat_id),
+    sourceMeetingId: cleanText(event?.message?.message_id),
+  });
+
+  return {
+    text: [
+      "結論",
+      "我已先把會議摘要發到指定群組，現在停在待確認，不會先寫文檔。",
+      "",
+      "重點",
+      `- 會議類型：${result.meeting_type === "weekly" ? "weekly" : "general"}`,
+      `- 專案鍵：${result.project_name}`,
+      `- 目標群組：${result.target_group_chat_id}`,
+      `- 文檔目標：${result.target_document.title}${result.target_document.existed ? "（已找到既有文檔）" : "（確認後會自動建立）"}`,
+      "",
+      "下一步",
+      `- 若確認寫入文檔，請回覆：/meeting confirm ${result.confirmation.confirmation_id}`,
     ].join("\n"),
   };
 }
@@ -318,6 +431,11 @@ async function executeGroupSharedAssistant({ event, scope, logger = noopLogger }
 }
 
 export async function executeCapabilityLane({ event, scope, logger = noopLogger }) {
+  const meetingReply = await executeMeetingCommand({ event, scope, logger });
+  if (meetingReply) {
+    return meetingReply;
+  }
+
   const lane = scope?.capability_lane || "personal-assistant";
   if (lane === "knowledge-assistant") {
     return executeKnowledgeAssistant({ event, scope, logger });
