@@ -145,6 +145,7 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Purpose: append doc content, preview-then-confirm replace, or do a minimal heading-targeted insert
   - Input note: target doc can be supplied as `document_id` / `doc_token`, or as a doc URL via `document_url` / `document_link` / `doc_link`
   - Input note: heading-targeted insert is enabled by `target_heading` plus optional `target_position=end_of_section|after_heading`
+  - Final-write note: preview can still resolve doc URLs and heading aliases, but the real write step now requires explicit `document_id` plus `section_heading`; missing either returns structured `missing_explicit_write_target`
   - Side effect note: `replace` and heading-targeted updates create a temporary confirmation artifact before real overwrite
 
 - `GET /api/doc/comments`

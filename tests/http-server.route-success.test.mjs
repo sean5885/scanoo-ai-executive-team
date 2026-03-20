@@ -667,9 +667,9 @@ test("document update can apply a heading-targeted insert after confirmation", a
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      document_id: "doc-1",
+      document_url: "https://larksuite.com/docx/doc-1",
       content: "New line",
-      target_heading: "第二部分",
+      section_heading: "第二部分",
     }),
   });
   const previewPayload = await previewResponse.json();
@@ -683,7 +683,7 @@ test("document update can apply a heading-targeted insert after confirmation", a
     body: JSON.stringify({
       document_id: "doc-1",
       content: "New line",
-      target_heading: "第二部分",
+      section_heading: "第二部分",
       confirm: true,
       confirmation_id: previewPayload.confirmation_id,
     }),
@@ -710,6 +710,65 @@ test("document update can apply a heading-targeted insert after confirmation", a
     ].join("\n"),
     mode: "replace",
   });
+});
+
+test("document update apply rejects writes without explicit document_id and section_heading", async (t) => {
+  const snapshot = await snapshotFile(docUpdateConfirmationStorePath);
+  t.after(async () => {
+    await restoreFile(docUpdateConfirmationStorePath, snapshot);
+  });
+
+  const { server } = await startTestServer(t, {
+    getDocument: async () => ({
+      document_id: "doc-1",
+      revision_id: "rev-1",
+      title: "Spec",
+      content: [
+        "# 第一部分",
+        "Alpha",
+        "",
+        "# 第二部分",
+        "Beta",
+      ].join("\n"),
+    }),
+    updateDocument: async () => {
+      throw new Error("updateDocument should not run when explicit write target is missing");
+    },
+  });
+
+  const { port } = server.address();
+  const previewResponse = await fetch(`http://127.0.0.1:${port}/api/doc/update`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      document_url: "https://larksuite.com/docx/doc-1",
+      content: "New line",
+      target_heading: "第二部分",
+    }),
+  });
+  const previewPayload = await previewResponse.json();
+
+  assert.equal(previewResponse.status, 200);
+  assert.equal(previewPayload.preview_required, true);
+
+  const applyResponse = await fetch(`http://127.0.0.1:${port}/api/doc/update`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      content: "New line",
+      target_heading: "第二部分",
+      confirm: true,
+      confirmation_id: previewPayload.confirmation_id,
+    }),
+  });
+  const applyPayload = await applyResponse.json();
+
+  assert.equal(applyResponse.status, 400);
+  assert.equal(applyPayload.ok, false);
+  assert.equal(applyPayload.error, "missing_explicit_write_target");
+  assert.deepEqual(applyPayload.missing_fields, ["document_id", "section_heading"]);
+  assert.deepEqual(applyPayload.required_fields, ["document_id", "section_heading"]);
+  assert.match(applyPayload.message, /explicit document_id and section_heading/i);
 });
 
 test("improvement workflow routes support list approve reject apply", async (t) => {

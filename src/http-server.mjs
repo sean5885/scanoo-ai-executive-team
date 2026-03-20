@@ -545,6 +545,13 @@ function buildDocumentUpdateInput(requestUrl, body = {}) {
   };
 }
 
+function buildExplicitDocumentWriteTarget(body = {}) {
+  return {
+    documentId: String(body.document_id || body.doc_token || "").trim(),
+    sectionHeading: String(body.section_heading || "").trim(),
+  };
+}
+
 function buildDocumentWriteAuthPayload(context, action) {
   return {
     account_id: context.account.id,
@@ -631,6 +638,29 @@ function buildDocumentTargetingFailure(error) {
     extra: {
       message: error.message || "Failed to resolve targeted document update.",
       ...(error.details && typeof error.details === "object" ? error.details : {}),
+    },
+  };
+}
+
+function buildExplicitDocumentWriteTargetFailure(body = {}) {
+  const explicitTarget = buildExplicitDocumentWriteTarget(body);
+  const missingFields = [];
+  if (!explicitTarget.documentId) {
+    missingFields.push("document_id");
+  }
+  if (!explicitTarget.sectionHeading) {
+    missingFields.push("section_heading");
+  }
+  if (!missingFields.length) {
+    return null;
+  }
+  return {
+    statusCode: 400,
+    error: "missing_explicit_write_target",
+    extra: {
+      message: "Final document write requires explicit document_id and section_heading.",
+      missing_fields: missingFields,
+      required_fields: ["document_id", "section_heading"],
     },
   };
 }
@@ -2354,6 +2384,27 @@ async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogg
     targetHeading,
     targetPosition,
   } = buildDocumentUpdateInput(requestUrl, body);
+  const explicitWriteTarget = buildExplicitDocumentWriteTarget(body);
+  const writesImmediately = !confirm && mode !== "replace" && !targetHeading;
+  const earlyExplicitTargetFailure =
+    (confirm || writesImmediately)
+      ? buildExplicitDocumentWriteTargetFailure(body)
+      : null;
+
+  if (earlyExplicitTargetFailure) {
+    logger.warn("document_update_missing_explicit_write_target", {
+      account_id: context.account.id,
+      preview_document_id: documentId || null,
+      missing_fields: earlyExplicitTargetFailure.extra?.missing_fields || [],
+    });
+    respondDocumentWriteFailure(
+      res,
+      earlyExplicitTargetFailure.statusCode,
+      earlyExplicitTargetFailure.error,
+      earlyExplicitTargetFailure.extra,
+    );
+    return;
+  }
 
   if (!documentId || !content) {
     logger.warn("document_update_missing_args", {
@@ -2431,12 +2482,29 @@ async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogg
         preview,
         targeting,
         message: targetHeading
-          ? "Heading-targeted update needs explicit confirmation. Re-submit with confirm=true and confirmation_id."
+          ? "Heading-targeted update needs explicit confirmation. Re-submit with confirm=true, document_id, section_heading, and confirmation_id."
           : undefined,
       }));
       return;
     }
 
+    const explicitTargetFailure = buildExplicitDocumentWriteTargetFailure(body);
+    if (explicitTargetFailure) {
+      logger.warn("document_update_missing_explicit_write_target", {
+        account_id: context.account.id,
+        preview_document_id: documentId,
+        missing_fields: explicitTargetFailure.extra?.missing_fields || [],
+      });
+      respondDocumentWriteFailure(
+        res,
+        explicitTargetFailure.statusCode,
+        explicitTargetFailure.error,
+        explicitTargetFailure.extra,
+      );
+      return;
+    }
+
+    const finalDocumentId = explicitWriteTarget.documentId;
     if (!confirmationId) {
       respondDocumentWriteFailure(
         res,
@@ -2450,7 +2518,7 @@ async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogg
     const confirmation = await consumeDocumentReplaceConfirmation({
       confirmationId,
       accountId: context.account.id,
-      documentId,
+      documentId: finalDocumentId,
       proposedContent: resolvedContent,
     });
 
@@ -2482,21 +2550,38 @@ async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogg
     }
   }
 
+  const explicitTargetFailure = buildExplicitDocumentWriteTargetFailure(body);
+  if (explicitTargetFailure) {
+    logger.warn("document_update_missing_explicit_write_target", {
+      account_id: context.account.id,
+      preview_document_id: documentId,
+      missing_fields: explicitTargetFailure.extra?.missing_fields || [],
+    });
+    respondDocumentWriteFailure(
+      res,
+      explicitTargetFailure.statusCode,
+      explicitTargetFailure.error,
+      explicitTargetFailure.extra,
+    );
+    return;
+  }
+  const finalDocumentId = explicitWriteTarget.documentId;
+
   logger.info("document_update_started", {
     account_id: context.account.id,
-    document_id: documentId,
+    document_id: finalDocumentId,
     mode: resolvedMode,
     target_heading: targetHeading || null,
   });
   const result = await getHttpService("updateDocument", updateDocument)(
     context.token.access_token,
-    documentId,
+    finalDocumentId,
     resolvedContent,
     resolvedMode,
   );
   logger.info("document_update_completed", {
     account_id: context.account.id,
-    document_id: documentId,
+    document_id: finalDocumentId,
     mode: resolvedMode,
     target_heading: targetHeading || null,
   });
@@ -2505,14 +2590,14 @@ async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogg
     action: "update_doc",
     targetStage: "mirror",
     candidate: {
-      doc_id: documentId,
+      doc_id: finalDocumentId,
       title: currentDocument?.title || null,
     },
   });
   logger.info("document_company_brain_update_boundary", {
     stage: "company_brain_write_intake_boundary",
     account_id: context.account.id,
-    doc_id: documentId,
+    doc_id: finalDocumentId,
     intake_state: intakeBoundary.intake_state,
     review_required: intakeBoundary.review_required,
     conflict_check_required: intakeBoundary.conflict_check_required,
