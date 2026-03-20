@@ -102,6 +102,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - per-request trace creation and request lifecycle logging
   - `trace_id` injection into JSON responses for easier cross-log correlation
   - key route child-log coverage for `auth_status`, `doc_create`, `doc_update`, `meeting_process`, `meeting_confirm`, `messages_list`, `message_reply`, `knowledge_search`, `knowledge_answer`, `drive_*`, `wiki_*`, `bitable_*`, `calendar_*`, and `tasks_*`
+  - `/api/doc/update` now also accepts minimal heading-targeted insert input (`target_heading`, optional `target_position`), resolves the target section against the current markdown content, and then reuses the existing replace preview/apply safety gate instead of changing the underlying Lark block-write adapter
   - doc-targeted HTTP routes now accept either explicit `document_id` / `doc_token` fields or a shared doc URL (`document_url` / `document_link` / `doc_link`), and the rewrite route can also recover a nested `target_document.url` payload before failing with `missing_document_id`
   - `GET /api/system/runtime-info` exposes the live HTTP process runtime facts (`db_path`, `node_pid`, `cwd`, `service_start_time`) from the same DB/config initialization path the server uses, and logs under `stage=runtime_info`
   - high-risk handler step logs now cover drive/wiki organize, bitable records, calendar event create/freebusy, and task get/create/comments
@@ -173,6 +174,18 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - support watched-document polling
 - Core path:
   - yes for safe doc editing
+
+### 3B. Document Targeting
+
+- Location:
+  - `/Users/seanhan/Documents/Playground/src/doc-targeting.mjs`
+- Responsibility:
+  - parse markdown heading structure from the current Lark raw-content snapshot
+  - resolve a unique target heading section
+  - support minimal insert positions for targeted writes (`end_of_section`, `after_heading`)
+  - fail soft on missing or ambiguous heading matches instead of silently writing to the wrong section
+- Core path:
+  - yes for minimal targeted doc editing
 
 ### 4. Lark Content Service
 

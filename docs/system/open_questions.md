@@ -25,11 +25,12 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
       - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
       - `/Users/seanhan/Documents/Playground/src/http-route-contracts.mjs`
 
-3. Comment-driven rewrite now has patch-plan preview / confirm, but final materialization still depends on a doc replace write.
+3. Comment-driven rewrite now has patch-plan preview / confirm, and generic doc update now has minimal heading-targeted insert planning, but rewrite materialization still depends on a full-doc replace write.
    - Why it matters:
-     - patch semantics and suggestion cards are clearer, but the underlying Lark doc write path is still replace-based
+     - targeted manual insert is now possible for unique markdown headings, but the underlying Lark doc write path is still replace-based
    - Files:
       - `/Users/seanhan/Documents/Playground/src/doc-comment-rewrite.mjs`
+      - `/Users/seanhan/Documents/Playground/src/doc-targeting.mjs`
       - `/Users/seanhan/Documents/Playground/src/lark-content.mjs`
       - `/Users/seanhan/Documents/Playground/src/doc-preview-cards.mjs`
 

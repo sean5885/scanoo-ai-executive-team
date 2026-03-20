@@ -15,11 +15,13 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 ### Browse / Write Flow
 
 1. HTTP route resolves account and valid token
-2. Handler calls `lark-content.mjs`
-3. `lark-content.mjs` calls Lark SDK
-4. for Lobster-created `docx` files, the initiating user's `open_id` is granted `full_access`
-5. Result is normalized and returned
-6. direct-message cleanup requests can also delete the latest Lobster meeting doc through tenant-token fallback and persist a chat-only failure-report preference
+2. for heading-targeted doc updates, the handler first reads the current raw markdown, resolves the target heading section, and turns the requested insert into a full-document replace candidate
+3. targeted updates then reuse the same preview/confirm replace gate instead of introducing a second Lark write primitive
+4. handler calls `lark-content.mjs`
+5. `lark-content.mjs` calls Lark SDK
+6. for Lobster-created `docx` files, the initiating user's `open_id` is granted `full_access`
+7. Result is normalized and returned
+8. direct-message cleanup requests can also delete the latest Lobster meeting doc through tenant-token fallback and persist a chat-only failure-report preference
 
 ### Sync Flow
 

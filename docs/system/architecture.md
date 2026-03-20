@@ -54,6 +54,7 @@ Use [deployment.md](/Users/seanhan/Documents/Playground/docs/system/deployment.m
   - `/Users/seanhan/Documents/Playground/src/doc-comment-rewrite.mjs`
   - `/Users/seanhan/Documents/Playground/src/doc-preview-cards.mjs`
   - `/Users/seanhan/Documents/Playground/src/doc-update-confirmations.mjs`
+  - `/Users/seanhan/Documents/Playground/src/doc-targeting.mjs`
 - runtime scope resolution
   - `/Users/seanhan/Documents/Playground/src/binding-runtime.mjs`
   - `/Users/seanhan/Documents/Playground/src/session-scope-store.mjs`
@@ -116,6 +117,7 @@ The following are architecture concerns:
 - sync pipeline shape
 - answer pipeline shape
 - comment rewrite orchestration
+- heading-targeted document update planning before replace apply
 - plugin-to-HTTP contract
 - security bridge boundary between Node and Python
 

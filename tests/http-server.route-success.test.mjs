@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 
 import { startHttpServer } from "../src/http-server.mjs";
-import { executiveImprovementStorePath } from "../src/config.mjs";
+import { docUpdateConfirmationStorePath, executiveImprovementStorePath } from "../src/config.mjs";
 import { setupExecutiveTaskStateTestHarness } from "./helpers/executive-task-state-harness.mjs";
 
 setupExecutiveTaskStateTestHarness();
@@ -490,6 +490,135 @@ test("task get/create and comment update/delete success routes return trace and 
   assert.equal(calls.some((entry) => entry[1]?.event === "task_comment_update_completed"), true);
   assert.equal(calls.some((entry) => entry[1]?.event === "task_comment_delete_started"), true);
   assert.equal(calls.some((entry) => entry[1]?.event === "task_comment_delete_completed"), true);
+});
+
+test("document update can preview a heading-targeted insert", async (t) => {
+  const snapshot = await snapshotFile(docUpdateConfirmationStorePath);
+  t.after(async () => {
+    await restoreFile(docUpdateConfirmationStorePath, snapshot);
+  });
+
+  const { server } = await startTestServer(t, {
+    getDocument: async () => ({
+      document_id: "doc-1",
+      revision_id: "rev-1",
+      title: "Spec",
+      content: [
+        "# 第一部分",
+        "Alpha",
+        "",
+        "# 第二部分",
+        "Beta",
+        "",
+        "# 第三部分",
+        "Gamma",
+      ].join("\n"),
+    }),
+  });
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/doc/update`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      document_id: "doc-1",
+      content: "New line",
+      target_heading: "第二部分",
+    }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.preview_required, true);
+  assert.equal(payload.action, "document_update_targeted_preview");
+  assert.equal(payload.targeting?.type, "heading");
+  assert.equal(payload.targeting?.matched_heading, "第二部分");
+  assert.match(payload.trace_id, /^http_/);
+  assert.match(payload.message, /explicit confirmation/i);
+});
+
+test("document update can apply a heading-targeted insert after confirmation", async (t) => {
+  const snapshot = await snapshotFile(docUpdateConfirmationStorePath);
+  t.after(async () => {
+    await restoreFile(docUpdateConfirmationStorePath, snapshot);
+  });
+
+  const calls = [];
+  const { server } = await startTestServer(t, {
+    getDocument: async () => ({
+      document_id: "doc-1",
+      revision_id: "rev-1",
+      title: "Spec",
+      content: [
+        "# 第一部分",
+        "Alpha",
+        "",
+        "# 第二部分",
+        "Beta",
+        "",
+        "# 第三部分",
+        "Gamma",
+      ].join("\n"),
+    }),
+    updateDocument: async (_accessToken, documentId, content, mode) => {
+      calls.push({ documentId, content, mode });
+      return {
+        document_id: documentId,
+        mode,
+        root_block_id: "blk-root",
+        appended_blocks: 1,
+      };
+    },
+  });
+
+  const { port } = server.address();
+  const previewResponse = await fetch(`http://127.0.0.1:${port}/api/doc/update`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      document_id: "doc-1",
+      content: "New line",
+      target_heading: "第二部分",
+    }),
+  });
+  const previewPayload = await previewResponse.json();
+
+  assert.equal(previewResponse.status, 200);
+  assert.equal(previewPayload.preview_required, true);
+
+  const applyResponse = await fetch(`http://127.0.0.1:${port}/api/doc/update`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      document_id: "doc-1",
+      content: "New line",
+      target_heading: "第二部分",
+      confirm: true,
+      confirmation_id: previewPayload.confirmation_id,
+    }),
+  });
+  const applyPayload = await applyResponse.json();
+
+  assert.equal(applyResponse.status, 200);
+  assert.equal(applyPayload.action, "document_update_targeted_apply");
+  assert.equal(applyPayload.targeting?.matched_heading, "第二部分");
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0], {
+    documentId: "doc-1",
+    content: [
+      "# 第一部分",
+      "Alpha",
+      "",
+      "# 第二部分",
+      "Beta",
+      "",
+      "New line",
+      "",
+      "# 第三部分",
+      "Gamma",
+    ].join("\n"),
+    mode: "replace",
+  });
 });
 
 test("improvement workflow routes support list approve reject apply", async (t) => {

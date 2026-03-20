@@ -142,9 +142,10 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
 
 - `POST /api/doc/update`
   - Handler: `handleDocumentUpdate`
-  - Purpose: append doc content, or preview-then-confirm replace
+  - Purpose: append doc content, preview-then-confirm replace, or do a minimal heading-targeted insert
   - Input note: target doc can be supplied as `document_id` / `doc_token`, or as a doc URL via `document_url` / `document_link` / `doc_link`
-  - Side effect note: `replace` now creates a temporary confirmation artifact before real overwrite
+  - Input note: heading-targeted insert is enabled by `target_heading` plus optional `target_position=end_of_section|after_heading`
+  - Side effect note: `replace` and heading-targeted updates create a temporary confirmation artifact before real overwrite
 
 - `GET /api/doc/comments`
   - Handler: `handleDocumentComments`
