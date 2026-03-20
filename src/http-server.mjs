@@ -6,6 +6,11 @@ import {
   oauthPort,
   searchTopK,
 } from "./config.mjs";
+import {
+  getCompanyBrainDocDetailAction,
+  listCompanyBrainDocsAction,
+  searchCompanyBrainDocsAction,
+} from "./company-brain-query.mjs";
 import { resolveLarkBindingRuntime } from "./binding-runtime.mjs";
 import {
   buildAuthorizeUrl,
@@ -86,9 +91,10 @@ import {
   updateTaskComment,
   listDocumentComments,
 } from "./lark-content.mjs";
-import { answerQuestion, searchKnowledgeBase } from "./answer-service.mjs";
+import { searchKnowledgeBase } from "./answer-service.mjs";
 import { resolveCompanyBrainWriteIntake } from "./company-brain-write-intake.mjs";
 import { applyRewrittenDocument, rewriteDocumentFromComments } from "./doc-comment-rewrite.mjs";
+import { buildPlannedUserInputEnvelope, executePlannedUserInput } from "./executive-planner.mjs";
 import { applyHeadingTargetedInsert, DocumentTargetingError } from "./doc-targeting.mjs";
 import { listUnseenDocumentComments, markDocumentCommentsSeen } from "./comment-watch-store.mjs";
 import { generateDocumentCommentSuggestionCard } from "./comment-suggestion-workflow.mjs";
@@ -133,7 +139,7 @@ import { listResolvedSessions } from "./session-scope-store.mjs";
 import { createMeetingCoordinator } from "./meeting-agent.mjs";
 import { extractDocumentId } from "./message-intent-utils.mjs";
 import { normalizeText, nowIso } from "./text-utils.mjs";
-import { createRuntimeLogger, createTraceId } from "./runtime-observability.mjs";
+import { createRequestId, createRuntimeLogger, createTraceId } from "./runtime-observability.mjs";
 import { getDbPath } from "./db.mjs";
 
 const pendingOauthStates = new Map();
@@ -422,6 +428,21 @@ function buildCompanyBrainDetailResult(context, item) {
     ...buildCompanyBrainReadAuthPayload(context, "company_brain_doc_detail"),
     item,
   };
+}
+
+function buildCompanyBrainAgentResult(res, action, result = {}) {
+  return withTracePayload(res, {
+    ok: result?.success === true,
+    action,
+    data: {
+      success: result?.success === true,
+      data: result?.data && typeof result.data === "object" && !Array.isArray(result.data)
+        ? result.data
+        : {},
+      error: result?.error || null,
+    },
+    ...(result?.success === true ? {} : { error: result?.error || "business_error" }),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -2149,13 +2170,96 @@ async function handleAgentCreateDoc(res, requestUrl, body, logger = noopHttpLogg
 }
 
 async function handleAgentListCompanyBrainDocs(res, requestUrl, body, logger = noopHttpLogger) {
-  await invokeAgentBridge(handleCompanyBrainDocsList, {
-    requestUrl,
-    body,
-    logger,
-    res,
-    action: "list_company_brain_docs",
+  const context = await resolveCompanyBrainReadContext(res, requestUrl, body, logger);
+  if (!context) {
+    return;
+  }
+
+  const limit = parseCompanyBrainLimit(requestUrl, body);
+  const result = listCompanyBrainDocsAction({
+    accountId: context.account.id,
+    limit,
   });
+
+  logCompanyBrainCollectionRead(logger, "company_brain_list", {
+    accountId: context.account.id,
+    limit,
+    total: result?.data?.total || 0,
+  });
+
+  logger.info("agent_bridge_completed", {
+    stage: "agent_bridge",
+    action: "list_company_brain_docs",
+    ok: result.success === true,
+    status_code: result.success === true ? 200 : 400,
+  });
+
+  jsonResponse(res, result.success === true ? 200 : 400, buildCompanyBrainAgentResult(res, "list_company_brain_docs", result));
+}
+
+async function handleAgentSearchCompanyBrainDocs(res, requestUrl, body, logger = noopHttpLogger) {
+  const context = await resolveCompanyBrainReadContext(res, requestUrl, body, logger);
+  if (!context) {
+    return;
+  }
+
+  const q = parseCompanyBrainSearchQuery(requestUrl, body);
+  const limit = parseCompanyBrainLimit(requestUrl, body);
+  const result = searchCompanyBrainDocsAction({
+    accountId: context.account.id,
+    q,
+    limit,
+  });
+
+  logCompanyBrainCollectionRead(logger, "company_brain_search", {
+    accountId: context.account.id,
+    q,
+    limit,
+    total: result?.data?.total || 0,
+  });
+
+  logger.info("agent_bridge_completed", {
+    stage: "agent_bridge",
+    action: "search_company_brain_docs",
+    ok: result.success === true,
+    status_code: result.success === true ? 200 : 400,
+  });
+
+  jsonResponse(res, result.success === true ? 200 : 400, buildCompanyBrainAgentResult(res, "search_company_brain_docs", result));
+}
+
+async function handleAgentGetCompanyBrainDocDetail(res, requestUrl, body, logger = noopHttpLogger) {
+  const context = await resolveCompanyBrainReadContext(res, requestUrl, body, logger);
+  if (!context) {
+    return;
+  }
+
+  const docId = parseCompanyBrainDocId(requestUrl, body);
+  const result = getCompanyBrainDocDetailAction({
+    accountId: context.account.id,
+    docId,
+  });
+
+  logCompanyBrainDetailRead(logger, {
+    accountId: context.account.id,
+    docId,
+    found: result.success === true,
+  });
+
+  const statusCode = result.success === true
+    ? 200
+    : result.error === "not_found"
+      ? 404
+      : 400;
+
+  logger.info("agent_bridge_completed", {
+    stage: "agent_bridge",
+    action: "get_company_brain_doc_detail",
+    ok: result.success === true,
+    status_code: statusCode,
+  });
+
+  jsonResponse(res, statusCode, buildCompanyBrainAgentResult(res, "get_company_brain_doc_detail", result));
 }
 
 async function handleAgentRuntimeInfo(res, requestUrl, body, logger = noopHttpLogger) {
@@ -4205,9 +4309,7 @@ async function handleSearch(res, requestUrl, body, logger = noopHttpLogger) {
 }
 
 async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger) {
-  const accountId = getAccountId(requestUrl, body);
   const q = requestUrl.searchParams.get("q") || body.q || "";
-  const k = Number.parseInt(requestUrl.searchParams.get("k") || body.k || `${searchTopK}`, 10);
 
   if (!q.trim()) {
     logger.warn("knowledge_answer_missing_query");
@@ -4217,34 +4319,30 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger) {
 
   try {
     logger.info("knowledge_answer_started", {
-      account_id: accountId || null,
+      account_id: getAccountId(requestUrl, body) || null,
       q_len: q.trim().length,
-      k,
     });
-    const result = await answerQuestion(accountId, q, k);
+    const result = await executePlannedUserInput({
+      text: q,
+      logger,
+      baseUrl: oauthBaseUrl,
+    });
+    const envelope = buildPlannedUserInputEnvelope(result);
     logger.info("knowledge_answer_completed", {
-      account_id: result.account.id,
-      provider: result.provider || null,
-      source_count: Array.isArray(result.sources) ? result.sources.length : 0,
+      selected_action: envelope.action || null,
+      ok: envelope.ok,
+      planner_error: envelope.error || null,
     });
-    jsonResponse(res, 200, {
-      ok: true,
-      account_id: result.account.id,
-      q,
-      answer: result.answer,
-      provider: result.provider,
-      sources: result.sources,
-    });
+    jsonResponse(res, envelope.error && !envelope.execution_result ? 422 : 200, envelope);
   } catch (error) {
     logger.warn("knowledge_answer_failed", {
-      account_id: accountId || null,
+      account_id: getAccountId(requestUrl, body) || null,
       error: logger.compactError(error),
     });
-    jsonResponse(res, 401, {
+    jsonResponse(res, 500, {
       ok: false,
-      error: "unauthorized",
+      error: "internal_error",
       message: error.message,
-      login_url: `${oauthBaseUrl}/oauth/lark/login`,
     });
   }
 }
@@ -4376,12 +4474,17 @@ export function startHttpServer({ logger = console, port = oauthPort, listen = t
   const server = http.createServer(async (req, res) => {
     const requestUrl = new URL(req.url || "/", oauthBaseUrl);
     const traceId = createTraceId("http");
+    const requestId = normalizeText(Array.isArray(req.headers["x-request-id"]) ? req.headers["x-request-id"][0] : req.headers["x-request-id"])
+      || createRequestId("http_request");
     const requestLogger = httpLogger.child("request", {
       trace_id: traceId,
+      request_id: requestId,
       method: req.method || "GET",
       pathname: requestUrl.pathname,
     });
     res.__trace_id = traceId;
+    res.__request_id = requestId;
+    res.setHeader("X-Request-Id", requestId);
     requestLogger.info("request_started");
     res.on("finish", () => {
       requestLogger.info("request_finished", {
@@ -4429,6 +4532,20 @@ export function startHttpServer({ logger = console, port = oauthPort, listen = t
       if (requestUrl.pathname === "/agent/company-brain/docs" && req.method === "GET") {
         await runHttpRoute(requestLogger, "agent_company_brain_docs_list", (routeLogger) =>
           handleAgentListCompanyBrainDocs(res, requestUrl, body, routeLogger)
+        );
+        return;
+      }
+
+      if (requestUrl.pathname === "/agent/company-brain/search" && req.method === "GET") {
+        await runHttpRoute(requestLogger, "agent_company_brain_search", (routeLogger) =>
+          handleAgentSearchCompanyBrainDocs(res, requestUrl, body, routeLogger)
+        );
+        return;
+      }
+
+      if (/^\/agent\/company-brain\/docs\/[^/]+$/.test(requestUrl.pathname) && req.method === "GET") {
+        await runHttpRoute(requestLogger, "agent_company_brain_doc_detail", (routeLogger) =>
+          handleAgentGetCompanyBrainDocDetail(res, requestUrl, body, routeLogger)
         );
         return;
       }

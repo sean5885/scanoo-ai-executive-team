@@ -12,6 +12,7 @@ import {
   looksLikeExecutiveExit,
   looksLikeExecutiveStart,
   planExecutiveTurn,
+  planUserInputAction,
   resetPlannerRuntimeContext,
   runPlannerMultiStep,
   runPlannerPreset,
@@ -67,6 +68,35 @@ test("planExecutiveTurn builds collaborative work items for multi-agent requests
   assert.equal(decision.supporting_agent_ids.length > 0, true);
   assert.equal(Array.isArray(decision.work_items), true);
   assert.equal(decision.work_items.length >= 2, true);
+});
+
+test("planUserInputAction rejects wrapped non-JSON output", async () => {
+  resetPlannerRuntimeContext();
+  const result = await planUserInputAction({
+    text: "幫我找 OKR 文件",
+    async requester() {
+      return '這是額外說明 {"action":"search_company_brain_docs","params":{"q":"OKR"}}';
+    },
+  });
+
+  assert.deepEqual(result, { error: "planner_failed" });
+});
+
+test("planUserInputAction rejects action outside planner_contract", async () => {
+  resetPlannerRuntimeContext();
+  const result = await planUserInputAction({
+    text: "直接回答我",
+    async requester() {
+      return JSON.stringify({
+        action: "free_chat_answer",
+        params: {},
+      });
+    },
+  });
+
+  assert.equal(result.error, "invalid_action");
+  assert.equal(result.action, "free_chat_answer");
+  assert.deepEqual(result.params, {});
 });
 
 test("planExecutiveTurn accepts injected planner requester", async () => {
@@ -757,7 +787,7 @@ test("dispatchPlannerTool builds dynamic detail path for company brain doc detai
 
     assert.equal(result.ok, true);
     assert.equal(result.trace_id, "trace_detail");
-    assert.deepEqual(calls, ["http://localhost:3333/api/company-brain/docs/doc_123"]);
+    assert.deepEqual(calls, ["http://localhost:3333/agent/company-brain/docs/doc_123"]);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -801,6 +831,129 @@ test("dispatchPlannerTool emits minimal runtime trace events", async () => {
     assert.equal(result.ok, true);
     assert.equal(events.some((event) => event?.event_type === "action_dispatch"), true);
     assert.equal(events.some((event) => event?.event_type === "action_result"), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("dispatchPlannerTool logs successful tool execution with request_id", async () => {
+  const originalFetch = globalThis.fetch;
+  const toolLogs = [];
+  const seenHeaders = [];
+  const logger = {
+    info(message, event) {
+      if (message === "lobster_tool_execution") {
+        toolLogs.push(event);
+      }
+    },
+    warn() {},
+    error() {},
+    debug() {},
+  };
+
+  globalThis.fetch = async (_url, init = {}) => {
+    seenHeaders.push(init.headers);
+    return {
+      status: 200,
+      async text() {
+        return JSON.stringify({
+          ok: true,
+          action: "get_runtime_info",
+          trace_id: "trace_runtime_success",
+          data: {
+            db_path: "/tmp/db.sqlite",
+            node_pid: 456,
+            cwd: "/tmp",
+            service_start_time: "2026-03-19T00:00:00.000Z",
+          },
+        });
+      },
+    };
+  };
+
+  try {
+    const result = await dispatchPlannerTool({
+      action: "get_runtime_info",
+      payload: {},
+      logger,
+      baseUrl: "http://localhost:3333",
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(toolLogs.length, 1);
+    assert.equal(toolLogs[0].action, "get_runtime_info");
+    assert.match(toolLogs[0].request_id, /^planner_tool_/);
+    assert.deepEqual(toolLogs[0].params, {});
+    assert.deepEqual(toolLogs[0].result, {
+      success: true,
+      data: {
+        db_path: "/tmp/db.sqlite",
+        node_pid: 456,
+        cwd: "/tmp",
+        service_start_time: "2026-03-19T00:00:00.000Z",
+        retry_count: 0,
+      },
+      error: null,
+    });
+    assert.equal(toolLogs[0].trace_id, "trace_runtime_success");
+    assert.equal(seenHeaders[0]["X-Request-Id"], toolLogs[0].request_id);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("dispatchPlannerTool logs failed tool execution with request_id", async () => {
+  const originalFetch = globalThis.fetch;
+  const toolLogs = [];
+  const logger = {
+    info() {},
+    warn() {},
+    error(message, event) {
+      if (message === "lobster_tool_execution") {
+        toolLogs.push(event);
+      }
+    },
+    debug() {},
+  };
+
+  globalThis.fetch = async () => ({
+    status: 500,
+    async text() {
+      return JSON.stringify({
+        ok: false,
+        action: "get_runtime_info",
+        error: "tool_error",
+        trace_id: "trace_runtime_fail",
+        data: {
+          message: "upstream_failed",
+        },
+      });
+    },
+  });
+
+  try {
+    const result = await dispatchPlannerTool({
+      action: "get_runtime_info",
+      payload: {},
+      logger,
+      baseUrl: "http://localhost:3333",
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(toolLogs.length, 1);
+    assert.equal(toolLogs[0].action, "get_runtime_info");
+    assert.match(toolLogs[0].request_id, /^planner_tool_/);
+    assert.deepEqual(toolLogs[0].result, {
+      success: false,
+      data: {
+        message: "upstream_failed",
+        stop_reason: "tool_error",
+        stopped: true,
+        retry_count: 1,
+      },
+      error: "tool_error",
+    });
+    assert.equal(toolLogs[0].trace_id, "trace_runtime_fail");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -966,7 +1119,7 @@ test("dispatchPlannerTool heals type mismatch input and can return success", asy
       baseUrl: "http://localhost:3333",
     });
 
-    assert.deepEqual(calls, ["http://localhost:3333/api/company-brain/docs/123"]);
+    assert.deepEqual(calls, ["http://localhost:3333/agent/company-brain/docs/123"]);
     assert.equal(result.ok, true);
     assert.equal(result.data.healed, true);
     assert.equal(result.data.retry_count, 1);

@@ -41,11 +41,12 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 2. account context is resolved
 3. FTS search runs against `lark_chunks_fts`
 4. `/search` returns hits directly
-5. `/answer` either:
-   - calls the dedicated OpenClaw MiniMax text path when direct text credentials are absent
-   - or calls OpenAI-compatible chat completions with governed context
-   - only falls back to retrieval-summary output if text generation fails
-6. governed answer prompts now prefer:
+5. `/answer` first goes through `executive-planner.mjs`
+   - planner must emit strict JSON `{ action, params }`
+   - wrapped/non-JSON planner output is rejected as `{ error: "planner_failed" }`
+   - actions outside `planner_contract.json` are rejected before execution
+   - valid planner decisions run the corresponding contract-bound action/preset and return a structured planner envelope
+6. the legacy/internal `answer-service.mjs` prompt path still prefers:
    - current question
    - compact workflow checkpoint
    - trimmed retrieved snippets
@@ -313,8 +314,9 @@ Actual AI-like execution paths:
   - organizer -> `lark-drive-semantic-classifier.mjs` -> governed XML batch prompt -> OpenClaw agent
   - malformed or incomplete classifier JSON triggers a repair retry before local-rule fallback
 
-- retrieval QA
-  - answer route -> `answer-service.mjs` -> external checkpoint + governed XML prompt -> optional LLM
+- planner-gated retrieval / tool execution
+  - answer route -> `executive-planner.mjs` strict `{ action, params }` decision -> contract-bound planner action/preset execution
+  - direct user-input answer fallback is disabled; `answer-service.mjs` is no longer the first responder for `/answer` or the knowledge-assistant lane
 
 - comment-driven rewrite
   - rewrite route -> `doc-comment-rewrite.mjs` -> external checkpoint + governed XML prompt -> optional LLM

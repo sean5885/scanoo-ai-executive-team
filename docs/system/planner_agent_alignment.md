@@ -110,6 +110,21 @@ For preset execution the shape is:
 }
 ```
 
+For strict user-input planning the decision shape is now:
+
+```json
+{
+  "action": "string",
+  "params": "object"
+}
+```
+
+This path is bounded by the checked-in planner contract:
+
+- `action` must exist in `planner_contract.json` (`actions` or `presets`)
+- wrapped / non-JSON model output is rejected as `{ "error": "planner_failed" }`
+- no heuristic or free-text fallback is used on this strict user-input planning path
+
 ## Output Shape
 
 Current `runPlannerToolFlow(...)` output:
@@ -119,6 +134,23 @@ Current `runPlannerToolFlow(...)` output:
   "selected_action": "string|null",
   "execution_result": "object|null",
   "trace_id": "string|null"
+}
+```
+
+Current strict user-input planner output before execution:
+
+```json
+{
+  "action": "string",
+  "params": "object"
+}
+```
+
+Current strict user-input planner error boundary:
+
+```json
+{
+  "error": "planner_failed|invalid_action|contract_violation"
 }
 ```
 

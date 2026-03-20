@@ -15,6 +15,7 @@ import { buildCompactSystemPrompt, governPromptSections, trimTextForBudget } fro
 import { getRegisteredAgent, listRegisteredAgents, parseRegisteredAgentCommand } from "./agent-registry.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import { callOpenClawTextGeneration } from "./openclaw-text-service.mjs";
+import { createRequestId, emitToolExecutionLog } from "./runtime-observability.mjs";
 import {
   compactPlannerConversationMemory as compactPlannerConversationMemoryLayer,
   getPlannerConversationMemory as getPlannerConversationMemoryLayer,
@@ -375,6 +376,45 @@ function getPlannerActionContract(action = "") {
 
 function getPlannerPresetContract(preset = "") {
   return plannerContract?.presets?.[cleanText(preset)] || null;
+}
+
+function getPlannerDecisionContract(name = "") {
+  const normalizedName = cleanText(name);
+  if (!normalizedName) {
+    return null;
+  }
+  const actionContract = getPlannerActionContract(normalizedName);
+  if (actionContract) {
+    return {
+      kind: "action",
+      contract: actionContract,
+    };
+  }
+  const presetContract = getPlannerPresetContract(normalizedName);
+  if (presetContract) {
+    return {
+      kind: "preset",
+      contract: presetContract,
+    };
+  }
+  return null;
+}
+
+function summarizePlannerInputSchema(schema = null) {
+  const requiredFields = Array.isArray(schema?.required)
+    ? schema.required.map((field) => cleanText(String(field || ""))).filter(Boolean)
+    : [];
+  return requiredFields.length > 0 ? requiredFields.join(", ") : "(none)";
+}
+
+function plannerDecisionCatalogText() {
+  const actionLines = Object.entries(plannerContract?.actions || {}).map(([name, contract]) => (
+    `- ${name}: type=action; required_params=${summarizePlannerInputSchema(contract?.input_schema)}`
+  ));
+  const presetLines = Object.entries(plannerContract?.presets || {}).map(([name, contract]) => (
+    `- ${name}: type=preset; required_params=${summarizePlannerInputSchema(contract?.input_schema)}`
+  ));
+  return [...actionLines, ...presetLines].join("\n");
 }
 
 function matchesSchemaType(expectedType, value) {
@@ -1004,6 +1044,150 @@ function parsePlannerDispatchResponse(rawText, action = "") {
   }
 }
 
+function isCompanyBrainQueryAction(action = "") {
+  return [
+    "list_company_brain_docs",
+    "search_company_brain_docs",
+    "get_company_brain_doc_detail",
+  ].includes(cleanText(action));
+}
+
+function buildEmptyCompanyBrainSummary() {
+  return {
+    overview: "",
+    headings: [],
+    highlights: [],
+    snippet: "",
+    content_length: 0,
+  };
+}
+
+function normalizeCompanyBrainListItems(items = []) {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+  return items.map((item) => ({
+    doc_id: cleanText(item?.doc_id) || "",
+    title: cleanText(item?.title) || "",
+    source: cleanText(item?.source) || "",
+    created_at: cleanText(item?.created_at) || "",
+    creator: item?.creator && typeof item.creator === "object"
+      ? {
+          account_id: cleanText(item.creator.account_id) || "",
+          open_id: cleanText(item.creator.open_id) || "",
+        }
+      : {
+          account_id: "",
+          open_id: "",
+        },
+    summary: item?.summary && typeof item.summary === "object"
+      ? {
+          overview: cleanText(item.summary.overview) || "",
+          headings: Array.isArray(item.summary.headings) ? item.summary.headings.map((value) => cleanText(value)).filter(Boolean) : [],
+          highlights: Array.isArray(item.summary.highlights) ? item.summary.highlights.map((value) => cleanText(value)).filter(Boolean) : [],
+          snippet: cleanText(item.summary.snippet) || cleanText(item.summary.overview) || "",
+          content_length: Number.isFinite(Number(item.summary.content_length)) ? Number(item.summary.content_length) : 0,
+        }
+      : buildEmptyCompanyBrainSummary(),
+    ...(item?.match && typeof item.match === "object"
+      ? {
+          match: {
+            type: cleanText(item.match.type) || "keyword",
+            keyword_score: Number(item.match.keyword_score || 0),
+            semantic_score: Number(item.match.semantic_score || 0),
+            score: Number(item.match.score || 0),
+          },
+        }
+      : {}),
+  }));
+}
+
+function normalizeCompanyBrainActionResult(action = "", result = null) {
+  if (!isCompanyBrainQueryAction(action) || !result || typeof result !== "object") {
+    return result;
+  }
+
+  const existingEnvelope = result?.data;
+  if (
+    existingEnvelope
+    && typeof existingEnvelope === "object"
+    && !Array.isArray(existingEnvelope)
+    && typeof existingEnvelope.success === "boolean"
+  ) {
+    return result;
+  }
+
+  const rawData = result?.data && typeof result.data === "object" && !Array.isArray(result.data)
+    ? result.data
+    : buildPlannerToolExecutionData(result);
+  const success = result?.ok !== false;
+  const error = cleanText(result?.error) || null;
+
+  if (action === "get_company_brain_doc_detail") {
+    const item = rawData?.doc || rawData?.item || rawData || {};
+    return {
+      ...result,
+      data: {
+        success,
+        data: {
+          doc: {
+            doc_id: cleanText(item?.doc_id) || "",
+            title: cleanText(item?.title) || "",
+            source: cleanText(item?.source) || "",
+            created_at: cleanText(item?.created_at) || "",
+            creator: item?.creator && typeof item.creator === "object"
+              ? {
+                  account_id: cleanText(item.creator.account_id) || "",
+                  open_id: cleanText(item.creator.open_id) || "",
+                }
+              : {
+                  account_id: "",
+                  open_id: "",
+                },
+          },
+          summary: rawData?.summary && typeof rawData.summary === "object"
+            ? {
+                overview: cleanText(rawData.summary.overview) || "",
+                headings: Array.isArray(rawData.summary.headings) ? rawData.summary.headings.map((value) => cleanText(value)).filter(Boolean) : [],
+                highlights: Array.isArray(rawData.summary.highlights) ? rawData.summary.highlights.map((value) => cleanText(value)).filter(Boolean) : [],
+                snippet: cleanText(rawData.summary.snippet) || cleanText(rawData.summary.overview) || "",
+                content_length: Number.isFinite(Number(rawData.summary.content_length)) ? Number(rawData.summary.content_length) : 0,
+              }
+            : buildEmptyCompanyBrainSummary(),
+        },
+        error,
+      },
+    };
+  }
+
+  return {
+    ...result,
+    data: {
+      success,
+      data: {
+        ...(action === "search_company_brain_docs" ? { q: cleanText(rawData?.q) || "" } : {}),
+        total: Number.isFinite(Number(rawData?.total)) ? Number(rawData.total) : 0,
+        items: normalizeCompanyBrainListItems(rawData?.items),
+      },
+      error,
+    },
+  };
+}
+
+function buildPlannerToolExecutionData(result = null) {
+  if (!result || typeof result !== "object") {
+    return {};
+  }
+
+  if (result.data && typeof result.data === "object" && !Array.isArray(result.data)) {
+    return result.data;
+  }
+
+  return Object.fromEntries(
+    Object.entries(result).filter(([key]) => !["ok", "action", "preset", "error", "trace_id"].includes(key)),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Planner contract validation public helpers
 // ---------------------------------------------------------------------------
@@ -1053,6 +1237,56 @@ export function validatePresetOutput(presetName = "", result = null) {
   };
 }
 
+export function validatePlannerUserInputDecision(decision = {}) {
+  const normalizedDecision = decision && typeof decision === "object" && !Array.isArray(decision)
+    ? decision
+    : {};
+  const action = cleanText(normalizedDecision.action || "");
+  const rawParams = normalizedDecision.params;
+  if (rawParams != null && (typeof rawParams !== "object" || Array.isArray(rawParams))) {
+    return {
+      ok: false,
+      error: "planner_failed",
+    };
+  }
+  const params = normalizePlannerPayload(normalizedDecision.params);
+
+  if (!action) {
+    return {
+      ok: false,
+      error: "planner_failed",
+    };
+  }
+
+  const contractTarget = getPlannerDecisionContract(action);
+  if (!contractTarget) {
+    return {
+      ok: false,
+      error: "invalid_action",
+      action,
+      params,
+    };
+  }
+
+  const violations = validateAgainstSchema(contractTarget.contract?.input_schema, params, "params");
+  if (violations.length > 0) {
+    return {
+      ok: false,
+      error: "contract_violation",
+      action,
+      params,
+      violations,
+    };
+  }
+
+  return {
+    ok: true,
+    action,
+    params,
+    target_kind: contractTarget.kind,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Planner tool and preset registries
 // ---------------------------------------------------------------------------
@@ -1072,7 +1306,7 @@ const plannerToolRegistry = new Map([
   ["search_company_brain_docs", {
     action: "search_company_brain_docs",
     method: "GET",
-    pathname: "/api/company-brain/search",
+    pathname: "/agent/company-brain/search",
     queryKeys: ["q", "limit"],
   }],
   ["get_company_brain_doc_detail", {
@@ -1083,7 +1317,7 @@ const plannerToolRegistry = new Map([
       if (!docId) {
         throw new Error("planner_tool_missing_doc_id:get_company_brain_doc_detail");
       }
-      return `/api/company-brain/docs/${encodeURIComponent(docId)}`;
+      return `/agent/company-brain/docs/${encodeURIComponent(docId)}`;
     },
     queryKeys: [],
   }],
@@ -1302,10 +1536,11 @@ export async function dispatchPlannerTool({
     baseUrl,
     maxRetry,
   });
+  const requestId = createRequestId("planner_tool");
   const hooks = createPlannerRuntimeHooks();
   const tool = getPlannerTool(runtimeInput.action);
   if (!tool) {
-    return buildPlannerStoppedResult({
+    const stoppedResult = buildPlannerStoppedResult({
       action: runtimeInput.action,
       error: "not_found",
       data: {
@@ -1313,6 +1548,17 @@ export async function dispatchPlannerTool({
       },
       traceId: null,
     });
+    emitToolExecutionLog({
+      logger,
+      requestId,
+      action: runtimeInput.action,
+      params: runtimeInput.payload,
+      success: false,
+      data: buildPlannerToolExecutionData(stoppedResult),
+      error: stoppedResult.error,
+      traceId: stoppedResult.trace_id || null,
+    });
+    return stoppedResult;
   }
 
   const resolvedInput = resolveDispatchInput({
@@ -1351,6 +1597,16 @@ export async function dispatchPlannerTool({
       stopReason: stoppedResult?.data?.stop_reason || "contract_violation",
       traceId: stoppedResult?.trace_id || null,
     }));
+    emitToolExecutionLog({
+      logger,
+      requestId,
+      action: tool.action,
+      params: runtimeInput.payload,
+      success: false,
+      data: buildPlannerToolExecutionData(stoppedResult),
+      error: stoppedResult.error,
+      traceId: stoppedResult.trace_id || null,
+    });
     return stoppedResult;
   }
   const effectivePayload = resolvedInput.payload;
@@ -1386,16 +1642,20 @@ export async function dispatchPlannerTool({
 
     const response = await fetch(url, {
       method: tool.method,
-      headers: tool.method === "POST"
-        ? { "Content-Type": "application/json" }
-        : undefined,
+      headers: {
+        ...(tool.method === "POST" ? { "Content-Type": "application/json" } : {}),
+        "X-Request-Id": requestId,
+      },
       body: tool.method === "POST"
         ? JSON.stringify(effectivePayload && typeof effectivePayload === "object" ? effectivePayload : {})
         : undefined,
     });
 
     const rawText = await response.text();
-    const data = parsePlannerDispatchResponse(rawText, tool.action);
+    const data = normalizeCompanyBrainActionResult(
+      tool.action,
+      parsePlannerDispatchResponse(rawText, tool.action),
+    );
     maybeInvokePlannerHook(hooks, "onActionDispatchResult", {
       action: tool.action,
       result: data,
@@ -1536,7 +1796,18 @@ export async function dispatchPlannerTool({
       traceId: normalizedResult?.trace_id || null,
     }));
   }
-  return withDispatchMeta(normalizedResult, { retryCount, healed });
+  const finalResult = withDispatchMeta(normalizedResult, { retryCount, healed });
+  emitToolExecutionLog({
+    logger,
+    requestId,
+    action: tool.action,
+    params: effectivePayload,
+    success: finalResult?.ok === true,
+    data: buildPlannerToolExecutionData(finalResult),
+    error: finalResult?.ok === false ? finalResult?.error || "business_error" : null,
+    traceId: finalResult?.trace_id || stickyTraceId || null,
+  });
+  return finalResult;
 }
 
 // ---------------------------------------------------------------------------
@@ -1553,6 +1824,8 @@ export async function runPlannerToolFlow({
   presetRunner = runPlannerPreset,
   contentReader,
   baseUrl = oauthBaseUrl,
+  forcedSelection = null,
+  disableAutoRouting = false,
 } = {}) {
   restorePlannerRuntimeContextFromSummary();
   maybeCompactPlannerConversationMemory({
@@ -1566,29 +1839,53 @@ export async function runPlannerToolFlow({
     payload,
   });
   const hooks = createPlannerRuntimeHooks();
-  const plannerDocQueryContext = getPlannerDocQueryContext();
-  const taskLifecycleFollowUp = await maybeRunPlannerTaskLifecycleFollowUp({
-    userIntent: agentInput.user_intent,
-    activeDoc: plannerDocQueryContext.activeDoc,
-    activeTheme: plannerDocQueryContext.activeTheme,
-    logger,
-  });
-  const routedFlow = taskLifecycleFollowUp?.selected_action
+  const normalizedForcedSelection = forcedSelection && typeof forcedSelection === "object"
     ? {
-        flow: null,
+        selected_action: cleanText(forcedSelection.selected_action || forcedSelection.action || "") || null,
+        reason: cleanText(forcedSelection.reason || "") || "forced_selection",
+      }
+    : null;
+  const plannerDocQueryContext = getPlannerDocQueryContext();
+  const taskLifecycleFollowUp = (!disableAutoRouting && !normalizedForcedSelection)
+    ? await maybeRunPlannerTaskLifecycleFollowUp({
+        userIntent: agentInput.user_intent,
+        activeDoc: plannerDocQueryContext.activeDoc,
+        activeTheme: plannerDocQueryContext.activeTheme,
+        logger,
+      })
+    : null;
+  const routedFlow = normalizedForcedSelection
+    ? {
+        flow: getPlannerFlowForAction(plannerFlows, normalizedForcedSelection.selected_action),
         action: null,
         payload: agentInput.payload,
         context: null,
       }
-    : resolvePlannerFlowRoute({
-        flows: plannerFlows,
-        userIntent: agentInput.user_intent,
-        payload: agentInput.payload,
-        logger,
-      });
-  const hardRoutedAction = taskLifecycleFollowUp?.selected_action || routedFlow.action;
+    : taskLifecycleFollowUp?.selected_action
+      ? {
+          flow: null,
+          action: null,
+          payload: agentInput.payload,
+          context: null,
+        }
+      : disableAutoRouting
+        ? {
+            flow: null,
+            action: null,
+            payload: agentInput.payload,
+            context: null,
+          }
+        : resolvePlannerFlowRoute({
+            flows: plannerFlows,
+            userIntent: agentInput.user_intent,
+            payload: agentInput.payload,
+            logger,
+          });
+  const hardRoutedAction = taskLifecycleFollowUp?.selected_action || (!disableAutoRouting ? routedFlow.action : null);
   const routedPayload = taskLifecycleFollowUp?.execution_result?.data || routedFlow.payload;
-  const selection = hardRoutedAction
+  const selection = normalizedForcedSelection
+    ? normalizedForcedSelection
+    : hardRoutedAction
     ? {
         selected_action: hardRoutedAction,
         reason: taskLifecycleFollowUp?.reason || "命中硬路由規則。",
@@ -2389,6 +2686,18 @@ function parsePlannerJson(text = "") {
   return JSON.parse(normalized.slice(start, end + 1));
 }
 
+function parseStrictPlannerUserInputJson(text = "") {
+  const normalized = String(text || "").trim();
+  if (!normalized.startsWith("{") || !normalized.endsWith("}")) {
+    throw new Error("planner_user_input_non_json");
+  }
+  const parsed = JSON.parse(normalized);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("planner_user_input_invalid_json_object");
+  }
+  return parsed;
+}
+
 export async function requestPlannerJson({
   systemPrompt,
   prompt,
@@ -2423,6 +2732,237 @@ export async function requestPlannerJson({
     throw new Error(data.error?.message || `executive_planner_failed:${response.status}`);
   }
   return data.choices?.[0]?.message?.content || "";
+}
+
+async function buildPlannerUserInputPrompt({ text = "" } = {}) {
+  restorePlannerRuntimeContextFromSummary();
+  const latestSummary = getPlannerConversationMemoryLayer()?.latest_summary || null;
+  const recentMessages = (getPlannerConversationMemoryLayer()?.recent_messages || []).slice(-4);
+  const docQueryContext = getPlannerDocQueryContext();
+  const systemPrompt = buildCompactSystemPrompt("你是 Lobster user-input planner。", [
+    "所有 user input 必須先被規劃成受控 planner action/preset，禁止直接回答問題。",
+    "只輸出單一合法 JSON object，不要 Markdown、不要 code fence、不要前後文、不要多餘欄位。",
+    '固定 shape：{"action":"...","params":{}}',
+    "action 必須完全對應 target_catalog 裡的名稱。",
+    "params 必須是 object，且需符合對應 contract 的 required params。",
+    "如果已有 active_doc 或 active_candidates，優先利用那些 doc_id 做 detail/read 決策。",
+    "看文件列表用 list，找資料用 search，讀某份文件內容才用 detail；不要混用。",
+    "若無法安全決策，不要輸出自然語言說明。",
+  ]);
+
+  const governed = governPromptSections({
+    systemPrompt,
+    format: "xml",
+    maxTokens: 700,
+    thresholds: {
+      light: agentPromptLightRatio,
+      rolling: agentPromptRollingRatio,
+      emergency: agentPromptEmergencyRatio,
+    },
+    sections: [
+      {
+        name: "planner_goal",
+        label: "planner_goal",
+        text: [
+          "輸出單一合法 JSON 物件，不要有前後文。",
+          '唯一合法 shape：{"action":"...","params":{}}',
+          "action 必須來自 target_catalog。",
+          "params 只能放該 action/preset 需要的欄位。",
+          "不可直接回答使用者問題，不可輸出 free text fallback。",
+        ].join("\n"),
+        required: true,
+        maxTokens: 120,
+      },
+      {
+        name: "target_catalog",
+        label: "target_catalog",
+        text: plannerDecisionCatalogText(),
+        required: true,
+        maxTokens: 220,
+      },
+      {
+        name: "latest_summary",
+        label: "latest_summary",
+        text: latestSummary ? trimTextForBudget(JSON.stringify(latestSummary, null, 2), 900) : "none",
+        summaryText: latestSummary ? trimTextForBudget(JSON.stringify(latestSummary, null, 2), 420) : "none",
+        maxTokens: 110,
+      },
+      {
+        name: "doc_query_context",
+        label: "doc_query_context",
+        text: trimTextForBudget(JSON.stringify(docQueryContext || {}, null, 2), 600),
+        summaryText: trimTextForBudget(JSON.stringify(docQueryContext || {}, null, 2), 260),
+        required: true,
+        maxTokens: 90,
+      },
+      {
+        name: "recent_dialogue",
+        label: "recent_dialogue",
+        text: recentMessages.length > 0
+          ? recentMessages.map((message) => `${message.role}: ${message.content}`).join("\n")
+          : "none",
+        summaryText: recentMessages.length > 0
+          ? recentMessages.map((message) => `${message.role}: ${message.content}`).join("\n")
+          : "none",
+        maxTokens: 80,
+      },
+      {
+        name: "user_request",
+        label: "user_request",
+        text,
+        required: true,
+        maxTokens: 100,
+      },
+    ],
+  });
+
+  return {
+    systemPrompt,
+    prompt: governed.prompt,
+  };
+}
+
+export async function planUserInputAction({ text = "", requester = requestPlannerJson } = {}) {
+  restorePlannerRuntimeContextFromSummary();
+  maybeCompactPlannerConversationMemory({
+    flows: buildPlannerFlowSnapshots(plannerFlows),
+    reason: "pre_plan_user_input_action",
+  });
+  let promptInput = await buildPlannerUserInputPrompt({ text });
+  let prompt = promptInput.prompt;
+  let lastInvalidDecision = null;
+
+  for (let attempt = 0; attempt <= llmJsonRetryMax; attempt += 1) {
+    try {
+      const raw = await requester({
+        systemPrompt: promptInput.systemPrompt,
+        prompt,
+        sessionIdSuffix: cleanText(text).slice(0, 48) || "user-input-planner",
+      });
+      const parsed = parseStrictPlannerUserInputJson(raw);
+      const validation = validatePlannerUserInputDecision(parsed);
+      if (validation.ok) {
+        const decision = {
+          action: validation.action,
+          params: validation.params,
+        };
+        recordPlannerConversationExchange({
+          userQuery: text,
+          plannerReply: JSON.stringify(decision),
+        });
+        maybeCompactPlannerConversationMemory({
+          flows: buildPlannerFlowSnapshots(plannerFlows),
+          latestSelectedAction: decision.action,
+          reason: "post_plan_user_input_action",
+        });
+        return decision;
+      }
+
+      if (validation.error === "invalid_action" || validation.error === "contract_violation") {
+        lastInvalidDecision = validation;
+        break;
+      }
+    } catch {
+      // Continue into the bounded retry path below.
+    }
+
+    if (attempt >= llmJsonRetryMax) {
+      break;
+    }
+    promptInput = await buildPlannerUserInputPrompt({
+      text: `${text}\n請只輸出合法 JSON，且僅能使用 target_catalog 的 action。`,
+    });
+    prompt = promptInput.prompt;
+  }
+
+  const errorResult = lastInvalidDecision
+    ? {
+        error: lastInvalidDecision.error,
+        action: lastInvalidDecision.action,
+        params: lastInvalidDecision.params,
+        ...(lastInvalidDecision.violations ? { violations: lastInvalidDecision.violations } : {}),
+      }
+    : { error: "planner_failed" };
+
+  recordPlannerConversationExchange({
+    userQuery: text,
+    plannerReply: JSON.stringify(errorResult),
+  });
+  maybeCompactPlannerConversationMemory({
+    flows: buildPlannerFlowSnapshots(plannerFlows),
+    reason: "post_plan_user_input_action_failed",
+  });
+  return errorResult;
+}
+
+export async function executePlannedUserInput({
+  text = "",
+  requester = requestPlannerJson,
+  logger = console,
+  contentReader,
+  baseUrl = oauthBaseUrl,
+} = {}) {
+  const decision = await planUserInputAction({ text, requester });
+  if (decision?.error) {
+    return {
+      ok: false,
+      ...decision,
+      execution_result: null,
+      trace_id: null,
+    };
+  }
+
+  const runtimeResult = await runPlannerToolFlow({
+    userIntent: text,
+    payload: decision.params,
+    logger,
+    contentReader,
+    baseUrl,
+    forcedSelection: {
+      selected_action: decision.action,
+      reason: "strict_user_input_planner",
+    },
+    disableAutoRouting: true,
+  });
+
+  return {
+    ok: runtimeResult?.execution_result?.ok === true,
+    action: decision.action,
+    params: decision.params,
+    error: cleanText(runtimeResult?.execution_result?.error || "") || null,
+    execution_result: runtimeResult?.execution_result || null,
+    trace_id: runtimeResult?.trace_id || null,
+  };
+}
+
+export function buildPlannedUserInputEnvelope(result = {}) {
+  if (!result || typeof result !== "object") {
+    return {
+      ok: false,
+      error: "planner_failed",
+      trace_id: null,
+    };
+  }
+
+  if (result.error && !result.execution_result) {
+    return {
+      ok: false,
+      error: cleanText(result.error || "") || "planner_failed",
+      ...(cleanText(result.action || "") ? { action: cleanText(result.action) } : {}),
+      params: normalizePlannerPayload(result.params),
+      ...(Array.isArray(result.violations) ? { violations: result.violations } : {}),
+      trace_id: result.trace_id || null,
+    };
+  }
+
+  return {
+    ok: result.ok === true,
+    action: cleanText(result.action || "") || null,
+    params: normalizePlannerPayload(result.params),
+    error: cleanText(result.error || "") || null,
+    execution_result: result.execution_result?.formatted_output || result.execution_result || null,
+    trace_id: result.trace_id || null,
+  };
 }
 
 function normalizePlannerDecision(decision = {}, fallbackText = "") {

@@ -1,5 +1,5 @@
-import { answerQuestion } from "./answer-service.mjs";
 import { generateDocumentCommentSuggestionCard } from "./comment-suggestion-workflow.mjs";
+import { buildPlannedUserInputEnvelope, executePlannedUserInput } from "./executive-planner.mjs";
 import {
   ensureMeetingWorkflowTask,
   executeExecutiveTurn,
@@ -381,21 +381,17 @@ async function executeKnowledgeAssistant({ event, scope, logger = noopLogger }) 
     return { text: buildLaneIntroReply(scope, scope) };
   }
 
-  const result = await answerQuestion(context.account.id, text, undefined, {
-    workflowStateKey: `knowledge-lane:${scope.session_key || scope.chat_id || context.account.id}`,
-  });
-  const sources = (result.sources || []).slice(0, 3).map((item) => `- ${item.title}`).join("\n") || "- 目前沒有額外來源";
   return {
-    text: [
-      "結論",
-      result.answer || "目前找不到對應知識。",
-      "",
-      "重點",
-      sources,
-      "",
-      "下一步",
-      "- 如果要，我可以再把這題展開成更完整的整理版本。",
-    ].join("\n"),
+    text: JSON.stringify(
+      buildPlannedUserInputEnvelope(
+        await executePlannedUserInput({
+          text,
+          logger,
+        }),
+      ),
+      null,
+      2,
+    ),
   };
 }
 

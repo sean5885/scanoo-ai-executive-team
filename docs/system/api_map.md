@@ -299,7 +299,9 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
 
 - `GET /answer`
   - Handler: `handleAnswer`
-  - Purpose: retrieve and answer
+  - Purpose: force user text through planner decision before any execution
+  - Response note: planner must first emit strict `{ action, params }`; wrapped/non-JSON output is rejected as `error=planner_failed`
+  - Response note: successful calls return a structured planner envelope rather than direct free-text answer fallback
 
 - `GET /agent/security/status`
   - Handler: `handleSecurityStatus`
@@ -353,6 +355,8 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
 - OpenClaw plugin tools
   - `/Users/seanhan/Documents/Playground/openclaw-plugin/lark-kb/index.ts`
   - Purpose: call local HTTP API as tools
+  - Log note: each tool execution emits a unified `lobster_tool_execution` payload with `request_id`, `action`, `params`, and normalized `result`
+  - Request note: plugin calls forward the same `request_id` to HTTP as `X-Request-Id`
 
 - Lark long connection event
   - `/Users/seanhan/Documents/Playground/src/index.mjs`

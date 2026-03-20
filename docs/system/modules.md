@@ -60,6 +60,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - suppress duplicate Lark event re-deliveries by `message_id` before lane execution
   - emit structured runtime logs for long-connection event intake, lane routing, tool/doc/group steps, reply send, and failure paths
   - attach a per-event and per-request `trace_id` so chain breaks can be located from logs
+  - preserve incoming `X-Request-Id` or mint a local `request_id` for HTTP request-log correlation, and echo it back in the response header
 - Main entry:
   - `startHttpServer()`
   - `enforceSingleLarkResponderRuntime()`
@@ -116,6 +117,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - `GET /api/company-brain/docs` now exposes a minimal read-only list view over `company_brain_docs`, with `limit` support and `stage=company_brain_list` logging
   - `GET /api/company-brain/docs/:doc_id` now exposes a minimal read-only detail view over `company_brain_docs`, returning the same `{ doc_id, title, source, created_at, creator }` shape and logging `stage=company_brain_detail`
   - `GET /api/company-brain/search?q=...` now exposes a minimal read-only search view over `company_brain_docs`, matching against `title` and `doc_id`, reusing the same item schema, and logging `stage=company_brain_search`
+  - `GET /answer` no longer calls `answer-service.mjs` directly; it now first requires a strict planner decision shaped as `{ action, params }`, rejects wrapped/non-JSON planner output with `{ error: "planner_failed" }`, rejects contract-external actions with structured `invalid_action`, and returns a structured planner envelope instead of free-text fallback
   - `/agent/docs/create`, `/agent/company-brain/docs`, and `/agent/system/runtime-info` now provide thin agent-facing bridges over the corresponding document/runtime routes, normalizing output into `{ ok, action, data, trace_id }` and logging `stage=agent_bridge`
   - `executive-planner.mjs` now enforces a minimal fail-soft contract check around planner action dispatch using [planner_contract.json](/Users/seanhan/Documents/Playground/docs/system/planner_contract.json); invalid required fields or simple `string/object/number` type mismatches return `ok=false` with `error=contract_violation` instead of throwing
   - `executive-planner.mjs` now also enforces a minimal fail-soft final-output contract check for successful planner presets using [planner_contract.json](/Users/seanhan/Documents/Playground/docs/system/planner_contract.json); preset-level violations return `ok=false` with `error=contract_violation`, but step-level preset validation is still intentionally out of scope
@@ -250,6 +252,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - XML-governed prompt assembly with anti-hallucination and user-intent self-check rules
   - prompt-budget governance and workflow-checkpoint-aware knowledge answers
   - shared low-variance generation parameters (`temperature=0.1`, clamped `top_p=0.7~0.8`)
+  - direct user-input routes no longer call this module as their first responder; `/answer` and the knowledge-assistant lane are now planner-gated through `executive-planner.mjs`
 - Core path:
   - yes
 
@@ -392,6 +395,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - cloud-doc organization now reuses the same task-state store through scope-keyed preview/apply helpers and verifier gate integration
   - cloud-doc apply now hard-requires `awaiting_review -> applying -> verifying`; preview routes are explicitly non-terminal and cannot self-declare success
   - `executive-planner.mjs` now also contains a minimal planner tool registry and `dispatchPlannerTool(...)` helper for `create_doc`, `list_company_brain_docs`, `search_company_brain_docs`, `get_company_brain_doc_detail`, and `get_runtime_info`, using the existing document/runtime HTTP surfaces and logging `stage=planner_tool_dispatch`
+  - the same module now also exposes a strict user-input planning surface: `planUserInputAction(...)` only accepts a single JSON object shaped as `{ action, params }`, returns `{ error: "planner_failed" }` when planner output is not strict JSON, rejects actions outside [planner_contract.json](/Users/seanhan/Documents/Playground/docs/system/planner_contract.json), and `executePlannedUserInput(...)` runs the resulting contract-bound action/preset through the existing planner runtime without reopening selector/free-text fallback paths
   - the same module now includes a minimal tool-selection policy helper that takes `user intent / task type` and returns `selected_action + reason`; it now prefers the `create_and_list_doc` preset for explicit create-then-list intents, logs `stage=planner_tool_select`, and still returns `selected_action: null` with a fixed fallback reason when unmatched
   - `src/router.js` now provides a minimal hard pre-route for company-brain document intents before the planner selector, using priority `mixed -> search -> detail`: `整理|解釋 -> search_and_detail_doc`, `找|搜尋|查 -> search_company_brain_docs`, `這份|內容 -> get_company_brain_doc_detail`; ordinal follow-ups like `第一份 / 第二份 / 打開第一個` can also route to detail when the planner has active candidates, and `runPlannerToolFlow(...)` feeds that routed action into the existing preset/dispatch path without changing its external response shape
   - the same planner runtime now also keeps a minimal in-memory read context: after a successful `search_and_detail_doc` or `get_company_brain_doc_detail`, the planner can remember `active_doc = { doc_id, title }`; after an ambiguous successful search it can also remember a bounded `active_candidates` list; themed knowledge flows can also remember `active_theme = okr|bd|delivery`; follow-up pronoun/detail questions like `這份文件裡面寫了什麼` route directly to `get_company_brain_doc_detail`, ordinal follow-ups can resolve through those candidates, and compacted planner memory can restore that doc-query context after runtime reset/restart
@@ -451,6 +455,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - `/Users/seanhan/Documents/Playground/src/message-intent-utils.mjs`
 - Responsibility:
   - isolate the cloud-document classification / reassignment follow-up workflow into a testable submodule instead of keeping all branch logic inside `lane-executor.mjs`
+  - knowledge-assistant lane turns no longer call `answer-service.mjs` directly; they now serialize the strict planner envelope returned by `executePlannedUserInput(...)`
   - keep cloud-doc organization follow-ups in the same workflow mode, including a plain-language re-explanation path, a dedicated "why can't this be directly assigned?" explainer path, and second-pass review continuation for generic confirmation follow-ups
   - generic second-confirmation follow-ups now prefer a session-scoped cached review summary, so "還有什麼需要我二次確認" returns quickly instead of rerunning a full semantic re-review on every turn
   - explicit reassignment / relearning requests such as "重新分配" or "各個角色去學習" still trigger the slower second-pass semantic re-review branch
@@ -533,6 +538,8 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 - Responsibility:
   - expose repo HTTP API as OpenClaw tools
   - compress oversized tool payloads before they are returned into agent context
+  - wrap every plugin tool execution with a unified `lobster_tool_execution` log payload containing `request_id`, `action`, `params`, and normalized `result`
+  - forward the same `request_id` to the local HTTP server through `X-Request-Id`
   - keep a local TypeScript compiler and `npm run typecheck` path for plugin contract checks
 - Main entry:
   - `register(...)` in `index.ts`
