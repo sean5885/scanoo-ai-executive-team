@@ -47,6 +47,75 @@ export function createTraceId(prefix = "trace") {
   return `${normalizedPrefix}_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
 }
 
+export function createRequestId(prefix = "req") {
+  return createTraceId(prefix);
+}
+
+function toToolLogObject(value, fallbackKey = "value") {
+  if (!value) {
+    return {};
+  }
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return { ...value };
+  }
+  if (Array.isArray(value)) {
+    return { items: value };
+  }
+  return { [fallbackKey]: value };
+}
+
+export function buildToolExecutionLog({
+  requestId = null,
+  action = "",
+  params = {},
+  success = false,
+  data = {},
+  error = null,
+  traceId = null,
+  extra = {},
+} = {}) {
+  return {
+    request_id: cleanText(requestId) || createRequestId("req"),
+    action: cleanText(action) || null,
+    params: toToolLogObject(params, "params"),
+    result: {
+      success: success === true,
+      data: toToolLogObject(data, "data"),
+      error: cleanText(error) || null,
+    },
+    trace_id: cleanText(traceId) || null,
+    ...(extra && typeof extra === "object" && !Array.isArray(extra) ? extra : {}),
+  };
+}
+
+export function emitToolExecutionLog({
+  logger = console,
+  requestId = null,
+  action = "",
+  params = {},
+  success = false,
+  data = {},
+  error = null,
+  traceId = null,
+  extra = {},
+} = {}) {
+  const entry = buildToolExecutionLog({
+    requestId,
+    action,
+    params,
+    success,
+    data,
+    error,
+    traceId,
+    extra,
+  });
+  const level = entry.result.success ? "info" : "error";
+  const fallback = logger?.log ? logger.log.bind(logger) : console.log.bind(console);
+  const sink = typeof logger?.[level] === "function" ? logger[level].bind(logger) : fallback;
+  sink("lobster_tool_execution", entry);
+  return entry;
+}
+
 export function createRuntimeLogger({
   logger = console,
   component = "runtime",

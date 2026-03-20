@@ -2,8 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildToolExecutionLog,
+  createRequestId,
   createRuntimeLogger,
   createTraceId,
+  emitToolExecutionLog,
   formatIdentifierHint,
   summarizeLarkEvent,
 } from "../src/runtime-observability.mjs";
@@ -83,4 +86,50 @@ test("createTraceId 會建立可讀 trace id，child logger 會繼承 base field
   assert.match(calls[0][1].trace_id, /^evt_/);
   assert.equal(calls[0][1].request_kind, "lark_event");
   assert.equal(calls[0][1].tool_name, "sendMessage");
+});
+
+test("buildToolExecutionLog 會產生統一 tool execution log shape", () => {
+  const log = buildToolExecutionLog({
+    requestId: createRequestId("tool"),
+    action: "create_doc",
+    params: { title: "Weekly report" },
+    success: true,
+    data: { document_id: "doc_123" },
+    error: null,
+    traceId: "trace_doc_123",
+  });
+
+  assert.match(log.request_id, /^tool_/);
+  assert.equal(log.action, "create_doc");
+  assert.deepEqual(log.params, { title: "Weekly report" });
+  assert.deepEqual(log.result, {
+    success: true,
+    data: { document_id: "doc_123" },
+    error: null,
+  });
+  assert.equal(log.trace_id, "trace_doc_123");
+});
+
+test("emitToolExecutionLog 會在失敗時輸出錯誤等級 log", () => {
+  const calls = [];
+  emitToolExecutionLog({
+    logger: {
+      error(...args) {
+        calls.push(args);
+      },
+    },
+    requestId: "req_123",
+    action: "search_company_brain_docs",
+    params: { q: "okr" },
+    success: false,
+    data: { message: "timeout" },
+    error: "runtime_exception",
+    traceId: "trace_fail",
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], "lobster_tool_execution");
+  assert.equal(calls[0][1].request_id, "req_123");
+  assert.equal(calls[0][1].result.success, false);
+  assert.equal(calls[0][1].result.error, "runtime_exception");
 });

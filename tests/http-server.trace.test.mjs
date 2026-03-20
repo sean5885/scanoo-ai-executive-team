@@ -32,6 +32,36 @@ test("http server attaches trace_id and emits request logs", async (t) => {
   assert.equal(calls.some((entry) => entry[1]?.event === "request_finished"), true);
 });
 
+test("http server preserves incoming x-request-id in request logs and response header", async (t) => {
+  const calls = [];
+  const logger = {
+    log() {},
+    info(...args) {
+      calls.push(args);
+    },
+    warn(...args) {
+      calls.push(args);
+    },
+    error(...args) {
+      calls.push(args);
+    },
+  };
+
+  const server = startHttpServer({ listen: false, logger });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  const response = await fetch(`http://127.0.0.1:${address.port}/health`, {
+    headers: {
+      "X-Request-Id": "req_http_123",
+    },
+  });
+
+  assert.equal(response.headers.get("x-request-id"), "req_http_123");
+  assert.equal(calls.some((entry) => entry[1]?.event === "request_started" && entry[1]?.request_id === "req_http_123"), true);
+});
+
 test("http server emits child route logs for auth route", async (t) => {
   const calls = [];
   const logger = {

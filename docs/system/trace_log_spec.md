@@ -16,6 +16,7 @@ It is a logging spec only:
 
 All minimum trace/log events should align around these fields:
 
+- `request_id`
 - `trace_id`
 - `event_type`
 - `timestamp`
@@ -31,6 +32,7 @@ All minimum trace/log events should align around these fields:
 
 ```json
 {
+  "request_id": "string|null",
   "trace_id": "string|null",
   "event_type": "string",
   "timestamp": "string|null",
@@ -66,10 +68,18 @@ All minimum trace/log events should align around these fields:
   - `preset_result`
   - `self_heal_attempt`
   - `retry_attempt`
-  - `stopped`
+- `stopped`
  - planner-side company-brain doc-query flow now also emits minimal internal debug events for:
    - `doc_query_route`
    - `doc_query_result`
+ - tool execution callers now also emit a unified `lobster_tool_execution` payload with:
+   - `request_id`
+   - `action`
+   - `params`
+   - `result.success`
+   - `result.data`
+   - `result.error`
+   - optional `trace_id`
 
 ### Fields not yet consistently runtimeized
 
@@ -78,7 +88,44 @@ All minimum trace/log events should align around these fields:
 - one fully standardized shape shared by planner, bridge, company-brain, and future handoff/escalation events
 - dedicated `handoff` / `escalation` runtime events as first-class logger outputs
 - planner trace events currently use the planner module logger path only; they are not yet a full shared system logging runtime
- - doc-query trace events are also planner-module-local debug events; they are not a separate public logging surface
+- doc-query trace events are also planner-module-local debug events; they are not a separate public logging surface
+
+## 0. `tool_execution`
+
+- purpose:
+  - record one bounded tool execution with request correlation and a normalized result payload
+- trigger:
+  - planner tool dispatch or OpenClaw plugin tool execution returns success or failure
+- required fields:
+  - `request_id`
+  - `action`
+  - `params`
+  - `result.success`
+  - `result.data`
+  - `result.error`
+- optional fields:
+  - `trace_id`
+  - `timestamp`
+- sample shape:
+  ```json
+  {
+    "request_id": "planner_tool_123",
+    "action": "get_runtime_info",
+    "params": {},
+    "result": {
+      "success": true,
+      "data": {
+        "db_path": "/tmp/db.sqlite"
+      },
+      "error": null
+    },
+    "trace_id": "trace_runtime"
+  }
+  ```
+- boundary:
+  - `tool_execution` is execution evidence only
+  - it does not replace planner `action_dispatch` / `action_result`
+  - tool logs must record both controlled errors and runtime exceptions; no silent fail
 
 ## 1. `action_dispatch`
 

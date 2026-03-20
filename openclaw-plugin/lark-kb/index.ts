@@ -1,3 +1,6 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import { randomUUID } from "node:crypto";
+
 type ToolResult = {
   content: Array<{ type: "text"; text: string }>;
   details?: Record<string, unknown>;
@@ -9,6 +12,94 @@ type PluginConfig = {
 };
 
 const TOOL_OUTPUT_MAX_CHARS = Number.parseInt(process.env.OPENCLAW_TOOL_OUTPUT_MAX_CHARS || "2400", 10);
+const toolExecutionContext = new AsyncLocalStorage<{
+  action: string;
+  params: Record<string, unknown>;
+  requestId: string;
+  traceId: string | null;
+}>();
+
+function createRequestId(prefix = "tool") {
+  return `${prefix}_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+}
+
+function normalizeLogObject(value: unknown, fallbackKey = "value"): Record<string, unknown> {
+  if (!value) {
+    return {};
+  }
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return { ...(value as Record<string, unknown>) };
+  }
+  if (Array.isArray(value)) {
+    return { items: value };
+  }
+  return { [fallbackKey]: value };
+}
+
+function extractTraceId(value: unknown): string | null {
+  if (typeof value === "string") {
+    return value.trim() || null;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value) || typeof (value as { trace_id?: unknown }).trace_id !== "string") {
+    return null;
+  }
+  return ((value as { trace_id?: string }).trace_id || "").trim() || null;
+}
+
+function extractToolResultLogData(result: unknown): Record<string, unknown> {
+  if (result && typeof result === "object" && !Array.isArray(result)) {
+    const toolResult = result as ToolResult;
+    if (toolResult.details && typeof toolResult.details === "object" && !Array.isArray(toolResult.details)) {
+      return { ...toolResult.details };
+    }
+  }
+  return normalizeLogObject(result, "result");
+}
+
+function extractErrorLogData(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) {
+    const details = normalizeLogObject((error as Error & { data?: unknown }).data, "data");
+    const status = Number.isFinite(Number((error as Error & { status?: unknown }).status))
+      ? { status: Number((error as Error & { status?: unknown }).status) }
+      : {};
+    return {
+      ...status,
+      ...details,
+    };
+  }
+  return normalizeLogObject(error, "error");
+}
+
+function emitToolExecutionLog({
+  requestId,
+  action,
+  params,
+  success,
+  data,
+  error,
+  traceId = null,
+}: {
+  requestId: string;
+  action: string;
+  params: Record<string, unknown>;
+  success: boolean;
+  data: Record<string, unknown>;
+  error: string | null;
+  traceId?: string | null;
+}) {
+  const sink = success ? console.info.bind(console) : console.error.bind(console);
+  sink("lobster_tool_execution", {
+    request_id: requestId,
+    action,
+    params: normalizeLogObject(params, "params"),
+    result: {
+      success,
+      data: normalizeLogObject(data, "data"),
+      error,
+    },
+    trace_id: traceId,
+  });
+}
 
 function getConfig(api: { pluginConfig?: PluginConfig }) {
   const cfg = api.pluginConfig ?? {};
@@ -24,6 +115,7 @@ async function callJson(
   init?: RequestInit,
 ): Promise<{ status: number; data: unknown }> {
   const cfg = getConfig(api);
+  const executionContext = toolExecutionContext.getStore();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), cfg.timeoutMs);
   try {
@@ -31,6 +123,7 @@ async function callJson(
       ...init,
       headers: {
         "Content-Type": "application/json",
+        ...(executionContext?.requestId ? { "X-Request-Id": executionContext.requestId } : {}),
         ...(init?.headers ?? {}),
       },
       signal: controller.signal,
@@ -43,6 +136,9 @@ async function callJson(
       } catch {
         data = { raw: text };
       }
+    }
+    if (executionContext && !executionContext.traceId) {
+      executionContext.traceId = extractTraceId(data);
     }
     return { status: res.status, data };
   } finally {
@@ -370,10 +466,75 @@ function errorFromResponse(operation: string, status: number, data: unknown): Er
     typeof data === "object" && data && "message" in data
       ? String((data as { message?: unknown }).message || "")
       : JSON.stringify(data);
-  return new Error(`${operation} failed (${status}): ${details}`);
+  const error = new Error(`${operation} failed (${status}): ${details}`) as Error & {
+    status?: number;
+    data?: Record<string, unknown>;
+    trace_id?: string | null;
+  };
+  error.status = status;
+  error.data = normalizeLogObject(data, "data");
+  error.trace_id = extractTraceId(data);
+  return error;
+}
+
+function withToolExecutionLogging(tool: {
+  name?: string;
+  execute?: (id: string, params: Record<string, unknown>) => Promise<ToolResult>;
+  [key: string]: unknown;
+}) {
+  if (typeof tool.execute !== "function") {
+    return tool;
+  }
+
+  const originalExecute = tool.execute.bind(tool);
+
+  return {
+    ...tool,
+    async execute(id: string, params: Record<string, unknown>) {
+      const requestId = createRequestId("openclaw_tool");
+      const context = {
+        action: String(tool.name || "").trim(),
+        params: params && typeof params === "object" && !Array.isArray(params) ? { ...params } : {},
+        requestId,
+        traceId: null as string | null,
+      };
+
+      return toolExecutionContext.run(context, async () => {
+        try {
+          const result = await originalExecute(id, params);
+          emitToolExecutionLog({
+            requestId,
+            action: context.action,
+            params: context.params,
+            success: true,
+            data: extractToolResultLogData(result),
+            error: null,
+            traceId: context.traceId,
+          });
+          return result;
+        } catch (error) {
+          emitToolExecutionLog({
+            requestId,
+            action: context.action,
+            params: context.params,
+            success: false,
+            data: extractErrorLogData(error),
+            error: error instanceof Error ? error.message : String(error),
+            traceId: context.traceId || extractTraceId((error as { trace_id?: unknown })?.trace_id),
+          });
+          throw error;
+        }
+      });
+    },
+  };
 }
 
 export default function register(api: { registerTool: Function; pluginConfig?: PluginConfig }) {
+  const originalRegisterTool = api.registerTool.bind(api);
+  api.registerTool = (tool: Record<string, unknown>, options?: Record<string, unknown>) => (
+    originalRegisterTool(withToolExecutionLogging(tool), options)
+  );
+
   api.registerTool(
     {
       name: "lark_kb_status",
