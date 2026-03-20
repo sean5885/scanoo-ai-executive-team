@@ -19,6 +19,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - No direct agent-facing query path was found.
 - Current usage is still minimal:
   - route-side non-blocking ingestion on verified API-created docs
+  - a small internal write-intake policy helper that classifies direct mirror intake vs review/conflict-required promotion paths
   - a read-only HTTP list route: `GET /api/company-brain/docs`
   - a read-only HTTP detail route: `GET /api/company-brain/docs/:doc_id`
   - a read-only HTTP search route: `GET /api/company-brain/search?q=...`
@@ -27,6 +28,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 - Minimal only.
 - It stores a verified-doc mirror, not a canonical memory graph or approval-governed knowledge layer.
+- intake classification now exists, but formal approval/governance still does not.
 - The list route only returns:
 - The list/detail routes only return:
 - The list/detail/search routes only return:

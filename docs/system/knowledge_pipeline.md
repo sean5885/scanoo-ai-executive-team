@@ -36,6 +36,10 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - lifecycle rows can be queried from `/api/doc/lifecycle?status=...`, and only `index_failed` / `verify_failed` may be retried through `/api/doc/lifecycle/retry`
 - `/api/doc/lifecycle/summary` returns the current count of each tracked lifecycle status for one account
 - when an API-created doc reaches `status=verified`, a non-blocking mirror row is also upserted into `company_brain_docs` with `{ doc_id, title, source, created_at, creator }`; this is still only a minimal ingestion surface, not a full company-brain governance layer
+- the verified-ingest path now also runs a small internal write-intake policy helper:
+  - no overlap signal -> direct mirror intake
+  - title overlap -> mark review/conflict required for any later stable promotion
+  - formal knowledge admission remains a separate approval-gated step and is not executed by the current ingest path
 - `GET /api/company-brain/docs` can list that minimal mirror with `doc_id`, `title`, `source`, `created_at`, and `creator`
 - `GET /api/company-brain/docs/:doc_id` can fetch one mirrored row with that same minimal shape
 - `GET /api/company-brain/search?q=...` can search that mirror by `title` or `doc_id`, still returning the same minimal item shape
@@ -70,13 +74,14 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 ## Conflict Detection
 
-- no explicit knowledge conflict detection pipeline found
+- no full semantic knowledge conflict detection pipeline found
+- company-brain write-intake now has a bounded overlap heuristic based on existing read-side title matches
 
 ## Review Pipeline
 
 - organization preview/apply exists
 - comment rewrite preview/apply exists
-- no document-ingest approval pipeline found
+- company-brain write-intake can now mark review-required candidates internally, but no standalone document-ingest approval pipeline exists
 
 ## Write-Back
 

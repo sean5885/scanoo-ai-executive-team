@@ -2212,6 +2212,9 @@ function formatPlannerTaskDecisionPromptSection(taskDecisionContext = null) {
   const blockedTasks = Array.isArray(taskDecisionContext?.blocked_tasks) ? taskDecisionContext.blocked_tasks : [];
   const inProgressTasks = Array.isArray(taskDecisionContext?.in_progress_tasks) ? taskDecisionContext.in_progress_tasks : [];
   const referenceTasks = Array.isArray(taskDecisionContext?.reference_tasks) ? taskDecisionContext.reference_tasks : [];
+  const focusedTask = taskDecisionContext?.focused_task && typeof taskDecisionContext.focused_task === "object"
+    ? taskDecisionContext.focused_task
+    : null;
   return [
     cleanText(taskDecisionContext?.scope_title)
       ? `scope_title: ${cleanText(taskDecisionContext.scope_title)}`
@@ -2219,10 +2222,19 @@ function formatPlannerTaskDecisionPromptSection(taskDecisionContext = null) {
     cleanText(taskDecisionContext?.theme)
       ? `theme: ${cleanText(taskDecisionContext.theme)}`
       : "",
+    cleanText(taskDecisionContext?.scope_binding)
+      ? `scope_binding: ${cleanText(taskDecisionContext.scope_binding)}`
+      : "",
     cleanText(taskDecisionContext?.aggregate_state)
       ? `aggregate_state: ${cleanText(taskDecisionContext.aggregate_state)}`
       : "",
     `counts: planned ${Number(counts?.planned || 0)}, in_progress ${Number(counts?.in_progress || 0)}, blocked ${Number(counts?.blocked || 0)}, done ${Number(counts?.done || 0)}`,
+    focusedTask
+      ? `當前優先 task：${cleanText(focusedTask?.title)}`
+      : "",
+    cleanText(taskDecisionContext?.focus_hint)
+      ? cleanText(taskDecisionContext.focus_hint)
+      : "",
     blockedTasks.length > 0
       ? `需主動提醒 blocked 風險：${blockedTasks.slice(0, 2).map((task) => cleanText(task?.title)).filter(Boolean).join("、")}`
       : "",
@@ -2249,6 +2261,7 @@ async function buildPlannerPrompt({ text, activeTask = null } = {}) {
   const taskDecisionContext = await getPlannerTaskDecisionContext({
     activeDoc: plannerDocQueryContext?.activeDoc || null,
     activeTheme: plannerDocQueryContext?.activeTheme || "",
+    userIntent: text,
   });
   const systemPrompt = buildCompactSystemPrompt("你是 executive planner，負責在多 agent 系統中為當前回合選擇最合適的 agent。", [
     "只輸出 JSON。",
@@ -2259,6 +2272,7 @@ async function buildPlannerPrompt({ text, activeTask = null } = {}) {
     "如果一般回覆就夠，不要過度規劃。",
     "clarify 只在缺少關鍵資訊且真的阻塞下一步時才可使用。",
     "handoff 只在 next_agent_id 與目前主責 agent 不同且能明顯提升結果時才可使用。",
+    "若 planner_task_context 有 focus_hint，優先沿用該 task，不要泛化成整體 snapshot。",
     "若 planner_task_context 顯示有 unfinished task，優先引用既有 task，不要忽略已存在的推進脈絡。",
     "若 planner_task_context 顯示有 blocked task，需主動把風險與 unblock 需求反映到決策理由。",
     "若 planner_task_context 顯示有 in_progress task，優先延續並利用現有進度摘要，不要重起平行任務。",
@@ -2293,6 +2307,7 @@ async function buildPlannerPrompt({ text, activeTask = null } = {}) {
           "若不需要問題，pending_questions 回傳空陣列。",
           "若不需要工作項，work_items 回傳空陣列。",
           "若資訊不足但仍可繼續，不要選 clarify；優先 start 或 continue。",
+          "若 planner_task_context 有 focus_hint，決策時先沿用該 task 與其文件/主題上下文。",
           "若 planner_task_context 有 unfinished_hint，決策時優先引用既有 task。",
           "若 planner_task_context 有 blocked_hint，reason 應明確反映 blocked 風險或 unblock 需求。",
           "若 planner_task_context 有 in_progress_hint，reason 應明確反映目前進度或延續中的工作。",

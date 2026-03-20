@@ -287,6 +287,77 @@ test("document rewrite preview accepts nested target document links", async (t) 
   assert.equal(seen.rewrite, documentId);
 });
 
+test("document create classifies verified mirror ingest as direct intake", async (t) => {
+  const documentId = `doc-create-direct-${Date.now()}`;
+  const title = `Ops Runbook Direct ${Date.now()}`;
+  const { server, calls } = await startTestServer(t, {
+    createDocument: async () => ({
+      document_id: documentId,
+      revision_id: "rev-create-direct-1",
+      title,
+      url: `https://larksuite.com/docx/${documentId}`,
+    }),
+  });
+
+  const { port } = server.address();
+  const createResponse = await fetch(`http://127.0.0.1:${port}/api/doc/create`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+  const createPayload = await createResponse.json();
+  assert.equal(createResponse.status, 200);
+  assert.equal(createPayload.document_id, documentId);
+  console.log("direct-calls", JSON.stringify(calls.slice(-8), null, 2));
+
+  const boundaryLog = calls.find((entry) => entry[1]?.event === "document_company_brain_intake_classified");
+  assert.equal(boundaryLog?.[1]?.doc_id, documentId);
+  assert.equal(boundaryLog?.[1]?.direct_intake_allowed, true);
+  assert.equal(boundaryLog?.[1]?.review_required, false);
+  assert.equal(boundaryLog?.[1]?.conflict_check_required, false);
+
+  const ingestedLog = calls.find((entry) => entry[1]?.event === "document_company_brain_ingested");
+  assert.equal(ingestedLog?.[1]?.doc_id, documentId);
+  assert.equal(ingestedLog?.[1]?.source, "api");
+});
+
+test("document create classifies title overlap as review and conflict check required", async (t) => {
+  const base = Date.now();
+  const title = `Ops Runbook Overlap ${base}`;
+  let counter = 0;
+  const { server, calls } = await startTestServer(t, {
+    createDocument: async () => {
+      counter += 1;
+      const documentId = `doc-create-overlap-${base}-${counter}`;
+      return {
+        document_id: documentId,
+        revision_id: `rev-create-overlap-${counter}`,
+        title,
+        url: `https://larksuite.com/docx/${documentId}`,
+      };
+    },
+  });
+
+  const { port } = server.address();
+  for (let index = 0; index < 2; index += 1) {
+    const response = await fetch(`http://127.0.0.1:${port}/api/doc/create`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
+    assert.equal(response.status, 200);
+  }
+  console.log("overlap-calls", JSON.stringify(calls.slice(-12), null, 2));
+
+  const overlapBoundaryLog = calls
+    .filter((entry) => entry[1]?.event === "document_company_brain_intake_classified")
+    .at(-1);
+  assert.equal(overlapBoundaryLog?.[1]?.review_required, true);
+  assert.equal(overlapBoundaryLog?.[1]?.conflict_check_required, true);
+  assert.equal(overlapBoundaryLog?.[1]?.matched_docs?.length, 1);
+  assert.equal(overlapBoundaryLog?.[1]?.matched_docs?.[0]?.match_type, "same_title");
+});
+
 test("cloud doc apply route requires prior preview and cannot bypass verifier path", async (t) => {
   const { server } = await startTestServer(t, {
     resolveDriveRootFolderToken: async () => "fld-root",

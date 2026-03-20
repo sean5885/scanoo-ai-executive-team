@@ -29,6 +29,7 @@ import { plannerBdFlow } from "../src/planner-bd-flow.mjs";
 import { plannerDeliveryFlow } from "../src/planner-delivery-flow.mjs";
 import {
   getPlannerDocQueryContext,
+  hydratePlannerDocQueryRuntimeContext,
   plannerDocQueryFlow,
   resetPlannerDocQueryRuntimeContext,
 } from "../src/planner-doc-query-flow.mjs";
@@ -331,6 +332,282 @@ test("planExecutiveTurn auto-fills task-driving work items for blocked tasks", a
   ]);
   assert.deepEqual(decision.pending_questions, [
     "誰可以主責解除「等法務確認條款」的阻塞？",
+  ]);
+});
+
+test("planExecutiveTurn prefers the current focused task for generic current-task follow-up", async () => {
+  resetPlannerRuntimeContext();
+  replacePlannerTaskLifecycleStoreForTests({
+    tasks: {
+      task_current_focus: {
+        id: "task_current_focus",
+        scope_key: "scope_current_focus",
+        title: "先寄報價單",
+        theme: "bd",
+        owner: "Alice",
+        deadline: "2026-03-28",
+        task_state: "planned",
+        lifecycle_state: "planned",
+        created_at: "2026-03-20T00:00:00.000Z",
+        updated_at: "2026-03-20T00:00:00.000Z",
+      },
+      task_current_blocked: {
+        id: "task_current_blocked",
+        scope_key: "scope_current_focus",
+        title: "等法務確認條款",
+        theme: "bd",
+        owner: "Bob",
+        deadline: "2026-03-29",
+        task_state: "blocked",
+        progress_status: "blocked",
+        progress_summary: "卡點：等法務確認",
+        note: "等法務確認",
+        lifecycle_state: "planned",
+        created_at: "2026-03-20T00:00:00.000Z",
+        updated_at: "2026-03-20T00:00:00.000Z",
+      },
+    },
+    scopes: {
+      scope_current_focus: {
+        scope_key: "scope_current_focus",
+        theme: "bd",
+        selected_action: "search_and_detail_doc",
+        user_intent: "整理 BD 文件",
+        trace_id: "trace_current_focus",
+        source_kind: "search_and_detail",
+        source_doc_id: "doc_current_focus",
+        source_title: "BD Execution Board",
+        last_active_task_id: "task_current_focus",
+        current_task_ids: ["task_current_focus", "task_current_blocked"],
+        created_at: "2026-03-20T00:00:00.000Z",
+        updated_at: "2026-03-20T00:00:00.000Z",
+      },
+    },
+    latest_scope_key: "scope_current_focus",
+  });
+
+  let capturedPrompt = "";
+  const decision = await planExecutiveTurn({
+    text: "這個現在怎麼辦？",
+    activeTask: null,
+    async requester({ prompt }) {
+      capturedPrompt = String(prompt || "");
+      return JSON.stringify({
+        action: "continue",
+        objective: "延續 BD 任務",
+        primary_agent_id: "generalist",
+        next_agent_id: "generalist",
+        supporting_agent_ids: [],
+        reason: "",
+        pending_questions: [],
+        work_items: [],
+      });
+    },
+  });
+
+  assert.match(capturedPrompt, /當前優先 task：先寄報價單/);
+  assert.match(capturedPrompt, /綁定來源=沿用當前 task/);
+  assert.deepEqual(decision.work_items, [
+    {
+      agent_id: "generalist",
+      task: "先由 Alice 推進「先寄報價單」，目標 2026-03-28",
+      role: "primary",
+      status: "pending",
+    },
+  ]);
+  assert.match(decision.reason, /先寄報價單/);
+});
+
+test("planExecutiveTurn prefers the mentioned document's task scope over the latest snapshot", async () => {
+  resetPlannerRuntimeContext();
+  replacePlannerTaskLifecycleStoreForTests({
+    tasks: {
+      task_bd_latest: {
+        id: "task_bd_latest",
+        scope_key: "scope_bd_latest",
+        title: "等法務確認條款",
+        theme: "bd",
+        owner: "Bob",
+        deadline: "2026-03-29",
+        task_state: "blocked",
+        progress_status: "blocked",
+        progress_summary: "卡點：等法務確認",
+        note: "等法務確認",
+        lifecycle_state: "planned",
+        created_at: "2026-03-20T00:00:00.000Z",
+        updated_at: "2026-03-20T00:00:00.000Z",
+      },
+      task_okr_doc: {
+        id: "task_okr_doc",
+        scope_key: "scope_okr_doc",
+        title: "更新 KR 週進度",
+        theme: "okr",
+        owner: "Alice",
+        deadline: "2026-03-28",
+        task_state: "planned",
+        lifecycle_state: "planned",
+        created_at: "2026-03-20T00:00:00.000Z",
+        updated_at: "2026-03-20T00:00:00.000Z",
+      },
+    },
+    scopes: {
+      scope_bd_latest: {
+        scope_key: "scope_bd_latest",
+        theme: "bd",
+        selected_action: "search_and_detail_doc",
+        user_intent: "整理 BD 文件",
+        trace_id: "trace_bd_latest",
+        source_kind: "search_and_detail",
+        source_doc_id: "doc_bd_latest",
+        source_title: "BD Execution Board",
+        last_active_task_id: "task_bd_latest",
+        current_task_ids: ["task_bd_latest"],
+        created_at: "2026-03-20T00:00:00.000Z",
+        updated_at: "2026-03-21T00:00:00.000Z",
+      },
+      scope_okr_doc: {
+        scope_key: "scope_okr_doc",
+        theme: "okr",
+        selected_action: "search_and_detail_doc",
+        user_intent: "整理 OKR 文件",
+        trace_id: "trace_okr_doc",
+        source_kind: "search_and_detail",
+        source_doc_id: "doc_okr_doc",
+        source_title: "OKR Weekly Review",
+        last_active_task_id: "task_okr_doc",
+        current_task_ids: ["task_okr_doc"],
+        created_at: "2026-03-20T00:00:00.000Z",
+        updated_at: "2026-03-20T00:00:00.000Z",
+      },
+    },
+    latest_scope_key: "scope_bd_latest",
+  });
+
+  let capturedPrompt = "";
+  const decision = await planExecutiveTurn({
+    text: "OKR Weekly Review 這份文件接下來怎麼辦？",
+    activeTask: null,
+    async requester({ prompt }) {
+      capturedPrompt = String(prompt || "");
+      return JSON.stringify({
+        action: "continue",
+        objective: "延續 OKR 文件任務",
+        primary_agent_id: "generalist",
+        next_agent_id: "generalist",
+        supporting_agent_ids: [],
+        reason: "",
+        pending_questions: [],
+        work_items: [],
+      });
+    },
+  });
+
+  assert.match(capturedPrompt, /scope_title: OKR Weekly Review/);
+  assert.match(capturedPrompt, /scope_binding: 命中文件名稱/);
+  assert.match(capturedPrompt, /當前優先 task：更新 KR 週進度/);
+  assert.deepEqual(decision.work_items, [
+    {
+      agent_id: "generalist",
+      task: "先由 Alice 推進「更新 KR 週進度」，目標 2026-03-28",
+      role: "primary",
+      status: "pending",
+    },
+  ]);
+});
+
+test("planExecutiveTurn keeps task driving on active_doc and active_theme context", async () => {
+  resetPlannerRuntimeContext();
+  replacePlannerTaskLifecycleStoreForTests({
+    tasks: {
+      task_latest_blocked: {
+        id: "task_latest_blocked",
+        scope_key: "scope_latest_blocked",
+        title: "等法務確認條款",
+        theme: "bd",
+        owner: "Bob",
+        deadline: "2026-03-29",
+        task_state: "blocked",
+        progress_status: "blocked",
+        progress_summary: "卡點：等法務確認",
+        note: "等法務確認",
+        lifecycle_state: "planned",
+        created_at: "2026-03-20T00:00:00.000Z",
+        updated_at: "2026-03-20T00:00:00.000Z",
+      },
+      task_doc_context: {
+        id: "task_doc_context",
+        scope_key: "scope_doc_context",
+        title: "整理 OKR 本週更新",
+        theme: "okr",
+        owner: "Alice",
+        deadline: "2026-03-28",
+        task_state: "planned",
+        lifecycle_state: "planned",
+        created_at: "2026-03-20T00:00:00.000Z",
+        updated_at: "2026-03-20T00:00:00.000Z",
+      },
+    },
+    scopes: {
+      scope_latest_blocked: {
+        scope_key: "scope_latest_blocked",
+        theme: "bd",
+        selected_action: "search_and_detail_doc",
+        user_intent: "整理 BD 文件",
+        trace_id: "trace_latest_blocked",
+        source_kind: "search_and_detail",
+        source_doc_id: "doc_latest_blocked",
+        source_title: "BD Execution Board",
+        last_active_task_id: "task_latest_blocked",
+        current_task_ids: ["task_latest_blocked"],
+        created_at: "2026-03-20T00:00:00.000Z",
+        updated_at: "2026-03-21T00:00:00.000Z",
+      },
+      scope_doc_context: {
+        scope_key: "scope_doc_context",
+        theme: "okr",
+        selected_action: "search_and_detail_doc",
+        user_intent: "整理 OKR 文件",
+        trace_id: "trace_doc_context",
+        source_kind: "search_and_detail",
+        source_doc_id: "doc_focus_okr",
+        source_title: "OKR Weekly Review",
+        last_active_task_id: "task_doc_context",
+        current_task_ids: ["task_doc_context"],
+        created_at: "2026-03-20T00:00:00.000Z",
+        updated_at: "2026-03-20T00:00:00.000Z",
+      },
+    },
+    latest_scope_key: "scope_latest_blocked",
+  });
+  hydratePlannerDocQueryRuntimeContext({
+    activeDoc: { doc_id: "doc_focus_okr", title: "OKR Weekly Review" },
+    activeTheme: "okr",
+  });
+
+  const decision = await planExecutiveTurn({
+    text: "接下來怎麼推進這份文件？",
+    activeTask: null,
+    async requester() {
+      return JSON.stringify({
+        action: "continue",
+        objective: "延續 OKR 文件任務",
+        primary_agent_id: "generalist",
+        next_agent_id: "generalist",
+        supporting_agent_ids: [],
+        reason: "",
+        pending_questions: [],
+        work_items: [],
+      });
+    },
+  });
+
+  assert.deepEqual(decision.work_items, [
+    {
+      agent_id: "generalist",
+      task: "先由 Alice 推進「整理 OKR 本週更新」，目標 2026-03-28",
+      role: "primary",
+      status: "pending",
+    },
   ]);
 });
 

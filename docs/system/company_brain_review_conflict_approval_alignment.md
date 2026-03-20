@@ -17,6 +17,7 @@ It is an alignment document:
 Current grounded runtime anchor points:
 
 - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
+- `/Users/seanhan/Documents/Playground/src/company-brain-write-intake.mjs`
 - `/Users/seanhan/Documents/Playground/src/lark-content.mjs`
 - `/Users/seanhan/Documents/Playground/src/rag-repository.mjs`
 - `/Users/seanhan/Documents/Playground/src/db.mjs`
@@ -31,6 +32,7 @@ Current adjacent runtime behavior already in code:
   - `created -> indexed -> verified`
   - plus failure states
 - verified mirror ingest into `company_brain_docs`
+- helper-level write-intake classification for review/conflict/approval requirements
 - company-brain read-side:
   - `GET /api/company-brain/docs`
   - `GET /api/company-brain/docs/:doc_id`
@@ -48,7 +50,7 @@ It is **not** yet a dedicated review/conflict/approval runtime.
 
 ### current alignment
 
-Mostly partial path, not direct runtime.
+Partially grounded as a helper-level gate, not a direct runtime.
 
 ### what is partially grounded
 
@@ -58,11 +60,11 @@ Review-style concepts already exist in neighboring system paths:
 - `doc_rewrite` preview/review/apply flows
 - `cloud_doc` preview/review/apply flows
 - lifecycle verification before stable completion
+- `resolveCompanyBrainWriteIntake(...)` now marks update, overlap, and formal-promotion paths as `review_required`
 
 ### what is not yet grounded
 
 - no dedicated `review_doc` route
-- no dedicated company-brain review helper
 - no company-brain-specific review state machine
 
 ### alignment note
@@ -70,6 +72,7 @@ Review-style concepts already exist in neighboring system paths:
 Current runtime only proves:
 
 - review is a real system concept
+- company-brain write/intake now has a minimum internal review decision boundary
 
 It does **not** prove:
 
@@ -79,7 +82,7 @@ It does **not** prove:
 
 ### current alignment
 
-Mostly spec-only, with limited partial inputs.
+Partially grounded as bounded overlap evidence, with no standalone runtime.
 
 ### what is partially grounded
 
@@ -88,18 +91,19 @@ Adjacent conflict signals already exist:
 - workflow outputs may carry `conflicts` / `conflict_items`
 - company-brain read-side search/detail can act as bounded lookup evidence
 - verification logic elsewhere already treats conflicting or incomplete state as a blocking concern
+- `resolveCompanyBrainWriteIntake(...)` now uses read-side title overlap as a minimum `conflict_check_required` signal
 
 ### what is not yet grounded
 
 - no dedicated `conflict_check` route
-- no dedicated write-side conflict helper
+- no semantic/topic-level write-side conflict helper
 - no explicit conflict state persistence tied to company-brain promotion
 
 ### alignment note
 
 Current runtime only proves:
 
-- search/read-side can support future conflict evidence gathering
+- search/read-side can support bounded overlap evidence gathering
 
 It does **not** prove:
 
@@ -117,11 +121,13 @@ The closest grounded behavior is:
 
 - lifecycle reaching `verified`
 - non-blocking mirror ingest into `company_brain_docs`
+- helper-level output explicitly marking `approval_required_for_formal_source` when target stage is approved knowledge
 
 ### what this means
 
 - verified mirror ingest is a bounded controlled path
 - it can be used as an intake/mirror boundary
+- formal admission remains a separately identified future step
 
 ### what it is not
 
@@ -166,28 +172,29 @@ Still out of scope for current runtime:
 Main gaps between spec and current runtime:
 
 1. `review_doc`
-   - only adjacent review concepts exist
+   - helper-level review gating exists
    - no direct company-brain review runtime
 2. `conflict_check`
-   - only partial evidence sources exist
+   - only title/doc overlap evidence exists
    - no direct company-brain conflict-check runtime
 3. `approval_transition`
-   - closest current behavior is verified mirror ingest
+   - helper-level approval requirement exists
+   - closest current actual write behavior is still verified mirror ingest
    - that is not a formal approval runtime
 
 ## Next Refactor Targets
 
 Most reasonable next refactor targets:
 
-1. reserve a minimum review interface on top of the existing controlled document/runtime path
-2. define a bounded conflict-check helper that can read from company-brain search/detail without changing read-side semantics
+1. keep the helper-level review/conflict/approval matrix stable for current callers
+2. lift bounded overlap evidence into an explicit conflict-check interface only when a real runtime is added
 3. separate "verified mirror ingest" terminology from "approval transition" terminology more explicitly
 4. keep approval work interface-only until review/conflict boundaries are clearer
 
 ## Current Boundary Summary
 
-- `review_doc` currently has only partial path alignment through adjacent review/confirm flows
-- `conflict_check` currently has only partial path alignment through existing read-side evidence and conflict-oriented surrounding outputs
+- `review_doc` currently has helper-level gating plus adjacent review/confirm flows, but no standalone runtime
+- `conflict_check` currently has helper-level read-side overlap evidence, but no standalone runtime
 - `approval_transition` is still effectively spec-only; verified mirror ingest must not be described as formal approval runtime
 - current grounded company-brain runtime remains:
   - controlled document/runtime path

@@ -87,6 +87,7 @@ import {
   listDocumentComments,
 } from "./lark-content.mjs";
 import { answerQuestion, searchKnowledgeBase } from "./answer-service.mjs";
+import { resolveCompanyBrainWriteIntake } from "./company-brain-write-intake.mjs";
 import { applyRewrittenDocument, rewriteDocumentFromComments } from "./doc-comment-rewrite.mjs";
 import { applyHeadingTargetedInsert, DocumentTargetingError } from "./doc-targeting.mjs";
 import { listUnseenDocumentComments, markDocumentCommentsSeen } from "./comment-watch-store.mjs";
@@ -440,10 +441,31 @@ function ingestVerifiedDocumentToCompanyBrain({ account, row, logger = noopHttpL
   }
 
   const payload = buildCompanyBrainPayload(row, metadata);
+  const intakeBoundary = resolveCompanyBrainWriteIntake({
+    accountId: account.id,
+    action: "ingest_doc",
+    targetStage: "mirror",
+    candidate: payload,
+  });
   try {
     const ingested = upsertCompanyBrainDoc({
       account_id: account.id,
       ...payload,
+    });
+    logger.info("document_company_brain_intake_classified", {
+      stage: "company_brain_intake_boundary",
+      account_id: account.id,
+      doc_id: payload.doc_id,
+      intake_state: intakeBoundary.intake_state,
+      direct_intake_allowed: intakeBoundary.direct_intake_allowed,
+      review_required: intakeBoundary.review_required,
+      conflict_check_required: intakeBoundary.conflict_check_required,
+      approval_required_for_formal_source: intakeBoundary.approval_required_for_formal_source,
+      matched_docs: intakeBoundary.matched_docs.map((item) => ({
+        doc_id: item.doc_id,
+        title: item.title,
+        match_type: item.match_type,
+      })),
     });
     logger.info("document_company_brain_ingested", {
       stage: "company_brain_ingest",
@@ -1945,7 +1967,7 @@ async function handleDocumentCreate(res, requestUrl, body, logger = noopHttpLogg
   });
   let created;
   try {
-    created = await createDocument(
+    created = await getHttpService("createDocument", createDocument)(
       context.token.access_token,
       title,
       folderToken,
@@ -2477,6 +2499,25 @@ async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogg
     document_id: documentId,
     mode: resolvedMode,
     target_heading: targetHeading || null,
+  });
+  const intakeBoundary = resolveCompanyBrainWriteIntake({
+    accountId: context.account.id,
+    action: "update_doc",
+    targetStage: "mirror",
+    candidate: {
+      doc_id: documentId,
+      title: currentDocument?.title || null,
+    },
+  });
+  logger.info("document_company_brain_update_boundary", {
+    stage: "company_brain_write_intake_boundary",
+    account_id: context.account.id,
+    doc_id: documentId,
+    intake_state: intakeBoundary.intake_state,
+    review_required: intakeBoundary.review_required,
+    conflict_check_required: intakeBoundary.conflict_check_required,
+    approval_required_for_formal_source: intakeBoundary.approval_required_for_formal_source,
+    target_stage: intakeBoundary.target_stage,
   });
   respondDocumentWriteSuccess(res, 200, buildDocumentUpdateResult({
     context,

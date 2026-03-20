@@ -17,6 +17,7 @@ It is an alignment document:
 Current grounded runtime anchor points:
 
 - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
+- `/Users/seanhan/Documents/Playground/src/company-brain-write-intake.mjs`
 - `/Users/seanhan/Documents/Playground/src/lark-content.mjs`
 - `/Users/seanhan/Documents/Playground/src/rag-repository.mjs`
 - `/Users/seanhan/Documents/Playground/src/db.mjs`
@@ -31,6 +32,11 @@ Current write/intake-adjacent paths already in code:
   - `created -> indexed -> verified`
   - plus failure states
 - non-blocking mirror write into `company_brain_docs` when lifecycle reaches `verified`
+- an internal write-intake policy helper now classifies:
+  - whether verified ingest may stay `direct_intake`
+  - whether the path should be treated as `review_required`
+  - whether overlap evidence should trigger `conflict_check_required`
+  - whether promotion into formal knowledge would still remain `approval_required_for_formal_source`
 
 Current company-brain-specific read-side remains:
 
@@ -83,6 +89,7 @@ Partially grounded in code through:
 
 - bounded update path exists
 - write path is not free-form and already sits behind controlled document/runtime rules
+- runtime now classifies `update_doc` as review-gated before any stable company-brain promotion
 
 ### what it is not
 
@@ -97,13 +104,19 @@ Partially grounded in code through:
 Partially grounded in code through:
 
 - `ingestVerifiedDocumentToCompanyBrain(...)`
+- `resolveCompanyBrainWriteIntake(...)`
 - verified lifecycle transition writing into `company_brain_docs`
 - `stage=company_brain_ingest` logging
+- `stage=company_brain_intake_boundary` logging
 
 ### what is already grounded
 
 - verified documents can be mirrored into `company_brain_docs`
 - ingest is non-blocking relative to lifecycle success
+- verified ingest now resolves a minimum intake boundary before mirror upsert:
+  - no overlap signal -> `direct_intake_allowed=true`
+  - overlap signal -> `review_required=true` and `conflict_check_required=true`
+  - formal knowledge promotion stays separated as `approval_required_for_formal_source=true`
 - mirror row schema is bounded:
   - `doc_id`
   - `title`
@@ -131,9 +144,9 @@ not to:
 
 ### current alignment
 
-Mostly spec-only.
+Partially grounded as a helper-level boundary, not as a standalone runtime.
 
-There is no dedicated company-brain `review_doc` runtime today.
+There is still no dedicated company-brain `review_doc` route or review state machine today.
 
 ### partial adjacent grounding
 
@@ -142,17 +155,19 @@ Review/confirm gates already exist in other document/workflow paths:
 - `doc_rewrite`
 - `cloud_doc`
 - preview/review/apply flows
+- `resolveCompanyBrainWriteIntake(...)` now marks update/promotion/overlap paths as `review_required`
 
 ### what this means
 
 - review as a system concept is grounded
-- company-brain-specific write/intake review is **not** yet runtimeized as its own capability
+- company-brain-specific write/intake review is only a minimum policy decision today
+- it is **not** yet runtimeized as its own independent capability
 
 ## `conflict_check` Alignment
 
 ### current alignment
 
-Mostly spec-only.
+Partially grounded as a bounded evidence helper.
 
 ### partial adjacent grounding
 
@@ -160,12 +175,14 @@ Conflict concepts already exist in surrounding system areas:
 
 - workflow verifier expectations mention `conflict_items`
 - knowledge/conflict-oriented command/docs exist elsewhere in the repo
-- search/read-side capability exists and could become future conflict input
+- search/read-side capability now feeds the intake policy helper as bounded overlap evidence
+- current overlap evidence is limited to read-side `title` matches excluding the same `doc_id`
 
 ### what is not yet grounded
 
 - no dedicated company-brain write/intake conflict-check runtime
-- no explicit `conflict_check` route or helper tied to write-side promotion
+- no explicit `conflict_check` route
+- no semantic/topic-level conflict resolver tied to write-side promotion
 
 ## In Scope
 
@@ -185,7 +202,7 @@ Still out of scope for current runtime:
 - standalone write-side company-brain agent
 - company-brain-specific review gate
 - company-brain-specific verification ownership
-- company-brain-specific conflict-check runtime
+- company-brain-specific conflict resolution runtime
 - automatic approval of long-term company-brain knowledge on ingest
 
 ## Current Gaps
@@ -197,19 +214,19 @@ Main gaps between spec and current runtime:
 2. `update_doc`
    - grounded as controlled document update, not as company-brain mutation contract
 3. `ingest_doc`
-   - grounded as verified mirror write, but not as explicit intake state machine
+   - grounded as verified mirror write plus a minimum intake policy helper, but not as a full intake state machine
 4. `review_doc`
-   - no dedicated company-brain review runtime yet
+   - only helper-level gating exists; no dedicated company-brain review runtime yet
 5. `conflict_check`
-   - no dedicated company-brain write-side conflict runtime yet
+   - only title/doc overlap evidence exists; no dedicated company-brain write-side conflict runtime yet
 
 ## Next Refactor Targets
 
 Most reasonable next refactor targets:
 
-1. make the verified-to-company-brain ingest boundary more explicit as an intake helper
+1. keep the helper-level intake matrix stable and reuse it from future planner/runtime callers
 2. separate company-brain mirror ingest terminology from generic document lifecycle terminology
-3. define a minimum review/conflict interface before any company-brain write-side expansion
+3. lift helper-level review/conflict decisions into an explicit bounded interface only when a real runtime is added
 4. keep read-side and document write-side separate until a true company-brain write boundary exists
 
 ## Current Boundary Summary
@@ -217,4 +234,4 @@ Most reasonable next refactor targets:
 - some write/intake-adjacent behavior is already grounded in code
 - that grounding currently lives in controlled document/runtime paths, not in a standalone company-brain write runtime
 - `create_doc`, `update_doc`, and `ingest_doc` have partial runtime alignment
-- `review_doc` and `conflict_check` are still effectively spec-only
+- `review_doc` and `conflict_check` now have a minimum helper-level boundary, but not a standalone runtime

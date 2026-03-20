@@ -190,6 +190,7 @@ function normalizeScope(scope = {}) {
     source_doc_id: cleanText(scope.source_doc_id) || null,
     source_title: cleanText(scope.source_title) || null,
     source_match_reason: cleanText(scope.source_match_reason) || null,
+    last_active_task_id: cleanText(scope.last_active_task_id) || null,
     current_task_ids: normalizeStringList(scope.current_task_ids, 12),
     created_at: cleanText(scope.created_at) || nowIso(),
     updated_at: cleanText(scope.updated_at) || nowIso(),
@@ -548,6 +549,7 @@ function buildScopeSnapshot({
   traceId = "",
   formattedOutput = {},
   taskIds = [],
+  lastActiveTaskId = "",
   existingScope = null,
 } = {}) {
   return normalizeScope({
@@ -561,6 +563,7 @@ function buildScopeSnapshot({
     source_doc_id: formattedOutput?.doc_id,
     source_title: formattedOutput?.title,
     source_match_reason: formattedOutput?.match_reason,
+    last_active_task_id: cleanText(lastActiveTaskId) || cleanText(existingScope?.last_active_task_id) || null,
     current_task_ids: taskIds,
     created_at: existingScope?.created_at || nowIso(),
     updated_at: nowIso(),
@@ -627,6 +630,7 @@ export async function syncPlannerActionLayerTaskLifecycle({
     traceId,
     formattedOutput,
     taskIds: currentTaskIds,
+    lastActiveTaskId: resolveTaskDrivingFocusTask(currentTaskIds.map((taskId) => store.tasks[taskId]).filter(Boolean))?.id,
     existingScope: store.scopes[scopeKey],
   });
   store.latest_scope_key = scopeKey;
@@ -756,10 +760,7 @@ function buildTaskDrivingPendingQuestion(task = {}) {
 
 function buildTaskDrivingContext(tasks = []) {
   const normalizedTasks = Array.isArray(tasks) ? tasks : [];
-  const blockedTask = normalizedTasks.find((task) => cleanText(task?.task_state) === "blocked");
-  const inProgressTask = normalizedTasks.find((task) => cleanText(task?.task_state) === "in_progress");
-  const unfinishedTask = normalizedTasks.find((task) => cleanText(task?.task_state) !== "done");
-  const focusTask = blockedTask || inProgressTask || unfinishedTask || null;
+  const focusTask = resolveTaskDrivingFocusTask(normalizedTasks);
   if (!focusTask) {
     return null;
   }
@@ -775,6 +776,14 @@ function buildTaskDrivingContext(tasks = []) {
     suggested_next_step: buildTaskDrivingNextStep(focusTask),
     suggested_question: buildTaskDrivingPendingQuestion(focusTask),
   };
+}
+
+function resolveTaskDrivingFocusTask(tasks = []) {
+  const normalizedTasks = Array.isArray(tasks) ? tasks : [];
+  const blockedTask = normalizedTasks.find((task) => cleanText(task?.task_state) === "blocked");
+  const inProgressTask = normalizedTasks.find((task) => cleanText(task?.task_state) === "in_progress");
+  const unfinishedTask = normalizedTasks.find((task) => cleanText(task?.task_state) !== "done");
+  return blockedTask || inProgressTask || unfinishedTask || null;
 }
 
 function formatPlannerTaskDecisionReference(task = {}, {
@@ -807,18 +816,32 @@ export function buildPlannerTaskDecisionContext(snapshot = null) {
     return null;
   }
 
+  const focusTask = snapshot?.focus_task && typeof snapshot.focus_task === "object"
+    ? snapshot.focus_task
+    : null;
   const unfinishedTasks = tasks.filter((task) => cleanText(task?.task_state) !== "done");
   const blockedTasks = tasks.filter((task) => cleanText(task?.task_state) === "blocked");
   const inProgressTasks = tasks.filter((task) => cleanText(task?.task_state) === "in_progress");
-  const taskDriving = buildTaskDrivingContext(tasks);
+  const taskDriving = buildTaskDrivingContext(focusTask ? [focusTask] : tasks);
+  const orderedReferenceTasks = [
+    ...(focusTask && cleanText(focusTask?.task_state) !== "done" ? [focusTask] : []),
+    ...unfinishedTasks.filter((task) => cleanText(task?.id) !== cleanText(focusTask?.id)),
+  ];
 
   return {
     scope_title: cleanText(snapshot?.scope?.source_title) || cleanText(snapshot?.scope?.theme) || "task lifecycle",
     theme: cleanText(snapshot?.scope?.theme) || null,
+    scope_binding: formatFocusBindingReason(snapshot?.scope_reason),
     aggregate_state: resolveAggregateTaskState(tasks),
     counts: summarizeTaskStateCounts(tasks),
+    focus_hint: focusTask
+      ? `當前優先 task：${formatPlannerTaskDecisionReference(focusTask, {
+          includeProgress: true,
+          includeRisk: true,
+        })}${cleanText(snapshot?.focus_reason) ? `；綁定來源=${formatFocusBindingReason(snapshot.focus_reason)}` : ""}`
+      : null,
     unfinished_hint: unfinishedTasks.length > 0
-      ? `優先引用未完成 task：${unfinishedTasks.slice(0, 3).map((task) => formatPlannerTaskDecisionReference(task, {
+      ? `優先引用未完成 task：${orderedReferenceTasks.slice(0, 3).map((task) => formatPlannerTaskDecisionReference(task, {
           includeProgress: true,
         })).join("；")}`
       : null,
@@ -839,7 +862,8 @@ export function buildPlannerTaskDecisionContext(snapshot = null) {
     unblock_question_hint: cleanText(taskDriving?.suggested_question)
       ? `若需補資源，優先確認：${cleanText(taskDriving.suggested_question)}`
       : null,
-    reference_tasks: unfinishedTasks.slice(0, 3).map((task) => buildPlannerTaskDecisionItem(task)),
+    focused_task: focusTask ? buildPlannerTaskDecisionItem(focusTask) : null,
+    reference_tasks: orderedReferenceTasks.slice(0, 3).map((task) => buildPlannerTaskDecisionItem(task)),
     blocked_tasks: blockedTasks.slice(0, 3).map((task) => buildPlannerTaskDecisionItem(task)),
     in_progress_tasks: inProgressTasks.slice(0, 3).map((task) => buildPlannerTaskDecisionItem(task)),
     task_driving: taskDriving,
@@ -864,28 +888,211 @@ function buildSnapshotFromStore(store = {}, scopeKey = "") {
   };
 }
 
-function resolveRelevantScopeKey(store = {}, { activeDoc = null, activeTheme = "" } = {}) {
-  const docId = cleanText(activeDoc?.doc_id);
-  if (docId) {
-    const docScope = Object.values(store?.scopes || {})
-      .filter((scope) => cleanText(scope?.source_doc_id) === docId)
-      .sort((left, right) => Date.parse(right?.updated_at || 0) - Date.parse(left?.updated_at || 0))[0];
-    if (docScope?.scope_key) {
-      return docScope.scope_key;
-    }
+function sortScopesByUpdatedAt(scopes = []) {
+  return [...(Array.isArray(scopes) ? scopes : [])]
+    .filter(Boolean)
+    .sort((left, right) => Date.parse(right?.updated_at || 0) - Date.parse(left?.updated_at || 0));
+}
+
+function resolveScopesByDocId(store = {}, docId = "") {
+  const normalizedDocId = cleanText(docId);
+  if (!normalizedDocId) {
+    return [];
+  }
+  return sortScopesByUpdatedAt(
+    Object.values(store?.scopes || {}).filter((scope) => cleanText(scope?.source_doc_id) === normalizedDocId),
+  );
+}
+
+function resolveScopesByTitle(store = {}, title = "") {
+  const normalizedTitle = cleanText(title);
+  if (!normalizedTitle) {
+    return [];
+  }
+  return sortScopesByUpdatedAt(
+    Object.values(store?.scopes || {}).filter((scope) => {
+      const sourceTitle = cleanText(scope?.source_title);
+      return sourceTitle ? normalizedTitle.includes(sourceTitle) || sourceTitle.includes(normalizedTitle) : false;
+    }),
+  );
+}
+
+function resolveScopesByTheme(store = {}, theme = "") {
+  const normalizedTheme = cleanText(theme);
+  if (!normalizedTheme) {
+    return [];
+  }
+  return sortScopesByUpdatedAt(
+    Object.values(store?.scopes || {}).filter((scope) => cleanText(scope?.theme) === normalizedTheme),
+  );
+}
+
+function resolveScopesByTaskTitle(store = {}, userIntent = "") {
+  const normalizedIntent = cleanText(userIntent);
+  if (!normalizedIntent) {
+    return [];
+  }
+  const matchedScopeKeys = normalizeStringList(
+    Object.values(store?.tasks || {})
+      .filter((task) => {
+        const title = cleanText(task?.title);
+        return title ? normalizedIntent.includes(title) : false;
+      })
+      .map((task) => task?.scope_key),
+    8,
+  );
+  return sortScopesByUpdatedAt(matchedScopeKeys.map((scopeKey) => store?.scopes?.[scopeKey]).filter(Boolean));
+}
+
+function resolveRelevantScope(store = {}, {
+  activeDoc = null,
+  activeTheme = "",
+  userIntent = "",
+} = {}) {
+  const activeDocMatches = resolveScopesByDocId(store, activeDoc?.doc_id);
+  if (activeDocMatches[0]?.scope_key) {
+    return {
+      scope_key: activeDocMatches[0].scope_key,
+      reason: "active_doc",
+    };
   }
 
-  const theme = cleanText(activeTheme);
-  if (theme) {
-    const themedScope = Object.values(store?.scopes || {})
-      .filter((scope) => cleanText(scope?.theme) === theme)
-      .sort((left, right) => Date.parse(right?.updated_at || 0) - Date.parse(left?.updated_at || 0))[0];
-    if (themedScope?.scope_key) {
-      return themedScope.scope_key;
-    }
+  const activeDocTitleMatches = resolveScopesByTitle(store, activeDoc?.title);
+  if (activeDocTitleMatches[0]?.scope_key) {
+    return {
+      scope_key: activeDocTitleMatches[0].scope_key,
+      reason: "active_doc_title",
+    };
   }
 
-  return cleanText(store?.latest_scope_key) || null;
+  const mentionedDocMatches = resolveScopesByTitle(store, userIntent);
+  if (mentionedDocMatches[0]?.scope_key) {
+    return {
+      scope_key: mentionedDocMatches[0].scope_key,
+      reason: "mentioned_doc",
+    };
+  }
+
+  const mentionedTaskMatches = resolveScopesByTaskTitle(store, userIntent);
+  if (mentionedTaskMatches[0]?.scope_key) {
+    return {
+      scope_key: mentionedTaskMatches[0].scope_key,
+      reason: "mentioned_task",
+    };
+  }
+
+  const themedMatches = resolveScopesByTheme(store, activeTheme);
+  if (themedMatches[0]?.scope_key) {
+    return {
+      scope_key: themedMatches[0].scope_key,
+      reason: "active_theme",
+    };
+  }
+
+  return {
+    scope_key: cleanText(store?.latest_scope_key) || null,
+    reason: cleanText(store?.latest_scope_key) ? "latest_scope" : null,
+  };
+}
+
+function looksLikeCurrentTaskFollowUp(userIntent = "") {
+  const normalizedIntent = cleanText(userIntent);
+  if (!normalizedIntent) {
+    return false;
+  }
+  return /(這個|这个|這份|这份|這份文件|这份文件|現在怎麼辦|现在怎么办|接下來|接下来|下一步|怎麼推進|怎么推进|如何推進|如何推进|怎麼處理|怎么处理|還要做什麼|还要做什么)/i.test(normalizedIntent);
+}
+
+function resolveTaskTitleTargetMatches(tasks = [], userIntent = "") {
+  const normalizedIntent = cleanText(userIntent);
+  if (!normalizedIntent) {
+    return [];
+  }
+  return tasks.filter((task) => {
+    const title = cleanText(task?.title);
+    return title ? normalizedIntent.includes(title) : false;
+  });
+}
+
+function resolveFocusedTask(tasks = [], {
+  scope = null,
+  scopeReason = "",
+  activeDoc = null,
+  activeTheme = "",
+  userIntent = "",
+} = {}) {
+  const visibleTasks = Array.isArray(tasks) ? tasks : [];
+  if (!visibleTasks.length) {
+    return {
+      task: null,
+      reason: null,
+    };
+  }
+
+  const taskTitleMatches = resolveTaskTitleTargetMatches(visibleTasks, userIntent);
+  if (taskTitleMatches.length === 1) {
+    return {
+      task: taskTitleMatches[0],
+      reason: "task_title",
+    };
+  }
+
+  const ownerMatches = resolveOwnerTargetMatches(visibleTasks, userIntent);
+  if (ownerMatches.length === 1) {
+    return {
+      task: ownerMatches[0],
+      reason: "owner",
+    };
+  }
+
+  const lastActiveTaskId = cleanText(scope?.last_active_task_id);
+  const lastActiveTask = lastActiveTaskId
+    ? visibleTasks.find((task) => cleanText(task?.id) === lastActiveTaskId) || null
+    : null;
+  if (lastActiveTask && looksLikeCurrentTaskFollowUp(userIntent)) {
+    return {
+      task: lastActiveTask,
+      reason: "current_task",
+    };
+  }
+
+  if (lastActiveTask && (cleanText(activeDoc?.doc_id) || cleanText(activeDoc?.title) || cleanText(activeTheme) || cleanText(scopeReason))) {
+    return {
+      task: lastActiveTask,
+      reason: cleanText(scopeReason) || "scope_context",
+    };
+  }
+
+  return {
+    task: resolveTaskDrivingFocusTask(visibleTasks),
+    reason: "task_driving",
+  };
+}
+
+function formatFocusBindingReason(reason = "") {
+  switch (cleanText(reason)) {
+    case "current_task":
+      return "沿用當前 task";
+    case "active_doc":
+      return "沿用 active_doc";
+    case "active_doc_title":
+      return "沿用 active_doc title";
+    case "mentioned_doc":
+      return "命中文件名稱";
+    case "mentioned_task":
+    case "task_title":
+      return "命中 task 名稱";
+    case "owner":
+      return "命中 owner";
+    case "active_theme":
+      return "沿用 active_theme";
+    case "latest_scope":
+      return "沿用最近 scope";
+    case "task_driving":
+      return "沿用 task driving";
+    default:
+      return cleanText(reason) || null;
+  }
 }
 
 function classifyTaskLifecycleIntent(userIntent = "") {
@@ -1408,10 +1615,12 @@ export async function maybeRunPlannerTaskLifecycleFollowUp({
   }
 
   const store = await loadStore();
-  const scopeKey = resolveRelevantScopeKey(store, {
+  const scopeSelection = resolveRelevantScope(store, {
     activeDoc,
     activeTheme,
+    userIntent,
   });
+  const scopeKey = scopeSelection.scope_key;
   const snapshot = buildSnapshotFromStore(store, scopeKey);
   if (!snapshot?.tasks?.length) {
     return null;
@@ -1452,6 +1661,18 @@ export async function maybeRunPlannerTaskLifecycleFollowUp({
       });
       await saveStore(store);
     }
+  }
+
+  const nextLastActiveTaskId = targetResolution.mode === "single"
+    ? cleanText(targetTasks?.[0]?.id) || cleanText(snapshot?.scope?.last_active_task_id) || null
+    : cleanText(snapshot?.scope?.last_active_task_id) || null;
+  if (snapshot.scope?.scope_key && nextLastActiveTaskId && nextLastActiveTaskId !== cleanText(store.scopes?.[snapshot.scope.scope_key]?.last_active_task_id)) {
+    store.scopes[snapshot.scope.scope_key] = normalizeScope({
+      ...store.scopes[snapshot.scope.scope_key],
+      last_active_task_id: nextLastActiveTaskId,
+      updated_at: mutated ? nowIso() : store.scopes[snapshot.scope.scope_key]?.updated_at,
+    });
+    await saveStore(store);
   }
 
   const refreshedSnapshot = buildSnapshotFromStore(store, scopeKey) || snapshot;
@@ -1518,13 +1739,31 @@ export async function getLatestPlannerTaskLifecycleSnapshot() {
 export async function getPlannerTaskDecisionContext({
   activeDoc = null,
   activeTheme = "",
+  userIntent = "",
 } = {}) {
   const store = await loadStore();
-  const scopeKey = resolveRelevantScopeKey(store, {
+  const scopeSelection = resolveRelevantScope(store, {
     activeDoc,
     activeTheme,
+    userIntent,
   });
-  return buildPlannerTaskDecisionContext(buildSnapshotFromStore(store, scopeKey));
+  const snapshot = buildSnapshotFromStore(store, scopeSelection.scope_key);
+  if (!snapshot?.tasks?.length) {
+    return null;
+  }
+  const focusResolution = resolveFocusedTask(snapshot.tasks, {
+    scope: snapshot.scope,
+    scopeReason: scopeSelection.reason,
+    activeDoc,
+    activeTheme,
+    userIntent,
+  });
+  return buildPlannerTaskDecisionContext({
+    ...snapshot,
+    scope_reason: scopeSelection.reason,
+    focus_task: focusResolution.task,
+    focus_reason: focusResolution.reason,
+  });
 }
 
 export async function getPlannerTaskLifecycleStore() {
