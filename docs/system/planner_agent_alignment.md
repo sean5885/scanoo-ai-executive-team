@@ -137,7 +137,7 @@ Current `runPlannerToolFlow(...)` output:
 }
 ```
 
-Current strict user-input planner output before execution:
+Current strict user-input planner output before execution supports both the legacy single-step shape and the new bounded multi-step shape:
 
 ```json
 {
@@ -146,6 +146,23 @@ Current strict user-input planner output before execution:
 }
 ```
 
+```json
+{
+  "steps": [
+    {
+      "action": "string",
+      "params": "object"
+    }
+  ]
+}
+```
+
+For the multi-step shape:
+
+- each `steps[i].action` must resolve to an action in `planner_contract.json`
+- presets are still allowed only through the legacy single-step `action` path
+- each step is later dispatched through the existing planner tool execution boundary rather than a separate shortcut runtime
+
 Current strict user-input planner error boundary:
 
 ```json
@@ -153,6 +170,12 @@ Current strict user-input planner error boundary:
   "error": "planner_failed|invalid_action|contract_violation"
 }
 ```
+
+When the invalid item is inside `steps`, the error payload may also carry:
+
+- `steps`
+- `step_index`
+- failing step `action` / `params`
 
 `execution_result` may now also carry an additional `formatted_output` field for successful company-brain read flows; this is a presentation-layer enrichment on top of the raw tool result, not a replacement for the bounded route output.
 
@@ -217,6 +240,39 @@ Current `dispatchPlannerTool(...)` output:
   "trace_id": "string|null"
 }
 ```
+
+For company-brain planner actions, `data` now keeps the planner-facing query envelope from `src/company-brain-query.mjs`:
+
+```json
+{
+  "success": "boolean",
+  "data": "object",
+  "error": "string|null"
+}
+```
+
+That query envelope is where structured summaries, search match metadata, and doc detail summaries now live; the public planner wrapper remains unchanged.
+
+Current `runPlannerMultiStep(...)` output:
+
+```json
+{
+  "ok": "boolean",
+  "steps": "array",
+  "results": "array",
+  "trace_id": "string|null",
+  "error": "string|null",
+  "stopped": "boolean",
+  "stopped_at_step": "number|null"
+}
+```
+
+Current multi-step runtime behavior:
+
+- steps are executed in order
+- each step goes through `dispatchPlannerTool(...)`
+- default behavior is stop-on-first-error
+- stopped runs return the failing step index and normalized error instead of continuing silently
 
 Current `runPlannerPreset(...)` output:
 

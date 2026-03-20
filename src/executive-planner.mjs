@@ -11,7 +11,12 @@ import {
   llmTopP,
 } from "./config.mjs";
 import { readFileSync } from "node:fs";
-import { buildCompactSystemPrompt, governPromptSections, trimTextForBudget } from "./agent-token-governance.mjs";
+import {
+  buildCompactSystemPrompt,
+  compactListItems,
+  governPromptSections,
+  trimTextForBudget,
+} from "./agent-token-governance.mjs";
 import { getRegisteredAgent, listRegisteredAgents, parseRegisteredAgentCommand } from "./agent-registry.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import { callOpenClawTextGeneration } from "./openclaw-text-service.mjs";
@@ -78,6 +83,11 @@ const executiveExitSignals = [
   "結束這個任務",
   "換下一個任務",
 ];
+
+const PLANNER_CONTEXT_WINDOW_MAX_CHARS = 2400;
+const PLANNER_CONTEXT_WINDOW_SUMMARY_MAX_CHARS = 640;
+const PLANNER_RECENT_STEP_LIMIT = 6;
+const PLANNER_HIGH_WEIGHT_DOC_LIMIT = 3;
 
 // ---------------------------------------------------------------------------
 // Executive intent helpers
@@ -729,14 +739,22 @@ function buildPlannerAgentOutput({
 }
 
 function buildPlannerMultiStepOutput({
+  ok = true,
   steps = [],
   results = [],
   traceId = null,
+  error = null,
+  stopped = false,
+  stoppedAtStep = null,
 } = {}) {
   return {
+    ok,
     steps,
     results,
     trace_id: traceId,
+    error: cleanText(error) || null,
+    stopped: stopped === true,
+    stopped_at_step: Number.isInteger(stoppedAtStep) ? stoppedAtStep : null,
   };
 }
 
@@ -1049,6 +1067,8 @@ function isCompanyBrainQueryAction(action = "") {
     "list_company_brain_docs",
     "search_company_brain_docs",
     "get_company_brain_doc_detail",
+    "ingest_learning_doc",
+    "update_learning_state",
   ].includes(cleanText(action));
 }
 
@@ -1059,6 +1079,44 @@ function buildEmptyCompanyBrainSummary() {
     highlights: [],
     snippet: "",
     content_length: 0,
+  };
+}
+
+function buildEmptyCompanyBrainLearningState() {
+  return {
+    status: "not_learned",
+    structured_summary: buildEmptyCompanyBrainSummary(),
+    key_concepts: [],
+    tags: [],
+    notes: "",
+    learned_at: null,
+    updated_at: null,
+  };
+}
+
+function normalizeCompanyBrainLearningState(value = null) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return buildEmptyCompanyBrainLearningState();
+  }
+
+  return {
+    status: cleanText(value.status) || "not_learned",
+    structured_summary: value.structured_summary && typeof value.structured_summary === "object"
+      ? {
+          overview: cleanText(value.structured_summary.overview) || "",
+          headings: Array.isArray(value.structured_summary.headings) ? value.structured_summary.headings.map((item) => cleanText(item)).filter(Boolean) : [],
+          highlights: Array.isArray(value.structured_summary.highlights) ? value.structured_summary.highlights.map((item) => cleanText(item)).filter(Boolean) : [],
+          snippet: cleanText(value.structured_summary.snippet)
+            || cleanText(value.structured_summary.overview)
+            || "",
+          content_length: Number.isFinite(Number(value.structured_summary.content_length)) ? Number(value.structured_summary.content_length) : 0,
+        }
+      : buildEmptyCompanyBrainSummary(),
+    key_concepts: Array.isArray(value.key_concepts) ? value.key_concepts.map((item) => cleanText(item)).filter(Boolean) : [],
+    tags: Array.isArray(value.tags) ? value.tags.map((item) => cleanText(item)).filter(Boolean) : [],
+    notes: cleanText(value.notes) || "",
+    learned_at: cleanText(value.learned_at) || null,
+    updated_at: cleanText(value.updated_at) || null,
   };
 }
 
@@ -1089,6 +1147,7 @@ function normalizeCompanyBrainListItems(items = []) {
           content_length: Number.isFinite(Number(item.summary.content_length)) ? Number(item.summary.content_length) : 0,
         }
       : buildEmptyCompanyBrainSummary(),
+    learning_state: normalizeCompanyBrainLearningState(item?.learning_state),
     ...(item?.match && typeof item.match === "object"
       ? {
           match: {
@@ -1154,6 +1213,36 @@ function normalizeCompanyBrainActionResult(action = "", result = null) {
                 content_length: Number.isFinite(Number(rawData.summary.content_length)) ? Number(rawData.summary.content_length) : 0,
               }
             : buildEmptyCompanyBrainSummary(),
+          learning_state: normalizeCompanyBrainLearningState(rawData?.learning_state),
+        },
+        error,
+      },
+    };
+  }
+
+  if (["ingest_learning_doc", "update_learning_state"].includes(action)) {
+    const item = rawData?.doc || rawData?.item || {};
+    return {
+      ...result,
+      data: {
+        success,
+        data: {
+          doc: {
+            doc_id: cleanText(item?.doc_id) || "",
+            title: cleanText(item?.title) || "",
+            source: cleanText(item?.source) || "",
+            created_at: cleanText(item?.created_at) || "",
+            creator: item?.creator && typeof item.creator === "object"
+              ? {
+                  account_id: cleanText(item.creator.account_id) || "",
+                  open_id: cleanText(item.creator.open_id) || "",
+                }
+              : {
+                  account_id: "",
+                  open_id: "",
+                },
+          },
+          learning_state: normalizeCompanyBrainLearningState(rawData?.learning_state),
         },
         error,
       },
@@ -1241,6 +1330,77 @@ export function validatePlannerUserInputDecision(decision = {}) {
   const normalizedDecision = decision && typeof decision === "object" && !Array.isArray(decision)
     ? decision
     : {};
+  const rawSteps = normalizedDecision.steps;
+  if (rawSteps !== undefined) {
+    if (!Array.isArray(rawSteps) || rawSteps.length === 0) {
+      return {
+        ok: false,
+        error: "planner_failed",
+      };
+    }
+
+    const steps = [];
+    for (let index = 0; index < rawSteps.length; index += 1) {
+      const rawStep = rawSteps[index];
+      if (!rawStep || typeof rawStep !== "object" || Array.isArray(rawStep)) {
+        return {
+          ok: false,
+          error: "planner_failed",
+        };
+      }
+
+      const action = cleanText(rawStep.action || "");
+      const rawParams = rawStep.params;
+      if (rawParams != null && (typeof rawParams !== "object" || Array.isArray(rawParams))) {
+        return {
+          ok: false,
+          error: "planner_failed",
+        };
+      }
+
+      const params = normalizePlannerPayload(rawParams);
+      if (!action) {
+        return {
+          ok: false,
+          error: "planner_failed",
+        };
+      }
+
+      const contract = getPlannerActionContract(action);
+      steps.push({ action, params });
+
+      if (!contract) {
+        return {
+          ok: false,
+          error: "invalid_action",
+          action,
+          params,
+          steps,
+          step_index: index,
+        };
+      }
+
+      const violations = validateAgainstSchema(contract?.input_schema, params, `steps[${index}].params`);
+      if (violations.length > 0) {
+        return {
+          ok: false,
+          error: "contract_violation",
+          action,
+          params,
+          steps,
+          step_index: index,
+          violations,
+        };
+      }
+    }
+
+    return {
+      ok: true,
+      steps,
+      target_kind: "multi_step",
+    };
+  }
+
   const action = cleanText(normalizedDecision.action || "");
   const rawParams = normalizedDecision.params;
   if (rawParams != null && (typeof rawParams !== "object" || Array.isArray(rawParams))) {
@@ -1320,6 +1480,16 @@ const plannerToolRegistry = new Map([
       return `/agent/company-brain/docs/${encodeURIComponent(docId)}`;
     },
     queryKeys: [],
+  }],
+  ["ingest_learning_doc", {
+    action: "ingest_learning_doc",
+    method: "POST",
+    pathname: "/agent/company-brain/learning/ingest",
+  }],
+  ["update_learning_state", {
+    action: "update_learning_state",
+    method: "POST",
+    pathname: "/agent/company-brain/learning/state",
   }],
   ["get_runtime_info", {
     action: "get_runtime_info",
@@ -1488,6 +1658,22 @@ export function selectPlannerTool({
   ) {
     selectedAction = "list_company_brain_docs";
     reason = "使用者意圖是查詢已驗證文件鏡像，對應 company_brain list bridge。";
+  } else if (
+    normalizedTaskType === "knowledge_learning"
+    || normalizedIntent.includes("學習這份文件")
+    || normalizedIntent.includes("学习这份文件")
+    || normalizedIntent.includes("ingest learning")
+    || normalizedIntent.includes("learn this doc")
+  ) {
+    selectedAction = "ingest_learning_doc";
+    reason = "使用者意圖是讓系統學習目前文件，對應 learning ingest bridge。";
+  } else if (
+    normalizedIntent.includes("更新學習狀態")
+    || normalizedIntent.includes("更新学习状态")
+    || normalizedIntent.includes("update learning state")
+  ) {
+    selectedAction = "update_learning_state";
+    reason = "使用者意圖是更新 learning state，對應 learning state bridge。";
   } else if (
     normalizedIntent.includes("runtime")
     || normalizedIntent.includes("db path")
@@ -2054,20 +2240,31 @@ export async function runPlannerMultiStep({
   steps = [],
   logger = console,
   dispatcher = dispatchPlannerTool,
+  stopOnError = true,
 } = {}) {
   const normalizedSteps = Array.isArray(steps)
     ? steps
         .map((step) => ({
           action: cleanText(step?.action || ""),
-          payload: step?.payload && typeof step.payload === "object" ? step.payload : {},
+          payload: normalizePlannerPayload(
+            step?.params && typeof step.params === "object" && !Array.isArray(step.params)
+              ? step.params
+              : step?.payload && typeof step.payload === "object" && !Array.isArray(step.payload)
+                ? step.payload
+                : {},
+          ),
         }))
         .filter((step) => step.action)
     : [];
 
   const results = [];
   let traceId = null;
+  let error = null;
+  let stopped = false;
+  let stoppedAtStep = null;
 
-  for (const step of normalizedSteps) {
+  for (let index = 0; index < normalizedSteps.length; index += 1) {
+    const step = normalizedSteps[index];
     const result = await dispatcher({
       action: step.action,
       payload: step.payload,
@@ -2075,6 +2272,12 @@ export async function runPlannerMultiStep({
     });
     results.push(result);
     traceId = result?.trace_id || traceId;
+    if (stopOnError !== false && result?.ok === false) {
+      error = cleanText(result?.error || "") || "business_error";
+      stopped = true;
+      stoppedAtStep = index;
+      break;
+    }
   }
 
   logger?.info?.("planner_multi_step", buildPlannerTraceEvent({
@@ -2084,13 +2287,19 @@ export async function runPlannerMultiStep({
       step_count: normalizedSteps.length,
       actions: normalizedSteps.map((step) => step.action),
       ok_count: results.filter((item) => item?.ok).length,
+      stopped,
+      stopped_at_step: stoppedAtStep,
     },
   }));
 
   return buildPlannerMultiStepOutput({
-    steps: normalizedSteps.map((step) => ({ action: step.action })),
+    ok: results.every((item) => item?.ok === true) && stopped !== true,
+    steps: normalizedSteps.slice(0, results.length).map((step) => ({ action: step.action })),
     results,
     traceId,
+    error,
+    stopped,
+    stoppedAtStep,
   });
 }
 
@@ -2212,6 +2421,7 @@ export async function runPlannerPreset({
       const multiStepExecution = await multiStepRunner({
         steps,
         logger,
+        stopOnError: false,
       });
       execution = {
         ...multiStepExecution,
@@ -2550,6 +2760,378 @@ function formatPlannerTaskDecisionPromptSection(taskDecisionContext = null) {
   ].filter(Boolean).join("\n");
 }
 
+function stringifyPlannerList(items = [], { maxItems = 4, maxItemChars = 120 } = {}) {
+  const compact = compactListItems(items, { maxItems, maxItemChars });
+  return compact.length > 0 ? compact.join("；") : "none";
+}
+
+function buildFocusedTaskContextText(taskDecisionContext = null) {
+  const focusedTask = taskDecisionContext?.focused_task && typeof taskDecisionContext.focused_task === "object"
+    ? taskDecisionContext.focused_task
+    : null;
+  if (!focusedTask) {
+    return "none";
+  }
+  return [
+    `title: ${cleanText(focusedTask.title) || "未命名 task"}`,
+    cleanText(focusedTask.owner) ? `owner: ${cleanText(focusedTask.owner)}` : "",
+    cleanText(focusedTask.deadline) ? `deadline: ${cleanText(focusedTask.deadline)}` : "",
+    cleanText(focusedTask.task_state) ? `task_state: ${cleanText(focusedTask.task_state)}` : "",
+    cleanText(focusedTask.progress_summary) ? `progress_summary: ${cleanText(focusedTask.progress_summary)}` : "",
+    cleanText(focusedTask.note) ? `note: ${cleanText(focusedTask.note)}` : "",
+    Array.isArray(focusedTask.risks) && focusedTask.risks.length > 0
+      ? `risks: ${stringifyPlannerList(focusedTask.risks, { maxItems: 3, maxItemChars: 80 })}`
+      : "",
+    cleanText(focusedTask.source_title) ? `source_title: ${cleanText(focusedTask.source_title)}` : "",
+    cleanText(focusedTask.source_doc_id) ? `source_doc_id: ${cleanText(focusedTask.source_doc_id)}` : "",
+    cleanText(focusedTask.source_summary)
+      ? `source_summary: ${trimTextForBudget(focusedTask.source_summary, 260, { preserveTail: false })}`
+      : "",
+  ].filter(Boolean).join("\n");
+}
+
+function buildPlannerRecentStepsText({
+  activeTask = null,
+  recentMessages = [],
+} = {}) {
+  const lines = [];
+
+  if (Array.isArray(activeTask?.turns) && activeTask.turns.length > 0) {
+    lines.push(
+      ...activeTask.turns
+        .slice(-4)
+        .map((turn) => {
+          const role = cleanText(turn?.role || "turn");
+          const text = cleanText(turn?.text || "");
+          return text ? `turn/${role}: ${trimTextForBudget(text, 120, { preserveTail: false })}` : "";
+        })
+        .filter(Boolean),
+    );
+  }
+
+  if (Array.isArray(activeTask?.agent_outputs) && activeTask.agent_outputs.length > 0) {
+    lines.push(
+      ...activeTask.agent_outputs
+        .slice(-2)
+        .map((item) => {
+          const agentId = cleanText(item?.agent_id || "agent");
+          const summary = cleanText(item?.summary || "");
+          return summary ? `agent_output/${agentId}: ${trimTextForBudget(summary, 120, { preserveTail: false })}` : "";
+        })
+        .filter(Boolean),
+    );
+  }
+
+  if (Array.isArray(activeTask?.handoffs) && activeTask.handoffs.length > 0) {
+    lines.push(
+      ...activeTask.handoffs
+        .slice(-2)
+        .map((item) => {
+          const from = cleanText(item?.from_agent_id || "");
+          const to = cleanText(item?.to_agent_id || "");
+          const reason = cleanText(item?.reason || "");
+          return from && to
+            ? `handoff: ${from} -> ${to}${reason ? ` (${trimTextForBudget(reason, 80, { preserveTail: false })})` : ""}`
+            : "";
+        })
+        .filter(Boolean),
+    );
+  }
+
+  if (Array.isArray(activeTask?.work_plan) && activeTask.work_plan.length > 0) {
+    lines.push(
+      ...activeTask.work_plan
+        .slice(-3)
+        .map((item) => {
+          const agentId = cleanText(item?.agent_id || "");
+          const task = cleanText(item?.task || "");
+          const status = cleanText(item?.status || "pending");
+          return agentId && task
+            ? `work_plan/${status}/${agentId}: ${trimTextForBudget(task, 120, { preserveTail: false })}`
+            : "";
+        })
+        .filter(Boolean),
+    );
+  }
+
+  if (lines.length === 0 && Array.isArray(recentMessages) && recentMessages.length > 0) {
+    lines.push(
+      ...recentMessages
+        .slice(-4)
+        .map((message) => {
+          const role = cleanText(message?.role || "message");
+          const content = cleanText(message?.content || "");
+          return content ? `${role}: ${trimTextForBudget(content, 120, { preserveTail: false })}` : "";
+        })
+        .filter(Boolean),
+    );
+  }
+
+  return lines.slice(0, PLANNER_RECENT_STEP_LIMIT).join("\n") || "none";
+}
+
+function buildPlannerHighWeightDocSummaryText({
+  taskDecisionContext = null,
+  latestSummary = null,
+  plannerDocQueryContext = {},
+} = {}) {
+  const lines = [];
+  const seenDocKeys = new Set();
+  const activeDoc = plannerDocQueryContext?.activeDoc && typeof plannerDocQueryContext.activeDoc === "object"
+    ? plannerDocQueryContext.activeDoc
+    : latestSummary?.active_doc;
+  const activeCandidates = Array.isArray(plannerDocQueryContext?.activeCandidates) && plannerDocQueryContext.activeCandidates.length > 0
+    ? plannerDocQueryContext.activeCandidates
+    : Array.isArray(latestSummary?.active_candidates)
+      ? latestSummary.active_candidates
+      : [];
+  const activeTheme = cleanText(plannerDocQueryContext?.activeTheme || latestSummary?.active_theme || "");
+  const candidateTasks = [
+    taskDecisionContext?.focused_task,
+    ...(Array.isArray(taskDecisionContext?.reference_tasks) ? taskDecisionContext.reference_tasks : []),
+  ]
+    .filter((item) => item && typeof item === "object");
+
+  if (activeTheme) {
+    lines.push(`active_theme: ${activeTheme}`);
+  }
+  if (cleanText(activeDoc?.title) || cleanText(activeDoc?.doc_id)) {
+    lines.push(`active_doc: ${cleanText(activeDoc?.title || activeDoc?.doc_id)} (${cleanText(activeDoc?.doc_id || "unknown_doc")})`);
+  }
+  if (activeCandidates.length > 0) {
+    lines.push(`active_candidates: ${activeCandidates.slice(0, 3).map((item) => cleanText(item?.title || item?.doc_id)).filter(Boolean).join("、")}`);
+  }
+
+  for (const item of candidateTasks) {
+    const docKey = cleanText(item?.source_doc_id || item?.source_title || item?.title || "");
+    if (!docKey || seenDocKeys.has(docKey)) {
+      continue;
+    }
+    seenDocKeys.add(docKey);
+    const summary = cleanText(item?.source_summary);
+    const label = cleanText(item?.source_title || item?.source_doc_id || item?.title || docKey);
+    if (label && summary) {
+      lines.push(`doc_summary/${label}: ${trimTextForBudget(summary, 220, { preserveTail: false })}`);
+    } else if (label) {
+      lines.push(`doc_ref: ${label}`);
+    }
+    if (seenDocKeys.size >= PLANNER_HIGH_WEIGHT_DOC_LIMIT) {
+      break;
+    }
+  }
+
+  if (cleanText(latestSummary?.next_step_suggestion)) {
+    lines.push(`summary_next_step: ${trimTextForBudget(latestSummary.next_step_suggestion, 160, { preserveTail: false })}`);
+  }
+
+  return lines.join("\n") || "none";
+}
+
+function buildPlannerLatestSummaryText(latestSummary = null) {
+  if (!latestSummary || typeof latestSummary !== "object") {
+    return "none";
+  }
+  const unfinishedItems = Array.isArray(latestSummary.unfinished_items)
+    ? latestSummary.unfinished_items.map((item) => cleanText(item?.label || "")).filter(Boolean)
+    : [];
+  const currentFlows = Array.isArray(latestSummary.current_flows)
+    ? latestSummary.current_flows.map((flow) => cleanText(flow?.id || "")).filter(Boolean)
+    : [];
+  return [
+    cleanText(latestSummary?.active_theme) ? `active_theme: ${cleanText(latestSummary.active_theme)}` : "",
+    cleanText(latestSummary?.active_doc?.title || latestSummary?.active_doc?.doc_id)
+      ? `active_doc: ${cleanText(latestSummary.active_doc.title || latestSummary.active_doc.doc_id)}`
+      : "",
+    currentFlows.length > 0
+      ? `current_flows: ${stringifyPlannerList(currentFlows, { maxItems: 5, maxItemChars: 40 })}`
+      : "",
+    unfinishedItems.length > 0
+      ? `unfinished_items: ${stringifyPlannerList(unfinishedItems, { maxItems: 4, maxItemChars: 90 })}`
+      : "",
+    cleanText(latestSummary?.next_step_suggestion)
+      ? `next_step_suggestion: ${trimTextForBudget(latestSummary.next_step_suggestion, 180, { preserveTail: false })}`
+      : "",
+  ].filter(Boolean).join("\n") || "none";
+}
+
+function buildPlannerActiveTaskText(activeTask = null) {
+  if (!activeTask || typeof activeTask !== "object") {
+    return "none";
+  }
+  const workPlan = Array.isArray(activeTask.work_plan)
+    ? activeTask.work_plan
+        .slice(0, 4)
+        .map((item) => {
+          const agentId = cleanText(item?.agent_id || "");
+          const task = cleanText(item?.task || "");
+          const status = cleanText(item?.status || "pending");
+          return agentId && task ? `${status}/${agentId}: ${trimTextForBudget(task, 100, { preserveTail: false })}` : "";
+        })
+        .filter(Boolean)
+    : [];
+  const pendingQuestions = Array.isArray(activeTask.pending_questions)
+    ? activeTask.pending_questions.map((item) => cleanText(item)).filter(Boolean)
+    : [];
+  return [
+    cleanText(activeTask.id) ? `task_id: ${cleanText(activeTask.id)}` : "",
+    cleanText(activeTask.objective) ? `objective: ${trimTextForBudget(activeTask.objective, 180, { preserveTail: false })}` : "",
+    cleanText(activeTask.primary_agent_id) ? `primary_agent_id: ${cleanText(activeTask.primary_agent_id)}` : "",
+    cleanText(activeTask.current_agent_id) ? `current_agent_id: ${cleanText(activeTask.current_agent_id)}` : "",
+    workPlan.length > 0
+      ? `work_plan: ${stringifyPlannerList(workPlan, { maxItems: 4, maxItemChars: 120 })}`
+      : "",
+    pendingQuestions.length > 0
+      ? `pending_questions: ${stringifyPlannerList(pendingQuestions, { maxItems: 3, maxItemChars: 100 })}`
+      : "",
+  ].filter(Boolean).join("\n") || "none";
+}
+
+function buildPlannerRecentDialogueText(recentMessages = []) {
+  return Array.isArray(recentMessages) && recentMessages.length > 0
+    ? recentMessages
+        .slice(-4)
+        .map((message) => {
+          const role = cleanText(message?.role || "message");
+          const content = cleanText(message?.content || "");
+          return content ? `${role}: ${trimTextForBudget(content, 90, { preserveTail: false })}` : "";
+        })
+        .filter(Boolean)
+        .join("\n") || "none"
+    : "none";
+}
+
+function fitPlannerContextWindow(entries = [], maxChars = PLANNER_CONTEXT_WINDOW_MAX_CHARS) {
+  const sortedEntries = [...(Array.isArray(entries) ? entries : [])]
+    .filter((entry) => cleanText(entry?.text) && cleanText(entry?.text) !== "none")
+    .sort((left, right) => Number(right?.priority || 0) - Number(left?.priority || 0));
+  const sections = {};
+  const dropped = [];
+  let remainingChars = Math.max(0, maxChars);
+
+  for (const entry of sortedEntries) {
+    if (remainingChars <= 0) {
+      dropped.push(cleanText(entry?.label || entry?.name || "context"));
+      continue;
+    }
+    const minChars = Number.isFinite(entry?.minChars) ? Number(entry.minChars) : 80;
+    const maxEntryChars = Number.isFinite(entry?.maxChars) ? Number(entry.maxChars) : remainingChars;
+    const budgetChars = Math.min(maxEntryChars, remainingChars);
+    if (budgetChars < minChars) {
+      dropped.push(cleanText(entry?.label || entry?.name || "context"));
+      continue;
+    }
+    const compacted = trimTextForBudget(entry.text, budgetChars, {
+      keywords: Array.isArray(entry?.keywords) ? entry.keywords : [],
+      preserveTail: entry?.preserveTail !== false,
+    });
+    if (!compacted) {
+      continue;
+    }
+    sections[entry.name] = compacted;
+    remainingChars -= compacted.length;
+  }
+
+  const droppedSummary = dropped.length > 0
+    ? trimTextForBudget(
+      `舊上下文已摘要或丟棄：${dropped.join("、")}`,
+      Math.min(remainingChars || PLANNER_CONTEXT_WINDOW_SUMMARY_MAX_CHARS, PLANNER_CONTEXT_WINDOW_SUMMARY_MAX_CHARS),
+      { preserveTail: false },
+    )
+    : "none";
+
+  return {
+    sections,
+    dropped,
+    droppedSummary,
+  };
+}
+
+function buildPlannerContextWindow({
+  latestSummary = null,
+  recentMessages = [],
+  plannerDocQueryContext = {},
+  taskDecisionContext = null,
+  activeTask = null,
+} = {}) {
+  return fitPlannerContextWindow([
+    {
+      name: "focused_task",
+      label: "focused_task",
+      text: buildFocusedTaskContextText(taskDecisionContext),
+      priority: 100,
+      maxChars: 620,
+      minChars: 120,
+      keywords: [
+        cleanText(taskDecisionContext?.focused_task?.title || ""),
+        cleanText(taskDecisionContext?.focused_task?.source_title || ""),
+      ],
+      preserveTail: false,
+    },
+    {
+      name: "recent_steps",
+      label: "recent_steps",
+      text: buildPlannerRecentStepsText({ activeTask, recentMessages }),
+      priority: 95,
+      maxChars: 520,
+      minChars: 120,
+      preserveTail: false,
+    },
+    {
+      name: "high_weight_doc_summaries",
+      label: "high_weight_doc_summaries",
+      text: buildPlannerHighWeightDocSummaryText({
+        taskDecisionContext,
+        latestSummary,
+        plannerDocQueryContext,
+      }),
+      priority: 90,
+      maxChars: 680,
+      minChars: 140,
+      keywords: [
+        cleanText(taskDecisionContext?.focused_task?.source_title || ""),
+        cleanText(plannerDocQueryContext?.activeDoc?.title || latestSummary?.active_doc?.title || ""),
+      ],
+      preserveTail: false,
+    },
+    {
+      name: "planner_task_context",
+      label: "planner_task_context",
+      text: formatPlannerTaskDecisionPromptSection(taskDecisionContext),
+      priority: 85,
+      maxChars: 520,
+      minChars: 120,
+      preserveTail: false,
+    },
+    {
+      name: "latest_summary",
+      label: "latest_summary",
+      text: buildPlannerLatestSummaryText(latestSummary),
+      priority: 65,
+      maxChars: 360,
+      minChars: 100,
+      preserveTail: false,
+    },
+    {
+      name: "active_task",
+      label: "active_task",
+      text: buildPlannerActiveTaskText(activeTask),
+      priority: 55,
+      maxChars: 360,
+      minChars: 100,
+      preserveTail: false,
+    },
+    {
+      name: "recent_dialogue",
+      label: "recent_dialogue",
+      text: buildPlannerRecentDialogueText(recentMessages),
+      priority: 45,
+      maxChars: 260,
+      minChars: 80,
+      preserveTail: false,
+    },
+  ]);
+}
+
 async function buildPlannerPrompt({ text, activeTask = null } = {}) {
   const memorySnapshot = getPlannerConversationMemoryLayer();
   const latestSummary = memorySnapshot?.latest_summary || null;
@@ -2559,6 +3141,13 @@ async function buildPlannerPrompt({ text, activeTask = null } = {}) {
     activeDoc: plannerDocQueryContext?.activeDoc || null,
     activeTheme: plannerDocQueryContext?.activeTheme || "",
     userIntent: text,
+  });
+  const contextWindow = buildPlannerContextWindow({
+    latestSummary,
+    recentMessages,
+    plannerDocQueryContext,
+    taskDecisionContext,
+    activeTask,
   });
   const systemPrompt = buildCompactSystemPrompt("你是 executive planner，負責在多 agent 系統中為當前回合選擇最合適的 agent。", [
     "只輸出 JSON。",
@@ -2584,7 +3173,7 @@ async function buildPlannerPrompt({ text, activeTask = null } = {}) {
   const governed = governPromptSections({
     systemPrompt,
     format: "xml",
-    maxTokens: 900,
+    maxTokens: 760,
     thresholds: {
       light: agentPromptLightRatio,
       rolling: agentPromptRollingRatio,
@@ -2614,50 +3203,84 @@ async function buildPlannerPrompt({ text, activeTask = null } = {}) {
           "不可把 list、search、detail 混用：list 不等於 search，search 不等於 detail。",
           "不可在未先嘗試對應 tool 的情況下，直接輸出找不到、無資料、或 fail-soft 停止。",
         ].join("\n"),
+        summaryText: [
+          "輸出單一合法 JSON 物件，不要有前後文。",
+          'shape: {"action":"start|continue|handoff|clarify","objective":"...","primary_agent_id":"...","next_agent_id":"...","supporting_agent_ids":["..."],"reason":"...","pending_questions":[],"work_items":[]}',
+          "優先沿用 focused task、unfinished、blocked、in_progress 提示。",
+          "list/search/detail 必須分清楚；找資料前先嘗試對應 tool。",
+          "pending_questions 最多 4 條；work_items 最多 8 條。",
+        ].join("\n"),
         required: true,
-        maxTokens: 260,
+        maxTokens: 200,
       },
       {
         name: "agent_registry",
         label: "agent_registry",
         text: agentCatalogText(),
-        required: true,
-        maxTokens: 220,
-      },
-      {
-        name: "latest_summary",
-        label: "latest_summary",
-        text: latestSummary ? trimTextForBudget(JSON.stringify(latestSummary, null, 2), 1100) : "none",
-        summaryText: latestSummary ? trimTextForBudget(JSON.stringify(latestSummary, null, 2), 420) : "none",
+        summaryText: listRegisteredAgents().map((agent) => agent.id).join(", "),
         required: true,
         maxTokens: 160,
       },
       {
+        name: "focused_task",
+        label: "focused_task",
+        text: contextWindow.sections.focused_task || "none",
+        summaryText: contextWindow.sections.focused_task || "none",
+        required: true,
+        maxTokens: 150,
+      },
+      {
+        name: "recent_steps",
+        label: "recent_steps",
+        text: contextWindow.sections.recent_steps || "none",
+        summaryText: contextWindow.sections.recent_steps || "none",
+        required: true,
+        maxTokens: 130,
+      },
+      {
+        name: "high_weight_doc_summaries",
+        label: "high_weight_doc_summaries",
+        text: contextWindow.sections.high_weight_doc_summaries || "none",
+        summaryText: contextWindow.sections.high_weight_doc_summaries || "none",
+        required: true,
+        maxTokens: 170,
+      },
+      {
+        name: "latest_summary",
+        label: "latest_summary",
+        text: contextWindow.sections.latest_summary || "none",
+        summaryText: contextWindow.sections.latest_summary || "none",
+        required: true,
+        maxTokens: 110,
+      },
+      {
         name: "recent_dialogue",
         label: "recent_dialogue",
-        text: recentMessages.length > 0
-          ? recentMessages.map((message) => `${message.role}: ${message.content}`).join("\n")
-          : "none",
-        summaryText: recentMessages.length > 0
-          ? recentMessages.map((message) => `${message.role}: ${message.content}`).join("\n")
-          : "none",
-        required: true,
-        maxTokens: 120,
+        text: contextWindow.sections.recent_dialogue || "none",
+        summaryText: contextWindow.sections.recent_dialogue || "none",
+        maxTokens: 70,
       },
       {
         name: "planner_task_context",
         label: "planner_task_context",
-        text: trimTextForBudget(formatPlannerTaskDecisionPromptSection(taskDecisionContext), 900),
-        summaryText: trimTextForBudget(formatPlannerTaskDecisionPromptSection(taskDecisionContext), 420),
+        text: contextWindow.sections.planner_task_context || "none",
+        summaryText: contextWindow.sections.planner_task_context || "none",
         required: true,
-        maxTokens: 180,
+        maxTokens: 150,
       },
       {
         name: "active_task",
         label: "active_task",
-        text: activeTask ? trimTextForBudget(JSON.stringify(activeTask, null, 2), 900) : "none",
-        summaryText: activeTask ? trimTextForBudget(JSON.stringify(activeTask, null, 2), 420) : "none",
-        maxTokens: 220,
+        text: contextWindow.sections.active_task || "none",
+        summaryText: contextWindow.sections.active_task || "none",
+        maxTokens: 100,
+      },
+      {
+        name: "older_context",
+        label: "older_context",
+        text: contextWindow.droppedSummary || "none",
+        summaryText: contextWindow.droppedSummary || "none",
+        maxTokens: 60,
       },
       {
         name: "user_request",
@@ -2742,8 +3365,10 @@ async function buildPlannerUserInputPrompt({ text = "" } = {}) {
   const systemPrompt = buildCompactSystemPrompt("你是 Lobster user-input planner。", [
     "所有 user input 必須先被規劃成受控 planner action/preset，禁止直接回答問題。",
     "只輸出單一合法 JSON object，不要 Markdown、不要 code fence、不要前後文、不要多餘欄位。",
-    '固定 shape：{"action":"...","params":{}}',
+    '合法 shape 只有兩種：{"action":"...","params":{}} 或 {"steps":[{"action":"...","params":{}}]}。',
+    "單步任務可用相容模式 action/params；只有明確需要多步時才輸出 steps。",
     "action 必須完全對應 target_catalog 裡的名稱。",
+    "steps 內的 action 只能使用 type=action 條目，不可放 preset。",
     "params 必須是 object，且需符合對應 contract 的 required params。",
     "如果已有 active_doc 或 active_candidates，優先利用那些 doc_id 做 detail/read 決策。",
     "看文件列表用 list，找資料用 search，讀某份文件內容才用 detail；不要混用。",
@@ -2765,8 +3390,10 @@ async function buildPlannerUserInputPrompt({ text = "" } = {}) {
         label: "planner_goal",
         text: [
           "輸出單一合法 JSON 物件，不要有前後文。",
-          '唯一合法 shape：{"action":"...","params":{}}',
+          '唯一合法 shape 只有兩種：{"action":"...","params":{}} 或 {"steps":[{"action":"...","params":{}}]}。',
+          "單步任務可用相容模式 action/params；只有明確需要多步時才輸出 steps。",
           "action 必須來自 target_catalog。",
+          "steps 內 action 只能來自 type=action 條目，不可使用 preset。",
           "params 只能放該 action/preset 需要的欄位。",
           "不可直接回答使用者問題，不可輸出 free text fallback。",
         ].join("\n"),
@@ -2842,17 +3469,21 @@ export async function planUserInputAction({ text = "", requester = requestPlanne
       const parsed = parseStrictPlannerUserInputJson(raw);
       const validation = validatePlannerUserInputDecision(parsed);
       if (validation.ok) {
-        const decision = {
-          action: validation.action,
-          params: validation.params,
-        };
+        const decision = Array.isArray(validation.steps)
+          ? {
+              steps: validation.steps,
+            }
+          : {
+              action: validation.action,
+              params: validation.params,
+            };
         recordPlannerConversationExchange({
           userQuery: text,
           plannerReply: JSON.stringify(decision),
         });
         maybeCompactPlannerConversationMemory({
           flows: buildPlannerFlowSnapshots(plannerFlows),
-          latestSelectedAction: decision.action,
+          latestSelectedAction: decision.action || decision.steps?.[0]?.action || "",
           reason: "post_plan_user_input_action",
         });
         return decision;
@@ -2880,6 +3511,8 @@ export async function planUserInputAction({ text = "", requester = requestPlanne
         error: lastInvalidDecision.error,
         action: lastInvalidDecision.action,
         params: lastInvalidDecision.params,
+        ...(Array.isArray(lastInvalidDecision.steps) ? { steps: lastInvalidDecision.steps } : {}),
+        ...(Number.isInteger(lastInvalidDecision.step_index) ? { step_index: lastInvalidDecision.step_index } : {}),
         ...(lastInvalidDecision.violations ? { violations: lastInvalidDecision.violations } : {}),
       }
     : { error: "planner_failed" };
@@ -2901,6 +3534,9 @@ export async function executePlannedUserInput({
   logger = console,
   contentReader,
   baseUrl = oauthBaseUrl,
+  toolFlowRunner = runPlannerToolFlow,
+  multiStepRunner = runPlannerMultiStep,
+  dispatcher = dispatchPlannerTool,
 } = {}) {
   const decision = await planUserInputAction({ text, requester });
   if (decision?.error) {
@@ -2912,7 +3548,30 @@ export async function executePlannedUserInput({
     };
   }
 
-  const runtimeResult = await runPlannerToolFlow({
+  if (Array.isArray(decision.steps)) {
+    const runtimeResult = await multiStepRunner({
+      steps: decision.steps,
+      logger,
+      async dispatcher({ action, payload }) {
+        return dispatcher({
+          action,
+          payload,
+          logger,
+          baseUrl,
+        });
+      },
+    });
+
+    return {
+      ok: runtimeResult?.ok === true,
+      steps: decision.steps,
+      error: cleanText(runtimeResult?.error || "") || null,
+      execution_result: runtimeResult || null,
+      trace_id: runtimeResult?.trace_id || null,
+    };
+  }
+
+  const runtimeResult = await toolFlowRunner({
     userIntent: text,
     payload: decision.params,
     logger,
@@ -2950,6 +3609,17 @@ export function buildPlannedUserInputEnvelope(result = {}) {
       error: cleanText(result.error || "") || "planner_failed",
       ...(cleanText(result.action || "") ? { action: cleanText(result.action) } : {}),
       params: normalizePlannerPayload(result.params),
+      ...(Array.isArray(result.steps)
+        ? {
+            steps: result.steps
+              .map((step) => ({
+                action: cleanText(step?.action || "") || null,
+                params: normalizePlannerPayload(step?.params),
+              }))
+              .filter((step) => step.action),
+          }
+        : {}),
+      ...(Number.isInteger(result.step_index) ? { step_index: result.step_index } : {}),
       ...(Array.isArray(result.violations) ? { violations: result.violations } : {}),
       trace_id: result.trace_id || null,
     };
@@ -2959,6 +3629,16 @@ export function buildPlannedUserInputEnvelope(result = {}) {
     ok: result.ok === true,
     action: cleanText(result.action || "") || null,
     params: normalizePlannerPayload(result.params),
+    ...(Array.isArray(result.steps)
+      ? {
+          steps: result.steps
+            .map((step) => ({
+              action: cleanText(step?.action || "") || null,
+              params: normalizePlannerPayload(step?.params),
+            }))
+            .filter((step) => step.action),
+        }
+      : {}),
     error: cleanText(result.error || "") || null,
     execution_result: result.execution_result?.formatted_output || result.execution_result || null,
     trace_id: result.trace_id || null,

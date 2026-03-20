@@ -126,6 +126,29 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Validation note: empty `q` returns `ok=false` with `error=invalid_query`
   - Log note: emits `stage=company_brain_search`
 
+- `GET /agent/company-brain/docs`
+  - Handler: `handleAgentListCompanyBrainDocs`
+  - Purpose: planner-facing list action over the verified-doc mirror
+  - Response shape: `{ ok, action, data, trace_id }`, where `data` keeps a unified `{ success, data, error }` envelope
+  - Data note: result items contain structured `summary`; no raw full text is returned
+  - Log note: emits `stage=agent_bridge`
+
+- `GET /agent/company-brain/search?q=...`
+  - Handler: `handleAgentSearchCompanyBrainDocs`
+  - Purpose: planner-facing search action with keyword match plus a basic semantic-lite ranking pass
+  - Response shape: `{ ok, action, data, trace_id }`, where `data` keeps a unified `{ success, data, error }` envelope
+  - Data note: search items contain structured `summary` and `match`
+  - Validation note: empty `q` returns `ok=false` with `error=invalid_query`
+  - Log note: emits `stage=agent_bridge`
+
+- `GET /agent/company-brain/docs/:doc_id`
+  - Handler: `handleAgentGetCompanyBrainDocDetail`
+  - Purpose: planner-facing detail action for one mirrored doc
+  - Response shape: `{ ok, action, data, trace_id }`, where `data` keeps a unified `{ success, data, error }` envelope
+  - Data note: detail result returns `{ doc, summary }`; no raw full text is returned
+  - Not-found note: returns `ok=false` with `error=not_found`
+  - Log note: emits `stage=agent_bridge`
+
 - `POST /api/doc/lifecycle/retry`
   - Handler: `handleDocumentLifecycleRetry`
   - Purpose: retry only `index_failed` / `verify_failed` lifecycle rows
@@ -300,7 +323,7 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
 - `GET /answer`
   - Handler: `handleAnswer`
   - Purpose: force user text through planner decision before any execution
-  - Response note: planner must first emit strict `{ action, params }`; wrapped/non-JSON output is rejected as `error=planner_failed`
+  - Response note: planner must first emit strict legacy `{ action, params }` or bounded multi-step `{ steps: [{ action, params }] }`; wrapped/non-JSON output is rejected as `error=planner_failed`
   - Response note: successful calls return a structured planner envelope rather than direct free-text answer fallback
 
 - `GET /agent/security/status`
@@ -315,12 +338,6 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Handler: `handleAgentCreateDoc`
   - Purpose: expose `/api/doc/create` through an agent-facing bridge
   - Response shape: `{ ok, action, data, trace_id }` with `action=create_doc`
-  - Log note: emits `stage=agent_bridge`
-
-- `GET /agent/company-brain/docs`
-  - Handler: `handleAgentListCompanyBrainDocs`
-  - Purpose: expose `/api/company-brain/docs` through an agent-facing bridge
-  - Response shape: `{ ok, action, data, trace_id }` with `action=list_company_brain_docs`
   - Log note: emits `stage=agent_bridge`
 
 - `GET /agent/system/runtime-info`

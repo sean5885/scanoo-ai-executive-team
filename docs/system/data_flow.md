@@ -42,10 +42,10 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 3. FTS search runs against `lark_chunks_fts`
 4. `/search` returns hits directly
 5. `/answer` first goes through `executive-planner.mjs`
-   - planner must emit strict JSON `{ action, params }`
+   - planner must emit strict legacy `{ action, params }` or bounded multi-step `{ steps: [{ action, params }] }`
    - wrapped/non-JSON planner output is rejected as `{ error: "planner_failed" }`
    - actions outside `planner_contract.json` are rejected before execution
-   - valid planner decisions run the corresponding contract-bound action/preset and return a structured planner envelope
+   - valid single-step decisions run the corresponding contract-bound action/preset; valid multi-step decisions run ordered contract-bound tool actions through the existing planner dispatcher and return a structured planner envelope
 6. the legacy/internal `answer-service.mjs` prompt path still prefers:
    - current question
    - compact workflow checkpoint
@@ -315,7 +315,7 @@ Actual AI-like execution paths:
   - malformed or incomplete classifier JSON triggers a repair retry before local-rule fallback
 
 - planner-gated retrieval / tool execution
-  - answer route -> `executive-planner.mjs` strict `{ action, params }` decision -> contract-bound planner action/preset execution
+  - answer route -> `executive-planner.mjs` strict single-step `{ action, params }` or bounded `{ steps: [{ action, params }] }` decision -> contract-bound planner action/preset execution or sequential planner tool execution
   - direct user-input answer fallback is disabled; `answer-service.mjs` is no longer the first responder for `/answer` or the knowledge-assistant lane
 
 - comment-driven rewrite

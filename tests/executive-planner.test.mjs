@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import {
   compactPlannerConversationMemory,
   dispatchPlannerTool,
+  executePlannedUserInput,
   getPlannerConversationMemory,
   looksLikeExecutiveExit,
   looksLikeExecutiveStart,
@@ -97,6 +98,48 @@ test("planUserInputAction rejects action outside planner_contract", async () => 
   assert.equal(result.error, "invalid_action");
   assert.equal(result.action, "free_chat_answer");
   assert.deepEqual(result.params, {});
+});
+
+test("planUserInputAction accepts strict multi-step output", async () => {
+  resetPlannerRuntimeContext();
+  const result = await planUserInputAction({
+    text: "先建立文件再列出文件",
+    async requester() {
+      return JSON.stringify({
+        steps: [
+          {
+            action: "create_doc",
+            params: {
+              title: "demo",
+            },
+          },
+          {
+            action: "list_company_brain_docs",
+            params: {
+              limit: 3,
+            },
+          },
+        ],
+      });
+    },
+  });
+
+  assert.deepEqual(result, {
+    steps: [
+      {
+        action: "create_doc",
+        params: {
+          title: "demo",
+        },
+      },
+      {
+        action: "list_company_brain_docs",
+        params: {
+          limit: 3,
+        },
+      },
+    ],
+  });
 });
 
 test("planExecutiveTurn accepts injected planner requester", async () => {
@@ -201,6 +244,190 @@ test("planExecutiveTurn builds prompt from latest summary plus recent messages i
   assert.equal(capturedPrompt.includes("latest_summary"), true);
   assert.equal(capturedPrompt.includes("ancient-marker-001"), false);
   assert.equal(capturedPrompt.includes("recent-marker-005"), true);
+});
+
+test("planExecutiveTurn trims oversized active-task context down to recent steps", async () => {
+  resetPlannerRuntimeContext();
+  replacePlannerTaskLifecycleStoreForTests({
+    tasks: {
+      task_big_context_focus: {
+        id: "task_big_context_focus",
+        scope_key: "scope_big_context",
+        title: "先處理關鍵客訴",
+        theme: "bd",
+        owner: "Alice",
+        deadline: "2026-03-30",
+        task_state: "in_progress",
+        progress_status: "half_done",
+        progress_summary: "已完成一半",
+        source_doc_id: "doc_big_context",
+        source_title: "Customer Escalation Runbook",
+        source_summary: `priority-doc-summary-keep ${"客訴升級處理摘要 ".repeat(60)}`,
+        lifecycle_state: "planned",
+        created_at: "2026-03-20T00:00:00.000Z",
+        updated_at: "2026-03-21T00:00:00.000Z",
+      },
+    },
+    scopes: {
+      scope_big_context: {
+        scope_key: "scope_big_context",
+        theme: "bd",
+        selected_action: "search_and_detail_doc",
+        user_intent: "整理客訴應對文件",
+        trace_id: "trace_big_context",
+        source_kind: "search_and_detail",
+        source_doc_id: "doc_big_context",
+        source_title: "Customer Escalation Runbook",
+        last_active_task_id: "task_big_context_focus",
+        current_task_ids: ["task_big_context_focus"],
+        created_at: "2026-03-20T00:00:00.000Z",
+        updated_at: "2026-03-21T00:00:00.000Z",
+      },
+    },
+    latest_scope_key: "scope_big_context",
+  });
+
+  const activeTask = {
+    id: "exec_task_big_context",
+    objective: "持續處理高優先客訴升級流程",
+    primary_agent_id: "generalist",
+    current_agent_id: "generalist",
+    work_plan: Array.from({ length: 8 }, (_, index) => ({
+      agent_id: "generalist",
+      task: `${index === 0 ? "ancient-plan-001" : `recent-plan-00${index}`} ${"處理步驟 ".repeat(30)}`,
+      role: "primary",
+      status: index < 5 ? "done" : "pending",
+    })),
+    turns: Array.from({ length: 10 }, (_, index) => ({
+      role: index % 2 === 0 ? "user" : "planner",
+      text: `${index === 0 ? "ancient-turn-001" : `recent-turn-00${index}`} ${"長上下文內容 ".repeat(50)}`,
+    })),
+    handoffs: [
+      { from_agent_id: "generalist", to_agent_id: "consult", reason: `ancient-handoff-001 ${"handoff ".repeat(20)}` },
+      { from_agent_id: "consult", to_agent_id: "generalist", reason: `recent-handoff-002 ${"return ".repeat(20)}` },
+    ],
+    agent_outputs: [
+      { agent_id: "consult", summary: `ancient-output-001 ${"summary ".repeat(25)}` },
+      { agent_id: "generalist", summary: `recent-output-002 ${"summary ".repeat(25)}` },
+    ],
+    pending_questions: Array.from({ length: 5 }, (_, index) => `pending-question-00${index} ${"待確認 ".repeat(20)}`),
+  };
+
+  let capturedPrompt = "";
+  await planExecutiveTurn({
+    text: "這個任務下一步是什麼？",
+    activeTask,
+    async requester({ prompt }) {
+      capturedPrompt = String(prompt || "");
+      return JSON.stringify({
+        action: "continue",
+        objective: "延續客訴任務",
+        primary_agent_id: "generalist",
+        next_agent_id: "generalist",
+        supporting_agent_ids: [],
+        reason: "測試 context window clipping",
+        pending_questions: [],
+        work_items: [],
+      });
+    },
+  });
+
+  assert.ok(capturedPrompt.length < 5200);
+  assert.equal(capturedPrompt.includes("ancient-turn-001"), false);
+  assert.equal(capturedPrompt.includes("ancient-plan-001"), false);
+  assert.equal(capturedPrompt.includes("recent-turn-009"), true);
+  assert.equal(capturedPrompt.includes("recent-output-002"), true);
+  assert.match(capturedPrompt, /priority-doc-summary-keep/);
+});
+
+test("planExecutiveTurn keeps focused task and high-weight doc summary under long-context pressure", async () => {
+  resetPlannerRuntimeContext();
+
+  for (let index = 0; index < 6; index += 1) {
+    await planExecutiveTurn({
+      text: `${index === 0 ? "ancient-dialogue-001" : `recent-dialogue-00${index}`} ${"舊對話 ".repeat(70)}`,
+      activeTask: null,
+      async requester() {
+        return JSON.stringify({
+          action: "continue",
+          objective: "延續任務",
+          primary_agent_id: "generalist",
+          next_agent_id: "generalist",
+          supporting_agent_ids: [],
+          reason: "測試長對話壓力",
+          pending_questions: [],
+          work_items: [],
+        });
+      },
+    });
+  }
+
+  replacePlannerTaskLifecycleStoreForTests({
+    tasks: {
+      task_doc_pressure: {
+        id: "task_doc_pressure",
+        scope_key: "scope_doc_pressure",
+        title: "先同步客訴處理窗口",
+        theme: "bd",
+        owner: "Alice",
+        deadline: "2026-03-31",
+        task_state: "planned",
+        source_doc_id: "doc_doc_pressure",
+        source_title: "Customer Escalation Runbook",
+        source_summary: `priority-doc-summary-keep ${"文件重點 ".repeat(80)}`,
+        lifecycle_state: "planned",
+        created_at: "2026-03-20T00:00:00.000Z",
+        updated_at: "2026-03-21T00:00:00.000Z",
+      },
+    },
+    scopes: {
+      scope_doc_pressure: {
+        scope_key: "scope_doc_pressure",
+        theme: "bd",
+        selected_action: "search_and_detail_doc",
+        user_intent: "整理客訴升級文件",
+        trace_id: "trace_doc_pressure",
+        source_kind: "search_and_detail",
+        source_doc_id: "doc_doc_pressure",
+        source_title: "Customer Escalation Runbook",
+        last_active_task_id: "task_doc_pressure",
+        current_task_ids: ["task_doc_pressure"],
+        created_at: "2026-03-20T00:00:00.000Z",
+        updated_at: "2026-03-21T00:00:00.000Z",
+      },
+    },
+    latest_scope_key: "scope_doc_pressure",
+  });
+  hydratePlannerDocQueryRuntimeContext({
+    activeDoc: { doc_id: "doc_doc_pressure", title: "Customer Escalation Runbook" },
+    activeTheme: "bd",
+  });
+
+  let capturedPrompt = "";
+  await planExecutiveTurn({
+    text: "這份文件接下來誰要先推進？",
+    activeTask: null,
+    async requester({ prompt }) {
+      capturedPrompt = String(prompt || "");
+      return JSON.stringify({
+        action: "continue",
+        objective: "延續客訴處理任務",
+        primary_agent_id: "generalist",
+        next_agent_id: "generalist",
+        supporting_agent_ids: [],
+        reason: "測試高權重摘要保留",
+        pending_questions: [],
+        work_items: [],
+      });
+    },
+  });
+
+  assert.equal(capturedPrompt.includes("ancient-dialogue-001"), false);
+  assert.match(capturedPrompt, /focused_task/);
+  assert.match(capturedPrompt, /先同步客訴處理窗口/);
+  assert.match(capturedPrompt, /high_weight_doc_summaries/);
+  assert.match(capturedPrompt, /Customer Escalation Runbook/);
+  assert.match(capturedPrompt, /priority-doc-summary-keep/);
 });
 
 test("planExecutiveTurn injects planner task context with unfinished, blocked, and in-progress hints", async () => {
@@ -3737,6 +3964,152 @@ test("runPlannerMultiStep ignores invalid steps and keeps null trace when nothin
   assert.deepEqual(result.results, []);
   assert.equal(result.trace_id, null);
   assert.equal(dispatcherCalled, false);
+});
+
+test("executePlannedUserInput runs multi-step decisions through sequential tool dispatch", async () => {
+  const calls = [];
+  const result = await executePlannedUserInput({
+    text: "先建立文件再列出文件",
+    logger: console,
+    async requester() {
+      return JSON.stringify({
+        steps: [
+          {
+            action: "create_doc",
+            params: {
+              title: "demo",
+            },
+          },
+          {
+            action: "list_company_brain_docs",
+            params: {
+              limit: 2,
+            },
+          },
+        ],
+      });
+    },
+    async dispatcher({ action, payload }) {
+      calls.push({ action, payload });
+      return {
+        ok: true,
+        action,
+        data: { echoed: payload },
+        trace_id: action === "create_doc" ? "trace_create" : "trace_list",
+      };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.steps, [
+    {
+      action: "create_doc",
+      params: {
+        title: "demo",
+      },
+    },
+    {
+      action: "list_company_brain_docs",
+      params: {
+        limit: 2,
+      },
+    },
+  ]);
+  assert.equal(result.error, null);
+  assert.equal(result.trace_id, "trace_list");
+  assert.equal(result.execution_result?.ok, true);
+  assert.equal(result.execution_result?.stopped, false);
+  assert.equal(result.execution_result?.results.length, 2);
+  assert.deepEqual(calls, [
+    {
+      action: "create_doc",
+      payload: {
+        title: "demo",
+      },
+    },
+    {
+      action: "list_company_brain_docs",
+      payload: {
+        limit: 2,
+      },
+    },
+  ]);
+});
+
+test("executePlannedUserInput stops multi-step execution on middle failure and returns error", async () => {
+  const calls = [];
+  const result = await executePlannedUserInput({
+    text: "先建立文件再查詢最後列出",
+    logger: console,
+    async requester() {
+      return JSON.stringify({
+        steps: [
+          {
+            action: "create_doc",
+            params: {
+              title: "demo",
+            },
+          },
+          {
+            action: "search_company_brain_docs",
+            params: {
+              q: "demo",
+            },
+          },
+          {
+            action: "list_company_brain_docs",
+            params: {
+              limit: 5,
+            },
+          },
+        ],
+      });
+    },
+    async dispatcher({ action, payload }) {
+      calls.push({ action, payload });
+      if (action === "search_company_brain_docs") {
+        return {
+          ok: false,
+          action,
+          error: "tool_error",
+          data: {
+            stopped: true,
+            stop_reason: "tool_error",
+          },
+          trace_id: "trace_search_fail",
+        };
+      }
+      return {
+        ok: true,
+        action,
+        data: { echoed: payload },
+        trace_id: "trace_create",
+      };
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "tool_error");
+  assert.equal(result.trace_id, "trace_search_fail");
+  assert.equal(result.execution_result?.ok, false);
+  assert.equal(result.execution_result?.stopped, true);
+  assert.equal(result.execution_result?.stopped_at_step, 1);
+  assert.equal(result.execution_result?.error, "tool_error");
+  assert.equal(result.execution_result?.results.length, 2);
+  assert.deepEqual(calls, [
+    {
+      action: "create_doc",
+      payload: {
+        title: "demo",
+      },
+    },
+    {
+      action: "search_company_brain_docs",
+      payload: {
+        q: "demo",
+      },
+    },
+  ]);
 });
 
 test("runPlannerPreset builds create_and_list_doc steps and returns preset output", async () => {
