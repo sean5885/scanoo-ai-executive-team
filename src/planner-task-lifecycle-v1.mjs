@@ -662,6 +662,9 @@ function buildPlannerTaskDecisionItem(task = {}) {
     progress_summary: cleanText(task?.progress_summary) || null,
     note: cleanText(task?.note) || null,
     risks: normalizeStringList(task?.risks, 3),
+    source_title: cleanText(task?.source_title) || null,
+    source_doc_id: cleanText(task?.source_doc_id) || null,
+    source_summary: cleanText(task?.source_summary) || null,
   };
 }
 
