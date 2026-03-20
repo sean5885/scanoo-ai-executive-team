@@ -92,6 +92,18 @@ export function buildCheckpointSummary(checkpoint = {}, { maxChars = 900 } = {})
   return trimTextForBudget(raw, maxChars, { preserveTail: false });
 }
 
+export function buildCompactSystemPrompt(role = "", rules = []) {
+  const normalizedRole = normalizeText(role);
+  const normalizedRules = uniqueLines([
+    "只依據提供內容與已觀察到的工具輸出。",
+    "證據不足時明確標示待確認，不要猜測。",
+    "輸出精簡、結構化、避免重複。",
+    ...(Array.isArray(rules) ? rules : []),
+  ]);
+
+  return [normalizedRole, normalizedRules.join(" ")].filter(Boolean).join(" ");
+}
+
 function compactSection(section, stage, maxChars) {
   const fullText = normalizeText(section.text || "");
   const summaryText = normalizeText(section.summaryText || "");
@@ -121,11 +133,57 @@ function compactSection(section, stage, maxChars) {
     : "";
 }
 
+function escapeXml(value = "") {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
+}
+
+function buildXmlPrompt({ systemPrompt = "", stage = "normal", sections = [] } = {}) {
+  const sectionBlocks = sections
+    .map(
+      (section) => [
+        `<section name="${escapeXml(section.name || section.label || "section")}" required="${section.required ? "true" : "false"}">`,
+        `<label>${escapeXml(section.label || section.name || "section")}</label>`,
+        `<content>${escapeXml(section.text || "")}</content>`,
+        "</section>",
+      ].join(""),
+    )
+    .join("");
+
+  return [
+    `<lobster_prompt format="xml" stage="${escapeXml(stage)}">`,
+    `<system_role>${escapeXml(systemPrompt)}</system_role>`,
+    "<reasoning_policy>",
+    "<thought_visibility>internal_only</thought_visibility>",
+    "<instruction>Before any action, reason internally about the goal, evidence, expected result, and risks. Do not reveal private chain-of-thought in the final answer.</instruction>",
+    "</reasoning_policy>",
+    "<anti_hallucination>",
+    "<rule>Use only the supplied context and observed tool output.</rule>",
+    "<rule>If a file path or file content was not directly observed, mark it as unverified and do not invent it.</rule>",
+    "<rule>Do not claim that ls or find was run unless their output is explicitly present in the context.</rule>",
+    "<rule>When evidence is incomplete, say what is unknown instead of guessing.</rule>",
+    "</anti_hallucination>",
+    "<self_check>",
+    "<rule>Before finalizing, verify the draft satisfies the latest user intent.</rule>",
+    "<rule>Before finalizing, verify each material claim is supported by supplied evidence or clearly marked uncertain.</rule>",
+    "</self_check>",
+    "<sections>",
+    sectionBlocks,
+    "</sections>",
+    "</lobster_prompt>",
+  ].join("");
+}
+
 export function governPromptSections({
   systemPrompt = "",
   sections = [],
   maxTokens = 1600,
   thresholds = DEFAULT_THRESHOLDS,
+  format = "labels",
 } = {}) {
   const normalizedSections = Array.isArray(sections) ? sections : [];
   const baseSections = normalizedSections.map((section) => ({
@@ -134,11 +192,14 @@ export function governPromptSections({
     summaryText: normalizeText(section.summaryText || ""),
   }));
 
-  const rawPrompt = baseSections
-    .filter((section) => section.text)
-    .map((section) => `${section.label}:\n${section.text}`)
-    .join("\n\n");
-  const rawTokens = estimateTokenCount(`${systemPrompt}\n${rawPrompt}`);
+  const rawPrompt =
+    format === "xml"
+      ? buildXmlPrompt({ systemPrompt, stage: "normal", sections: baseSections.filter((section) => section.text) })
+      : baseSections
+          .filter((section) => section.text)
+          .map((section) => `${section.label}:\n${section.text}`)
+          .join("\n\n");
+  const rawTokens = estimateTokenCount(rawPrompt);
   const ratio = maxTokens > 0 ? rawTokens / maxTokens : 0;
   const stage =
     ratio >= thresholds.emergency
@@ -176,7 +237,10 @@ export function governPromptSections({
     totalChars += block.length + 2;
   }
 
-  const prompt = activeSections.map((section) => `${section.label}:\n${section.text}`).join("\n\n");
+  const prompt =
+    format === "xml"
+      ? buildXmlPrompt({ systemPrompt, stage, sections: activeSections })
+      : activeSections.map((section) => `${section.label}:\n${section.text}`).join("\n\n");
   return {
     stage,
     rawTokens,

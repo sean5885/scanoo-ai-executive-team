@@ -65,6 +65,12 @@ Operationally, the runtime modes are:
   - Python subprocess invoked from Node
   - used only for guarded local actions
 
+Repo-managed local service asset:
+
+- LaunchAgent template
+  - `/Users/seanhan/Documents/Playground/config/com.seanhan.lark-kb-http.plist`
+  - intended to run `/Users/seanhan/Documents/Playground/src/index.mjs` as the Playground long-connection bot
+
 ## Runtime Dependencies
 
 - Node.js
@@ -72,6 +78,7 @@ Operationally, the runtime modes are:
 - Lark app credentials
 - optional OpenClaw CLI
 - optional OpenAI-compatible API key
+- optional Python `faster-whisper` runtime for local meeting transcription
 - optional Python 3 for `lobster_security`
 
 More specifically:
@@ -106,6 +113,7 @@ Key values:
 - chunk/search limits
 - embedding dimensions and semantic search top-k
 - LLM endpoint and model
+- meeting audio capture and transcription settings
 - semantic classifier provider and OpenClaw settings
 - lobster-security paths and approval mode
 - lobster-security expected version
@@ -133,7 +141,14 @@ Key values:
   - source of truth for user content and collaboration objects
 
 - OpenAI-compatible LLM
-  - used only for answer generation and comment rewrite
+  - used for answer generation and comment rewrite
+  - may also be used for meeting-audio transcription only when explicitly configured as the meeting transcription provider
+
+- local host microphone via `ffmpeg`
+  - used only for meeting capture on the same machine that runs the long-connection bot
+
+- local Python `faster-whisper`
+  - default meeting-audio transcription path on the same machine that runs the long-connection bot
 
 - OpenClaw runtime
   - used for semantic classification and plugin execution
@@ -180,14 +195,16 @@ From this repo alone, we still cannot confirm:
 
 ## Current Local Machine State
 
-Observed on the current Mac during the latest debugging pass:
+Observed on the current Mac after the latest Playground re-cutover work:
 
-- the Playground LaunchAgent `com.seanhan.lark-kb-http` was intentionally stopped
-- the old LaunchAgent plist and `lark-kb-http` log files were removed after backup
-- the stale launchd disabled flag was cleared after removing that agent
-- `ai-server` remains the only live Lobster long-connection runtime on this machine
+- the repo-managed Playground LaunchAgent plist was restored to `~/Library/LaunchAgents/com.seanhan.lark-kb-http.plist`
+- `com.seanhan.lark-kb-http` is the active long-connection runtime on this machine
+- `src/index.mjs` now runs a startup guard that disables known competing LaunchAgents such as `ai.openclaw.gateway`, `lobster.core`, `lobster.gateway`, and `lobster.worker` before the Playground long-connection listener starts
+- `ai.openclaw.gateway` is currently disabled in `launchctl` on this machine to avoid dual-responder drift
+- the previous `ai-server` launch agents `lobster.core`, `lobster.gateway`, and `lobster.worker` must stay disabled; if they are re-enabled, they can still answer on the same machine and reintroduce dual-responder drift
+- `~/Library/Logs/lark-kb-http.log` confirms `src/index.mjs` is connected through Lark persistent connection
 
 Why this matters:
 
-- Playground code can still be run manually or re-enabled later
-- but Lark message behavior on this machine now comes from `ai-server`, not from `/Users/seanhan/Documents/Playground/src/index.mjs`
+- Lark message behavior on this machine now comes from `/Users/seanhan/Documents/Playground/src/index.mjs`
+- if a competing local responder is re-enabled later, the Playground startup guard now attempts to disable it again before serving Lark traffic

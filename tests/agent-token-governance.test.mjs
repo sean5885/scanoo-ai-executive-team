@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildCompactSystemPrompt,
   buildCheckpointSummary,
   compactToolPayload,
   governPromptSections,
@@ -10,6 +11,7 @@ import {
 test("governPromptSections uses summary text when prompt enters rolling stage", () => {
   const governed = governPromptSections({
     systemPrompt: "system",
+    format: "xml",
     maxTokens: 120,
     sections: [
       {
@@ -38,8 +40,11 @@ test("governPromptSections uses summary text when prompt enters rolling stage", 
   });
 
   assert.ok(["rolling", "emergency"].includes(governed.stage));
+  assert.match(governed.prompt, /<lobster_prompt/);
+  assert.match(governed.prompt, /<thought_visibility>internal_only<\/thought_visibility>/);
   assert.match(governed.prompt, /精簡摘要/);
   assert.doesNotMatch(governed.prompt, /A{200}/);
+  assert.match(governed.prompt, /Do not claim that ls or find was run unless their output is explicitly present/);
 });
 
 test("buildCheckpointSummary keeps structured fields and omits overflow", () => {
@@ -67,4 +72,17 @@ test("compactToolPayload trims large arrays and long strings", () => {
   assert.ok(compacted.items.length <= 9);
   assert.equal(typeof compacted.items.at(-1), "object");
   assert.ok(compacted.answer.length < 800);
+});
+
+test("buildCompactSystemPrompt deduplicates shared rules into a short prompt", () => {
+  const prompt = buildCompactSystemPrompt("你是摘要助手。", [
+    "只依據提供內容與已觀察到的工具輸出。",
+    "證據不足時明確標示待確認，不要猜測。",
+    "輸出精簡、結構化、避免重複。",
+    "保留關鍵決策。",
+  ]);
+
+  assert.match(prompt, /你是摘要助手/);
+  assert.match(prompt, /保留關鍵決策/);
+  assert.equal(prompt.match(/輸出精簡、結構化、避免重複/g)?.length, 1);
 });

@@ -1,0 +1,455 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+
+import { startHttpServer } from "../src/http-server.mjs";
+import { executiveImprovementStorePath } from "../src/config.mjs";
+import { setupExecutiveTaskStateTestHarness } from "./helpers/executive-task-state-harness.mjs";
+
+setupExecutiveTaskStateTestHarness();
+
+function createLoggerSink() {
+  const calls = [];
+  return {
+    calls,
+    logger: {
+      log() {},
+      info(...args) {
+        calls.push(args);
+      },
+      warn(...args) {
+        calls.push(args);
+      },
+      error(...args) {
+        calls.push(args);
+      },
+    },
+  };
+}
+
+function createAuthorizedOverrides(overrides = {}) {
+  return {
+    getValidUserToken: async () => ({ access_token: "token-1", account_id: "acct-1" }),
+    getStoredAccountContext: async () => ({ account: { id: "acct-1" } }),
+    ...overrides,
+  };
+}
+
+async function startTestServer(t, serviceOverrides) {
+  const sink = createLoggerSink();
+  const server = startHttpServer({
+    listen: false,
+    logger: sink.logger,
+    serviceOverrides: createAuthorizedOverrides(serviceOverrides),
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+  return { server, calls: sink.calls };
+}
+
+async function snapshotFile(filePath) {
+  try {
+    return await fs.readFile(filePath, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+async function restoreFile(filePath, content) {
+  if (content == null) {
+    await fs.rm(filePath, { force: true });
+    return;
+  }
+  await fs.writeFile(filePath, content, "utf8");
+}
+
+test("drive organize preview success route returns trace and handler step logs", async (t) => {
+  const { server, calls } = await startTestServer(t, {
+    resolveDriveRootFolderToken: async () => "fld-root",
+    previewDriveOrganization: async () => ({ task_id: "drive-task-1", items: [{ file_token: "doc-1" }] }),
+  });
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/drive/organize/preview`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ recursive: true }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.match(payload.trace_id, /^http_/);
+  assert.equal(payload.workflow_state, "awaiting_review");
+  assert.equal(payload.verification, null);
+  assert.equal(calls.some((entry) => entry[1]?.event === "drive_organize_started"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "drive_organize_completed"), true);
+});
+
+test("wiki organize preview success route returns trace and handler step logs", async (t) => {
+  const { server, calls } = await startTestServer(t, {
+    previewWikiOrganization: async () => ({ items: [{ node_token: "wiki-1" }] }),
+  });
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/wiki/organize/preview`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ space_id: "space-1" }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.match(payload.trace_id, /^http_/);
+  assert.equal(payload.workflow_state, "awaiting_review");
+  assert.equal(payload.verification, null);
+  assert.equal(calls.some((entry) => entry[1]?.event === "wiki_organize_started"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "wiki_organize_completed"), true);
+});
+
+test("drive organize apply success route returns trace and handler step logs", async (t) => {
+  const { server, calls } = await startTestServer(t, {
+    resolveDriveRootFolderToken: async () => "fld-root",
+    previewDriveOrganization: async () => ({ task_id: "drive-task-preview-1", items: [{ file_token: "doc-1" }] }),
+    applyDriveOrganization: async () => ({ task_id: "drive-task-apply-1", moved: 3 }),
+  });
+
+  const { port } = server.address();
+  const previewResponse = await fetch(`http://127.0.0.1:${port}/api/drive/organize/preview`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ recursive: true }),
+  });
+  assert.equal(previewResponse.status, 200);
+  const response = await fetch(`http://127.0.0.1:${port}/api/drive/organize/apply`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ recursive: true }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.match(payload.trace_id, /^http_/);
+  assert.equal(payload.workflow_state, "completed");
+  assert.equal(payload.verification?.pass, true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "drive_organize_started"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "drive_organize_completed"), true);
+});
+
+test("wiki organize apply success route returns trace and handler step logs", async (t) => {
+  const { server, calls } = await startTestServer(t, {
+    previewWikiOrganization: async () => ({ items: [{ node_token: "wiki-1" }] }),
+    applyWikiOrganization: async () => ({ moved: [{ node_token: "wiki-1" }] }),
+  });
+
+  const { port } = server.address();
+  const previewResponse = await fetch(`http://127.0.0.1:${port}/api/wiki/organize/preview`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ space_id: "space-1" }),
+  });
+  assert.equal(previewResponse.status, 200);
+  const response = await fetch(`http://127.0.0.1:${port}/api/wiki/organize/apply`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ space_id: "space-1" }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.match(payload.trace_id, /^http_/);
+  assert.equal(payload.workflow_state, "completed");
+  assert.equal(payload.verification?.pass, true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "wiki_organize_started"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "wiki_organize_completed"), true);
+});
+
+test("cloud doc apply route requires prior preview and cannot bypass verifier path", async (t) => {
+  const { server } = await startTestServer(t, {
+    resolveDriveRootFolderToken: async () => "fld-root",
+    applyDriveOrganization: async () => ({ task_id: "drive-task-apply-1", moved: 3 }),
+  });
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/drive/organize/apply`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ recursive: true }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 409);
+  assert.equal(payload.error, "preview_required");
+});
+
+test("bitable records list and search success routes return trace and handler step logs", async (t) => {
+  const { server, calls } = await startTestServer(t, {
+    listBitableRecords: async () => ({ items: [{ record_id: "rec-1" }] }),
+    searchBitableRecords: async () => ({ items: [{ record_id: "rec-2" }] }),
+  });
+
+  const { port } = server.address();
+  const listResponse = await fetch(`http://127.0.0.1:${port}/api/bitable/apps/app-1/tables/tbl-1/records`);
+  const listPayload = await listResponse.json();
+  assert.equal(listResponse.status, 200);
+  assert.match(listPayload.trace_id, /^http_/);
+  assert.equal(calls.some((entry) => entry[1]?.event === "bitable_records_list_started"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "bitable_records_list_completed"), true);
+
+  const searchResponse = await fetch(`http://127.0.0.1:${port}/api/bitable/apps/app-1/tables/tbl-1/records/search`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ filter: { conditions: [] } }),
+  });
+  const searchPayload = await searchResponse.json();
+  assert.equal(searchResponse.status, 200);
+  assert.match(searchPayload.trace_id, /^http_/);
+  assert.equal(calls.some((entry) => entry[1]?.event === "bitable_records_search_started"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "bitable_records_search_completed"), true);
+});
+
+test("bitable record crud success routes return trace and handler step logs", async (t) => {
+  const { server, calls } = await startTestServer(t, {
+    createBitableRecord: async () => ({ record: { record_id: "rec-created" } }),
+    getBitableRecord: async () => ({ record: { record_id: "rec-1" } }),
+    updateBitableRecord: async () => ({ record: { record_id: "rec-1" } }),
+    deleteBitableRecord: async () => ({ deleted: true }),
+  });
+
+  const { port } = server.address();
+
+  const createResponse = await fetch(`http://127.0.0.1:${port}/api/bitable/apps/app-1/tables/tbl-1/records/create`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ fields: { Name: "Alpha" } }),
+  });
+  assert.equal(createResponse.status, 200);
+  assert.match((await createResponse.json()).trace_id, /^http_/);
+
+  const getResponse = await fetch(`http://127.0.0.1:${port}/api/bitable/apps/app-1/tables/tbl-1/records/rec-1`);
+  assert.equal(getResponse.status, 200);
+  assert.match((await getResponse.json()).trace_id, /^http_/);
+
+  const updateResponse = await fetch(`http://127.0.0.1:${port}/api/bitable/apps/app-1/tables/tbl-1/records/rec-1`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ fields: { Name: "Beta" } }),
+  });
+  assert.equal(updateResponse.status, 200);
+  assert.match((await updateResponse.json()).trace_id, /^http_/);
+
+  const deleteResponse = await fetch(`http://127.0.0.1:${port}/api/bitable/apps/app-1/tables/tbl-1/records/rec-1`, {
+    method: "DELETE",
+  });
+  assert.equal(deleteResponse.status, 200);
+  assert.match((await deleteResponse.json()).trace_id, /^http_/);
+
+  assert.equal(calls.some((entry) => entry[1]?.event === "bitable_record_create_started"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "bitable_record_create_completed"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "bitable_record_get_started"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "bitable_record_get_completed"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "bitable_record_update_started"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "bitable_record_update_completed"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "bitable_record_delete_started"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "bitable_record_delete_completed"), true);
+});
+
+test("calendar freebusy success route returns trace and handler step logs", async (t) => {
+  const { server, calls } = await startTestServer(t, {
+    listFreebusy: async () => ({ items: [{ id: "fb-1", busy: true }] }),
+  });
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/calendar/freebusy`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ time_min: "2026-03-17T09:00:00+08:00", time_max: "2026-03-17T10:00:00+08:00" }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.match(payload.trace_id, /^http_/);
+  assert.equal(calls.some((entry) => entry[1]?.event === "calendar_freebusy_started"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "calendar_freebusy_completed"), true);
+});
+
+test("calendar create event success route returns trace and handler step logs", async (t) => {
+  const { server, calls } = await startTestServer(t, {
+    createCalendarEvent: async () => ({ event: { event_id: "evt-1" } }),
+  });
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/calendar/events/create`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      calendar_id: "cal-1",
+      summary: "Weekly sync",
+      start_time: "2026-03-17T09:00:00+08:00",
+      end_time: "2026-03-17T10:00:00+08:00",
+    }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.match(payload.trace_id, /^http_/);
+  assert.equal(calls.some((entry) => entry[1]?.event === "calendar_create_event_started"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "calendar_create_event_completed"), true);
+});
+
+test("task comments list and create success routes return trace and handler step logs", async (t) => {
+  const { server, calls } = await startTestServer(t, {
+    listTaskComments: async () => ({ items: [{ comment_id: "c-1" }] }),
+    createTaskComment: async () => ({ comment: { comment_id: "c-2" } }),
+  });
+
+  const { port } = server.address();
+  const listResponse = await fetch(`http://127.0.0.1:${port}/api/tasks/task-1/comments`);
+  const listPayload = await listResponse.json();
+  assert.equal(listResponse.status, 200);
+  assert.match(listPayload.trace_id, /^http_/);
+  assert.equal(calls.some((entry) => entry[1]?.event === "task_comments_list_started"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "task_comments_list_completed"), true);
+
+  const createResponse = await fetch(`http://127.0.0.1:${port}/api/tasks/task-1/comments`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ content: "please review" }),
+  });
+  const createPayload = await createResponse.json();
+  assert.equal(createResponse.status, 200);
+  assert.match(createPayload.trace_id, /^http_/);
+  assert.equal(calls.some((entry) => entry[1]?.event === "task_comment_create_started"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "task_comment_create_completed"), true);
+});
+
+test("task get/create and comment update/delete success routes return trace and handler step logs", async (t) => {
+  const { server, calls } = await startTestServer(t, {
+    getTask: async () => ({ task: { task_id: "task-1" } }),
+    createTask: async () => ({ task: { task_id: "task-created" } }),
+    updateTaskComment: async () => ({ comment: { comment_id: "c-1" } }),
+    deleteTaskComment: async () => ({ deleted: true }),
+  });
+
+  const { port } = server.address();
+
+  const getTaskResponse = await fetch(`http://127.0.0.1:${port}/api/tasks/task-1`);
+  assert.equal(getTaskResponse.status, 200);
+  assert.match((await getTaskResponse.json()).trace_id, /^http_/);
+
+  const createTaskResponse = await fetch(`http://127.0.0.1:${port}/api/tasks/create`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ summary: "Ship feature" }),
+  });
+  assert.equal(createTaskResponse.status, 200);
+  assert.match((await createTaskResponse.json()).trace_id, /^http_/);
+
+  const updateCommentResponse = await fetch(`http://127.0.0.1:${port}/api/tasks/task-1/comments/c-1`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ content: "updated comment" }),
+  });
+  assert.equal(updateCommentResponse.status, 200);
+  assert.match((await updateCommentResponse.json()).trace_id, /^http_/);
+
+  const deleteCommentResponse = await fetch(`http://127.0.0.1:${port}/api/tasks/task-1/comments/c-1`, {
+    method: "DELETE",
+  });
+  assert.equal(deleteCommentResponse.status, 200);
+  assert.match((await deleteCommentResponse.json()).trace_id, /^http_/);
+
+  assert.equal(calls.some((entry) => entry[1]?.event === "task_get_started"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "task_get_completed"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "task_create_started"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "task_create_completed"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "task_comment_update_started"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "task_comment_update_completed"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "task_comment_delete_started"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "task_comment_delete_completed"), true);
+});
+
+test("improvement workflow routes support list approve reject apply", async (t) => {
+  const snapshot = await snapshotFile(executiveImprovementStorePath);
+  t.after(async () => {
+    await restoreFile(executiveImprovementStorePath, snapshot);
+  });
+  await fs.writeFile(executiveImprovementStorePath, JSON.stringify({
+    items: [
+      {
+        id: "proposal-1",
+        task_id: "task-1",
+        account_id: "acct-1",
+        session_key: "sess-1",
+        reflection_id: "reflection-1",
+        category: "verification_improvement",
+        mode: "proposal_only",
+        title: "Tighten meeting owner check",
+        description: "owner missing should stay blocked",
+        target: "executive-verifier",
+        source_error_type: "missing_owner",
+        status: "pending_approval",
+        created_at: "2026-03-18T00:00:00.000Z",
+        updated_at: "2026-03-18T00:00:00.000Z",
+      },
+      {
+        id: "proposal-2",
+        task_id: "task-1",
+        account_id: "acct-1",
+        session_key: "sess-1",
+        reflection_id: "reflection-1",
+        category: "prompt_improvement",
+        mode: "proposal_only",
+        title: "Shorten robotic status wording",
+        description: "replace robotic fallback wording",
+        target: "agent-dispatcher",
+        source_error_type: "robotic_response",
+        status: "pending_approval",
+        created_at: "2026-03-18T00:00:00.000Z",
+        updated_at: "2026-03-18T00:00:00.000Z",
+      },
+    ],
+  }, null, 2));
+
+  const { server, calls } = await startTestServer(t, {});
+  const { port } = server.address();
+
+  const listResponse = await fetch(`http://127.0.0.1:${port}/agent/improvements?account_id=acct-1`);
+  const listPayload = await listResponse.json();
+  assert.equal(listResponse.status, 200);
+  assert.equal(listPayload.total, 2);
+  assert.match(listPayload.trace_id, /^http_/);
+
+  const approveResponse = await fetch(`http://127.0.0.1:${port}/agent/improvements/proposal-1/approve`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ actor: "sean" }),
+  });
+  const approvePayload = await approveResponse.json();
+  assert.equal(approveResponse.status, 200);
+  assert.equal(approvePayload.item.status, "approved");
+
+  const applyResponse = await fetch(`http://127.0.0.1:${port}/agent/improvements/proposal-1/apply`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ actor: "sean" }),
+  });
+  const applyPayload = await applyResponse.json();
+  assert.equal(applyResponse.status, 200);
+  assert.equal(applyPayload.item.status, "applied");
+
+  const rejectResponse = await fetch(`http://127.0.0.1:${port}/agent/improvements/proposal-2/reject`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ actor: "sean" }),
+  });
+  const rejectPayload = await rejectResponse.json();
+  assert.equal(rejectResponse.status, 200);
+  assert.equal(rejectPayload.item.status, "rejected");
+
+  assert.equal(calls.some((entry) => entry[1]?.event === "improvement_list_started"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "improvement_list_completed"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "improvement_resolution_started"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "improvement_resolution_completed"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "improvement_apply_started"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "improvement_apply_completed"), true);
+});

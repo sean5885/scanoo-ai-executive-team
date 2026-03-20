@@ -123,6 +123,40 @@ export function getAccountContextByOpenId(openId) {
   return token ? { account, token } : null;
 }
 
+export function getAccountPreference(accountId, prefKey) {
+  if (!accountId || !prefKey) {
+    return null;
+  }
+  const row = db
+    .prepare("SELECT pref_value FROM account_preferences WHERE account_id = ? AND pref_key = ?")
+    .get(accountId, prefKey);
+  return row?.pref_value ?? null;
+}
+
+export function setAccountPreference(accountId, prefKey, prefValue) {
+  if (!accountId || !prefKey) {
+    return null;
+  }
+  const timestamp = nowIso();
+  db.prepare(`
+    INSERT INTO account_preferences (
+      account_id, pref_key, pref_value, created_at, updated_at
+    ) VALUES (
+      @account_id, @pref_key, @pref_value, @created_at, @updated_at
+    )
+    ON CONFLICT(account_id, pref_key) DO UPDATE SET
+      pref_value = excluded.pref_value,
+      updated_at = excluded.updated_at
+  `).run({
+    account_id: accountId,
+    pref_key: prefKey,
+    pref_value: prefValue ?? null,
+    created_at: timestamp,
+    updated_at: timestamp,
+  });
+  return getAccountPreference(accountId, prefKey);
+}
+
 export function createSyncJob(accountId, mode, cursor = {}) {
   const timestamp = nowIso();
   const jobId = id();
@@ -221,6 +255,151 @@ export function getDocumentByExternalKey(accountId, externalKey) {
     .get(accountId, externalKey) || null;
 }
 
+export function getDocumentByDocumentId(accountId, documentId) {
+  return db
+    .prepare("SELECT * FROM lark_documents WHERE account_id = ? AND document_id = ?")
+    .get(accountId, documentId) || null;
+}
+
+export function listDocumentsByStatus(accountId, status, limit = 50) {
+  return db.prepare(`
+    SELECT
+      document_id,
+      external_key,
+      status,
+      failure_reason,
+      indexed_at,
+      verified_at,
+      created_at,
+      updated_at
+    FROM lark_documents
+    WHERE account_id = ?
+      AND status = ?
+    ORDER BY updated_at DESC
+    LIMIT ?
+  `).all(accountId, status, limit);
+}
+
+export function summarizeDocumentLifecycle(accountId) {
+  const rows = db.prepare(`
+    SELECT status, COUNT(*) AS count
+    FROM lark_documents
+    WHERE account_id = ?
+      AND status IS NOT NULL
+    GROUP BY status
+  `).all(accountId);
+
+  const summary = {
+    created: 0,
+    indexed: 0,
+    verified: 0,
+    create_failed: 0,
+    index_failed: 0,
+    verify_failed: 0,
+  };
+
+  for (const row of rows) {
+    if (row?.status in summary) {
+      summary[row.status] = row.count || 0;
+    }
+  }
+
+  return summary;
+}
+
+export function upsertCompanyBrainDoc({ account_id, doc_id, title, source, created_at, creator }) {
+  const timestamp = nowIso();
+  db.prepare(`
+    INSERT INTO company_brain_docs (
+      account_id, doc_id, title, source, created_at, creator_json, updated_at
+    ) VALUES (
+      @account_id, @doc_id, @title, @source, @created_at, @creator_json, @updated_at
+    )
+    ON CONFLICT(account_id, doc_id) DO UPDATE SET
+      title = excluded.title,
+      source = excluded.source,
+      created_at = excluded.created_at,
+      creator_json = excluded.creator_json,
+      updated_at = excluded.updated_at
+  `).run({
+    account_id,
+    doc_id,
+    title: title || null,
+    source: source || null,
+    created_at: created_at || null,
+    creator_json: JSON.stringify(creator || { account_id: null, open_id: null }),
+    updated_at: timestamp,
+  });
+
+  return db
+    .prepare("SELECT account_id, doc_id, title, source, created_at, creator_json, updated_at FROM company_brain_docs WHERE account_id = ? AND doc_id = ?")
+    .get(account_id, doc_id) || null;
+}
+
+// Keep read-side field selection and query execution centralized so the
+// list/detail/search routes stay aligned while Phase 1 only improves clarity.
+const companyBrainDocReadFields = `
+  doc_id,
+  title,
+  source,
+  created_at,
+  creator_json
+`;
+
+function runCompanyBrainReadQuery({ sql, params = [], mode = "all" }) {
+  const statement = db.prepare(sql);
+  if (mode === "get") {
+    return statement.get(...params) || null;
+  }
+  return statement.all(...params);
+}
+
+function buildCompanyBrainReadSelectSql(whereClause, suffix = "") {
+  return `
+    SELECT
+      ${companyBrainDocReadFields}
+    FROM company_brain_docs
+    WHERE ${whereClause}
+    ${suffix}
+  `;
+}
+
+export function listCompanyBrainDocs(accountId, limit = 50) {
+  return runCompanyBrainReadQuery({
+    sql: buildCompanyBrainReadSelectSql("account_id = ?", "ORDER BY updated_at DESC LIMIT ?"),
+    params: [accountId, limit],
+  });
+}
+
+export function getCompanyBrainDoc(accountId, docId) {
+  return runCompanyBrainReadQuery({
+    sql: buildCompanyBrainReadSelectSql("account_id = ? AND doc_id = ?", "LIMIT 1"),
+    params: [accountId, docId],
+    mode: "get",
+  });
+}
+
+export function searchCompanyBrainDocs(accountId, query, limit = 50) {
+  const normalizedQuery = String(query || "").trim();
+  if (!normalizedQuery) {
+    return [];
+  }
+
+  const likeQuery = `%${normalizedQuery}%`;
+  return runCompanyBrainReadQuery({
+    sql: buildCompanyBrainReadSelectSql(
+      `account_id = ?
+      AND (
+        doc_id = ?
+        OR doc_id LIKE ?
+        OR title LIKE ?
+      )`,
+      "ORDER BY updated_at DESC LIMIT ?",
+    ),
+    params: [accountId, normalizedQuery, likeQuery, likeQuery, limit],
+  });
+}
+
 export function upsertDocument(document) {
   const timestamp = nowIso();
   const existing = getDocumentByExternalKey(document.account_id, document.external_key);
@@ -230,11 +409,11 @@ export function upsertDocument(document) {
     INSERT INTO lark_documents (
       id, account_id, source_id, source_type, external_key, external_id, file_token, node_id,
       document_id, space_id, title, url, parent_path, revision, updated_at_remote, content_hash,
-      raw_text, inactive_reason, acl_json, meta_json, active, synced_at, created_at, updated_at
+      raw_text, inactive_reason, acl_json, meta_json, active, status, indexed_at, verified_at, failure_reason, synced_at, created_at, updated_at
     ) VALUES (
       @id, @account_id, @source_id, @source_type, @external_key, @external_id, @file_token, @node_id,
       @document_id, @space_id, @title, @url, @parent_path, @revision, @updated_at_remote, @content_hash,
-      @raw_text, NULL, @acl_json, @meta_json, @active, @synced_at, @created_at, @updated_at
+      @raw_text, NULL, @acl_json, @meta_json, @active, @status, @indexed_at, @verified_at, @failure_reason, @synced_at, @created_at, @updated_at
     )
     ON CONFLICT(account_id, external_key) DO UPDATE SET
       source_id = excluded.source_id,
@@ -255,6 +434,10 @@ export function upsertDocument(document) {
       acl_json = excluded.acl_json,
       meta_json = excluded.meta_json,
       active = excluded.active,
+      status = excluded.status,
+      indexed_at = excluded.indexed_at,
+      verified_at = excluded.verified_at,
+      failure_reason = excluded.failure_reason,
       synced_at = excluded.synced_at,
       updated_at = excluded.updated_at
   `).run({
@@ -278,12 +461,20 @@ export function upsertDocument(document) {
     acl_json: document.acl_json ? JSON.stringify(document.acl_json) : null,
     meta_json: document.meta_json ? JSON.stringify(document.meta_json) : null,
     active: document.active ?? 1,
+    status: document.status || null,
+    indexed_at: document.indexed_at || null,
+    verified_at: document.verified_at || null,
+    failure_reason: document.failure_reason || null,
     synced_at: timestamp,
     created_at: timestamp,
     updated_at: timestamp,
   });
 
   return db.prepare("SELECT * FROM lark_documents WHERE id = ?").get(documentId);
+}
+
+export function runRepositoryTransaction(callback) {
+  return db.transaction(callback)();
 }
 
 export function touchDocumentSeen(accountId, externalKey, title, updatedAtRemote, revision) {
@@ -481,7 +672,7 @@ export function searchChunksBySubstring(accountId, rawQuery, limit) {
       0 AS rank
     FROM lark_chunks c
     JOIN lark_documents d ON d.id = c.document_id
-    WHERE c.account_id = ?
+    WHERE c.account_id = @account_id
       AND c.active = 1
       AND d.active = 1
       AND (
@@ -546,4 +737,29 @@ export function getSyncSummary(accountId) {
     FROM lark_documents
     WHERE account_id = ?
   `).get(accountId);
+}
+
+export function listIndexedDocumentsForOrganization(accountId, limit = 400) {
+  return db.prepare(`
+    SELECT
+      id,
+      title,
+      url,
+      parent_path,
+      source_type,
+      raw_text,
+      document_id,
+      file_token,
+      node_id,
+      space_id,
+      synced_at,
+      updated_at_remote
+    FROM lark_documents
+    WHERE account_id = ?
+      AND active = 1
+      AND COALESCE(TRIM(raw_text), '') <> ''
+    ORDER BY
+      COALESCE(updated_at_remote, synced_at, updated_at) DESC
+    LIMIT ?
+  `).all(accountId, limit);
 }

@@ -8,8 +8,16 @@ import {
   llmApiKey,
   llmBaseUrl,
   llmModel,
+  llmTemperature,
+  llmTopP,
 } from "./config.mjs";
-import { buildCheckpointSummary, compactListItems, governPromptSections, trimTextForBudget } from "./agent-token-governance.mjs";
+import {
+  buildCheckpointSummary,
+  buildCompactSystemPrompt,
+  compactListItems,
+  governPromptSections,
+  trimTextForBudget,
+} from "./agent-token-governance.mjs";
 import { getWorkflowCheckpoint, updateWorkflowCheckpoint } from "./agent-workflow-state.mjs";
 import { getDocument, listDocumentComments, resolveDocumentComment, updateDocument } from "./lark-content.mjs";
 
@@ -40,12 +48,22 @@ async function collectDocumentComments(accessToken, documentId, { includeSolved 
 function summarizeComments(comments) {
   return comments.map((comment, index) => {
     const replies = comment.replies
-      .map((reply) => `  - 回覆：${reply.text || "(空回覆)"}`)
+      .map((reply) =>
+        [
+          `  - 回覆：${reply.text || "(空回覆)"}`,
+          Array.isArray(reply.images) && reply.images.length ? `    附圖：${reply.images.length} 張` : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      )
       .join("\n");
     return [
       `${index + 1}. comment_id=${comment.comment_id || "unknown"}`,
       `   引用內容：${comment.quote || "(沒有引用文字)"}`,
       `   評論內容：${comment.latest_reply_text || "(沒有評論文字)"}`,
+      Array.isArray(comment.replies) && comment.replies.some((reply) => Array.isArray(reply.images) && reply.images.length)
+        ? `   評論附圖：${comment.replies.reduce((sum, reply) => sum + (Array.isArray(reply.images) ? reply.images.length : 0), 0)} 張`
+        : "",
       replies,
     ]
       .filter(Boolean)
@@ -57,6 +75,18 @@ function extractDocumentStructure(content) {
   const lines = normalizeText(content).split("\n");
   const headings = lines.filter((line) => /^#{1,6}\s/.test(line)).slice(0, 12);
   return headings.length ? headings : lines.slice(0, 12);
+}
+
+function compareDocumentStructure(originalContent, rewrittenContent) {
+  const original = extractDocumentStructure(originalContent);
+  const rewritten = extractDocumentStructure(rewrittenContent);
+  if (!original.length) {
+    return true;
+  }
+  if (rewritten.length < original.length) {
+    return false;
+  }
+  return original.every((line, index) => normalizeText(rewritten[index]) === normalizeText(line));
 }
 
 function collectFocusedExcerpts(content, comments = []) {
@@ -94,9 +124,13 @@ export function buildRewritePromptInput(document, comments, checkpoint = null) {
     maxItems: 8,
     maxItemChars: 260,
   });
+  const systemPrompt = buildCompactSystemPrompt("你是文件編修助手。", [
+    "根據評論修正文檔，保留原本語言與結構。",
+    "不要輸出 JSON、表格或程式碼框。",
+  ]);
   const governed = governPromptSections({
-    systemPrompt:
-      "你是文件編修助手。根據評論修正文檔，保留原本語言與結構，不加入不存在的事實，不輸出 JSON、表格或程式碼框。",
+    systemPrompt,
+    format: "xml",
     maxTokens: docRewritePromptMaxTokens,
     thresholds: {
       light: agentPromptLightRatio,
@@ -108,7 +142,7 @@ export function buildRewritePromptInput(document, comments, checkpoint = null) {
         name: "task_goal",
         label: "task_goal",
         text:
-          "輸出兩段：<<SUMMARY>> 列 1 到 6 條修改重點；<<CONTENT>> 輸出完整修訂後 Markdown。已進入 checkpoint 的舊資訊不要重複展開。",
+          "輸出兩段：<<SUMMARY>> 列 1 到 6 條修改重點；<<CONTENT>> 輸出完整修訂後 Markdown。已進入 checkpoint 的舊資訊不要重複展開。若評論要求的事實無法從文檔或評論證明，保留原文並在摘要中標示待確認。",
         required: true,
         maxTokens: 110,
       },
@@ -154,8 +188,7 @@ export function buildRewritePromptInput(document, comments, checkpoint = null) {
   });
 
   return {
-    systemPrompt:
-      "你是文件編修助手。根據評論修正文檔，保留原本語言與結構，不加入不存在的事實，不輸出 JSON、表格或程式碼框。",
+    systemPrompt,
     prompt: governed.prompt,
     governance: governed,
   };
@@ -250,6 +283,29 @@ function applyParagraphPatchPlan(originalContent, patchPlan = []) {
   return [...before, ...(patch.after || []), ...after].join("\n\n").trim();
 }
 
+export function buildDocRewriteStructuredResult({
+  originalContent = "",
+  rewrittenContent = "",
+  patchPlan = [],
+  changeSummary = [],
+  applied = false,
+  documentId = "",
+  title = "",
+  updateResult = null,
+} = {}) {
+  return {
+    document_id: documentId || "",
+    title: title || "",
+    change_summary: Array.isArray(changeSummary) ? changeSummary : [],
+    patch_plan: Array.isArray(patchPlan) ? patchPlan : [],
+    before_excerpt: splitParagraphs(originalContent).slice(0, 3),
+    after_excerpt: splitParagraphs(rewrittenContent).slice(0, 3),
+    structure_preserved: compareDocumentStructure(originalContent, rewrittenContent),
+    applied: applied === true,
+    update_result: updateResult || null,
+  };
+}
+
 async function rewriteWithModel(document, comments, checkpoint = null) {
   if (!llmApiKey) {
     throw new Error("missing_llm_api_key_for_comment_rewrite");
@@ -265,7 +321,8 @@ async function rewriteWithModel(document, comments, checkpoint = null) {
     },
     body: JSON.stringify({
       model: llmModel,
-      temperature: 0.2,
+      temperature: llmTemperature,
+      top_p: llmTopP,
       messages: [
         {
           role: "system",
@@ -362,6 +419,17 @@ export async function rewriteDocumentFromComments(
     },
   });
 
+  const structuredResult = buildDocRewriteStructuredResult({
+    originalContent: document.content,
+    rewrittenContent: patchedContent,
+    patchPlan,
+    changeSummary: rewritten.summary,
+    applied: Boolean(apply),
+    documentId: document.document_id,
+    title: document.title,
+    updateResult,
+  });
+
   return {
     ok: true,
     document_id: document.document_id,
@@ -375,6 +443,8 @@ export async function rewriteDocumentFromComments(
     change_summary: rewritten.summary,
     patch_plan: patchPlan,
     revised_content: patchedContent,
+    structured_result: structuredResult,
+    workflow_state: apply ? "applying" : "awaiting_review",
     context_governance: rewritten.context_governance || null,
     update_result: updateResult,
     resolved_comment_ids: resolvedComments.map((item) => item.comment_id),
@@ -398,9 +468,22 @@ export async function applyRewrittenDocument(
       .map((commentId) => resolveDocumentComment(accessToken, documentId, commentId, true, "docx")),
   );
 
+  const structuredResult = buildDocRewriteStructuredResult({
+    originalContent: currentDocument.content,
+    rewrittenContent: nextContent,
+    patchPlan,
+    changeSummary: [],
+    applied: true,
+    documentId,
+    title: currentDocument.title,
+    updateResult,
+  });
+
   return {
     update_result: updateResult,
     applied_patch_count: Array.isArray(patchPlan) ? patchPlan.length : 0,
     resolved_comment_ids: resolvedComments.map((item) => item.comment_id),
+    structured_result: structuredResult,
+    workflow_state: "applying",
   };
 }

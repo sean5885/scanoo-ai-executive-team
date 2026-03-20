@@ -1,0 +1,357 @@
+{
+  "version": "v1",
+  "actions": {
+    "create_doc": {
+      "input_schema": {
+        "type": "object",
+        "required": ["title"],
+        "properties": {
+          "title": { "type": "string" },
+          "folder_token": { "type": ["string", "null"] }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["ok", "action", "trace_id"],
+        "properties": {
+          "ok": { "type": "boolean" },
+          "action": { "type": "string" },
+          "trace_id": { "type": ["string", "null"] },
+          "data": {
+            "type": "object",
+            "required": [
+              "account_id",
+              "auth_mode",
+              "document_id",
+              "revision_id",
+              "title",
+              "folder_token",
+              "url",
+              "fallback_root",
+              "permission_grant_failed",
+              "permission_grant_skipped",
+              "permission_grant_error",
+              "write_result"
+            ],
+            "properties": {
+              "account_id": { "type": "string" },
+              "auth_mode": { "type": "string" },
+              "document_id": { "type": "string" },
+              "revision_id": { "type": "number" },
+              "title": { "type": "string" },
+              "folder_token": { "type": ["string", "null"] },
+              "url": { "type": "string" },
+              "fallback_root": { "type": "boolean" },
+              "permission_grant_failed": { "type": "boolean" },
+              "permission_grant_skipped": { "type": "boolean" },
+              "permission_grant_error": { "type": ["object", "null"] },
+              "write_result": { "type": ["object", "null"] }
+            }
+          }
+        }
+      },
+      "error_codes": [
+        "missing_user_access_token",
+        "internal_error"
+      ]
+    },
+    "list_company_brain_docs": {
+      "input_schema": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "limit": { "type": ["number", "string", "null"] }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["ok", "action", "trace_id"],
+        "properties": {
+          "ok": { "type": "boolean" },
+          "action": { "type": "string" },
+          "trace_id": { "type": ["string", "null"] },
+          "data": {
+            "type": "object",
+            "required": ["account_id", "auth_mode", "limit", "total", "items"],
+            "properties": {
+              "account_id": { "type": "string" },
+              "auth_mode": { "type": "string" },
+              "limit": { "type": "number" },
+              "total": { "type": "number" },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["doc_id", "title", "source", "created_at", "creator"],
+                  "properties": {
+                    "doc_id": { "type": "string" },
+                    "title": { "type": "string" },
+                    "source": { "type": "string" },
+                    "created_at": { "type": "string" },
+                    "creator": {
+                      "type": "object",
+                      "required": ["account_id", "open_id"],
+                      "properties": {
+                        "account_id": { "type": "string" },
+                        "open_id": { "type": "string" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "error_codes": [
+        "missing_user_access_token",
+        "internal_error"
+      ]
+    },
+    "search_company_brain_docs": {
+      "input_schema": {
+        "type": "object",
+        "required": ["q"],
+        "properties": {
+          "q": { "type": "string" },
+          "limit": { "type": ["number", "string", "null"] }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["ok", "action", "trace_id"],
+        "properties": {
+          "ok": { "type": "boolean" },
+          "action": { "type": "string" },
+          "trace_id": { "type": ["string", "null"] },
+          "account_id": { "type": "string" },
+          "auth_mode": { "type": "string" },
+          "q": { "type": "string" },
+          "limit": { "type": "number" },
+          "total": { "type": "number" },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["doc_id", "title", "source", "created_at", "creator"],
+              "properties": {
+                "doc_id": { "type": "string" },
+                "title": { "type": "string" },
+                "source": { "type": "string" },
+                "created_at": { "type": "string" },
+                "creator": {
+                  "type": "object",
+                  "required": ["account_id", "open_id"],
+                  "properties": {
+                    "account_id": { "type": "string" },
+                    "open_id": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "error_codes": [
+        "invalid_query",
+        "missing_user_access_token",
+        "internal_error"
+      ]
+    },
+    "get_company_brain_doc_detail": {
+      "input_schema": {
+        "type": "object",
+        "required": ["doc_id"],
+        "properties": {
+          "doc_id": { "type": "string" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["ok", "action", "trace_id"],
+        "properties": {
+          "ok": { "type": "boolean" },
+          "action": { "type": "string" },
+          "trace_id": { "type": ["string", "null"] },
+          "account_id": { "type": "string" },
+          "auth_mode": { "type": "string" },
+          "item": {
+            "type": "object",
+            "required": ["doc_id", "title", "source", "created_at", "creator"],
+            "properties": {
+              "doc_id": { "type": "string" },
+              "title": { "type": "string" },
+              "source": { "type": "string" },
+              "created_at": { "type": "string" },
+              "creator": {
+                "type": "object",
+                "required": ["account_id", "open_id"],
+                "properties": {
+                  "account_id": { "type": "string" },
+                  "open_id": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "error_codes": [
+        "planner_tool_missing_doc_id:get_company_brain_doc_detail",
+        "not_found",
+        "missing_user_access_token",
+        "internal_error"
+      ]
+    },
+    "get_runtime_info": {
+      "input_schema": {
+        "type": "object",
+        "required": [],
+        "properties": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["ok", "action", "trace_id", "data"],
+        "properties": {
+          "ok": { "type": "boolean" },
+          "action": { "type": "string" },
+          "trace_id": { "type": ["string", "null"] },
+          "data": {
+            "type": "object",
+            "required": ["db_path", "node_pid", "cwd", "service_start_time"],
+            "properties": {
+              "db_path": { "type": "string" },
+              "node_pid": { "type": "number" },
+              "cwd": { "type": "string" },
+              "service_start_time": { "type": "string" }
+            }
+          }
+        }
+      },
+      "error_codes": [
+        "internal_error"
+      ]
+    }
+  },
+  "presets": {
+    "create_and_list_doc": {
+      "input_schema": {
+        "type": "object",
+        "required": ["title"],
+        "properties": {
+          "title": { "type": "string" },
+          "folder_token": { "type": ["string", "null"] },
+          "limit": { "type": ["number", "string", "null"] }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["ok", "preset", "steps", "results", "trace_id", "stopped", "stopped_at_step"],
+        "properties": {
+          "ok": { "type": "boolean" },
+          "preset": { "type": "string" },
+          "steps": { "type": "array" },
+          "results": { "type": "array" },
+          "trace_id": { "type": ["string", "null"] },
+          "stopped": { "type": "boolean" },
+          "stopped_at_step": { "type": ["number", "null"] }
+        }
+      },
+      "error_codes": [
+        "missing_user_access_token",
+        "internal_error"
+      ],
+      "stop_on_error": true
+    },
+    "runtime_and_list_docs": {
+      "input_schema": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "limit": { "type": ["number", "string", "null"] }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["ok", "preset", "steps", "results", "trace_id", "stopped", "stopped_at_step"],
+        "properties": {
+          "ok": { "type": "boolean" },
+          "preset": { "type": "string" },
+          "steps": { "type": "array" },
+          "results": { "type": "array" },
+          "trace_id": { "type": ["string", "null"] },
+          "stopped": { "type": "boolean" },
+          "stopped_at_step": { "type": ["number", "null"] }
+        }
+      },
+      "error_codes": [
+        "missing_user_access_token",
+        "internal_error"
+      ],
+      "stop_on_error": true
+    },
+    "search_and_detail_doc": {
+      "input_schema": {
+        "type": "object",
+        "required": ["q", "doc_id"],
+        "properties": {
+          "q": { "type": "string" },
+          "doc_id": { "type": "string" },
+          "limit": { "type": ["number", "string", "null"] }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["ok", "preset", "steps", "results", "trace_id", "stopped", "stopped_at_step"],
+        "properties": {
+          "ok": { "type": "boolean" },
+          "preset": { "type": "string" },
+          "steps": { "type": "array" },
+          "results": { "type": "array" },
+          "trace_id": { "type": ["string", "null"] },
+          "stopped": { "type": "boolean" },
+          "stopped_at_step": { "type": ["number", "null"] }
+        }
+      },
+      "error_codes": [
+        "invalid_query",
+        "not_found",
+        "missing_user_access_token",
+        "internal_error"
+      ],
+      "stop_on_error": true
+    },
+    "create_search_detail_list_doc": {
+      "input_schema": {
+        "type": "object",
+        "required": ["title", "q"],
+        "properties": {
+          "title": { "type": "string" },
+          "q": { "type": "string" },
+          "folder_token": { "type": ["string", "null"] },
+          "doc_id": { "type": ["string", "null"] },
+          "limit": { "type": ["number", "string", "null"] }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["ok", "preset", "steps", "results", "trace_id", "stopped", "stopped_at_step"],
+        "properties": {
+          "ok": { "type": "boolean" },
+          "preset": { "type": "string" },
+          "steps": { "type": "array" },
+          "results": { "type": "array" },
+          "trace_id": { "type": ["string", "null"] },
+          "stopped": { "type": "boolean" },
+          "stopped_at_step": { "type": ["number", "null"] }
+        }
+      },
+      "error_codes": [
+        "invalid_query",
+        "not_found",
+        "missing_user_access_token",
+        "internal_error"
+      ],
+      "stop_on_error": true
+    }
+  }
+}

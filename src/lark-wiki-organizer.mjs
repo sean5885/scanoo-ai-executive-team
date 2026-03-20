@@ -528,6 +528,10 @@ export async function applyWikiOrganization(accessToken, options = {}) {
     parent_node_token: preview.parent_node_token,
     recursive: preview.recursive,
     include_containers: preview.include_containers,
+    preview_plan: {
+      target_folders: preview.target_folders,
+      moves: preview.moves,
+    },
     created_folders: createdFolders,
     moves_submitted: executedMoves.length,
     moves: executedMoves,

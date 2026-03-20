@@ -13,7 +13,7 @@ This repository is a Lark-first local service for:
 - OpenClaw tool exposure
 - guarded local actions through `lobster_security`
 
-It is not a browser frontend app and it is not a multi-agent planner system.
+It is not a browser frontend app. It now includes a closed-loop executive orchestration layer with compact work-plan synthesis, evidence-based verification, reflection, and improvement proposals, but it is still not a full background-planner system with autonomous worker queues.
 
 ## Architecture Layer vs Runtime Layer
 
@@ -61,6 +61,16 @@ Use [deployment.md](/Users/seanhan/Documents/Playground/docs/system/deployment.m
   - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
 - answer orchestration
   - `/Users/seanhan/Documents/Playground/src/answer-service.mjs`
+- executive orchestration
+  - `/Users/seanhan/Documents/Playground/src/executive-planner.mjs`
+  - `/Users/seanhan/Documents/Playground/src/executive-task-state.mjs`
+  - `/Users/seanhan/Documents/Playground/src/executive-orchestrator.mjs`
+  - `/Users/seanhan/Documents/Playground/src/executive-closed-loop.mjs`
+  - `/Users/seanhan/Documents/Playground/src/executive-lifecycle.mjs`
+  - `/Users/seanhan/Documents/Playground/src/executive-verifier.mjs`
+  - `/Users/seanhan/Documents/Playground/src/executive-reflection.mjs`
+  - `/Users/seanhan/Documents/Playground/src/executive-improvement.mjs`
+  - `/Users/seanhan/Documents/Playground/src/executive-memory.mjs`
 - sync orchestration
   - `/Users/seanhan/Documents/Playground/src/lark-sync-service.mjs`
 - comment suggestion workflow and poller
@@ -141,6 +151,12 @@ These describe code structure and responsibility, not how many processes are run
 - `answer-service.mjs`
   - performs hybrid retrieval and optionally calls an OpenAI-compatible model
 
+- `executive-closed-loop.mjs`
+  - turns execution output into evidence, verification, reflection, and improvement proposals
+
+- `meeting-agent.mjs`
+  - emits structured meeting artifacts and proposal-first knowledge writeback
+
 - `doc-comment-rewrite.mjs`
   - reads a doc, reads comments, builds a patch-oriented rewrite preview, then optionally materializes the approved patch back to the doc
 
@@ -199,6 +215,9 @@ Implemented:
 - capability-lane execution for DM / group / doc / knowledge requests
 - watched-comment polling for rewrite suggestion cards
 - security wrapper bridge
+- evidence-based verification before executive completion
+- reflection and improvement proposal generation after important turns
+- proposal-first memory path for uncertain knowledge writes
 
 Early-stage or partial:
 

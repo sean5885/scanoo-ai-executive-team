@@ -4,6 +4,11 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 ## Core Capabilities
 
+- system audit report for external architecture review:
+  - [Lobster AI Executive System Audit Report v1](/Users/seanhan/Documents/Playground/docs/system/Lobster%20AI%20Executive%20System%20Audit%20Report%20v1.md)
+- skill governance mirrors:
+  - [Skill Routing Map](/Users/seanhan/Documents/Playground/docs/system/skill_routing_map.md)
+  - [Skill Audit Summary](/Users/seanhan/Documents/Playground/docs/system/skill_audit_summary.md)
 - Lark user OAuth
 - Drive / Wiki / Doc browse and write
 - local sync into SQLite
@@ -11,6 +16,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - optional LLM answer generation
 - message / calendar / task operations
 - bitable / sheet / reaction / busy-free operations
+- Bitable share-link parsing so pasted `base/...` URLs can resolve into app/table context
 - comment-driven doc rewrite
 - patch-plan preview before doc rewrite apply
 - rewrite suggestion card for new document comments
@@ -19,14 +25,21 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - guarded local action bridge
 - binding / session / workspace runtime foundation
 - capability-lane routing for DM / group / doc / knowledge requests
+- closed-loop executive planner with shared multi-turn task state, evidence-based verification, reflection, and agent-to-agent handoff across registered agents
 - lane-specific execution strategies for DM / group / doc / knowledge requests
 - structured runtime logging for long-connection event handling and doc resolution debugging
 - prompt-budget governance, external workflow checkpoints, and tool-output compression for AI-heavy paths
-- `/meeting` command workflow for weekly/general meeting summarization, pending confirmation, doc write, and weekly todo tracking
+- XML-governed prompts with anti-hallucination and user-intent self-check rules
+- shared low-variance LLM settings (`temperature=0.1`, clamped `top_p=0.7~0.8`)
+- text/image modality routing so image-only and image+text tasks can bypass the text path
+- Nano Banana-oriented image understanding adapter that returns compact structured image fields before any optional text synthesis
+- DM cloud-document classification preview with recommended owner-role mapping from local indexed docs
+- `/meeting` workflow for chat-scoped meeting capture, optional calendar-backed session binding via `meeting_url`, optional local microphone recording, default local `faster-whisper` transcription, transcript compaction before summary prompting, optional meeting-image structuring, automatic per-meeting Lark doc creation, weekly/general meeting summarization, pending confirmation, doc write, and weekly todo tracking
+- repo-local mirror for externally stored skills used by Lobster operations, including audited Traditional-Chinese first-batch governance docs
 
 ## Architecture Overview
 
-This repo is a local Node service with a Python security subproject. It is not a browser app and not a multi-agent executive server.
+This repo is a local Node service with a Python security subproject. It is not a browser app and not a fully autonomous multi-agent executive server, but it now includes a closed-loop executive orchestration layer for checked-in agents.
 
 Main runtime shape:
 
@@ -45,7 +58,7 @@ Architecture layer vs runtime layer is now split explicitly:
 
 ## Agent Overview
 
-AI-like components exist, but they are limited:
+AI-like components exist, and now include:
 
 - OpenClaw plugin tools
 - OpenClaw-backed semantic classifier
@@ -53,9 +66,12 @@ AI-like components exist, but they are limited:
 - LLM answer generator
 - LLM comment rewrite
 - shared token-governance / checkpoint layer for those AI paths
+- malformed JSON retry for MiniMax/OpenClaw semantic classification and meeting-summary JSON responses
 - command-scoped `/meeting` workflow inside the capability-lane runtime
-
-No planner/router/specialist team is present in this repo.
+- checked-in slash-agent registry
+- closed-loop executive planner
+- shared per-session executive task state
+- multi-turn continuation and agent handoff for registered agents
 
 ## Repo Scale
 
@@ -73,6 +89,8 @@ No planner/router/specialist team is present in this repo.
 - secure local action bridge
 - comment-driven doc rewrite workflow
 - prompt slimming with stable section labels to improve cache-friendly prefixes for repeated LLM calls
+- XML prompt wrapping and anti-hallucination guardrails for answer, rewrite, meeting-summary, and semantic-classifier flows
+- shared compact system-prompt builder so answer / rewrite / meeting / classifier prompts do not repeat the same core rules
 
 ## Partial
 
@@ -81,11 +99,10 @@ No planner/router/specialist team is present in this repo.
 - stronger write safety
 - runtime contract hardening between Node and `lobster_security`
 - provider-side prompt caching cannot be confirmed from repo code, so the repo now uses stable prompt templates plus external checkpoints instead of re-sending large historical context each round
-- `/meeting` currently reuses lane execution plus HTTP workflow instead of a true slash-agent registry, because that registry does not exist in this repo
+- the executive planner is still thin and synchronous; it does not yet run parallel subagents or a background queue
 
 ## Not Implemented
 
-- planner/router/specialist agent system
 - company_brain
 - agent learning pipeline
 - unread-only semantics
@@ -104,4 +121,4 @@ No planner/router/specialist team is present in this repo.
 7. Semantic classifier 現在可 local fallback，但 OpenClaw 品質仍高於本地規則。
 8. Bitable / Sheet 已有 bulk-upsert / replace-batch，但 workflow 仍不算完整產品層。
 9. hosted deployment topology 仍無法從 repo 確認。
-10. capability lanes 已實作，但 downstream full agent registry 仍不存在；這個 repo 仍應被描述為 AI-enabled Lark tool service，不是 planner/specialist agent system。
+10. closed-loop executive orchestration 已落地，但它仍不是背景 worker + 多 subagent 並行的完整 company brain。

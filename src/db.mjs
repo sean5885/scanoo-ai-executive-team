@@ -8,14 +8,19 @@ try {
   fs.chmodSync(path.dirname(ragDbPath), 0o700);
 } catch {}
 
-const db = new Database(ragDbPath);
-try {
-  fs.chmodSync(ragDbPath, 0o600);
-} catch {}
-db.pragma("journal_mode = WAL");
-db.pragma("foreign_keys = ON");
+let currentDb = null;
 
-db.exec(`
+function initializeDb(db) {
+  if (!db) {
+    return db;
+  }
+  try {
+    fs.chmodSync(ragDbPath, 0o600);
+  } catch {}
+  db.pragma("journal_mode = WAL");
+  db.pragma("foreign_keys = ON");
+
+  db.exec(`
   CREATE TABLE IF NOT EXISTS lark_accounts (
     id TEXT PRIMARY KEY,
     open_id TEXT UNIQUE,
@@ -99,6 +104,21 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_lark_documents_account_id ON lark_documents(account_id, active);
   CREATE INDEX IF NOT EXISTS idx_lark_documents_updated_remote ON lark_documents(updated_at_remote);
+
+  CREATE TABLE IF NOT EXISTS company_brain_docs (
+    account_id TEXT NOT NULL,
+    doc_id TEXT NOT NULL,
+    title TEXT,
+    source TEXT,
+    created_at TEXT,
+    creator_json TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (account_id, doc_id),
+    FOREIGN KEY (account_id) REFERENCES lark_accounts(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_company_brain_docs_account_id
+  ON company_brain_docs(account_id, updated_at DESC);
 
   CREATE TABLE IF NOT EXISTS lark_chunks (
     id TEXT PRIMARY KEY,
@@ -205,6 +225,113 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_weekly_todo_tracker_lookup
   ON weekly_todo_tracker(account_id, project_key, status);
+
+  CREATE TABLE IF NOT EXISTS meeting_capture_sessions (
+    id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    chat_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    started_by_open_id TEXT,
+    source_message_id TEXT,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (account_id) REFERENCES lark_accounts(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_meeting_capture_sessions_lookup
+  ON meeting_capture_sessions(account_id, chat_id, status, updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS meeting_capture_entries (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    sender_open_id TEXT,
+    sender_label TEXT,
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(session_id, message_id),
+    FOREIGN KEY (session_id) REFERENCES meeting_capture_sessions(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_meeting_capture_entries_lookup
+  ON meeting_capture_entries(session_id, created_at);
+
+  CREATE TABLE IF NOT EXISTS account_preferences (
+    account_id TEXT NOT NULL,
+    pref_key TEXT NOT NULL,
+    pref_value TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (account_id, pref_key),
+    FOREIGN KEY (account_id) REFERENCES lark_accounts(id) ON DELETE CASCADE
+  );
 `);
+
+  return db;
+}
+
+function getDb() {
+  if (currentDb?.open) {
+    return currentDb;
+  }
+  currentDb = initializeDb(new Database(ragDbPath));
+  return currentDb;
+}
+
+function ensureColumn(tableName, columnName, definitionSql) {
+  const db = getDb();
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all();
+  if (columns.some((column) => column.name === columnName)) {
+    return;
+  }
+  try {
+    db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definitionSql}`);
+  } catch (error) {
+    if (/duplicate column name/i.test(String(error?.message || ""))) {
+      return;
+    }
+    throw error;
+  }
+}
+
+ensureColumn("meeting_capture_sessions", "source_kind", "TEXT");
+ensureColumn("meeting_capture_sessions", "event_id", "TEXT");
+ensureColumn("meeting_capture_sessions", "event_summary", "TEXT");
+ensureColumn("meeting_capture_sessions", "meeting_url", "TEXT");
+ensureColumn("meeting_capture_sessions", "event_start_time", "TEXT");
+ensureColumn("meeting_capture_sessions", "event_end_time", "TEXT");
+ensureColumn("meeting_capture_sessions", "target_document_id", "TEXT");
+ensureColumn("meeting_capture_sessions", "target_document_title", "TEXT");
+ensureColumn("meeting_capture_sessions", "target_document_url", "TEXT");
+ensureColumn("meeting_capture_sessions", "audio_file_path", "TEXT");
+ensureColumn("meeting_capture_sessions", "audio_device_name", "TEXT");
+ensureColumn("meeting_capture_sessions", "audio_pid", "INTEGER");
+ensureColumn("meeting_capture_sessions", "audio_started_at", "TEXT");
+ensureColumn("meeting_capture_sessions", "audio_stopped_at", "TEXT");
+ensureColumn("lark_documents", "status", "TEXT");
+ensureColumn("lark_documents", "indexed_at", "TEXT");
+ensureColumn("lark_documents", "verified_at", "TEXT");
+ensureColumn("lark_documents", "failure_reason", "TEXT");
+
+const db = new Proxy({}, {
+  get(_target, prop) {
+    const value = getDb()[prop];
+    return typeof value === "function" ? value.bind(getDb()) : value;
+  },
+});
+
+export function closeDbForTests() {
+  if (!currentDb?.open) {
+    return;
+  }
+  currentDb.close();
+  currentDb = null;
+}
+
+export function getDbPath() {
+  return ragDbPath;
+}
 
 export default db;

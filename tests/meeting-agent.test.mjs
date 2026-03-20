@@ -4,11 +4,22 @@ import assert from "node:assert/strict";
 import {
   buildMeetingConfirmationCard,
   buildMeetingGroupMessage,
+  buildMeetingStructuredResult,
   classifyMeeting,
   createMeetingCoordinator,
   formatGeneralMeeting,
   formatWeeklyMeeting,
+  parseMeetingCommand,
 } from "../src/meeting-agent.mjs";
+import { closeDbForTests } from "../src/db.mjs";
+import { disposeLarkContentClientForTests } from "../src/lark-content.mjs";
+import { setupExecutiveTaskStateTestHarness } from "./helpers/executive-task-state-harness.mjs";
+
+setupExecutiveTaskStateTestHarness();
+test.after(() => {
+  disposeLarkContentClientForTests();
+  closeDbForTests();
+});
 
 function createCoordinatorHarness() {
   const confirmations = new Map();
@@ -146,6 +157,77 @@ test("classifier defaults ambiguous cases to general", () => {
   assert.equal(result.meeting_type, "general");
 });
 
+test("plain 會議 text can wake meeting workflow from menu button", () => {
+  const parsed = parseMeetingCommand("會議");
+
+  assert.equal(parsed.action, "start_capture");
+  assert.equal(parsed.content, "");
+  assert.equal(parsed.wake_source, "menu_button");
+});
+
+test("natural-language meeting workflow intent wakes the meeting flow", () => {
+  const parsed = parseMeetingCommand("你會一起參會，並做記錄然後給我確認，我同意後，你來寫進第二部分");
+
+  assert.equal(parsed.action, "start_capture");
+  assert.equal(parsed.content, "");
+  assert.equal(parsed.wake_source, "natural_language_intent");
+});
+
+test("generic calendar mention does not wake the meeting flow", () => {
+  const parsed = parseMeetingCommand("今天下午 5 點有會議，先幫我提醒一下");
+
+  assert.equal(parsed, null);
+});
+
+test("meeting start phrase enters capture mode", () => {
+  const parsed = parseMeetingCommand("我要開會了");
+
+  assert.equal(parsed.action, "start_capture");
+  assert.equal(parsed.wake_source, "natural_language_start");
+});
+
+test("short record request enters capture mode", () => {
+  const parsed = parseMeetingCommand("請記錄吧");
+
+  assert.equal(parsed.action, "start_capture");
+  assert.equal(parsed.wake_source, "natural_language_start");
+});
+
+test("offline meeting note request enters capture mode", () => {
+  const parsed = parseMeetingCommand("線下會議 請記錄");
+
+  assert.equal(parsed.action, "start_capture");
+  assert.equal(parsed.wake_source, "natural_language_start");
+});
+
+test("okr weekly meeting short context enters capture mode", () => {
+  const parsed = parseMeetingCommand("okr 周例會");
+
+  assert.equal(parsed.action, "start_capture");
+  assert.equal(parsed.wake_source, "natural_language_start");
+});
+
+test("prepare to start meeting record enters capture mode", () => {
+  const parsed = parseMeetingCommand("現在正要開始 請準備記錄吧");
+
+  assert.equal(parsed.action, "start_capture");
+  assert.equal(parsed.wake_source, "natural_language_start");
+});
+
+test("calendar meeting listen phrase enters calendar-backed capture mode", () => {
+  const parsed = parseMeetingCommand("開始旁聽這場會議");
+
+  assert.equal(parsed.action, "start_capture_calendar");
+  assert.equal(parsed.wake_source, "natural_language_calendar_start");
+});
+
+test("meeting stop phrase exits capture mode", () => {
+  const parsed = parseMeetingCommand("會議結束了");
+
+  assert.equal(parsed.action, "stop_capture");
+  assert.equal(parsed.wake_source, "natural_language_stop");
+});
+
 test("weekly formatter only emits four required sections and marks missing owner", () => {
   const text = formatWeeklyMeeting({
     progress: ["完成 KR1 首版"],
@@ -199,6 +281,25 @@ test("group message builder hides internal classifier fields", () => {
   assert.match(message, /【會議紀要】/);
 });
 
+test("buildMeetingStructuredResult exposes decisions, action items, and knowledge writeback", () => {
+  const result = buildMeetingStructuredResult({
+    summary: {
+      time: "20260315",
+      participants: ["Sean", "Amy"],
+      conclusions: ["確認下週提交新版 proposal"],
+      todos: [{ owner: "Sean", title: "整理 PRD", deadline: "20260320" }],
+      main_points: ["同步交付節奏"],
+    },
+    classification: { meeting_type: "general" },
+    transcriptText: "結論：確認下週提交新版 proposal",
+    projectName: "Alpha",
+  });
+
+  assert.equal(result.decisions.length, 1);
+  assert.equal(result.action_items.length, 1);
+  assert.equal(result.knowledge_writeback.required, true);
+});
+
 test("meeting confirmation card exposes confirm button without internal classifier fields", () => {
   const card = buildMeetingConfirmationCard({
     meetingType: "general",
@@ -233,7 +334,10 @@ test("meeting confirmation flow does not write document before confirm", async (
   assert.equal(harness.sentMessages[0].options.cardPayload.elements.at(-1).tag, "action");
   assert.equal(harness.createdDocuments.length, 0);
   assert.equal(harness.documents.size, 0);
-  assert.equal(preview.workflow_state, "pending_confirmation");
+  assert.equal(preview.workflow_state, "awaiting_confirmation");
+  assert.notEqual(preview.workflow_state, "writing_back");
+  assert.equal(typeof preview.verification.pass, "boolean");
+  assert.ok(preview.structured_result);
 });
 
 test("meeting confirmation writes to existing document with newest content on top", async () => {
@@ -268,10 +372,14 @@ test("meeting confirmation writes to existing document with newest content on to
   });
 
   assert.equal(applied.target_document.document_id, "doc-existing");
+  assert.equal(applied.workflow_state, "writing_back");
+  assert.notEqual(applied.workflow_state, "completed");
   assert.equal(harness.createdDocuments.length, 0);
   const content = harness.documents.get("doc-existing");
   assert.match(content, /^\[20260315\]/);
   assert.match(content, /\[20260301\]\n\n舊內容$/);
+  assert.ok(Array.isArray(applied.knowledge_proposals));
+  assert.ok(applied.structured_result);
 });
 
 test("meeting confirmation creates new general document when no existing document exists", async () => {

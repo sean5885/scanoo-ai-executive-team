@@ -46,11 +46,19 @@ const EXACT_METHODS = new Map([
   ["/answer", ["GET"]],
   ["/agent/security/status", ["GET"]],
   ["/agent/approvals", ["GET"]],
+  ["/agent/improvements", ["GET"]],
+  ["/agent/docs/create", ["POST"]],
+  ["/agent/company-brain/docs", ["GET"]],
+  ["/agent/system/runtime-info", ["GET"]],
+  ["/api/company-brain/search", ["GET"]],
   ["/agent/tasks", ["POST"]],
 ]);
 
 const REGEX_METHODS = [
+  [/^\/api\/company-brain\/docs\/[^/]+$/, ["GET"]],
   [/^\/agent\/approvals\/[^/]+\/(approve|reject)$/, ["POST"]],
+  [/^\/agent\/improvements\/[^/]+\/(approve|reject)$/, ["POST"]],
+  [/^\/agent\/improvements\/[^/]+\/apply$/, ["POST"]],
   [/^\/agent\/tasks\/[^/]+\/actions$/, ["POST"]],
   [/^\/agent\/tasks\/[^/]+\/finish$/, ["POST"]],
   [/^\/agent\/tasks\/[^/]+\/rollback$/, ["POST"]],

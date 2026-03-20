@@ -1,6 +1,6 @@
-# Lark -> RAG Knowledge Base Syncer
+# Lobster AI Executive Team
 
-這個專案是一個給 OpenClaw / 龍蝦使用的 Lark 國際版知識庫同步器。
+這個專案是一個給 OpenClaw / 龍蝦使用的 Lark 國際版知識、文檔、會議與 executive orchestration 本地服務。
 
 重點是：
 - 使用 `larksuite.com`，不是 Feishu
@@ -9,16 +9,24 @@
 - 把內容切塊後寫入 SQLite FTS 索引
 - 補上 local semantic embedding sidecar 做 hybrid retrieval
 - 對外提供 `/sync/full`、`/sync/incremental`、`/search`、`/answer`
+- 內建 slash agents、executive orchestration、meeting workflow、verification/reflection/improvement closed loop
 
 ## System Mirror
 
 系統技術鏡像在：
 
 - [/Users/seanhan/Documents/Playground/docs/system](/Users/seanhan/Documents/Playground/docs/system)
+- 根層規則與升級文件：
+  - [/Users/seanhan/Documents/Playground/RULES.md](/Users/seanhan/Documents/Playground/RULES.md)
+  - [/Users/seanhan/Documents/Playground/ARCHITECTURE.md](/Users/seanhan/Documents/Playground/ARCHITECTURE.md)
+  - [/Users/seanhan/Documents/Playground/IMPROVEMENT.md](/Users/seanhan/Documents/Playground/IMPROVEMENT.md)
 - 文件整理回覆規格：
   - [/Users/seanhan/Documents/Playground/docs/system/file_organization_reply_spec.md](/Users/seanhan/Documents/Playground/docs/system/file_organization_reply_spec.md)
 - Binding / Session / Workspace 規格：
   - [/Users/seanhan/Documents/Playground/docs/system/binding_session_workspace.md](/Users/seanhan/Documents/Playground/docs/system/binding_session_workspace.md)
+- 閉環架構與升級說明：
+  - [/Users/seanhan/Documents/Playground/docs/system/closed_loop.md](/Users/seanhan/Documents/Playground/docs/system/closed_loop.md)
+  - [/Users/seanhan/Documents/Playground/docs/system/lobster_v2_upgrade.md](/Users/seanhan/Documents/Playground/docs/system/lobster_v2_upgrade.md)
 
 之後若 code、API、資料流、plugin tools 或安全流程有變動，應同步更新這裡的文件。
 

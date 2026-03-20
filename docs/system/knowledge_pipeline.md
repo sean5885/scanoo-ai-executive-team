@@ -31,6 +31,14 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - document metadata is stored in:
   - `lark_sources`
   - `lark_documents`
+- API-created docx files can also be inserted into the same temporary index directly from `/api/doc/create`, using normalized metadata `{ doc_id, source, created_at, creator: { account_id, open_id }, title, folder_token }`
+- API-created docx files can also carry a minimal lifecycle in `lark_documents`: `status`, `indexed_at`, `verified_at`, `failure_reason`
+- lifecycle rows can be queried from `/api/doc/lifecycle?status=...`, and only `index_failed` / `verify_failed` may be retried through `/api/doc/lifecycle/retry`
+- `/api/doc/lifecycle/summary` returns the current count of each tracked lifecycle status for one account
+- when an API-created doc reaches `status=verified`, a non-blocking mirror row is also upserted into `company_brain_docs` with `{ doc_id, title, source, created_at, creator }`; this is still only a minimal ingestion surface, not a full company-brain governance layer
+- `GET /api/company-brain/docs` can list that minimal mirror with `doc_id`, `title`, `source`, `created_at`, and `creator`
+- `GET /api/company-brain/docs/:doc_id` can fetch one mirrored row with that same minimal shape
+- `GET /api/company-brain/search?q=...` can search that mirror by `title` or `doc_id`, still returning the same minimal item shape
 - text chunks are stored in:
   - `lark_chunks`
   - `lark_chunks_fts`
@@ -75,6 +83,8 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - doc write-back exists through:
   - `/Users/seanhan/Documents/Playground/src/lark-content.mjs`
   - `/Users/seanhan/Documents/Playground/src/doc-comment-rewrite.mjs`
+- direct doc creation through `/Users/seanhan/Documents/Playground/src/http-server.mjs` can now append a non-blocking `document_index` step into the same retrieval index; this still does not create a separate company-brain layer
+- direct doc creation can additionally mirror verified API-created docs into `company_brain_docs`, but this remains a lightweight verified-doc registry rather than a canonical tenant-wide memory graph
 
 ## Current Gaps
 

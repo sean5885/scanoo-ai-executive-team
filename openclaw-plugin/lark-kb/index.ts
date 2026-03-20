@@ -199,6 +199,68 @@ function formatResult(title: string, payload: unknown): ToolResult {
   };
 }
 
+function cleanStringParam(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function firstCapture(text: string, patterns: RegExp[]) {
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+  return "";
+}
+
+function extractBitableReferenceFromUrl(value: unknown) {
+  const raw = cleanStringParam(value);
+  if (!raw) {
+    return null;
+  }
+
+  const appToken = firstCapture(raw, [/\/base\/([A-Za-z0-9_-]+)/i]);
+  if (!appToken) {
+    return null;
+  }
+
+  return {
+    appToken,
+    tableId: firstCapture(raw, [/[?&#](?:table|table_id|tableId)=([A-Za-z0-9_-]+)/i]),
+    viewId: firstCapture(raw, [/[?&#](?:view|view_id|viewId)=([A-Za-z0-9_-]+)/i]),
+    recordId: firstCapture(raw, [/[?&#](?:record|record_id|recordId)=([A-Za-z0-9_-]+)/i]),
+  };
+}
+
+function resolveBitableContext(
+  toolName: string,
+  params: Record<string, unknown>,
+  { requireTableId = false, requireRecordId = false } = {},
+) {
+  const fromUrl = extractBitableReferenceFromUrl(params.url);
+  const appToken = cleanStringParam(params.app_token) || fromUrl?.appToken || "";
+  const tableId = cleanStringParam(params.table_id) || fromUrl?.tableId || "";
+  const viewId = cleanStringParam(params.view_id) || fromUrl?.viewId || "";
+  const recordId = cleanStringParam(params.record_id) || fromUrl?.recordId || "";
+
+  if (!appToken) {
+    throw new Error(`${toolName} requires app_token or a Bitable base url`);
+  }
+  if (requireTableId && !tableId) {
+    throw new Error(`${toolName} requires table_id or a Bitable url that includes table=...`);
+  }
+  if (requireRecordId && !recordId) {
+    throw new Error(`${toolName} requires record_id or a Bitable url that includes record=...`);
+  }
+
+  return {
+    appToken,
+    tableId,
+    viewId,
+    recordId,
+  };
+}
+
 function compactDriveOrganizePayload(payload: unknown) {
   if (!payload || typeof payload !== "object") {
     return payload;
@@ -500,7 +562,7 @@ export default function register(api: { registerTool: Function; pluginConfig?: P
     {
       name: "lark_doc_update",
       description:
-        "Append to or replace the content of an existing Lark docx document using the authorized user OAuth token. Replace mode is preview-first: the first call returns a confirmation_id, and only a second call with confirm=true applies the overwrite.",
+        "Append to or replace the content of an existing Lark docx document using the authorized user OAuth token. You can also target one markdown heading section with target_heading. Replace mode, and heading-targeted updates, are preview-first: the first call returns a confirmation_id, and only a second call with confirm=true applies the overwrite.",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -508,6 +570,8 @@ export default function register(api: { registerTool: Function; pluginConfig?: P
           document_id: { type: "string" },
           content: { type: "string" },
           mode: { type: "string", enum: ["append", "replace"] },
+          target_heading: { type: "string" },
+          target_position: { type: "string", enum: ["end_of_section", "after_heading"] },
           confirmation_id: { type: "string" },
           confirm: { type: "boolean" },
           account_id: { type: "string" }
@@ -521,6 +585,8 @@ export default function register(api: { registerTool: Function; pluginConfig?: P
             document_id: params.document_id,
             content: params.content,
             mode: params.mode === "replace" ? "replace" : "append",
+            target_heading: params.target_heading,
+            target_position: params.target_position,
             confirmation_id: params.confirmation_id,
             confirm: params.confirm === true,
             account_id: params.account_id,
@@ -1103,27 +1169,55 @@ export default function register(api: { registerTool: Function; pluginConfig?: P
 
   api.registerTool(
     {
-      name: "lark_bitable_tables_list",
+      name: "lark_bitable_app_get",
       description:
-        "List all tables inside one Lark Bitable app.",
+        "Get one Lark Bitable app. Accepts either app_token or a full Bitable base URL.",
       parameters: {
         type: "object",
         additionalProperties: false,
         properties: {
           app_token: { type: "string" },
+          url: { type: "string" },
+          account_id: { type: "string" }
+        },
+        required: []
+      },
+      async execute(_id: string, params: Record<string, unknown>) {
+        const { appToken } = resolveBitableContext("lark_bitable_app_get", params);
+        const query = toQuery({ account_id: params.account_id });
+        const result = await callJson(api, `/api/bitable/apps/${encodeURIComponent(appToken)}${query}`);
+        if (result.status >= 400) throw errorFromResponse("lark_bitable_app_get", result.status, result.data);
+        return formatResult("lark_bitable_app_get", result.data);
+      },
+    },
+    { optional: true },
+  );
+
+  api.registerTool(
+    {
+      name: "lark_bitable_tables_list",
+      description:
+        "List all tables inside one Lark Bitable app. Accepts either app_token or a full Bitable base URL.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          app_token: { type: "string" },
+          url: { type: "string" },
           page_token: { type: "string" },
           page_size: { type: "number" },
           account_id: { type: "string" }
         },
-        required: ["app_token"]
+        required: []
       },
       async execute(_id: string, params: Record<string, unknown>) {
+        const { appToken } = resolveBitableContext("lark_bitable_tables_list", params);
         const query = toQuery({
           page_token: params.page_token,
           page_size: params.page_size,
           account_id: params.account_id,
         });
-        const result = await callJson(api, `/api/bitable/apps/${encodeURIComponent(String(params.app_token))}/tables${query}`);
+        const result = await callJson(api, `/api/bitable/apps/${encodeURIComponent(appToken)}/tables${query}`);
         if (result.status >= 400) throw errorFromResponse("lark_bitable_tables_list", result.status, result.data);
         return formatResult("lark_bitable_tables_list", result.data);
       },
@@ -1135,21 +1229,23 @@ export default function register(api: { registerTool: Function; pluginConfig?: P
     {
       name: "lark_bitable_table_create",
       description:
-        "Create one table inside a Lark Bitable app.",
+        "Create one table inside a Lark Bitable app. Accepts either app_token or a full Bitable base URL.",
       parameters: {
         type: "object",
         additionalProperties: false,
         properties: {
           app_token: { type: "string" },
+          url: { type: "string" },
           name: { type: "string" },
           default_view_name: { type: "string" },
           fields: { type: "array", items: { type: "object" } },
           account_id: { type: "string" }
         },
-        required: ["app_token", "name"]
+        required: ["name"]
       },
       async execute(_id: string, params: Record<string, unknown>) {
-        const result = await callJson(api, `/api/bitable/apps/${encodeURIComponent(String(params.app_token))}/tables/create`, {
+        const { appToken } = resolveBitableContext("lark_bitable_table_create", params);
+        const result = await callJson(api, `/api/bitable/apps/${encodeURIComponent(appToken)}/tables/create`, {
           method: "POST",
           body: JSON.stringify({
             name: params.name,
@@ -1169,30 +1265,34 @@ export default function register(api: { registerTool: Function; pluginConfig?: P
     {
       name: "lark_bitable_records_list",
       description:
-        "List records in one Bitable table.",
+        "List records in one Bitable table. Accepts either app_token plus table_id, or a Bitable URL that already includes the target table.",
       parameters: {
         type: "object",
         additionalProperties: false,
         properties: {
           app_token: { type: "string" },
+          url: { type: "string" },
           table_id: { type: "string" },
           page_token: { type: "string" },
           page_size: { type: "number" },
           view_id: { type: "string" },
           account_id: { type: "string" }
         },
-        required: ["app_token", "table_id"]
+        required: []
       },
       async execute(_id: string, params: Record<string, unknown>) {
+        const { appToken, tableId, viewId } = resolveBitableContext("lark_bitable_records_list", params, {
+          requireTableId: true,
+        });
         const query = toQuery({
           page_token: params.page_token,
           page_size: params.page_size,
-          view_id: params.view_id,
+          view_id: params.view_id || viewId,
           account_id: params.account_id,
         });
         const result = await callJson(
           api,
-          `/api/bitable/apps/${encodeURIComponent(String(params.app_token))}/tables/${encodeURIComponent(String(params.table_id))}/records${query}`,
+          `/api/bitable/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/records${query}`,
         );
         if (result.status >= 400) throw errorFromResponse("lark_bitable_records_list", result.status, result.data);
         return formatResult("lark_bitable_records_list", result.data);
@@ -1205,12 +1305,13 @@ export default function register(api: { registerTool: Function; pluginConfig?: P
     {
       name: "lark_bitable_records_search",
       description:
-        "Filter or search records in one Bitable table.",
+        "Filter or search records in one Bitable table. Accepts either app_token plus table_id, or a Bitable URL that already includes the target table.",
       parameters: {
         type: "object",
         additionalProperties: false,
         properties: {
           app_token: { type: "string" },
+          url: { type: "string" },
           table_id: { type: "string" },
           filter: { type: "object" },
           field_names: { type: "array", items: { type: "string" } },
@@ -1220,12 +1321,15 @@ export default function register(api: { registerTool: Function; pluginConfig?: P
           view_id: { type: "string" },
           account_id: { type: "string" }
         },
-        required: ["app_token", "table_id"]
+        required: []
       },
       async execute(_id: string, params: Record<string, unknown>) {
+        const { appToken, tableId, viewId } = resolveBitableContext("lark_bitable_records_search", params, {
+          requireTableId: true,
+        });
         const result = await callJson(
           api,
-          `/api/bitable/apps/${encodeURIComponent(String(params.app_token))}/tables/${encodeURIComponent(String(params.table_id))}/records/search`,
+          `/api/bitable/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/records/search`,
           {
             method: "POST",
             body: JSON.stringify({
@@ -1234,7 +1338,7 @@ export default function register(api: { registerTool: Function; pluginConfig?: P
               sort: params.sort,
               page_size: params.page_size,
               page_token: params.page_token,
-              view_id: params.view_id,
+              view_id: params.view_id || viewId,
               account_id: params.account_id,
             }),
           },
@@ -1250,22 +1354,26 @@ export default function register(api: { registerTool: Function; pluginConfig?: P
     {
       name: "lark_bitable_record_create",
       description:
-        "Create one record in a Bitable table.",
+        "Create one record in a Bitable table. Accepts either app_token plus table_id, or a Bitable URL that already includes the target table.",
       parameters: {
         type: "object",
         additionalProperties: false,
         properties: {
           app_token: { type: "string" },
+          url: { type: "string" },
           table_id: { type: "string" },
           fields: { type: "object" },
           account_id: { type: "string" }
         },
-        required: ["app_token", "table_id", "fields"]
+        required: ["fields"]
       },
       async execute(_id: string, params: Record<string, unknown>) {
+        const { appToken, tableId } = resolveBitableContext("lark_bitable_record_create", params, {
+          requireTableId: true,
+        });
         const result = await callJson(
           api,
-          `/api/bitable/apps/${encodeURIComponent(String(params.app_token))}/tables/${encodeURIComponent(String(params.table_id))}/records/create`,
+          `/api/bitable/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/records/create`,
           {
             method: "POST",
             body: JSON.stringify({
@@ -1285,23 +1393,28 @@ export default function register(api: { registerTool: Function; pluginConfig?: P
     {
       name: "lark_bitable_record_update",
       description:
-        "Update one record in a Bitable table.",
+        "Update one record in a Bitable table. Accepts either raw tokens or a Bitable URL that already includes the target table and record.",
       parameters: {
         type: "object",
         additionalProperties: false,
         properties: {
           app_token: { type: "string" },
+          url: { type: "string" },
           table_id: { type: "string" },
           record_id: { type: "string" },
           fields: { type: "object" },
           account_id: { type: "string" }
         },
-        required: ["app_token", "table_id", "record_id", "fields"]
+        required: ["fields"]
       },
       async execute(_id: string, params: Record<string, unknown>) {
+        const { appToken, tableId, recordId } = resolveBitableContext("lark_bitable_record_update", params, {
+          requireTableId: true,
+          requireRecordId: true,
+        });
         const result = await callJson(
           api,
-          `/api/bitable/apps/${encodeURIComponent(String(params.app_token))}/tables/${encodeURIComponent(String(params.table_id))}/records/${encodeURIComponent(String(params.record_id))}`,
+          `/api/bitable/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/records/${encodeURIComponent(recordId)}`,
           {
             method: "POST",
             body: JSON.stringify({
@@ -1321,23 +1434,28 @@ export default function register(api: { registerTool: Function; pluginConfig?: P
     {
       name: "lark_bitable_record_delete",
       description:
-        "Delete one record from a Bitable table.",
+        "Delete one record from a Bitable table. Accepts either raw tokens or a Bitable URL that already includes the target table and record.",
       parameters: {
         type: "object",
         additionalProperties: false,
         properties: {
           app_token: { type: "string" },
+          url: { type: "string" },
           table_id: { type: "string" },
           record_id: { type: "string" },
           account_id: { type: "string" }
         },
-        required: ["app_token", "table_id", "record_id"]
+        required: []
       },
       async execute(_id: string, params: Record<string, unknown>) {
+        const { appToken, tableId, recordId } = resolveBitableContext("lark_bitable_record_delete", params, {
+          requireTableId: true,
+          requireRecordId: true,
+        });
         const query = toQuery({ account_id: params.account_id });
         const result = await callJson(
           api,
-          `/api/bitable/apps/${encodeURIComponent(String(params.app_token))}/tables/${encodeURIComponent(String(params.table_id))}/records/${encodeURIComponent(String(params.record_id))}${query}`,
+          `/api/bitable/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/records/${encodeURIComponent(recordId)}${query}`,
           {
             method: "DELETE",
           },

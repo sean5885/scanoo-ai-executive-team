@@ -1,7 +1,15 @@
 {
   "name": "lark-kb",
   "private": true,
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
   "openclaw": {
-    "extensions": ["./index.ts"]
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
   }
 }

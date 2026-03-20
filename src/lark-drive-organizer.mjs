@@ -494,6 +494,10 @@ export async function applyDriveOrganization(accessToken, folderToken, options =
     folder_token: folderToken,
     recursive: preview.recursive,
     include_folders: preview.include_folders,
+    preview_plan: {
+      target_folders: preview.target_folders,
+      moves: preview.moves,
+    },
     created_folders: createdFolders,
     moves_submitted: executedMoves.length,
     moves: executedMoves,

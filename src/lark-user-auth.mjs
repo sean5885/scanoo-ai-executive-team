@@ -58,7 +58,12 @@ async function postAuthenJson(pathname, payload) {
     throw new Error(data.msg || data.message || `Lark auth request failed: ${response.status}`);
   }
 
-  return data.data || {};
+  return data.data || {
+    ...data,
+    code: undefined,
+    msg: undefined,
+    message: undefined,
+  };
 }
 
 export function buildOAuthState() {
@@ -142,6 +147,20 @@ export async function getValidUserToken(accountId) {
   }
 
   return refreshUserToken(token.refresh_token);
+}
+
+export async function getTenantAccessToken() {
+  const data = await postAuthenJson("/open-apis/auth/v3/tenant_access_token/internal", {});
+  const accessToken = data?.tenant_access_token || "";
+  if (!accessToken) {
+    throw new Error("Missing tenant access token in auth response");
+  }
+  return {
+    access_token: accessToken,
+    token_type: "tenant",
+    expires_in: data.expire || 0,
+    expires_at: nowSeconds() + (data.expire || 0),
+  };
 }
 
 export async function getUserProfile(accessToken) {

@@ -61,6 +61,7 @@ Stabilize Lark Lobster document handling, lane execution, and comment-driven sug
 ## Operating Rules
 
 - Update this file whenever the current objective, active implementation focus, or major risks change.
+- Before starting a fresh Codex thread, update `Current Objective` if the task focus changed, then use the kickoff prompt in `TASK_TEMPLATE.md`.
 - Keep `Done` factual; only list capabilities that already exist in code.
 - Keep `In Progress` short and limited to active engineering work.
 - Move finished items from `In Progress` or `Next` into `Done` instead of duplicating them.

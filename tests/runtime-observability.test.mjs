@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   createRuntimeLogger,
+  createTraceId,
   formatIdentifierHint,
   summarizeLarkEvent,
 } from "../src/runtime-observability.mjs";
@@ -58,4 +59,28 @@ test("createRuntimeLogger 會輸出結構化 runtime log", () => {
   assert.equal(calls[0][1].event, "lane_resolved");
   assert.equal(calls[0][1].capability_lane, "doc-editor");
   assert.ok(typeof calls[0][1].ts === "string");
+});
+
+test("createTraceId 會建立可讀 trace id，child logger 會繼承 base fields", () => {
+  const calls = [];
+  const logger = createRuntimeLogger({
+    logger: {
+      info(...args) {
+        calls.push(args);
+      },
+    },
+    component: "root",
+    baseFields: {
+      trace_id: createTraceId("evt"),
+    },
+  });
+
+  logger.child("lane", { request_kind: "lark_event" }).info("tool_called", {
+    tool_name: "sendMessage",
+  });
+
+  assert.equal(calls.length, 1);
+  assert.match(calls[0][1].trace_id, /^evt_/);
+  assert.equal(calls[0][1].request_kind, "lark_event");
+  assert.equal(calls[0][1].tool_name, "sendMessage");
 });

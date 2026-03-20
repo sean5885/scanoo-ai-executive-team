@@ -1,3 +1,5 @@
+import { extractLarkBitableReferenceFromText } from "./lark-url-utils.mjs";
+
 const STRUCTURED_SIGNAL_KEYS = new Set([
   "text",
   "title",
@@ -228,6 +230,21 @@ export function buildMessageText(input = {}) {
   return parts.join(" ").trim();
 }
 
+export function buildVisibleMessageText(input = {}) {
+  const rawContent = collectRawContent(input);
+  const parsedContent = safeParseJson(rawContent);
+  const parts = [
+    cleanText(input.message_text),
+    cleanText(input.text),
+    cleanText(input.message?.text),
+    cleanText(input.event?.message_text),
+    ...collectStructuredSignals(parsedContent),
+  ]
+    .filter(Boolean)
+    .filter((part, index, bucket) => bucket.indexOf(part) === index);
+  return parts.join(" ").trim();
+}
+
 export function normalizeMessageText(input = {}) {
   return buildMessageText(input).toLowerCase();
 }
@@ -236,6 +253,28 @@ export function extractDocumentId(input = {}) {
   const candidates = [];
   collectDocumentCandidates(input, candidates);
   return candidates[0] || "";
+}
+
+export function extractBitableReference(input = {}) {
+  const rawContent = collectRawContent(input);
+  const parsedContent = safeParseJson(rawContent);
+  const parts = [
+    cleanText(input.message_text),
+    cleanText(input.text),
+    cleanText(input.message?.text),
+    cleanText(input.event?.message_text),
+    rawContent,
+    ...collectStructuredSignals(parsedContent),
+  ].filter(Boolean);
+
+  for (const part of parts) {
+    const ref = extractLarkBitableReferenceFromText(part);
+    if (ref?.app_token) {
+      return ref;
+    }
+  }
+
+  return null;
 }
 
 export function collectRelatedMessageIds(input = {}) {

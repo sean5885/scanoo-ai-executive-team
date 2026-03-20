@@ -7,18 +7,30 @@ import {
   llmApiKey,
   llmBaseUrl,
   llmModel,
+  llmTemperature,
+  llmTopP,
   meetingDefaultChatId,
   meetingConfirmPath,
   meetingDocFolderToken,
   meetingPromptMaxTokens,
+  meetingSummaryJsonRetryMax,
   oauthBaseUrl,
 } from "./config.mjs";
 import {
   consumeMeetingWriteConfirmation,
   createMeetingWriteConfirmation,
 } from "./doc-update-confirmations.mjs";
-import { governPromptSections, trimTextForBudget } from "./agent-token-governance.mjs";
-import { createDocument, getDocument, sendMessage, updateDocument } from "./lark-content.mjs";
+import { buildCompactSystemPrompt, governPromptSections, trimTextForBudget } from "./agent-token-governance.mjs";
+import { callOpenClawTextGeneration } from "./openclaw-text-service.mjs";
+import {
+  createManagedDocument,
+  ensureDocumentManagerPermission,
+  getDocument,
+  sendMessage,
+  updateDocument,
+} from "./lark-content.mjs";
+import { registerKnowledgeWriteback } from "./executive-closed-loop.mjs";
+import { EVIDENCE_TYPES, verifyMeetingWorkflowCompletion } from "./executive-verifier.mjs";
 import { normalizeText, nowIso } from "./text-utils.mjs";
 
 const WEEKLY_PROGRESS_KEYWORDS = ["進展", "推进", "推進", "完成度", "完成", "達成", "okr", "kr", "目標", "objective"];
@@ -27,6 +39,92 @@ const WEEKLY_SOLUTION_KEYWORDS = ["解法", "方案", "決定", "處理", "修�
 const WEEKLY_TODO_KEYWORDS = ["todo", "待辦", "待办", "owner", "下週", "本週", "跟進", "跟进", "action item"];
 const GENERAL_CONCLUSION_KEYWORDS = ["結論", "结论", "決定", "决定", "共識", "共识", "確認", "确认"];
 const DONE_KEYWORDS = ["完成", "已完成", "done", "結案", "close"];
+const MEETING_WAKE_WORDS = ["會議", "会议", "meeting"];
+const MEETING_TOPIC_SIGNALS = ["會議", "会议", "meeting", "週會", "周会", "例會", "例会"];
+const MEETING_PARTICIPATION_SIGNALS = ["參會", "参会", "與會", "与会", "一起參會", "一起参会"];
+const MEETING_START_SIGNALS = [
+  "我要開會了",
+  "我要开会了",
+  "請記錄吧",
+  "请记录吧",
+  "請記錄",
+  "请记录",
+  "現在正要開始",
+  "现在正要开始",
+  "開始開會",
+  "开始开会",
+  "開始會議",
+  "开始会议",
+  "準備開會",
+  "准备开会",
+  "請準備記錄",
+  "请准备记录",
+  "準備記錄",
+  "准备记录",
+  "進入會議模式",
+  "进入会议模式",
+  "開始記錄會議",
+  "开始记录会议",
+];
+const OFFLINE_MEETING_CONTEXT_SIGNALS = [
+  "線下會議",
+  "线下会议",
+  "現場會議",
+  "现场会议",
+  "okr 周例會",
+  "okr 周例会",
+  "okr 週例會",
+  "okr 週例会",
+];
+const MEETING_CALENDAR_START_SIGNALS = [
+  "開始旁聽這場會議",
+  "开始旁听这场会议",
+  "開始旁聽這個會議",
+  "开始旁听这个会议",
+  "旁聽這場會議",
+  "旁听这场会议",
+  "開始跟這場會議",
+  "开始跟这场会议",
+];
+const MEETING_STOP_SIGNALS = [
+  "會議結束了",
+  "会议结束了",
+  "結束會議",
+  "结束会议",
+  "停止記錄",
+  "停止记录",
+  "停止會議記錄",
+  "停止会议记录",
+  "先結束會議",
+  "先结束会议",
+];
+const MEETING_NOTE_SIGNALS = [
+  "記錄",
+  "记录",
+  "紀錄",
+  "紀要",
+  "纪要",
+  "逐字稿",
+  "整理會議",
+  "整理会议",
+  "同步記錄",
+  "同步记录",
+];
+const MEETING_CONFIRM_SIGNALS = [
+  "確認",
+  "确认",
+  "同意後",
+  "同意后",
+  "確認後",
+  "确认后",
+  "寫進",
+  "写进",
+  "寫入",
+  "写入",
+  "第二部分",
+  "文檔",
+  "文档",
+];
 
 function splitLines(value) {
   return normalizeText(value)
@@ -132,6 +230,47 @@ function buildStableProjectIdentity({ text, metadata = {}, chatId = "" } = {}) {
 
 function parseMeetingCommand(text) {
   const normalized = String(text || "").trim();
+  const wakeText = normalized.toLowerCase();
+  if (MEETING_WAKE_WORDS.includes(wakeText)) {
+    return {
+      action: "start_capture",
+      content: "",
+      wake_source: "menu_button",
+    };
+  }
+
+  if (looksLikeMeetingStartIntent(normalized)) {
+    return {
+      action: "start_capture",
+      content: "",
+      wake_source: "natural_language_start",
+    };
+  }
+
+  if (looksLikeCalendarMeetingStartIntent(normalized)) {
+    return {
+      action: "start_capture_calendar",
+      content: "",
+      wake_source: "natural_language_calendar_start",
+    };
+  }
+
+  if (looksLikeMeetingStopIntent(normalized)) {
+    return {
+      action: "stop_capture",
+      content: "",
+      wake_source: "natural_language_stop",
+    };
+  }
+
+  if (looksLikeNaturalLanguageMeetingIntent(normalized)) {
+    return {
+      action: "start_capture",
+      content: "",
+      wake_source: "natural_language_intent",
+    };
+  }
+
   if (!normalized.startsWith("/meeting")) {
     return null;
   }
@@ -144,10 +283,76 @@ function parseMeetingCommand(text) {
     };
   }
 
+  if (/^\/meeting\s+(stop|end|finish)\s*$/i.test(normalized)) {
+    return {
+      action: "stop_capture",
+      content: "",
+      wake_source: "slash_stop",
+    };
+  }
+
+  if (/^\/meeting\s+(current|calendar|listen)\s*$/i.test(normalized)) {
+    return {
+      action: "start_capture_calendar",
+      content: "",
+      wake_source: "slash_calendar_start",
+    };
+  }
+
+  if (/^\/meeting\s+start\s*$/i.test(normalized)) {
+    return {
+      action: "start_capture",
+      content: "",
+      wake_source: "slash_start",
+    };
+  }
+
   return {
     action: "process",
     content: normalized.replace(/^\/meeting\s*/u, "").trim(),
   };
+}
+
+function hasSignal(text, signals = []) {
+  return signals.some((signal) => text.includes(signal));
+}
+
+function looksLikeNaturalLanguageMeetingIntent(text) {
+  const normalized = normalizeText(text);
+  if (!normalized) {
+    return false;
+  }
+  const topicHits = collectSignalCount(normalized, MEETING_TOPIC_SIGNALS);
+  const noteHits = collectSignalCount(normalized, MEETING_NOTE_SIGNALS);
+  const confirmHits = collectSignalCount(normalized, MEETING_CONFIRM_SIGNALS);
+  if (topicHits >= 1 && noteHits >= 1 && confirmHits >= 1) {
+    return true;
+  }
+  return hasSignal(normalized, MEETING_PARTICIPATION_SIGNALS) && noteHits >= 1;
+}
+
+function looksLikeMeetingStartIntent(text) {
+  const normalized = normalizeText(text);
+  if (!normalized) {
+    return false;
+  }
+  if (hasSignal(normalized, MEETING_START_SIGNALS)) {
+    return true;
+  }
+  const hasOfflineMeetingContext = hasSignal(normalized, OFFLINE_MEETING_CONTEXT_SIGNALS);
+  const hasMeetingTopic = collectSignalCount(normalized, MEETING_TOPIC_SIGNALS) >= 1;
+  const hasMeetingNotes = collectSignalCount(normalized, MEETING_NOTE_SIGNALS) >= 1;
+  return hasOfflineMeetingContext && (hasMeetingTopic || hasMeetingNotes);
+}
+
+function looksLikeMeetingStopIntent(text) {
+  const normalized = normalizeText(text);
+  return Boolean(normalized) && hasSignal(normalized, MEETING_STOP_SIGNALS);
+}
+
+function looksLikeCalendarMeetingStartIntent(text) {
+  const normalized = normalizeText(text);
+  return Boolean(normalized) && hasSignal(normalized, MEETING_CALENDAR_START_SIGNALS);
 }
 
 function collectSignalCount(text, keywords) {
@@ -370,25 +575,24 @@ function extractJsonPayload(text) {
   const start = normalized.indexOf("{");
   const end = normalized.lastIndexOf("}");
   if (start === -1 || end === -1 || end <= start) {
-    return null;
+    throw new Error("meeting_summary_missing_json_object");
   }
 
   try {
     return JSON.parse(normalized.slice(start, end + 1));
-  } catch {
-    return null;
+  } catch (error) {
+    throw new Error(`meeting_summary_invalid_json:${error.message}`);
   }
 }
 
-async function generateMeetingSummaryWithModel({ text, metadata = {}, classification }) {
-  if (!llmApiKey) {
-    return null;
-  }
-
-  const systemPrompt =
+function buildMeetingSummaryPrompt({ text, metadata = {}, classification }) {
+  const systemPrompt = buildCompactSystemPrompt("你是會議整理助手。", [
+    "只輸出 JSON。",
+    "不要補充未提及內容。",
     classification.meeting_type === "weekly"
-      ? "你是會議整理助手。只輸出 JSON，不補充未提及內容。weekly 只輸出 progress、issues、solutions、todos。"
-      : "你是會議整理助手。只輸出 JSON，不補充未提及內容。general 只輸出 time、participants、main_points、conclusions、todos。";
+      ? "weekly 只輸出 progress、issues、solutions、todos。"
+      : "general 只輸出 time、participants、main_points、conclusions、todos。",
+  ]);
 
   const schemaText =
     classification.meeting_type === "weekly"
@@ -397,6 +601,7 @@ async function generateMeetingSummaryWithModel({ text, metadata = {}, classifica
 
   const governed = governPromptSections({
     systemPrompt,
+    format: "xml",
     maxTokens: meetingPromptMaxTokens,
     thresholds: {
       light: agentPromptLightRatio,
@@ -409,8 +614,8 @@ async function generateMeetingSummaryWithModel({ text, metadata = {}, classifica
         label: "task_goal",
         text:
           classification.meeting_type === "weekly"
-            ? "判定已完成。請只整理 KR 推進相關核心，不寫流水帳，不補充 CEO 支援事項。"
-            : "判定已完成。請只整理會議核心，不補充未提及內容。",
+            ? "判定已完成。請只整理 KR 推進相關核心，不寫流水帳，不補充 CEO 支援事項；如果資訊不足，保留待確認而不是猜測。"
+            : "判定已完成。請只整理會議核心，不補充未提及內容；如果資訊不足，保留待確認而不是猜測。",
         required: true,
         maxTokens: 100,
       },
@@ -439,6 +644,72 @@ async function generateMeetingSummaryWithModel({ text, metadata = {}, classifica
     ],
   });
 
+  return {
+    systemPrompt,
+    prompt: governed.prompt,
+  };
+}
+
+function buildMeetingSummaryRepairPrompt({ originalPrompt, malformedResponse, reason, classification }) {
+  const governed = governPromptSections({
+    systemPrompt: buildCompactSystemPrompt("你是會議整理 JSON 修復器。", [
+      "你只能輸出合法 JSON。",
+      "不能補充未提及內容。",
+    ]),
+    format: "xml",
+    maxTokens: meetingPromptMaxTokens,
+    thresholds: {
+      light: agentPromptLightRatio,
+      rolling: agentPromptRollingRatio,
+      emergency: agentPromptEmergencyRatio,
+    },
+    sections: [
+      {
+        name: "repair_goal",
+        label: "repair_goal",
+        text:
+          classification.meeting_type === "weekly"
+            ? '修復上一輪輸出，返回合法 JSON：{"progress":["..."],"issues":["..."],"solutions":["..."],"todos":[{"owner":"...","title":"...","objective":"...","kr":"..."}]}'
+            : '修復上一輪輸出，返回合法 JSON：{"time":"YYYYMMDD或待確認","participants":["..."],"main_points":["..."],"conclusions":["..."],"todos":[{"owner":"...","title":"..."}]}',
+        required: true,
+        maxTokens: 180,
+      },
+      {
+        name: "repair_reason",
+        label: "repair_reason",
+        text: reason,
+        required: true,
+        maxTokens: 120,
+      },
+      {
+        name: "malformed_response",
+        label: "malformed_response",
+        text: trimTextForBudget(malformedResponse, 1200, { preserveTail: true }),
+        required: true,
+        maxTokens: 360,
+      },
+      {
+        name: "original_prompt",
+        label: "original_prompt",
+        text: originalPrompt,
+        required: true,
+        maxTokens: meetingPromptMaxTokens - 720,
+      },
+    ],
+  });
+
+  return governed.prompt;
+}
+
+async function requestMeetingSummaryJson({ systemPrompt, prompt }) {
+  if (!llmApiKey) {
+    return callOpenClawTextGeneration({
+      systemPrompt,
+      prompt,
+      sessionIdSuffix: "meeting-summary",
+    });
+  }
+
   const response = await fetch(`${llmBaseUrl}/chat/completions`, {
     method: "POST",
     headers: {
@@ -447,18 +718,47 @@ async function generateMeetingSummaryWithModel({ text, metadata = {}, classifica
     },
     body: JSON.stringify({
       model: llmModel,
-      temperature: 0.1,
+      temperature: llmTemperature,
+      top_p: llmTopP,
       messages: [
         { role: "system", content: systemPrompt },
-        { role: "user", content: governed.prompt },
+        { role: "user", content: prompt },
       ],
     }),
   });
   const data = await response.json();
   if (!response.ok) {
-    return null;
+    throw new Error(data.error?.message || `meeting_summary_llm_failed:${response.status}`);
   }
-  return extractJsonPayload(data.choices?.[0]?.message?.content || "");
+  return data.choices?.[0]?.message?.content || "";
+}
+
+async function generateMeetingSummaryWithModel({ text, metadata = {}, classification }) {
+  const promptInput = buildMeetingSummaryPrompt({ text, metadata, classification });
+  let prompt = promptInput.prompt;
+
+  for (let attempt = 0; attempt <= meetingSummaryJsonRetryMax; attempt += 1) {
+    let rawResponse = "";
+    try {
+      rawResponse = await requestMeetingSummaryJson({
+        systemPrompt: promptInput.systemPrompt,
+        prompt,
+      });
+      return extractJsonPayload(rawResponse);
+    } catch (error) {
+      if (attempt >= meetingSummaryJsonRetryMax) {
+        return null;
+      }
+      prompt = buildMeetingSummaryRepairPrompt({
+        originalPrompt: promptInput.prompt,
+        malformedResponse: rawResponse,
+        reason: error?.message || "meeting_summary_unknown_error",
+        classification,
+      });
+    }
+  }
+
+  return null;
 }
 
 async function buildMeetingSummary({ text, metadata = {}, classification }) {
@@ -524,6 +824,114 @@ export function buildMeetingGroupMessage({ meeting_type, summary }) {
   return meeting_type === "weekly"
     ? formatWeeklyMeeting(summary)
     : formatGeneralMeeting(summary);
+}
+
+function normalizeActionItems(todos = [], defaultDeadline = "待確認") {
+  const items = Array.isArray(todos) ? todos : [];
+  return items
+    .map((item) => ({
+      title: normalizeText(item?.title),
+      owner: normalizeOwner(item?.owner),
+      deadline: normalizeText(item?.deadline) || defaultDeadline,
+      objective: normalizeText(item?.objective),
+      kr: normalizeText(item?.kr),
+    }))
+    .filter((item) => item.title)
+    .slice(0, 8);
+}
+
+function inferMeetingConflicts(text = "", summary = {}, classification = {}) {
+  const lines = splitLines(text);
+  const summaryLines = classification.meeting_type === "weekly"
+    ? [...(summary.issues || []), ...(summary.solutions || [])]
+    : [...(summary.conclusions || []), ...(summary.main_points || [])];
+  return dedupe(
+    [...lines, ...summaryLines].filter((line) => /(衝突|冲突|不一致|矛盾|待確認|待确认|爭議|争议)/i.test(line)),
+  ).slice(0, 6);
+}
+
+function buildMeetingKnowledgeWriteback({ summary = {}, classification = {}, projectName = "", conflicts = [] } = {}) {
+  const tags = ["meeting", classification.meeting_type || "general", normalizeProjectKey(projectName || "shared")];
+  const decisions = classification.meeting_type === "weekly"
+    ? dedupe([...(summary.solutions || []), ...(summary.progress || [])]).slice(0, 4)
+    : dedupe(summary.conclusions || []).slice(0, 4);
+  const proposals = decisions.map((item, index) => ({
+    title: `${projectName || "meeting"}_${classification.meeting_type || "general"}_decision_${index + 1}`,
+    content: item,
+    tags,
+    evidence: [{ type: EVIDENCE_TYPES.summary_generated, summary: "meeting_summary" }],
+  }));
+  return {
+    required: Boolean(proposals.length || conflicts.length),
+    proposals,
+    approved_items: [],
+    conflict_candidates: conflicts,
+  };
+}
+
+export function buildMeetingStructuredResult({
+  summary = {},
+  classification = {},
+  transcriptText = "",
+  metadata = {},
+  projectName = "",
+} = {}) {
+  const actionItems = normalizeActionItems(summary.todos, normalizeText(metadata.deadline) || "待確認");
+  const decisions = classification.meeting_type === "weekly"
+    ? dedupe(summary.solutions || []).slice(0, 5)
+    : dedupe(summary.conclusions || []).slice(0, 5);
+  const risks = classification.meeting_type === "weekly"
+    ? dedupe(summary.issues || []).slice(0, 5)
+    : dedupe((summary.main_points || []).filter((item) => /(風險|风险|阻塞|卡點|依賴|依赖)/i.test(item))).slice(0, 5);
+  const owners = dedupe(actionItems.map((item) => item.owner)).slice(0, 8);
+  const deadlines = dedupe(actionItems.map((item) => item.deadline)).slice(0, 8);
+  const openQuestions = dedupe([
+    ...actionItems.filter((item) => item.owner === "待確認").map((item) => `待確認 owner：${item.title}`),
+    ...actionItems.filter((item) => item.deadline === "待確認").map((item) => `待確認 deadline：${item.title}`),
+    ...(Array.isArray(summary.participants) && summary.participants.includes("待確認") ? ["與會人員待確認"] : []),
+  ]).slice(0, 8);
+  const conflicts = inferMeetingConflicts(transcriptText, summary, classification);
+  const knowledgeWriteback = buildMeetingKnowledgeWriteback({
+    summary,
+    classification,
+    projectName,
+    conflicts,
+  });
+  return {
+    meeting_type: classification.meeting_type || "general",
+    summary: buildMeetingGroupMessage({
+      meeting_type: classification.meeting_type || "general",
+      summary,
+    }),
+    decisions,
+    action_items: actionItems,
+    owner: owners,
+    deadline: deadlines,
+    risks,
+    open_questions: openQuestions,
+    conflicts,
+    knowledge_writeback: knowledgeWriteback,
+    task_writeback: {
+      items: actionItems.map((item) => ({
+        title: item.title,
+        owner: item.owner,
+        deadline: item.deadline,
+      })),
+    },
+    follow_up_recommendations: dedupe([
+      openQuestions.length ? "先把 owner 與 deadline 補齊，再正式落進追蹤系統。" : "",
+      conflicts.length ? "這場會議裡有衝突或待確認內容，建議先走 proposal/conflict queue。" : "",
+      decisions.length ? "可把已確認決策轉成知識提案，避免只留在會議紀要裡。" : "",
+    ]).slice(0, 5),
+  };
+}
+
+function buildMeetingVerification({ structuredResult = {}, summaryContent = "", extraEvidence = [] } = {}) {
+  return verifyMeetingWorkflowCompletion({
+    summaryContent,
+    structuredResult,
+    extraEvidence,
+  });
 }
 
 function buildGeneralMeetingDocEntry(summary = {}) {
@@ -799,7 +1207,7 @@ function defaultCoordinatorDeps() {
   return {
     sendMessage,
     getDocument,
-    createDocument,
+    createDocument: createManagedDocument,
     updateDocument,
     createConfirmation: createMeetingWriteConfirmation,
     consumeConfirmation: consumeMeetingWriteConfirmation,
@@ -853,13 +1261,33 @@ export function createMeetingCoordinator(overrides = {}) {
     };
   }
 
-  async function ensureMeetingDocument({ accessToken, accountId, projectKey, projectName, meetingType, chatId }) {
+  async function ensureMeetingDocument({
+    accessToken,
+    accountId,
+    accountOpenId = "",
+    projectKey,
+    projectName,
+    meetingType,
+    chatId,
+  }) {
     const existing = await resolveMeetingDocumentTarget({ accountId, projectKey, projectName, meetingType, chatId });
     if (existing.document_id) {
+      await ensureDocumentManagerPermission(accessToken, existing.document_id, {
+        tokenType: "user",
+        managerOpenId: accountOpenId,
+      });
       return existing;
     }
 
-    const created = await deps.createDocument(accessToken, existing.title, meetingDocFolderToken || undefined);
+    const created = await deps.createDocument(
+      accessToken,
+      existing.title,
+      meetingDocFolderToken || undefined,
+      {
+        tokenType: "user",
+        managerOpenId: accountOpenId,
+      },
+    );
     deps.saveMeetingDocumentMapping({
       accountId,
       projectKey,
@@ -949,6 +1377,13 @@ export function createMeetingCoordinator(overrides = {}) {
       meeting_type: classification.meeting_type,
       summary,
     });
+    const structuredResult = buildMeetingStructuredResult({
+      summary,
+      classification,
+      transcriptText: text,
+      metadata,
+      projectName: identity.project_name,
+    });
     const resolvedSourceMeetingId = sourceMeetingId || crypto.randomUUID();
     const docEntryContent = classification.meeting_type === "weekly"
       ? buildWeeklyMeetingDocEntry(summary)
@@ -987,6 +1422,16 @@ export function createMeetingCoordinator(overrides = {}) {
         projectName: identity.project_name,
       }),
     });
+    const verification = buildMeetingVerification({
+      structuredResult,
+      summaryContent,
+      extraEvidence: [
+        {
+          type: EVIDENCE_TYPES.API_call_success,
+          summary: "meeting_group_message_sent",
+        },
+      ],
+    });
 
     return {
       meeting_type: classification.meeting_type,
@@ -998,12 +1443,79 @@ export function createMeetingCoordinator(overrides = {}) {
       target_document: targetDoc,
       group_message: sent,
       confirmation,
-      workflow_state: "pending_confirmation",
+      structured_result: structuredResult,
+      verification,
+      workflow_state: "awaiting_confirmation",
+    };
+  }
+
+  async function renderMeetingMinutes({
+    accountId,
+    transcriptText,
+    metadata = {},
+    chatId = "",
+    projectName = "",
+    sourceMeetingId = "",
+  }) {
+    const text = normalizeText(transcriptText);
+    if (!text) {
+      throw new Error("missing_meeting_content");
+    }
+
+    const classification = classifyMeeting({ text, metadata });
+    const summary = await buildMeetingSummary({ text, metadata, classification });
+    const identity = projectName
+      ? { project_name: projectName, project_key: normalizeProjectKey(projectName) }
+      : buildStableProjectIdentity({ text, metadata, chatId });
+    const resolvedSourceMeetingId = sourceMeetingId || crypto.randomUUID();
+    const docEntryContent = classification.meeting_type === "weekly"
+      ? buildWeeklyMeetingDocEntry(summary)
+      : buildGeneralMeetingDocEntry(summary);
+    const weeklyTodos = classification.meeting_type === "weekly" && accountId
+      ? buildWeeklyTrackerPayload(summary, {
+          projectKey: identity.project_key,
+          accountId,
+          sourceDate: summary.time,
+          sourceMeetingId: resolvedSourceMeetingId,
+          transcriptText: text,
+          existingItems: deps.listWeeklyTrackerItems(accountId, identity.project_key),
+        })
+      : [];
+
+    const structuredResult = buildMeetingStructuredResult({
+      summary,
+      classification,
+      transcriptText: text,
+      metadata,
+      projectName: identity.project_name,
+    });
+
+    return {
+      meeting_type: classification.meeting_type,
+      summary,
+      summary_content: buildMeetingGroupMessage({
+        meeting_type: classification.meeting_type,
+        summary,
+      }),
+      doc_entry_content: docEntryContent,
+      weekly_todos: weeklyTodos,
+      project_name: identity.project_name,
+      project_key: identity.project_key,
+      source_meeting_id: resolvedSourceMeetingId,
+      structured_result: structuredResult,
+      verification: buildMeetingVerification({
+        structuredResult,
+        summaryContent: buildMeetingGroupMessage({
+          meeting_type: classification.meeting_type,
+          summary,
+        }),
+      }),
     };
   }
 
   async function confirmMeetingWrite({
     accountId,
+    accountOpenId = "",
     accessToken,
     confirmationId,
   }) {
@@ -1023,6 +1535,7 @@ export function createMeetingCoordinator(overrides = {}) {
       : await ensureMeetingDocument({
           accessToken,
           accountId,
+          accountOpenId,
           projectKey: confirmation.project_key,
           projectName: confirmation.project_name,
           meetingType: confirmation.meeting_type,
@@ -1066,6 +1579,55 @@ export function createMeetingCoordinator(overrides = {}) {
       );
     }
 
+    const structuredResult = buildMeetingStructuredResult({
+      summary: confirmation.meeting_type === "weekly"
+        ? sanitizeWeeklySummary({
+            todos: confirmation.weekly_todos,
+          }, confirmation.summary_content, {
+            date: confirmation.source_date,
+          })
+        : sanitizeGeneralSummary({}, confirmation.summary_content, {
+            date: confirmation.source_date,
+          }),
+      classification: {
+        meeting_type: confirmation.meeting_type,
+      },
+      transcriptText: confirmation.summary_content,
+      metadata: {
+        date: confirmation.source_date,
+      },
+      projectName: confirmation.project_name,
+    });
+    const proposalRecords = await registerKnowledgeWriteback({
+      accountId,
+      sessionKey: confirmation.chat_id || accountId,
+      taskId: confirmationId,
+      writeback: structuredResult.knowledge_writeback,
+    });
+    structuredResult.knowledge_writeback.proposal_ids = proposalRecords.map((item) => item.id).filter(Boolean);
+    const verification = buildMeetingVerification({
+      structuredResult,
+      summaryContent: confirmation.summary_content,
+      extraEvidence: [
+        {
+          type: EVIDENCE_TYPES.file_updated,
+          summary: `document:${targetDoc.document_id}`,
+        },
+        {
+          type: EVIDENCE_TYPES.DB_write_confirmed,
+          summary: "meeting_document_mapping_saved",
+        },
+        ...(proposalRecords.length
+          ? [
+              {
+                type: EVIDENCE_TYPES.knowledge_proposal_created,
+                summary: `knowledge_proposals:${proposalRecords.length}`,
+              },
+            ]
+          : []),
+      ],
+    });
+
     return {
       confirmation_id: confirmationId,
       meeting_type: confirmation.meeting_type,
@@ -1077,13 +1639,17 @@ export function createMeetingCoordinator(overrides = {}) {
       },
       write_result: writeResult,
       tracker_updates: trackerUpdates,
-      workflow_state: "doc_written",
+      structured_result: structuredResult,
+      knowledge_proposals: proposalRecords,
+      verification,
+      workflow_state: "writing_back",
     };
   }
 
   return {
     processMeetingPreview,
     confirmMeetingWrite,
+    renderMeetingMinutes,
     resolveMeetingDocumentTarget,
     prependMeetingEntry,
     updateWeeklyTodoTracker,

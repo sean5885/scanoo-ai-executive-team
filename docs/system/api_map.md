@@ -26,6 +26,12 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Module: OAuth
   - Purpose: inspect authorization state
 
+- `GET /api/system/runtime-info`
+  - Handler: `handleRuntimeInfo`
+  - Module: runtime / HTTP API
+  - Purpose: expose the current DB path, node PID, working directory, and service start time for the running HTTP process
+  - Log note: emits `stage=runtime_info`
+
 - `POST /api/runtime/resolve-scopes`
   - Handler: `handleRuntimeResolveScopes`
   - Module: runtime scope resolution
@@ -88,9 +94,50 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Handler: `handleDocumentRead`
   - Purpose: read one docx document
 
+- `GET /api/doc/lifecycle`
+  - Handler: `handleDocumentLifecycleList`
+  - Purpose: list API-created document lifecycle rows by `status`
+  - Response shape: `doc_id`, `external_key`, `failure_reason`, `indexed_at`, `verified_at`, `created_at`, `updated_at`
+
+- `GET /api/doc/lifecycle/summary`
+  - Handler: `handleDocumentLifecycleSummary`
+  - Purpose: return lifecycle counts for `created`, `indexed`, `verified`, `create_failed`, `index_failed`, and `verify_failed`
+  - Log note: emits `stage=document_lifecycle_summary`
+
+- `GET /api/company-brain/docs`
+  - Handler: `handleCompanyBrainDocsList`
+  - Purpose: list the minimal verified-doc mirror from `company_brain_docs`
+  - Response shape: `doc_id`, `title`, `source`, `created_at`, `creator`
+  - Query note: supports `limit`
+  - Log note: emits `stage=company_brain_list`
+
+- `GET /api/company-brain/docs/:doc_id`
+  - Handler: `handleCompanyBrainDocDetail`
+  - Purpose: return one minimal verified-doc mirror row from `company_brain_docs`
+  - Response shape: `doc_id`, `title`, `source`, `created_at`, `creator`
+  - Not-found note: returns `ok=false` with `error=not_found`
+  - Log note: emits `stage=company_brain_detail`
+
+- `GET /api/company-brain/search?q=...`
+  - Handler: `handleCompanyBrainSearch`
+  - Purpose: search the minimal verified-doc mirror by `title` or `doc_id`
+  - Response shape: `total`, `items`; each item keeps the same minimal shape as list/detail
+  - Validation note: empty `q` returns `ok=false` with `error=invalid_query`
+  - Log note: emits `stage=company_brain_search`
+
+- `POST /api/doc/lifecycle/retry`
+  - Handler: `handleDocumentLifecycleRetry`
+  - Purpose: retry only `index_failed` / `verify_failed` lifecycle rows
+  - Retry note: `create_failed` is intentionally not auto-retried; the route re-runs only the index/verify portion of the lifecycle and logs transitions under `stage=document_lifecycle_retry`
+
 - `POST /api/doc/create`
   - Handler: `handleDocumentCreate`
   - Purpose: create docx, optional initial content
+  - Side effect note: the docx adapter keeps `POST /open-apis/docx/v1/documents`, adds structured create-error diagnostics, and may fall back from folder-scoped create to root create when the platform rejects the folder target with `1063003`
+  - Route behavior note: document creation is the blocking step; post-create manager-permission grant is non-blocking, skipped when the current user is already the owner, and returned as `permission_grant_failed` / `permission_grant_skipped` / `permission_grant_error`
+  - Index note: after create succeeds, the route writes normalized metadata `{ doc_id, source, created_at, creator: { account_id, open_id }, title, folder_token }` into the existing `lark_sources` / `lark_documents` index as a non-blocking `document_index` step; this is not a separate company-brain module
+  - Lifecycle note: the route now advances `lark_documents.status` through `created -> indexed -> verified`, records `indexed_at` / `verified_at`, and writes `create_failed` / `index_failed` / `verify_failed` plus `failure_reason` on the corresponding failure path, with `document_lifecycle_update` logs for each transition
+  - Company-brain note: when the lifecycle reaches `verified`, the route also attempts a non-blocking mirror write into `company_brain_docs` with `{ doc_id, title, source, created_at, creator }`, logging under `stage=company_brain_ingest`
 
 - `POST /api/doc/update`
   - Handler: `handleDocumentUpdate`
@@ -254,6 +301,24 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
 - `GET /agent/approvals`
   - Handler: `handleApprovalList`
   - Purpose: list pending approvals
+
+- `POST /agent/docs/create`
+  - Handler: `handleAgentCreateDoc`
+  - Purpose: expose `/api/doc/create` through an agent-facing bridge
+  - Response shape: `{ ok, action, data, trace_id }` with `action=create_doc`
+  - Log note: emits `stage=agent_bridge`
+
+- `GET /agent/company-brain/docs`
+  - Handler: `handleAgentListCompanyBrainDocs`
+  - Purpose: expose `/api/company-brain/docs` through an agent-facing bridge
+  - Response shape: `{ ok, action, data, trace_id }` with `action=list_company_brain_docs`
+  - Log note: emits `stage=agent_bridge`
+
+- `GET /agent/system/runtime-info`
+  - Handler: `handleAgentRuntimeInfo`
+  - Purpose: expose `/api/system/runtime-info` through an agent-facing bridge
+  - Response shape: `{ ok, action, data, trace_id }` with `action=get_runtime_info`
+  - Log note: emits `stage=agent_bridge`
 
 - `POST /agent/approvals/:request_id/approve`
 - `POST /agent/approvals/:request_id/reject`

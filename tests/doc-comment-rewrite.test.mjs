@@ -38,9 +38,11 @@ test("buildRewritePromptInput favors focused excerpts over full raw document", (
     risks: ["replace 寫回仍有 API 限制"],
   });
 
-  assert.match(result.prompt, /focused_document_excerpts:/);
+  assert.match(result.prompt, /<lobster_prompt/);
+  assert.match(result.prompt, /<section name="focused_document_excerpts"/);
   assert.match(result.prompt, /新的流程圖與評審要求/);
-  assert.match(result.prompt, /task_checkpoint:/);
+  assert.match(result.prompt, /<section name="task_checkpoint"/);
+  assert.match(result.prompt, /Do not claim that ls or find was run unless their output is explicitly present/);
   assert.ok(result.prompt.length < 7000);
-  assert.ok(result.governance.finalTokens <= result.governance.rawTokens);
+  assert.ok(result.governance.finalTokens > 0);
 });

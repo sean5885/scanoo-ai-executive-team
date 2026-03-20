@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 import { cleanText } from "./message-intent-utils.mjs";
 
 function compactError(error) {
@@ -40,7 +42,16 @@ export function summarizeLarkEvent(event = {}) {
   };
 }
 
-export function createRuntimeLogger({ logger = console, component = "runtime" } = {}) {
+export function createTraceId(prefix = "trace") {
+  const normalizedPrefix = cleanText(prefix) || "trace";
+  return `${normalizedPrefix}_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
+}
+
+export function createRuntimeLogger({
+  logger = console,
+  component = "runtime",
+  baseFields = {},
+} = {}) {
   const fallback = logger?.log ? logger.log.bind(logger) : console.log.bind(console);
 
   function emit(level, event, fields = {}) {
@@ -49,6 +60,7 @@ export function createRuntimeLogger({ logger = console, component = "runtime" } 
       ts: new Date().toISOString(),
       component,
       event,
+      ...baseFields,
       ...fields,
     });
   }
@@ -63,9 +75,16 @@ export function createRuntimeLogger({ logger = console, component = "runtime" } 
     error(event, fields = {}) {
       emit("error", event, fields);
     },
-    child(nextComponent) {
+    child(nextComponent, childFields = {}) {
       const childComponent = cleanText(nextComponent) || component;
-      return createRuntimeLogger({ logger, component: `${component}.${childComponent}` });
+      return createRuntimeLogger({
+        logger,
+        component: `${component}.${childComponent}`,
+        baseFields: {
+          ...baseFields,
+          ...(childFields && typeof childFields === "object" ? childFields : {}),
+        },
+      });
     },
     compactError,
   };

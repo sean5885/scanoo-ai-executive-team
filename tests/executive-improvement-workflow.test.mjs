@@ -1,0 +1,179 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+
+import {
+  executiveApprovedMemoryStorePath,
+  executiveImprovementStorePath,
+  executiveReflectionStorePath,
+} from "../src/config.mjs";
+import { buildLifecycleTransition } from "../src/executive-lifecycle.mjs";
+import {
+  applyImprovementWorkflowProposal,
+  archiveExecutiveReflection,
+  listImprovementWorkflowProposals,
+  registerImprovementWorkflowProposals,
+  resolveImprovementWorkflowProposal,
+} from "../src/executive-improvement-workflow.mjs";
+import {
+  appendExecutiveTaskImprovementProposal,
+  getExecutiveTask,
+  startExecutiveTask,
+  updateExecutiveTask,
+} from "../src/executive-task-state.mjs";
+import { setupExecutiveTaskStateTestHarness } from "./helpers/executive-task-state-harness.mjs";
+
+setupExecutiveTaskStateTestHarness();
+
+async function snapshotFile(filePath) {
+  try {
+    return await fs.readFile(filePath, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+async function restoreFile(filePath, content) {
+  if (content == null) {
+    await fs.rm(filePath, { force: true });
+    return;
+  }
+  await fs.writeFile(filePath, content, "utf8");
+}
+
+test("improvement workflow archives reflections and supports approve/apply loop", async (t) => {
+  const files = [
+    executiveReflectionStorePath,
+    executiveImprovementStorePath,
+    executiveApprovedMemoryStorePath,
+  ];
+  const snapshots = await Promise.all(files.map((filePath) => snapshotFile(filePath)));
+  t.after(async () => {
+    await Promise.all(files.map((filePath, index) => restoreFile(filePath, snapshots[index])));
+  });
+
+  const task = await startExecutiveTask({
+    accountId: "acct-1",
+    sessionKey: "sess-1",
+    objective: "補強會議 owner 規則",
+    primaryAgentId: "meeting",
+    currentAgentId: "meeting",
+  });
+  const transition = buildLifecycleTransition({
+    from: task.lifecycle_state,
+    to: "clarified",
+    reason: "test",
+  });
+  await updateExecutiveTask(task.id, transition.patch);
+  const transition2 = buildLifecycleTransition({
+    from: "clarified",
+    to: "planned",
+    reason: "test",
+  });
+  await updateExecutiveTask(task.id, transition2.patch);
+  const transition3 = buildLifecycleTransition({
+    from: "planned",
+    to: "executing",
+    reason: "test",
+  });
+  await updateExecutiveTask(task.id, transition3.patch);
+  const transition4 = buildLifecycleTransition({
+    from: "executing",
+    to: "awaiting_result",
+    reason: "test",
+  });
+  await updateExecutiveTask(task.id, transition4.patch);
+  const transition5 = buildLifecycleTransition({
+    from: "awaiting_result",
+    to: "verifying",
+    reason: "test",
+  });
+  await updateExecutiveTask(task.id, transition5.patch);
+  const transition6 = buildLifecycleTransition({
+    from: "verifying",
+    to: "blocked",
+    reason: "test",
+  });
+  await updateExecutiveTask(task.id, transition6.patch);
+  const transition7 = buildLifecycleTransition({
+    from: "blocked",
+    to: "reflected",
+    reason: "test",
+  });
+  await updateExecutiveTask(task.id, transition7.patch);
+
+  const reflection = await archiveExecutiveReflection({
+    accountId: "acct-1",
+    sessionKey: "sess-1",
+    taskId: task.id,
+    reflection: {
+      task_type: "meeting_processing",
+      task_input: "這次會議缺 owner",
+      action_taken: "輸出會議摘要",
+      evidence_collected: [{ type: "summary_generated", summary: "meeting_summary" }],
+      verification_result: { pass: false, issues: ["missing_owner"] },
+      what_went_wrong: ["missing_owner"],
+      missing_elements: ["owner"],
+      routing_quality: { correct: true },
+      response_quality: { robotic_response: false },
+      error_type: "missing_owner",
+    },
+  });
+
+  const proposals = await registerImprovementWorkflowProposals({
+    accountId: "acct-1",
+    sessionKey: "sess-1",
+    taskId: task.id,
+    reflectionId: reflection.id,
+    reflection,
+    proposals: [
+      {
+        id: "proposal-1",
+        category: "meeting_agent_improvement",
+        mode: "proposal_only",
+        title: "Require owner checklist",
+        description: "會議 action item 缺 owner 時，強制補待確認 owner。",
+        target: "meeting-agent",
+      },
+      {
+        id: "proposal-2",
+        category: "verification_improvement",
+        mode: "auto_apply",
+        title: "Tighten verifier",
+        description: "owner 缺失時不可 pass。",
+        target: "executive-verifier",
+      },
+    ],
+  });
+
+  for (const proposal of proposals) {
+    await appendExecutiveTaskImprovementProposal(task.id, proposal);
+  }
+  const improvementTransition = buildLifecycleTransition({
+    from: "reflected",
+    to: "improvement_proposed",
+    reason: "test",
+  });
+  await updateExecutiveTask(task.id, improvementTransition.patch);
+
+  const listed = await listImprovementWorkflowProposals({ accountId: "acct-1" });
+  assert.equal(listed.length >= 2, true);
+  assert.equal(listed.some((item) => item.id === "proposal-2" && item.status === "applied"), true);
+
+  const approved = await resolveImprovementWorkflowProposal({
+    proposalId: "proposal-1",
+    approved: true,
+    actor: "sean",
+  });
+  assert.equal(approved.status, "approved");
+
+  const applied = await applyImprovementWorkflowProposal({
+    proposalId: "proposal-1",
+    actor: "sean",
+  });
+  assert.equal(applied.status, "applied");
+
+  const finalTask = await getExecutiveTask(task.id);
+  assert.equal(finalTask.improvement_proposals.some((item) => item.id === "proposal-1" && item.status === "applied"), true);
+  assert.equal(finalTask.lifecycle_state, "improved");
+});

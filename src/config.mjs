@@ -40,6 +40,15 @@ export function resolveDomainUrl(value) {
   return String(domain).replace(/\/$/, "");
 }
 
+function parseFloatOrDefault(value, fallback) {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
 export const baseConfig = {
   appId: process.env.LARK_APP_ID,
   appSecret: process.env.LARK_APP_SECRET,
@@ -86,15 +95,68 @@ export const docCommentSuggestionWatchesPath =
 export const agentWorkflowCheckpointStorePath =
   process.env.AGENT_WORKFLOW_CHECKPOINT_STORE ||
   path.resolve(process.cwd(), ".data/agent-workflow-checkpoints.json");
+export const executiveTaskStateStorePath =
+  process.env.EXECUTIVE_TASK_STATE_STORE ||
+  path.resolve(process.cwd(), ".data/executive-task-state.json");
+export const executiveSessionMemoryStorePath =
+  process.env.EXECUTIVE_SESSION_MEMORY_STORE ||
+  path.resolve(process.cwd(), ".data/executive-session-memory.json");
+export const executiveApprovedMemoryStorePath =
+  process.env.EXECUTIVE_APPROVED_MEMORY_STORE ||
+  path.resolve(process.cwd(), ".data/executive-approved-memory.json");
+export const executivePendingProposalStorePath =
+  process.env.EXECUTIVE_PENDING_PROPOSAL_STORE ||
+  path.resolve(process.cwd(), ".data/executive-pending-proposals.json");
+export const executiveReflectionStorePath =
+  process.env.EXECUTIVE_REFLECTION_STORE ||
+  path.resolve(process.cwd(), ".data/executive-reflections.json");
+export const executiveImprovementStorePath =
+  process.env.EXECUTIVE_IMPROVEMENT_STORE ||
+  path.resolve(process.cwd(), ".data/executive-improvements.json");
+export const plannerTaskLifecycleV1StorePath =
+  process.env.PLANNER_TASK_LIFECYCLE_V1_STORE ||
+  path.resolve(process.cwd(), ".data/planner-task-lifecycle-v1.json");
 export const ragDbPath =
   process.env.RAG_SQLITE_PATH || path.resolve(process.cwd(), ".data/lark-rag.sqlite");
 export const chunkTargetSize = Number.parseInt(process.env.RAG_CHUNK_TARGET_SIZE || "1000", 10);
 export const chunkOverlapSize = Number.parseInt(process.env.RAG_CHUNK_OVERLAP || "180", 10);
 export const searchTopK = Number.parseInt(process.env.RAG_SEARCH_TOP_K || "6", 10);
 export const llmBaseUrl =
-  (process.env.LLM_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
+  (process.env.LLM_BASE_URL || process.env.OPENAI_API_BASE || process.env.OPENAI_BASE_URL || "https://api2.codexcn.com/v1").replace(/\/$/, "");
 export const llmApiKey = process.env.LLM_API_KEY || "";
-export const llmModel = process.env.LLM_MODEL || "gpt-4o-mini";
+export const minimaxTextModel =
+  String(process.env.MINIMAX_TEXT_MODEL || process.env.LLM_MODEL || "MiniMax-M2.7").trim() || "MiniMax-M2.7";
+export const llmModel = minimaxTextModel;
+export const llmOpenClawAgentId =
+  String(process.env.LLM_OPENCLAW_AGENT || "lobster-backend").trim() || "lobster-backend";
+export const llmOpenClawSessionPrefix =
+  String(process.env.LLM_OPENCLAW_SESSION_PREFIX || "playground-llm").trim() || "playground-llm";
+export const llmOpenClawTimeoutMs = Number.parseInt(process.env.LLM_OPENCLAW_TIMEOUT_MS || "90000", 10);
+export const llmTemperature = 0.1;
+export const llmTopP = clamp(parseFloatOrDefault(process.env.LLM_TOP_P || "0.75", 0.75), 0.7, 0.8);
+export const llmJsonRetryMax = Number.parseInt(process.env.LLM_JSON_RETRY_MAX || "2", 10);
+export const imageUnderstandingProvider =
+  String(process.env.IMAGE_UNDERSTANDING_PROVIDER || "nano_banana").trim() || "nano_banana";
+export const imageUnderstandingBaseUrl =
+  (
+    process.env.IMAGE_UNDERSTANDING_BASE_URL ||
+    (imageUnderstandingProvider === "nano_banana"
+      ? "https://generativelanguage.googleapis.com/v1beta"
+      : llmBaseUrl)
+  ).replace(/\/$/, "");
+export const imageUnderstandingApiKey =
+  process.env.IMAGE_UNDERSTANDING_API_KEY || process.env.NANO_BANANA_API_KEY || "";
+export const imageUnderstandingModel =
+  String(process.env.IMAGE_UNDERSTANDING_MODEL || process.env.NANO_BANANA_MODEL || "gemini-2.5-flash-image").trim() ||
+  "gemini-2.5-flash-image";
+export const imageUnderstandingPromptMaxTokens = Number.parseInt(
+  process.env.IMAGE_UNDERSTANDING_PROMPT_MAX_TOKENS || "1200",
+  10,
+);
+export const imageUnderstandingMaxResultChars = Number.parseInt(
+  process.env.IMAGE_UNDERSTANDING_MAX_RESULT_CHARS || "420",
+  10,
+);
 export const answerMaxContextChars = Number.parseInt(
   process.env.RAG_ANSWER_MAX_CONTEXT_CHARS || "12000",
   10,
@@ -112,10 +174,63 @@ export const docRewritePromptMaxTokens = Number.parseInt(process.env.DOC_REWRITE
 export const docRewriteDocumentMaxChars = Number.parseInt(process.env.DOC_REWRITE_DOCUMENT_MAX_CHARS || "3600", 10);
 export const docRewriteCommentMaxChars = Number.parseInt(process.env.DOC_REWRITE_COMMENT_MAX_CHARS || "1800", 10);
 export const semanticClassifierPromptMaxTokens = Number.parseInt(process.env.SEMANTIC_CLASSIFIER_PROMPT_MAX_TOKENS || "2200", 10);
+export const semanticClassifierJsonRetryMax = Number.parseInt(
+  process.env.SEMANTIC_CLASSIFIER_JSON_RETRY_MAX || String(llmJsonRetryMax),
+  10,
+);
 export const openClawToolOutputMaxChars = Number.parseInt(process.env.OPENCLAW_TOOL_OUTPUT_MAX_CHARS || "2400", 10);
 export const meetingPromptMaxTokens = Number.parseInt(process.env.MEETING_PROMPT_MAX_TOKENS || "2200", 10);
+export const meetingTranscriptPromptMaxChars = Number.parseInt(
+  process.env.MEETING_TRANSCRIPT_PROMPT_MAX_CHARS || "3600",
+  10,
+);
+export const meetingSummaryJsonRetryMax = Number.parseInt(
+  process.env.MEETING_SUMMARY_JSON_RETRY_MAX || String(llmJsonRetryMax),
+  10,
+);
 export const meetingDefaultChatId = String(process.env.MEETING_GROUP_CHAT_ID || "").trim();
 export const meetingDocFolderToken = String(process.env.MEETING_DOC_FOLDER_TOKEN || "").trim();
+export const meetingAudioCaptureEnabled =
+  String(process.env.MEETING_AUDIO_CAPTURE_ENABLED || "true").toLowerCase() === "true";
+export const meetingAudioFfmpegBin = String(process.env.MEETING_AUDIO_FFMPEG_BIN || "ffmpeg").trim() || "ffmpeg";
+export const meetingAudioInputDeviceIndex = String(process.env.MEETING_AUDIO_INPUT_DEVICE_INDEX || "").trim();
+export const meetingAudioCaptureDir =
+  process.env.MEETING_AUDIO_CAPTURE_DIR || path.resolve(process.cwd(), ".data/meeting-audio");
+export const meetingTranscribeProvider =
+  String(process.env.MEETING_TRANSCRIBE_PROVIDER || "faster_whisper").trim() || "faster_whisper";
+export const meetingTranscribeBaseUrl =
+  (process.env.MEETING_TRANSCRIBE_BASE_URL || llmBaseUrl).replace(/\/$/, "");
+export const meetingTranscribeApiKey = process.env.MEETING_TRANSCRIBE_API_KEY || llmApiKey;
+export const meetingTranscribeModel = process.env.MEETING_TRANSCRIBE_MODEL || "whisper-1";
+export const meetingTranscribeLanguage = String(process.env.MEETING_TRANSCRIBE_LANGUAGE || "zh").trim();
+export const meetingTranscribeFasterWhisperPython =
+  String(process.env.MEETING_TRANSCRIBE_FASTER_WHISPER_PYTHON || "python3").trim() || "python3";
+export const meetingTranscribeFasterWhisperScript =
+  process.env.MEETING_TRANSCRIBE_FASTER_WHISPER_SCRIPT ||
+  path.resolve(process.cwd(), "scripts/transcribe-with-faster-whisper.py");
+export const meetingTranscribeFasterWhisperModel =
+  String(process.env.MEETING_TRANSCRIBE_FASTER_WHISPER_MODEL || "small").trim() || "small";
+export const meetingTranscribeFasterWhisperDevice =
+  String(process.env.MEETING_TRANSCRIBE_FASTER_WHISPER_DEVICE || "cpu").trim() || "cpu";
+export const meetingTranscribeFasterWhisperComputeType =
+  String(process.env.MEETING_TRANSCRIBE_FASTER_WHISPER_COMPUTE_TYPE || "int8").trim() || "int8";
+export const meetingTranscribeFasterWhisperCacheDir =
+  process.env.MEETING_TRANSCRIBE_FASTER_WHISPER_CACHE_DIR ||
+  path.resolve(process.cwd(), ".data/faster-whisper");
+export const runtimeGuardDisableCompetingLaunchAgents =
+  String(process.env.RUNTIME_GUARD_DISABLE_COMPETING_LAUNCH_AGENTS || "true").toLowerCase() ===
+  "true";
+export const runtimeGuardCompetingLaunchLabels = String(
+  process.env.RUNTIME_GUARD_COMPETING_LAUNCH_LABELS ||
+    "ai.openclaw.gateway,lobster.core,lobster.gateway,lobster.worker",
+)
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+export const runtimeMessageDedupWindowMs = Number.parseInt(
+  process.env.RUNTIME_MESSAGE_DEDUP_WINDOW_MS || "120000",
+  10,
+);
 
 export const lobsterSecurityProjectRoot =
   process.env.LOBSTER_SECURITY_PROJECT_ROOT || path.resolve(process.cwd(), "lobster_security");

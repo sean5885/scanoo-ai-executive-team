@@ -4,12 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { execFile as execFileCb } from "node:child_process";
-import { governPromptSections, trimTextForBudget } from "./agent-token-governance.mjs";
+import { buildCompactSystemPrompt, governPromptSections, trimTextForBudget } from "./agent-token-governance.mjs";
 import {
   agentPromptEmergencyRatio,
   agentPromptLightRatio,
   agentPromptRollingRatio,
+  llmModel,
   semanticClassifierPromptMaxTokens,
+  semanticClassifierJsonRetryMax,
 } from "./config.mjs";
 import { normalizeText } from "./text-utils.mjs";
 
@@ -88,7 +90,12 @@ function parseBatchResponse(text) {
   const raw = stripCodeFences(text);
   const match = raw.match(/\{[\s\S]*\}$/);
   const jsonText = match ? match[0] : raw;
-  const parsed = JSON.parse(jsonText);
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch (error) {
+    throw new Error(`semantic_classifier_invalid_json:${error.message}`);
+  }
   const rows = Array.isArray(parsed.results) ? parsed.results : [];
   return rows
     .map((row) => ({
@@ -98,6 +105,23 @@ function parseBatchResponse(text) {
       reason: String(row.reason || "").trim(),
     }))
     .filter((row) => row.id && CATEGORIES.includes(row.category));
+}
+
+function validateBatchRows(rows, items) {
+  const rowById = new Map();
+  for (const row of rows) {
+    if (rowById.has(row.id)) {
+      throw new Error(`semantic_classifier_duplicate_id:${row.id}`);
+    }
+    rowById.set(row.id, row);
+  }
+
+  const missing = items.map((item) => item.id).filter((id) => !rowById.has(id));
+  if (missing.length) {
+    throw new Error(`semantic_classifier_missing_rows:${missing.join(",")}`);
+  }
+
+  return items.map((item) => rowById.get(item.id)).filter(Boolean);
 }
 
 function buildPrompt(items) {
@@ -116,8 +140,11 @@ function buildPrompt(items) {
   });
 
   const governed = governPromptSections({
-    systemPrompt:
-      "你是企業知識文件分類器。根據文件標題、路徑與內容摘要判斷語義分類，不要重複輸出背景說明。",
+    systemPrompt: buildCompactSystemPrompt("你是企業知識文件分類器。", [
+      "根據文件標題、路徑與內容摘要判斷語義分類。",
+      "證據不足時也必須選出最接近的固定分類並說明原因。",
+    ]),
+    format: "xml",
     maxTokens: semanticClassifierPromptMaxTokens,
     thresholds: {
       light: agentPromptLightRatio,
@@ -133,6 +160,7 @@ function buildPrompt(items) {
           "不要只看檔名，要優先理解正文內容。",
           `分類只能從以下固定分類中選一個：${CATEGORIES.join("、")}`,
           '格式必須是：{"results":[{"id":"...","category":"...","confidence":0.0,"reason":"..."}]}',
+          "每個輸入文件都必須返回一列結果。",
           "只回 JSON，不要任何額外文字。",
         ].join("\n"),
         required: true,
@@ -147,6 +175,67 @@ function buildPrompt(items) {
           .join("\n\n"),
         required: true,
         maxTokens: semanticClassifierPromptMaxTokens - 220,
+      },
+    ],
+  });
+
+  return governed.prompt;
+}
+
+function buildRepairPrompt(items, malformedResponse, reason) {
+  const governed = governPromptSections({
+    systemPrompt: buildCompactSystemPrompt("你是企業知識文件分類器的 JSON 修復器。", [
+      "你只能修正成合法 JSON。",
+      "不能省略任何文件結果，也不能增加額外說明。",
+    ]),
+    format: "xml",
+    maxTokens: semanticClassifierPromptMaxTokens,
+    thresholds: {
+      light: agentPromptLightRatio,
+      rolling: agentPromptRollingRatio,
+      emergency: agentPromptEmergencyRatio,
+    },
+    sections: [
+      {
+        name: "repair_goal",
+        label: "repair_goal",
+        text: [
+          "修復上一輪分類結果，輸出合法 JSON。",
+          `合法分類只能使用：${CATEGORIES.join("、")}`,
+          "你必須為每個文件 id 返回一列結果。",
+          '格式必須是：{"results":[{"id":"...","category":"...","confidence":0.0,"reason":"..."}]}',
+          "不要輸出 Markdown、解釋或程式碼框。",
+        ].join("\n"),
+        required: true,
+        maxTokens: 160,
+      },
+      {
+        name: "repair_reason",
+        label: "repair_reason",
+        text: reason,
+        required: true,
+        maxTokens: 120,
+      },
+      {
+        name: "required_document_ids",
+        label: "required_document_ids",
+        text: items.map((item) => item.id).join("\n"),
+        required: true,
+        maxTokens: 120,
+      },
+      {
+        name: "malformed_response",
+        label: "malformed_response",
+        text: trimTextForBudget(malformedResponse, 1400, { preserveTail: true }),
+        required: true,
+        maxTokens: 400,
+      },
+      {
+        name: "original_request",
+        label: "original_request",
+        text: buildPrompt(items),
+        required: true,
+        maxTokens: semanticClassifierPromptMaxTokens - 860,
       },
     ],
   });
@@ -193,7 +282,29 @@ async function callClassifier(prompt) {
   return callViaOpenClaw(prompt);
 }
 
-function classifyDocumentsLocally(items) {
+export async function classifyPendingItemsWithRetries(items, { classifier = callClassifier } = {}) {
+  let prompt = buildPrompt(items);
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= semanticClassifierJsonRetryMax; attempt += 1) {
+    let content = "";
+    try {
+      content = await classifier(prompt);
+      const rows = validateBatchRows(parseBatchResponse(content), items);
+      return rows;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= semanticClassifierJsonRetryMax) {
+        break;
+      }
+      prompt = buildRepairPrompt(items, content, error.message || "semantic_classifier_unknown_error");
+    }
+  }
+
+  throw lastError || new Error("semantic_classifier_retry_exhausted");
+}
+
+export function classifyDocumentsLocally(items) {
   const rules = [
     { category: "工程技術", patterns: ["工程", "技術", "api", "系統", "架構", "程式", "開發", "sdk", "算法"] },
     { category: "產品需求", patterns: ["需求", "prd", "功能", "流程", "欄位", "驗收", "產品"] },
@@ -225,55 +336,60 @@ function classifyDocumentsLocally(items) {
 export async function classifyDocumentsSemantically(items) {
   const cache = loadCache();
   const resolved = new Map();
-  const pending = [];
+  const normalizedItems = Array.isArray(items) ? items : [];
 
-  for (const item of items.slice(0, MAX_ITEMS_PER_RUN)) {
-    const text = summarizeText(item.text || "");
-    if (!text) {
-      continue;
-    }
+  for (let start = 0; start < normalizedItems.length; start += MAX_ITEMS_PER_RUN) {
+    const pending = [];
+    for (const item of normalizedItems.slice(start, start + MAX_ITEMS_PER_RUN)) {
+      const text = summarizeText(item.text || "");
+      if (!text) {
+        continue;
+      }
 
-    const cacheKey = hashInput(item.title, text);
-    const cached = cache[cacheKey];
-    if (cached?.category) {
-      resolved.set(item.id, {
-        category: cached.category,
-        confidence: cached.confidence || 0,
-        reason: cached.reason || "cached",
-        content_source: item.content_source || null,
+      const cacheKey = hashInput(item.title, text);
+      const cached = cache[cacheKey];
+      if (cached?.category) {
+        resolved.set(item.id, {
+          category: cached.category,
+          confidence: cached.confidence || 0,
+          reason: cached.reason || "cached",
+          content_source: item.content_source || null,
+        });
+        continue;
+      }
+
+      pending.push({
+        ...item,
+        text,
+        cacheKey,
       });
+    }
+
+    if (!pending.length) {
       continue;
     }
 
-    pending.push({
-      ...item,
-      text,
-      cacheKey,
-    });
-  }
-
-  if (!pending.length) {
-    return resolved;
-  }
-
-  let rows = [];
-  try {
-    const content = await callClassifier(buildPrompt(pending));
-    rows = parseBatchResponse(content);
-  } catch {
-    return classifyDocumentsLocally(pending);
-  }
-
-  for (const row of rows) {
-    const source = pending.find((item) => item.id === row.id);
-    if (!source) {
+    let rows = [];
+    try {
+      rows = await classifyPendingItemsWithRetries(pending);
+    } catch {
+      for (const [id, value] of classifyDocumentsLocally(pending)) {
+        resolved.set(id, value);
+      }
       continue;
     }
-    cache[source.cacheKey] = row;
-    resolved.set(source.id, {
-      ...row,
-      content_source: source.content_source || null,
-    });
+
+    for (const row of rows) {
+      const source = pending.find((item) => item.id === row.id);
+      if (!source) {
+        continue;
+      }
+      cache[source.cacheKey] = row;
+      resolved.set(source.id, {
+        ...row,
+        content_source: source.content_source || null,
+      });
+    }
   }
 
   saveCache(cache);
@@ -288,7 +404,7 @@ export function getSemanticClassifierInfo() {
   return {
     available: semanticClassifierAvailable(),
     provider: PROVIDER,
-    model: "minimax/MiniMax-M2.5 via OpenClaw",
+    model: `minimax/${llmModel} via OpenClaw`,
     cache_path: CACHE_PATH,
     host: os.hostname(),
     max_items_per_run: MAX_ITEMS_PER_RUN,

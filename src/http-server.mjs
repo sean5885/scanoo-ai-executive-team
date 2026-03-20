@@ -1,4 +1,5 @@
 import http from "node:http";
+import process from "node:process";
 import {
   oauthBaseUrl,
   oauthCallbackPath,
@@ -15,6 +16,19 @@ import {
   getUserProfile,
   getValidUserToken,
 } from "./lark-user-auth.mjs";
+import {
+  getCompanyBrainDoc,
+  getDocumentByDocumentId,
+  getDocumentByExternalKey,
+  listCompanyBrainDocs,
+  listDocumentsByStatus,
+  runRepositoryTransaction,
+  searchCompanyBrainDocs,
+  summarizeDocumentLifecycle,
+  upsertCompanyBrainDoc,
+  upsertDocument,
+  upsertSource,
+} from "./rag-repository.mjs";
 import {
   bulkUpsertBitableRecords,
   checkDriveTask,
@@ -64,6 +78,7 @@ import {
   listWikiSpaceNodes,
   listWikiSpaces,
   moveWikiNode,
+  ensureDocumentManagerPermission,
   updateBitableApp,
   updateBitableRecord,
   updateDocument,
@@ -73,9 +88,11 @@ import {
 } from "./lark-content.mjs";
 import { answerQuestion, searchKnowledgeBase } from "./answer-service.mjs";
 import { applyRewrittenDocument, rewriteDocumentFromComments } from "./doc-comment-rewrite.mjs";
+import { applyHeadingTargetedInsert, DocumentTargetingError } from "./doc-targeting.mjs";
 import { listUnseenDocumentComments, markDocumentCommentsSeen } from "./comment-watch-store.mjs";
 import { generateDocumentCommentSuggestionCard } from "./comment-suggestion-workflow.mjs";
 import { runCommentSuggestionPollOnce } from "./comment-suggestion-poller.mjs";
+import { buildCloudDocStructuredResult, buildCloudDocWorkflowScopeKey } from "./cloud-doc-organization-workflow.mjs";
 import {
   consumeCommentRewriteConfirmation,
   consumeDocumentReplaceConfirmation,
@@ -93,19 +110,47 @@ import {
   rollbackSecureTask,
   startSecureTask,
 } from "./lobster-security-bridge.mjs";
+import {
+  applyImprovementWorkflowProposal,
+  getImprovementWorkflowProposal,
+  listImprovementWorkflowProposals,
+  resolveImprovementWorkflowProposal,
+} from "./executive-improvement-workflow.mjs";
+import {
+  ensureDocRewriteWorkflowTask,
+  ensureCloudDocWorkflowTask,
+  finalizeDocRewriteWorkflowTask,
+  finalizeCloudDocWorkflowTask,
+  markCloudDocApplying,
+  markDocRewriteApplying,
+} from "./executive-orchestrator.mjs";
 import { runSync } from "./lark-sync-service.mjs";
 import { applyDriveOrganization, previewDriveOrganization } from "./lark-drive-organizer.mjs";
 import { applyWikiOrganization, previewWikiOrganization } from "./lark-wiki-organizer.mjs";
 import { getAllowedMethodsForPath } from "./http-route-contracts.mjs";
 import { listResolvedSessions } from "./session-scope-store.mjs";
 import { createMeetingCoordinator } from "./meeting-agent.mjs";
-import { normalizeText } from "./text-utils.mjs";
+import { extractDocumentId } from "./message-intent-utils.mjs";
+import { normalizeText, nowIso } from "./text-utils.mjs";
+import { createRuntimeLogger, createTraceId } from "./runtime-observability.mjs";
+import { getDbPath } from "./db.mjs";
 
 const pendingOauthStates = new Map();
 const meetingCoordinator = createMeetingCoordinator({
   createConfirmation: createMeetingWriteConfirmation,
   consumeConfirmation: consumeMeetingWriteConfirmation,
 });
+let activeHttpServiceOverrides = {};
+const serviceStartTime = nowIso();
+
+function setActiveHttpServiceOverrides(overrides = {}) {
+  activeHttpServiceOverrides = overrides && typeof overrides === "object" ? overrides : {};
+}
+
+function getHttpService(name, fallback) {
+  const override = activeHttpServiceOverrides?.[name];
+  return typeof override === "function" ? override : fallback;
+}
 
 function cleanupOauthStates() {
   const cutoff = Date.now() - 10 * 60 * 1000;
@@ -117,11 +162,24 @@ function cleanupOauthStates() {
   }
 }
 
+function withTracePayload(res, payload) {
+  if (!payload || Array.isArray(payload) || typeof payload !== "object") {
+    return payload;
+  }
+  if (res?.__trace_id && payload.trace_id == null) {
+    return {
+      ...payload,
+      trace_id: res.__trace_id,
+    };
+  }
+  return payload;
+}
+
 function jsonResponse(res, statusCode, payload) {
   res.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
   });
-  res.end(`${JSON.stringify(payload, null, 2)}\n`);
+  res.end(`${JSON.stringify(withTracePayload(res, payload), null, 2)}\n`);
 }
 
 function htmlResponse(res, statusCode, html) {
@@ -136,11 +194,1090 @@ function methodNotAllowed(res, allowedMethods) {
     "Content-Type": "application/json; charset=utf-8",
     Allow: allowedMethods.join(", "),
   });
-  res.end(`${JSON.stringify({
+  res.end(`${JSON.stringify(withTracePayload(res, {
     ok: false,
     error: "method_not_allowed",
     allowed_methods: allowedMethods,
-  }, null, 2)}\n`);
+  }), null, 2)}\n`);
+}
+
+const noopHttpLogger = {
+  info() {},
+  warn() {},
+  error() {},
+  compactError(error) {
+    if (!error) {
+      return null;
+    }
+    if (error instanceof Error) {
+      return {
+        name: error.name || "Error",
+        message: error.message || "unknown_error",
+      };
+    }
+    return {
+      message: typeof error === "string" ? error : String(error),
+    };
+  },
+  child() {
+    return this;
+  },
+};
+
+function extractHttpPlatformError(error) {
+  const raw = error?.response?.data || null;
+  return {
+    http_status: Number.isFinite(Number(error?.response?.status)) ? Number(error.response.status) : null,
+    platform_code: Number.isFinite(Number(raw?.code)) ? Number(raw.code) : null,
+    platform_msg: raw?.msg || raw?.message || String(error?.message || "unknown_error"),
+    log_id: raw?.log_id || raw?.error?.log_id || null,
+    raw: raw || null,
+  };
+}
+
+function buildApiDocumentMetadata({
+  account,
+  documentId = null,
+  title = null,
+  folderToken = null,
+  createdAt = null,
+} = {}) {
+  return {
+    doc_id: documentId || null,
+    source: "api",
+    created_at: createdAt || null,
+    creator: {
+      account_id: account?.id || null,
+      open_id: account?.open_id || null,
+    },
+    title: title || null,
+    folder_token: folderToken || null,
+  };
+}
+
+function buildDocumentLifecycleView(row) {
+  return {
+    doc_id: row?.document_id || null,
+    external_key: row?.external_key || null,
+    status: row?.status || null,
+    failure_reason: row?.failure_reason || null,
+    indexed_at: row?.indexed_at || null,
+    verified_at: row?.verified_at || null,
+    created_at: row?.created_at || null,
+    updated_at: row?.updated_at || null,
+  };
+}
+
+function buildCompanyBrainPayload(row, metadata) {
+  return {
+    doc_id: row?.document_id || metadata?.doc_id || null,
+    title: row?.title || metadata?.title || null,
+    source: metadata?.source || "api",
+    created_at: metadata?.created_at || row?.created_at || null,
+    creator: metadata?.creator || {
+      account_id: null,
+      open_id: null,
+    },
+  };
+}
+
+function buildCompanyBrainDocView(row) {
+  let creator = {
+    account_id: null,
+    open_id: null,
+  };
+  try {
+    const parsed = row?.creator_json ? JSON.parse(row.creator_json) : null;
+    if (parsed && typeof parsed === "object") {
+      creator = {
+        account_id: parsed.account_id || null,
+        open_id: parsed.open_id || null,
+      };
+    }
+  } catch {
+    creator = {
+      account_id: null,
+      open_id: null,
+    };
+  }
+
+  return {
+    doc_id: row?.doc_id || null,
+    title: row?.title || null,
+    source: row?.source || null,
+    created_at: row?.created_at || null,
+    creator,
+  };
+}
+
+function parseCompanyBrainLimit(requestUrl, body, fallback = 50) {
+  const limitRaw = Number.parseInt(
+    String(requestUrl.searchParams.get("limit") || body.limit || String(fallback)).trim(),
+    10,
+  );
+  return Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : fallback;
+}
+
+function parseCompanyBrainDocId(requestUrl, body) {
+  return String(
+    requestUrl.pathname.match(/^\/api\/company-brain\/docs\/([^/]+)$/)?.[1]
+    || body.doc_id
+    || ""
+  ).trim();
+}
+
+function parseCompanyBrainSearchQuery(requestUrl, body) {
+  return String(requestUrl.searchParams.get("q") || body.q || "").trim();
+}
+
+// ---------------------------------------------------------------------------
+// Company-brain conflict-evidence read helpers
+// ---------------------------------------------------------------------------
+
+function logCompanyBrainReadEvent(logger, stage, fields = {}) {
+  logger.info(`document_${stage}`, {
+    stage,
+    ...fields,
+  });
+}
+
+function logCompanyBrainCollectionRead(logger, stage, { accountId, limit = null, q = null, total = 0 }) {
+  logCompanyBrainReadEvent(logger, stage, {
+    account_id: accountId,
+    ...(limit == null ? {} : { limit }),
+    ...(q == null ? {} : { q }),
+    total,
+  });
+}
+
+function logCompanyBrainDetailRead(logger, { accountId, docId, found }) {
+  logCompanyBrainReadEvent(logger, "company_brain_detail", {
+    account_id: accountId,
+    doc_id: docId,
+    found,
+  });
+}
+
+function resolveCompanyBrainReadContext(res, requestUrl, body, logger = noopHttpLogger) {
+  return requireUserContext(res, getAccountId(requestUrl, body), logger);
+}
+
+function buildCompanyBrainReadAuthPayload(context, action) {
+  return {
+    account_id: context.account.id,
+    auth_mode: "user_access_token",
+    action,
+  };
+}
+
+function respondCompanyBrainReadSuccess(res, statusCode, payload) {
+  jsonResponse(res, statusCode, {
+    ok: true,
+    ...payload,
+  });
+}
+
+function respondCompanyBrainReadFailure(res, statusCode, error) {
+  jsonResponse(res, statusCode, {
+    ok: false,
+    error,
+  });
+}
+
+function respondCompanyBrainReadMissingDocId(res) {
+  respondCompanyBrainReadFailure(res, 400, "missing_doc_id");
+}
+
+function respondCompanyBrainReadInvalidQuery(res) {
+  respondCompanyBrainReadFailure(res, 400, "invalid_query");
+}
+
+function respondCompanyBrainReadNotFound(res) {
+  respondCompanyBrainReadFailure(res, 404, "not_found");
+}
+
+function readCompanyBrainListItems(accountId, limit) {
+  return listCompanyBrainDocs(accountId, limit).map(buildCompanyBrainDocView);
+}
+
+function readCompanyBrainDetailItem(accountId, docId) {
+  const row = getCompanyBrainDoc(accountId, docId);
+  return row ? buildCompanyBrainDocView(row) : null;
+}
+
+function readCompanyBrainSearchItems(accountId, query, limit) {
+  return searchCompanyBrainDocs(accountId, query, limit).map(buildCompanyBrainDocView);
+}
+
+function buildCompanyBrainCollectionResult(context, action, payload) {
+  return {
+    ...buildCompanyBrainReadAuthPayload(context, action),
+    ...payload,
+  };
+}
+
+function buildCompanyBrainDetailResult(context, item) {
+  return {
+    ...buildCompanyBrainReadAuthPayload(context, "company_brain_doc_detail"),
+    item,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Company-brain approval-adjacent mirror-ingest helper
+// ---------------------------------------------------------------------------
+
+function ingestVerifiedDocumentToCompanyBrain({ account, row, logger = noopHttpLogger }) {
+  if (!account?.id || !row?.document_id) {
+    return null;
+  }
+
+  let metadata = null;
+  try {
+    metadata = row.meta_json ? JSON.parse(row.meta_json) : null;
+  } catch {
+    metadata = null;
+  }
+
+  const payload = buildCompanyBrainPayload(row, metadata);
+  try {
+    const ingested = upsertCompanyBrainDoc({
+      account_id: account.id,
+      ...payload,
+    });
+    logger.info("document_company_brain_ingested", {
+      stage: "company_brain_ingest",
+      account_id: account.id,
+      doc_id: payload.doc_id,
+      source: payload.source,
+    });
+    return ingested;
+  } catch (error) {
+    logger.warn("document_company_brain_ingest_failed", {
+      stage: "company_brain_ingest",
+      account_id: account.id,
+      doc_id: payload.doc_id,
+      error: logger.compactError(error),
+    });
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Company-brain write/intake helpers
+// ---------------------------------------------------------------------------
+
+function buildDocumentCreateInput(body = {}) {
+  return {
+    title: String(body.title || "").trim(),
+    folderToken: String(body.folder_token || "").trim() || undefined,
+    content: String(body.content || "").trim(),
+  };
+}
+
+function buildDocumentReferenceSeed(requestUrl, body = {}) {
+  const searchParams = requestUrl?.searchParams;
+  return {
+    document_id: searchParams?.get("document_id") || body.document_id || "",
+    doc_token: searchParams?.get("doc_token") || body.doc_token || "",
+    document_url:
+      searchParams?.get("document_url")
+      || searchParams?.get("document_link")
+      || searchParams?.get("doc_link")
+      || searchParams?.get("doc_url")
+      || body.document_url
+      || body.document_link
+      || body.doc_link
+      || body.doc_url
+      || "",
+    url: searchParams?.get("url") || body.url || body.link || body.href || "",
+    target_document_id: body.target_document_id || "",
+    target_document_url: body.target_document_url || "",
+    target_document: body.target_document || null,
+    text: body.text || body.content || "",
+  };
+}
+
+function resolveDocumentIdFromRequest(requestUrl, body = {}) {
+  const seed = buildDocumentReferenceSeed(requestUrl, body);
+  return String(seed.document_id || seed.doc_token || extractDocumentId(seed) || "").trim();
+}
+
+function buildDocumentUpdateInput(requestUrl, body = {}) {
+  const target = body.target && typeof body.target === "object" ? body.target : {};
+  return {
+    documentId: resolveDocumentIdFromRequest(requestUrl, body),
+    content: String(body.content || "").trim(),
+    mode: String(body.mode || "append").trim() === "replace" ? "replace" : "append",
+    confirm: body.confirm === true,
+    confirmationId: String(body.confirmation_id || "").trim(),
+    targetHeading: String(
+      body.target_heading
+      || body.section_heading
+      || body.heading
+      || target.heading
+      || target.section
+      || "",
+    ).trim(),
+    targetPosition: String(body.target_position || target.position || "").trim(),
+  };
+}
+
+function buildDocumentWriteAuthPayload(context, action) {
+  return {
+    account_id: context.account.id,
+    auth_mode: "user_access_token",
+    action,
+  };
+}
+
+function respondDocumentWriteSuccess(res, statusCode, payload) {
+  jsonResponse(res, statusCode, {
+    ok: true,
+    ...payload,
+  });
+}
+
+function respondDocumentWriteFailure(res, statusCode, error, extra = {}) {
+  jsonResponse(res, statusCode, {
+    ok: false,
+    error,
+    ...extra,
+  });
+}
+
+function buildDocumentCreateResult({
+  context,
+  created,
+  permissionGrantFailed,
+  permissionGrantSkipped,
+  permissionGrantError,
+  writeResult,
+}) {
+  return {
+    ...buildDocumentWriteAuthPayload(context, "document_create"),
+    ...created,
+    permission_grant_failed: permissionGrantFailed,
+    permission_grant_skipped: permissionGrantSkipped,
+    permission_grant_error: permissionGrantError,
+    write_result: writeResult,
+  };
+}
+
+function buildDocumentUpdateResult({
+  context,
+  mode,
+  result,
+  targeting = null,
+}) {
+  const action = targeting
+    ? "document_update_targeted_apply"
+    : mode === "replace"
+      ? "document_update_replace_apply"
+      : "document_update";
+  return {
+    ...buildDocumentWriteAuthPayload(context, action),
+    ...result,
+    targeting,
+  };
+}
+
+function buildDocumentReplacePreviewResult({
+  context,
+  preview,
+  targeting = null,
+  message = "Replace mode needs explicit confirmation. Re-submit with confirm=true and confirmation_id.",
+}) {
+  const action = targeting ? "document_update_targeted_preview" : "document_update_replace_preview";
+  return {
+    ...buildDocumentWriteAuthPayload(context, action),
+    preview_required: true,
+    message,
+    ...preview,
+    targeting,
+  };
+}
+
+function buildDocumentTargetingFailure(error) {
+  if (!(error instanceof DocumentTargetingError)) {
+    return null;
+  }
+
+  return {
+    statusCode: 400,
+    error: error.code || "document_targeting_error",
+    extra: {
+      message: error.message || "Failed to resolve targeted document update.",
+      ...(error.details && typeof error.details === "object" ? error.details : {}),
+    },
+  };
+}
+
+function logDocumentLifecycleTransition(
+  logger,
+  {
+    accountId = null,
+    documentId = null,
+    from = null,
+    to = null,
+    error = null,
+  } = {},
+) {
+  const level = error ? "warn" : "info";
+  logger[level]("document_lifecycle_updated", {
+    stage: "document_lifecycle_update",
+    account_id: accountId,
+    document_id: documentId,
+    from,
+    to,
+    ...(error ? { error: logger.compactError(error) } : {}),
+  });
+}
+
+function buildCreateFailureExternalKey(res, fallbackTimestamp) {
+  return `api-create:${res.__trace_id || fallbackTimestamp}`;
+}
+
+function buildCreatedDocumentSeed(created = {}) {
+  return {
+    document_id: created.document_id || null,
+    revision_id: created.revision_id || null,
+    title: created.title || null,
+    url: created.url || null,
+  };
+}
+
+function logDocumentCreatePermissionGrantSkipped(logger, context, created) {
+  logger.info("document_create_permission_grant_skipped", {
+    stage: "permission_grant_skipped",
+    reason: "self_owner",
+    account_id: context.account.id,
+    document_id: created.document_id || null,
+  });
+}
+
+function logDocumentCreatePermissionGrantFailed(logger, context, created, permissionGrantError) {
+  logger.warn("document_create_permission_grant_failed", {
+    stage: "permission_grant",
+    account_id: context.account.id,
+    document_id: created.document_id || null,
+    code: permissionGrantError.platform_code,
+    msg: permissionGrantError.platform_msg,
+    log_id: permissionGrantError.log_id,
+  });
+}
+
+async function persistCreateFailedLifecycleRecord({
+  account,
+  res,
+  title,
+  folderToken,
+  logger = noopHttpLogger,
+  error,
+}) {
+  const failureCreatedAt = nowIso();
+  const failureExternalKey = buildCreateFailureExternalKey(res, failureCreatedAt);
+  try {
+    upsertApiLifecycleDocument({
+      account,
+      externalKey: failureExternalKey,
+      created: buildCreatedDocumentSeed({ title }),
+      folderToken,
+      content: null,
+      status: "create_failed",
+      failureReason: extractHttpPlatformError(error).platform_msg,
+      createdAt: failureCreatedAt,
+    });
+    logDocumentLifecycleTransition(logger, {
+      accountId: account.id,
+      documentId: null,
+      from: null,
+      to: "create_failed",
+    });
+  } catch (lifecycleError) {
+    logDocumentLifecycleTransition(logger, {
+      accountId: account.id,
+      documentId: null,
+      from: null,
+      to: "create_failed",
+      error: lifecycleError,
+    });
+  }
+}
+
+async function persistCreatedLifecycleSeed({
+  account,
+  created,
+  folderToken,
+  createdAt,
+  logger = noopHttpLogger,
+}) {
+  try {
+    upsertApiLifecycleDocument({
+      account,
+      externalKey: `drive:${created.document_id}`,
+      created: buildCreatedDocumentSeed(created),
+      folderToken,
+      content: null,
+      status: "created",
+      createdAt,
+    });
+    logDocumentLifecycleTransition(logger, {
+      accountId: account.id,
+      documentId: created.document_id || null,
+      from: null,
+      to: "created",
+    });
+  } catch (error) {
+    logDocumentLifecycleTransition(logger, {
+      accountId: account.id,
+      documentId: created.document_id || null,
+      from: null,
+      to: "created",
+      error,
+    });
+  }
+}
+
+async function applyDocumentManagerPermissionGrant({
+  context,
+  created,
+  logger = noopHttpLogger,
+}) {
+  const managerOpenId = String(context.account.open_id || "").trim();
+  const createdByOpenId = managerOpenId;
+  let permissionGrantFailed = false;
+  let permissionGrantSkipped = false;
+  let permissionGrantError = null;
+
+  if (!managerOpenId || managerOpenId === createdByOpenId) {
+    permissionGrantSkipped = true;
+    logDocumentCreatePermissionGrantSkipped(logger, context, created);
+    return {
+      permissionGrantFailed,
+      permissionGrantSkipped,
+      permissionGrantError,
+    };
+  }
+
+  try {
+    await ensureDocumentManagerPermission(context.token.access_token, created.document_id, {
+      tokenType: "user",
+      managerOpenId,
+    });
+  } catch (error) {
+    permissionGrantFailed = true;
+    permissionGrantError = extractHttpPlatformError(error);
+    logDocumentCreatePermissionGrantFailed(logger, context, created, permissionGrantError);
+  }
+
+  return {
+    permissionGrantFailed,
+    permissionGrantSkipped,
+    permissionGrantError,
+  };
+}
+
+function logDocumentIndexLifecycleResult({
+  logger = noopHttpLogger,
+  account,
+  created,
+  indexedDocument,
+}) {
+  logDocumentLifecycleTransition(logger, {
+    accountId: account.id,
+    documentId: created.document_id || null,
+    from: "created",
+    to: "indexed",
+  });
+
+  if (indexedDocument?.verified) {
+    logDocumentLifecycleTransition(logger, {
+      accountId: account.id,
+      documentId: created.document_id || null,
+      from: "indexed",
+      to: "verified",
+    });
+    return;
+  }
+
+  logDocumentLifecycleTransition(logger, {
+    accountId: account.id,
+    documentId: created.document_id || null,
+    from: "indexed",
+    to: "verify_failed",
+  });
+}
+
+async function persistIndexFailureLifecycleRecord({
+  account,
+  created,
+  folderToken,
+  content,
+  createdAt,
+  logger = noopHttpLogger,
+  error,
+}) {
+  try {
+    upsertApiLifecycleDocument({
+      account,
+      externalKey: `drive:${created.document_id}`,
+      created,
+      folderToken,
+      content,
+      status: "index_failed",
+      failureReason: String(error?.message || "index_failed"),
+      createdAt,
+    });
+    logDocumentLifecycleTransition(logger, {
+      accountId: account.id,
+      documentId: created.document_id || null,
+      from: "created",
+      to: "index_failed",
+    });
+  } catch (lifecycleError) {
+    logDocumentLifecycleTransition(logger, {
+      accountId: account.id,
+      documentId: created.document_id || null,
+      from: "created",
+      to: "index_failed",
+      error: lifecycleError,
+    });
+  }
+}
+
+async function handleDocumentCreateIndexBoundary({
+  context,
+  created,
+  folderToken,
+  content,
+  createdAt,
+  logger = noopHttpLogger,
+}) {
+  try {
+    const indexedDocument = await indexApiCreatedDocument({
+      account: context.account,
+      created,
+      folderToken,
+      content,
+    });
+    logDocumentIndexLifecycleResult({
+      logger,
+      account: context.account,
+      created,
+      indexedDocument,
+    });
+    if (indexedDocument?.verified) {
+      ingestVerifiedDocumentToCompanyBrain({
+        account: context.account,
+        row: indexedDocument?.document_row,
+        logger,
+      });
+    }
+    logger.info("document_create_indexed", {
+      stage: "document_index_schema_normalized",
+      account_id: context.account.id,
+      document_id: created.document_id || null,
+      index_document_id: indexedDocument?.document_row?.id || null,
+      source: "api",
+    });
+  } catch (error) {
+    await persistIndexFailureLifecycleRecord({
+      account: context.account,
+      created,
+      folderToken,
+      content,
+      createdAt,
+      logger,
+      error,
+    });
+    logger.warn("document_create_index_failed", {
+      stage: "document_index_schema_normalized",
+      account_id: context.account.id,
+      document_id: created.document_id || null,
+      error: logger.compactError(error),
+    });
+  }
+}
+
+function upsertApiLifecycleDocument({
+  account,
+  externalKey,
+  created,
+  folderToken,
+  content = null,
+  status,
+  indexedAt = null,
+  verifiedAt = null,
+  failureReason = null,
+  createdAt = null,
+}) {
+  return upsertDocument({
+    account_id: account.id,
+    source_id: null,
+    source_type: "docx",
+    external_key: externalKey,
+    external_id: created?.document_id || null,
+    file_token: created?.document_id || null,
+    document_id: created?.document_id || null,
+    title: created?.title || null,
+    url: created?.url || null,
+    parent_path: "/",
+    revision: created?.revision_id || null,
+    updated_at_remote: indexedAt || createdAt || nowIso(),
+    raw_text: content || null,
+    meta_json: buildApiDocumentMetadata({
+      account,
+      documentId: created?.document_id || null,
+      title: created?.title || null,
+      folderToken,
+      createdAt,
+    }),
+    active: 1,
+    status,
+    indexed_at: indexedAt || null,
+    verified_at: verifiedAt || null,
+    failure_reason: failureReason || null,
+  });
+}
+
+async function indexApiCreatedDocument({
+  account,
+  created,
+  folderToken,
+  content,
+}) {
+  if (!account?.id || !created?.document_id) {
+    return null;
+  }
+
+  const externalKey = `drive:${created.document_id}`;
+  const existingDocument = getDocumentByExternalKey(account.id, externalKey);
+  let existingMeta = null;
+  try {
+    existingMeta = existingDocument?.meta_json ? JSON.parse(existingDocument.meta_json) : null;
+  } catch {
+    existingMeta = null;
+  }
+
+  const createdAt = existingMeta?.created_at || nowIso();
+  const indexedAt = nowIso();
+  const metadata = buildApiDocumentMetadata({
+    account,
+    documentId: created.document_id,
+    title: created.title,
+    folderToken,
+    createdAt,
+  });
+  const requiredShape = {
+    doc_id: true,
+    source: true,
+    created_at: true,
+    creator: {
+      account_id: true,
+      open_id: true,
+    },
+    title: true,
+    folder_token: true,
+  };
+
+  function missingKeys(meta, shape) {
+    const misses = [];
+    if (!meta || typeof meta !== "object") {
+      return ["(root)"];
+    }
+    for (const [key, value] of Object.entries(shape)) {
+      if (!(key in meta)) {
+        misses.push(key);
+        continue;
+      }
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        for (const nested of missingKeys(meta[key], value)) {
+          misses.push(nested === "(root)" ? key : `${key}.${nested}`);
+        }
+      }
+    }
+    return misses;
+  }
+
+  return runRepositoryTransaction(() => {
+    const sourceRow = upsertSource({
+      account_id: account.id,
+      source_type: "drive",
+      external_key: externalKey,
+      external_id: created.document_id,
+      title: created.title || null,
+      url: created.url || null,
+      parent_external_key: folderToken ? `drive:${folderToken}` : null,
+      parent_path: "/",
+      updated_at_remote: indexedAt,
+      meta_json: metadata,
+    });
+
+    const indexedDocument = upsertApiLifecycleDocument({
+      account,
+      externalKey,
+      created,
+      folderToken,
+      content,
+      status: "indexed",
+      indexedAt,
+      createdAt,
+    });
+
+    const sourceMeta = sourceRow?.meta_json ? JSON.parse(sourceRow.meta_json) : null;
+    const documentMeta = indexedDocument?.meta_json ? JSON.parse(indexedDocument.meta_json) : null;
+    const verified =
+      JSON.stringify(sourceMeta) === JSON.stringify(documentMeta) &&
+      missingKeys(sourceMeta, requiredShape).length === 0 &&
+      missingKeys(documentMeta, requiredShape).length === 0;
+
+    if (!verified) {
+      const failedDocument = upsertApiLifecycleDocument({
+        account,
+        externalKey,
+        created,
+        folderToken,
+        content,
+        status: "verify_failed",
+        indexedAt,
+        verifiedAt: null,
+        failureReason: "metadata_mismatch",
+        createdAt,
+      });
+      return {
+        source_row: sourceRow,
+        document_row: failedDocument,
+        verified: false,
+        failure_reason: "metadata_mismatch",
+      };
+    }
+
+    const verifiedAt = nowIso();
+    const verifiedDocument = upsertApiLifecycleDocument({
+      account,
+      externalKey,
+      created,
+      folderToken,
+      content,
+      status: "verified",
+      indexedAt,
+      verifiedAt,
+      createdAt,
+    });
+
+    return {
+      source_row: sourceRow,
+      document_row: verifiedDocument,
+      verified: true,
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Review-adjacent helper builders
+// ---------------------------------------------------------------------------
+
+function buildCloudDocPreviewPlan(result) {
+  return {
+    target_folders: Array.isArray(result?.target_folders) ? result.target_folders : [],
+    moves: Array.isArray(result?.moves) ? result.moves : [],
+  };
+}
+
+function buildCloudDocScopeObjective({ folderToken, options }) {
+  if (folderToken) {
+    return folderToken;
+  }
+  return options?.spaceId || options?.parentNodeToken || options?.spaceName || "wiki_scope";
+}
+
+function buildCloudDocScopeMeta({
+  scopeType,
+  folderToken = "",
+  spaceId = "",
+  parentNodeToken = "",
+  previewPlan = null,
+}) {
+  return {
+    scope_type: scopeType,
+    folder_token: folderToken,
+    space_id: spaceId,
+    parent_node_token: parentNodeToken,
+    ...(previewPlan ? { preview_plan: previewPlan } : {}),
+  };
+}
+
+function buildCloudDocWorkflowScope(scopeKey) {
+  return {
+    session_key: scopeKey,
+    trace_id: createTraceId(),
+  };
+}
+
+function respondCloudDocPreviewRequired(res, message) {
+  jsonResponse(res, 409, {
+    ok: false,
+    error: "preview_required",
+    message,
+  });
+}
+
+async function ensureCloudDocPreviewReviewTasks({
+  accountId,
+  scope,
+  scopeKey,
+  objective,
+  previewPlan,
+  meta,
+}) {
+  await ensureCloudDocWorkflowTask({
+    accountId,
+    scope,
+    workflowState: "previewing",
+    routingHint: "cloud_doc_preview",
+    objective,
+    scopeKey,
+    meta: {
+      ...meta,
+      preview_plan: previewPlan,
+    },
+  });
+  await ensureCloudDocWorkflowTask({
+    accountId,
+    scope,
+    workflowState: "awaiting_review",
+    routingHint: "cloud_doc_review_pending",
+    objective,
+    scopeKey,
+    meta: {
+      ...meta,
+      preview_plan: previewPlan,
+    },
+  });
+}
+
+function buildDocumentRewriteWorkflowScope(documentId) {
+  return {
+    session_key: `doc-rewrite:${documentId}`,
+    trace_id: createTraceId(),
+  };
+}
+
+function buildDocumentRewriteTaskMeta(route, extra = {}) {
+  return {
+    route,
+    ...extra,
+  };
+}
+
+function buildDocumentRewritePreviewResponse({
+  context,
+  result,
+  confirmation,
+  workflowScope,
+}) {
+  return {
+    ok: true,
+    account_id: context.account.id,
+    auth_mode: "user_access_token",
+    action: "document_rewrite_from_comments_preview",
+    trace_id: workflowScope.trace_id,
+    preview_required: true,
+    ...result,
+    confirmation_id: confirmation.confirmation_id,
+    confirmation_type: confirmation.confirmation_type,
+    confirmation_expires_at: confirmation.expires_at,
+    rewrite_preview: confirmation.preview,
+    rewrite_preview_card: confirmation.preview_card,
+  };
+}
+
+function buildDocumentRewriteApplyResponse({
+  context,
+  documentId,
+  confirmation,
+  applied,
+  finalized,
+  workflowScope,
+}) {
+  return {
+    ok: true,
+    account_id: context.account.id,
+    auth_mode: "user_access_token",
+    action: "document_rewrite_from_comments_apply",
+    trace_id: workflowScope.trace_id,
+    document_id: documentId,
+    applied: true,
+    resolve_comments: Boolean(confirmation.resolve_comments),
+    change_summary: confirmation.change_summary || [],
+    update_result: applied.update_result,
+    resolved_comment_ids: applied.resolved_comment_ids,
+    workflow_state: finalized?.task?.workflow_state || applied.workflow_state || "applying",
+    verification: finalized?.verification || null,
+  };
+}
+
+function respondDocumentRewriteFailure(res, statusCode, error, message, extra = {}) {
+  jsonResponse(res, statusCode, {
+    ok: false,
+    error,
+    ...(message ? { message } : {}),
+    ...extra,
+  });
+}
+
+function buildCloudDocOrganizeResponse({
+  context,
+  apply,
+  result,
+  finalized = null,
+}) {
+  return {
+    ok: true,
+    account_id: context.account.id,
+    auth_mode: "user_access_token",
+    action: apply ? "organize_apply" : "organize_preview",
+    workflow_state: finalized?.task?.workflow_state || (apply ? "applying" : "awaiting_review"),
+    verification: finalized?.verification || null,
+    ...result,
+  };
+}
+
+function buildWikiOrganizeResponse({
+  context,
+  apply,
+  result,
+  finalized = null,
+}) {
+  return {
+    ok: true,
+    account_id: context.account.id,
+    auth_mode: "user_access_token",
+    action: apply ? "wiki_organize_apply" : "wiki_organize_preview",
+    workflow_state: finalized?.task?.workflow_state || (apply ? "applying" : "awaiting_review"),
+    verification: finalized?.verification || null,
+    ...result,
+  };
+}
+
+async function runHttpRoute(logger, routeName, fn) {
+  const routeLogger = (logger || noopHttpLogger).child(routeName, { route: routeName });
+  const startedAt = Date.now();
+  routeLogger.info("route_started");
+  try {
+    const result = await fn(routeLogger);
+    routeLogger.info("route_succeeded", {
+      duration_ms: Date.now() - startedAt,
+    });
+    return result;
+  } catch (error) {
+    routeLogger.error("route_failed", {
+      duration_ms: Date.now() - startedAt,
+      error: routeLogger.compactError(error),
+    });
+    throw error;
+  }
 }
 
 async function readJsonBody(req) {
@@ -160,13 +1297,60 @@ async function readJsonBody(req) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
+async function invokeAgentBridge(handler, { requestUrl, body, logger, res, action }) {
+  let capturedStatusCode = 200;
+  let capturedPayload = null;
+
+  const captureRes = {
+    __trace_id: res?.__trace_id,
+    writeHead(statusCode) {
+      capturedStatusCode = statusCode;
+    },
+    end(serialized) {
+      try {
+        capturedPayload = serialized ? JSON.parse(String(serialized).trim()) : null;
+      } catch {
+        capturedPayload = {
+          ok: false,
+          error: "agent_bridge_invalid_json_response",
+          raw: serialized == null ? null : String(serialized),
+        };
+      }
+    },
+  };
+
+  await handler(captureRes, requestUrl, body, logger);
+
+  const traceId = capturedPayload?.trace_id || res?.__trace_id || null;
+  const data = capturedPayload && typeof capturedPayload === "object"
+    ? Object.fromEntries(Object.entries(capturedPayload).filter(([key]) => key !== "ok" && key !== "action" && key !== "trace_id"))
+    : null;
+  const ok = Boolean(capturedPayload?.ok);
+
+  logger.info("agent_bridge_completed", {
+    stage: "agent_bridge",
+    action,
+    ok,
+    status_code: capturedStatusCode,
+  });
+
+  jsonResponse(res, capturedStatusCode, {
+    ok,
+    action,
+    data,
+    trace_id: traceId,
+  });
+}
+
 async function resolveAccountContext(accountId) {
-  const validToken = await getValidUserToken(accountId);
+  const validToken = await getHttpService("getValidUserToken", getValidUserToken)(accountId);
   if (!validToken?.access_token) {
     return null;
   }
 
-  const context = await getStoredAccountContext(validToken.account_id || accountId);
+  const context = await getHttpService("getStoredAccountContext", getStoredAccountContext)(
+    validToken.account_id || accountId
+  );
   if (!context?.account) {
     return null;
   }
@@ -177,9 +1361,15 @@ async function resolveAccountContext(accountId) {
   };
 }
 
-async function requireUserContext(res, accountId) {
+async function requireUserContext(res, accountId, logger = noopHttpLogger) {
+  logger.info("auth_context_resolve_started", {
+    account_id: accountId || null,
+  });
   const context = await resolveAccountContext(accountId);
   if (!context?.token?.access_token) {
+    logger.warn("auth_context_missing_user_token", {
+      account_id: accountId || null,
+    });
     jsonResponse(res, 401, {
       ok: false,
       error: "missing_user_access_token",
@@ -189,6 +1379,9 @@ async function requireUserContext(res, accountId) {
     return null;
   }
 
+  logger.info("auth_context_resolve_succeeded", {
+    account_id: context.account?.id || accountId || null,
+  });
   return context;
 }
 
@@ -196,9 +1389,12 @@ function getAccountId(requestUrl, body) {
   return requestUrl.searchParams.get("account_id") || body.account_id || undefined;
 }
 
-async function handleAuthStatus(res, accountId) {
+async function handleAuthStatus(res, accountId, logger = noopHttpLogger) {
   const stored = await getStoredUserToken(accountId);
   if (!stored?.access_token) {
+    logger.warn("auth_status_missing_stored_token", {
+      account_id: accountId || null,
+    });
     jsonResponse(res, 200, {
       ok: false,
       authorized: false,
@@ -209,6 +1405,9 @@ async function handleAuthStatus(res, accountId) {
 
   const context = await resolveAccountContext(accountId);
   if (!context) {
+    logger.warn("auth_status_refresh_failed", {
+      account_id: accountId || null,
+    });
     jsonResponse(res, 200, {
       ok: false,
       authorized: false,
@@ -219,6 +1418,9 @@ async function handleAuthStatus(res, accountId) {
   }
 
   const profile = await getUserProfile(context.token.access_token);
+  logger.info("auth_status_ready", {
+    account_id: context.account.id,
+  });
   jsonResponse(res, 200, {
     ok: true,
     authorized: true,
@@ -390,17 +1592,24 @@ async function handleDriveDelete(res, requestUrl, body) {
   });
 }
 
-async function handleDriveOrganize(res, requestUrl, body, apply) {
-  const context = await requireUserContext(res, getAccountId(requestUrl, body));
+async function handleDriveOrganize(res, requestUrl, body, apply, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
   if (!context) {
     return;
   }
 
   let folderToken = String(body.folder_token || requestUrl.searchParams.get("folder_token") || "").trim();
   if (!folderToken) {
-    folderToken = await resolveDriveRootFolderToken(context.token.access_token) || "";
+    folderToken =
+      (await getHttpService("resolveDriveRootFolderToken", resolveDriveRootFolderToken)(
+        context.token.access_token
+      )) || "";
   }
   if (!folderToken) {
+    logger.warn("drive_organize_missing_folder_token", {
+      account_id: context.account.id,
+      apply,
+    });
     jsonResponse(res, 400, { ok: false, error: "missing_folder_token" });
     return;
   }
@@ -410,18 +1619,107 @@ async function handleDriveOrganize(res, requestUrl, body, apply) {
     includeFolders: body.include_folders === true || requestUrl.searchParams.get("include_folders") === "true",
     accountId: context.account.id,
   };
-
-  const result = apply
-    ? await applyDriveOrganization(context.token.access_token, folderToken, options)
-    : await previewDriveOrganization(context.token.access_token, folderToken, options);
-
-  jsonResponse(res, 200, {
-    ok: true,
-    account_id: context.account.id,
-    auth_mode: "user_access_token",
-    action: apply ? "organize_apply" : "organize_preview",
-    ...result,
+  const scopeKey = buildCloudDocWorkflowScopeKey({ folderToken });
+  const objective = buildCloudDocScopeObjective({ folderToken });
+  const scopeMeta = buildCloudDocScopeMeta({
+    scopeType: "drive_folder",
+    folderToken,
   });
+  const workflowScope = buildCloudDocWorkflowScope(scopeKey);
+
+  logger.info("drive_organize_started", {
+    account_id: context.account.id,
+    apply,
+    recursive: options.recursive,
+    include_folders: options.includeFolders,
+  });
+  let applyingTask = null;
+  if (!apply) {
+    await ensureCloudDocWorkflowTask({
+      accountId: context.account.id,
+      scope: workflowScope,
+      workflowState: "scoping",
+      routingHint: "cloud_doc_scoping",
+      objective,
+      scopeKey,
+      meta: scopeMeta,
+    });
+  } else {
+    applyingTask = await markCloudDocApplying({
+      accountId: context.account.id,
+      scope: workflowScope,
+      scopeKey,
+      meta: scopeMeta,
+    });
+    if (!applyingTask || applyingTask.workflow_state !== "applying") {
+      respondCloudDocPreviewRequired(
+        res,
+        "Drive organize apply requires a prior preview/review step for the same folder scope.",
+      );
+      return;
+    }
+  }
+  const result = apply
+    ? await getHttpService("applyDriveOrganization", applyDriveOrganization)(
+        context.token.access_token,
+        folderToken,
+        options
+      )
+    : await getHttpService("previewDriveOrganization", previewDriveOrganization)(
+        context.token.access_token,
+        folderToken,
+        options
+      );
+  logger.info("drive_organize_completed", {
+    account_id: context.account.id,
+    apply,
+    task_id: result.task_id || null,
+    total_items: Array.isArray(result.items) ? result.items.length : null,
+  });
+  if (!apply) {
+    await ensureCloudDocPreviewReviewTasks({
+      accountId: context.account.id,
+      scope: workflowScope,
+      scopeKey,
+      objective,
+      previewPlan: buildCloudDocPreviewPlan(result),
+      meta: scopeMeta,
+    });
+  }
+  const structuredResult = buildCloudDocStructuredResult({
+    scopeKey,
+    scopeType: "drive_folder",
+    preview: apply
+      ? buildCloudDocPreviewPlan(applyingTask?.meta?.preview_plan)
+      : result,
+    apply: apply ? result : null,
+    mode: apply ? "apply" : "preview",
+  });
+  const finalized = apply
+    ? await finalizeCloudDocWorkflowTask({
+        accountId: context.account.id,
+        scope: workflowScope,
+        scopeKey,
+        structuredResult,
+        extraEvidence: [
+          {
+            type: "file_updated",
+            summary: `drive_scope:${folderToken}`,
+          },
+          {
+            type: "API_call_success",
+            summary: "drive_organize_apply_succeeded",
+          },
+        ],
+      })
+    : null;
+
+  jsonResponse(res, 200, buildCloudDocOrganizeResponse({
+    context,
+    apply,
+    result,
+    finalized,
+  }));
 }
 
 async function handleWikiCreateNode(res, requestUrl, body) {
@@ -481,8 +1779,8 @@ async function handleWikiMove(res, requestUrl, body) {
   });
 }
 
-async function handleWikiOrganize(res, requestUrl, body, apply) {
-  const context = await requireUserContext(res, getAccountId(requestUrl, body));
+async function handleWikiOrganize(res, requestUrl, body, apply, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
   if (!context) {
     return;
   }
@@ -497,18 +1795,111 @@ async function handleWikiOrganize(res, requestUrl, body, apply) {
       body.include_containers === true || requestUrl.searchParams.get("include_containers") === "true",
     accountId: context.account.id,
   };
-
-  const result = apply
-    ? await applyWikiOrganization(context.token.access_token, options)
-    : await previewWikiOrganization(context.token.access_token, options);
-
-  jsonResponse(res, 200, {
-    ok: true,
-    account_id: context.account.id,
-    auth_mode: "user_access_token",
-    action: apply ? "wiki_organize_apply" : "wiki_organize_preview",
-    ...result,
+  const scopeKey = buildCloudDocWorkflowScopeKey({
+    spaceId: options.spaceId,
+    parentNodeToken: options.parentNodeToken,
+    spaceName: options.spaceName,
   });
+  const objective = buildCloudDocScopeObjective({ options });
+  const scopeMeta = buildCloudDocScopeMeta({
+    scopeType: "wiki_scope",
+    spaceId: options.spaceId || "",
+    parentNodeToken: options.parentNodeToken || "",
+  });
+  const workflowScope = buildCloudDocWorkflowScope(scopeKey);
+
+  logger.info("wiki_organize_started", {
+    account_id: context.account.id,
+    apply,
+    has_space_id: Boolean(options.spaceId),
+    has_parent_node_token: Boolean(options.parentNodeToken),
+    recursive: options.recursive,
+  });
+  let applyingTask = null;
+  if (!apply) {
+    await ensureCloudDocWorkflowTask({
+      accountId: context.account.id,
+      scope: workflowScope,
+      workflowState: "scoping",
+      routingHint: "cloud_doc_scoping",
+      objective,
+      scopeKey,
+      meta: scopeMeta,
+    });
+  } else {
+    applyingTask = await markCloudDocApplying({
+      accountId: context.account.id,
+      scope: workflowScope,
+      scopeKey,
+      meta: scopeMeta,
+    });
+    if (!applyingTask || applyingTask.workflow_state !== "applying") {
+      respondCloudDocPreviewRequired(
+        res,
+        "Wiki organize apply requires a prior preview/review step for the same scope.",
+      );
+      return;
+    }
+  }
+  const result = apply
+    ? await getHttpService("applyWikiOrganization", applyWikiOrganization)(
+        context.token.access_token,
+        options
+      )
+    : await getHttpService("previewWikiOrganization", previewWikiOrganization)(
+        context.token.access_token,
+        options
+      );
+  logger.info("wiki_organize_completed", {
+    account_id: context.account.id,
+    apply,
+    total_items: Array.isArray(result.items) ? result.items.length : null,
+    task_id: result.task_id || null,
+  });
+  if (!apply) {
+    await ensureCloudDocPreviewReviewTasks({
+      accountId: context.account.id,
+      scope: workflowScope,
+      scopeKey,
+      objective,
+      previewPlan: buildCloudDocPreviewPlan(result),
+      meta: scopeMeta,
+    });
+  }
+  const structuredResult = buildCloudDocStructuredResult({
+    scopeKey,
+    scopeType: "wiki_scope",
+    preview: apply
+      ? buildCloudDocPreviewPlan(applyingTask?.meta?.preview_plan)
+      : result,
+    apply: apply ? result : null,
+    mode: apply ? "apply" : "preview",
+  });
+  const finalized = apply
+    ? await finalizeCloudDocWorkflowTask({
+        accountId: context.account.id,
+        scope: workflowScope,
+        scopeKey,
+        structuredResult,
+        extraEvidence: [
+          {
+            type: "file_updated",
+            summary: `wiki_scope:${options.spaceId || options.parentNodeToken || options.spaceName || "unknown"}`,
+          },
+          {
+            type: "API_call_success",
+            summary: "wiki_organize_apply_succeeded",
+          },
+        ],
+      })
+    : null;
+
+  jsonResponse(res, 200, buildWikiOrganizeResponse({
+    context,
+    apply,
+    result,
+    finalized,
+  }));
 }
 
 async function handleDocumentRead(res, requestUrl, body) {
@@ -521,7 +1912,7 @@ async function handleDocumentRead(res, requestUrl, body) {
     requestUrl.searchParams.get("document_id") || body.document_id || body.doc_token || "",
   ).trim();
   if (!documentId) {
-    jsonResponse(res, 400, { ok: false, error: "missing_document_id" });
+    respondDocumentRewriteFailure(res, 400, "missing_document_id");
     return;
   }
 
@@ -535,56 +1926,475 @@ async function handleDocumentRead(res, requestUrl, body) {
   });
 }
 
-async function handleDocumentCreate(res, requestUrl, body) {
-  const context = await requireUserContext(res, getAccountId(requestUrl, body));
+async function handleDocumentCreate(res, requestUrl, body, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
   if (!context) {
     return;
   }
 
-  const title = String(body.title || "").trim();
-  const folderToken = String(body.folder_token || "").trim() || undefined;
-  const content = String(body.content || "").trim();
+  const { title, folderToken, content } = buildDocumentCreateInput(body);
 
   if (!title) {
-    jsonResponse(res, 400, { ok: false, error: "missing_document_title" });
+    logger.warn("document_create_missing_title");
+    respondDocumentWriteFailure(res, 400, "missing_document_title");
     return;
   }
 
-  const created = await createDocument(context.token.access_token, title, folderToken);
+  logger.info("document_create_started", {
+    account_id: context.account.id,
+    has_folder_token: Boolean(folderToken),
+    has_initial_content: Boolean(content),
+  });
+  let created;
+  try {
+    created = await createDocument(
+      context.token.access_token,
+      title,
+      folderToken,
+      "user",
+    );
+  } catch (error) {
+    await persistCreateFailedLifecycleRecord({
+      account: context.account,
+      res,
+      title,
+      folderToken,
+      logger,
+      error,
+    });
+    throw error;
+  }
+  const createdAt = nowIso();
+  await persistCreatedLifecycleSeed({
+    account: context.account,
+    created,
+    folderToken,
+    createdAt,
+    logger,
+  });
+  logger.info("document_create_create_succeeded", {
+    account_id: context.account.id,
+    document_id: created.document_id || null,
+    folder_token: folderToken || null,
+  });
+  const {
+    permissionGrantFailed,
+    permissionGrantSkipped,
+    permissionGrantError,
+  } = await applyDocumentManagerPermissionGrant({
+    context,
+    created,
+    logger,
+  });
   let writeResult = null;
   if (content && created.document_id) {
     writeResult = await updateDocument(context.token.access_token, created.document_id, content, "replace");
   }
+  await handleDocumentCreateIndexBoundary({
+    context,
+    created,
+    folderToken,
+    content,
+    createdAt,
+    logger,
+  });
+  logger.info("document_create_completed", {
+    account_id: context.account.id,
+    document_id: created.document_id || null,
+    wrote_initial_content: Boolean(writeResult),
+    permission_grant_failed: permissionGrantFailed,
+    permission_grant_skipped: permissionGrantSkipped,
+  });
+
+  respondDocumentWriteSuccess(res, 200, buildDocumentCreateResult({
+    context,
+    created,
+    permissionGrantFailed,
+    permissionGrantSkipped,
+    permissionGrantError,
+    writeResult,
+  }));
+}
+
+async function handleDocumentLifecycleList(res, requestUrl, body, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
+  if (!context) {
+    return;
+  }
+
+  const status = String(requestUrl.searchParams.get("status") || body.status || "").trim();
+  if (!status) {
+    jsonResponse(res, 400, { ok: false, error: "missing_document_lifecycle_status" });
+    return;
+  }
+
+  const limitRaw = Number.parseInt(
+    String(requestUrl.searchParams.get("limit") || body.limit || "50").trim(),
+    10,
+  );
+  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 50;
+  const items = listDocumentsByStatus(context.account.id, status, limit).map(buildDocumentLifecycleView);
 
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
     auth_mode: "user_access_token",
-    action: "document_create",
-    ...created,
-    write_result: writeResult,
+    action: "document_lifecycle_list",
+    status,
+    total: items.length,
+    items,
   });
 }
 
-async function handleDocumentUpdate(res, requestUrl, body) {
-  const context = await requireUserContext(res, getAccountId(requestUrl, body));
+async function handleDocumentLifecycleSummary(res, requestUrl, body, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
   if (!context) {
     return;
   }
 
-  const documentId = String(body.document_id || body.doc_token || "").trim();
-  const content = String(body.content || "").trim();
-  const mode = String(body.mode || "append").trim() === "replace" ? "replace" : "append";
-  const confirm = body.confirm === true;
-  const confirmationId = String(body.confirmation_id || "").trim();
+  const summary = summarizeDocumentLifecycle(context.account.id);
+  logger.info("document_lifecycle_summary", {
+    stage: "document_lifecycle_summary",
+    account_id: context.account.id,
+    ...summary,
+  });
+
+  jsonResponse(res, 200, {
+    ok: true,
+    account_id: context.account.id,
+    auth_mode: "user_access_token",
+    action: "document_lifecycle_summary",
+    summary,
+  });
+}
+
+async function handleRuntimeInfo(res, requestUrl, body, logger = noopHttpLogger) {
+  const payload = {
+    db_path: getDbPath(),
+    node_pid: process.pid,
+    cwd: process.cwd(),
+    service_start_time: serviceStartTime,
+  };
+
+  logger.info("runtime_info", {
+    stage: "runtime_info",
+    ...payload,
+  });
+
+  jsonResponse(res, 200, {
+    ok: true,
+    action: "runtime_info",
+    ...payload,
+  });
+}
+
+async function handleAgentCreateDoc(res, requestUrl, body, logger = noopHttpLogger) {
+  await invokeAgentBridge(handleDocumentCreate, {
+    requestUrl,
+    body,
+    logger,
+    res,
+    action: "create_doc",
+  });
+}
+
+async function handleAgentListCompanyBrainDocs(res, requestUrl, body, logger = noopHttpLogger) {
+  await invokeAgentBridge(handleCompanyBrainDocsList, {
+    requestUrl,
+    body,
+    logger,
+    res,
+    action: "list_company_brain_docs",
+  });
+}
+
+async function handleAgentRuntimeInfo(res, requestUrl, body, logger = noopHttpLogger) {
+  await invokeAgentBridge(handleRuntimeInfo, {
+    requestUrl,
+    body,
+    logger,
+    res,
+    action: "get_runtime_info",
+  });
+}
+
+async function handleCompanyBrainDocsList(res, requestUrl, body, logger = noopHttpLogger) {
+  const context = await resolveCompanyBrainReadContext(res, requestUrl, body, logger);
+  if (!context) {
+    return;
+  }
+
+  const limit = parseCompanyBrainLimit(requestUrl, body);
+  const items = readCompanyBrainListItems(context.account.id, limit);
+
+  logCompanyBrainCollectionRead(logger, "company_brain_list", {
+    accountId: context.account.id,
+    limit,
+    total: items.length,
+  });
+
+  respondCompanyBrainReadSuccess(res, 200, buildCompanyBrainCollectionResult(context, "company_brain_docs_list", {
+    limit,
+    total: items.length,
+    items,
+  }));
+}
+
+async function handleCompanyBrainDocDetail(res, requestUrl, body, logger = noopHttpLogger) {
+  const context = await resolveCompanyBrainReadContext(res, requestUrl, body, logger);
+  if (!context) {
+    return;
+  }
+
+  const docId = parseCompanyBrainDocId(requestUrl, body);
+  if (!docId) {
+    respondCompanyBrainReadMissingDocId(res);
+    return;
+  }
+
+  const item = readCompanyBrainDetailItem(context.account.id, docId);
+  if (!item) {
+    logCompanyBrainDetailRead(logger, {
+      accountId: context.account.id,
+      docId,
+      found: false,
+    });
+    respondCompanyBrainReadNotFound(res);
+    return;
+  }
+
+  logCompanyBrainDetailRead(logger, {
+    accountId: context.account.id,
+    docId,
+    found: true,
+  });
+
+  respondCompanyBrainReadSuccess(res, 200, buildCompanyBrainDetailResult(context, item));
+}
+
+async function handleCompanyBrainSearch(res, requestUrl, body, logger = noopHttpLogger) {
+  const context = await resolveCompanyBrainReadContext(res, requestUrl, body, logger);
+  if (!context) {
+    return;
+  }
+
+  const q = parseCompanyBrainSearchQuery(requestUrl, body);
+  if (!q) {
+    respondCompanyBrainReadInvalidQuery(res);
+    return;
+  }
+
+  const limit = parseCompanyBrainLimit(requestUrl, body);
+  const items = readCompanyBrainSearchItems(context.account.id, q, limit);
+
+  logCompanyBrainCollectionRead(logger, "company_brain_search", {
+    accountId: context.account.id,
+    q,
+    limit,
+    total: items.length,
+  });
+
+  respondCompanyBrainReadSuccess(res, 200, buildCompanyBrainCollectionResult(context, "company_brain_docs_search", {
+    q,
+    limit,
+    total: items.length,
+    items,
+  }));
+}
+
+async function handleDocumentLifecycleRetry(res, requestUrl, body, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
+  if (!context) {
+    return;
+  }
+
+  const documentId = String(body.document_id || requestUrl.searchParams.get("document_id") || "").trim();
+  const externalKey = String(body.external_key || requestUrl.searchParams.get("external_key") || "").trim();
+  if (!documentId && !externalKey) {
+    jsonResponse(res, 400, { ok: false, error: "missing_document_id_or_external_key" });
+    return;
+  }
+
+  const row = documentId
+    ? getDocumentByDocumentId(context.account.id, documentId)
+    : getDocumentByExternalKey(context.account.id, externalKey);
+
+  if (!row) {
+    jsonResponse(res, 404, { ok: false, error: "document_lifecycle_record_not_found" });
+    return;
+  }
+
+  if (row.status === "create_failed") {
+    jsonResponse(res, 409, {
+      ok: false,
+      error: "document_lifecycle_retry_not_supported",
+      message: "create_failed must be retried manually from a new create request.",
+      item: buildDocumentLifecycleView(row),
+    });
+    return;
+  }
+
+  if (row.status !== "index_failed" && row.status !== "verify_failed") {
+    jsonResponse(res, 409, {
+      ok: false,
+      error: "document_lifecycle_status_not_retryable",
+      item: buildDocumentLifecycleView(row),
+    });
+    return;
+  }
+
+  let parsedMeta = null;
+  try {
+    parsedMeta = row.meta_json ? JSON.parse(row.meta_json) : null;
+  } catch {
+    parsedMeta = null;
+  }
+
+  const created = {
+    document_id: row.document_id || null,
+    revision_id: row.revision || null,
+    title: row.title || null,
+    url: row.url || null,
+  };
+  const folderToken = parsedMeta?.folder_token || null;
+  const retried = await indexApiCreatedDocument({
+    account: context.account,
+    created,
+    folderToken,
+    content: row.raw_text || "",
+  }).catch((error) => {
+    upsertApiLifecycleDocument({
+      account: context.account,
+      externalKey: row.external_key,
+      created,
+      folderToken,
+      content: row.raw_text || "",
+      status: "index_failed",
+      failureReason: String(error?.message || "index_failed"),
+      createdAt: parsedMeta?.created_at || row.created_at || nowIso(),
+    });
+    logger.warn("document_lifecycle_retry", {
+      stage: "document_lifecycle_retry",
+      account_id: context.account.id,
+      document_id: row.document_id || null,
+      from: row.status,
+      to: "index_failed",
+    });
+    throw error;
+  });
+
+  if (row.status === "index_failed") {
+    logger.info("document_lifecycle_retry", {
+      stage: "document_lifecycle_retry",
+      account_id: context.account.id,
+      document_id: row.document_id || null,
+      from: "index_failed",
+      to: "indexed",
+    });
+  }
+
+  const finalState = retried?.verified ? "verified" : "verify_failed";
+  logger[finalState === "verified" ? "info" : "warn"]("document_lifecycle_retry", {
+    stage: "document_lifecycle_retry",
+    account_id: context.account.id,
+    document_id: row.document_id || null,
+    from: row.status === "verify_failed" ? "verify_failed" : "indexed",
+    to: finalState,
+  });
+
+  const refreshed = getDocumentByExternalKey(context.account.id, row.external_key) || row;
+  if (finalState === "verified") {
+    ingestVerifiedDocumentToCompanyBrain({
+      account: context.account,
+      row: refreshed,
+      logger,
+    });
+  }
+  jsonResponse(res, 200, {
+    ok: true,
+    account_id: context.account.id,
+    auth_mode: "user_access_token",
+    action: "document_lifecycle_retry",
+    item: buildDocumentLifecycleView(refreshed),
+  });
+}
+
+async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
+  if (!context) {
+    return;
+  }
+
+  const {
+    documentId,
+    content,
+    mode,
+    confirm,
+    confirmationId,
+    targetHeading,
+    targetPosition,
+  } = buildDocumentUpdateInput(body);
 
   if (!documentId || !content) {
+    logger.warn("document_update_missing_args", {
+      has_document_id: Boolean(documentId),
+      has_content: Boolean(content),
+    });
     jsonResponse(res, 400, { ok: false, error: "missing_document_id_or_content" });
     return;
   }
 
-  if (mode === "replace") {
-    const current = await getDocument(context.token.access_token, documentId);
+  if (targetHeading && mode === "replace") {
+    respondDocumentWriteFailure(
+      res,
+      400,
+      "unsupported_target_mode",
+      { message: "Heading-targeted update currently supports append semantics only." },
+    );
+    return;
+  }
+
+  let resolvedMode = mode;
+  let resolvedContent = content;
+  let targeting = null;
+  let currentDocument = null;
+
+  if (targetHeading) {
+    try {
+      currentDocument = await getHttpService("getDocument", getDocument)(context.token.access_token, documentId);
+      const targeted = applyHeadingTargetedInsert(currentDocument.content, content, {
+        heading: targetHeading,
+        position: targetPosition,
+      });
+      resolvedMode = "replace";
+      resolvedContent = targeted.content;
+      targeting = targeted.targeting;
+    } catch (error) {
+      const failure = buildDocumentTargetingFailure(error);
+      if (!failure) {
+        throw error;
+      }
+      logger.warn("document_update_targeting_failed", {
+        account_id: context.account.id,
+        document_id: documentId,
+        target_heading: targetHeading,
+        error: failure.error,
+      });
+      respondDocumentWriteFailure(res, failure.statusCode, failure.error, failure.extra);
+      return;
+    }
+  }
+
+  if (resolvedMode === "replace") {
+    logger.info("document_replace_preview_or_apply_started", {
+      account_id: context.account.id,
+      document_id: documentId,
+      confirm,
+      target_heading: targetHeading || null,
+    });
+    const current = currentDocument
+      || await getHttpService("getDocument", getDocument)(context.token.access_token, documentId);
+    currentDocument = current;
 
     if (!confirm) {
       const preview = await createDocumentReplaceConfirmation({
@@ -593,27 +2403,27 @@ async function handleDocumentUpdate(res, requestUrl, body) {
         title: current.title,
         currentRevisionId: current.revision_id,
         currentContent: current.content,
-        proposedContent: content,
+        proposedContent: resolvedContent,
       });
 
-      jsonResponse(res, 200, {
-        ok: true,
-        account_id: context.account.id,
-        auth_mode: "user_access_token",
-        action: "document_update_replace_preview",
-        preview_required: true,
-        message: "Replace mode needs explicit confirmation. Re-submit with confirm=true and confirmation_id.",
-        ...preview,
-      });
+      respondDocumentWriteSuccess(res, 200, buildDocumentReplacePreviewResult({
+        context,
+        preview,
+        targeting,
+        message: targetHeading
+          ? "Heading-targeted update needs explicit confirmation. Re-submit with confirm=true and confirmation_id."
+          : undefined,
+      }));
       return;
     }
 
     if (!confirmationId) {
-      jsonResponse(res, 400, {
-        ok: false,
-        error: "missing_confirmation_id",
-        message: "Replace mode requires confirmation_id when confirm=true.",
-      });
+      respondDocumentWriteFailure(
+        res,
+        400,
+        "missing_confirmation_id",
+        { message: "Replace mode requires confirmation_id when confirm=true." },
+      );
       return;
     }
 
@@ -621,15 +2431,16 @@ async function handleDocumentUpdate(res, requestUrl, body) {
       confirmationId,
       accountId: context.account.id,
       documentId,
-      proposedContent: content,
+      proposedContent: resolvedContent,
     });
 
     if (!confirmation) {
-      jsonResponse(res, 400, {
-        ok: false,
-        error: "invalid_or_expired_confirmation",
-        message: "The replace confirmation is missing, expired, or no longer matches this document/content.",
-      });
+      respondDocumentWriteFailure(
+        res,
+        400,
+        "invalid_or_expired_confirmation",
+        { message: "The replace confirmation is missing, expired, or no longer matches this document/content." },
+      );
       return;
     }
 
@@ -638,24 +2449,43 @@ async function handleDocumentUpdate(res, requestUrl, body) {
       current.revision_id &&
       confirmation.current_revision_id !== current.revision_id
     ) {
-      jsonResponse(res, 409, {
-        ok: false,
-        error: "stale_confirmation",
-        message: "The document changed after preview. Create a new replace preview first.",
-        current_revision_id: current.revision_id,
-      });
+      respondDocumentWriteFailure(
+        res,
+        409,
+        "stale_confirmation",
+        {
+          message: "The document changed after preview. Create a new replace preview first.",
+          current_revision_id: current.revision_id,
+        },
+      );
       return;
     }
   }
 
-  const result = await updateDocument(context.token.access_token, documentId, content, mode);
-  jsonResponse(res, 200, {
-    ok: true,
+  logger.info("document_update_started", {
     account_id: context.account.id,
-    auth_mode: "user_access_token",
-    action: mode === "replace" ? "document_update_replace_apply" : "document_update",
-    ...result,
+    document_id: documentId,
+    mode: resolvedMode,
+    target_heading: targetHeading || null,
   });
+  const result = await getHttpService("updateDocument", updateDocument)(
+    context.token.access_token,
+    documentId,
+    resolvedContent,
+    resolvedMode,
+  );
+  logger.info("document_update_completed", {
+    account_id: context.account.id,
+    document_id: documentId,
+    mode: resolvedMode,
+    target_heading: targetHeading || null,
+  });
+  respondDocumentWriteSuccess(res, 200, buildDocumentUpdateResult({
+    context,
+    mode: resolvedMode,
+    result,
+    targeting,
+  }));
 }
 
 async function handleDocumentComments(res, requestUrl, body) {
@@ -709,14 +2539,33 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body) {
   const confirm = body.confirm === true;
   const confirmationId = String(body.confirmation_id || "").trim();
   const resolveComments = Boolean(body.resolve_comments);
+  const workflowScope = buildDocumentRewriteWorkflowScope(documentId);
 
   if (!apply) {
     const current = await getDocument(context.token.access_token, documentId);
+    await ensureDocRewriteWorkflowTask({
+      accountId: context.account.id,
+      documentId,
+      documentTitle: current.title,
+      scope: workflowScope,
+      workflowState: "loading_source",
+      routingHint: "doc_rewrite_loading_source",
+      meta: buildDocumentRewriteTaskMeta("document_rewrite_from_comments_preview"),
+    });
     const result = await rewriteDocumentFromComments(context.token.access_token, documentId, {
       includeSolved: Boolean(body.include_solved),
       commentIds,
       apply: false,
       resolveComments,
+    });
+    await ensureDocRewriteWorkflowTask({
+      accountId: context.account.id,
+      documentId,
+      documentTitle: current.title,
+      scope: workflowScope,
+      workflowState: "drafting",
+      routingHint: "doc_rewrite_drafting",
+      meta: buildDocumentRewriteTaskMeta("document_rewrite_from_comments_preview"),
     });
     if (!result.comment_count) {
       jsonResponse(res, 200, {
@@ -741,29 +2590,34 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body) {
       comments: result.comments || [],
       resolveComments,
     });
-
-    jsonResponse(res, 200, {
-      ok: true,
-      account_id: context.account.id,
-      auth_mode: "user_access_token",
-      action: "document_rewrite_from_comments_preview",
-      preview_required: true,
-      ...result,
-      confirmation_id: confirmation.confirmation_id,
-      confirmation_type: confirmation.confirmation_type,
-      confirmation_expires_at: confirmation.expires_at,
-      rewrite_preview: confirmation.preview,
-      rewrite_preview_card: confirmation.preview_card,
+    await ensureDocRewriteWorkflowTask({
+      accountId: context.account.id,
+      documentId,
+      documentTitle: current.title,
+      scope: workflowScope,
+      workflowState: "awaiting_review",
+      routingHint: "doc_rewrite_review_pending",
+      meta: buildDocumentRewriteTaskMeta("document_rewrite_from_comments_preview", {
+        confirmation_id: confirmation.confirmation_id,
+      }),
     });
+
+    jsonResponse(res, 200, buildDocumentRewritePreviewResponse({
+      context,
+      result,
+      confirmation,
+      workflowScope,
+    }));
     return;
   }
 
   if (!confirm || !confirmationId) {
-    jsonResponse(res, 400, {
-      ok: false,
-      error: "missing_comment_rewrite_confirmation",
-      message: "Apply mode requires confirm=true and a valid confirmation_id from the preview step.",
-    });
+    respondDocumentRewriteFailure(
+      res,
+      400,
+      "missing_comment_rewrite_confirmation",
+      "Apply mode requires confirm=true and a valid confirmation_id from the preview step.",
+    );
     return;
   }
 
@@ -774,11 +2628,12 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body) {
     documentId,
   });
   if (!confirmation) {
-    jsonResponse(res, 400, {
-      ok: false,
-      error: "invalid_or_expired_confirmation",
-      message: "The rewrite confirmation is missing or expired. Generate a fresh preview first.",
-    });
+    respondDocumentRewriteFailure(
+      res,
+      400,
+      "invalid_or_expired_confirmation",
+      "The rewrite confirmation is missing or expired. Generate a fresh preview first.",
+    );
     return;
   }
   if (
@@ -786,14 +2641,23 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body) {
     current.revision_id &&
     confirmation.current_revision_id !== current.revision_id
   ) {
-    jsonResponse(res, 409, {
-      ok: false,
-      error: "stale_confirmation",
-      message: "The document changed after preview. Generate a fresh rewrite preview first.",
-      current_revision_id: current.revision_id,
-    });
+    respondDocumentRewriteFailure(
+      res,
+      409,
+      "stale_confirmation",
+      "The document changed after preview. Generate a fresh rewrite preview first.",
+      { current_revision_id: current.revision_id },
+    );
     return;
   }
+
+  await markDocRewriteApplying({
+    accountId: context.account.id,
+    scope: workflowScope,
+    meta: buildDocumentRewriteTaskMeta("document_rewrite_from_comments_apply", {
+      confirmation_id: confirmationId,
+    }),
+  });
 
   const applied = await applyRewrittenDocument(
     context.token.access_token,
@@ -804,19 +2668,30 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body) {
       resolveCommentIds: confirmation.resolve_comments ? confirmation.comment_ids : [],
     },
   );
-
-  jsonResponse(res, 200, {
-    ok: true,
-    account_id: context.account.id,
-    auth_mode: "user_access_token",
-    action: "document_rewrite_from_comments_apply",
-    document_id: documentId,
-    applied: true,
-    resolve_comments: Boolean(confirmation.resolve_comments),
-    change_summary: confirmation.change_summary || [],
-    update_result: applied.update_result,
-    resolved_comment_ids: applied.resolved_comment_ids,
+  const finalized = await finalizeDocRewriteWorkflowTask({
+    accountId: context.account.id,
+    scope: workflowScope,
+    structuredResult: applied.structured_result,
+    extraEvidence: [
+      {
+        type: "file_updated",
+        summary: `document:${documentId}`,
+      },
+      {
+        type: "API_call_success",
+        summary: "document_rewrite_apply_succeeded",
+      },
+    ],
   });
+
+  jsonResponse(res, 200, buildDocumentRewriteApplyResponse({
+    context,
+    documentId,
+    confirmation,
+    applied,
+    finalized,
+    workflowScope,
+  }));
 }
 
 async function handleDocumentCommentSuggestionCard(res, requestUrl, body) {
@@ -855,8 +2730,8 @@ async function handleDocumentCommentSuggestionPoll(res) {
   jsonResponse(res, 200, result);
 }
 
-async function handleMeetingProcess(res, requestUrl, body) {
-  const context = await requireUserContext(res, getAccountId(requestUrl, body));
+async function handleMeetingProcess(res, requestUrl, body, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
   if (!context) {
     return;
   }
@@ -865,11 +2740,17 @@ async function handleMeetingProcess(res, requestUrl, body) {
     body.content || body.transcript || body.text || body.merged_text || "",
   );
   if (!transcriptText) {
+    logger.warn("meeting_process_missing_content");
     jsonResponse(res, 400, { ok: false, error: "missing_meeting_content" });
     return;
   }
 
   const metadata = typeof body.metadata === "object" && body.metadata ? body.metadata : {};
+  logger.info("meeting_process_started", {
+    account_id: context.account.id,
+    chat_id: String(body.chat_id || body.group_id || "").trim() || null,
+    transcript_chars: transcriptText.length,
+  });
   const result = await meetingCoordinator.processMeetingPreview({
     accountId: context.account.id,
     accessToken: context.token.access_token,
@@ -879,6 +2760,11 @@ async function handleMeetingProcess(res, requestUrl, body) {
     groupChatId: String(body.group_chat_id || body.target_chat_id || body.chat_id || "").trim(),
     projectName: String(body.project_name || "").trim(),
     sourceMeetingId: String(body.source_meeting_id || "").trim(),
+  });
+  logger.info("meeting_process_completed", {
+    account_id: context.account.id,
+    confirmation_id: result.confirmation_id || null,
+    group_chat_id: result.group_chat_id || null,
   });
 
   jsonResponse(res, 200, {
@@ -890,24 +2776,33 @@ async function handleMeetingProcess(res, requestUrl, body) {
   });
 }
 
-async function handleMeetingConfirm(res, requestUrl, body) {
-  const context = await requireUserContext(res, getAccountId(requestUrl, body));
+async function handleMeetingConfirm(res, requestUrl, body, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
   if (!context) {
     return;
   }
 
   const confirmationId = String(body.confirmation_id || "").trim();
   if (!confirmationId) {
+    logger.warn("meeting_confirm_missing_confirmation_id");
     jsonResponse(res, 400, { ok: false, error: "missing_confirmation_id" });
     return;
   }
 
+  logger.info("meeting_confirm_started", {
+    account_id: context.account.id,
+    confirmation_id: confirmationId,
+  });
   const result = await meetingCoordinator.confirmMeetingWrite({
     accountId: context.account.id,
     accessToken: context.token.access_token,
     confirmationId,
   });
   if (!result) {
+    logger.warn("meeting_confirm_invalid_or_expired", {
+      account_id: context.account.id,
+      confirmation_id: confirmationId,
+    });
     jsonResponse(res, 400, {
       ok: false,
       error: "invalid_or_expired_confirmation",
@@ -916,6 +2811,11 @@ async function handleMeetingConfirm(res, requestUrl, body) {
     return;
   }
 
+  logger.info("meeting_confirm_completed", {
+    account_id: context.account.id,
+    confirmation_id: confirmationId,
+    document_id: result.target_document?.document_id || null,
+  });
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -975,8 +2875,8 @@ async function handleMeetingConfirmPage(res, requestUrl, body) {
   );
 }
 
-async function handleMessagesList(res, requestUrl, body) {
-  const context = await requireUserContext(res, getAccountId(requestUrl, body));
+async function handleMessagesList(res, requestUrl, body, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
   if (!context) {
     return;
   }
@@ -987,16 +2887,25 @@ async function handleMessagesList(res, requestUrl, body) {
   ).trim();
 
   if (!containerId) {
+    logger.warn("messages_list_missing_container_id");
     jsonResponse(res, 400, { ok: false, error: "missing_container_id" });
     return;
   }
 
+  logger.info("messages_list_started", {
+    account_id: context.account.id,
+    container_id_type: containerIdType,
+  });
   const result = await listMessages(context.token.access_token, containerId, {
     containerIdType,
     startTime: requestUrl.searchParams.get("start_time") || body.start_time || undefined,
     endTime: requestUrl.searchParams.get("end_time") || body.end_time || undefined,
     sortType: requestUrl.searchParams.get("sort_type") || body.sort_type || undefined,
     pageToken: requestUrl.searchParams.get("page_token") || body.page_token || undefined,
+  });
+  logger.info("messages_list_completed", {
+    account_id: context.account.id,
+    total: result.items?.length || result.total || null,
   });
 
   jsonResponse(res, 200, {
@@ -1059,8 +2968,8 @@ async function handleMessageGet(res, requestUrl, body, messageId) {
   });
 }
 
-async function handleMessageReply(res, requestUrl, body) {
-  const context = await requireUserContext(res, getAccountId(requestUrl, body));
+async function handleMessageReply(res, requestUrl, body, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
   if (!context) {
     return;
   }
@@ -1071,13 +2980,26 @@ async function handleMessageReply(res, requestUrl, body) {
   const cardTitle = typeof body.card_title === "string" ? body.card_title.trim() : undefined;
 
   if (!messageId || !content) {
+    logger.warn("message_reply_missing_args", {
+      has_message_id: Boolean(messageId),
+      has_content: Boolean(content),
+    });
     jsonResponse(res, 400, { ok: false, error: "missing_message_id_or_content" });
     return;
   }
 
+  logger.info("message_reply_started", {
+    account_id: context.account.id,
+    reply_in_thread: replyInThread,
+    as_card: Boolean(cardTitle),
+  });
   const result = await replyMessage(context.token.access_token, messageId, content, {
     replyInThread,
     cardTitle,
+  });
+  logger.info("message_reply_completed", {
+    account_id: context.account.id,
+    message_id: messageId,
   });
 
   jsonResponse(res, 200, {
@@ -1156,8 +3078,8 @@ async function handleCalendarSearch(res, requestUrl, body) {
   });
 }
 
-async function handleCalendarCreateEvent(res, requestUrl, body) {
-  const context = await requireUserContext(res, getAccountId(requestUrl, body));
+async function handleCalendarCreateEvent(res, requestUrl, body, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
   if (!context) {
     return;
   }
@@ -1168,6 +3090,13 @@ async function handleCalendarCreateEvent(res, requestUrl, body) {
   const endTime = String(body.end_time || "").trim();
 
   if (!calendarId || !summary || !startTime || !endTime) {
+    logger.warn("calendar_create_event_missing_args", {
+      account_id: context.account.id,
+      has_calendar_id: Boolean(calendarId),
+      has_summary: Boolean(summary),
+      has_start_time: Boolean(startTime),
+      has_end_time: Boolean(endTime),
+    });
     jsonResponse(res, 400, { ok: false, error: "missing_calendar_id_summary_start_time_or_end_time" });
     return;
   }
@@ -1176,13 +3105,27 @@ async function handleCalendarCreateEvent(res, requestUrl, body) {
     ? body.reminders.map((value) => Number.parseInt(`${value}`, 10)).filter(Number.isFinite)
     : [];
 
-  const result = await createCalendarEvent(context.token.access_token, calendarId, {
+  logger.info("calendar_create_event_started", {
+    account_id: context.account.id,
+    calendar_id: calendarId,
+    reminders: reminders.length,
+  });
+  const result = await getHttpService("createCalendarEvent", createCalendarEvent)(
+    context.token.access_token,
+    calendarId,
+    {
     summary,
     description: typeof body.description === "string" ? body.description.trim() : undefined,
     startTime,
     endTime,
     timezone: typeof body.timezone === "string" && body.timezone.trim() ? body.timezone.trim() : "Asia/Taipei",
     reminders,
+    }
+  );
+  logger.info("calendar_create_event_completed", {
+    account_id: context.account.id,
+    calendar_id: calendarId,
+    event_id: result.event?.event_id || result.data?.event_id || null,
   });
 
   jsonResponse(res, 200, {
@@ -1226,13 +3169,21 @@ async function handleTasksList(res, requestUrl, body) {
   });
 }
 
-async function handleTaskGet(res, requestUrl, body, taskId) {
-  const context = await requireUserContext(res, getAccountId(requestUrl, body));
+async function handleTaskGet(res, requestUrl, body, taskId, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
   if (!context) {
     return;
   }
 
-  const result = await getTask(context.token.access_token, taskId);
+  logger.info("task_get_started", {
+    account_id: context.account.id,
+    task_id: taskId,
+  });
+  const result = await getHttpService("getTask", getTask)(context.token.access_token, taskId);
+  logger.info("task_get_completed", {
+    account_id: context.account.id,
+    task_id: taskId,
+  });
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -1242,25 +3193,37 @@ async function handleTaskGet(res, requestUrl, body, taskId) {
   });
 }
 
-async function handleTaskCreate(res, requestUrl, body) {
-  const context = await requireUserContext(res, getAccountId(requestUrl, body));
+async function handleTaskCreate(res, requestUrl, body, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
   if (!context) {
     return;
   }
 
   const summary = String(body.summary || "").trim();
   if (!summary) {
+    logger.warn("task_create_missing_summary", {
+      account_id: context.account.id,
+    });
     jsonResponse(res, 400, { ok: false, error: "missing_task_summary" });
     return;
   }
 
-  const result = await createTask(context.token.access_token, {
+  logger.info("task_create_started", {
+    account_id: context.account.id,
+    has_due_time: Boolean(body.due_time),
+    has_link_url: Boolean(body.link_url),
+  });
+  const result = await getHttpService("createTask", createTask)(context.token.access_token, {
     summary,
     description: typeof body.description === "string" ? body.description.trim() : undefined,
     dueTime: typeof body.due_time === "string" ? body.due_time.trim() : undefined,
     timezone: typeof body.timezone === "string" && body.timezone.trim() ? body.timezone.trim() : "Asia/Taipei",
     linkUrl: typeof body.link_url === "string" ? body.link_url.trim() : undefined,
     linkTitle: typeof body.link_title === "string" ? body.link_title.trim() : undefined,
+  });
+  logger.info("task_create_completed", {
+    account_id: context.account.id,
+    task_id: result.task?.task_id || result.data?.task_id || null,
   });
 
   jsonResponse(res, 200, {
@@ -1377,13 +3340,23 @@ async function handleBitableTableCreate(res, requestUrl, body, appToken) {
   });
 }
 
-async function handleBitableRecordsList(res, requestUrl, body, appToken, tableId) {
-  const context = await requireUserContext(res, getAccountId(requestUrl, body));
+async function handleBitableRecordsList(res, requestUrl, body, appToken, tableId, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
   if (!context) return;
 
   const pageSize = Number.parseInt(requestUrl.searchParams.get("page_size") || body.page_size || "50", 10);
   const fieldNames = requestUrl.searchParams.getAll("field_name");
-  const result = await listBitableRecords(context.token.access_token, appToken, tableId, {
+  logger.info("bitable_records_list_started", {
+    account_id: context.account.id,
+    app_token: appToken,
+    table_id: tableId,
+    page_size: Number.isFinite(pageSize) ? Math.max(1, Math.min(pageSize, 100)) : 50,
+  });
+  const result = await getHttpService("listBitableRecords", listBitableRecords)(
+    context.token.access_token,
+    appToken,
+    tableId,
+    {
     pageToken: requestUrl.searchParams.get("page_token") || body.page_token || undefined,
     pageSize: Number.isFinite(pageSize) ? Math.max(1, Math.min(pageSize, 100)) : 50,
     viewId: requestUrl.searchParams.get("view_id") || body.view_id || undefined,
@@ -1392,6 +3365,13 @@ async function handleBitableRecordsList(res, requestUrl, body, appToken, tableId
     filter: requestUrl.searchParams.get("filter") || body.filter || undefined,
     automaticFields: body.automatic_fields === true || requestUrl.searchParams.get("automatic_fields") === "true",
     userIdType: requestUrl.searchParams.get("user_id_type") || body.user_id_type || undefined,
+    }
+  );
+  logger.info("bitable_records_list_completed", {
+    account_id: context.account.id,
+    app_token: appToken,
+    table_id: tableId,
+    total_items: Array.isArray(result.items) ? result.items.length : null,
   });
 
   jsonResponse(res, 200, {
@@ -1403,11 +3383,21 @@ async function handleBitableRecordsList(res, requestUrl, body, appToken, tableId
   });
 }
 
-async function handleBitableRecordsSearch(res, requestUrl, body, appToken, tableId) {
-  const context = await requireUserContext(res, getAccountId(requestUrl, body));
+async function handleBitableRecordsSearch(res, requestUrl, body, appToken, tableId, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
   if (!context) return;
 
-  const result = await searchBitableRecords(context.token.access_token, appToken, tableId, {
+  logger.info("bitable_records_search_started", {
+    account_id: context.account.id,
+    app_token: appToken,
+    table_id: tableId,
+    has_filter: body.filter != null,
+  });
+  const result = await getHttpService("searchBitableRecords", searchBitableRecords)(
+    context.token.access_token,
+    appToken,
+    tableId,
+    {
     pageToken: typeof body.page_token === "string" ? body.page_token.trim() : undefined,
     pageSize: Number.isFinite(Number(body.page_size)) ? Math.max(1, Math.min(Number(body.page_size), 100)) : 50,
     viewId: typeof body.view_id === "string" ? body.view_id.trim() : undefined,
@@ -1416,6 +3406,13 @@ async function handleBitableRecordsSearch(res, requestUrl, body, appToken, table
     filter: body.filter,
     automaticFields: body.automatic_fields === true,
     userIdType: typeof body.user_id_type === "string" ? body.user_id_type.trim() : undefined,
+    }
+  );
+  logger.info("bitable_records_search_completed", {
+    account_id: context.account.id,
+    app_token: appToken,
+    table_id: tableId,
+    total_items: Array.isArray(result.items) ? result.items.length : null,
   });
 
   jsonResponse(res, 200, {
@@ -1427,20 +3424,41 @@ async function handleBitableRecordsSearch(res, requestUrl, body, appToken, table
   });
 }
 
-async function handleBitableRecordCreate(res, requestUrl, body, appToken, tableId) {
-  const context = await requireUserContext(res, getAccountId(requestUrl, body));
+async function handleBitableRecordCreate(res, requestUrl, body, appToken, tableId, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
   if (!context) return;
 
   if (!body.fields || typeof body.fields !== "object") {
+    logger.warn("bitable_record_create_missing_fields", {
+      account_id: context.account.id,
+      app_token: appToken,
+      table_id: tableId,
+    });
     jsonResponse(res, 400, { ok: false, error: "missing_record_fields" });
     return;
   }
 
-  const result = await createBitableRecord(context.token.access_token, appToken, tableId, {
+  logger.info("bitable_record_create_started", {
+    account_id: context.account.id,
+    app_token: appToken,
+    table_id: tableId,
+  });
+  const result = await getHttpService("createBitableRecord", createBitableRecord)(
+    context.token.access_token,
+    appToken,
+    tableId,
+    {
     fields: body.fields,
     userIdType: typeof body.user_id_type === "string" ? body.user_id_type.trim() : undefined,
     clientToken: typeof body.client_token === "string" ? body.client_token.trim() : undefined,
     ignoreConsistencyCheck: body.ignore_consistency_check === true,
+    }
+  );
+  logger.info("bitable_record_create_completed", {
+    account_id: context.account.id,
+    app_token: appToken,
+    table_id: tableId,
+    record_id: result.record?.record_id || result.data?.record_id || null,
   });
 
   jsonResponse(res, 200, {
@@ -1452,14 +3470,32 @@ async function handleBitableRecordCreate(res, requestUrl, body, appToken, tableI
   });
 }
 
-async function handleBitableRecordGet(res, requestUrl, body, appToken, tableId, recordId) {
-  const context = await requireUserContext(res, getAccountId(requestUrl, body));
+async function handleBitableRecordGet(res, requestUrl, body, appToken, tableId, recordId, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
   if (!context) return;
 
-  const result = await getBitableRecord(context.token.access_token, appToken, tableId, recordId, {
+  logger.info("bitable_record_get_started", {
+    account_id: context.account.id,
+    app_token: appToken,
+    table_id: tableId,
+    record_id: recordId,
+  });
+  const result = await getHttpService("getBitableRecord", getBitableRecord)(
+    context.token.access_token,
+    appToken,
+    tableId,
+    recordId,
+    {
     userIdType: requestUrl.searchParams.get("user_id_type") || body.user_id_type || undefined,
     withSharedUrl: requestUrl.searchParams.get("with_shared_url") === "true" || body.with_shared_url === true,
     automaticFields: requestUrl.searchParams.get("automatic_fields") === "true" || body.automatic_fields === true,
+    }
+  );
+  logger.info("bitable_record_get_completed", {
+    account_id: context.account.id,
+    app_token: appToken,
+    table_id: tableId,
+    record_id: recordId,
   });
 
   jsonResponse(res, 200, {
@@ -1471,18 +3507,42 @@ async function handleBitableRecordGet(res, requestUrl, body, appToken, tableId, 
   });
 }
 
-async function handleBitableRecordUpdate(res, requestUrl, body, appToken, tableId, recordId) {
-  const context = await requireUserContext(res, getAccountId(requestUrl, body));
+async function handleBitableRecordUpdate(res, requestUrl, body, appToken, tableId, recordId, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
   if (!context) return;
 
   if (!body.fields || typeof body.fields !== "object") {
+    logger.warn("bitable_record_update_missing_fields", {
+      account_id: context.account.id,
+      app_token: appToken,
+      table_id: tableId,
+      record_id: recordId,
+    });
     jsonResponse(res, 400, { ok: false, error: "missing_record_fields" });
     return;
   }
 
-  const result = await updateBitableRecord(context.token.access_token, appToken, tableId, recordId, {
+  logger.info("bitable_record_update_started", {
+    account_id: context.account.id,
+    app_token: appToken,
+    table_id: tableId,
+    record_id: recordId,
+  });
+  const result = await getHttpService("updateBitableRecord", updateBitableRecord)(
+    context.token.access_token,
+    appToken,
+    tableId,
+    recordId,
+    {
     fields: body.fields,
     userIdType: typeof body.user_id_type === "string" ? body.user_id_type.trim() : undefined,
+    }
+  );
+  logger.info("bitable_record_update_completed", {
+    account_id: context.account.id,
+    app_token: appToken,
+    table_id: tableId,
+    record_id: recordId,
   });
 
   jsonResponse(res, 200, {
@@ -1494,11 +3554,28 @@ async function handleBitableRecordUpdate(res, requestUrl, body, appToken, tableI
   });
 }
 
-async function handleBitableRecordDelete(res, requestUrl, body, appToken, tableId, recordId) {
-  const context = await requireUserContext(res, getAccountId(requestUrl, body));
+async function handleBitableRecordDelete(res, requestUrl, body, appToken, tableId, recordId, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
   if (!context) return;
 
-  const result = await deleteBitableRecord(context.token.access_token, appToken, tableId, recordId);
+  logger.info("bitable_record_delete_started", {
+    account_id: context.account.id,
+    app_token: appToken,
+    table_id: tableId,
+    record_id: recordId,
+  });
+  const result = await getHttpService("deleteBitableRecord", deleteBitableRecord)(
+    context.token.access_token,
+    appToken,
+    tableId,
+    recordId
+  );
+  logger.info("bitable_record_delete_completed", {
+    account_id: context.account.id,
+    app_token: appToken,
+    table_id: tableId,
+    record_id: recordId,
+  });
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -1508,17 +3585,39 @@ async function handleBitableRecordDelete(res, requestUrl, body, appToken, tableI
   });
 }
 
-async function handleBitableRecordsBulkUpsert(res, requestUrl, body, appToken, tableId) {
-  const context = await requireUserContext(res, getAccountId(requestUrl, body));
+async function handleBitableRecordsBulkUpsert(res, requestUrl, body, appToken, tableId, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
   if (!context) return;
   if (!Array.isArray(body.records) || !body.records.length) {
+    logger.warn("bitable_records_bulk_upsert_missing_records", {
+      account_id: context.account.id,
+      app_token: appToken,
+      table_id: tableId,
+    });
     jsonResponse(res, 400, { ok: false, error: "missing_bulk_records" });
     return;
   }
 
-  const result = await bulkUpsertBitableRecords(context.token.access_token, appToken, tableId, {
+  logger.info("bitable_records_bulk_upsert_started", {
+    account_id: context.account.id,
+    app_token: appToken,
+    table_id: tableId,
+    record_count: body.records.length,
+  });
+  const result = await getHttpService("bulkUpsertBitableRecords", bulkUpsertBitableRecords)(
+    context.token.access_token,
+    appToken,
+    tableId,
+    {
     records: body.records,
     userIdType: body.user_id_type,
+    }
+  );
+  logger.info("bitable_records_bulk_upsert_completed", {
+    account_id: context.account.id,
+    app_token: appToken,
+    table_id: tableId,
+    total_records: Array.isArray(result.records) ? result.records.length : null,
   });
 
   jsonResponse(res, 200, {
@@ -1671,18 +3770,28 @@ async function handleSpreadsheetReplaceBatch(res, requestUrl, body, spreadsheetT
   });
 }
 
-async function handleCalendarFreebusy(res, requestUrl, body) {
-  const context = await requireUserContext(res, getAccountId(requestUrl, body));
+async function handleCalendarFreebusy(res, requestUrl, body, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
   if (!context) return;
 
   const timeMin = String(body.time_min || requestUrl.searchParams.get("time_min") || "").trim();
   const timeMax = String(body.time_max || requestUrl.searchParams.get("time_max") || "").trim();
   if (!timeMin || !timeMax) {
+    logger.warn("calendar_freebusy_missing_args", {
+      account_id: context.account.id,
+      has_time_min: Boolean(timeMin),
+      has_time_max: Boolean(timeMax),
+    });
     jsonResponse(res, 400, { ok: false, error: "missing_time_min_or_time_max" });
     return;
   }
 
-  const result = await listFreebusy(context.token.access_token, {
+  logger.info("calendar_freebusy_started", {
+    account_id: context.account.id,
+    has_user_id: Boolean(body.user_id || requestUrl.searchParams.get("user_id")),
+    has_room_id: Boolean(body.room_id || requestUrl.searchParams.get("room_id")),
+  });
+  const result = await getHttpService("listFreebusy", listFreebusy)(context.token.access_token, {
     timeMin,
     timeMax,
     userId: typeof body.user_id === "string" ? body.user_id.trim() : requestUrl.searchParams.get("user_id") || undefined,
@@ -1695,6 +3804,10 @@ async function handleCalendarFreebusy(res, requestUrl, body) {
       body.include_external_calendar === true || requestUrl.searchParams.get("include_external_calendar") === "true",
     onlyBusy: body.only_busy === true || requestUrl.searchParams.get("only_busy") === "true",
   });
+  logger.info("calendar_freebusy_completed", {
+    account_id: context.account.id,
+    items: Array.isArray(result.items) ? result.items.length : null,
+  });
 
   jsonResponse(res, 200, {
     ok: true,
@@ -1705,16 +3818,26 @@ async function handleCalendarFreebusy(res, requestUrl, body) {
   });
 }
 
-async function handleTaskCommentsList(res, requestUrl, body, taskId) {
-  const context = await requireUserContext(res, getAccountId(requestUrl, body));
+async function handleTaskCommentsList(res, requestUrl, body, taskId, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
   if (!context) return;
 
   const pageSize = Number.parseInt(requestUrl.searchParams.get("page_size") || body.page_size || "50", 10);
-  const result = await listTaskComments(context.token.access_token, taskId, {
+  logger.info("task_comments_list_started", {
+    account_id: context.account.id,
+    task_id: taskId,
+    page_size: Number.isFinite(pageSize) ? Math.max(1, Math.min(pageSize, 100)) : 50,
+  });
+  const result = await getHttpService("listTaskComments", listTaskComments)(context.token.access_token, taskId, {
     pageToken: requestUrl.searchParams.get("page_token") || body.page_token || undefined,
     pageSize: Number.isFinite(pageSize) ? Math.max(1, Math.min(pageSize, 100)) : 50,
     listDirection: requestUrl.searchParams.get("list_direction") || body.list_direction || undefined,
     userIdType: requestUrl.searchParams.get("user_id_type") || body.user_id_type || "open_id",
+  });
+  logger.info("task_comments_list_completed", {
+    account_id: context.account.id,
+    task_id: taskId,
+    total_items: Array.isArray(result.items) ? result.items.length : null,
   });
 
   jsonResponse(res, 200, {
@@ -1726,21 +3849,35 @@ async function handleTaskCommentsList(res, requestUrl, body, taskId) {
   });
 }
 
-async function handleTaskCommentCreate(res, requestUrl, body, taskId) {
-  const context = await requireUserContext(res, getAccountId(requestUrl, body));
+async function handleTaskCommentCreate(res, requestUrl, body, taskId, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
   if (!context) return;
 
   const content = String(body.content || "").trim();
   if (!content && !String(body.rich_content || "").trim()) {
+    logger.warn("task_comment_create_missing_content", {
+      account_id: context.account.id,
+      task_id: taskId,
+    });
     jsonResponse(res, 400, { ok: false, error: "missing_comment_content" });
     return;
   }
 
-  const result = await createTaskComment(context.token.access_token, taskId, {
+  logger.info("task_comment_create_started", {
+    account_id: context.account.id,
+    task_id: taskId,
+    has_parent_id: Boolean(body.parent_id),
+  });
+  const result = await getHttpService("createTaskComment", createTaskComment)(context.token.access_token, taskId, {
     content: content || undefined,
     richContent: typeof body.rich_content === "string" ? body.rich_content.trim() : undefined,
     parentId: typeof body.parent_id === "string" ? body.parent_id.trim() : undefined,
     userIdType: typeof body.user_id_type === "string" ? body.user_id_type.trim() : undefined,
+  });
+  logger.info("task_comment_create_completed", {
+    account_id: context.account.id,
+    task_id: taskId,
+    comment_id: result.comment?.comment_id || result.data?.comment_id || null,
   });
 
   jsonResponse(res, 200, {
@@ -1752,12 +3889,22 @@ async function handleTaskCommentCreate(res, requestUrl, body, taskId) {
   });
 }
 
-async function handleTaskCommentGet(res, requestUrl, body, taskId, commentId) {
-  const context = await requireUserContext(res, getAccountId(requestUrl, body));
+async function handleTaskCommentGet(res, requestUrl, body, taskId, commentId, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
   if (!context) return;
 
-  const result = await getTaskComment(context.token.access_token, taskId, commentId, {
+  logger.info("task_comment_get_started", {
+    account_id: context.account.id,
+    task_id: taskId,
+    comment_id: commentId,
+  });
+  const result = await getHttpService("getTaskComment", getTaskComment)(context.token.access_token, taskId, commentId, {
     userIdType: requestUrl.searchParams.get("user_id_type") || body.user_id_type || "open_id",
+  });
+  logger.info("task_comment_get_completed", {
+    account_id: context.account.id,
+    task_id: taskId,
+    comment_id: commentId,
   });
 
   jsonResponse(res, 200, {
@@ -1769,20 +3916,35 @@ async function handleTaskCommentGet(res, requestUrl, body, taskId, commentId) {
   });
 }
 
-async function handleTaskCommentUpdate(res, requestUrl, body, taskId, commentId) {
-  const context = await requireUserContext(res, getAccountId(requestUrl, body));
+async function handleTaskCommentUpdate(res, requestUrl, body, taskId, commentId, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
   if (!context) return;
 
   const content = String(body.content || "").trim();
   if (!content && !String(body.rich_content || "").trim()) {
+    logger.warn("task_comment_update_missing_content", {
+      account_id: context.account.id,
+      task_id: taskId,
+      comment_id: commentId,
+    });
     jsonResponse(res, 400, { ok: false, error: "missing_comment_content" });
     return;
   }
 
-  const result = await updateTaskComment(context.token.access_token, taskId, commentId, {
+  logger.info("task_comment_update_started", {
+    account_id: context.account.id,
+    task_id: taskId,
+    comment_id: commentId,
+  });
+  const result = await getHttpService("updateTaskComment", updateTaskComment)(context.token.access_token, taskId, commentId, {
     content: content || undefined,
     richContent: typeof body.rich_content === "string" ? body.rich_content.trim() : undefined,
     userIdType: typeof body.user_id_type === "string" ? body.user_id_type.trim() : undefined,
+  });
+  logger.info("task_comment_update_completed", {
+    account_id: context.account.id,
+    task_id: taskId,
+    comment_id: commentId,
   });
 
   jsonResponse(res, 200, {
@@ -1794,11 +3956,21 @@ async function handleTaskCommentUpdate(res, requestUrl, body, taskId, commentId)
   });
 }
 
-async function handleTaskCommentDelete(res, requestUrl, body, taskId, commentId) {
-  const context = await requireUserContext(res, getAccountId(requestUrl, body));
+async function handleTaskCommentDelete(res, requestUrl, body, taskId, commentId, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
   if (!context) return;
 
-  const result = await deleteTaskComment(context.token.access_token, taskId, commentId);
+  logger.info("task_comment_delete_started", {
+    account_id: context.account.id,
+    task_id: taskId,
+    comment_id: commentId,
+  });
+  const result = await getHttpService("deleteTaskComment", deleteTaskComment)(context.token.access_token, taskId, commentId);
+  logger.info("task_comment_delete_completed", {
+    account_id: context.account.id,
+    task_id: taskId,
+    comment_id: commentId,
+  });
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -1863,18 +4035,28 @@ async function handleMessageReactionDelete(res, requestUrl, body, messageId, rea
   });
 }
 
-async function handleSearch(res, requestUrl, body) {
+async function handleSearch(res, requestUrl, body, logger = noopHttpLogger) {
   const accountId = getAccountId(requestUrl, body);
   const q = requestUrl.searchParams.get("q") || body.q || "";
   const k = Number.parseInt(requestUrl.searchParams.get("k") || body.k || `${searchTopK}`, 10);
 
   if (!q.trim()) {
+    logger.warn("knowledge_search_missing_query");
     jsonResponse(res, 400, { ok: false, error: "missing_query" });
     return;
   }
 
   try {
+    logger.info("knowledge_search_started", {
+      account_id: accountId || null,
+      q_len: q.trim().length,
+      k,
+    });
     const { account, items } = searchKnowledgeBase(accountId, q, k);
+    logger.info("knowledge_search_completed", {
+      account_id: account.id,
+      total: items.length,
+    });
     jsonResponse(res, 200, {
       ok: true,
       account_id: account.id,
@@ -1883,6 +4065,10 @@ async function handleSearch(res, requestUrl, body) {
       items,
     });
   } catch (error) {
+    logger.warn("knowledge_search_failed", {
+      account_id: accountId || null,
+      error: logger.compactError(error),
+    });
     jsonResponse(res, 401, {
       ok: false,
       error: "unauthorized",
@@ -1892,18 +4078,29 @@ async function handleSearch(res, requestUrl, body) {
   }
 }
 
-async function handleAnswer(res, requestUrl, body) {
+async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger) {
   const accountId = getAccountId(requestUrl, body);
   const q = requestUrl.searchParams.get("q") || body.q || "";
   const k = Number.parseInt(requestUrl.searchParams.get("k") || body.k || `${searchTopK}`, 10);
 
   if (!q.trim()) {
+    logger.warn("knowledge_answer_missing_query");
     jsonResponse(res, 400, { ok: false, error: "missing_query" });
     return;
   }
 
   try {
+    logger.info("knowledge_answer_started", {
+      account_id: accountId || null,
+      q_len: q.trim().length,
+      k,
+    });
     const result = await answerQuestion(accountId, q, k);
+    logger.info("knowledge_answer_completed", {
+      account_id: result.account.id,
+      provider: result.provider || null,
+      source_count: Array.isArray(result.sources) ? result.sources.length : 0,
+    });
     jsonResponse(res, 200, {
       ok: true,
       account_id: result.account.id,
@@ -1913,6 +4110,10 @@ async function handleAnswer(res, requestUrl, body) {
       sources: result.sources,
     });
   } catch (error) {
+    logger.warn("knowledge_answer_failed", {
+      account_id: accountId || null,
+      error: logger.compactError(error),
+    });
     jsonResponse(res, 401, {
       ok: false,
       error: "unauthorized",
@@ -1971,12 +4172,104 @@ async function handleApprovalResolution(res, requestId, body, approved) {
   jsonResponse(res, 200, result);
 }
 
-export function startHttpServer() {
+async function handleImprovementList(res, requestUrl, body, logger = noopHttpLogger) {
+  const accountId = getAccountId(requestUrl, body);
+  const status = String(requestUrl.searchParams.get("status") || body.status || "").trim();
+  logger.info("improvement_list_started", {
+    account_id: accountId || null,
+    status: status || null,
+  });
+  const items = await listImprovementWorkflowProposals({ accountId, status });
+  logger.info("improvement_list_completed", {
+    account_id: accountId || null,
+    total: items.length,
+  });
+  jsonResponse(res, 200, { ok: true, total: items.length, items });
+}
+
+async function handleImprovementResolution(res, proposalId, body, approved, logger = noopHttpLogger) {
+  const actor = typeof body.actor === "string" && body.actor.trim() ? body.actor.trim() : "openclaw";
+  logger.info("improvement_resolution_started", {
+    proposal_id: proposalId,
+    approved,
+    actor,
+  });
+  const existing = await getImprovementWorkflowProposal(proposalId);
+  if (!existing) {
+    logger.warn("improvement_resolution_missing_proposal", {
+      proposal_id: proposalId,
+    });
+    jsonResponse(res, 404, { ok: false, error: "proposal_not_found" });
+    return;
+  }
+  const result = await resolveImprovementWorkflowProposal({ proposalId, approved, actor });
+  logger.info("improvement_resolution_completed", {
+    proposal_id: proposalId,
+    status: result?.status || null,
+  });
+  jsonResponse(res, 200, { ok: true, item: result });
+}
+
+async function handleImprovementApply(res, proposalId, body, logger = noopHttpLogger) {
+  const actor = typeof body.actor === "string" && body.actor.trim() ? body.actor.trim() : "openclaw";
+  logger.info("improvement_apply_started", {
+    proposal_id: proposalId,
+    actor,
+  });
+  const existing = await getImprovementWorkflowProposal(proposalId);
+  if (!existing) {
+    logger.warn("improvement_apply_missing_proposal", {
+      proposal_id: proposalId,
+    });
+    jsonResponse(res, 404, { ok: false, error: "proposal_not_found" });
+    return;
+  }
+  try {
+    const result = await applyImprovementWorkflowProposal({ proposalId, actor });
+    logger.info("improvement_apply_completed", {
+      proposal_id: proposalId,
+      status: result?.status || null,
+    });
+    jsonResponse(res, 200, { ok: true, item: result });
+  } catch (error) {
+    logger.warn("improvement_apply_failed", {
+      proposal_id: proposalId,
+      error: logger.compactError(error),
+    });
+    jsonResponse(res, 409, {
+      ok: false,
+      error: "proposal_not_approved",
+      message: "Improvement proposal must be approved before apply.",
+    });
+  }
+}
+
+export function startHttpServer({ logger = console, port = oauthPort, listen = true, serviceOverrides = {} } = {}) {
+  setActiveHttpServiceOverrides(serviceOverrides);
+  const httpLogger = createRuntimeLogger({ logger, component: "http" });
   const server = http.createServer(async (req, res) => {
+    const requestUrl = new URL(req.url || "/", oauthBaseUrl);
+    const traceId = createTraceId("http");
+    const requestLogger = httpLogger.child("request", {
+      trace_id: traceId,
+      method: req.method || "GET",
+      pathname: requestUrl.pathname,
+    });
+    res.__trace_id = traceId;
+    requestLogger.info("request_started");
+    res.on("finish", () => {
+      requestLogger.info("request_finished", {
+        status_code: res.statusCode,
+      });
+    });
     try {
       cleanupOauthStates();
-      const requestUrl = new URL(req.url || "/", oauthBaseUrl);
-      const body = await readJsonBody(req).catch(() => ({}));
+      const body = await readJsonBody(req).catch((error) => {
+        requestLogger.warn("request_body_parse_failed", {
+          error: requestLogger.compactError(error),
+        });
+        return {};
+      });
 
       if (requestUrl.pathname === "/health") {
         jsonResponse(res, 200, { ok: true });
@@ -1993,6 +4286,34 @@ export function startHttpServer() {
         return;
       }
 
+      if (requestUrl.pathname === "/agent/improvements" && req.method === "GET") {
+        await runHttpRoute(requestLogger, "improvement_list", (routeLogger) =>
+          handleImprovementList(res, requestUrl, body, routeLogger)
+        );
+        return;
+      }
+
+      if (requestUrl.pathname === "/agent/docs/create" && req.method === "POST") {
+        await runHttpRoute(requestLogger, "agent_create_doc", (routeLogger) =>
+          handleAgentCreateDoc(res, requestUrl, body, routeLogger)
+        );
+        return;
+      }
+
+      if (requestUrl.pathname === "/agent/company-brain/docs" && req.method === "GET") {
+        await runHttpRoute(requestLogger, "agent_company_brain_docs_list", (routeLogger) =>
+          handleAgentListCompanyBrainDocs(res, requestUrl, body, routeLogger)
+        );
+        return;
+      }
+
+      if (requestUrl.pathname === "/agent/system/runtime-info" && req.method === "GET") {
+        await runHttpRoute(requestLogger, "agent_runtime_info", (routeLogger) =>
+          handleAgentRuntimeInfo(res, requestUrl, body, routeLogger)
+        );
+        return;
+      }
+
       const approvalResolveMatch = requestUrl.pathname.match(/^\/agent\/approvals\/([^/]+)\/(approve|reject)$/);
       if (approvalResolveMatch && req.method === "POST") {
         await handleApprovalResolution(
@@ -2000,6 +4321,28 @@ export function startHttpServer() {
           decodeURIComponent(approvalResolveMatch[1]),
           body,
           approvalResolveMatch[2] === "approve",
+        );
+        return;
+      }
+
+      const improvementResolveMatch = requestUrl.pathname.match(/^\/agent\/improvements\/([^/]+)\/(approve|reject)$/);
+      if (improvementResolveMatch && req.method === "POST") {
+        await runHttpRoute(requestLogger, "improvement_resolution", (routeLogger) =>
+          handleImprovementResolution(
+            res,
+            decodeURIComponent(improvementResolveMatch[1]),
+            body,
+            improvementResolveMatch[2] === "approve",
+            routeLogger,
+          )
+        );
+        return;
+      }
+
+      const improvementApplyMatch = requestUrl.pathname.match(/^\/agent\/improvements\/([^/]+)\/apply$/);
+      if (improvementApplyMatch && req.method === "POST") {
+        await runHttpRoute(requestLogger, "improvement_apply", (routeLogger) =>
+          handleImprovementApply(res, decodeURIComponent(improvementApplyMatch[1]), body, routeLogger)
         );
         return;
       }
@@ -2064,7 +4407,9 @@ export function startHttpServer() {
       }
 
       if (requestUrl.pathname === "/api/auth/status" && req.method === "GET") {
-        await handleAuthStatus(res, getAccountId(requestUrl, body));
+        await runHttpRoute(requestLogger, "auth_status", (routeLogger) =>
+          handleAuthStatus(res, getAccountId(requestUrl, body), routeLogger)
+        );
         return;
       }
 
@@ -2079,61 +4424,79 @@ export function startHttpServer() {
       }
 
       if (requestUrl.pathname === "/api/drive/root" && req.method === "GET") {
-        await handleDriveList(res, requestUrl, body);
+        await runHttpRoute(requestLogger, "drive_root", () =>
+          handleDriveList(res, requestUrl, body)
+        );
         return;
       }
 
       if (requestUrl.pathname === "/api/drive/list" && req.method === "GET") {
-        await handleDriveList(res, requestUrl, body);
+        await runHttpRoute(requestLogger, "drive_list", () =>
+          handleDriveList(res, requestUrl, body)
+        );
         return;
       }
 
       if (requestUrl.pathname === "/api/drive/create-folder" && req.method === "POST") {
-        await handleDriveCreateFolder(res, requestUrl, body);
+        await runHttpRoute(requestLogger, "drive_create_folder", () =>
+          handleDriveCreateFolder(res, requestUrl, body)
+        );
         return;
       }
 
       if (requestUrl.pathname === "/api/drive/move" && req.method === "POST") {
-        await handleDriveMove(res, requestUrl, body);
+        await runHttpRoute(requestLogger, "drive_move", () =>
+          handleDriveMove(res, requestUrl, body)
+        );
         return;
       }
 
       if (requestUrl.pathname === "/api/drive/task-status" && req.method === "GET") {
-        await handleDriveTaskStatus(res, requestUrl, body);
+        await runHttpRoute(requestLogger, "drive_task_status", () =>
+          handleDriveTaskStatus(res, requestUrl, body)
+        );
         return;
       }
 
       if (requestUrl.pathname === "/api/drive/delete" && req.method === "POST") {
-        await handleDriveDelete(res, requestUrl, body);
+        await runHttpRoute(requestLogger, "drive_delete", () =>
+          handleDriveDelete(res, requestUrl, body)
+        );
         return;
       }
 
       if (requestUrl.pathname === "/api/drive/organize/preview" && req.method === "POST") {
-        await handleDriveOrganize(res, requestUrl, body, false);
+        await runHttpRoute(requestLogger, "drive_organize_preview", (routeLogger) =>
+          handleDriveOrganize(res, requestUrl, body, false, routeLogger)
+        );
         return;
       }
 
       if (requestUrl.pathname === "/api/drive/organize/apply" && req.method === "POST") {
-        await handleDriveOrganize(res, requestUrl, body, true);
+        await runHttpRoute(requestLogger, "drive_organize_apply", (routeLogger) =>
+          handleDriveOrganize(res, requestUrl, body, true, routeLogger)
+        );
         return;
       }
 
       if (requestUrl.pathname === "/api/wiki/spaces" && req.method === "GET") {
-        const context = await requireUserContext(res, getAccountId(requestUrl, body));
-        if (!context) {
-          return;
-        }
+        await runHttpRoute(requestLogger, "wiki_spaces", async (routeLogger) => {
+          const context = await requireUserContext(res, getAccountId(requestUrl, body), routeLogger);
+          if (!context) {
+            return;
+          }
 
-        const data = await listWikiSpaces(
-          context.token.access_token,
-          requestUrl.searchParams.get("page_token") || undefined,
-        );
-        jsonResponse(res, 200, {
-          ok: true,
-          account_id: context.account.id,
-          auth_mode: "user_access_token",
-          source: "wiki.v2.spaces",
-          ...data,
+          const data = await listWikiSpaces(
+            context.token.access_token,
+            requestUrl.searchParams.get("page_token") || undefined,
+          );
+          jsonResponse(res, 200, {
+            ok: true,
+            account_id: context.account.id,
+            auth_mode: "user_access_token",
+            source: "wiki.v2.spaces",
+            ...data,
+          });
         });
         return;
       }
@@ -2143,13 +4506,66 @@ export function startHttpServer() {
         return;
       }
 
+      if (requestUrl.pathname === "/api/system/runtime-info" && req.method === "GET") {
+        await runHttpRoute(requestLogger, "runtime_info", (routeLogger) =>
+          handleRuntimeInfo(res, requestUrl, body, routeLogger)
+        );
+        return;
+      }
+
+      if (requestUrl.pathname === "/api/doc/lifecycle/summary" && req.method === "GET") {
+        await runHttpRoute(requestLogger, "doc_lifecycle_summary", (routeLogger) =>
+          handleDocumentLifecycleSummary(res, requestUrl, body, routeLogger)
+        );
+        return;
+      }
+
+      if (requestUrl.pathname === "/api/company-brain/docs" && req.method === "GET") {
+        await runHttpRoute(requestLogger, "company_brain_docs_list", (routeLogger) =>
+          handleCompanyBrainDocsList(res, requestUrl, body, routeLogger)
+        );
+        return;
+      }
+
+      if (requestUrl.pathname === "/api/company-brain/search" && req.method === "GET") {
+        await runHttpRoute(requestLogger, "company_brain_docs_search", (routeLogger) =>
+          handleCompanyBrainSearch(res, requestUrl, body, routeLogger)
+        );
+        return;
+      }
+
+      if (/^\/api\/company-brain\/docs\/[^/]+$/.test(requestUrl.pathname) && req.method === "GET") {
+        await runHttpRoute(requestLogger, "company_brain_doc_detail", (routeLogger) =>
+          handleCompanyBrainDocDetail(res, requestUrl, body, routeLogger)
+        );
+        return;
+      }
+
+      if (requestUrl.pathname === "/api/doc/lifecycle" && req.method === "GET") {
+        await runHttpRoute(requestLogger, "doc_lifecycle_list", (routeLogger) =>
+          handleDocumentLifecycleList(res, requestUrl, body, routeLogger)
+        );
+        return;
+      }
+
+      if (requestUrl.pathname === "/api/doc/lifecycle/retry" && req.method === "POST") {
+        await runHttpRoute(requestLogger, "doc_lifecycle_retry", (routeLogger) =>
+          handleDocumentLifecycleRetry(res, requestUrl, body, routeLogger)
+        );
+        return;
+      }
+
       if (requestUrl.pathname === "/api/doc/create" && req.method === "POST") {
-        await handleDocumentCreate(res, requestUrl, body);
+        await runHttpRoute(requestLogger, "doc_create", (routeLogger) =>
+          handleDocumentCreate(res, requestUrl, body, routeLogger)
+        );
         return;
       }
 
       if (requestUrl.pathname === "/api/doc/update" && req.method === "POST") {
-        await handleDocumentUpdate(res, requestUrl, body);
+        await runHttpRoute(requestLogger, "doc_update", (routeLogger) =>
+          handleDocumentUpdate(res, requestUrl, body, routeLogger)
+        );
         return;
       }
 
@@ -2174,12 +4590,16 @@ export function startHttpServer() {
       }
 
       if (requestUrl.pathname === "/api/meeting/process" && req.method === "POST") {
-        await handleMeetingProcess(res, requestUrl, body);
+        await runHttpRoute(requestLogger, "meeting_process", (routeLogger) =>
+          handleMeetingProcess(res, requestUrl, body, routeLogger)
+        );
         return;
       }
 
       if (requestUrl.pathname === "/api/meeting/confirm" && req.method === "POST") {
-        await handleMeetingConfirm(res, requestUrl, body);
+        await runHttpRoute(requestLogger, "meeting_confirm", (routeLogger) =>
+          handleMeetingConfirm(res, requestUrl, body, routeLogger)
+        );
         return;
       }
 
@@ -2189,7 +4609,9 @@ export function startHttpServer() {
       }
 
       if (requestUrl.pathname === "/api/messages" && req.method === "GET") {
-        await handleMessagesList(res, requestUrl, body);
+        await runHttpRoute(requestLogger, "messages_list", (routeLogger) =>
+          handleMessagesList(res, requestUrl, body, routeLogger)
+        );
         return;
       }
 
@@ -2199,7 +4621,9 @@ export function startHttpServer() {
       }
 
       if (requestUrl.pathname === "/api/messages/reply" && req.method === "POST") {
-        await handleMessageReply(res, requestUrl, body);
+        await runHttpRoute(requestLogger, "message_reply", (routeLogger) =>
+          handleMessageReply(res, requestUrl, body, routeLogger)
+        );
         return;
       }
 
@@ -2218,147 +4642,192 @@ export function startHttpServer() {
       }
 
       if (requestUrl.pathname === "/api/calendar/primary" && req.method === "GET") {
-        await handleCalendarPrimary(res, requestUrl, body);
+        await runHttpRoute(requestLogger, "calendar_primary", () =>
+          handleCalendarPrimary(res, requestUrl, body)
+        );
         return;
       }
 
       if (requestUrl.pathname === "/api/calendar/events" && req.method === "GET") {
-        await handleCalendarEvents(res, requestUrl, body);
+        await runHttpRoute(requestLogger, "calendar_events", () =>
+          handleCalendarEvents(res, requestUrl, body)
+        );
         return;
       }
 
       if (requestUrl.pathname === "/api/calendar/events/search" && req.method === "POST") {
-        await handleCalendarSearch(res, requestUrl, body);
+        await runHttpRoute(requestLogger, "calendar_events_search", () =>
+          handleCalendarSearch(res, requestUrl, body)
+        );
         return;
       }
 
       if (requestUrl.pathname === "/api/calendar/events/create" && req.method === "POST") {
-        await handleCalendarCreateEvent(res, requestUrl, body);
+        await runHttpRoute(requestLogger, "calendar_events_create", (routeLogger) =>
+          handleCalendarCreateEvent(res, requestUrl, body, routeLogger)
+        );
         return;
       }
 
       if (requestUrl.pathname === "/api/tasks" && req.method === "GET") {
-        await handleTasksList(res, requestUrl, body);
+        await runHttpRoute(requestLogger, "tasks_list", () =>
+          handleTasksList(res, requestUrl, body)
+        );
         return;
       }
 
       if (requestUrl.pathname === "/api/tasks/create" && req.method === "POST") {
-        await handleTaskCreate(res, requestUrl, body);
+        await runHttpRoute(requestLogger, "task_create", (routeLogger) =>
+          handleTaskCreate(res, requestUrl, body, routeLogger)
+        );
         return;
       }
 
       const taskGetMatch = requestUrl.pathname.match(/^\/api\/tasks\/([^/]+)$/);
       if (taskGetMatch && req.method === "GET") {
-        await handleTaskGet(res, requestUrl, body, decodeURIComponent(taskGetMatch[1]));
+        await runHttpRoute(requestLogger, "task_get", (routeLogger) =>
+          handleTaskGet(res, requestUrl, body, decodeURIComponent(taskGetMatch[1]), routeLogger)
+        );
         return;
       }
 
       if (requestUrl.pathname === "/api/bitable/apps/create" && req.method === "POST") {
-        await handleBitableAppCreate(res, requestUrl, body);
+        await runHttpRoute(requestLogger, "bitable_app_create", () =>
+          handleBitableAppCreate(res, requestUrl, body)
+        );
         return;
       }
 
       const bitableAppMatch = requestUrl.pathname.match(/^\/api\/bitable\/apps\/([^/]+)$/);
       if (bitableAppMatch && req.method === "GET") {
-        await handleBitableAppGet(res, requestUrl, body, decodeURIComponent(bitableAppMatch[1]));
+        await runHttpRoute(requestLogger, "bitable_app_get", () =>
+          handleBitableAppGet(res, requestUrl, body, decodeURIComponent(bitableAppMatch[1]))
+        );
         return;
       }
       if (bitableAppMatch && (req.method === "POST" || req.method === "PATCH")) {
-        await handleBitableAppUpdate(res, requestUrl, body, decodeURIComponent(bitableAppMatch[1]));
+        await runHttpRoute(requestLogger, "bitable_app_update", () =>
+          handleBitableAppUpdate(res, requestUrl, body, decodeURIComponent(bitableAppMatch[1]))
+        );
         return;
       }
 
       const bitableTablesMatch = requestUrl.pathname.match(/^\/api\/bitable\/apps\/([^/]+)\/tables$/);
       if (bitableTablesMatch && req.method === "GET") {
-        await handleBitableTablesList(res, requestUrl, body, decodeURIComponent(bitableTablesMatch[1]));
+        await runHttpRoute(requestLogger, "bitable_tables_list", () =>
+          handleBitableTablesList(res, requestUrl, body, decodeURIComponent(bitableTablesMatch[1]))
+        );
         return;
       }
 
       const bitableTableCreateMatch = requestUrl.pathname.match(/^\/api\/bitable\/apps\/([^/]+)\/tables\/create$/);
       if (bitableTableCreateMatch && req.method === "POST") {
-        await handleBitableTableCreate(res, requestUrl, body, decodeURIComponent(bitableTableCreateMatch[1]));
+        await runHttpRoute(requestLogger, "bitable_table_create", () =>
+          handleBitableTableCreate(res, requestUrl, body, decodeURIComponent(bitableTableCreateMatch[1]))
+        );
         return;
       }
 
       const bitableRecordsMatch = requestUrl.pathname.match(/^\/api\/bitable\/apps\/([^/]+)\/tables\/([^/]+)\/records$/);
       if (bitableRecordsMatch && req.method === "GET") {
-        await handleBitableRecordsList(
-          res,
-          requestUrl,
-          body,
-          decodeURIComponent(bitableRecordsMatch[1]),
-          decodeURIComponent(bitableRecordsMatch[2]),
+        await runHttpRoute(requestLogger, "bitable_records_list", (routeLogger) =>
+          handleBitableRecordsList(
+            res,
+            requestUrl,
+            body,
+            decodeURIComponent(bitableRecordsMatch[1]),
+            decodeURIComponent(bitableRecordsMatch[2]),
+            routeLogger,
+          )
         );
         return;
       }
 
       const bitableRecordsSearchMatch = requestUrl.pathname.match(/^\/api\/bitable\/apps\/([^/]+)\/tables\/([^/]+)\/records\/search$/);
       if (bitableRecordsSearchMatch && req.method === "POST") {
-        await handleBitableRecordsSearch(
-          res,
-          requestUrl,
-          body,
-          decodeURIComponent(bitableRecordsSearchMatch[1]),
-          decodeURIComponent(bitableRecordsSearchMatch[2]),
+        await runHttpRoute(requestLogger, "bitable_records_search", (routeLogger) =>
+          handleBitableRecordsSearch(
+            res,
+            requestUrl,
+            body,
+            decodeURIComponent(bitableRecordsSearchMatch[1]),
+            decodeURIComponent(bitableRecordsSearchMatch[2]),
+            routeLogger,
+          )
         );
         return;
       }
 
       const bitableRecordCreateMatch = requestUrl.pathname.match(/^\/api\/bitable\/apps\/([^/]+)\/tables\/([^/]+)\/records\/create$/);
       if (bitableRecordCreateMatch && req.method === "POST") {
-        await handleBitableRecordCreate(
-          res,
-          requestUrl,
-          body,
-          decodeURIComponent(bitableRecordCreateMatch[1]),
-          decodeURIComponent(bitableRecordCreateMatch[2]),
+        await runHttpRoute(requestLogger, "bitable_record_create", (routeLogger) =>
+          handleBitableRecordCreate(
+            res,
+            requestUrl,
+            body,
+            decodeURIComponent(bitableRecordCreateMatch[1]),
+            decodeURIComponent(bitableRecordCreateMatch[2]),
+            routeLogger,
+          )
         );
         return;
       }
 
       const bitableRecordBulkMatch = requestUrl.pathname.match(/^\/api\/bitable\/apps\/([^/]+)\/tables\/([^/]+)\/records\/bulk-upsert$/);
       if (bitableRecordBulkMatch && req.method === "POST") {
-        await handleBitableRecordsBulkUpsert(
-          res,
-          requestUrl,
-          body,
-          decodeURIComponent(bitableRecordBulkMatch[1]),
-          decodeURIComponent(bitableRecordBulkMatch[2]),
+        await runHttpRoute(requestLogger, "bitable_records_bulk_upsert", (routeLogger) =>
+          handleBitableRecordsBulkUpsert(
+            res,
+            requestUrl,
+            body,
+            decodeURIComponent(bitableRecordBulkMatch[1]),
+            decodeURIComponent(bitableRecordBulkMatch[2]),
+            routeLogger,
+          )
         );
         return;
       }
 
       const bitableRecordMatch = requestUrl.pathname.match(/^\/api\/bitable\/apps\/([^/]+)\/tables\/([^/]+)\/records\/([^/]+)$/);
       if (bitableRecordMatch && req.method === "GET") {
-        await handleBitableRecordGet(
-          res,
-          requestUrl,
-          body,
-          decodeURIComponent(bitableRecordMatch[1]),
-          decodeURIComponent(bitableRecordMatch[2]),
-          decodeURIComponent(bitableRecordMatch[3]),
+        await runHttpRoute(requestLogger, "bitable_record_get", (routeLogger) =>
+          handleBitableRecordGet(
+            res,
+            requestUrl,
+            body,
+            decodeURIComponent(bitableRecordMatch[1]),
+            decodeURIComponent(bitableRecordMatch[2]),
+            decodeURIComponent(bitableRecordMatch[3]),
+            routeLogger,
+          )
         );
         return;
       }
       if (bitableRecordMatch && (req.method === "POST" || req.method === "PATCH")) {
-        await handleBitableRecordUpdate(
-          res,
-          requestUrl,
-          body,
-          decodeURIComponent(bitableRecordMatch[1]),
-          decodeURIComponent(bitableRecordMatch[2]),
-          decodeURIComponent(bitableRecordMatch[3]),
+        await runHttpRoute(requestLogger, "bitable_record_update", (routeLogger) =>
+          handleBitableRecordUpdate(
+            res,
+            requestUrl,
+            body,
+            decodeURIComponent(bitableRecordMatch[1]),
+            decodeURIComponent(bitableRecordMatch[2]),
+            decodeURIComponent(bitableRecordMatch[3]),
+            routeLogger,
+          )
         );
         return;
       }
       if (bitableRecordMatch && req.method === "DELETE") {
-        await handleBitableRecordDelete(
-          res,
-          requestUrl,
-          body,
-          decodeURIComponent(bitableRecordMatch[1]),
-          decodeURIComponent(bitableRecordMatch[2]),
-          decodeURIComponent(bitableRecordMatch[3]),
+        await runHttpRoute(requestLogger, "bitable_record_delete", (routeLogger) =>
+          handleBitableRecordDelete(
+            res,
+            requestUrl,
+            body,
+            decodeURIComponent(bitableRecordMatch[1]),
+            decodeURIComponent(bitableRecordMatch[2]),
+            decodeURIComponent(bitableRecordMatch[3]),
+            routeLogger,
+          )
         );
         return;
       }
@@ -2421,48 +4890,63 @@ export function startHttpServer() {
       }
 
       if (requestUrl.pathname === "/api/calendar/freebusy" && req.method === "POST") {
-        await handleCalendarFreebusy(res, requestUrl, body);
+        await runHttpRoute(requestLogger, "calendar_freebusy", (routeLogger) =>
+          handleCalendarFreebusy(res, requestUrl, body, routeLogger)
+        );
         return;
       }
 
       const taskCommentsMatch = requestUrl.pathname.match(/^\/api\/tasks\/([^/]+)\/comments$/);
       if (taskCommentsMatch && req.method === "GET") {
-        await handleTaskCommentsList(res, requestUrl, body, decodeURIComponent(taskCommentsMatch[1]));
+        await runHttpRoute(requestLogger, "task_comments_list", (routeLogger) =>
+          handleTaskCommentsList(res, requestUrl, body, decodeURIComponent(taskCommentsMatch[1]), routeLogger)
+        );
         return;
       }
       if (taskCommentsMatch && req.method === "POST") {
-        await handleTaskCommentCreate(res, requestUrl, body, decodeURIComponent(taskCommentsMatch[1]));
+        await runHttpRoute(requestLogger, "task_comment_create", (routeLogger) =>
+          handleTaskCommentCreate(res, requestUrl, body, decodeURIComponent(taskCommentsMatch[1]), routeLogger)
+        );
         return;
       }
 
       const taskCommentMatch = requestUrl.pathname.match(/^\/api\/tasks\/([^/]+)\/comments\/([^/]+)$/);
       if (taskCommentMatch && req.method === "GET") {
-        await handleTaskCommentGet(
-          res,
-          requestUrl,
-          body,
-          decodeURIComponent(taskCommentMatch[1]),
-          decodeURIComponent(taskCommentMatch[2]),
+        await runHttpRoute(requestLogger, "task_comment_get", (routeLogger) =>
+          handleTaskCommentGet(
+            res,
+            requestUrl,
+            body,
+            decodeURIComponent(taskCommentMatch[1]),
+            decodeURIComponent(taskCommentMatch[2]),
+            routeLogger,
+          )
         );
         return;
       }
       if (taskCommentMatch && (req.method === "POST" || req.method === "PUT" || req.method === "PATCH")) {
-        await handleTaskCommentUpdate(
-          res,
-          requestUrl,
-          body,
-          decodeURIComponent(taskCommentMatch[1]),
-          decodeURIComponent(taskCommentMatch[2]),
+        await runHttpRoute(requestLogger, "task_comment_update", (routeLogger) =>
+          handleTaskCommentUpdate(
+            res,
+            requestUrl,
+            body,
+            decodeURIComponent(taskCommentMatch[1]),
+            decodeURIComponent(taskCommentMatch[2]),
+            routeLogger,
+          )
         );
         return;
       }
       if (taskCommentMatch && req.method === "DELETE") {
-        await handleTaskCommentDelete(
-          res,
-          requestUrl,
-          body,
-          decodeURIComponent(taskCommentMatch[1]),
-          decodeURIComponent(taskCommentMatch[2]),
+        await runHttpRoute(requestLogger, "task_comment_delete", (routeLogger) =>
+          handleTaskCommentDelete(
+            res,
+            requestUrl,
+            body,
+            decodeURIComponent(taskCommentMatch[1]),
+            decodeURIComponent(taskCommentMatch[2]),
+            routeLogger,
+          )
         );
         return;
       }
@@ -2490,47 +4974,57 @@ export function startHttpServer() {
       }
 
       if (requestUrl.pathname === "/api/wiki/create-node" && req.method === "POST") {
-        await handleWikiCreateNode(res, requestUrl, body);
+        await runHttpRoute(requestLogger, "wiki_create_node", () =>
+          handleWikiCreateNode(res, requestUrl, body)
+        );
         return;
       }
 
       if (requestUrl.pathname === "/api/wiki/move" && req.method === "POST") {
-        await handleWikiMove(res, requestUrl, body);
+        await runHttpRoute(requestLogger, "wiki_move", () =>
+          handleWikiMove(res, requestUrl, body)
+        );
         return;
       }
 
       const wikiNodesMatch = requestUrl.pathname.match(/^\/api\/wiki\/spaces\/([^/]+)\/nodes$/);
       if (wikiNodesMatch && req.method === "GET") {
-        const context = await requireUserContext(res, getAccountId(requestUrl, body));
-        if (!context) {
-          return;
-        }
+        await runHttpRoute(requestLogger, "wiki_nodes_list", async (routeLogger) => {
+          const context = await requireUserContext(res, getAccountId(requestUrl, body), routeLogger);
+          if (!context) {
+            return;
+          }
 
-        const spaceId = decodeURIComponent(wikiNodesMatch[1]);
-        const data = await listWikiSpaceNodes(
-          context.token.access_token,
-          spaceId,
-          requestUrl.searchParams.get("parent_node_token") || undefined,
-          requestUrl.searchParams.get("page_token") || undefined,
-        );
-        jsonResponse(res, 200, {
-          ok: true,
-          account_id: context.account.id,
-          auth_mode: "user_access_token",
-          source: "wiki.v2.space_node.list",
-          space_id: spaceId,
-          ...data,
+          const spaceId = decodeURIComponent(wikiNodesMatch[1]);
+          const data = await listWikiSpaceNodes(
+            context.token.access_token,
+            spaceId,
+            requestUrl.searchParams.get("parent_node_token") || undefined,
+            requestUrl.searchParams.get("page_token") || undefined,
+          );
+          jsonResponse(res, 200, {
+            ok: true,
+            account_id: context.account.id,
+            auth_mode: "user_access_token",
+            source: "wiki.v2.space_node.list",
+            space_id: spaceId,
+            ...data,
+          });
         });
         return;
       }
 
       if (requestUrl.pathname === "/api/wiki/organize/preview" && req.method === "POST") {
-        await handleWikiOrganize(res, requestUrl, body, false);
+        await runHttpRoute(requestLogger, "wiki_organize_preview", (routeLogger) =>
+          handleWikiOrganize(res, requestUrl, body, false, routeLogger)
+        );
         return;
       }
 
       if (requestUrl.pathname === "/api/wiki/organize/apply" && req.method === "POST") {
-        await handleWikiOrganize(res, requestUrl, body, true);
+        await runHttpRoute(requestLogger, "wiki_organize_apply", (routeLogger) =>
+          handleWikiOrganize(res, requestUrl, body, true, routeLogger)
+        );
         return;
       }
 
@@ -2545,12 +5039,16 @@ export function startHttpServer() {
       }
 
       if (requestUrl.pathname === "/search" && req.method === "GET") {
-        await handleSearch(res, requestUrl, body);
+        await runHttpRoute(requestLogger, "knowledge_search", (routeLogger) =>
+          handleSearch(res, requestUrl, body, routeLogger)
+        );
         return;
       }
 
       if (requestUrl.pathname === "/answer" && req.method === "GET") {
-        await handleAnswer(res, requestUrl, body);
+        await runHttpRoute(requestLogger, "knowledge_answer", (routeLogger) =>
+          handleAnswer(res, requestUrl, body, routeLogger)
+        );
         return;
       }
 
@@ -2562,7 +5060,9 @@ export function startHttpServer() {
 
       jsonResponse(res, 404, { ok: false, error: "not_found" });
     } catch (error) {
-      console.error("HTTP server error:", error);
+      requestLogger.error("request_failed", {
+        error: requestLogger.compactError(error),
+      });
       jsonResponse(res, 500, {
         ok: false,
         error: "internal_error",
@@ -2571,10 +5071,12 @@ export function startHttpServer() {
     }
   });
 
-  server.listen(oauthPort, () => {
-    console.log(`HTTP server listening on ${oauthBaseUrl}`);
-    console.log(`Open this URL to sign in: ${oauthBaseUrl}/oauth/lark/login`);
-  });
+  if (listen) {
+    server.listen(port, () => {
+      logger.log(`HTTP server listening on ${oauthBaseUrl}`);
+      logger.log(`Open this URL to sign in: ${oauthBaseUrl}/oauth/lark/login`);
+    });
+  }
 
   return server;
 }

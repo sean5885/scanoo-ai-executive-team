@@ -1,0 +1,10 @@
+[
+  {
+    "skill": "meeting-notes",
+    "path": "/Users/seanhan/.agents/skills/meeting-notes",
+    "business_summary": "把會議內容轉成可追蹤的結構化輸出，避免只停留在摘要。",
+    "risk_level": "LOW",
+    "moved_to_other": [],
+    "support_paths": []
+  }
+]

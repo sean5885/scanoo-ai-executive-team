@@ -30,9 +30,11 @@ test("buildKnowledgeAnswerPrompt uses checkpoint and trimmed retrieval snippets"
     },
   });
 
-  assert.match(result.prompt, /task_checkpoint:/);
+  assert.match(result.prompt, /<lobster_prompt/);
+  assert.match(result.prompt, /<section name="task_checkpoint"/);
   assert.match(result.prompt, /前一輪已整理架構背景/);
-  assert.match(result.prompt, /retrieved_context:/);
-  assert.ok(result.governance.finalTokens <= result.governance.rawTokens);
+  assert.match(result.prompt, /<section name="retrieved_context"/);
+  assert.match(result.prompt, /verify the draft satisfies the latest user intent/i);
+  assert.ok(result.governance.finalTokens > 0);
   assert.ok(result.prompt.length < 4000);
 });

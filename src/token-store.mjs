@@ -9,6 +9,9 @@ export async function readJsonFile(filePath) {
     if (error.code === "ENOENT") {
       return null;
     }
+    if (error instanceof SyntaxError) {
+      return null;
+    }
     throw error;
   }
 }

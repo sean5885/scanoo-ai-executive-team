@@ -5,12 +5,15 @@ import { startCommentSuggestionPoller } from "./comment-suggestion-poller.mjs";
 import { buildLaneFailureReply } from "./capability-lane.mjs";
 import { executeCapabilityLane } from "./lane-executor.mjs";
 import { replyMessage } from "./lark-content.mjs";
-import { createRuntimeLogger, summarizeLarkEvent } from "./runtime-observability.mjs";
+import { createRuntimeLogger, createTraceId, summarizeLarkEvent } from "./runtime-observability.mjs";
 import { startHttpServer } from "./http-server.mjs";
+import { enforceSingleLarkResponderRuntime } from "./runtime-conflict-guard.mjs";
+import { createMessageEventDeduper } from "./runtime-message-deduper.mjs";
 import { touchResolvedSession } from "./session-scope-store.mjs";
 
 const client = new Lark.Client(baseConfig);
 const runtimeLogger = createRuntimeLogger({ logger: console, component: "long_connection" });
+const messageEventDeduper = createMessageEventDeduper();
 
 async function replyToChat(chatId, text) {
   return client.im.v1.message.create({
@@ -49,22 +52,29 @@ const eventDispatcher = new Lark.EventDispatcher({}).register({
     const chatId = data?.message?.chat_id;
     const senderType = data?.sender?.sender_type;
     const eventSummary = summarizeLarkEvent(data);
+    const traceId = createTraceId("evt");
+    const eventLogger = runtimeLogger.child("event", { trace_id: traceId, ...eventSummary });
 
     if (!chatId || senderType === "app") {
-      runtimeLogger.info("event_skipped", {
-        ...eventSummary,
+      eventLogger.info("event_skipped", {
         reason: !chatId ? "missing_chat_id" : "sender_is_app",
       });
       return;
     }
 
-    runtimeLogger.info("event_received", eventSummary);
+    eventLogger.info("event_received");
+
+    if (!messageEventDeduper.shouldProcess(data?.message?.message_id)) {
+      eventLogger.warn("event_skipped", {
+        reason: "duplicate_message_id",
+      });
+      return;
+    }
 
     let scope = null;
     try {
       scope = resolveLarkBindingRuntime({ event: data });
-      runtimeLogger.info("lane_resolved", {
-        ...eventSummary,
+      eventLogger.info("lane_resolved", {
         capability_lane: scope.capability_lane,
         lane_reason: scope.lane_reason,
         session_key: scope.session_key,
@@ -75,11 +85,20 @@ const eventDispatcher = new Lark.EventDispatcher({}).register({
       const reply = await executeCapabilityLane({
         event: data,
         scope,
-        logger: runtimeLogger.child(scope.capability_lane || "lane"),
-      });
-      if (!reply?.text) {
-        runtimeLogger.warn("lane_returned_empty_reply", {
+        logger: runtimeLogger.child(scope.capability_lane || "lane", {
+          trace_id: traceId,
           ...eventSummary,
+        }),
+        traceId,
+      });
+      if (reply?.suppressReply) {
+        eventLogger.info("reply_suppressed", {
+          capability_lane: scope.capability_lane,
+        });
+        return;
+      }
+      if (!reply?.text) {
+        eventLogger.warn("lane_returned_empty_reply", {
           capability_lane: scope.capability_lane,
         });
         await replyToChat(chatId, `${botName} 已連上長連接，之後我會按對話 scope 自動分到對應能力模式。`);
@@ -87,15 +106,13 @@ const eventDispatcher = new Lark.EventDispatcher({}).register({
       }
 
       await sendLaneReply(data, reply);
-      runtimeLogger.info("reply_sent", {
-        ...eventSummary,
+      eventLogger.info("reply_sent", {
         capability_lane: scope.capability_lane,
         reply_mode: reply.replyMode || "text",
         card_title: reply.cardTitle || null,
       });
     } catch (error) {
-      runtimeLogger.error("event_processing_failed", {
-        ...eventSummary,
+      eventLogger.error("event_processing_failed", {
         capability_lane: scope?.capability_lane || null,
         error: runtimeLogger.compactError(error),
       });
@@ -106,13 +123,11 @@ const eventDispatcher = new Lark.EventDispatcher({}).register({
 
       try {
         await replyToChat(chatId, buildLaneFailureReply(scope, scope));
-        runtimeLogger.warn("error_reply_sent", {
-          ...eventSummary,
+        eventLogger.warn("error_reply_sent", {
           capability_lane: scope?.capability_lane || null,
         });
       } catch (replyError) {
-        runtimeLogger.error("error_reply_failed", {
-          ...eventSummary,
+        eventLogger.error("error_reply_failed", {
           capability_lane: scope?.capability_lane || null,
           error: runtimeLogger.compactError(replyError),
         });
@@ -143,4 +158,5 @@ process.on("SIGTERM", () => {
 });
 
 console.log(`Starting ${botName} with long connection...`);
+await enforceSingleLarkResponderRuntime({ logger: runtimeLogger.child("runtime_guard") });
 wsClient.start({ eventDispatcher });

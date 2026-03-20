@@ -7,6 +7,31 @@ const DRIVE_PAGE_SIZE = 200;
 const DOC_BLOCK_PAGE_SIZE = 500;
 const MESSAGE_PAGE_SIZE = 50;
 const TASK_PAGE_SIZE = 50;
+const DOC_CREATE_PLATFORM_BLOCKED_CODE = 1063003;
+const DOC_CREATE_DIAGNOSIS = {
+  ROOT_BLOCKED: "ROOT_BLOCKED",
+  FOLDER_BLOCKED: "FOLDER_BLOCKED",
+  UNKNOWN: "UNKNOWN",
+};
+
+function destroyAgent(agent) {
+  if (agent && typeof agent.destroy === "function") {
+    agent.destroy();
+  }
+}
+
+export function disposeLarkContentClientForTests() {
+  const httpDefaults = userClient?.httpInstance?.defaults || {};
+  destroyAgent(httpDefaults.httpAgent);
+  destroyAgent(httpDefaults.httpsAgent);
+}
+
+function withAccessToken(accessToken, tokenType = "user") {
+  if (tokenType === "tenant") {
+    return Lark.withTenantToken(accessToken);
+  }
+  return Lark.withUserAccessToken(accessToken);
+}
 
 function safeParseJson(value) {
   if (!value || typeof value !== "string") {
@@ -28,6 +53,35 @@ function unwrapResponse(response, fallbackMessage) {
   return response.data || {};
 }
 
+function shouldRetryLarkMessageError(error) {
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    message.includes("timeout") ||
+    message.includes("temporar") ||
+    message.includes("rate") ||
+    message.includes("429") ||
+    message.includes("502") ||
+    message.includes("503") ||
+    message.includes("504")
+  );
+}
+
+async function withMessageRetry(operation) {
+  let lastError = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (attempt === 1 || !shouldRetryLarkMessageError(error)) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}
+
 async function getDriveRootFolderMeta(accessToken) {
   const response = await fetch(`${apiBaseUrl}/open-apis/drive/explorer/v2/root_folder/meta`, {
     headers: {
@@ -42,6 +96,73 @@ async function getDriveRootFolderMeta(accessToken) {
   return data.data || {};
 }
 
+function extractLarkPlatformError(error) {
+  const raw = error?.response?.data || null;
+  const platformCode = Number.isFinite(Number(raw?.code)) ? Number(raw.code) : null;
+  const platformMsg = raw?.msg || raw?.message || String(error?.message || "unknown_error");
+  const logId = raw?.log_id || raw?.error?.log_id || null;
+  return {
+    http_status: Number.isFinite(Number(error?.response?.status)) ? Number(error.response.status) : null,
+    platform_code: platformCode,
+    platform_msg: platformMsg,
+    log_id: logId,
+    raw: raw || {
+      message: String(error?.message || "unknown_error"),
+    },
+  };
+}
+
+function isDocCreatePlatformBlockedError(error) {
+  return extractLarkPlatformError(error).platform_code === DOC_CREATE_PLATFORM_BLOCKED_CODE;
+}
+
+function buildDocCreateStructuredError({
+  stage = "",
+  tokenType = "user",
+  title = "",
+  folderToken = "",
+  error,
+  diagnosis = DOC_CREATE_DIAGNOSIS.UNKNOWN,
+  probe = null,
+} = {}) {
+  const platform = extractLarkPlatformError(error);
+  const payload = {
+    stage,
+    http_status: platform.http_status,
+    platform_code: platform.platform_code,
+    platform_msg: platform.platform_msg,
+    log_id: platform.log_id,
+    token_type: tokenType,
+    title,
+    folder_token: folderToken || null,
+    diagnosis,
+    probe,
+    raw: platform.raw,
+  };
+  const structuredError = new Error(JSON.stringify(payload));
+  structuredError.name = "LarkDocCreateError";
+  Object.assign(structuredError, payload);
+  return structuredError;
+}
+
+function logDocCreateDiagnostic({
+  mode = "direct",
+  tokenType = "user",
+  folderToken = "",
+  platformCode = null,
+  platformMsg = "",
+  logId = null,
+} = {}) {
+  console.info("[lark_doc_create]", {
+    token_type: tokenType,
+    has_folder_token: Boolean(folderToken),
+    mode,
+    code: platformCode,
+    msg: platformMsg || null,
+    log_id: logId || null,
+  });
+}
+
 function normalizeDriveList(data) {
   return {
     files: data.files || [],
@@ -52,6 +173,82 @@ function normalizeDriveList(data) {
 
 function normalizeDocumentUrl(documentId) {
   return documentId ? `https://larksuite.com/docx/${documentId}` : null;
+}
+
+async function createDocumentDirect(accessToken, title, folderToken, tokenType = "user") {
+  const data = unwrapResponse(
+    await userClient.docx.document.create(
+      {
+        data: {
+          title,
+          folder_token: folderToken || undefined,
+        },
+      },
+      withAccessToken(accessToken, tokenType),
+    ),
+    "Failed to create Lark document",
+  );
+
+  const document = data.document || {};
+  return {
+    document_id: document.document_id || null,
+    revision_id: document.revision_id || null,
+    title: document.title || title,
+    folder_token: folderToken || null,
+    url: normalizeDocumentUrl(document.document_id || null),
+  };
+}
+
+export async function probeDocumentCreateCapability(accessToken, title, folderToken, tokenType = "user") {
+  let folderOk = false;
+  let rootOk = false;
+  let folderError = null;
+  let rootError = null;
+
+  try {
+    await createDocumentDirect(accessToken, title, folderToken, tokenType);
+    folderOk = true;
+  } catch (error) {
+    folderError = extractLarkPlatformError(error);
+    logDocCreateDiagnostic({
+      mode: "probe",
+      tokenType,
+      folderToken,
+      platformCode: folderError.platform_code,
+      platformMsg: folderError.platform_msg,
+      logId: folderError.log_id,
+    });
+  }
+
+  try {
+    await createDocumentDirect(accessToken, title, "", tokenType);
+    rootOk = true;
+  } catch (error) {
+    rootError = extractLarkPlatformError(error);
+    logDocCreateDiagnostic({
+      mode: "probe",
+      tokenType,
+      folderToken: "",
+      platformCode: rootError.platform_code,
+      platformMsg: rootError.platform_msg,
+      logId: rootError.log_id,
+    });
+  }
+
+  let diagnosis = DOC_CREATE_DIAGNOSIS.UNKNOWN;
+  if (!rootOk && !folderOk) {
+    diagnosis = DOC_CREATE_DIAGNOSIS.ROOT_BLOCKED;
+  } else if (rootOk && !folderOk) {
+    diagnosis = DOC_CREATE_DIAGNOSIS.FOLDER_BLOCKED;
+  }
+
+  return {
+    root_ok: rootOk,
+    folder_ok: folderOk,
+    diagnosis,
+    root_error: rootError,
+    folder_error: folderError,
+  };
 }
 
 function normalizeDocumentContent(content) {
@@ -368,7 +565,7 @@ export async function moveDriveItem(accessToken, fileToken, type, folderToken) {
   };
 }
 
-export async function deleteDriveItem(accessToken, fileToken, type) {
+export async function deleteDriveItem(accessToken, fileToken, type, tokenType = "user") {
   const data = unwrapResponse(
     await userClient.drive.v1.file.delete(
       {
@@ -379,7 +576,7 @@ export async function deleteDriveItem(accessToken, fileToken, type) {
           type,
         },
       },
-      Lark.withUserAccessToken(accessToken),
+      withAccessToken(accessToken, tokenType),
     ),
     "Failed to delete Lark Drive item",
   );
@@ -515,27 +712,180 @@ export async function moveWikiNode(accessToken, spaceId, nodeToken, targetParent
   };
 }
 
-export async function createDocument(accessToken, title, folderToken) {
-  const data = unwrapResponse(
-    await userClient.docx.document.create(
-      {
-        data: {
-          title,
-          folder_token: folderToken || undefined,
-        },
-      },
-      Lark.withUserAccessToken(accessToken),
-    ),
-    "Failed to create Lark document",
-  );
+export async function createDocument(accessToken, title, folderToken, tokenType = "user") {
+  try {
+    const created = await createDocumentDirect(accessToken, title, folderToken, tokenType);
+    return {
+      ...created,
+      fallback_root: false,
+    };
+  } catch (error) {
+    const directError = extractLarkPlatformError(error);
+    logDocCreateDiagnostic({
+      mode: "direct",
+      tokenType,
+      folderToken,
+      platformCode: directError.platform_code,
+      platformMsg: directError.platform_msg,
+      logId: directError.log_id,
+    });
 
-  const document = data.document || {};
+    if (!folderToken || !isDocCreatePlatformBlockedError(error)) {
+      throw buildDocCreateStructuredError({
+        stage: "docx_create_direct",
+        tokenType,
+        title,
+        folderToken,
+        error,
+      });
+    }
+
+    try {
+      const fallbackCreated = await createDocumentDirect(accessToken, title, "", tokenType);
+      logDocCreateDiagnostic({
+        mode: "fallback",
+        tokenType,
+        folderToken: "",
+        platformCode: null,
+        platformMsg: "fallback_root_create_succeeded",
+        logId: null,
+      });
+      return {
+        ...fallbackCreated,
+        requested_folder_token: folderToken || null,
+        fallback_root: true,
+      };
+    } catch (rootError) {
+      const probe = {
+        root_ok: false,
+        folder_ok: false,
+        diagnosis: DOC_CREATE_DIAGNOSIS.ROOT_BLOCKED,
+        root_error: extractLarkPlatformError(rootError),
+        folder_error: directError,
+      };
+      logDocCreateDiagnostic({
+        mode: "fallback",
+        tokenType,
+        folderToken: "",
+        platformCode: probe.root_error.platform_code,
+        platformMsg: probe.root_error.platform_msg,
+        logId: probe.root_error.log_id,
+      });
+      throw buildDocCreateStructuredError({
+        stage: "docx_create_root_fallback",
+        tokenType,
+        title,
+        folderToken,
+        error: rootError,
+        diagnosis: probe.diagnosis,
+        probe,
+      });
+    }
+  }
+}
+
+async function grantDocumentMemberPermission(accessToken, documentId, openId, tokenType = "user") {
+  if (!accessToken || !documentId || !openId) {
+    return null;
+  }
+
+  const payload = {
+    path: {
+      token: documentId,
+    },
+    params: {
+      type: "docx",
+      need_notification: false,
+    },
+    data: {
+      member_type: "openid",
+      member_id: openId,
+      type: "user",
+      perm: "full_access",
+      perm_type: "container",
+    },
+  };
+
+  try {
+    const data = unwrapResponse(
+      await userClient.drive.permissionMember.create(
+        payload,
+        withAccessToken(accessToken, tokenType),
+      ),
+      "Failed to grant document full access",
+    );
+    return data.member || null;
+  } catch (error) {
+    const message = String(error?.message || "");
+    if (!/exist|already|重复|已存在/i.test(message)) {
+      throw error;
+    }
+
+    const data = unwrapResponse(
+      await userClient.drive.permissionMember.update(
+        {
+          path: {
+            token: documentId,
+            member_id: openId,
+          },
+          params: {
+            type: "docx",
+            need_notification: false,
+          },
+          data: {
+            member_type: "openid",
+            perm: "full_access",
+            perm_type: "container",
+            type: "user",
+          },
+        },
+        withAccessToken(accessToken, tokenType),
+      ),
+      "Failed to upgrade document member permission",
+    );
+    return data.member || null;
+  }
+}
+
+export async function ensureDocumentManagerPermission(
+  accessToken,
+  documentId,
+  {
+    tokenType = "user",
+    managerOpenId = "",
+  } = {},
+) {
+  const permission = await grantDocumentMemberPermission(
+    accessToken,
+    documentId,
+    managerOpenId,
+    tokenType,
+  );
   return {
-    document_id: document.document_id || null,
-    revision_id: document.revision_id || null,
-    title: document.title || title,
-    folder_token: folderToken || null,
-    url: normalizeDocumentUrl(document.document_id || null),
+    document_id: documentId || null,
+    manager_open_id: managerOpenId || null,
+    manager_permission: permission?.perm || null,
+  };
+}
+
+export async function createManagedDocument(
+  accessToken,
+  title,
+  folderToken,
+  {
+    tokenType = "user",
+    managerOpenId = "",
+  } = {},
+) {
+  const created = await createDocument(accessToken, title, folderToken, tokenType);
+  const permission = await ensureDocumentManagerPermission(accessToken, created.document_id, {
+    tokenType,
+    managerOpenId,
+  });
+  return {
+    ...created,
+    manager_open_id: managerOpenId || null,
+    manager_permission: permission?.manager_permission || null,
   };
 }
 
@@ -642,7 +992,7 @@ export async function resolveDocumentComment(accessToken, documentId, commentId,
   };
 }
 
-async function listAllDocumentBlocks(accessToken, documentId) {
+async function listAllDocumentBlocks(accessToken, documentId, tokenType = "user") {
   const items = [];
   let pageToken = undefined;
 
@@ -658,7 +1008,7 @@ async function listAllDocumentBlocks(accessToken, documentId) {
             page_token: pageToken,
           },
         },
-        Lark.withUserAccessToken(accessToken),
+        withAccessToken(accessToken, tokenType),
       ),
       "Failed to list Lark document blocks",
     );
@@ -682,7 +1032,7 @@ function resolveDocumentRootBlock(blocks) {
   );
 }
 
-async function convertMarkdownToBlocks(accessToken, content) {
+async function convertMarkdownToBlocks(accessToken, content, tokenType = "user") {
   const data = unwrapResponse(
     await userClient.docx.document.convert(
       {
@@ -691,7 +1041,7 @@ async function convertMarkdownToBlocks(accessToken, content) {
           content,
         },
       },
-      Lark.withUserAccessToken(accessToken),
+      withAccessToken(accessToken, tokenType),
     ),
     "Failed to convert markdown into Lark document blocks",
   );
@@ -702,13 +1052,13 @@ async function convertMarkdownToBlocks(accessToken, content) {
   };
 }
 
-export async function updateDocument(accessToken, documentId, content, mode = "append") {
+export async function updateDocument(accessToken, documentId, content, mode = "append", tokenType = "user") {
   const normalizedContent = normalizeDocumentContent(content);
   if (!normalizedContent) {
     throw new Error("missing_document_content");
   }
 
-  const blocks = await listAllDocumentBlocks(accessToken, documentId);
+  const blocks = await listAllDocumentBlocks(accessToken, documentId, tokenType);
   const rootBlock = resolveDocumentRootBlock(blocks);
   if (!rootBlock?.block_id) {
     throw new Error("missing_document_root_block");
@@ -727,13 +1077,13 @@ export async function updateDocument(accessToken, documentId, content, mode = "a
             end_index: rootBlock.children.length,
           },
         },
-        Lark.withUserAccessToken(accessToken),
+        withAccessToken(accessToken, tokenType),
       ),
       "Failed to clear Lark document content",
     );
   }
 
-  const converted = await convertMarkdownToBlocks(accessToken, normalizedContent);
+  const converted = await convertMarkdownToBlocks(accessToken, normalizedContent, tokenType);
   if (!converted.first_level_block_ids.length || !converted.blocks.length) {
     return {
       document_id: documentId,
@@ -756,7 +1106,7 @@ export async function updateDocument(accessToken, documentId, content, mode = "a
           descendants: converted.blocks,
         },
       },
-      Lark.withUserAccessToken(accessToken),
+      withAccessToken(accessToken, tokenType),
     ),
     "Failed to write Lark document content",
   );
@@ -824,6 +1174,31 @@ export async function getMessage(accessToken, messageId) {
   );
 
   return normalizeMessageItem(data);
+}
+
+export async function downloadMessageImage(accessToken, imageKey, tokenType = "user") {
+  const response = await fetch(
+    `${apiBaseUrl}/open-apis/im/v1/images/${encodeURIComponent(imageKey)}?type=message`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`Failed to download Lark image: ${response.status}`);
+  }
+
+  const contentType = response.headers.get("content-type") || "application/octet-stream";
+  const buffer = Buffer.from(await response.arrayBuffer());
+  return {
+    image_key: imageKey,
+    mime_type: contentType.split(";")[0].trim() || "application/octet-stream",
+    bytes: buffer,
+    token_type: tokenType,
+  };
 }
 
 export async function searchMessages(
@@ -902,21 +1277,23 @@ export async function replyMessage(
       )
     : JSON.stringify({ text: normalized });
 
-  const data = unwrapResponse(
-    await userClient.im.v1.message.reply(
-      {
-        path: {
-          message_id: messageId,
+  const data = await withMessageRetry(async () =>
+    unwrapResponse(
+      await userClient.im.v1.message.reply(
+        {
+          path: {
+            message_id: messageId,
+          },
+          data: {
+            msg_type: isCard ? "interactive" : "text",
+            content: payloadContent,
+            reply_in_thread: replyInThread,
+          },
         },
-        data: {
-          msg_type: isCard ? "interactive" : "text",
-          content: payloadContent,
-          reply_in_thread: replyInThread,
-        },
-      },
-      Lark.withUserAccessToken(accessToken),
+        Lark.withUserAccessToken(accessToken),
+      ),
+      "Failed to reply to Lark message",
     ),
-    "Failed to reply to Lark message",
   );
 
   return normalizeMessageItem(data);
@@ -943,31 +1320,33 @@ export async function sendMessage(
       )
     : JSON.stringify({ text: normalized });
 
-  const data = unwrapResponse(
-    await userClient.im.v1.message.create(
-      {
-        params: {
-          receive_id_type: receiveIdType,
+  const data = await withMessageRetry(async () =>
+    unwrapResponse(
+      await userClient.im.v1.message.create(
+        {
+          params: {
+            receive_id_type: receiveIdType,
+          },
+          data: {
+            receive_id: receiveId,
+            msg_type: isCard ? "interactive" : "text",
+            content: payloadContent,
+          },
         },
-        data: {
-          receive_id: receiveId,
-          msg_type: isCard ? "interactive" : "text",
-          content: payloadContent,
-        },
-      },
-      Lark.withUserAccessToken(accessToken),
+        Lark.withUserAccessToken(accessToken),
+      ),
+      "Failed to send Lark message",
     ),
-    "Failed to send Lark message",
   );
 
   return normalizeMessageItem(data);
 }
 
-export async function getPrimaryCalendar(accessToken) {
+export async function getPrimaryCalendar(accessToken, tokenType = "user") {
   const data = unwrapResponse(
     await userClient.calendar.v4.calendar.primary(
       {},
-      Lark.withUserAccessToken(accessToken),
+      withAccessToken(accessToken, tokenType),
     ),
     "Failed to get primary Lark calendar",
   );
@@ -979,6 +1358,7 @@ export async function listCalendarEvents(
   accessToken,
   calendarId,
   { pageSize = 50, pageToken, startTime, endTime, anchorTime } = {},
+  tokenType = "user",
 ) {
   const data = unwrapResponse(
     await userClient.calendar.v4.calendarEvent.list(
@@ -994,7 +1374,7 @@ export async function listCalendarEvents(
           anchor_time: anchorTime,
         },
       },
-      Lark.withUserAccessToken(accessToken),
+      withAccessToken(accessToken, tokenType),
     ),
     "Failed to list Lark calendar events",
   );

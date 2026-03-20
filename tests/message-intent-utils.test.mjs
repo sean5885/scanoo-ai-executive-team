@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { buildLaneFailureReply, resolveCapabilityLane } from "../src/capability-lane.mjs";
 import {
+  extractBitableReference,
   collectRelatedMessageIds,
   extractDocumentId,
   normalizeMessageText,
@@ -31,6 +32,24 @@ test("extractDocumentId 會從分享連結中擷取 doc token", () => {
   };
 
   assert.equal(extractDocumentId(event), "doccnA1B2C3D4E5");
+});
+
+test("extractBitableReference 會從 base 連結中擷取 app 與 table token", () => {
+  const event = {
+    message: {
+      content: JSON.stringify({
+        text: "幫我看這個 bitable https://tenant.larksuite.com/base/bscnA1B2C3D4?table=tblN9X8Y7&view=vewK3L2",
+      }),
+    },
+  };
+
+  assert.deepEqual(extractBitableReference(event), {
+    url: "https://tenant.larksuite.com/base/bscnA1B2C3D4?table=tblN9X8Y7&view=vewK3L2",
+    app_token: "bscnA1B2C3D4",
+    table_id: "tblN9X8Y7",
+    view_id: "vewK3L2",
+    record_id: null,
+  });
 });
 
 test("collectRelatedMessageIds 會去重 reply-chain message ids", () => {

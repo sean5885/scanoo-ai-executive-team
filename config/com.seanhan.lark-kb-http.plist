@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.seanhan.lark-kb-http</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>WorkingDirectory</key>
+    <string>/Users/seanhan/Documents/Playground</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>/opt/homebrew/opt/node@24/bin/node</string>
+      <string>/Users/seanhan/Documents/Playground/src/index.mjs</string>
+    </array>
+    <key>StandardOutPath</key>
+    <string>/Users/seanhan/Library/Logs/lark-kb-http.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/seanhan/Library/Logs/lark-kb-http.err.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>HOME</key>
+      <string>/Users/seanhan</string>
+      <key>PATH</key>
+      <string>/opt/homebrew/opt/node@24/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+  </dict>
+</plist>

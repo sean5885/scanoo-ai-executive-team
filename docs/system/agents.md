@@ -4,26 +4,42 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 ## Agent Architecture Status
 
-An AI-enabled system exists here, but it is not a planner/router/specialist team like a multi-agent executive server.
+An AI-enabled system exists here, and it now includes a closed-loop executive orchestration layer on top of checked-in slash agents. It is still not a fully autonomous company-brain server.
 
 What exists:
 
 - OpenClaw plugin tools
 - binding-based capability lanes
+- closed-loop executive planner plus shared task-state orchestration
+- persona-based slash-agent registry and dispatcher
+- input modality routing for text / image / multimodal requests
 - lane-specific execution strategies
 - command-style `/meeting` workflow built on top of the lane executor
 - OpenClaw-backed semantic classifier
 - LLM answer generation
 - LLM comment rewrite
+- Nano Banana-oriented image understanding adapter for image-first tasks
 
 What does not exist in current code:
 
-- planner
-- router
-- specialist agents
-- slash-agent registry
-- memory orchestration layer
+- autonomous long-running planner queue
 - company_brain
+- tenant-wide shared memory service
+- memory orchestration layer
+
+What now exists in current code:
+
+- closed-loop executive planner that can start, continue, or hand off between registered agents
+- shared executive task state for multi-turn continuation and agent-to-agent handoff
+- lifecycle state transitions that require evidence plus verifier pass before completion
+- checked-in slash-agent registry for `/generalist`, `/ceo`, `/product`, `/prd`, `/cmo`, `/consult`, `/cdo`, `/delivery`, `/ops`, `/tech`
+- checked-in `/knowledge audit|consistency|conflicts|distill|brain|proposals|approve|reject|ownership|learn`
+- persona-configured shared dispatcher that reuses retrieval grounding plus compact role prompts
+- image-bearing slash requests that first use the Nano Banana-oriented adapter, then pass compact structured image context into the text model only when needed
+- explicit capability contracts for registered agents
+- self-check script plus maintainable capability/checklist documents for chain governance
+- evidence-based verifier, reflection records, and improvement proposal generation
+- proposal-first knowledge writeback path for uncertain meeting/executive conclusions
 
 ## Current Agent-Like Components
 
@@ -33,6 +49,7 @@ What does not exist in current code:
   - `lark-kb` plugin
 - Role:
   - exposes repo capabilities as OpenClaw tools
+  - Bitable tools now accept either raw `app_token` inputs or pasted `base/...` URLs
 - Input:
   - tool parameters
 - Output:
@@ -43,6 +60,21 @@ What does not exist in current code:
   - OpenClaw runtime
 - Calls:
   - local HTTP API
+
+### Agent-Facing HTTP Bridges
+
+- Code:
+  - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
+- Role:
+  - provide thin agent-facing wrappers over selected document/runtime routes
+  - preserve the underlying route logic instead of re-implementing it
+  - normalize agent-facing responses to `{ ok, action, data, trace_id }`
+- Current bridges:
+  - `POST /agent/docs/create`
+  - `GET /agent/company-brain/docs`
+  - `GET /agent/system/runtime-info`
+- Logging:
+  - `stage=agent_bridge`
 
 ### Binding / Session Runtime
 
@@ -87,6 +119,7 @@ What does not exist in current code:
   - session scope
   - message text heuristics
   - structured Lark message payload fields such as `document_id` and `doc_token`
+  - pasted Bitable `base/...` URLs in message text or structured link fields
   - reply-chain follow-up hints when the current message is replying to a shared doc
 - Output:
   - `group-shared-assistant`
@@ -109,7 +142,10 @@ What does not exist in current code:
   - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
 - Role:
   - run one concrete reply strategy after a lane is resolved
+  - intercept checked-in slash agents before generic lane fallback
+  - route image-only and image+text requests through the image-understanding adapter before normal text-lane handling
   - also intercept `/meeting` as a command workflow before default lane replies
+  - preflight shared Bitable links so the bot can inspect base/table structure without asking the user to copy tokens manually
 - Input:
   - long-connection event
   - resolved lane scope
@@ -120,12 +156,113 @@ What does not exist in current code:
   - doc suggestion workflow
   - Lark content adapter
   - OAuth account context
-  - message intent utilities for document reference extraction
+  - message intent utilities for document and Bitable reference extraction
 - Called by:
   - `src/index.mjs`
 - Calls:
   - lane-specific service functions
   - referenced-message lookups for doc share recovery
+
+### Registered Slash Agents
+
+- Name:
+  - slash-agent registry and dispatcher
+- Code:
+  - `/Users/seanhan/Documents/Playground/src/agent-registry.mjs`
+  - `/Users/seanhan/Documents/Playground/src/agent-dispatcher.mjs`
+- Role:
+  - define checked-in agent IDs, slash commands, knowledge subcommands, role prompts, and output contracts
+  - expose minimum capability contracts for governance and self-check
+  - dispatch `/ceo`, `/product`, `/prd`, `/cmo`, `/consult`, `/cdo`, `/delivery`, `/ops`, `/tech`, `/generalist`, and `/knowledge *` before generic lane fallback
+  - reuse retrieval grounding and compact workflow checkpoints for persona answers
+  - when direct text-model credentials are absent, call the dedicated `lobster-backend` OpenClaw MiniMax text path before dropping to extractive retrieval-only output
+- Input:
+  - slash command text
+  - retrieved snippets
+  - optional compact structured image context
+- Output:
+  - persona-scoped answer with concise sources footer
+- Dependencies:
+  - `answer-service.mjs`
+  - `agent-token-governance.mjs`
+  - `agent-workflow-state.mjs`
+  - `image-understanding-service.mjs`
+
+### Executive Orchestration Layer
+
+- Name:
+  - executive planner and task-state orchestrator
+- Code:
+  - `/Users/seanhan/Documents/Playground/src/executive-planner.mjs`
+  - `/Users/seanhan/Documents/Playground/src/executive-task-state.mjs`
+  - `/Users/seanhan/Documents/Playground/src/executive-orchestrator.mjs`
+  - `/Users/seanhan/Documents/Playground/src/executive-closed-loop.mjs`
+  - `/Users/seanhan/Documents/Playground/src/executive-lifecycle.mjs`
+  - `/Users/seanhan/Documents/Playground/src/executive-verifier.mjs`
+  - `/Users/seanhan/Documents/Playground/src/executive-reflection.mjs`
+  - `/Users/seanhan/Documents/Playground/src/executive-improvement.mjs`
+  - `/Users/seanhan/Documents/Playground/src/executive-memory.mjs`
+- Role:
+  - maintain one active executive task per session
+  - let registered slash agents continue across multiple turns
+  - allow planner-selected handoff between registered agents
+  - let the planner attach a small work plan with primary and supporting agents
+  - run supporting-agent passes, then feed their compact outputs back into the primary agent for synthesis
+  - support explicit exit from executive mode
+  - derive task rules, success criteria, and lifecycle state on task initialization
+  - collect evidence from execution, run verifier checks, and append reflection/improvement records
+  - use the same dedicated `lobster-backend` OpenClaw MiniMax text path for planner decisions when direct `LLM_API_KEY` is unavailable
+  - render user-facing executive replies as a fixed brief with:
+    - direct answer first
+    - orchestration context only when useful
+    - visible subtask list
+    - visible supporting-agent summaries
+  - expose a minimal planner-callable tool registry for three agent-bridge actions:
+    - `create_doc`
+    - `list_company_brain_docs`
+    - `get_runtime_info`
+  - route those tool calls through the existing `/agent/*` HTTP bridges instead of duplicating document/runtime logic
+- Boundaries:
+  - does not run an async worker queue
+  - supporting agents now run as in-process parallel async calls, not as background workers
+  - does not maintain a tenant-wide memory graph
+  - does not yet auto-apply high-risk prompt/governance proposals without review
+
+### Image Understanding Adapter
+
+- Name:
+  - image understanding adapter
+- Code:
+  - `/Users/seanhan/Documents/Playground/src/modality-router.mjs`
+  - `/Users/seanhan/Documents/Playground/src/image-understanding-service.mjs`
+- Role:
+  - classify incoming input as `text`, `image`, or `multimodal`
+  - send image understanding tasks to Nano Banana instead of the text model
+  - convert image outputs into compact structured fields before any downstream text synthesis
+- Input:
+  - image URLs from structured Lark payloads
+  - image-related task text
+- Output:
+  - `detected_objects`
+  - `scene_summary`
+  - `visible_text`
+  - `key_entities`
+  - `confidence`
+  - `extracted_notes`
+- Dependencies:
+  - configurable Nano Banana-compatible HTTP endpoint
+- Called by:
+  - `src/lane-executor.mjs`
+
+## Governance Artifacts
+
+- Capability matrix:
+  - `/Users/seanhan/Documents/Playground/docs/system/agent_capability_matrix.md`
+- Chain checklist:
+  - `/Users/seanhan/Documents/Playground/docs/system/chain_health_checklist.md`
+- Self-check:
+  - `/Users/seanhan/Documents/Playground/src/system-self-check.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/self-check.mjs`
 
 ### Meeting Command Workflow
 
@@ -137,6 +274,16 @@ What does not exist in current code:
   - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
 - Role:
   - classify meeting content into `weekly` or `general`
+  - start a chat-scoped meeting capture mode from menu or natural-language start phrases
+  - auto-bind `我要開會了` style starts to the current or nearest calendar meeting when a `meeting_url` is available
+  - bind capture mode to the current or nearest calendar event when the user explicitly asks to listen to "this meeting"
+  - silently accumulate in-chat meeting notes until the user ends the meeting
+  - answer explicit status checks such as `請問在持續記錄中嗎` without writing that question into the transcript
+  - attempt local microphone recording on the host machine during active meeting capture
+  - transcribe the local recording on meeting end with local `faster-whisper` by default, or an explicitly configured OpenAI-compatible audio endpoint
+  - when user OAuth refresh is invalid, `/meeting` style capture can fall back to tenant-token doc creation and local capture instead of failing before recording starts
+  - create a dedicated Lark meeting document at capture start and write the final usable minutes into that same document on meeting end
+  - grant the initiating user `full_access` on Lobster-created or reused meeting docs so the doc is manageable, not read-only
   - generate a fixed summary format
   - send summary to a target group
   - attach a confirm-write button via interactive card
@@ -145,6 +292,11 @@ What does not exist in current code:
   - update weekly todo tracker for weekly meetings
 - Input:
   - `/meeting` command text
+  - Lark menu wake text such as `會議`
+  - natural-language start / stop phrases such as `我要開會了` and `會議結束了`
+  - short offline meeting starts such as `請記錄吧`, `線下會議 請記錄`, `okr 周例會`, or `現在正要開始 請準備記錄吧`
+  - calendar-backed start phrases such as `開始旁聽這場會議`
+  - natural-language meeting workflow requests that clearly ask Lobster to record first and write only after confirmation
   - referenced doc content
   - HTTP meeting payload
 - Output:
@@ -276,7 +428,8 @@ What does not exist in current code:
 ## Fallback Behavior
 
 - answer path:
-  - extractive fallback when no LLM key exists
+  - use the dedicated OpenClaw MiniMax text path when direct text-model credentials are absent
+  - only fall back to retrieval-summary output if text generation itself fails
 
 - semantic classifier:
   - local rules now exist as fallback when OpenClaw is unavailable
