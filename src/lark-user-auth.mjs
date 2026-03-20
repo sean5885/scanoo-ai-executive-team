@@ -10,9 +10,19 @@ import {
 import { getAccountContext, getAccountContextByOpenId, saveToken, upsertAccount } from "./rag-repository.mjs";
 
 const userClient = new Lark.Client(baseConfig);
+let activeLarkAuthServiceOverrides = {};
 
 function nowSeconds() {
   return Math.floor(Date.now() / 1000);
+}
+
+function getLarkAuthService(name, fallback) {
+  const override = activeLarkAuthServiceOverrides?.[name];
+  return typeof override === "function" ? override : fallback;
+}
+
+export function setLarkAuthServiceOverridesForTests(overrides = {}) {
+  activeLarkAuthServiceOverrides = overrides && typeof overrides === "object" ? overrides : {};
 }
 
 function normalizeTokenData(data) {
@@ -20,6 +30,7 @@ function normalizeTokenData(data) {
     throw new Error("Missing user access token in OAuth response");
   }
 
+  const obtainedAt = nowSeconds();
   return {
     access_token: data.access_token,
     refresh_token: data.refresh_token || null,
@@ -31,10 +42,10 @@ function normalizeTokenData(data) {
     user_id: data.user_id || null,
     union_id: data.union_id || null,
     tenant_key: data.tenant_key || null,
-    obtained_at: nowSeconds(),
-    expires_at: nowSeconds() + (data.expires_in || 0),
+    obtained_at: obtainedAt,
+    expires_at: obtainedAt + (data.expires_in || 0),
     refresh_expires_at: data.refresh_expires_in
-      ? nowSeconds() + data.refresh_expires_in
+      ? obtainedAt + data.refresh_expires_in
       : null,
   };
 }
@@ -81,7 +92,7 @@ export function buildAuthorizeUrl(state) {
 }
 
 export async function exchangeCodeForUserToken(code) {
-  const data = await postAuthenJson("/open-apis/authen/v1/access_token", {
+  const data = await getLarkAuthService("postAuthenJson", postAuthenJson)("/open-apis/authen/v1/access_token", {
     grant_type: "authorization_code",
     code,
   });
@@ -91,7 +102,7 @@ export async function exchangeCodeForUserToken(code) {
 }
 
 export async function refreshUserToken(refreshToken) {
-  const data = await postAuthenJson("/open-apis/authen/v1/refresh_access_token", {
+  const data = await getLarkAuthService("postAuthenJson", postAuthenJson)("/open-apis/authen/v1/refresh_access_token", {
     grant_type: "refresh_token",
     refresh_token: refreshToken,
   });
@@ -130,27 +141,79 @@ export async function getStoredAccountContextByOpenId(openId) {
   return getAccountContextByOpenId(openId);
 }
 
-export async function getValidUserToken(accountId) {
+export function isUserTokenFresh(token, skewSeconds = 120) {
+  return Boolean(token?.access_token) && ((token.expires_at || 0) - nowSeconds() > skewSeconds);
+}
+
+export async function getValidUserTokenState(accountId) {
   const context = getAccountContext(accountId);
   const token = context?.token;
 
   if (!token?.access_token) {
-    return null;
+    return {
+      status: "missing",
+      account: context?.account || null,
+      token: null,
+      refreshed: false,
+      error: null,
+    };
   }
 
-  if ((token.expires_at || 0) - nowSeconds() > 120) {
-    return token;
+  if (isUserTokenFresh(token)) {
+    return {
+      status: "valid",
+      account: context?.account || null,
+      token,
+      refreshed: false,
+      error: null,
+    };
   }
 
   if (!token.refresh_token) {
-    return null;
+    return {
+      status: "reauth_required",
+      reason: "missing_refresh_token",
+      account: context?.account || null,
+      token,
+      refreshed: false,
+      error: null,
+    };
   }
 
-  return refreshUserToken(token.refresh_token);
+  try {
+    const refreshedToken = await refreshUserToken(token.refresh_token);
+    return {
+      status: "valid",
+      account: context?.account || refreshedToken.account || null,
+      token: refreshedToken,
+      refreshed: true,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: "reauth_required",
+      reason: "refresh_failed",
+      account: context?.account || null,
+      token,
+      refreshed: false,
+      error,
+    };
+  }
+}
+
+export async function getValidUserToken(accountId) {
+  const state = await getValidUserTokenState(accountId);
+  if (state.status === "valid") {
+    return state.token;
+  }
+  if (state.error) {
+    throw state.error;
+  }
+  return null;
 }
 
 export async function getTenantAccessToken() {
-  const data = await postAuthenJson("/open-apis/auth/v3/tenant_access_token/internal", {});
+  const data = await getLarkAuthService("postAuthenJson", postAuthenJson)("/open-apis/auth/v3/tenant_access_token/internal", {});
   const accessToken = data?.tenant_access_token || "";
   if (!accessToken) {
     throw new Error("Missing tenant access token in auth response");
@@ -163,7 +226,7 @@ export async function getTenantAccessToken() {
   };
 }
 
-export async function getUserProfile(accessToken) {
+async function getUserProfileFromLark(accessToken) {
   const response = await userClient.authen.v1.userInfo.get(
     {},
     Lark.withUserAccessToken(accessToken),
@@ -174,4 +237,8 @@ export async function getUserProfile(accessToken) {
   }
 
   return response.data || {};
+}
+
+export async function getUserProfile(accessToken) {
+  return getLarkAuthService("getUserProfile", getUserProfileFromLark)(accessToken);
 }

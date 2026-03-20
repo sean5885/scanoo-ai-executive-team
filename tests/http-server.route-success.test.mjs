@@ -30,7 +30,13 @@ function createLoggerSink() {
 
 function createAuthorizedOverrides(overrides = {}) {
   return {
-    getValidUserToken: async () => ({ access_token: "token-1", account_id: "acct-1" }),
+    getValidUserTokenState: async () => ({
+      status: "valid",
+      token: { access_token: "token-1", account_id: "acct-1" },
+      account: { id: "acct-1" },
+      refreshed: false,
+      error: null,
+    }),
     getStoredAccountContext: async () => ({ account: { id: "acct-1" } }),
     ...overrides,
   };

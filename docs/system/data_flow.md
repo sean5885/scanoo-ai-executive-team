@@ -10,20 +10,24 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 2. Service redirects to Lark authorization
 3. Callback hits `/oauth/lark/callback`
 4. Service exchanges code for user token
-5. Account and token are persisted to local storage
+5. Callback persists `access_token`, `refresh_token`, `expires_at`, and `refresh_expires_at` into the local SQLite `lark_tokens` table
+6. The stored account row remains the lookup anchor for later request-scoped token refresh
 
 ### Browse / Write Flow
 
-1. HTTP route resolves account and valid token
-2. for heading-targeted doc updates, preview may still resolve the target doc from explicit IDs or shared doc URLs and then read current raw markdown
-3. the handler resolves the target heading section and turns the requested insert into a full-document replace candidate
-4. targeted updates then reuse the same preview/confirm replace gate instead of introducing a second Lark write primitive
-5. the final write step no longer trusts preview-time URL resolution alone; it requires explicit `document_id` and `section_heading`, otherwise it returns structured `missing_explicit_write_target`
-6. handler calls `lark-content.mjs`
-7. `lark-content.mjs` calls Lark SDK
-8. for Lobster-created `docx` files, the initiating user's `open_id` is granted `full_access`
-9. Result is normalized and returned
-10. direct-message cleanup requests can also delete the latest Lobster meeting doc through tenant-token fallback and persist a chat-only failure-report preference
+1. HTTP route resolves account and user-token state
+2. request-layer adapters (`lark-content.mjs` / `lark-connectors.mjs`) re-check token validity before each Lark API call
+3. if the stored token is expired, the request layer refreshes it with the persisted `refresh_token` and writes the replacement token back into SQLite
+4. only when refresh cannot recover does the HTTP path fail soft with `error=oauth_reauth_required`
+5. for heading-targeted doc updates, preview may still resolve the target doc from explicit IDs or shared doc URLs and then read current raw markdown
+6. the handler resolves the target heading section and turns the requested insert into a full-document replace candidate
+7. targeted updates then reuse the same preview/confirm replace gate instead of introducing a second Lark write primitive
+8. the final write step no longer trusts preview-time URL resolution alone; it requires explicit `document_id` and `section_heading`, otherwise it returns structured `missing_explicit_write_target`
+9. handler calls `lark-content.mjs`
+10. `lark-content.mjs` calls Lark SDK
+11. for Lobster-created `docx` files, the initiating user's `open_id` is granted `full_access`
+12. Result is normalized and returned
+13. direct-message cleanup requests can also delete the latest Lobster meeting doc through tenant-token fallback and persist a chat-only failure-report preference
 
 ### Sync Flow
 

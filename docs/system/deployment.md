@@ -121,8 +121,8 @@ Key values:
 ## Infra Artifacts Present
 
 - local `.data` runtime state
-  - includes OAuth token store, RAG SQLite, lobster_security state, doc replace confirmation store, comment watch state, and comment suggestion watch definitions
-  - token JSON files are written with restrictive file permissions
+  - includes the RAG/OAuth SQLite database, lobster_security state, doc replace confirmation store, comment watch state, and comment suggestion watch definitions
+  - user OAuth tokens are persisted in SQLite `lark_tokens`, optionally encrypted by `LARK_TOKEN_ENCRYPTION_SECRET`
 - Python config files under:
   - `/Users/seanhan/Documents/Playground/lobster_security/config/policy.yaml`
   - `/Users/seanhan/Documents/Playground/lobster_security/config/network_policy.yaml`
@@ -161,7 +161,7 @@ Key values:
 
 - filesystem state
   - `.data/`
-  - token store
+  - SQLite-backed OAuth token store
   - SQLite index
   - pending security state
 
@@ -191,7 +191,7 @@ From this repo alone, we still cannot confirm:
 - comments rewrite and answer quality depend on external model endpoint quality
 - OpenClaw presence is assumed for semantic organization workflows
 - watched comment suggestion cards depend on local timer polling unless manually triggered by API
-- token and runtime state are local, which simplifies setup but still weakens multi-machine portability even after optional encryption
+- token and runtime state are local, which simplifies setup but still weakens multi-machine portability even after optional token encryption
 
 ## Current Local Machine State
 

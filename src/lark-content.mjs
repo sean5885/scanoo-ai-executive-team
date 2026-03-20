@@ -1,5 +1,6 @@
 import * as Lark from "@larksuiteoapi/node-sdk";
 import { apiBaseUrl, baseConfig } from "./config.mjs";
+import { resolveLarkRequestAuth } from "./lark-request-auth.mjs";
 
 const userClient = new Lark.Client(baseConfig);
 const WIKI_PAGE_SIZE = 50;
@@ -31,6 +32,10 @@ function withAccessToken(accessToken, tokenType = "user") {
     return Lark.withTenantToken(accessToken);
   }
   return Lark.withUserAccessToken(accessToken);
+}
+
+async function resolveContentAuth(accessToken, tokenType = "user") {
+  return resolveLarkRequestAuth(accessToken, { tokenType });
 }
 
 function safeParseJson(value) {
@@ -200,6 +205,7 @@ async function createDocumentDirect(accessToken, title, folderToken, tokenType =
 }
 
 export async function probeDocumentCreateCapability(accessToken, title, folderToken, tokenType = "user") {
+  ({ accessToken, tokenType } = await resolveContentAuth(accessToken, tokenType));
   let folderOk = false;
   let rootOk = false;
   let folderError = null;
@@ -483,6 +489,7 @@ function normalizeMessageReaction(item) {
 }
 
 export async function listDriveFolder(accessToken, folderToken, pageToken) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.drive.v1.file.list(
       {
@@ -501,6 +508,7 @@ export async function listDriveFolder(accessToken, folderToken, pageToken) {
 }
 
 export async function listDriveRoot(accessToken, pageToken) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const result = await listDriveFolder(accessToken, undefined, pageToken);
   if (!pageToken) {
     try {
@@ -514,11 +522,13 @@ export async function listDriveRoot(accessToken, pageToken) {
 }
 
 export async function resolveDriveRootFolderToken(accessToken) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const meta = await getDriveRootFolderMeta(accessToken);
   return meta.token || null;
 }
 
 export async function createDriveFolder(accessToken, folderToken, name) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.drive.v1.file.createFolder(
       {
@@ -541,6 +551,7 @@ export async function createDriveFolder(accessToken, folderToken, name) {
 }
 
 export async function moveDriveItem(accessToken, fileToken, type, folderToken) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.drive.v1.file.move(
       {
@@ -566,6 +577,7 @@ export async function moveDriveItem(accessToken, fileToken, type, folderToken) {
 }
 
 export async function deleteDriveItem(accessToken, fileToken, type, tokenType = "user") {
+  ({ accessToken, tokenType } = await resolveContentAuth(accessToken, tokenType));
   const data = unwrapResponse(
     await userClient.drive.v1.file.delete(
       {
@@ -589,6 +601,7 @@ export async function deleteDriveItem(accessToken, fileToken, type, tokenType = 
 }
 
 export async function checkDriveTask(accessToken, taskId) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.drive.v1.file.taskCheck(
       {
@@ -608,6 +621,7 @@ export async function checkDriveTask(accessToken, taskId) {
 }
 
 export async function listWikiSpaces(accessToken, pageToken) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.wiki.v2.space.list(
       {
@@ -629,6 +643,7 @@ export async function listWikiSpaces(accessToken, pageToken) {
 }
 
 export async function listWikiSpaceNodes(accessToken, spaceId, parentNodeToken, pageToken) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.wiki.v2.spaceNode.list(
       {
@@ -654,6 +669,7 @@ export async function listWikiSpaceNodes(accessToken, spaceId, parentNodeToken, 
 }
 
 export async function createWikiNode(accessToken, spaceId, title, parentNodeToken) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.wiki.v2.spaceNode.create(
       {
@@ -684,6 +700,7 @@ export async function createWikiNode(accessToken, spaceId, title, parentNodeToke
 }
 
 export async function moveWikiNode(accessToken, spaceId, nodeToken, targetParentToken, targetSpaceId) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.wiki.v2.spaceNode.move(
       {
@@ -713,6 +730,7 @@ export async function moveWikiNode(accessToken, spaceId, nodeToken, targetParent
 }
 
 export async function createDocument(accessToken, title, folderToken, tokenType = "user") {
+  ({ accessToken, tokenType } = await resolveContentAuth(accessToken, tokenType));
   try {
     const created = await createDocumentDirect(accessToken, title, folderToken, tokenType);
     return {
@@ -855,6 +873,7 @@ export async function ensureDocumentManagerPermission(
     managerOpenId = "",
   } = {},
 ) {
+  ({ accessToken, tokenType } = await resolveContentAuth(accessToken, tokenType));
   const permission = await grantDocumentMemberPermission(
     accessToken,
     documentId,
@@ -877,6 +896,7 @@ export async function createManagedDocument(
     managerOpenId = "",
   } = {},
 ) {
+  ({ accessToken, tokenType } = await resolveContentAuth(accessToken, tokenType));
   const created = await createDocument(accessToken, title, folderToken, tokenType);
   const permission = await ensureDocumentManagerPermission(accessToken, created.document_id, {
     tokenType,
@@ -890,6 +910,7 @@ export async function createManagedDocument(
 }
 
 export async function getDocument(accessToken, documentId) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const meta = unwrapResponse(
     await userClient.docx.document.get(
       {
@@ -937,6 +958,7 @@ export async function listDocumentComments(
     pageToken,
   } = {},
 ) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.drive.v1.fileComment.list(
       {
@@ -966,6 +988,7 @@ export async function listDocumentComments(
 }
 
 export async function resolveDocumentComment(accessToken, documentId, commentId, isSolved = true, fileType = "docx") {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   unwrapResponse(
     await userClient.drive.v1.fileComment.patch(
       {
@@ -1053,6 +1076,7 @@ async function convertMarkdownToBlocks(accessToken, content, tokenType = "user")
 }
 
 export async function updateDocument(accessToken, documentId, content, mode = "append", tokenType = "user") {
+  ({ accessToken, tokenType } = await resolveContentAuth(accessToken, tokenType));
   const normalizedContent = normalizeDocumentContent(content);
   if (!normalizedContent) {
     throw new Error("missing_document_content");
@@ -1133,6 +1157,7 @@ export async function listMessages(
     pageToken,
   } = {},
 ) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.im.v1.message.list(
       {
@@ -1161,6 +1186,7 @@ export async function listMessages(
 }
 
 export async function getMessage(accessToken, messageId) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.im.v1.message.get(
       {
@@ -1177,6 +1203,7 @@ export async function getMessage(accessToken, messageId) {
 }
 
 export async function downloadMessageImage(accessToken, imageKey, tokenType = "user") {
+  ({ accessToken, tokenType } = await resolveContentAuth(accessToken, tokenType));
   const response = await fetch(
     `${apiBaseUrl}/open-apis/im/v1/images/${encodeURIComponent(imageKey)}?type=message`,
     {
@@ -1213,6 +1240,7 @@ export async function searchMessages(
     limit = 20,
   } = {},
 ) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const collected = [];
   let pageToken = undefined;
   let hasMore = true;
@@ -1262,6 +1290,7 @@ export async function replyMessage(
   content,
   { replyInThread = false, cardTitle, cardPayload } = {},
 ) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const normalized = String(content || "").trim();
   if (!normalized && !cardPayload) {
     throw new Error("missing_message_content");
@@ -1305,6 +1334,7 @@ export async function sendMessage(
   content,
   { receiveIdType = "chat", cardTitle, cardPayload } = {},
 ) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const normalized = String(content || "").trim();
   if (!normalized && !cardPayload) {
     throw new Error("missing_message_content");
@@ -1343,6 +1373,7 @@ export async function sendMessage(
 }
 
 export async function getPrimaryCalendar(accessToken, tokenType = "user") {
+  ({ accessToken, tokenType } = await resolveContentAuth(accessToken, tokenType));
   const data = unwrapResponse(
     await userClient.calendar.v4.calendar.primary(
       {},
@@ -1360,6 +1391,7 @@ export async function listCalendarEvents(
   { pageSize = 50, pageToken, startTime, endTime, anchorTime } = {},
   tokenType = "user",
 ) {
+  ({ accessToken, tokenType } = await resolveContentAuth(accessToken, tokenType));
   const data = unwrapResponse(
     await userClient.calendar.v4.calendarEvent.list(
       {
@@ -1388,6 +1420,7 @@ export async function listCalendarEvents(
 }
 
 export async function searchCalendarEvents(accessToken, calendarId, query) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.calendar.v4.calendarEvent.search(
       {
@@ -1417,6 +1450,7 @@ export async function createCalendarEvent(
   calendarId,
   { summary, description, startTime, endTime, timezone = "Asia/Taipei", reminders = [] },
 ) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.calendar.v4.calendarEvent.create(
       {
@@ -1449,6 +1483,7 @@ export async function listTasks(
   accessToken,
   { pageSize = TASK_PAGE_SIZE, pageToken, startCreateTime, endCreateTime, completed } = {},
 ) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.task.v1.task.list(
       {
@@ -1473,6 +1508,7 @@ export async function listTasks(
 }
 
 export async function getTask(accessToken, taskId) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.task.v1.task.get(
       {
@@ -1492,6 +1528,7 @@ export async function createTask(
   accessToken,
   { summary, description, dueTime, timezone = "Asia/Taipei", linkUrl, linkTitle },
 ) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.task.v1.task.create(
       {
@@ -1527,6 +1564,7 @@ export async function createBitableApp(
   accessToken,
   { name, folderToken, timeZone, customizedConfig, sourceAppToken, copyTypes, apiType } = {},
 ) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.bitable.v1.app.create(
       {
@@ -1551,6 +1589,7 @@ export async function createBitableApp(
 }
 
 export async function getBitableApp(accessToken, appToken) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.bitable.v1.app.get(
       {
@@ -1567,6 +1606,7 @@ export async function getBitableApp(accessToken, appToken) {
 }
 
 export async function updateBitableApp(accessToken, appToken, { name, isAdvanced } = {}) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.bitable.v1.app.update(
       {
@@ -1587,6 +1627,7 @@ export async function updateBitableApp(accessToken, appToken, { name, isAdvanced
 }
 
 export async function listBitableTables(accessToken, appToken, { pageToken, pageSize = 50 } = {}) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.bitable.v1.appTable.list(
       {
@@ -1617,6 +1658,7 @@ export async function createBitableTable(
   appToken,
   { name, defaultViewName, fields = [] } = {},
 ) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.bitable.v1.appTable.create(
       {
@@ -1650,6 +1692,7 @@ export async function listBitableRecords(
   tableId,
   { pageToken, pageSize = 50, viewId, fieldNames, sort, filter, automaticFields, userIdType } = {},
 ) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.bitable.v1.appTableRecord.list(
       {
@@ -1689,6 +1732,7 @@ export async function searchBitableRecords(
   tableId,
   { pageToken, pageSize = 50, viewId, fieldNames, sort = [], filter, automaticFields, userIdType } = {},
 ) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.bitable.v1.appTableRecord.search(
       {
@@ -1730,6 +1774,7 @@ export async function createBitableRecord(
   tableId,
   { fields, userIdType, clientToken, ignoreConsistencyCheck } = {},
 ) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.bitable.v1.appTableRecord.create(
       {
@@ -1761,6 +1806,7 @@ export async function getBitableRecord(
   recordId,
   { userIdType, withSharedUrl, automaticFields } = {},
 ) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.bitable.v1.appTableRecord.get(
       {
@@ -1790,6 +1836,7 @@ export async function updateBitableRecord(
   recordId,
   { fields, userIdType } = {},
 ) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.bitable.v1.appTableRecord.update(
       {
@@ -1819,6 +1866,7 @@ export async function bulkUpsertBitableRecords(
   tableId,
   { records = [], userIdType } = {},
 ) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const items = [];
   for (const item of Array.isArray(records) ? records : []) {
     if (item?.record_id) {
@@ -1842,6 +1890,7 @@ export async function bulkUpsertBitableRecords(
 }
 
 export async function deleteBitableRecord(accessToken, appToken, tableId, recordId) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.bitable.v1.appTableRecord.delete(
       {
@@ -1865,6 +1914,7 @@ export async function deleteBitableRecord(accessToken, appToken, tableId, record
 }
 
 export async function createSpreadsheet(accessToken, { title, folderToken } = {}) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.sheets.v3.spreadsheet.create(
       {
@@ -1882,6 +1932,7 @@ export async function createSpreadsheet(accessToken, { title, folderToken } = {}
 }
 
 export async function getSpreadsheet(accessToken, spreadsheetToken) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.sheets.v3.spreadsheet.get(
       {
@@ -1898,6 +1949,7 @@ export async function getSpreadsheet(accessToken, spreadsheetToken) {
 }
 
 export async function updateSpreadsheet(accessToken, spreadsheetToken, { title } = {}) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.sheets.v3.spreadsheet.patch(
       {
@@ -1917,6 +1969,7 @@ export async function updateSpreadsheet(accessToken, spreadsheetToken, { title }
 }
 
 export async function listSpreadsheetSheets(accessToken, spreadsheetToken) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.sheets.v3.spreadsheetSheet.query(
       {
@@ -1936,6 +1989,7 @@ export async function listSpreadsheetSheets(accessToken, spreadsheetToken) {
 }
 
 export async function getSpreadsheetSheet(accessToken, spreadsheetToken, sheetId) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.sheets.v3.spreadsheetSheet.get(
       {
@@ -1958,6 +2012,7 @@ export async function replaceSpreadsheetCells(
   sheetId,
   { range, find, replacement, matchCase, matchEntireCell, searchByRegex, includeFormulas } = {},
 ) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.sheets.v3.spreadsheetSheet.replace(
       {
@@ -1995,6 +2050,7 @@ export async function replaceSpreadsheetCellsBatch(
   sheetId,
   { replacements = [] } = {},
 ) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const items = [];
   for (const replacement of Array.isArray(replacements) ? replacements : []) {
     items.push(await replaceSpreadsheetCells(accessToken, spreadsheetToken, sheetId, replacement));
@@ -2011,6 +2067,7 @@ export async function listFreebusy(
   accessToken,
   { timeMin, timeMax, userId, roomId, userIdType = "open_id", includeExternalCalendar, onlyBusy } = {},
 ) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.calendar.v4.freebusy.list(
       {
@@ -2045,6 +2102,7 @@ export async function listTaskComments(
   taskId,
   { pageToken, pageSize = 50, listDirection, userIdType = "open_id" } = {},
 ) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.task.v1.taskComment.list(
       {
@@ -2072,6 +2130,7 @@ export async function listTaskComments(
 }
 
 export async function getTaskComment(accessToken, taskId, commentId, { userIdType = "open_id" } = {}) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.task.v1.taskComment.get(
       {
@@ -2096,6 +2155,7 @@ export async function createTaskComment(
   taskId,
   { content, richContent, parentId, userIdType = "open_id" } = {},
 ) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.task.v1.taskComment.create(
       {
@@ -2125,6 +2185,7 @@ export async function updateTaskComment(
   commentId,
   { content, richContent, userIdType = "open_id" } = {},
 ) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.task.v1.taskComment.update(
       {
@@ -2149,6 +2210,7 @@ export async function updateTaskComment(
 }
 
 export async function deleteTaskComment(accessToken, taskId, commentId) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   unwrapResponse(
     await userClient.task.v1.taskComment.delete(
       {
@@ -2174,6 +2236,7 @@ export async function listMessageReactions(
   messageId,
   { reactionType, pageToken, pageSize = 50, userIdType = "open_id" } = {},
 ) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.im.v1.messageReaction.list(
       {
@@ -2201,6 +2264,7 @@ export async function listMessageReactions(
 }
 
 export async function createMessageReaction(accessToken, messageId, emojiType) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.im.v1.messageReaction.create(
       {
@@ -2222,6 +2286,7 @@ export async function createMessageReaction(accessToken, messageId, emojiType) {
 }
 
 export async function deleteMessageReaction(accessToken, messageId, reactionId) {
+  ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.im.v1.messageReaction.delete(
       {

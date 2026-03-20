@@ -1,5 +1,6 @@
 import * as Lark from "@larksuiteoapi/node-sdk";
 import { baseConfig } from "./config.mjs";
+import { resolveLarkRequestAuth } from "./lark-request-auth.mjs";
 import { buildParentPath, markdownToPlainText, normalizeText } from "./text-utils.mjs";
 
 const larkClient = new Lark.Client(baseConfig);
@@ -7,6 +8,11 @@ const WIKI_PAGE_SIZE = 50;
 
 function withToken(accessToken) {
   return Lark.withUserAccessToken(accessToken);
+}
+
+async function resolveConnectorAuth(accessToken) {
+  const auth = await resolveLarkRequestAuth(accessToken);
+  return auth.accessToken;
 }
 
 function safeUrl(url, fallback) {
@@ -22,6 +28,7 @@ function wikiSpaceUrl(spaceId) {
 }
 
 export async function listDriveFolderItems(accessToken, folderToken, pageToken) {
+  accessToken = await resolveConnectorAuth(accessToken);
   const response = await larkClient.drive.v1.file.list(
     {
       params: {
@@ -41,6 +48,7 @@ export async function listDriveFolderItems(accessToken, folderToken, pageToken) 
 }
 
 export async function scanDriveTree(accessToken, folderToken, parentParts = [], recursive = true) {
+  accessToken = await resolveConnectorAuth(accessToken);
   const collected = [];
   let pageToken;
   let hasMore = true;
@@ -83,6 +91,7 @@ export async function scanDriveTree(accessToken, folderToken, parentParts = [], 
 }
 
 export async function fetchDocxPlainText(accessToken, documentId) {
+  accessToken = await resolveConnectorAuth(accessToken);
   let rawResponse = null;
 
   try {
@@ -119,6 +128,7 @@ export async function fetchDocxPlainText(accessToken, documentId) {
 }
 
 export async function listWikiSpaces(accessToken, pageToken) {
+  accessToken = await resolveConnectorAuth(accessToken);
   const response = await larkClient.wiki.v2.space.list(
     {
       params: {
@@ -137,6 +147,7 @@ export async function listWikiSpaces(accessToken, pageToken) {
 }
 
 export async function listWikiSpaceNodes(accessToken, spaceId, parentNodeToken, pageToken) {
+  accessToken = await resolveConnectorAuth(accessToken);
   const response = await larkClient.wiki.v2.spaceNode.list(
     {
       path: {
@@ -164,6 +175,7 @@ export async function scanWikiSpaceTree(
   parentNodeToken,
   parentParts = [],
 ) {
+  accessToken = await resolveConnectorAuth(accessToken);
   const collected = [];
   let pageToken;
   let hasMore = true;
@@ -213,6 +225,7 @@ export async function scanWikiSpaceTree(
 }
 
 export async function listAllWikiSpaces(accessToken) {
+  accessToken = await resolveConnectorAuth(accessToken);
   const spaces = [];
   let pageToken;
   let hasMore = true;

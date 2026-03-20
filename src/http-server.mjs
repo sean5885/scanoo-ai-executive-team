@@ -22,9 +22,10 @@ import {
   exchangeCodeForUserToken,
   getStoredAccountContext,
   getStoredUserToken,
+  getValidUserTokenState,
   getUserProfile,
-  getValidUserToken,
 } from "./lark-user-auth.mjs";
+import { isOAuthReauthRequiredError } from "./lark-request-auth.mjs";
 import {
   getCompanyBrainDoc,
   getDocumentByDocumentId,
@@ -838,7 +839,7 @@ async function applyDocumentManagerPermissionGrant({
   }
 
   try {
-    await ensureDocumentManagerPermission(context.token.access_token, created.document_id, {
+    await ensureDocumentManagerPermission(context.token, created.document_id, {
       tokenType: "user",
       managerOpenId,
     });
@@ -1420,20 +1421,19 @@ async function invokeAgentBridge(handler, { requestUrl, body, logger, res, actio
 }
 
 async function resolveAccountContext(accountId) {
-  const validToken = await getHttpService("getValidUserToken", getValidUserToken)(accountId);
-  if (!validToken?.access_token) {
-    return null;
-  }
-
-  const context = await getHttpService("getStoredAccountContext", getStoredAccountContext)(
-    validToken.account_id || accountId
-  );
-  if (!context?.account) {
-    return null;
-  }
+  const tokenState = await getHttpService("getValidUserTokenState", getValidUserTokenState)(accountId);
+  const validToken = tokenState?.status === "valid" ? tokenState.token : null;
+  const context = validToken
+    ? await getHttpService("getStoredAccountContext", getStoredAccountContext)(
+      validToken.account_id || tokenState?.account?.id || accountId
+    )
+    : null;
 
   return {
-    account: context.account,
+    status: tokenState?.status || "missing",
+    reason: tokenState?.reason || null,
+    error: tokenState?.error || null,
+    account: context?.account || tokenState?.account || null,
     token: validToken,
   };
 }
@@ -1444,15 +1444,23 @@ async function requireUserContext(res, accountId, logger = noopHttpLogger) {
   });
   const context = await resolveAccountContext(accountId);
   if (!context?.token?.access_token) {
-    logger.warn("auth_context_missing_user_token", {
+    const reauthRequired = context?.status === "reauth_required";
+    logger.warn(reauthRequired ? "auth_context_reauth_required" : "auth_context_missing_user_token", {
       account_id: accountId || null,
     });
-    jsonResponse(res, 401, {
-      ok: false,
-      error: "missing_user_access_token",
-      login_url: `${oauthBaseUrl}/oauth/lark/login`,
-      message: "Open the login URL first to grant Lobster access to your Lark account.",
-    });
+    jsonResponse(res, 401, reauthRequired
+      ? {
+        ok: false,
+        error: "oauth_reauth_required",
+        login_url: `${oauthBaseUrl}/oauth/lark/login`,
+        message: "Stored token expired and refresh failed. Reauthorize Lobster with Lark.",
+      }
+      : {
+        ok: false,
+        error: "missing_user_access_token",
+        login_url: `${oauthBaseUrl}/oauth/lark/login`,
+        message: "Open the login URL first to grant Lobster access to your Lark account.",
+      });
     return null;
   }
 
@@ -1467,7 +1475,7 @@ function getAccountId(requestUrl, body) {
 }
 
 async function handleAuthStatus(res, accountId, logger = noopHttpLogger) {
-  const stored = await getStoredUserToken(accountId);
+  const stored = await getHttpService("getStoredUserToken", getStoredUserToken)(accountId);
   if (!stored?.access_token) {
     logger.warn("auth_status_missing_stored_token", {
       account_id: accountId || null,
@@ -1482,6 +1490,19 @@ async function handleAuthStatus(res, accountId, logger = noopHttpLogger) {
 
   const context = await resolveAccountContext(accountId);
   if (!context) {
+    logger.warn("auth_status_refresh_failed", {
+      account_id: accountId || null,
+    });
+    jsonResponse(res, 200, {
+      ok: false,
+      authorized: false,
+      login_url: `${oauthBaseUrl}/oauth/lark/login`,
+      message: "Stored token is expired and could not be refreshed.",
+    });
+    return;
+  }
+
+  if (!context.token?.access_token) {
     logger.warn("auth_status_refresh_failed", {
       account_id: accountId || null,
     });
@@ -1542,7 +1563,7 @@ async function handleSync(res, requestUrl, body, mode) {
 
   const summary = await runSync({
     account: context.account,
-    accessToken: context.token.access_token,
+    accessToken: context.token,
     mode,
   });
 
@@ -1561,8 +1582,8 @@ async function handleDriveList(res, requestUrl, body) {
   const folderToken = requestUrl.searchParams.get("folder_token") || body.folder_token || undefined;
   const pageToken = requestUrl.searchParams.get("page_token") || body.page_token || undefined;
   const data = folderToken
-    ? await listDriveFolder(context.token.access_token, folderToken, pageToken)
-    : await listDriveRoot(context.token.access_token, pageToken);
+    ? await listDriveFolder(context.token, folderToken, pageToken)
+    : await listDriveRoot(context.token, pageToken);
 
   jsonResponse(res, 200, {
     ok: true,
@@ -1588,7 +1609,7 @@ async function handleDriveCreateFolder(res, requestUrl, body) {
     return;
   }
 
-  const result = await createDriveFolder(context.token.access_token, folderToken, name);
+  const result = await createDriveFolder(context.token, folderToken, name);
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -1613,7 +1634,7 @@ async function handleDriveMove(res, requestUrl, body) {
     return;
   }
 
-  const result = await moveDriveItem(context.token.access_token, fileToken, type, folderToken);
+  const result = await moveDriveItem(context.token, fileToken, type, folderToken);
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -1635,7 +1656,7 @@ async function handleDriveTaskStatus(res, requestUrl, body) {
     return;
   }
 
-  const result = await checkDriveTask(context.token.access_token, String(taskId));
+  const result = await checkDriveTask(context.token, String(taskId));
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -1659,7 +1680,7 @@ async function handleDriveDelete(res, requestUrl, body) {
     return;
   }
 
-  const result = await deleteDriveItem(context.token.access_token, fileToken, type);
+  const result = await deleteDriveItem(context.token, fileToken, type);
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -1679,7 +1700,7 @@ async function handleDriveOrganize(res, requestUrl, body, apply, logger = noopHt
   if (!folderToken) {
     folderToken =
       (await getHttpService("resolveDriveRootFolderToken", resolveDriveRootFolderToken)(
-        context.token.access_token
+        context.token
       )) || "";
   }
   if (!folderToken) {
@@ -1738,12 +1759,12 @@ async function handleDriveOrganize(res, requestUrl, body, apply, logger = noopHt
   }
   const result = apply
     ? await getHttpService("applyDriveOrganization", applyDriveOrganization)(
-        context.token.access_token,
+        context.token,
         folderToken,
         options
       )
     : await getHttpService("previewDriveOrganization", previewDriveOrganization)(
-        context.token.access_token,
+        context.token,
         folderToken,
         options
       );
@@ -1814,7 +1835,7 @@ async function handleWikiCreateNode(res, requestUrl, body) {
     return;
   }
 
-  const result = await createWikiNode(context.token.access_token, spaceId, title, parentNodeToken);
+  const result = await createWikiNode(context.token, spaceId, title, parentNodeToken);
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -1841,7 +1862,7 @@ async function handleWikiMove(res, requestUrl, body) {
   }
 
   const result = await moveWikiNode(
-    context.token.access_token,
+    context.token,
     spaceId,
     nodeToken,
     targetParentToken,
@@ -1920,11 +1941,11 @@ async function handleWikiOrganize(res, requestUrl, body, apply, logger = noopHtt
   }
   const result = apply
     ? await getHttpService("applyWikiOrganization", applyWikiOrganization)(
-        context.token.access_token,
+        context.token,
         options
       )
     : await getHttpService("previewWikiOrganization", previewWikiOrganization)(
-        context.token.access_token,
+        context.token,
         options
       );
   logger.info("wiki_organize_completed", {
@@ -1991,7 +2012,7 @@ async function handleDocumentRead(res, requestUrl, body) {
     return;
   }
 
-  const result = await getHttpService("getDocument", getDocument)(context.token.access_token, documentId);
+  const result = await getHttpService("getDocument", getDocument)(context.token, documentId);
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -2023,7 +2044,7 @@ async function handleDocumentCreate(res, requestUrl, body, logger = noopHttpLogg
   let created;
   try {
     created = await getHttpService("createDocument", createDocument)(
-      context.token.access_token,
+      context.token,
       title,
       folderToken,
       "user",
@@ -2063,7 +2084,7 @@ async function handleDocumentCreate(res, requestUrl, body, logger = noopHttpLogg
   });
   let writeResult = null;
   if (content && created.document_id) {
-    writeResult = await updateDocument(context.token.access_token, created.document_id, content, "replace");
+    writeResult = await updateDocument(context.token, created.document_id, content, "replace");
   }
   await handleDocumentCreateIndexBoundary({
     context,
@@ -2602,7 +2623,7 @@ async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogg
 
   if (targetHeading) {
     try {
-      currentDocument = await getHttpService("getDocument", getDocument)(context.token.access_token, documentId);
+      currentDocument = await getHttpService("getDocument", getDocument)(context.token, documentId);
       const targeted = applyHeadingTargetedInsert(currentDocument.content, content, {
         heading: targetHeading,
         position: targetPosition,
@@ -2634,7 +2655,7 @@ async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogg
       target_heading: targetHeading || null,
     });
     const current = currentDocument
-      || await getHttpService("getDocument", getDocument)(context.token.access_token, documentId);
+      || await getHttpService("getDocument", getDocument)(context.token, documentId);
     currentDocument = current;
 
     if (!confirm) {
@@ -2744,7 +2765,7 @@ async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogg
     target_heading: targetHeading || null,
   });
   const result = await getHttpService("updateDocument", updateDocument)(
-    context.token.access_token,
+    context.token,
     finalDocumentId,
     resolvedContent,
     resolvedMode,
@@ -2795,7 +2816,7 @@ async function handleDocumentComments(res, requestUrl, body) {
   }
 
   const includeSolved = String(requestUrl.searchParams.get("include_solved") || body.include_solved || "").trim();
-  const result = await getHttpService("listDocumentComments", listDocumentComments)(context.token.access_token, documentId, {
+  const result = await getHttpService("listDocumentComments", listDocumentComments)(context.token, documentId, {
     fileType: "docx",
     isSolved:
       includeSolved === "true"
@@ -2834,7 +2855,7 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body) {
   const workflowScope = buildDocumentRewriteWorkflowScope(documentId);
 
   if (!apply) {
-    const current = await getHttpService("getDocument", getDocument)(context.token.access_token, documentId);
+    const current = await getHttpService("getDocument", getDocument)(context.token, documentId);
     await ensureDocRewriteWorkflowTask({
       accountId: context.account.id,
       documentId,
@@ -2845,7 +2866,7 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body) {
       meta: buildDocumentRewriteTaskMeta("document_rewrite_from_comments_preview"),
     });
     const result = await getHttpService("rewriteDocumentFromComments", rewriteDocumentFromComments)(
-      context.token.access_token,
+      context.token,
       documentId,
       {
         includeSolved: Boolean(body.include_solved),
@@ -2917,7 +2938,7 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body) {
     return;
   }
 
-  const current = await getHttpService("getDocument", getDocument)(context.token.access_token, documentId);
+  const current = await getHttpService("getDocument", getDocument)(context.token, documentId);
   const confirmation = await consumeCommentRewriteConfirmation({
     confirmationId,
     accountId: context.account.id,
@@ -2956,7 +2977,7 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body) {
   });
 
   const applied = await applyRewrittenDocument(
-    context.token.access_token,
+    context.token,
     documentId,
     confirmation.rewritten_content,
     {
@@ -3003,7 +3024,7 @@ async function handleDocumentCommentSuggestionCard(res, requestUrl, body) {
   }
 
   const result = await getHttpService("generateDocumentCommentSuggestionCard", generateDocumentCommentSuggestionCard)({
-    accessToken: context.token.access_token,
+    accessToken: context.token,
     accountId: context.account.id,
     documentId,
     messageId: String(body.message_id || body.notify_message_id || "").trim(),
@@ -3049,7 +3070,7 @@ async function handleMeetingProcess(res, requestUrl, body, logger = noopHttpLogg
   });
   const result = await meetingCoordinator.processMeetingPreview({
     accountId: context.account.id,
-    accessToken: context.token.access_token,
+    accessToken: context.token,
     transcriptText,
     metadata,
     chatId: String(body.chat_id || body.group_id || "").trim(),
@@ -3091,7 +3112,7 @@ async function handleMeetingConfirm(res, requestUrl, body, logger = noopHttpLogg
   });
   const result = await meetingCoordinator.confirmMeetingWrite({
     accountId: context.account.id,
-    accessToken: context.token.access_token,
+    accessToken: context.token,
     confirmationId,
   });
   if (!result) {
@@ -3144,7 +3165,7 @@ async function handleMeetingConfirmPage(res, requestUrl, body) {
 
   const result = await meetingCoordinator.confirmMeetingWrite({
     accountId: context.account.id,
-    accessToken: context.token.access_token,
+    accessToken: context.token,
     confirmationId,
   });
 
@@ -3192,7 +3213,7 @@ async function handleMessagesList(res, requestUrl, body, logger = noopHttpLogger
     account_id: context.account.id,
     container_id_type: containerIdType,
   });
-  const result = await listMessages(context.token.access_token, containerId, {
+  const result = await listMessages(context.token, containerId, {
     containerIdType,
     startTime: requestUrl.searchParams.get("start_time") || body.start_time || undefined,
     endTime: requestUrl.searchParams.get("end_time") || body.end_time || undefined,
@@ -3231,7 +3252,7 @@ async function handleMessageSearch(res, requestUrl, body) {
     return;
   }
 
-  const result = await searchMessages(context.token.access_token, containerId, keyword, {
+  const result = await searchMessages(context.token, containerId, keyword, {
     containerIdType,
     startTime: requestUrl.searchParams.get("start_time") || body.start_time || undefined,
     endTime: requestUrl.searchParams.get("end_time") || body.end_time || undefined,
@@ -3254,7 +3275,7 @@ async function handleMessageGet(res, requestUrl, body, messageId) {
     return;
   }
 
-  const result = await getMessage(context.token.access_token, messageId);
+  const result = await getMessage(context.token, messageId);
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -3289,7 +3310,7 @@ async function handleMessageReply(res, requestUrl, body, logger = noopHttpLogger
     reply_in_thread: replyInThread,
     as_card: Boolean(cardTitle),
   });
-  const result = await replyMessage(context.token.access_token, messageId, content, {
+  const result = await replyMessage(context.token, messageId, content, {
     replyInThread,
     cardTitle,
   });
@@ -3313,7 +3334,7 @@ async function handleCalendarPrimary(res, requestUrl, body) {
     return;
   }
 
-  const result = await getPrimaryCalendar(context.token.access_token);
+  const result = await getPrimaryCalendar(context.token);
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -3335,7 +3356,7 @@ async function handleCalendarEvents(res, requestUrl, body) {
     return;
   }
 
-  const result = await listCalendarEvents(context.token.access_token, calendarId, {
+  const result = await listCalendarEvents(context.token, calendarId, {
     pageToken: requestUrl.searchParams.get("page_token") || body.page_token || undefined,
     startTime: requestUrl.searchParams.get("start_time") || body.start_time || undefined,
     endTime: requestUrl.searchParams.get("end_time") || body.end_time || undefined,
@@ -3364,7 +3385,7 @@ async function handleCalendarSearch(res, requestUrl, body) {
     return;
   }
 
-  const result = await searchCalendarEvents(context.token.access_token, calendarId, query);
+  const result = await searchCalendarEvents(context.token, calendarId, query);
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -3407,7 +3428,7 @@ async function handleCalendarCreateEvent(res, requestUrl, body, logger = noopHtt
     reminders: reminders.length,
   });
   const result = await getHttpService("createCalendarEvent", createCalendarEvent)(
-    context.token.access_token,
+    context.token,
     calendarId,
     {
     summary,
@@ -3449,7 +3470,7 @@ async function handleTasksList(res, requestUrl, body) {
           ? false
           : undefined;
 
-  const result = await listTasks(context.token.access_token, {
+  const result = await listTasks(context.token, {
     pageToken: requestUrl.searchParams.get("page_token") || body.page_token || undefined,
     startCreateTime: requestUrl.searchParams.get("start_create_time") || body.start_create_time || undefined,
     endCreateTime: requestUrl.searchParams.get("end_create_time") || body.end_create_time || undefined,
@@ -3475,7 +3496,7 @@ async function handleTaskGet(res, requestUrl, body, taskId, logger = noopHttpLog
     account_id: context.account.id,
     task_id: taskId,
   });
-  const result = await getHttpService("getTask", getTask)(context.token.access_token, taskId);
+  const result = await getHttpService("getTask", getTask)(context.token, taskId);
   logger.info("task_get_completed", {
     account_id: context.account.id,
     task_id: taskId,
@@ -3509,7 +3530,7 @@ async function handleTaskCreate(res, requestUrl, body, logger = noopHttpLogger) 
     has_due_time: Boolean(body.due_time),
     has_link_url: Boolean(body.link_url),
   });
-  const result = await getHttpService("createTask", createTask)(context.token.access_token, {
+  const result = await getHttpService("createTask", createTask)(context.token, {
     summary,
     description: typeof body.description === "string" ? body.description.trim() : undefined,
     dueTime: typeof body.due_time === "string" ? body.due_time.trim() : undefined,
@@ -3541,7 +3562,7 @@ async function handleBitableAppCreate(res, requestUrl, body) {
     return;
   }
 
-  const result = await createBitableApp(context.token.access_token, {
+  const result = await createBitableApp(context.token, {
     name,
     folderToken: typeof body.folder_token === "string" ? body.folder_token.trim() : undefined,
     timeZone: typeof body.time_zone === "string" ? body.time_zone.trim() : undefined,
@@ -3564,7 +3585,7 @@ async function handleBitableAppGet(res, requestUrl, body, appToken) {
   const context = await requireUserContext(res, getAccountId(requestUrl, body));
   if (!context) return;
 
-  const result = await getBitableApp(context.token.access_token, appToken);
+  const result = await getBitableApp(context.token, appToken);
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -3578,7 +3599,7 @@ async function handleBitableAppUpdate(res, requestUrl, body, appToken) {
   const context = await requireUserContext(res, getAccountId(requestUrl, body));
   if (!context) return;
 
-  const result = await updateBitableApp(context.token.access_token, appToken, {
+  const result = await updateBitableApp(context.token, appToken, {
     name: typeof body.name === "string" ? body.name.trim() : undefined,
     isAdvanced: typeof body.is_advanced === "boolean" ? body.is_advanced : undefined,
   });
@@ -3597,7 +3618,7 @@ async function handleBitableTablesList(res, requestUrl, body, appToken) {
   if (!context) return;
 
   const pageSize = Number.parseInt(requestUrl.searchParams.get("page_size") || body.page_size || "50", 10);
-  const result = await listBitableTables(context.token.access_token, appToken, {
+  const result = await listBitableTables(context.token, appToken, {
     pageToken: requestUrl.searchParams.get("page_token") || body.page_token || undefined,
     pageSize: Number.isFinite(pageSize) ? Math.max(1, Math.min(pageSize, 100)) : 50,
   });
@@ -3621,7 +3642,7 @@ async function handleBitableTableCreate(res, requestUrl, body, appToken) {
     return;
   }
 
-  const result = await createBitableTable(context.token.access_token, appToken, {
+  const result = await createBitableTable(context.token, appToken, {
     name,
     defaultViewName: typeof body.default_view_name === "string" ? body.default_view_name.trim() : undefined,
     fields: Array.isArray(body.fields) ? body.fields : [],
@@ -3649,7 +3670,7 @@ async function handleBitableRecordsList(res, requestUrl, body, appToken, tableId
     page_size: Number.isFinite(pageSize) ? Math.max(1, Math.min(pageSize, 100)) : 50,
   });
   const result = await getHttpService("listBitableRecords", listBitableRecords)(
-    context.token.access_token,
+    context.token,
     appToken,
     tableId,
     {
@@ -3690,7 +3711,7 @@ async function handleBitableRecordsSearch(res, requestUrl, body, appToken, table
     has_filter: body.filter != null,
   });
   const result = await getHttpService("searchBitableRecords", searchBitableRecords)(
-    context.token.access_token,
+    context.token,
     appToken,
     tableId,
     {
@@ -3740,7 +3761,7 @@ async function handleBitableRecordCreate(res, requestUrl, body, appToken, tableI
     table_id: tableId,
   });
   const result = await getHttpService("createBitableRecord", createBitableRecord)(
-    context.token.access_token,
+    context.token,
     appToken,
     tableId,
     {
@@ -3777,7 +3798,7 @@ async function handleBitableRecordGet(res, requestUrl, body, appToken, tableId, 
     record_id: recordId,
   });
   const result = await getHttpService("getBitableRecord", getBitableRecord)(
-    context.token.access_token,
+    context.token,
     appToken,
     tableId,
     recordId,
@@ -3825,7 +3846,7 @@ async function handleBitableRecordUpdate(res, requestUrl, body, appToken, tableI
     record_id: recordId,
   });
   const result = await getHttpService("updateBitableRecord", updateBitableRecord)(
-    context.token.access_token,
+    context.token,
     appToken,
     tableId,
     recordId,
@@ -3861,7 +3882,7 @@ async function handleBitableRecordDelete(res, requestUrl, body, appToken, tableI
     record_id: recordId,
   });
   const result = await getHttpService("deleteBitableRecord", deleteBitableRecord)(
-    context.token.access_token,
+    context.token,
     appToken,
     tableId,
     recordId
@@ -3901,7 +3922,7 @@ async function handleBitableRecordsBulkUpsert(res, requestUrl, body, appToken, t
     record_count: body.records.length,
   });
   const result = await getHttpService("bulkUpsertBitableRecords", bulkUpsertBitableRecords)(
-    context.token.access_token,
+    context.token,
     appToken,
     tableId,
     {
@@ -3935,7 +3956,7 @@ async function handleSpreadsheetCreate(res, requestUrl, body) {
     return;
   }
 
-  const result = await createSpreadsheet(context.token.access_token, {
+  const result = await createSpreadsheet(context.token, {
     title,
     folderToken: typeof body.folder_token === "string" ? body.folder_token.trim() : undefined,
   });
@@ -3953,7 +3974,7 @@ async function handleSpreadsheetGet(res, requestUrl, body, spreadsheetToken) {
   const context = await requireUserContext(res, getAccountId(requestUrl, body));
   if (!context) return;
 
-  const result = await getSpreadsheet(context.token.access_token, spreadsheetToken);
+  const result = await getSpreadsheet(context.token, spreadsheetToken);
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -3973,7 +3994,7 @@ async function handleSpreadsheetUpdate(res, requestUrl, body, spreadsheetToken) 
     return;
   }
 
-  const result = await updateSpreadsheet(context.token.access_token, spreadsheetToken, { title });
+  const result = await updateSpreadsheet(context.token, spreadsheetToken, { title });
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -3987,7 +4008,7 @@ async function handleSpreadsheetSheetsList(res, requestUrl, body, spreadsheetTok
   const context = await requireUserContext(res, getAccountId(requestUrl, body));
   if (!context) return;
 
-  const result = await listSpreadsheetSheets(context.token.access_token, spreadsheetToken);
+  const result = await listSpreadsheetSheets(context.token, spreadsheetToken);
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -4001,7 +4022,7 @@ async function handleSpreadsheetSheetGet(res, requestUrl, body, spreadsheetToken
   const context = await requireUserContext(res, getAccountId(requestUrl, body));
   if (!context) return;
 
-  const result = await getSpreadsheetSheet(context.token.access_token, spreadsheetToken, sheetId);
+  const result = await getSpreadsheetSheet(context.token, spreadsheetToken, sheetId);
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -4023,7 +4044,7 @@ async function handleSpreadsheetReplace(res, requestUrl, body, spreadsheetToken,
     return;
   }
 
-  const result = await replaceSpreadsheetCells(context.token.access_token, spreadsheetToken, sheetId, {
+  const result = await replaceSpreadsheetCells(context.token, spreadsheetToken, sheetId, {
     range,
     find,
     replacement,
@@ -4051,7 +4072,7 @@ async function handleSpreadsheetReplaceBatch(res, requestUrl, body, spreadsheetT
   }
 
   const result = await replaceSpreadsheetCellsBatch(
-    context.token.access_token,
+    context.token,
     spreadsheetToken,
     sheetId,
     { replacements: body.replacements },
@@ -4087,7 +4108,7 @@ async function handleCalendarFreebusy(res, requestUrl, body, logger = noopHttpLo
     has_user_id: Boolean(body.user_id || requestUrl.searchParams.get("user_id")),
     has_room_id: Boolean(body.room_id || requestUrl.searchParams.get("room_id")),
   });
-  const result = await getHttpService("listFreebusy", listFreebusy)(context.token.access_token, {
+  const result = await getHttpService("listFreebusy", listFreebusy)(context.token, {
     timeMin,
     timeMax,
     userId: typeof body.user_id === "string" ? body.user_id.trim() : requestUrl.searchParams.get("user_id") || undefined,
@@ -4124,7 +4145,7 @@ async function handleTaskCommentsList(res, requestUrl, body, taskId, logger = no
     task_id: taskId,
     page_size: Number.isFinite(pageSize) ? Math.max(1, Math.min(pageSize, 100)) : 50,
   });
-  const result = await getHttpService("listTaskComments", listTaskComments)(context.token.access_token, taskId, {
+  const result = await getHttpService("listTaskComments", listTaskComments)(context.token, taskId, {
     pageToken: requestUrl.searchParams.get("page_token") || body.page_token || undefined,
     pageSize: Number.isFinite(pageSize) ? Math.max(1, Math.min(pageSize, 100)) : 50,
     listDirection: requestUrl.searchParams.get("list_direction") || body.list_direction || undefined,
@@ -4164,7 +4185,7 @@ async function handleTaskCommentCreate(res, requestUrl, body, taskId, logger = n
     task_id: taskId,
     has_parent_id: Boolean(body.parent_id),
   });
-  const result = await getHttpService("createTaskComment", createTaskComment)(context.token.access_token, taskId, {
+  const result = await getHttpService("createTaskComment", createTaskComment)(context.token, taskId, {
     content: content || undefined,
     richContent: typeof body.rich_content === "string" ? body.rich_content.trim() : undefined,
     parentId: typeof body.parent_id === "string" ? body.parent_id.trim() : undefined,
@@ -4194,7 +4215,7 @@ async function handleTaskCommentGet(res, requestUrl, body, taskId, commentId, lo
     task_id: taskId,
     comment_id: commentId,
   });
-  const result = await getHttpService("getTaskComment", getTaskComment)(context.token.access_token, taskId, commentId, {
+  const result = await getHttpService("getTaskComment", getTaskComment)(context.token, taskId, commentId, {
     userIdType: requestUrl.searchParams.get("user_id_type") || body.user_id_type || "open_id",
   });
   logger.info("task_comment_get_completed", {
@@ -4232,7 +4253,7 @@ async function handleTaskCommentUpdate(res, requestUrl, body, taskId, commentId,
     task_id: taskId,
     comment_id: commentId,
   });
-  const result = await getHttpService("updateTaskComment", updateTaskComment)(context.token.access_token, taskId, commentId, {
+  const result = await getHttpService("updateTaskComment", updateTaskComment)(context.token, taskId, commentId, {
     content: content || undefined,
     richContent: typeof body.rich_content === "string" ? body.rich_content.trim() : undefined,
     userIdType: typeof body.user_id_type === "string" ? body.user_id_type.trim() : undefined,
@@ -4261,7 +4282,7 @@ async function handleTaskCommentDelete(res, requestUrl, body, taskId, commentId,
     task_id: taskId,
     comment_id: commentId,
   });
-  const result = await getHttpService("deleteTaskComment", deleteTaskComment)(context.token.access_token, taskId, commentId);
+  const result = await getHttpService("deleteTaskComment", deleteTaskComment)(context.token, taskId, commentId);
   logger.info("task_comment_delete_completed", {
     account_id: context.account.id,
     task_id: taskId,
@@ -4281,7 +4302,7 @@ async function handleMessageReactionsList(res, requestUrl, body, messageId) {
   if (!context) return;
 
   const pageSize = Number.parseInt(requestUrl.searchParams.get("page_size") || body.page_size || "50", 10);
-  const result = await listMessageReactions(context.token.access_token, messageId, {
+  const result = await listMessageReactions(context.token, messageId, {
     reactionType: requestUrl.searchParams.get("reaction_type") || body.reaction_type || undefined,
     pageToken: requestUrl.searchParams.get("page_token") || body.page_token || undefined,
     pageSize: Number.isFinite(pageSize) ? Math.max(1, Math.min(pageSize, 100)) : 50,
@@ -4307,7 +4328,7 @@ async function handleMessageReactionCreate(res, requestUrl, body, messageId) {
     return;
   }
 
-  const result = await createMessageReaction(context.token.access_token, messageId, emojiType);
+  const result = await createMessageReaction(context.token, messageId, emojiType);
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -4321,7 +4342,7 @@ async function handleMessageReactionDelete(res, requestUrl, body, messageId, rea
   const context = await requireUserContext(res, getAccountId(requestUrl, body));
   if (!context) return;
 
-  const result = await deleteMessageReaction(context.token.access_token, messageId, reactionId);
+  const result = await deleteMessageReaction(context.token, messageId, reactionId);
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -4810,7 +4831,7 @@ export function startHttpServer({ logger = console, port = oauthPort, listen = t
           }
 
           const data = await listWikiSpaces(
-            context.token.access_token,
+            context.token,
             requestUrl.searchParams.get("page_token") || undefined,
           );
           jsonResponse(res, 200, {
@@ -5320,7 +5341,7 @@ export function startHttpServer({ logger = console, port = oauthPort, listen = t
 
           const spaceId = decodeURIComponent(wikiNodesMatch[1]);
           const data = await listWikiSpaceNodes(
-            context.token.access_token,
+            context.token,
             spaceId,
             requestUrl.searchParams.get("parent_node_token") || undefined,
             requestUrl.searchParams.get("page_token") || undefined,
@@ -5383,6 +5404,15 @@ export function startHttpServer({ logger = console, port = oauthPort, listen = t
 
       jsonResponse(res, 404, { ok: false, error: "not_found" });
     } catch (error) {
+      if (isOAuthReauthRequiredError(error)) {
+        jsonResponse(res, 401, {
+          ok: false,
+          error: "oauth_reauth_required",
+          login_url: `${oauthBaseUrl}/oauth/lark/login`,
+          message: "Stored token expired and refresh failed. Reauthorize Lobster with Lark.",
+        });
+        return;
+      }
       requestLogger.error("request_failed", {
         error: requestLogger.compactError(error),
       });
