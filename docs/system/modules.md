@@ -102,6 +102,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - per-request trace creation and request lifecycle logging
   - `trace_id` injection into JSON responses for easier cross-log correlation
   - key route child-log coverage for `auth_status`, `doc_create`, `doc_update`, `meeting_process`, `meeting_confirm`, `messages_list`, `message_reply`, `knowledge_search`, `knowledge_answer`, `drive_*`, `wiki_*`, `bitable_*`, `calendar_*`, and `tasks_*`
+  - doc-targeted HTTP routes now accept either explicit `document_id` / `doc_token` fields or a shared doc URL (`document_url` / `document_link` / `doc_link`), and the rewrite route can also recover a nested `target_document.url` payload before failing with `missing_document_id`
   - `GET /api/system/runtime-info` exposes the live HTTP process runtime facts (`db_path`, `node_pid`, `cwd`, `service_start_time`) from the same DB/config initialization path the server uses, and logs under `stage=runtime_info`
   - high-risk handler step logs now cover drive/wiki organize, bitable records, calendar event create/freebusy, and task get/create/comments
   - `/api/doc/create` now splits create from post-create permission grant, skips the grant when the current user is already the owner, and still returns `ok: true` if docx creation succeeded even when a later permission upgrade is rejected by the platform

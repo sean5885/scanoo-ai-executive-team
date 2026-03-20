@@ -494,7 +494,7 @@ function buildDocumentReferenceSeed(requestUrl, body = {}) {
     target_document_id: body.target_document_id || "",
     target_document_url: body.target_document_url || "",
     target_document: body.target_document || null,
-    text: body.text || body.content || "",
+    text: body.text || "",
   };
 }
 
@@ -1908,15 +1908,13 @@ async function handleDocumentRead(res, requestUrl, body) {
     return;
   }
 
-  const documentId = String(
-    requestUrl.searchParams.get("document_id") || body.document_id || body.doc_token || "",
-  ).trim();
+  const documentId = resolveDocumentIdFromRequest(requestUrl, body);
   if (!documentId) {
     respondDocumentRewriteFailure(res, 400, "missing_document_id");
     return;
   }
 
-  const result = await getDocument(context.token.access_token, documentId);
+  const result = await getHttpService("getDocument", getDocument)(context.token.access_token, documentId);
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -2333,7 +2331,7 @@ async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogg
     confirmationId,
     targetHeading,
     targetPosition,
-  } = buildDocumentUpdateInput(body);
+  } = buildDocumentUpdateInput(requestUrl, body);
 
   if (!documentId || !content) {
     logger.warn("document_update_missing_args", {
@@ -2494,16 +2492,14 @@ async function handleDocumentComments(res, requestUrl, body) {
     return;
   }
 
-  const documentId = String(
-    requestUrl.searchParams.get("document_id") || body.document_id || body.doc_token || "",
-  ).trim();
+  const documentId = resolveDocumentIdFromRequest(requestUrl, body);
   if (!documentId) {
     jsonResponse(res, 400, { ok: false, error: "missing_document_id" });
     return;
   }
 
   const includeSolved = String(requestUrl.searchParams.get("include_solved") || body.include_solved || "").trim();
-  const result = await listDocumentComments(context.token.access_token, documentId, {
+  const result = await getHttpService("listDocumentComments", listDocumentComments)(context.token.access_token, documentId, {
     fileType: "docx",
     isSolved:
       includeSolved === "true"
@@ -2526,7 +2522,7 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body) {
     return;
   }
 
-  const documentId = String(body.document_id || body.doc_token || "").trim();
+  const documentId = resolveDocumentIdFromRequest(requestUrl, body);
   if (!documentId) {
     jsonResponse(res, 400, { ok: false, error: "missing_document_id" });
     return;
@@ -2542,7 +2538,7 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body) {
   const workflowScope = buildDocumentRewriteWorkflowScope(documentId);
 
   if (!apply) {
-    const current = await getDocument(context.token.access_token, documentId);
+    const current = await getHttpService("getDocument", getDocument)(context.token.access_token, documentId);
     await ensureDocRewriteWorkflowTask({
       accountId: context.account.id,
       documentId,
@@ -2552,12 +2548,16 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body) {
       routingHint: "doc_rewrite_loading_source",
       meta: buildDocumentRewriteTaskMeta("document_rewrite_from_comments_preview"),
     });
-    const result = await rewriteDocumentFromComments(context.token.access_token, documentId, {
-      includeSolved: Boolean(body.include_solved),
-      commentIds,
-      apply: false,
-      resolveComments,
-    });
+    const result = await getHttpService("rewriteDocumentFromComments", rewriteDocumentFromComments)(
+      context.token.access_token,
+      documentId,
+      {
+        includeSolved: Boolean(body.include_solved),
+        commentIds,
+        apply: false,
+        resolveComments,
+      },
+    );
     await ensureDocRewriteWorkflowTask({
       accountId: context.account.id,
       documentId,
@@ -2621,7 +2621,7 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body) {
     return;
   }
 
-  const current = await getDocument(context.token.access_token, documentId);
+  const current = await getHttpService("getDocument", getDocument)(context.token.access_token, documentId);
   const confirmation = await consumeCommentRewriteConfirmation({
     confirmationId,
     accountId: context.account.id,
@@ -2700,13 +2700,13 @@ async function handleDocumentCommentSuggestionCard(res, requestUrl, body) {
     return;
   }
 
-  const documentId = String(body.document_id || body.doc_token || "").trim();
+  const documentId = resolveDocumentIdFromRequest(requestUrl, body);
   if (!documentId) {
     jsonResponse(res, 400, { ok: false, error: "missing_document_id" });
     return;
   }
 
-  const result = await generateDocumentCommentSuggestionCard({
+  const result = await getHttpService("generateDocumentCommentSuggestionCard", generateDocumentCommentSuggestionCard)({
     accessToken: context.token.access_token,
     accountId: context.account.id,
     documentId,

@@ -504,13 +504,15 @@ export default function register(api: { registerTool: Function; pluginConfig?: P
         additionalProperties: false,
         properties: {
           document_id: { type: "string" },
+          document_url: { type: "string" },
           account_id: { type: "string" }
         },
-        required: ["document_id"]
+        required: []
       },
       async execute(_id: string, params: Record<string, unknown>) {
         const query = toQuery({
           document_id: params.document_id,
+          document_url: params.document_url,
           account_id: params.account_id,
         });
         const result = await callJson(api, `/api/doc/read${query}`);
@@ -568,6 +570,7 @@ export default function register(api: { registerTool: Function; pluginConfig?: P
         additionalProperties: false,
         properties: {
           document_id: { type: "string" },
+          document_url: { type: "string" },
           content: { type: "string" },
           mode: { type: "string", enum: ["append", "replace"] },
           target_heading: { type: "string" },
@@ -576,13 +579,14 @@ export default function register(api: { registerTool: Function; pluginConfig?: P
           confirm: { type: "boolean" },
           account_id: { type: "string" }
         },
-        required: ["document_id", "content"]
+        required: ["content"]
       },
       async execute(_id: string, params: Record<string, unknown>) {
         const result = await callJson(api, "/api/doc/update", {
           method: "POST",
           body: JSON.stringify({
             document_id: params.document_id,
+            document_url: params.document_url,
             content: params.content,
             mode: params.mode === "replace" ? "replace" : "append",
             target_heading: params.target_heading,
@@ -611,14 +615,16 @@ export default function register(api: { registerTool: Function; pluginConfig?: P
         additionalProperties: false,
         properties: {
           document_id: { type: "string" },
+          document_url: { type: "string" },
           include_solved: { type: "boolean" },
           account_id: { type: "string" }
         },
-        required: ["document_id"]
+        required: []
       },
       async execute(_id: string, params: Record<string, unknown>) {
         const query = toQuery({
           document_id: params.document_id,
+          document_url: params.document_url,
           include_solved: params.include_solved === true ? "true" : undefined,
           account_id: params.account_id,
         });
@@ -642,6 +648,7 @@ export default function register(api: { registerTool: Function; pluginConfig?: P
         additionalProperties: false,
         properties: {
           document_id: { type: "string" },
+          document_url: { type: "string" },
           comment_ids: {
             type: "array",
             items: { type: "string" }
@@ -653,13 +660,14 @@ export default function register(api: { registerTool: Function; pluginConfig?: P
           resolve_comments: { type: "boolean" },
           account_id: { type: "string" }
         },
-        required: ["document_id"]
+        required: []
       },
       async execute(_id: string, params: Record<string, unknown>) {
         const result = await callJson(api, "/api/doc/rewrite-from-comments", {
           method: "POST",
           body: JSON.stringify({
             document_id: params.document_id,
+            document_url: params.document_url,
             comment_ids: params.comment_ids,
             include_solved: params.include_solved === true,
             apply: params.apply === true,
@@ -688,19 +696,21 @@ export default function register(api: { registerTool: Function; pluginConfig?: P
         additionalProperties: false,
         properties: {
           document_id: { type: "string" },
+          document_url: { type: "string" },
           message_id: { type: "string" },
           reply_in_thread: { type: "boolean" },
           resolve_comments: { type: "boolean" },
           mark_seen: { type: "boolean" },
           account_id: { type: "string" }
         },
-        required: ["document_id"]
+        required: []
       },
       async execute(_id: string, params: Record<string, unknown>) {
         const result = await callJson(api, "/api/doc/comments/suggestion-card", {
           method: "POST",
           body: JSON.stringify({
             document_id: params.document_id,
+            document_url: params.document_url,
             message_id: params.message_id,
             reply_in_thread: params.reply_in_thread === true,
             resolve_comments: params.resolve_comments === true,

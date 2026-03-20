@@ -93,6 +93,7 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
 - `GET /api/doc/read`
   - Handler: `handleDocumentRead`
   - Purpose: read one docx document
+  - Input note: accepts `document_id` / `doc_token`, and also doc URLs passed as `document_url` / `document_link` / `doc_link`
 
 - `GET /api/doc/lifecycle`
   - Handler: `handleDocumentLifecycleList`
@@ -142,15 +143,18 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
 - `POST /api/doc/update`
   - Handler: `handleDocumentUpdate`
   - Purpose: append doc content, or preview-then-confirm replace
+  - Input note: target doc can be supplied as `document_id` / `doc_token`, or as a doc URL via `document_url` / `document_link` / `doc_link`
   - Side effect note: `replace` now creates a temporary confirmation artifact before real overwrite
 
 - `GET /api/doc/comments`
   - Handler: `handleDocumentComments`
   - Purpose: list doc comments
+  - Input note: target doc can be supplied as `document_id` / `doc_token`, or as a doc URL via `document_url` / `document_link` / `doc_link`
 
 - `POST /api/doc/comments/suggestion-card`
   - Handler: `handleDocumentCommentSuggestionCard`
   - Purpose: detect unseen unresolved comments, generate a rewrite preview, and return/send a suggestion card
+  - Input note: target doc can be supplied as `document_id` / `doc_token`, or as a doc URL via `document_url` / `document_link` / `doc_link`
   - Side effect note: may mark comments as seen in local watch state and may send a Lark reply card if `message_id` is provided
 
 - `POST /api/doc/comments/poll-suggestion-cards`
@@ -162,6 +166,7 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
 - `POST /api/doc/rewrite-from-comments`
   - Handler: `handleDocumentRewriteFromComments`
   - Purpose: preview comment-driven patch plan, then confirm before apply
+  - Input note: target doc can be supplied as `document_id` / `doc_token`, a doc URL field, or a nested `target_document.url`
   - Side effect note: preview path also returns a rewrite summary card; apply path depends on a temporary confirmation artifact, carries a patch plan, and may resolve comments after write
 
 - `GET /api/messages`

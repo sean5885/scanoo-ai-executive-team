@@ -163,6 +163,130 @@ test("wiki organize apply success route returns trace and handler step logs", as
   assert.equal(calls.some((entry) => entry[1]?.event === "wiki_organize_completed"), true);
 });
 
+test("document read and comments routes accept document_url query input", async (t) => {
+  const documentId = "doccn-route-url-1";
+  const seen = {
+    read: null,
+    comments: null,
+  };
+  const { server } = await startTestServer(t, {
+    getDocument: async (_accessToken, incomingDocumentId) => {
+      seen.read = incomingDocumentId;
+      return {
+        document_id: incomingDocumentId,
+        title: "Route URL Doc",
+        content: "# Route URL Doc",
+        revision_id: "rev-route-1",
+      };
+    },
+    listDocumentComments: async (_accessToken, incomingDocumentId) => {
+      seen.comments = incomingDocumentId;
+      return {
+        document_id: incomingDocumentId,
+        items: [],
+        has_more: false,
+        page_token: null,
+      };
+    },
+  });
+
+  const { port } = server.address();
+  const encodedUrl = encodeURIComponent(`https://larksuite.com/docx/${documentId}`);
+  const readResponse = await fetch(`http://127.0.0.1:${port}/api/doc/read?document_url=${encodedUrl}`);
+  const readPayload = await readResponse.json();
+  assert.equal(readResponse.status, 200);
+  assert.equal(readPayload.document_id, documentId);
+  assert.equal(seen.read, documentId);
+
+  const commentsResponse = await fetch(`http://127.0.0.1:${port}/api/doc/comments?document_url=${encodedUrl}`);
+  const commentsPayload = await commentsResponse.json();
+  assert.equal(commentsResponse.status, 200);
+  assert.equal(commentsPayload.document_id, documentId);
+  assert.equal(seen.comments, documentId);
+});
+
+test("document update replace preview accepts document_url body input", async (t) => {
+  const documentId = "doccn-update-url-1";
+  let seenDocumentId = null;
+  const { server } = await startTestServer(t, {
+    getDocument: async (_accessToken, incomingDocumentId) => {
+      seenDocumentId = incomingDocumentId;
+      return {
+        document_id: incomingDocumentId,
+        title: "Editable Doc",
+        content: "# Existing",
+        revision_id: "rev-update-1",
+      };
+    },
+  });
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/doc/update`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      document_url: `https://larksuite.com/docx/${documentId}`,
+      content: "# Updated",
+      mode: "replace",
+    }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.preview?.document_id, documentId);
+  assert.equal(seenDocumentId, documentId);
+});
+
+test("document rewrite preview accepts nested target document links", async (t) => {
+  const documentId = "doccn-rewrite-url-1";
+  const seen = {
+    read: null,
+    rewrite: null,
+  };
+  const { server } = await startTestServer(t, {
+    getDocument: async (_accessToken, incomingDocumentId) => {
+      seen.read = incomingDocumentId;
+      return {
+        document_id: incomingDocumentId,
+        title: "Rewrite Target",
+        content: "# Current",
+        revision_id: "rev-rewrite-1",
+      };
+    },
+    rewriteDocumentFromComments: async (_accessToken, incomingDocumentId) => {
+      seen.rewrite = incomingDocumentId;
+      return {
+        document_id: incomingDocumentId,
+        title: "Rewrite Target",
+        comment_count: 0,
+        comment_ids: [],
+        comments: [],
+        change_summary: [],
+        patch_plan: [],
+        revised_content: "# Current",
+      };
+    },
+  });
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/doc/rewrite-from-comments`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      target_document: {
+        url: `https://larksuite.com/docx/${documentId}`,
+      },
+      apply: false,
+    }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.document_id, documentId);
+  assert.equal(seen.read, documentId);
+  assert.equal(seen.rewrite, documentId);
+});
+
 test("cloud doc apply route requires prior preview and cannot bypass verifier path", async (t) => {
   const { server } = await startTestServer(t, {
     resolveDriveRootFolderToken: async () => "fld-root",

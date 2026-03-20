@@ -456,10 +456,17 @@ curl "http://127.0.0.1:3333/search?q=test"
 
 預設是 preview，不會直接改文檔。
 
+目標文檔現在可用兩種方式指定：
+
+- 直接傳 `document_id` / `doc_token`
+- 直接傳 doc 連結，例如 `document_url` / `document_link` / `doc_link`
+
 示例：
 
 ```bash
 curl "http://127.0.0.1:3333/api/doc/comments?document_id=doccnxxxx"
+
+curl "http://127.0.0.1:3333/api/doc/comments?document_url=https%3A%2F%2Flarksuite.com%2Fdocx%2Fdoccnxxxx"
 
 curl -X POST http://127.0.0.1:3333/api/doc/comments/suggestion-card \
   -H 'Content-Type: application/json' \
@@ -491,6 +498,8 @@ curl -X POST http://127.0.0.1:3333/api/doc/rewrite-from-comments \
 ```
 
 如果你已經完成過 OAuth，新增寫入 scope 後需要重新授權一次，才能真的使用文檔寫入能力。
+
+若要確認是不是 scope 問題，先看 `GET /api/auth/status` 回傳的 `scope` 是否已包含目前 `.env` 裡要求的 doc 讀寫權限；如果 scope 已齊，但仍是 `missing_document_id`，優先檢查輸入是不是只帶了整理結果、沒有帶目標 doc token 或 doc link。
 
 `/api/doc/comments/suggestion-card` 會先檢查是否有新的未解評論；如果有，就直接產生一張可回傳或可回覆到訊息裡的改稿建議卡，並附 `confirmation_id` 給後續 apply 使用。
 
