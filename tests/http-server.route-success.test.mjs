@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 
+import db from "../src/db.mjs";
 import { startHttpServer } from "../src/http-server.mjs";
 import { docUpdateConfirmationStorePath, executiveImprovementStorePath } from "../src/config.mjs";
 import { setupExecutiveTaskStateTestHarness } from "./helpers/executive-task-state-harness.mjs";
@@ -35,7 +36,28 @@ function createAuthorizedOverrides(overrides = {}) {
   };
 }
 
+function ensureTestAccount(accountId = "acct-1") {
+  const timestamp = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO lark_accounts (
+      id, open_id, user_id, union_id, tenant_key, name, email, scope, created_at, updated_at
+    ) VALUES (
+      @id, @open_id, NULL, NULL, NULL, @name, NULL, @scope, @created_at, @updated_at
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      updated_at = excluded.updated_at
+  `).run({
+    id: accountId,
+    open_id: `ou_test_${accountId}`,
+    name: "HTTP Route Test",
+    scope: "test",
+    created_at: timestamp,
+    updated_at: timestamp,
+  });
+}
+
 async function startTestServer(t, serviceOverrides) {
+  ensureTestAccount("acct-1");
   const sink = createLoggerSink();
   const server = startHttpServer({
     listen: false,
@@ -308,7 +330,6 @@ test("document create classifies verified mirror ingest as direct intake", async
   const createPayload = await createResponse.json();
   assert.equal(createResponse.status, 200);
   assert.equal(createPayload.document_id, documentId);
-  console.log("direct-calls", JSON.stringify(calls.slice(-8), null, 2));
 
   const boundaryLog = calls.find((entry) => entry[1]?.event === "document_company_brain_intake_classified");
   assert.equal(boundaryLog?.[1]?.doc_id, documentId);
@@ -347,7 +368,6 @@ test("document create classifies title overlap as review and conflict check requ
     });
     assert.equal(response.status, 200);
   }
-  console.log("overlap-calls", JSON.stringify(calls.slice(-12), null, 2));
 
   const overlapBoundaryLog = calls
     .filter((entry) => entry[1]?.event === "document_company_brain_intake_classified")
