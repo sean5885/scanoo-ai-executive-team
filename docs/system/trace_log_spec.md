@@ -21,6 +21,9 @@ All minimum trace/log events should align around these fields:
 - `event_type`
 - `timestamp`
 - `action|preset|agent`
+- `chosen_lane`
+- `chosen_action`
+- `fallback_reason`
 - `ok`
 - `error`
 - `retry_count`
@@ -39,6 +42,9 @@ All minimum trace/log events should align around these fields:
   "action": "string|null",
   "preset": "string|null",
   "agent": "string|null",
+  "chosen_lane": "string|null",
+  "chosen_action": "string|null",
+  "fallback_reason": "string|null",
   "ok": "boolean|null",
   "error": "string|null",
   "retry_count": "number|null",
@@ -72,6 +78,10 @@ All minimum trace/log events should align around these fields:
  - planner-side company-brain doc-query flow now also emits minimal internal debug events for:
    - `doc_query_route`
    - `doc_query_result`
+- lane/runtime selection logs now also surface:
+  - `chosen_lane`
+  - `chosen_action`
+  - `fallback_reason`
  - tool execution callers now also emit a unified `lobster_tool_execution` payload with:
    - `request_id`
    - `action`

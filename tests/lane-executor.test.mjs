@@ -12,6 +12,7 @@ import {
   looksLikeDeleteMeetingDocRequest,
   looksLikeMeetingCaptureStatusQuery,
   pickCalendarMeetingEvent,
+  resolveLaneExecutionPlan,
   shouldPreferActiveExecutiveTask,
   shouldFallbackImageTaskToTextLane,
 } from "../src/lane-executor.mjs";
@@ -180,4 +181,54 @@ test("active meeting workflow stays on meeting follow-up path", () => {
     }),
     true,
   );
+});
+
+test("lane execution plan separates document summary from recent dialogue summary", () => {
+  const documentPlan = resolveLaneExecutionPlan({
+    scope: {
+      capability_lane: "knowledge-assistant",
+    },
+    event: {
+      message: {
+        content: JSON.stringify({
+          text: "幫我整理文件重點",
+        }),
+      },
+    },
+  });
+  const dialoguePlan = resolveLaneExecutionPlan({
+    scope: {
+      capability_lane: "personal-assistant",
+    },
+    event: {
+      message: {
+        content: JSON.stringify({
+          text: "幫我總結最近對話",
+        }),
+      },
+    },
+  });
+
+  assert.equal(documentPlan.chosen_lane, "knowledge-assistant");
+  assert.equal(documentPlan.chosen_action, "planner_user_input");
+  assert.equal(dialoguePlan.chosen_lane, "personal-assistant");
+  assert.equal(dialoguePlan.chosen_action, "summarize_recent_dialogue");
+});
+
+test("lane execution plan reports structured semantic mismatch instead of generic fallback for misplaced document request", () => {
+  const plan = resolveLaneExecutionPlan({
+    scope: {
+      capability_lane: "personal-assistant",
+    },
+    event: {
+      message: {
+        content: JSON.stringify({
+          text: "請整理文件摘要",
+        }),
+      },
+    },
+  });
+
+  assert.equal(plan.chosen_action, null);
+  assert.equal(plan.fallback_reason, "semantic_mismatch_document_request_in_personal_lane");
 });

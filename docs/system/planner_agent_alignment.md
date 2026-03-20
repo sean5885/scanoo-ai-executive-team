@@ -168,7 +168,7 @@ Current strict user-input planner error boundary:
 
 ```json
 {
-  "error": "planner_failed|invalid_action|contract_violation"
+  "error": "planner_failed|invalid_action|contract_violation|semantic_mismatch|stale_decision_reused"
 }
 ```
 
@@ -177,6 +177,28 @@ When the invalid item is inside `steps`, the error payload may also carry:
 - `steps`
 - `step_index`
 - failing step `action` / `params`
+
+For stricter fail-soft behavior on direct user-input planning, the checked-in runtime now also rejects:
+
+- semantically mismatched decisions, for example trying to map `總結最近對話` onto a document-search action
+- byte-identical planner decisions copied from the previous turn when the current user input is not an explicit same-task follow-up
+
+These structured planner failures may also carry:
+
+- `reason`
+- `previous_user_text`
+- `semantics`
+
+The planner envelope built for lane execution now also exposes a minimal trace summary:
+
+```json
+{
+  "trace": {
+    "chosen_action": "string|null",
+    "fallback_reason": "string|null"
+  }
+}
+```
 
 `execution_result` may now also carry an additional `formatted_output` field for successful company-brain read flows; this is a presentation-layer enrichment on top of the raw tool result, not a replacement for the bounded route output.
 

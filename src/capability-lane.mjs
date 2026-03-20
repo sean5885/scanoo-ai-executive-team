@@ -4,6 +4,34 @@ function hasAny(text, keywords) {
   return keywords.some((keyword) => text.includes(keyword));
 }
 
+const conversationSummaryKeywords = [
+  "最近對話",
+  "最近对话",
+  "最近聊天",
+  "最近訊息",
+  "最近消息",
+  "總結最近",
+  "总结最近",
+  "總結對話",
+  "总结对话",
+  "整理對話",
+  "整理对话",
+  "整理聊天",
+];
+
+const documentSummaryKeywords = [
+  "整理文件",
+  "整理文檔",
+  "整理文档",
+  "文件摘要",
+  "文檔摘要",
+  "文档摘要",
+  "文件重點",
+  "文件重点",
+  "總結文件",
+  "总结文件",
+];
+
 export function resolveCapabilityLane(scope, input = {}) {
   const text = normalizeMessageText(input);
   const hasDirectDocumentReference = Boolean(extractDocumentId(input));
@@ -77,6 +105,11 @@ export function resolveCapabilityLane(scope, input = {}) {
     (hasAny(text, docEditActionKeywords) && hasAny(text, docReferenceKeywords)) ||
     (hasReplyChain && hasAny(text, docFollowUpKeywords));
 
+  const wantsConversationSummary = hasAny(text, conversationSummaryKeywords);
+  const wantsDocumentSummary =
+    hasAny(text, documentSummaryKeywords)
+    || (hasAny(text, ["整理", "總結", "总结", "摘要", "重點", "重点"]) && hasAny(text, docReferenceKeywords));
+
   if (wantsDocEdit) {
     return {
       capability_lane: "doc-editor",
@@ -88,6 +121,35 @@ export function resolveCapabilityLane(scope, input = {}) {
         "lark_doc_comment_suggestion_card",
         "lark_doc_rewrite_from_comments",
         "lark_doc_update",
+      ],
+    };
+  }
+
+  if (wantsConversationSummary && !wantsDocumentSummary && scope?.chat_type === "group") {
+    return {
+      capability_lane: "group-shared-assistant",
+      lane_label: "群組共享助手",
+      lane_reason: "group_conversation_summary_request",
+      recommended_tools: [
+        "lark_message_reply_card",
+        "lark_messages_list",
+        "lark_calendar_primary",
+      ],
+    };
+  }
+
+  if (wantsDocumentSummary) {
+    return {
+      capability_lane: "knowledge-assistant",
+      lane_label: "知識助手",
+      lane_reason: "message_mentions_document_summary_or_lookup",
+      recommended_tools: [
+        "lark_kb_search",
+        "lark_kb_answer",
+        "lark_doc_read",
+        "lark_drive_list",
+        "lark_wiki_spaces",
+        "lark_wiki_nodes",
       ],
     };
   }

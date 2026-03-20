@@ -148,6 +148,158 @@ function hasAny(text, keywords) {
   return keywords.some((keyword) => text.includes(keyword));
 }
 
+const recentConversationSummarySignals = [
+  "最近對話",
+  "最近对话",
+  "最近聊天",
+  "最近訊息",
+  "最近消息",
+  "總結最近",
+  "总结最近",
+  "總結對話",
+  "总结对话",
+  "整理對話",
+  "整理对话",
+  "整理聊天",
+];
+
+const documentSummarySignals = [
+  "整理文件",
+  "整理文檔",
+  "整理文档",
+  "文件摘要",
+  "文檔摘要",
+  "文档摘要",
+  "文件重點",
+  "文件重点",
+  "總結文件",
+  "总结文件",
+];
+
+function buildLaneTrace({
+  scope,
+  chosenAction = null,
+  fallbackReason = null,
+} = {}) {
+  return {
+    chosen_lane: cleanText(scope?.capability_lane || "personal-assistant") || "personal-assistant",
+    chosen_action: cleanText(chosenAction) || null,
+    fallback_reason: cleanText(fallbackReason) || null,
+  };
+}
+
+function attachLaneTrace(envelope = {}, {
+  scope,
+  chosenAction = null,
+  fallbackReason = null,
+} = {}) {
+  return {
+    ...(envelope && typeof envelope === "object" && !Array.isArray(envelope) ? envelope : {}),
+    trace: {
+      ...(envelope?.trace && typeof envelope.trace === "object" && !Array.isArray(envelope.trace) ? envelope.trace : {}),
+      ...buildLaneTrace({
+        scope,
+        chosenAction: chosenAction || envelope?.trace?.chosen_action,
+        fallbackReason: fallbackReason || envelope?.trace?.fallback_reason,
+      }),
+    },
+  };
+}
+
+function buildLaneStructuredErrorEnvelope({
+  scope,
+  error = "business_error",
+  chosenAction = null,
+  fallbackReason = "",
+  details = {},
+} = {}) {
+  return attachLaneTrace({
+    ok: false,
+    error: cleanText(error) || "business_error",
+    details: details && typeof details === "object" && !Array.isArray(details) ? details : {},
+  }, {
+    scope,
+    chosenAction,
+    fallbackReason: cleanText(fallbackReason) || cleanText(error) || "business_error",
+  });
+}
+
+export function resolveLaneExecutionPlan({ event, scope } = {}) {
+  const lane = cleanText(scope?.capability_lane || "personal-assistant") || "personal-assistant";
+  const text = normalizeMessageText(event);
+
+  if (lane === "knowledge-assistant") {
+    return buildLaneTrace({
+      scope,
+      chosenAction: "planner_user_input",
+      fallbackReason: null,
+    });
+  }
+
+  if (lane === "doc-editor") {
+    return buildLaneTrace({
+      scope,
+      chosenAction: "doc_editor_workflow",
+      fallbackReason: null,
+    });
+  }
+
+  if (lane === "group-shared-assistant") {
+    if (hasAny(text, ["回覆", "回复", "怎麼回", "怎么回"])) {
+      return buildLaneTrace({
+        scope,
+        chosenAction: "draft_group_reply",
+      });
+    }
+    if (hasAny(text, [...recentConversationSummarySignals, "總結", "总结", "整理"])) {
+      return buildLaneTrace({
+        scope,
+        chosenAction: "summarize_recent_dialogue",
+      });
+    }
+    return buildLaneTrace({
+      scope,
+      chosenAction: null,
+      fallbackReason: "group_lane_default_reply",
+    });
+  }
+
+  if (hasAny(text, ["日程", "行程", "calendar", "會議", "会议"])) {
+    return buildLaneTrace({
+      scope,
+      chosenAction: "calendar_summary",
+    });
+  }
+
+  if (hasAny(text, ["任務", "task", "待辦", "todo"])) {
+    return buildLaneTrace({
+      scope,
+      chosenAction: "tasks_summary",
+    });
+  }
+
+  if (hasAny(text, recentConversationSummarySignals)) {
+    return buildLaneTrace({
+      scope,
+      chosenAction: "summarize_recent_dialogue",
+    });
+  }
+
+  if (hasAny(text, documentSummarySignals) || (text.includes("文件") && hasAny(text, ["整理", "總結", "总结", "摘要", "重點", "重点"]))) {
+    return buildLaneTrace({
+      scope,
+      chosenAction: null,
+      fallbackReason: "semantic_mismatch_document_request_in_personal_lane",
+    });
+  }
+
+  return buildLaneTrace({
+    scope,
+    chosenAction: null,
+    fallbackReason: "personal_lane_default_reply",
+  });
+}
+
 const meetingCaptureStatusSignals = [
   "在持續記錄中嗎",
   "在持续记录中吗",
@@ -371,6 +523,8 @@ async function resolveAuthContext(event, logger = noopLogger, { allowTenantFallb
 }
 
 async function executeKnowledgeAssistant({ event, scope, logger = noopLogger }) {
+  const lanePlan = resolveLaneExecutionPlan({ event, scope });
+  logger.info("lane_execution_planned", lanePlan);
   const context = await resolveAuthContext(event, logger, { allowTenantFallback: true });
   if (!context) {
     return { text: buildLaneIntroReply(scope, scope) };
@@ -381,17 +535,20 @@ async function executeKnowledgeAssistant({ event, scope, logger = noopLogger }) 
     return { text: buildLaneIntroReply(scope, scope) };
   }
 
-  return {
-    text: JSON.stringify(
-      buildPlannedUserInputEnvelope(
-        await executePlannedUserInput({
-          text,
-          logger,
-        }),
-      ),
-      null,
-      2,
+  const plannerEnvelope = attachLaneTrace(
+    buildPlannedUserInputEnvelope(
+      await executePlannedUserInput({
+        text,
+        logger,
+      }),
     ),
+    {
+      scope,
+    },
+  );
+  logger.info("lane_execution_result", plannerEnvelope.trace);
+  return {
+    text: JSON.stringify(plannerEnvelope, null, 2),
   };
 }
 
@@ -412,8 +569,8 @@ async function executeBitableLinkRequest({ event, scope, logger = noopLogger }) 
     source: "message_link",
   });
 
-  const app = await getBitableApp(context.token.access_token, bitableRef.app_token);
-  const tables = await listBitableTables(context.token.access_token, bitableRef.app_token, {
+  const app = await getBitableApp(context.token, bitableRef.app_token);
+  const tables = await listBitableTables(context.token, bitableRef.app_token, {
     pageSize: 20,
   });
 
@@ -425,7 +582,7 @@ async function executeBitableLinkRequest({ event, scope, logger = noopLogger }) 
 
   let records = null;
   if (targetTableId) {
-    records = await listBitableRecords(context.token.access_token, bitableRef.app_token, targetTableId, {
+    records = await listBitableRecords(context.token, bitableRef.app_token, targetTableId, {
       pageSize: 5,
       viewId: bitableRef.view_id || undefined,
     });
@@ -824,7 +981,7 @@ async function executeMeetingCommand({ event, scope, logger = noopLogger }) {
   if (command.action === "start_capture_calendar") {
     const meeting = context.tokenKind === "user"
       ? await resolveCalendarBackedMeeting({
-          accessToken: context.token.access_token,
+          accessToken: context.token,
           text: normalizeMessageText(event),
         })
       : null;
@@ -870,7 +1027,7 @@ async function executeMeetingCommand({ event, scope, logger = noopLogger }) {
       { session_id: formatIdentifierHint(activeSession.id) },
       () =>
         ensureMeetingCaptureDoc({
-          accessToken: context.token.access_token,
+          accessToken: context.token,
           tokenType: context.tokenKind,
           session: activeSession,
           fallbackTitle: buildMeetingCaptureDocTitle({
@@ -886,7 +1043,7 @@ async function executeMeetingCommand({ event, scope, logger = noopLogger }) {
       { document_id: formatIdentifierHint(meetingDoc.document_id), mode: "replace" },
       () =>
         updateDocument(
-          context.token.access_token,
+          context.token,
           meetingDoc.document_id,
           buildMeetingDraftDocContent({
             title: meetingDoc.title,
@@ -932,7 +1089,7 @@ async function executeMeetingCommand({ event, scope, logger = noopLogger }) {
   if (command.action === "start_capture") {
     const meeting = context.tokenKind === "user"
       ? await resolveCalendarBackedMeeting({
-          accessToken: context.token.access_token,
+          accessToken: context.token,
           text: normalizeMessageText(event),
         })
       : null;
@@ -960,7 +1117,7 @@ async function executeMeetingCommand({ event, scope, logger = noopLogger }) {
       { session_id: formatIdentifierHint(activeSession.id) },
       () =>
         ensureMeetingCaptureDoc({
-          accessToken: context.token.access_token,
+          accessToken: context.token,
           tokenType: context.tokenKind,
           session: activeSession,
           fallbackTitle: buildMeetingCaptureDocTitle({
@@ -976,7 +1133,7 @@ async function executeMeetingCommand({ event, scope, logger = noopLogger }) {
       { document_id: formatIdentifierHint(meetingDoc.document_id), mode: "replace" },
       () =>
         updateDocument(
-          context.token.access_token,
+          context.token,
           meetingDoc.document_id,
           buildMeetingDraftDocContent({
             title: meetingDoc.title,
@@ -1061,7 +1218,7 @@ async function executeMeetingCommand({ event, scope, logger = noopLogger }) {
       chatTranscript,
     });
     const meetingDoc = await ensureMeetingCaptureDoc({
-      accessToken: context.token.access_token,
+      accessToken: context.token,
       tokenType: context.tokenKind,
       session: activeSession,
       fallbackTitle: buildMeetingCaptureDocTitle({
@@ -1081,7 +1238,7 @@ async function executeMeetingCommand({ event, scope, logger = noopLogger }) {
             { document_id: formatIdentifierHint(meetingDoc.document_id) },
             () =>
               deleteDriveItem(
-                context.token.access_token,
+                context.token,
                 meetingDoc.document_id,
                 "docx",
                 context.tokenKind,
@@ -1098,7 +1255,7 @@ async function executeMeetingCommand({ event, scope, logger = noopLogger }) {
           { document_id: formatIdentifierHint(meetingDoc.document_id), mode: "replace" },
           () =>
             updateDocument(
-              context.token.access_token,
+              context.token,
               meetingDoc.document_id,
               buildFailedMeetingDocContent({
                 title: meetingDoc.title,
@@ -1145,7 +1302,7 @@ async function executeMeetingCommand({ event, scope, logger = noopLogger }) {
       { document_id: formatIdentifierHint(meetingDoc.document_id), mode: "replace" },
       () =>
         updateDocument(
-          context.token.access_token,
+          context.token,
           meetingDoc.document_id,
           buildFinalMeetingDocContent({
             title: meetingDoc.title,
@@ -1215,7 +1372,7 @@ async function executeMeetingCommand({ event, scope, logger = noopLogger }) {
         meetingCoordinator.confirmMeetingWrite({
           accountId: context.account.id,
           accountOpenId: context.account.open_id || "",
-          accessToken: context.token.access_token,
+          accessToken: context.token,
           confirmationId: command.confirmation_id,
         }),
     );
@@ -1272,11 +1429,11 @@ async function executeMeetingCommand({ event, scope, logger = noopLogger }) {
     };
   }
 
-  const documentRef = await resolveReferencedDocumentId(event, context.token.access_token, logger);
+  const documentRef = await resolveReferencedDocumentId(event, context.token, logger);
   let transcriptText = command.content;
   let referencedDocument = null;
   if (documentRef.documentId) {
-    referencedDocument = await getDocument(context.token.access_token, documentRef.documentId);
+    referencedDocument = await getDocument(context.token, documentRef.documentId);
     transcriptText = referencedDocument.content || transcriptText;
   }
 
@@ -1311,7 +1468,7 @@ async function executeMeetingCommand({ event, scope, logger = noopLogger }) {
 
   const result = await meetingCoordinator.processMeetingPreview({
     accountId: context.account.id,
-    accessToken: context.token.access_token,
+    accessToken: context.token,
     transcriptText,
     metadata: {
       date: formatUnixDate(event?.message?.create_time),
@@ -1432,7 +1589,7 @@ async function executeDocEditor({ event, scope, logger = noopLogger }) {
     ? await getActiveExecutiveTask(context.account.id, sessionKey)
     : null;
   const activeDocRewriteTask = activeTask?.workflow === "doc_rewrite" ? activeTask : null;
-  const documentRef = await resolveReferencedDocumentId(event, context.token.access_token, logger);
+  const documentRef = await resolveReferencedDocumentId(event, context.token, logger);
   const documentId = documentRef.documentId || cleanText(activeDocRewriteTask?.meta?.document_id || "");
   if (!documentId) {
     logger.warn("doc_editor_missing_document_id", {
@@ -1455,7 +1612,7 @@ async function executeDocEditor({ event, scope, logger = noopLogger }) {
 
   if (hasAny(normalizeMessageText({ text }), ["評論", "评论", "改稿", "rewrite", "修改"])) {
     const result = await generateDocumentCommentSuggestionCard({
-      accessToken: context.token.access_token,
+      accessToken: context.token,
       accountId: context.account.id,
       documentId,
       messageId: "",
@@ -1481,11 +1638,11 @@ async function executeDocEditor({ event, scope, logger = noopLogger }) {
       cardTitle: result.rewrite_preview_card?.title || "評論改稿建議",
       text: result.rewrite_preview_card?.content || "我已生成評論改稿建議。",
       replyMode: "card",
-      accessToken: context.token.access_token,
+      accessToken: context.token,
     };
   }
 
-  const document = await getDocument(context.token.access_token, documentId);
+  const document = await getDocument(context.token, documentId);
   return {
     text: [
       "結論",
@@ -1512,6 +1669,8 @@ async function executePersonalAssistant({ event, scope, logger = noopLogger }) {
   }
 
   const text = normalizeMessageText(event);
+  const lanePlan = resolveLaneExecutionPlan({ event, scope });
+  logger.info("lane_execution_planned", lanePlan);
   const chatId = cleanText(event?.message?.chat_id);
   const sessionKey = cleanText(scope?.session_key || scope?.chat_id || chatId);
   const cloudDocScopeKey = buildCloudDocWorkflowScopeKey({ sessionKey });
@@ -1540,7 +1699,7 @@ async function executePersonalAssistant({ event, scope, logger = noopLogger }) {
     if (wantsDeleteMeetingDoc && recentMeetingSession?.target_document_id) {
       try {
         await deleteDriveItem(
-          context.token.access_token,
+          context.token,
           recentMeetingSession.target_document_id,
           "docx",
           context.tokenKind,
@@ -1714,6 +1873,20 @@ async function executePersonalAssistant({ event, scope, logger = noopLogger }) {
   }
 
   if (context.tokenKind === "tenant") {
+    if (lanePlan.chosen_action === "summarize_recent_dialogue") {
+      const errorEnvelope = buildLaneStructuredErrorEnvelope({
+        scope,
+        error: "permission_denied",
+        chosenAction: lanePlan.chosen_action,
+        fallbackReason: "missing_user_oauth_for_recent_dialogue_summary",
+        details: {
+          message: "recent_dialogue_summary_requires_user_oauth",
+        },
+      });
+      return {
+        text: JSON.stringify(errorEnvelope, null, 2),
+      };
+    }
     return {
       text: [
         "結論",
@@ -1729,9 +1902,24 @@ async function executePersonalAssistant({ event, scope, logger = noopLogger }) {
     };
   }
 
+  if (lanePlan.fallback_reason === "semantic_mismatch_document_request_in_personal_lane") {
+    const errorEnvelope = buildLaneStructuredErrorEnvelope({
+      scope,
+      error: "semantic_mismatch",
+      fallbackReason: lanePlan.fallback_reason,
+      details: {
+        message: "document_summary_request_should_route_to_knowledge_lane",
+        suggested_lane: "knowledge-assistant",
+      },
+    });
+    return {
+      text: JSON.stringify(errorEnvelope, null, 2),
+    };
+  }
+
   if (hasAny(text, ["日程", "行程", "calendar", "會議", "会议"])) {
-    const calendar = await getPrimaryCalendar(context.token.access_token);
-    const events = await listCalendarEvents(context.token.access_token, calendar.calendar_id, {
+    const calendar = await getPrimaryCalendar(context.token);
+    const events = await listCalendarEvents(context.token, calendar.calendar_id, {
       startTime: startOfDayUnix().toString(),
       endTime: endOfDayUnix().toString(),
     });
@@ -1742,10 +1930,33 @@ async function executePersonalAssistant({ event, scope, logger = noopLogger }) {
   }
 
   if (hasAny(text, ["任務", "task", "待辦", "todo"])) {
-    const tasks = await listTasks(context.token.access_token, {});
+    const tasks = await listTasks(context.token, {});
     const items = (tasks.items || []).slice(0, 5).map((item) => `- ${item.summary || "(未命名任務)"}`).join("\n") || "- 目前沒有抓到任務";
     return {
       text: ["結論", "我先幫你看目前任務。", "", "重點", items, "", "下一步", "- 如果你要，我可以再幫你挑出最該先做的 3 件事。"].join("\n"),
+    };
+  }
+
+  if (lanePlan.chosen_action === "summarize_recent_dialogue" && chatId) {
+    const messages = await listMessages(context.token, chatId, {
+      containerIdType: "chat",
+      pageSize: 8,
+    });
+    const items = (messages.items || [])
+      .slice(0, 5)
+      .map((item) => `- ${truncate(item.text || item.content, 96)}`)
+      .join("\n") || "- 目前沒有抓到足夠的最近對話";
+    return {
+      text: [
+        "結論",
+        "我先幫你總結最近這段對話。",
+        "",
+        "重點",
+        items,
+        "",
+        "下一步",
+        "- 如果你要，我可以把這段整理成待辦、回覆草稿，或改成更短的摘要。",
+      ].join("\n"),
     };
   }
 
@@ -1770,9 +1981,11 @@ async function executeGroupSharedAssistant({ event, scope, logger = noopLogger }
   }
 
   const text = normalizeMessageText(event);
+  const lanePlan = resolveLaneExecutionPlan({ event, scope });
+  logger.info("lane_execution_planned", lanePlan);
   const chatId = cleanText(event?.message?.chat_id);
   if (chatId && hasAny(text, ["總結", "总结", "整理", "回覆", "回复", "怎麼回", "怎么回"])) {
-    const messages = await listMessages(context.token.access_token, chatId, {
+    const messages = await listMessages(context.token, chatId, {
       containerIdType: "chat",
       pageSize: 8,
     });
@@ -1820,6 +2033,9 @@ export async function executeCapabilityLane({ event, scope, logger = noopLogger 
   }
 
   const lane = scope?.capability_lane || "personal-assistant";
+  logger.info("lane_selected", {
+    chosen_lane: lane,
+  });
   const agentContext = await resolveAuthContext(event, logger, { allowTenantFallback: true });
   const normalizedText = normalizeMessageText(event);
   const sessionKey = cleanText(scope?.session_key || scope?.chat_id || event?.message?.chat_id);

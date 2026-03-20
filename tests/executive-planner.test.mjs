@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import {
+  buildPlannedUserInputEnvelope,
   compactPlannerConversationMemory,
   dispatchPlannerTool,
   executePlannedUserInput,
@@ -98,6 +99,126 @@ test("planUserInputAction rejects action outside planner_contract", async () => 
   assert.equal(result.error, "invalid_action");
   assert.equal(result.action, "free_chat_answer");
   assert.deepEqual(result.params, {});
+});
+
+test("planUserInputAction returns structured semantic_mismatch when action does not match user intent", async () => {
+  resetPlannerRuntimeContext();
+  const result = await planUserInputAction({
+    text: "幫我總結最近對話",
+    async requester() {
+      return JSON.stringify({
+        action: "search_company_brain_docs",
+        params: {
+          q: "最近對話",
+        },
+      });
+    },
+  });
+
+  assert.equal(result.error, "semantic_mismatch");
+  assert.equal(result.action, "search_company_brain_docs");
+  assert.equal(result.reason, "conversation_summary_not_supported_by_planner_contract");
+});
+
+test("planUserInputAction rejects stale decision reuse across different inputs", async () => {
+  resetPlannerRuntimeContext();
+
+  const first = await planUserInputAction({
+    text: "整理 OKR 文件",
+    async requester() {
+      return JSON.stringify({
+        action: "search_company_brain_docs",
+        params: {
+          q: "OKR",
+        },
+      });
+    },
+  });
+  assert.equal(first.action, "search_company_brain_docs");
+
+  const second = await planUserInputAction({
+    text: "整理 BD 文件",
+    async requester() {
+      return JSON.stringify({
+        action: "search_company_brain_docs",
+        params: {
+          q: "OKR",
+        },
+      });
+    },
+  });
+
+  assert.equal(second.error, "stale_decision_reused");
+  assert.equal(second.reason, "decision_identical_to_previous_turn_without_explicit_same_task");
+  assert.equal(second.previous_user_text, "整理 OKR 文件");
+});
+
+test("buildPlannedUserInputEnvelope exposes chosen_action and fallback_reason for structured failures", () => {
+  const envelope = buildPlannedUserInputEnvelope({
+    ok: false,
+    error: "semantic_mismatch",
+    action: "search_company_brain_docs",
+    params: {
+      q: "最近對話",
+    },
+    reason: "conversation_summary_not_supported_by_planner_contract",
+    trace_id: "trace_semantic",
+  });
+
+  assert.equal(envelope.trace?.chosen_action, "search_company_brain_docs");
+  assert.equal(envelope.trace?.fallback_reason, "conversation_summary_not_supported_by_planner_contract");
+});
+
+test("different planner inputs do not collapse into the same fixed envelope", async () => {
+  resetPlannerRuntimeContext();
+
+  const documentResult = buildPlannedUserInputEnvelope(await executePlannedUserInput({
+    text: "整理 OKR 文件",
+    async requester() {
+      return JSON.stringify({
+        action: "search_company_brain_docs",
+        params: {
+          q: "OKR",
+        },
+      });
+    },
+    async toolFlowRunner() {
+      return {
+        selected_action: "search_company_brain_docs",
+        execution_result: {
+          ok: true,
+          action: "search_company_brain_docs",
+          trace_id: "trace_doc",
+          data: {
+            success: true,
+            data: {
+              q: "OKR",
+              total: 0,
+              items: [],
+            },
+            error: null,
+          },
+        },
+        trace_id: "trace_doc",
+      };
+    },
+  }));
+
+  const conversationResult = buildPlannedUserInputEnvelope(await executePlannedUserInput({
+    text: "總結最近對話",
+    async requester() {
+      return JSON.stringify({
+        action: "search_company_brain_docs",
+        params: {
+          q: "OKR",
+        },
+      });
+    },
+  }));
+
+  assert.notDeepEqual(documentResult, conversationResult);
+  assert.equal(documentResult.ok, true);
+  assert.equal(conversationResult.ok, false);
 });
 
 test("planUserInputAction accepts strict multi-step output", async () => {

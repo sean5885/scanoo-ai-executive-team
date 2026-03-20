@@ -1696,6 +1696,8 @@ export function selectPlannerTool({
     user_intent: normalizedIntent || null,
     task_type: normalizedTaskType || null,
     selected_action: selectedAction || null,
+    chosen_action: selectedAction || null,
+    fallback_reason: selectedAction ? null : reason || null,
     reason: reason || null,
   });
 
@@ -2183,6 +2185,8 @@ export async function runPlannerToolFlow({
       user_intent: cleanText(String(userIntent || "").toLowerCase()) || null,
       task_type: cleanText(String(taskType || "").toLowerCase()) || null,
       selected_action: selection.selected_action || null,
+      chosen_action: selection.selected_action || null,
+      fallback_reason: cleanText(selection.reason || executionResult?.data?.reason || executionResult?.data?.stop_reason || executionResult?.error || "") || null,
     },
   }));
 
@@ -3372,6 +3376,7 @@ async function buildPlannerUserInputPrompt({ text = "" } = {}) {
     "params 必須是 object，且需符合對應 contract 的 required params。",
     "如果已有 active_doc 或 active_candidates，優先利用那些 doc_id 做 detail/read 決策。",
     "看文件列表用 list，找資料用 search，讀某份文件內容才用 detail；不要混用。",
+    "不可因 recent_dialogue 或 latest_summary 而直接重用上一輪 decision；只有明確是同一 task follow-up 才能沿用。",
     "若無法安全決策，不要輸出自然語言說明。",
   ]);
 
@@ -3395,6 +3400,7 @@ async function buildPlannerUserInputPrompt({ text = "" } = {}) {
           "action 必須來自 target_catalog。",
           "steps 內 action 只能來自 type=action 條目，不可使用 preset。",
           "params 只能放該 action/preset 需要的欄位。",
+          "不可直接複製上一輪 decision；如果 user_request 和前一輪不是同一 task，必須重新決策。",
           "不可直接回答使用者問題，不可輸出 free text fallback。",
         ].join("\n"),
         required: true,
@@ -3449,6 +3455,313 @@ async function buildPlannerUserInputPrompt({ text = "" } = {}) {
   };
 }
 
+function normalizePlannerUserInputText(text = "") {
+  return cleanText(String(text || "").toLowerCase()).replace(/\s+/g, " ");
+}
+
+function plannerTextHasAny(text = "", keywords = []) {
+  return keywords.some((keyword) => text.includes(keyword));
+}
+
+function derivePlannerUserInputSemantics(text = "") {
+  const normalizedText = normalizePlannerUserInputText(text);
+  const conversationSummarySignals = [
+    "最近對話",
+    "最近对话",
+    "最近聊天",
+    "最近訊息",
+    "最近消息",
+    "summary recent conversation",
+    "summarize recent conversation",
+    "總結最近",
+    "总结最近",
+    "總結對話",
+    "总结对话",
+    "整理對話",
+    "整理对话",
+    "整理聊天",
+  ];
+  const documentSignals = [
+    "文件",
+    "文檔",
+    "文档",
+    "doc",
+    "wiki",
+    "knowledge",
+    "知識",
+    "知识",
+  ];
+  const documentSummarySignals = [
+    "整理",
+    "總結",
+    "总结",
+    "摘要",
+    "重點",
+    "重点",
+    "summary",
+  ];
+  const sameTaskSignals = [
+    "這個",
+    "这个",
+    "這份",
+    "这份",
+    "同一",
+    "上一輪",
+    "上一轮",
+    "剛剛那個",
+    "刚刚那个",
+    "延續",
+    "延续",
+    "繼續",
+    "继续",
+    "same task",
+  ];
+
+  const wantsConversationSummary = plannerTextHasAny(normalizedText, conversationSummarySignals);
+  const wantsDocumentSummary =
+    plannerTextHasAny(normalizedText, documentSummarySignals) && plannerTextHasAny(normalizedText, documentSignals);
+  const wantsRuntimeInfo = plannerTextHasAny(normalizedText, [
+    "runtime",
+    "db path",
+    "pid",
+    "cwd",
+    "service start",
+    "運行資訊",
+    "运行信息",
+  ]);
+  const wantsCreateDoc = plannerTextHasAny(normalizedText, [
+    "建立文件",
+    "创建文档",
+    "create doc",
+    "新建文件",
+  ]);
+  const wantsDocumentLookup = wantsDocumentSummary || plannerTextHasAny(normalizedText, [
+    "找文件",
+    "查文件",
+    "搜尋文件",
+    "搜索文件",
+    "查知識",
+    "查知识",
+    "company brain",
+    "知識庫",
+    "知识库",
+  ]);
+
+  return {
+    normalized_text: normalizedText,
+    wants_conversation_summary: wantsConversationSummary,
+    wants_document_summary: wantsDocumentSummary,
+    wants_document_lookup: wantsDocumentLookup,
+    wants_runtime_info: wantsRuntimeInfo,
+    wants_create_doc: wantsCreateDoc,
+    explicit_same_task: plannerTextHasAny(normalizedText, sameTaskSignals),
+  };
+}
+
+function collectPlannerDecisionActionNames(decision = {}) {
+  if (Array.isArray(decision?.steps)) {
+    return decision.steps
+      .map((step) => cleanText(step?.action || ""))
+      .filter(Boolean);
+  }
+  const action = cleanText(decision?.action || "");
+  return action ? [action] : [];
+}
+
+function buildPlannerSemanticMismatch({
+  decision = {},
+  reason = "",
+  semantics = null,
+} = {}) {
+  return {
+    error: "semantic_mismatch",
+    action: cleanText(decision?.action || "") || null,
+    params: normalizePlannerPayload(decision?.params),
+    ...(Array.isArray(decision?.steps) ? { steps: decision.steps } : {}),
+    reason: cleanText(reason) || "planner_action_semantically_mismatched",
+    semantics,
+  };
+}
+
+function validatePlannerDecisionSemantics({
+  text = "",
+  decision = {},
+} = {}) {
+  const semantics = derivePlannerUserInputSemantics(text);
+  const actionNames = collectPlannerDecisionActionNames(decision);
+  const allowedDocumentActions = new Set([
+    "list_company_brain_docs",
+    "search_company_brain_docs",
+    "get_company_brain_doc_detail",
+    "search_and_detail_doc",
+    "runtime_and_list_docs",
+    "create_search_detail_list_doc",
+  ]);
+  const allowedCreateActions = new Set([
+    "create_doc",
+    "create_and_list_doc",
+    "create_search_detail_list_doc",
+  ]);
+  const allowedCreateContinuationActions = new Set([
+    ...allowedCreateActions,
+    "list_company_brain_docs",
+    "search_company_brain_docs",
+    "get_company_brain_doc_detail",
+  ]);
+
+  if (semantics.wants_conversation_summary) {
+    return {
+      ok: false,
+      ...buildPlannerSemanticMismatch({
+        decision,
+        reason: "conversation_summary_not_supported_by_planner_contract",
+        semantics,
+      }),
+    };
+  }
+
+  if (semantics.wants_runtime_info && actionNames.some((name) => name !== "get_runtime_info")) {
+    return {
+      ok: false,
+      ...buildPlannerSemanticMismatch({
+        decision,
+        reason: "runtime_query_routed_to_non_runtime_action",
+        semantics,
+      }),
+    };
+  }
+
+  if (
+    semantics.wants_create_doc
+    && (
+      !actionNames.some((name) => allowedCreateActions.has(name))
+      || actionNames.some((name) => !allowedCreateContinuationActions.has(name))
+    )
+  ) {
+    return {
+      ok: false,
+      ...buildPlannerSemanticMismatch({
+        decision,
+        reason: "document_create_query_routed_to_non_create_action",
+        semantics,
+      }),
+    };
+  }
+
+  if (semantics.wants_document_lookup && actionNames.some((name) => !allowedDocumentActions.has(name))) {
+    return {
+      ok: false,
+      ...buildPlannerSemanticMismatch({
+        decision,
+        reason: "document_lookup_query_routed_to_non_document_action",
+        semantics,
+      }),
+    };
+  }
+
+  return {
+    ok: true,
+    semantics,
+  };
+}
+
+function parsePlannerConversationDecision(value = "") {
+  const text = cleanText(value);
+  if (!text || !text.startsWith("{") || !text.endsWith("}")) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function getLatestPlannerDecisionContext() {
+  const recentMessages = Array.isArray(getPlannerConversationMemoryLayer()?.recent_messages)
+    ? getPlannerConversationMemoryLayer().recent_messages
+    : [];
+  let plannerMessage = null;
+  let userMessage = null;
+  for (let index = recentMessages.length - 1; index >= 0; index -= 1) {
+    const message = recentMessages[index];
+    if (!plannerMessage && message?.role === "planner") {
+      plannerMessage = message;
+      continue;
+    }
+    if (plannerMessage && message?.role === "user") {
+      userMessage = message;
+      break;
+    }
+  }
+
+  const previousDecision = parsePlannerConversationDecision(plannerMessage?.content || "");
+  const previousUserText = cleanText(userMessage?.content || "");
+  if (!previousDecision || !previousUserText) {
+    return null;
+  }
+
+  return {
+    previous_user_text: previousUserText,
+    previous_user_semantics: derivePlannerUserInputSemantics(previousUserText),
+    previous_decision: previousDecision,
+  };
+}
+
+function canonicalizePlannerDecision(decision = {}) {
+  if (!decision || typeof decision !== "object") {
+    return "";
+  }
+  if (Array.isArray(decision.steps)) {
+    return JSON.stringify({
+      steps: decision.steps.map((step) => ({
+        action: cleanText(step?.action || ""),
+        params: normalizePlannerPayload(step?.params),
+      })),
+    });
+  }
+  return JSON.stringify({
+    action: cleanText(decision.action || ""),
+    params: normalizePlannerPayload(decision.params),
+  });
+}
+
+function validatePlannerDecisionFreshness({
+  text = "",
+  decision = {},
+} = {}) {
+  const latestContext = getLatestPlannerDecisionContext();
+  if (!latestContext?.previous_decision) {
+    return { ok: true };
+  }
+
+  const currentText = normalizePlannerUserInputText(text);
+  const previousText = normalizePlannerUserInputText(latestContext.previous_user_text);
+  if (!currentText || !previousText || currentText === previousText) {
+    return { ok: true };
+  }
+
+  const currentSemantics = derivePlannerUserInputSemantics(text);
+  if (currentSemantics.explicit_same_task) {
+    return { ok: true };
+  }
+
+  if (canonicalizePlannerDecision(decision) !== canonicalizePlannerDecision(latestContext.previous_decision)) {
+    return { ok: true };
+  }
+
+  return {
+    ok: false,
+    error: "stale_decision_reused",
+    action: cleanText(decision?.action || "") || null,
+    params: normalizePlannerPayload(decision?.params),
+    ...(Array.isArray(decision?.steps) ? { steps: decision.steps } : {}),
+    reason: "decision_identical_to_previous_turn_without_explicit_same_task",
+    previous_user_text: latestContext.previous_user_text,
+  };
+}
+
 export async function planUserInputAction({ text = "", requester = requestPlannerJson } = {}) {
   restorePlannerRuntimeContextFromSummary();
   maybeCompactPlannerConversationMemory({
@@ -3477,19 +3790,40 @@ export async function planUserInputAction({ text = "", requester = requestPlanne
               action: validation.action,
               params: validation.params,
             };
-        recordPlannerConversationExchange({
-          userQuery: text,
-          plannerReply: JSON.stringify(decision),
+        const semanticValidation = validatePlannerDecisionSemantics({
+          text,
+          decision,
         });
-        maybeCompactPlannerConversationMemory({
-          flows: buildPlannerFlowSnapshots(plannerFlows),
-          latestSelectedAction: decision.action || decision.steps?.[0]?.action || "",
-          reason: "post_plan_user_input_action",
-        });
-        return decision;
+        if (!semanticValidation.ok) {
+          lastInvalidDecision = semanticValidation;
+        } else {
+          const freshnessValidation = validatePlannerDecisionFreshness({
+            text,
+            decision,
+          });
+          if (!freshnessValidation.ok) {
+            lastInvalidDecision = freshnessValidation;
+          } else {
+            recordPlannerConversationExchange({
+              userQuery: text,
+              plannerReply: JSON.stringify(decision),
+            });
+            maybeCompactPlannerConversationMemory({
+              flows: buildPlannerFlowSnapshots(plannerFlows),
+              latestSelectedAction: decision.action || decision.steps?.[0]?.action || "",
+              reason: "post_plan_user_input_action",
+            });
+            return decision;
+          }
+        }
       }
 
-      if (validation.error === "invalid_action" || validation.error === "contract_violation") {
+      if (
+        validation.error === "invalid_action"
+        || validation.error === "contract_violation"
+        || validation.error === "semantic_mismatch"
+        || validation.error === "stale_decision_reused"
+      ) {
         lastInvalidDecision = validation;
         break;
       }
@@ -3501,7 +3835,7 @@ export async function planUserInputAction({ text = "", requester = requestPlanne
       break;
     }
     promptInput = await buildPlannerUserInputPrompt({
-      text: `${text}\n請只輸出合法 JSON，且僅能使用 target_catalog 的 action。`,
+      text: `${text}\n請只輸出合法 JSON，且僅能使用 target_catalog 的 action；不可沿用上一輪 decision，必須依這一輪 user_request 重新決策。`,
     });
     prompt = promptInput.prompt;
   }
@@ -3514,6 +3848,9 @@ export async function planUserInputAction({ text = "", requester = requestPlanne
         ...(Array.isArray(lastInvalidDecision.steps) ? { steps: lastInvalidDecision.steps } : {}),
         ...(Number.isInteger(lastInvalidDecision.step_index) ? { step_index: lastInvalidDecision.step_index } : {}),
         ...(lastInvalidDecision.violations ? { violations: lastInvalidDecision.violations } : {}),
+        ...(cleanText(lastInvalidDecision.reason || "") ? { reason: cleanText(lastInvalidDecision.reason) } : {}),
+        ...(cleanText(lastInvalidDecision.previous_user_text || "") ? { previous_user_text: cleanText(lastInvalidDecision.previous_user_text) } : {}),
+        ...(lastInvalidDecision.semantics ? { semantics: lastInvalidDecision.semantics } : {}),
       }
     : { error: "planner_failed" };
 
@@ -3595,11 +3932,23 @@ export async function executePlannedUserInput({
 }
 
 export function buildPlannedUserInputEnvelope(result = {}) {
+  const chosenAction = cleanText(result.action || result.steps?.[0]?.action || "") || null;
+  const fallbackReason = cleanText(
+    result.reason
+    || result.execution_result?.data?.reason
+    || result.execution_result?.data?.stop_reason
+    || result.error
+    || "",
+  ) || null;
   if (!result || typeof result !== "object") {
     return {
       ok: false,
       error: "planner_failed",
       trace_id: null,
+      trace: {
+        chosen_action: null,
+        fallback_reason: "planner_failed",
+      },
     };
   }
 
@@ -3621,7 +3970,14 @@ export function buildPlannedUserInputEnvelope(result = {}) {
         : {}),
       ...(Number.isInteger(result.step_index) ? { step_index: result.step_index } : {}),
       ...(Array.isArray(result.violations) ? { violations: result.violations } : {}),
+      ...(cleanText(result.reason || "") ? { reason: cleanText(result.reason) } : {}),
+      ...(cleanText(result.previous_user_text || "") ? { previous_user_text: cleanText(result.previous_user_text) } : {}),
+      ...(result.semantics ? { semantics: result.semantics } : {}),
       trace_id: result.trace_id || null,
+      trace: {
+        chosen_action: chosenAction,
+        fallback_reason: fallbackReason,
+      },
     };
   }
 
@@ -3642,6 +3998,10 @@ export function buildPlannedUserInputEnvelope(result = {}) {
     error: cleanText(result.error || "") || null,
     execution_result: result.execution_result?.formatted_output || result.execution_result || null,
     trace_id: result.trace_id || null,
+    trace: {
+      chosen_action: chosenAction,
+      fallback_reason: fallbackReason,
+    },
   };
 }
 

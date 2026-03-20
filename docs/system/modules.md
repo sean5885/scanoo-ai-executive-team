@@ -160,8 +160,9 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 - Responsibility:
   - build login URL
   - exchange code
-  - refresh token
-  - resolve valid user token
+  - persist `access_token` / `refresh_token` / `expires_at` into SQLite-backed account state
+  - refresh expired user tokens through the stored `refresh_token`
+  - expose token-state resolution (`valid` / `missing` / `reauth_required`) for HTTP and request-layer fail-soft handling
 - Core path:
   - yes
 
@@ -199,6 +200,8 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - `/Users/seanhan/Documents/Playground/src/lark-content.mjs`
 - Responsibility:
   - direct Lark SDK calls for drive, wiki, doc, comments, messages, reactions, calendar, freebusy, tasks, bitable, and sheets
+  - resolve a valid user token from account-scoped auth context before each Lark API call
+  - auto-refresh expired user tokens in the adapter path instead of requiring handlers to inject fresh `access_token` strings manually
   - grant the initiating Lark user `full_access` on Lobster-created docx files
   - repair reused Lobster meeting docs so the initiator keeps management access instead of read-only access
   - docx create adapter now emits structured platform diagnostics (`stage/http_status/platform_code/platform_msg/log_id/token_type/title/folder_token/raw`) instead of collapsing all failures into a plain 400 message
@@ -214,6 +217,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 - Responsibility:
   - recursive drive and wiki scan
   - doc text extraction
+  - account-scoped token resolution and per-call refresh before sync-side Lark reads
 - Core path:
   - yes for sync
 
@@ -459,6 +463,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 - Responsibility:
   - isolate the cloud-document classification / reassignment follow-up workflow into a testable submodule instead of keeping all branch logic inside `lane-executor.mjs`
   - knowledge-assistant lane turns no longer call `answer-service.mjs` directly; they now serialize the strict planner envelope returned by `executePlannedUserInput(...)`
+  - strict planner envelopes now reject semantically mismatched actions and stale previous-turn decision reuse with structured errors instead of generic fallback text
   - keep cloud-doc organization follow-ups in the same workflow mode, including a plain-language re-explanation path, a dedicated "why can't this be directly assigned?" explainer path, and second-pass review continuation for generic confirmation follow-ups
   - generic second-confirmation follow-ups now prefer a session-scoped cached review summary, so "還有什麼需要我二次確認" returns quickly instead of rerunning a full semantic re-review on every turn
   - explicit reassignment / relearning requests such as "重新分配" or "各個角色去學習" still trigger the slower second-pass semantic re-review branch
@@ -479,6 +484,8 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - prefer the same-session active cloud-doc workflow only when the same `scope_key` matches, otherwise fall back to the existing planner/lane path
   - for doc lane, also inspect referenced upstream messages when current message only contains a share/reply wrapper
   - keep group-summary prompts in the group lane instead of over-matching the knowledge lane
+  - distinguish document-summary requests from recent-dialogue summary requests so `整理文件` and `總結最近對話` do not collapse into the same lane/action path
+  - emit lane execution trace fields `chosen_lane`, `chosen_action`, and `fallback_reason`
   - emit doc-resolution and auth-context runtime logs to support live payload debugging
   - honor direct-message cleanup instructions for failed Lobster meeting docs and persist a chat-only failure-report preference instead of falling back to generic personal-assistant boilerplate
 - Core path:

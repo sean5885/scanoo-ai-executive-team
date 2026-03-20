@@ -95,6 +95,36 @@ test("一般群聊整理需求仍維持 group-shared-assistant", () => {
   assert.equal(lane.capability_lane, "group-shared-assistant");
 });
 
+test("文件整理需求會進 knowledge-assistant 而不是沿用最近對話 lane", () => {
+  const lane = resolveCapabilityLane(
+    { chat_type: "p2p" },
+    {
+      message: {
+        content: JSON.stringify({
+          text: "幫我整理文件重點",
+        }),
+      },
+    },
+  );
+
+  assert.equal(lane.capability_lane, "knowledge-assistant");
+});
+
+test("最近對話總結需求不會被誤導到 knowledge-assistant", () => {
+  const lane = resolveCapabilityLane(
+    { chat_type: "p2p" },
+    {
+      message: {
+        content: JSON.stringify({
+          text: "幫我總結最近對話",
+        }),
+      },
+    },
+  );
+
+  assert.equal(lane.capability_lane, "personal-assistant");
+});
+
 test("normalizeMessageText 會保留結構化欄位供 lane 判斷", () => {
   const text = normalizeMessageText({
     message: {
