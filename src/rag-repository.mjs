@@ -346,6 +346,18 @@ const companyBrainDocReadFields = `
   creator_json
 `;
 
+const companyBrainDocQueryFields = `
+  cb.doc_id,
+  cb.title,
+  cb.source,
+  cb.created_at,
+  cb.creator_json,
+  cb.updated_at,
+  d.raw_text,
+  d.url,
+  d.parent_path
+`;
+
 function runCompanyBrainReadQuery({ sql, params = [], mode = "all" }) {
   const statement = db.prepare(sql);
   if (mode === "get") {
@@ -359,6 +371,20 @@ function buildCompanyBrainReadSelectSql(whereClause, suffix = "") {
     SELECT
       ${companyBrainDocReadFields}
     FROM company_brain_docs
+    WHERE ${whereClause}
+    ${suffix}
+  `;
+}
+
+function buildCompanyBrainQuerySelectSql(whereClause, suffix = "") {
+  return `
+    SELECT
+      ${companyBrainDocQueryFields}
+    FROM company_brain_docs cb
+    LEFT JOIN lark_documents d
+      ON d.account_id = cb.account_id
+      AND d.document_id = cb.doc_id
+      AND d.active = 1
     WHERE ${whereClause}
     ${suffix}
   `;
@@ -397,6 +423,28 @@ export function searchCompanyBrainDocs(accountId, query, limit = 50) {
       "ORDER BY updated_at DESC LIMIT ?",
     ),
     params: [accountId, normalizedQuery, likeQuery, likeQuery, limit],
+  });
+}
+
+export function listCompanyBrainDocQueryRecords(accountId, limit = null) {
+  const hasLimit = limit !== null && limit !== undefined && Number.isFinite(Number(limit));
+  const suffix = hasLimit
+    ? "ORDER BY cb.updated_at DESC LIMIT ?"
+    : "ORDER BY cb.updated_at DESC";
+  const params = hasLimit
+    ? [accountId, Number(limit)]
+    : [accountId];
+  return runCompanyBrainReadQuery({
+    sql: buildCompanyBrainQuerySelectSql("cb.account_id = ?", suffix),
+    params,
+  });
+}
+
+export function getCompanyBrainDocQueryRecord(accountId, docId) {
+  return runCompanyBrainReadQuery({
+    sql: buildCompanyBrainQuerySelectSql("cb.account_id = ? AND cb.doc_id = ?", "LIMIT 1"),
+    params: [accountId, docId],
+    mode: "get",
   });
 }
 

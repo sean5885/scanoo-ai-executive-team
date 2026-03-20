@@ -56,6 +56,74 @@ function ensureTestAccount(accountId = "acct-1") {
   });
 }
 
+function insertCompanyBrainFixture({
+  accountId = "acct-1",
+  docId,
+  title,
+  rawText,
+  source = "api",
+}) {
+  const timestamp = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO lark_documents (
+      id, account_id, source_id, source_type, external_key, external_id, file_token, node_id,
+      document_id, space_id, title, url, parent_path, revision, updated_at_remote, content_hash,
+      raw_text, inactive_reason, acl_json, meta_json, active, status, indexed_at, verified_at,
+      failure_reason, synced_at, created_at, updated_at
+    ) VALUES (
+      @id, @account_id, NULL, 'docx', @external_key, NULL, NULL, NULL,
+      @document_id, NULL, @title, @url, '/', NULL, NULL, NULL,
+      @raw_text, NULL, NULL, NULL, 1, 'verified', NULL, NULL,
+      NULL, @synced_at, @created_at, @updated_at
+    )
+    ON CONFLICT(account_id, external_key) DO UPDATE SET
+      document_id = excluded.document_id,
+      title = excluded.title,
+      url = excluded.url,
+      raw_text = excluded.raw_text,
+      active = excluded.active,
+      status = excluded.status,
+      synced_at = excluded.synced_at,
+      updated_at = excluded.updated_at
+  `).run({
+    id: `route_ldoc_${docId}`,
+    account_id: accountId,
+    external_key: `route_ext_${docId}`,
+    document_id: docId,
+    title,
+    url: `https://larksuite.com/docx/${docId}`,
+    raw_text: rawText,
+    synced_at: timestamp,
+    created_at: timestamp,
+    updated_at: timestamp,
+  });
+
+  db.prepare(`
+    INSERT INTO company_brain_docs (
+      account_id, doc_id, title, source, created_at, creator_json, updated_at
+    ) VALUES (
+      @account_id, @doc_id, @title, @source, @created_at, @creator_json, @updated_at
+    )
+    ON CONFLICT(account_id, doc_id) DO UPDATE SET
+      title = excluded.title,
+      source = excluded.source,
+      created_at = excluded.created_at,
+      creator_json = excluded.creator_json,
+      updated_at = excluded.updated_at
+  `).run({
+    account_id: accountId,
+    doc_id: docId,
+    title,
+    source,
+    created_at: timestamp,
+    creator_json: JSON.stringify({
+      account_id: accountId,
+      open_id: `ou_test_${accountId}`,
+    }),
+    updated_at: timestamp,
+  });
+}
+
 async function startTestServer(t, serviceOverrides) {
   ensureTestAccount("acct-1");
   const sink = createLoggerSink();
@@ -376,6 +444,50 @@ test("document create classifies title overlap as review and conflict check requ
   assert.equal(overlapBoundaryLog?.[1]?.conflict_check_required, true);
   assert.equal(overlapBoundaryLog?.[1]?.matched_docs?.length, 1);
   assert.equal(overlapBoundaryLog?.[1]?.matched_docs?.[0]?.match_type, "same_title");
+});
+
+test("agent company-brain search and detail routes return structured summaries for planner use", async (t) => {
+  const docId = `doc-agent-company-brain-${Date.now()}`;
+  insertCompanyBrainFixture({
+    docId,
+    title: "Planner Delivery SOP",
+    rawText: [
+      "# Planner Delivery SOP",
+      "## Owner",
+      "CS Team",
+      "## Steps",
+      "- Confirm onboarding owner",
+      "- Review launch checklist",
+    ].join("\n"),
+  });
+  t.after(() => {
+    db.prepare("DELETE FROM company_brain_docs WHERE account_id = ? AND doc_id = ?").run("acct-1", docId);
+    db.prepare("DELETE FROM lark_documents WHERE account_id = ? AND document_id = ?").run("acct-1", docId);
+  });
+
+  const { server } = await startTestServer(t, {});
+  const { port } = server.address();
+
+  const searchResponse = await fetch(`http://127.0.0.1:${port}/agent/company-brain/search?q=launch%20checklist`);
+  const searchPayload = await searchResponse.json();
+  assert.equal(searchResponse.status, 200);
+  assert.equal(searchPayload.ok, true);
+  assert.equal(searchPayload.action, "search_company_brain_docs");
+  assert.equal(searchPayload.data.success, true);
+  assert.equal(searchPayload.data.data.items[0].doc_id, docId);
+  assert.match(searchPayload.data.data.items[0].summary.overview, /Planner Delivery SOP/);
+
+  const detailResponse = await fetch(`http://127.0.0.1:${port}/agent/company-brain/docs/${docId}`);
+  const detailPayload = await detailResponse.json();
+  assert.equal(detailResponse.status, 200);
+  assert.equal(detailPayload.ok, true);
+  assert.equal(detailPayload.action, "get_company_brain_doc_detail");
+  assert.equal(detailPayload.data.success, true);
+  assert.equal(detailPayload.data.data.doc.doc_id, docId);
+  assert.deepEqual(detailPayload.data.data.summary.headings.slice(0, 2), [
+    "Planner Delivery SOP",
+    "Owner",
+  ]);
 });
 
 test("cloud doc apply route requires prior preview and cannot bypass verifier path", async (t) => {

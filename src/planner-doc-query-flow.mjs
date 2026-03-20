@@ -168,6 +168,54 @@ async function readPlannerDocumentContent({
   }
 }
 
+function extractCompanyBrainEnvelope(executionResult = null) {
+  const envelope = executionResult?.data;
+  if (
+    envelope
+    && typeof envelope === "object"
+    && !Array.isArray(envelope)
+    && typeof envelope.success === "boolean"
+  ) {
+    return envelope;
+  }
+  return null;
+}
+
+function extractCompanyBrainPayload(executionResult = null) {
+  const envelope = extractCompanyBrainEnvelope(executionResult);
+  if (envelope) {
+    return envelope.data && typeof envelope.data === "object" && !Array.isArray(envelope.data)
+      ? envelope.data
+      : {};
+  }
+
+  if (executionResult?.data && typeof executionResult.data === "object" && !Array.isArray(executionResult.data)) {
+    return executionResult.data;
+  }
+
+  return executionResult && typeof executionResult === "object" ? executionResult : {};
+}
+
+function extractCompanyBrainItems(executionResult = null) {
+  const payload = extractCompanyBrainPayload(executionResult);
+  return Array.isArray(payload?.items)
+    ? payload.items
+    : Array.isArray(executionResult?.items)
+      ? executionResult.items
+      : [];
+}
+
+function extractCompanyBrainDetailDoc(executionResult = null) {
+  const payload = extractCompanyBrainPayload(executionResult);
+  if (payload?.doc && typeof payload.doc === "object" && !Array.isArray(payload.doc)) {
+    return payload.doc;
+  }
+  if (payload?.item && typeof payload.item === "object" && !Array.isArray(payload.item)) {
+    return payload.item;
+  }
+  return executionResult?.item || payload || executionResult?.data || executionResult || null;
+}
+
 function extractPlannerCandidatesFromResult(selectedAction = "", executionResult = null) {
   if (!executionResult || typeof executionResult !== "object" || executionResult.ok !== true) {
     return [];
@@ -175,13 +223,7 @@ function extractPlannerCandidatesFromResult(selectedAction = "", executionResult
 
   const normalizedAction = cleanText(selectedAction);
   if (normalizedAction === "search_company_brain_docs") {
-    return normalizePlannerCandidates(
-      Array.isArray(executionResult.items)
-        ? executionResult.items
-        : Array.isArray(executionResult.data?.items)
-          ? executionResult.data.items
-          : [],
-    );
+    return normalizePlannerCandidates(extractCompanyBrainItems(executionResult));
   }
 
   if (normalizedAction === "search_and_detail_doc") {
@@ -190,13 +232,7 @@ function extractPlannerCandidatesFromResult(selectedAction = "", executionResult
       "company_brain_docs_search",
       "search_company_brain_docs",
     ].includes(cleanText(item?.action)));
-    return normalizePlannerCandidates(
-      Array.isArray(searchResult?.items)
-        ? searchResult.items
-        : Array.isArray(searchResult?.data?.items)
-          ? searchResult.data.items
-          : [],
-    );
+    return normalizePlannerCandidates(extractCompanyBrainItems(searchResult));
   }
 
   return [];
@@ -212,11 +248,7 @@ function extractActiveDocFromPlannerResult(selectedAction = "", executionResult 
   }
 
   if (cleanText(selectedAction) === "get_company_brain_doc_detail") {
-    return (
-      fromCandidate(executionResult.item)
-      || fromCandidate(executionResult.data?.item)
-      || fromCandidate(executionResult.data)
-    );
+    return fromCandidate(extractCompanyBrainDetailDoc(executionResult));
   }
 
   if (cleanText(selectedAction) === "search_and_detail_doc") {
@@ -226,11 +258,7 @@ function extractActiveDocFromPlannerResult(selectedAction = "", executionResult 
       "get_company_brain_doc_detail",
     ].includes(cleanText(item?.action)));
     if (detailResult) {
-      return (
-        fromCandidate(detailResult.item)
-        || fromCandidate(detailResult.data?.item)
-        || fromCandidate(detailResult.data)
-      );
+      return fromCandidate(extractCompanyBrainDetailDoc(detailResult));
     }
     const candidates = extractPlannerCandidatesFromResult(selectedAction, executionResult);
     return candidates.length === 1 ? candidates[0] : null;
@@ -370,11 +398,7 @@ export async function formatDocQueryExecutionResult({
   const normalizedIntent = cleanText(userIntent);
 
   if (normalizedAction === "search_company_brain_docs") {
-    const items = Array.isArray(executionResult.items)
-      ? executionResult.items
-      : Array.isArray(executionResult.data?.items)
-        ? executionResult.data.items
-        : [];
+    const items = extractCompanyBrainItems(executionResult);
     const result = withFormattedOutput(executionResult, buildPlannerFormattedOutput({
       kind: "search",
       items: items.map((item) => ({
@@ -398,7 +422,8 @@ export async function formatDocQueryExecutionResult({
   }
 
   if (normalizedAction === "get_company_brain_doc_detail") {
-    const detailItem = executionResult.item || executionResult.data?.item || executionResult.data || null;
+    const detailItem = extractCompanyBrainDetailDoc(executionResult);
+    const detailPayload = extractCompanyBrainPayload(executionResult);
     const docId = cleanText(detailItem?.doc_id);
     const title = cleanText(detailItem?.title);
     const contentResult = await contentReader({
@@ -409,7 +434,9 @@ export async function formatDocQueryExecutionResult({
       kind: "detail",
       title: title || contentResult?.title || "",
       docId,
-      contentSummary: summarizePlannerDocumentContent(contentResult?.content || ""),
+      contentSummary: cleanText(detailPayload?.summary?.overview)
+        || cleanText(detailPayload?.summary?.snippet)
+        || summarizePlannerDocumentContent(contentResult?.content || ""),
       found: Boolean(docId),
     }));
     logDocQueryTrace(logger, buildDocQueryTraceEvent({
@@ -436,13 +463,10 @@ export async function formatDocQueryExecutionResult({
       "company_brain_doc_detail",
       "get_company_brain_doc_detail",
     ].includes(cleanText(item?.action)));
-    const searchItems = Array.isArray(searchResult?.items)
-      ? searchResult.items
-      : Array.isArray(searchResult?.data?.items)
-        ? searchResult.data.items
-        : [];
+    const searchItems = extractCompanyBrainItems(searchResult);
     const searchItem = searchItems[0] || null;
-    const detailItem = detailResult?.item || detailResult?.data?.item || detailResult?.data || searchItem || null;
+    const detailItem = extractCompanyBrainDetailDoc(detailResult) || searchItem || null;
+    const detailPayload = extractCompanyBrainPayload(detailResult);
 
     if (!detailResult && searchItems.length === 0) {
       const result = withFormattedOutput(executionResult, buildPlannerFormattedOutput({
@@ -500,7 +524,9 @@ export async function formatDocQueryExecutionResult({
       title: title || contentResult?.title || "",
       docId,
       matchReason: cleanText(normalizedPayload.q) || normalizedIntent || "由搜尋結果命中",
-      contentSummary: summarizePlannerDocumentContent(contentResult?.content || ""),
+      contentSummary: cleanText(detailPayload?.summary?.overview)
+        || cleanText(detailPayload?.summary?.snippet)
+        || summarizePlannerDocumentContent(contentResult?.content || ""),
       found: Boolean(docId),
     }));
     logDocQueryTrace(logger, buildDocQueryTraceEvent({

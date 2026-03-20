@@ -327,7 +327,7 @@ function parseCompanyBrainLimit(requestUrl, body, fallback = 50) {
 
 function parseCompanyBrainDocId(requestUrl, body) {
   return String(
-    requestUrl.pathname.match(/^\/api\/company-brain\/docs\/([^/]+)$/)?.[1]
+    requestUrl.pathname.match(/^\/(?:api|agent)\/company-brain\/docs\/([^/]+)$/)?.[1]
     || body.doc_id
     || ""
   ).trim();

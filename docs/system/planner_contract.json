@@ -72,28 +72,44 @@
           "trace_id": { "type": ["string", "null"] },
           "data": {
             "type": "object",
-            "required": ["account_id", "auth_mode", "limit", "total", "items"],
+            "required": ["success", "data", "error"],
             "properties": {
-              "account_id": { "type": "string" },
-              "auth_mode": { "type": "string" },
-              "limit": { "type": "number" },
-              "total": { "type": "number" },
-              "items": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "required": ["doc_id", "title", "source", "created_at", "creator"],
-                  "properties": {
-                    "doc_id": { "type": "string" },
-                    "title": { "type": "string" },
-                    "source": { "type": "string" },
-                    "created_at": { "type": "string" },
-                    "creator": {
+              "success": { "type": "boolean" },
+              "error": { "type": ["string", "null"] },
+              "data": {
+                "type": "object",
+                "required": ["total", "items"],
+                "properties": {
+                  "total": { "type": "number" },
+                  "items": {
+                    "type": "array",
+                    "items": {
                       "type": "object",
-                      "required": ["account_id", "open_id"],
+                      "required": ["doc_id", "title", "source", "created_at", "creator", "summary"],
                       "properties": {
-                        "account_id": { "type": "string" },
-                        "open_id": { "type": "string" }
+                        "doc_id": { "type": "string" },
+                        "title": { "type": "string" },
+                        "source": { "type": "string" },
+                        "created_at": { "type": "string" },
+                        "creator": {
+                          "type": "object",
+                          "required": ["account_id", "open_id"],
+                          "properties": {
+                            "account_id": { "type": "string" },
+                            "open_id": { "type": "string" }
+                          }
+                        },
+                        "summary": {
+                          "type": "object",
+                          "required": ["overview", "headings", "highlights", "snippet", "content_length"],
+                          "properties": {
+                            "overview": { "type": "string" },
+                            "headings": { "type": "array" },
+                            "highlights": { "type": "array" },
+                            "snippet": { "type": "string" },
+                            "content_length": { "type": "number" }
+                          }
+                        }
                       }
                     }
                   }
@@ -124,27 +140,59 @@
           "ok": { "type": "boolean" },
           "action": { "type": "string" },
           "trace_id": { "type": ["string", "null"] },
-          "account_id": { "type": "string" },
-          "auth_mode": { "type": "string" },
-          "q": { "type": "string" },
-          "limit": { "type": "number" },
-          "total": { "type": "number" },
-          "items": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": ["doc_id", "title", "source", "created_at", "creator"],
-              "properties": {
-                "doc_id": { "type": "string" },
-                "title": { "type": "string" },
-                "source": { "type": "string" },
-                "created_at": { "type": "string" },
-                "creator": {
-                  "type": "object",
-                  "required": ["account_id", "open_id"],
-                  "properties": {
-                    "account_id": { "type": "string" },
-                    "open_id": { "type": "string" }
+          "data": {
+            "type": "object",
+            "required": ["success", "data", "error"],
+            "properties": {
+              "success": { "type": "boolean" },
+              "error": { "type": ["string", "null"] },
+              "data": {
+                "type": "object",
+                "required": ["q", "total", "items"],
+                "properties": {
+                  "q": { "type": "string" },
+                  "total": { "type": "number" },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["doc_id", "title", "source", "created_at", "creator", "summary", "match"],
+                      "properties": {
+                        "doc_id": { "type": "string" },
+                        "title": { "type": "string" },
+                        "source": { "type": "string" },
+                        "created_at": { "type": "string" },
+                        "creator": {
+                          "type": "object",
+                          "required": ["account_id", "open_id"],
+                          "properties": {
+                            "account_id": { "type": "string" },
+                            "open_id": { "type": "string" }
+                          }
+                        },
+                        "summary": {
+                          "type": "object",
+                          "required": ["overview", "headings", "highlights", "snippet", "content_length"],
+                          "properties": {
+                            "overview": { "type": "string" },
+                            "headings": { "type": "array" },
+                            "highlights": { "type": "array" },
+                            "snippet": { "type": "string" },
+                            "content_length": { "type": "number" }
+                          }
+                        },
+                        "match": {
+                          "type": "object",
+                          "required": ["type", "keyword_score", "semantic_score", "score"],
+                          "properties": {
+                            "type": { "type": "string" },
+                            "keyword_score": { "type": "number" },
+                            "semantic_score": { "type": "number" },
+                            "score": { "type": "number" }
+                          }
+                        }
+                      }
+                    }
                   }
                 }
               }
@@ -173,22 +221,45 @@
           "ok": { "type": "boolean" },
           "action": { "type": "string" },
           "trace_id": { "type": ["string", "null"] },
-          "account_id": { "type": "string" },
-          "auth_mode": { "type": "string" },
-          "item": {
+          "data": {
             "type": "object",
-            "required": ["doc_id", "title", "source", "created_at", "creator"],
+            "required": ["success", "data", "error"],
             "properties": {
-              "doc_id": { "type": "string" },
-              "title": { "type": "string" },
-              "source": { "type": "string" },
-              "created_at": { "type": "string" },
-              "creator": {
+              "success": { "type": "boolean" },
+              "error": { "type": ["string", "null"] },
+              "data": {
                 "type": "object",
-                "required": ["account_id", "open_id"],
+                "required": ["doc", "summary"],
                 "properties": {
-                  "account_id": { "type": "string" },
-                  "open_id": { "type": "string" }
+                  "doc": {
+                    "type": "object",
+                    "required": ["doc_id", "title", "source", "created_at", "creator"],
+                    "properties": {
+                      "doc_id": { "type": "string" },
+                      "title": { "type": "string" },
+                      "source": { "type": "string" },
+                      "created_at": { "type": "string" },
+                      "creator": {
+                        "type": "object",
+                        "required": ["account_id", "open_id"],
+                        "properties": {
+                          "account_id": { "type": "string" },
+                          "open_id": { "type": "string" }
+                        }
+                      }
+                    }
+                  },
+                  "summary": {
+                    "type": "object",
+                    "required": ["overview", "headings", "highlights", "snippet", "content_length"],
+                    "properties": {
+                      "overview": { "type": "string" },
+                      "headings": { "type": "array" },
+                      "highlights": { "type": "array" },
+                      "snippet": { "type": "string" },
+                      "content_length": { "type": "number" }
+                    }
+                  }
                 }
               }
             }
