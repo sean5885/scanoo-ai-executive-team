@@ -661,6 +661,122 @@ function buildPlannerTaskDecisionItem(task = {}) {
   };
 }
 
+function buildTaskDrivingMissingFields(task = {}) {
+  const missing = [];
+  if (!cleanText(task?.owner)) {
+    missing.push("owner");
+  }
+  if (!cleanText(task?.deadline)) {
+    missing.push("deadline");
+  }
+  return missing;
+}
+
+function buildTaskDrivingNextStep(task = {}) {
+  const item = buildPlannerTaskDecisionItem(task);
+  const missingFields = buildTaskDrivingMissingFields(task);
+  const taskTitle = item.title;
+
+  if (item.task_state === "blocked") {
+    if (item.note) {
+      return `優先解除阻塞：「${taskTitle}」先處理 ${item.note}`;
+    }
+    if (item.risks.length > 0) {
+      return `優先解除阻塞：「${taskTitle}」先處理 ${item.risks[0]}`;
+    }
+    if (missingFields.length > 0) {
+      return `優先解除阻塞：先補齊「${taskTitle}」的 ${missingFields.join(" / ")}`;
+    }
+    if (item.owner) {
+      return `優先找 ${item.owner} 解除「${taskTitle}」阻塞`;
+    }
+    return `優先確認「${taskTitle}」缺少的資源與協助`;
+  }
+
+  if (item.task_state === "in_progress") {
+    if (item.progress_summary && item.deadline) {
+      return `延續執行：「${taskTitle}」${item.progress_summary}，先對齊 ${item.deadline} 前的下一步`;
+    }
+    if (item.progress_summary) {
+      return `延續執行：「${taskTitle}」${item.progress_summary}，並回報下一個可執行動作`;
+    }
+    if (item.deadline) {
+      return `延續執行：「${taskTitle}」，先對齊 ${item.deadline} 前的交付節點`;
+    }
+    return `延續執行：「${taskTitle}」並回報下一個可執行動作`;
+  }
+
+  if (item.task_state === "planned") {
+    if (missingFields.length > 0) {
+      return `先補齊「${taskTitle}」的 ${missingFields.join(" / ")}`;
+    }
+    if (item.owner && item.deadline) {
+      return `先由 ${item.owner} 推進「${taskTitle}」，目標 ${item.deadline}`;
+    }
+    if (item.owner) {
+      return `先由 ${item.owner} 啟動「${taskTitle}」`;
+    }
+    return `啟動「${taskTitle}」的下一步`;
+  }
+
+  if (item.task_state === "done") {
+    return `確認「${taskTitle}」的 result 與收尾事項`;
+  }
+
+  return null;
+}
+
+function buildTaskDrivingPendingQuestion(task = {}) {
+  const item = buildPlannerTaskDecisionItem(task);
+  if (!item.title) {
+    return null;
+  }
+
+  if (item.task_state === "blocked") {
+    if (!item.note) {
+      return `「${item.title}」目前卡在哪個環節？`;
+    }
+    if (!item.owner) {
+      return `誰可以主責解除「${item.title}」的阻塞？`;
+    }
+    if (!item.deadline) {
+      return `「${item.title}」解除阻塞後希望何時完成？`;
+    }
+    return null;
+  }
+
+  if (!item.owner) {
+    return `誰來負責「${item.title}」？`;
+  }
+  if (!item.deadline && item.task_state !== "done") {
+    return `「${item.title}」預計何時完成？`;
+  }
+  return null;
+}
+
+function buildTaskDrivingContext(tasks = []) {
+  const normalizedTasks = Array.isArray(tasks) ? tasks : [];
+  const blockedTask = normalizedTasks.find((task) => cleanText(task?.task_state) === "blocked");
+  const inProgressTask = normalizedTasks.find((task) => cleanText(task?.task_state) === "in_progress");
+  const unfinishedTask = normalizedTasks.find((task) => cleanText(task?.task_state) !== "done");
+  const focusTask = blockedTask || inProgressTask || unfinishedTask || null;
+  if (!focusTask) {
+    return null;
+  }
+
+  const item = buildPlannerTaskDecisionItem(focusTask);
+  return {
+    mode: item.task_state === "blocked"
+      ? "unblock"
+      : item.task_state === "in_progress"
+        ? "continue"
+        : "next_step",
+    task: item,
+    suggested_next_step: buildTaskDrivingNextStep(focusTask),
+    suggested_question: buildTaskDrivingPendingQuestion(focusTask),
+  };
+}
+
 function formatPlannerTaskDecisionReference(task = {}, {
   includeProgress = false,
   includeRisk = false,
@@ -694,6 +810,7 @@ export function buildPlannerTaskDecisionContext(snapshot = null) {
   const unfinishedTasks = tasks.filter((task) => cleanText(task?.task_state) !== "done");
   const blockedTasks = tasks.filter((task) => cleanText(task?.task_state) === "blocked");
   const inProgressTasks = tasks.filter((task) => cleanText(task?.task_state) === "in_progress");
+  const taskDriving = buildTaskDrivingContext(tasks);
 
   return {
     scope_title: cleanText(snapshot?.scope?.source_title) || cleanText(snapshot?.scope?.theme) || "task lifecycle",
@@ -716,9 +833,16 @@ export function buildPlannerTaskDecisionContext(snapshot = null) {
           includeProgress: true,
         })).join("；")}`
       : null,
+    next_step_hint: cleanText(taskDriving?.suggested_next_step)
+      ? `主動下一步：${cleanText(taskDriving.suggested_next_step)}`
+      : null,
+    unblock_question_hint: cleanText(taskDriving?.suggested_question)
+      ? `若需補資源，優先確認：${cleanText(taskDriving.suggested_question)}`
+      : null,
     reference_tasks: unfinishedTasks.slice(0, 3).map((task) => buildPlannerTaskDecisionItem(task)),
     blocked_tasks: blockedTasks.slice(0, 3).map((task) => buildPlannerTaskDecisionItem(task)),
     in_progress_tasks: inProgressTasks.slice(0, 3).map((task) => buildPlannerTaskDecisionItem(task)),
+    task_driving: taskDriving,
   };
 }
 
@@ -1199,6 +1323,23 @@ function summarizeTaskLifecycleFollowUp({
   return `目前 task 狀態：planned ${counts.planned} 個、in_progress ${counts.in_progress} 個、blocked ${counts.blocked} 個、done ${counts.done} 個。`;
 }
 
+function buildTaskLifecycleActionNextActions({
+  tasks = [],
+  targetMode = "all",
+} = {}) {
+  if (cleanText(targetMode) === "ambiguous") {
+    return tasks
+      .slice(0, 5)
+      .map((task, index) => `第${index + 1}個：${cleanText(task?.title) || "未命名 task"}`);
+  }
+
+  return tasks
+    .filter((task) => cleanText(task?.task_state) !== "done")
+    .map((task) => buildTaskDrivingNextStep(task))
+    .filter(Boolean)
+    .slice(0, 5);
+}
+
 function buildTaskLifecycleFormattedOutput({
   scope = {},
   tasks = [],
@@ -1235,13 +1376,10 @@ function buildTaskLifecycleFormattedOutput({
     found: tasks.length > 0,
     action_layer: {
       summary,
-      next_actions: tasks
-        .filter((task) => cleanText(task?.task_state) !== "done")
-        .map((task, index) => cleanText(targetMode) === "ambiguous"
-          ? `第${index + 1}個：${cleanText(task?.title)}`
-          : cleanText(task?.title))
-        .filter(Boolean)
-        .slice(0, 5),
+      next_actions: buildTaskLifecycleActionNextActions({
+        tasks,
+        targetMode,
+      }),
       owner: resolveSharedOwner(tasks),
       deadline: resolveSharedDeadline(tasks),
       risks: normalizeStringList([

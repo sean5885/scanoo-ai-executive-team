@@ -128,9 +128,27 @@ function buildActionSummary({
   return null;
 }
 
+function normalizeStructuredStatus(status = "") {
+  const normalized = cleanText(status).toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  if (["blocked", "block", "卡住", "阻塞"].some((keyword) => normalized.includes(keyword))) {
+    return "blocked";
+  }
+  if (["in_progress", "進行中", "进行中", "started", "half_done", "handled"].some((keyword) => normalized.includes(keyword))) {
+    return "in_progress";
+  }
+  if (["done", "completed", "完成", "已完成"].some((keyword) => normalized.includes(keyword))) {
+    return "done";
+  }
+  return null;
+}
+
 function buildActionNextActions({
   domainLabel = "",
   formattedOutput = {},
+  extractedFields = {},
 } = {}) {
   const kind = cleanText(formattedOutput?.kind);
   const items = Array.isArray(formattedOutput?.items) ? formattedOutput.items : [];
@@ -142,8 +160,15 @@ function buildActionNextActions({
     )));
   }
   if (kind === "detail" || kind === "search_and_detail") {
+    const status = normalizeStructuredStatus(extractedFields?.status);
     return normalizeActionList([
-      `確認 ${label}後續跟進事項`,
+      status === "blocked"
+        ? `優先解除 ${label}卡點`
+        : status === "in_progress"
+          ? `推進 ${label}下一個可執行步驟`
+          : status === "done"
+            ? `確認 ${label}驗收與結果`
+            : `確認 ${label}後續跟進事項`,
       "確認 owner",
       "確認 deadline",
     ]);
@@ -195,6 +220,7 @@ export function buildPlannerActionLayer({
     next_actions: buildActionNextActions({
       domainLabel: effectiveDomain,
       formattedOutput,
+      extractedFields: extracted,
     }),
     owner: extracted.owner,
     deadline: extracted.deadline,

@@ -2232,6 +2232,12 @@ function formatPlannerTaskDecisionPromptSection(taskDecisionContext = null) {
     referenceTasks.length > 0
       ? `優先引用未完成 task：${referenceTasks.slice(0, 3).map((task) => cleanText(task?.title)).filter(Boolean).join("、")}`
       : "",
+    cleanText(taskDecisionContext?.next_step_hint)
+      ? cleanText(taskDecisionContext.next_step_hint)
+      : "",
+    cleanText(taskDecisionContext?.unblock_question_hint)
+      ? cleanText(taskDecisionContext.unblock_question_hint)
+      : "",
   ].filter(Boolean).join("\n");
 }
 
@@ -2256,6 +2262,7 @@ async function buildPlannerPrompt({ text, activeTask = null } = {}) {
     "若 planner_task_context 顯示有 unfinished task，優先引用既有 task，不要忽略已存在的推進脈絡。",
     "若 planner_task_context 顯示有 blocked task，需主動把風險與 unblock 需求反映到決策理由。",
     "若 planner_task_context 顯示有 in_progress task，優先延續並利用現有進度摘要，不要重起平行任務。",
+    "若 planner_task_context 已提供主動下一步，優先把它轉成 work_items，而不是只做被動 continue。",
     "明確區分 list、search、detail：列出文件是 list；查資料、找文件、搜尋內容是 search；查看某文件內容、讀某文檔是 detail/read。",
     "若使用者是在找資料、搜尋內容、查某個文檔，必須先嘗試對應 tool；不要未調 tool 就直接 fail-soft。",
     "若需要判斷找不到，前提必須是已經嘗試過對應 tool；禁止用純文字直接回答找不到。",
@@ -2289,6 +2296,8 @@ async function buildPlannerPrompt({ text, activeTask = null } = {}) {
           "若 planner_task_context 有 unfinished_hint，決策時優先引用既有 task。",
           "若 planner_task_context 有 blocked_hint，reason 應明確反映 blocked 風險或 unblock 需求。",
           "若 planner_task_context 有 in_progress_hint，reason 應明確反映目前進度或延續中的工作。",
+          "若 planner_task_context 有 next_step_hint，work_items 應主動帶出下一步執行。",
+          "若 planner_task_context 有 unblock_question_hint，僅在真的缺資源時才把它放進 pending_questions。",
           "若使用者是要列出文件，應走 list 類能力；若是找資料、找文件、搜尋內容，應走 search 類能力；若是查看某文件內容、讀某文檔，應走 detail/read 類能力。",
           "不可把 list、search、detail 混用：list 不等於 search，search 不等於 detail。",
           "不可在未先嘗試對應 tool 的情況下，直接輸出找不到、無資料、或 fail-soft 停止。",
@@ -2351,6 +2360,7 @@ async function buildPlannerPrompt({ text, activeTask = null } = {}) {
   return {
     systemPrompt,
     prompt: governed.prompt,
+    taskDecisionContext,
   };
 }
 
@@ -2427,6 +2437,54 @@ function normalizePlannerDecision(decision = {}, fallbackText = "") {
   };
 }
 
+function enrichPlannerDecisionWithTaskDriving(decision = {}, {
+  taskDecisionContext = null,
+} = {}) {
+  const taskDriving = taskDecisionContext?.task_driving;
+  if (!taskDriving || typeof taskDriving !== "object") {
+    return decision;
+  }
+
+  const normalizedDecision = decision && typeof decision === "object"
+    ? {
+        ...decision,
+        pending_questions: Array.isArray(decision.pending_questions) ? [...decision.pending_questions] : [],
+        work_items: Array.isArray(decision.work_items) ? [...decision.work_items] : [],
+      }
+    : {
+        pending_questions: [],
+        work_items: [],
+      };
+
+  if (normalizedDecision.work_items.length === 0 && cleanText(taskDriving?.suggested_next_step)) {
+    const agentId = getRegisteredAgent(cleanText(normalizedDecision.next_agent_id || ""))
+      ? cleanText(normalizedDecision.next_agent_id)
+      : getRegisteredAgent(cleanText(normalizedDecision.primary_agent_id || ""))
+        ? cleanText(normalizedDecision.primary_agent_id)
+        : "generalist";
+    normalizedDecision.work_items = [{
+      agent_id: agentId,
+      task: cleanText(taskDriving.suggested_next_step),
+      role: "primary",
+      status: "pending",
+    }];
+  }
+
+  if (normalizedDecision.pending_questions.length === 0 && cleanText(taskDriving?.suggested_question)) {
+    normalizedDecision.pending_questions = [cleanText(taskDriving.suggested_question)];
+  }
+
+  if (!cleanText(normalizedDecision.reason) && cleanText(taskDriving?.suggested_next_step)) {
+    normalizedDecision.reason = taskDriving.mode === "unblock"
+      ? `延續既有 task，優先解除阻塞：${cleanText(taskDriving?.task?.title) || "未命名 task"}`
+      : taskDriving.mode === "continue"
+        ? `延續既有 task，推進下一個可執行動作：${cleanText(taskDriving?.task?.title) || "未命名 task"}`
+        : `延續既有 task，主動推進下一步：${cleanText(taskDriving?.task?.title) || "未命名 task"}`;
+  }
+
+  return normalizedDecision;
+}
+
 export async function planExecutiveTurn({ text = "", activeTask = null, requester = requestPlannerJson } = {}) {
   restorePlannerRuntimeContextFromSummary();
   maybeCompactPlannerConversationMemory({
@@ -2443,7 +2501,12 @@ export async function planExecutiveTurn({ text = "", activeTask = null, requeste
         prompt,
         sessionIdSuffix: cleanText(activeTask?.id || text).slice(0, 48) || "executive-planner",
       });
-      const normalizedDecision = normalizePlannerDecision(parsePlannerJson(raw), text);
+      const normalizedDecision = enrichPlannerDecisionWithTaskDriving(
+        normalizePlannerDecision(parsePlannerJson(raw), text),
+        {
+          taskDecisionContext: promptInput.taskDecisionContext,
+        },
+      );
       recordPlannerConversationExchange({
         userQuery: text,
         plannerReply: JSON.stringify({
@@ -2471,7 +2534,12 @@ export async function planExecutiveTurn({ text = "", activeTask = null, requeste
     }
   }
 
-  const fallbackDecision = heuristicPlanExecutiveTurn(text, activeTask);
+  const fallbackDecision = enrichPlannerDecisionWithTaskDriving(
+    heuristicPlanExecutiveTurn(text, activeTask),
+    {
+      taskDecisionContext: promptInput.taskDecisionContext,
+    },
+  );
   recordPlannerConversationExchange({
     userQuery: text,
     plannerReply: JSON.stringify({

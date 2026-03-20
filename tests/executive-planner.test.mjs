@@ -260,8 +260,78 @@ test("planExecutiveTurn injects planner task context with unfinished, blocked, a
   assert.match(capturedPrompt, /優先引用未完成 task/);
   assert.match(capturedPrompt, /需主動提醒 blocked 風險/);
   assert.match(capturedPrompt, /可提供進度摘要/);
+  assert.match(capturedPrompt, /主動下一步/);
   assert.match(capturedPrompt, /等法務確認條款/);
   assert.match(capturedPrompt, /更新專案排程/);
+});
+
+test("planExecutiveTurn auto-fills task-driving work items for blocked tasks", async () => {
+  resetPlannerRuntimeContext();
+  replacePlannerTaskLifecycleStoreForTests({
+    tasks: {
+      task_blocked_2: {
+        id: "task_blocked_2",
+        scope_key: "scope_task_driving_1",
+        title: "等法務確認條款",
+        theme: "bd",
+        owner: null,
+        deadline: null,
+        task_state: "blocked",
+        progress_status: "blocked",
+        progress_summary: "卡點：等法務確認",
+        note: "等法務確認",
+        risks: ["合約條款未定"],
+        lifecycle_state: "planned",
+        created_at: "2026-03-20T00:00:00.000Z",
+        updated_at: "2026-03-20T00:00:00.000Z",
+      },
+    },
+    scopes: {
+      scope_task_driving_1: {
+        scope_key: "scope_task_driving_1",
+        theme: "bd",
+        selected_action: "search_and_detail_doc",
+        user_intent: "整理 BD 文件",
+        trace_id: "trace_task_driving_1",
+        source_kind: "search_and_detail",
+        source_doc_id: "doc_task_driving_1",
+        source_title: "BD Execution Board",
+        current_task_ids: ["task_blocked_2"],
+        created_at: "2026-03-20T00:00:00.000Z",
+        updated_at: "2026-03-20T00:00:00.000Z",
+      },
+    },
+    latest_scope_key: "scope_task_driving_1",
+  });
+
+  const decision = await planExecutiveTurn({
+    text: "接下來怎麼推進？",
+    activeTask: null,
+    async requester() {
+      return JSON.stringify({
+        action: "continue",
+        objective: "延續 BD 推進",
+        primary_agent_id: "generalist",
+        next_agent_id: "generalist",
+        supporting_agent_ids: [],
+        reason: "測試 task driving",
+        pending_questions: [],
+        work_items: [],
+      });
+    },
+  });
+
+  assert.deepEqual(decision.work_items, [
+    {
+      agent_id: "generalist",
+      task: "優先解除阻塞：「等法務確認條款」先處理 等法務確認",
+      role: "primary",
+      status: "pending",
+    },
+  ]);
+  assert.deepEqual(decision.pending_questions, [
+    "誰可以主責解除「等法務確認條款」的阻塞？",
+  ]);
 });
 
 test("manual compact entry rebuilds planner latest summary without changing public planner result shape", async () => {
@@ -1977,6 +2047,61 @@ test("runPlannerToolFlow extracts action layer fields for OKR detail result", as
   resetPlannerRuntimeContext();
 });
 
+test("runPlannerToolFlow makes action layer next step proactive for blocked detail result", async () => {
+  resetPlannerRuntimeContext();
+  const result = await runPlannerToolFlow({
+    userIntent: "整理 BD 文件",
+    payload: { limit: 5 },
+    logger: console,
+    async presetRunner() {
+      return {
+        ok: true,
+        preset: "search_and_detail_doc",
+        steps: [
+          { action: "search_company_brain_docs" },
+          { action: "get_company_brain_doc_detail" },
+        ],
+        results: [
+          {
+            ok: true,
+            action: "company_brain_docs_search",
+            items: [{ doc_id: "bd_detail_blocked_1", title: "BD Playbook" }],
+            trace_id: "trace_bd_detail_blocked_search",
+          },
+          {
+            ok: true,
+            action: "company_brain_doc_detail",
+            item: { doc_id: "bd_detail_blocked_1", title: "BD Playbook" },
+            trace_id: "trace_bd_detail_blocked_detail",
+          },
+        ],
+        trace_id: "trace_bd_detail_blocked_detail",
+        stopped: false,
+        stopped_at_step: null,
+      };
+    },
+    async contentReader() {
+      return {
+        title: "BD Playbook",
+        content: "負責人：Bob；截止：下週一；狀態：blocked；風險：客戶回覆延遲。",
+      };
+    },
+  });
+
+  assert.deepEqual(result.execution_result?.formatted_output?.action_layer, {
+    summary: "負責人：Bob；截止：下週一；狀態：blocked；風險：客戶回覆延遲。",
+    next_actions: [
+      "優先解除 BD卡點",
+      "確認 owner",
+      "確認 deadline",
+    ],
+    owner: "Bob",
+    deadline: "下週一",
+    risks: ["客戶回覆延遲"],
+    status: "blocked",
+  });
+});
+
 test("runPlannerToolFlow syncs action_layer next_actions into task lifecycle v1 store", async () => {
   resetPlannerRuntimeContext();
   await runPlannerToolFlow({
@@ -2680,7 +2805,7 @@ test("runPlannerToolFlow extracts action layer fields for delivery mixed result"
   assert.deepEqual(result.execution_result?.formatted_output?.action_layer, {
     summary: "負責人：CS Team；截止：本週五；風險：帳號開通延遲；狀態：blocked。",
     next_actions: [
-      "確認 交付後續跟進事項",
+      "優先解除 交付卡點",
       "確認 owner",
       "確認 deadline",
     ],

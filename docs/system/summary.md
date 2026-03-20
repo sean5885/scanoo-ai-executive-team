@@ -26,6 +26,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - binding / session / workspace runtime foundation
 - capability-lane routing for DM / group / doc / knowledge requests
 - closed-loop executive planner with shared multi-turn task state, evidence-based verification, reflection, and agent-to-agent handoff across registered agents
+- bounded planner-side task driving v1 for unfinished / blocked / in-progress tasks, using local JSON task snapshots to suggest next steps, unblock actions, and minimal action-layer reminders without changing public planner contracts
 - lane-specific execution strategies for DM / group / doc / knowledge requests
 - structured runtime logging for long-connection event handling and doc resolution debugging
 - prompt-budget governance, external workflow checkpoints, and tool-output compression for AI-heavy paths
