@@ -4,7 +4,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 ## Purpose
 
-This document aligns the `company_brain_agent` spec in [agent_spec.md](/Users/seanhan/Documents/Playground/docs/system/agent_spec.md) with the currently checked-in company-brain read-side runtime.
+This document aligns the `company_brain_agent` spec in [agent_spec.md](/Users/seanhan/Documents/Playground/docs/system/agent_spec.md) with the currently checked-in company-brain read-side runtime and its bounded learning sidecar actions.
 
 It is an alignment document:
 
@@ -17,6 +17,8 @@ It is an alignment document:
 Current runtime anchor points:
 
 - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
+- `/Users/seanhan/Documents/Playground/src/company-brain-learning.mjs`
+- `/Users/seanhan/Documents/Playground/src/company-brain-query.mjs`
 - `/Users/seanhan/Documents/Playground/src/rag-repository.mjs`
 - `/Users/seanhan/Documents/Playground/src/db.mjs`
 
@@ -25,10 +27,17 @@ Current read-side company-brain runtime already exists through these routes:
 - `GET /api/company-brain/docs`
 - `GET /api/company-brain/docs/:doc_id`
 - `GET /api/company-brain/search?q=...`
+- `GET /agent/company-brain/docs`
+- `GET /agent/company-brain/search`
+- `GET /agent/company-brain/docs/:doc_id`
+- `POST /agent/company-brain/learning/ingest`
+- `POST /agent/company-brain/learning/state`
 
 Current data source:
 
 - `company_brain_docs`
+- mirrored `lark_documents.raw_text` for summary/search enrichment
+- optional `company_brain_learning_state` for planner-side learned summaries/concepts/tags
 
 This means `company_brain_agent` currently maps to a narrow read-oriented route/repository capability layer, not to an independent long-running agent process.
 
@@ -37,8 +46,11 @@ This means `company_brain_agent` currently maps to a narrow read-oriented route/
 `company_brain_agent` currently aligns to the following responsibilities:
 
 - list verified document mirrors from `company_brain_docs`
-- search company-brain records by `title` / `doc_id`
+- search company-brain records by `title` / `doc_id` with a basic semantic-lite ranking pass
 - fetch detail for one mirrored document by `doc_id`
+- derive planner-safe structured summaries from mirrored document text
+- ingest a mirrored document into a simplified learning sidecar
+- update simplified per-document learning state
 - provide bounded read results back to planner/runtime callers
 
 ## In Scope
@@ -48,7 +60,10 @@ Already in scope today:
 - company-brain docs list
 - company-brain doc detail
 - company-brain search
+- planner-facing structured summary shaping
+- planner-facing unified query envelope `{ success, data, error }`
 - read-only access to verified mirror records
+- bounded per-doc learning-state writes that stay outside approval/governance admission
 - bounded route-level error handling for:
   - `invalid_query`
   - `not_found`
@@ -65,6 +80,7 @@ Still out of scope for current runtime:
 - direct Feishu write orchestration
 - independent knowledge synthesis engine
 - autonomous company-brain worker/runtime
+- approval-governed long-term memory promotion
 
 ## Input Shape
 
@@ -97,7 +113,7 @@ Current effective input shapes are:
 
 ## Output Shape
 
-Current list/detail/search outputs are all route-shaped, with the minimal item schema:
+Public `/api/company-brain/*` outputs remain route-shaped, with the minimal item schema:
 
 ```json
 {
@@ -112,48 +128,72 @@ Current list/detail/search outputs are all route-shaped, with the minimal item s
 }
 ```
 
-### list/search wrapper shape
+Planner-facing `/agent/company-brain/*` outputs now normalize their query payload under:
+
+```json
+{
+  "success": "boolean",
+  "data": "object",
+  "error": "string|null"
+}
+```
+
+Planner/runtime still receives the existing bounded wrapper:
 
 ```json
 {
   "ok": "boolean",
   "action": "string",
-  "total": "number",
-  "items": "array",
+  "data": {
+    "success": "boolean",
+    "data": "object",
+    "error": "string|null"
+  },
   "trace_id": "string|null"
 }
 ```
 
-### detail wrapper shape
+Planner-facing `data` is summary-oriented:
 
-```json
-{
-  "ok": "boolean",
-  "action": "string",
-  "item": "object|null",
-  "trace_id": "string|null"
-}
-```
+- list:
+  - `total`
+  - `items[]`
+  - each item includes `summary` and `learning_state`
+- search:
+  - `q`
+  - `total`
+  - `items[]`
+  - each item includes `summary`, `learning_state`, and `match`
+- detail:
+  - `doc`
+  - `summary`
+- learning write actions return:
+  - `doc`
+  - `learning_state`
+
+The planner-facing summary never returns raw full text.
 
 ## Handoff Behavior
 
 Current practical handoff behavior:
 
 - planner/runtime may hand off a bounded read request to company-brain routes
-- this is currently implemented as direct route dispatch, not as a separate handoff runtime module
+- this is currently implemented as direct route dispatch plus a small internal query module, not as a separate handoff runtime module
 
 Minimum handoff-compatible request types today:
 
 - list company-brain docs
 - search company-brain docs
 - get company-brain doc detail
+- ingest learning doc
+- update learning state
 
 Requests that should stay with planner instead of company-brain handoff:
 
 - create document
 - document lifecycle query/retry
 - runtime info
-- any write path
+- any write path outside the bounded learning sidecar actions above
 
 ## Stop / Escalation Behavior
 
@@ -236,14 +276,14 @@ This means:
 
 - standalone `company_brain_agent` runtime wrapper
 - dedicated handoff/escalation runtime objects
-- richer knowledge reasoning or summarization behavior inside company-brain agent
+- richer knowledge reasoning beyond deterministic structured-summary extraction
 
 ## Next Refactor Targets
 
 Most reasonable next refactor targets:
 
-1. extract company-brain read route/repository logic into a clearer internal company-brain runtime boundary
-2. align planner dispatch and company-brain route results to one more explicit handoff shape
-3. add explicit trace/log event alignment for company-brain read-side operations
+1. improve semantic ranking beyond the current lightweight local-token/cosine pass
+2. add explicit trace/log event alignment for company-brain read-side operations
+3. decide whether public `/api/company-brain/*` should eventually expose the same structured summary shape
 
 These are future refactor goals only; they are not fully implemented today.

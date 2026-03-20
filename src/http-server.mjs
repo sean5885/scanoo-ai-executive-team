@@ -11,6 +11,10 @@ import {
   listCompanyBrainDocsAction,
   searchCompanyBrainDocsAction,
 } from "./company-brain-query.mjs";
+import {
+  ingestLearningDocAction,
+  updateLearningStateAction,
+} from "./company-brain-learning.mjs";
 import { resolveLarkBindingRuntime } from "./binding-runtime.mjs";
 import {
   buildAuthorizeUrl,
@@ -2260,6 +2264,68 @@ async function handleAgentGetCompanyBrainDocDetail(res, requestUrl, body, logger
   });
 
   jsonResponse(res, statusCode, buildCompanyBrainAgentResult(res, "get_company_brain_doc_detail", result));
+}
+
+async function handleAgentIngestLearningDoc(res, requestUrl, body, logger = noopHttpLogger) {
+  const context = await resolveCompanyBrainReadContext(res, requestUrl, body, logger);
+  if (!context) {
+    return;
+  }
+
+  const docId = parseCompanyBrainDocId(requestUrl, body);
+  const result = ingestLearningDocAction({
+    accountId: context.account.id,
+    docId,
+  });
+  const statusCode = result.success === true
+    ? 200
+    : result.error === "not_found"
+      ? 404
+      : 400;
+
+  logger.info("company_brain_learning", {
+    stage: "company_brain_learning",
+    action: "ingest_learning_doc",
+    account_id: context.account.id,
+    doc_id: docId || null,
+    ok: result.success === true,
+    status_code: statusCode,
+  });
+
+  jsonResponse(res, statusCode, buildCompanyBrainAgentResult(res, "ingest_learning_doc", result));
+}
+
+async function handleAgentUpdateLearningState(res, requestUrl, body, logger = noopHttpLogger) {
+  const context = await resolveCompanyBrainReadContext(res, requestUrl, body, logger);
+  if (!context) {
+    return;
+  }
+
+  const docId = parseCompanyBrainDocId(requestUrl, body);
+  const result = updateLearningStateAction({
+    accountId: context.account.id,
+    docId,
+    status: body?.status,
+    notes: body?.notes,
+    tags: Array.isArray(body?.tags) ? body.tags : null,
+    key_concepts: Array.isArray(body?.key_concepts) ? body.key_concepts : null,
+  });
+  const statusCode = result.success === true
+    ? 200
+    : result.error === "not_found"
+      ? 404
+      : 400;
+
+  logger.info("company_brain_learning", {
+    stage: "company_brain_learning",
+    action: "update_learning_state",
+    account_id: context.account.id,
+    doc_id: docId || null,
+    ok: result.success === true,
+    status_code: statusCode,
+  });
+
+  jsonResponse(res, statusCode, buildCompanyBrainAgentResult(res, "update_learning_state", result));
 }
 
 async function handleAgentRuntimeInfo(res, requestUrl, body, logger = noopHttpLogger) {
@@ -4539,6 +4605,20 @@ export function startHttpServer({ logger = console, port = oauthPort, listen = t
       if (requestUrl.pathname === "/agent/company-brain/search" && req.method === "GET") {
         await runHttpRoute(requestLogger, "agent_company_brain_search", (routeLogger) =>
           handleAgentSearchCompanyBrainDocs(res, requestUrl, body, routeLogger)
+        );
+        return;
+      }
+
+      if (requestUrl.pathname === "/agent/company-brain/learning/ingest" && req.method === "POST") {
+        await runHttpRoute(requestLogger, "agent_company_brain_learning_ingest", (routeLogger) =>
+          handleAgentIngestLearningDoc(res, requestUrl, body, routeLogger)
+        );
+        return;
+      }
+
+      if (requestUrl.pathname === "/agent/company-brain/learning/state" && req.method === "POST") {
+        await runHttpRoute(requestLogger, "agent_company_brain_learning_update", (routeLogger) =>
+          handleAgentUpdateLearningState(res, requestUrl, body, routeLogger)
         );
         return;
       }

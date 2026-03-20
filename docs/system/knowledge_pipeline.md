@@ -36,6 +36,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - lifecycle rows can be queried from `/api/doc/lifecycle?status=...`, and only `index_failed` / `verify_failed` may be retried through `/api/doc/lifecycle/retry`
 - `/api/doc/lifecycle/summary` returns the current count of each tracked lifecycle status for one account
 - when an API-created doc reaches `status=verified`, a non-blocking mirror row is also upserted into `company_brain_docs` with `{ doc_id, title, source, created_at, creator }`; this is still only a minimal ingestion surface, not a full company-brain governance layer
+- planner/runtime can now additionally create a simplified learned sidecar row in `company_brain_learning_state`, but only through explicit bounded agent actions; verified mirror ingest alone does not auto-promote documents into learned state
 - the verified-ingest path now also runs a small internal write-intake policy helper:
   - no overlap signal -> direct mirror intake
   - title overlap -> mark review/conflict required for any later stable promotion
@@ -43,6 +44,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - `GET /api/company-brain/docs` can list that minimal mirror with `doc_id`, `title`, `source`, `created_at`, and `creator`
 - `GET /api/company-brain/docs/:doc_id` can fetch one mirrored row with that same minimal shape
 - `GET /api/company-brain/search?q=...` can search that mirror by `title` or `doc_id`, still returning the same minimal item shape
+- planner-facing search/detail/list can now also read `learning_state`, and planner-facing search can match learned `key_concepts` / `tags`
 - text chunks are stored in:
   - `lark_chunks`
   - `lark_chunks_fts`
@@ -96,3 +98,4 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - no company-brain canonical layer
 - no source-of-truth approval governance for knowledge ingestion
 - no full Bitable/Sheet content extraction into retrieval index
+- no approval-governed learned-memory promotion path; current learning store is only a simplified sidecar

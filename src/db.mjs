@@ -120,6 +120,24 @@ function initializeDb(db) {
   CREATE INDEX IF NOT EXISTS idx_company_brain_docs_account_id
   ON company_brain_docs(account_id, updated_at DESC);
 
+  CREATE TABLE IF NOT EXISTS company_brain_learning_state (
+    account_id TEXT NOT NULL,
+    doc_id TEXT NOT NULL,
+    learning_status TEXT NOT NULL,
+    structured_summary_json TEXT NOT NULL,
+    key_concepts_json TEXT NOT NULL,
+    tags_json TEXT NOT NULL,
+    notes TEXT,
+    learned_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (account_id, doc_id),
+    FOREIGN KEY (account_id) REFERENCES lark_accounts(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_company_brain_learning_state_account_id
+  ON company_brain_learning_state(account_id, learning_status, updated_at DESC);
+
   CREATE TABLE IF NOT EXISTS lark_chunks (
     id TEXT PRIMARY KEY,
     document_id TEXT NOT NULL,

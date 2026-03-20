@@ -2566,6 +2566,9 @@ test("runPlannerToolFlow returns explicit not-found output when search_and_detai
     items: [],
     match_reason: "搜尋不存在的流程並解釋",
     content_summary: null,
+    learning_status: null,
+    learning_concepts: [],
+    learning_tags: [],
     found: false,
   });
   resetPlannerRuntimeContext();

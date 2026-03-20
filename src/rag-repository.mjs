@@ -336,6 +336,85 @@ export function upsertCompanyBrainDoc({ account_id, doc_id, title, source, creat
     .get(account_id, doc_id) || null;
 }
 
+export function getCompanyBrainLearningState(accountId, docId) {
+  return db.prepare(`
+    SELECT
+      account_id,
+      doc_id,
+      learning_status,
+      structured_summary_json,
+      key_concepts_json,
+      tags_json,
+      notes,
+      learned_at,
+      created_at,
+      updated_at AS learning_updated_at
+    FROM company_brain_learning_state
+    WHERE account_id = ?
+      AND doc_id = ?
+    LIMIT 1
+  `).get(accountId, docId) || null;
+}
+
+export function upsertCompanyBrainLearningState({
+  account_id,
+  doc_id,
+  learning_status,
+  structured_summary,
+  key_concepts,
+  tags,
+  notes = "",
+  learned_at = null,
+}) {
+  const timestamp = nowIso();
+  db.prepare(`
+    INSERT INTO company_brain_learning_state (
+      account_id,
+      doc_id,
+      learning_status,
+      structured_summary_json,
+      key_concepts_json,
+      tags_json,
+      notes,
+      learned_at,
+      created_at,
+      updated_at
+    ) VALUES (
+      @account_id,
+      @doc_id,
+      @learning_status,
+      @structured_summary_json,
+      @key_concepts_json,
+      @tags_json,
+      @notes,
+      @learned_at,
+      @created_at,
+      @updated_at
+    )
+    ON CONFLICT(account_id, doc_id) DO UPDATE SET
+      learning_status = excluded.learning_status,
+      structured_summary_json = excluded.structured_summary_json,
+      key_concepts_json = excluded.key_concepts_json,
+      tags_json = excluded.tags_json,
+      notes = excluded.notes,
+      learned_at = excluded.learned_at,
+      updated_at = excluded.updated_at
+  `).run({
+    account_id,
+    doc_id,
+    learning_status,
+    structured_summary_json: JSON.stringify(structured_summary || {}),
+    key_concepts_json: JSON.stringify(Array.isArray(key_concepts) ? key_concepts : []),
+    tags_json: JSON.stringify(Array.isArray(tags) ? tags : []),
+    notes: notes || "",
+    learned_at: learned_at || null,
+    created_at: timestamp,
+    updated_at: timestamp,
+  });
+
+  return getCompanyBrainLearningState(account_id, doc_id);
+}
+
 // Keep read-side field selection and query execution centralized so the
 // list/detail/search routes stay aligned while Phase 1 only improves clarity.
 const companyBrainDocReadFields = `
@@ -353,6 +432,13 @@ const companyBrainDocQueryFields = `
   cb.created_at,
   cb.creator_json,
   cb.updated_at,
+  cls.learning_status,
+  cls.structured_summary_json,
+  cls.key_concepts_json,
+  cls.tags_json,
+  cls.notes,
+  cls.learned_at,
+  cls.updated_at AS learning_updated_at,
   d.raw_text,
   d.url,
   d.parent_path
@@ -381,6 +467,9 @@ function buildCompanyBrainQuerySelectSql(whereClause, suffix = "") {
     SELECT
       ${companyBrainDocQueryFields}
     FROM company_brain_docs cb
+    LEFT JOIN company_brain_learning_state cls
+      ON cls.account_id = cb.account_id
+      AND cls.doc_id = cb.doc_id
     LEFT JOIN lark_documents d
       ON d.account_id = cb.account_id
       AND d.document_id = cb.doc_id

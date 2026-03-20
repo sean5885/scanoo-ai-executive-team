@@ -46,6 +46,9 @@ function buildPlannerFormattedOutput({
   items = [],
   matchReason = "",
   contentSummary = "",
+  learningStatus = "",
+  learningConcepts = [],
+  learningTags = [],
   found = null,
 } = {}) {
   return {
@@ -55,6 +58,9 @@ function buildPlannerFormattedOutput({
     items: Array.isArray(items) ? items : [],
     match_reason: cleanText(matchReason) || null,
     content_summary: cleanText(contentSummary) || null,
+    learning_status: cleanText(learningStatus) || null,
+    learning_concepts: Array.isArray(learningConcepts) ? learningConcepts.map((item) => cleanText(item)).filter(Boolean) : [],
+    learning_tags: Array.isArray(learningTags) ? learningTags.map((item) => cleanText(item)).filter(Boolean) : [],
     found: typeof found === "boolean" ? found : null,
   };
 }
@@ -214,6 +220,18 @@ function extractCompanyBrainDetailDoc(executionResult = null) {
     return payload.item;
   }
   return executionResult?.item || payload || executionResult?.data || executionResult || null;
+}
+
+function extractCompanyBrainLearningState(executionResult = null) {
+  const payload = extractCompanyBrainPayload(executionResult);
+  if (payload?.learning_state && typeof payload.learning_state === "object" && !Array.isArray(payload.learning_state)) {
+    return payload.learning_state;
+  }
+  const detailDoc = extractCompanyBrainDetailDoc(executionResult);
+  if (detailDoc?.learning_state && typeof detailDoc.learning_state === "object" && !Array.isArray(detailDoc.learning_state)) {
+    return detailDoc.learning_state;
+  }
+  return null;
 }
 
 function extractPlannerCandidatesFromResult(selectedAction = "", executionResult = null) {
@@ -424,6 +442,7 @@ export async function formatDocQueryExecutionResult({
   if (normalizedAction === "get_company_brain_doc_detail") {
     const detailItem = extractCompanyBrainDetailDoc(executionResult);
     const detailPayload = extractCompanyBrainPayload(executionResult);
+    const learningState = extractCompanyBrainLearningState(executionResult);
     const docId = cleanText(detailItem?.doc_id);
     const title = cleanText(detailItem?.title);
     const contentResult = await contentReader({
@@ -437,6 +456,9 @@ export async function formatDocQueryExecutionResult({
       contentSummary: cleanText(detailPayload?.summary?.overview)
         || cleanText(detailPayload?.summary?.snippet)
         || summarizePlannerDocumentContent(contentResult?.content || ""),
+      learningStatus: cleanText(learningState?.status) || null,
+      learningConcepts: Array.isArray(learningState?.key_concepts) ? learningState.key_concepts : [],
+      learningTags: Array.isArray(learningState?.tags) ? learningState.tags : [],
       found: Boolean(docId),
     }));
     logDocQueryTrace(logger, buildDocQueryTraceEvent({
@@ -467,6 +489,7 @@ export async function formatDocQueryExecutionResult({
     const searchItem = searchItems[0] || null;
     const detailItem = extractCompanyBrainDetailDoc(detailResult) || searchItem || null;
     const detailPayload = extractCompanyBrainPayload(detailResult);
+    const learningState = extractCompanyBrainLearningState(detailResult) || searchItem?.learning_state || null;
 
     if (!detailResult && searchItems.length === 0) {
       const result = withFormattedOutput(executionResult, buildPlannerFormattedOutput({
@@ -527,6 +550,9 @@ export async function formatDocQueryExecutionResult({
       contentSummary: cleanText(detailPayload?.summary?.overview)
         || cleanText(detailPayload?.summary?.snippet)
         || summarizePlannerDocumentContent(contentResult?.content || ""),
+      learningStatus: cleanText(learningState?.status) || null,
+      learningConcepts: Array.isArray(learningState?.key_concepts) ? learningState.key_concepts : [],
+      learningTags: Array.isArray(learningState?.tags) ? learningState.tags : [],
       found: Boolean(docId),
     }));
     logDocQueryTrace(logger, buildDocQueryTraceEvent({

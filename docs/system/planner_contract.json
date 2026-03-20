@@ -85,7 +85,7 @@
                     "type": "array",
                     "items": {
                       "type": "object",
-                      "required": ["doc_id", "title", "source", "created_at", "creator", "summary"],
+                      "required": ["doc_id", "title", "source", "created_at", "creator", "summary", "learning_state"],
                       "properties": {
                         "doc_id": { "type": "string" },
                         "title": { "type": "string" },
@@ -108,6 +108,29 @@
                             "highlights": { "type": "array" },
                             "snippet": { "type": "string" },
                             "content_length": { "type": "number" }
+                          }
+                        },
+                        "learning_state": {
+                          "type": "object",
+                          "required": ["status", "structured_summary", "key_concepts", "tags", "notes", "learned_at", "updated_at"],
+                          "properties": {
+                            "status": { "type": "string" },
+                            "structured_summary": {
+                              "type": "object",
+                              "required": ["overview", "headings", "highlights", "snippet", "content_length"],
+                              "properties": {
+                                "overview": { "type": "string" },
+                                "headings": { "type": "array" },
+                                "highlights": { "type": "array" },
+                                "snippet": { "type": "string" },
+                                "content_length": { "type": "number" }
+                              }
+                            },
+                            "key_concepts": { "type": "array" },
+                            "tags": { "type": "array" },
+                            "notes": { "type": "string" },
+                            "learned_at": { "type": ["string", "null"] },
+                            "updated_at": { "type": ["string", "null"] }
                           }
                         }
                       }
@@ -156,7 +179,7 @@
                     "type": "array",
                     "items": {
                       "type": "object",
-                      "required": ["doc_id", "title", "source", "created_at", "creator", "summary", "match"],
+                      "required": ["doc_id", "title", "source", "created_at", "creator", "summary", "learning_state", "match"],
                       "properties": {
                         "doc_id": { "type": "string" },
                         "title": { "type": "string" },
@@ -179,6 +202,29 @@
                             "highlights": { "type": "array" },
                             "snippet": { "type": "string" },
                             "content_length": { "type": "number" }
+                          }
+                        },
+                        "learning_state": {
+                          "type": "object",
+                          "required": ["status", "structured_summary", "key_concepts", "tags", "notes", "learned_at", "updated_at"],
+                          "properties": {
+                            "status": { "type": "string" },
+                            "structured_summary": {
+                              "type": "object",
+                              "required": ["overview", "headings", "highlights", "snippet", "content_length"],
+                              "properties": {
+                                "overview": { "type": "string" },
+                                "headings": { "type": "array" },
+                                "highlights": { "type": "array" },
+                                "snippet": { "type": "string" },
+                                "content_length": { "type": "number" }
+                              }
+                            },
+                            "key_concepts": { "type": "array" },
+                            "tags": { "type": "array" },
+                            "notes": { "type": "string" },
+                            "learned_at": { "type": ["string", "null"] },
+                            "updated_at": { "type": ["string", "null"] }
                           }
                         },
                         "match": {
@@ -229,7 +275,7 @@
               "error": { "type": ["string", "null"] },
               "data": {
                 "type": "object",
-                "required": ["doc", "summary"],
+                "required": ["doc", "summary", "learning_state"],
                 "properties": {
                   "doc": {
                     "type": "object",
@@ -259,6 +305,29 @@
                       "snippet": { "type": "string" },
                       "content_length": { "type": "number" }
                     }
+                  },
+                  "learning_state": {
+                    "type": "object",
+                    "required": ["status", "structured_summary", "key_concepts", "tags", "notes", "learned_at", "updated_at"],
+                    "properties": {
+                      "status": { "type": "string" },
+                      "structured_summary": {
+                        "type": "object",
+                        "required": ["overview", "headings", "highlights", "snippet", "content_length"],
+                        "properties": {
+                          "overview": { "type": "string" },
+                          "headings": { "type": "array" },
+                          "highlights": { "type": "array" },
+                          "snippet": { "type": "string" },
+                          "content_length": { "type": "number" }
+                        }
+                      },
+                      "key_concepts": { "type": "array" },
+                      "tags": { "type": "array" },
+                      "notes": { "type": "string" },
+                      "learned_at": { "type": ["string", "null"] },
+                      "updated_at": { "type": ["string", "null"] }
+                    }
                   }
                 }
               }
@@ -268,6 +337,166 @@
       },
       "error_codes": [
         "planner_tool_missing_doc_id:get_company_brain_doc_detail",
+        "not_found",
+        "missing_user_access_token",
+        "internal_error"
+      ]
+    },
+    "ingest_learning_doc": {
+      "input_schema": {
+        "type": "object",
+        "required": ["doc_id"],
+        "properties": {
+          "doc_id": { "type": "string" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["ok", "action", "trace_id"],
+        "properties": {
+          "ok": { "type": "boolean" },
+          "action": { "type": "string" },
+          "trace_id": { "type": ["string", "null"] },
+          "data": {
+            "type": "object",
+            "required": ["success", "data", "error"],
+            "properties": {
+              "success": { "type": "boolean" },
+              "error": { "type": ["string", "null"] },
+              "data": {
+                "type": "object",
+                "required": ["doc", "learning_state"],
+                "properties": {
+                  "doc": {
+                    "type": "object",
+                    "required": ["doc_id", "title", "source", "created_at", "creator"],
+                    "properties": {
+                      "doc_id": { "type": "string" },
+                      "title": { "type": "string" },
+                      "source": { "type": "string" },
+                      "created_at": { "type": "string" },
+                      "creator": {
+                        "type": "object",
+                        "required": ["account_id", "open_id"],
+                        "properties": {
+                          "account_id": { "type": "string" },
+                          "open_id": { "type": "string" }
+                        }
+                      }
+                    }
+                  },
+                  "learning_state": {
+                    "type": "object",
+                    "required": ["status", "structured_summary", "key_concepts", "tags", "notes", "learned_at", "updated_at"],
+                    "properties": {
+                      "status": { "type": "string" },
+                      "structured_summary": {
+                        "type": "object",
+                        "required": ["overview", "headings", "highlights", "snippet", "content_length"],
+                        "properties": {
+                          "overview": { "type": "string" },
+                          "headings": { "type": "array" },
+                          "highlights": { "type": "array" },
+                          "snippet": { "type": "string" },
+                          "content_length": { "type": "number" }
+                        }
+                      },
+                      "key_concepts": { "type": "array" },
+                      "tags": { "type": "array" },
+                      "notes": { "type": "string" },
+                      "learned_at": { "type": ["string", "null"] },
+                      "updated_at": { "type": ["string", "null"] }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "error_codes": [
+        "not_found",
+        "missing_user_access_token",
+        "internal_error"
+      ]
+    },
+    "update_learning_state": {
+      "input_schema": {
+        "type": "object",
+        "required": ["doc_id"],
+        "properties": {
+          "doc_id": { "type": "string" },
+          "status": { "type": ["string", "null"] },
+          "notes": { "type": ["string", "null"] },
+          "tags": { "type": ["array", "null"] },
+          "key_concepts": { "type": ["array", "null"] }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["ok", "action", "trace_id"],
+        "properties": {
+          "ok": { "type": "boolean" },
+          "action": { "type": "string" },
+          "trace_id": { "type": ["string", "null"] },
+          "data": {
+            "type": "object",
+            "required": ["success", "data", "error"],
+            "properties": {
+              "success": { "type": "boolean" },
+              "error": { "type": ["string", "null"] },
+              "data": {
+                "type": "object",
+                "required": ["doc", "learning_state"],
+                "properties": {
+                  "doc": {
+                    "type": "object",
+                    "required": ["doc_id", "title", "source", "created_at", "creator"],
+                    "properties": {
+                      "doc_id": { "type": "string" },
+                      "title": { "type": "string" },
+                      "source": { "type": "string" },
+                      "created_at": { "type": "string" },
+                      "creator": {
+                        "type": "object",
+                        "required": ["account_id", "open_id"],
+                        "properties": {
+                          "account_id": { "type": "string" },
+                          "open_id": { "type": "string" }
+                        }
+                      }
+                    }
+                  },
+                  "learning_state": {
+                    "type": "object",
+                    "required": ["status", "structured_summary", "key_concepts", "tags", "notes", "learned_at", "updated_at"],
+                    "properties": {
+                      "status": { "type": "string" },
+                      "structured_summary": {
+                        "type": "object",
+                        "required": ["overview", "headings", "highlights", "snippet", "content_length"],
+                        "properties": {
+                          "overview": { "type": "string" },
+                          "headings": { "type": "array" },
+                          "highlights": { "type": "array" },
+                          "snippet": { "type": "string" },
+                          "content_length": { "type": "number" }
+                        }
+                      },
+                      "key_concepts": { "type": "array" },
+                      "tags": { "type": "array" },
+                      "notes": { "type": "string" },
+                      "learned_at": { "type": ["string", "null"] },
+                      "updated_at": { "type": ["string", "null"] }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "error_codes": [
         "not_found",
         "missing_user_access_token",
         "internal_error"

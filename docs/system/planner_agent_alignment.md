@@ -33,6 +33,7 @@ Current minimum runtime responsibilities already implemented there:
 - planner preset execution
 - reusable planner flow interface / registry layer
 - reusable planner-side company-brain doc-query pipeline
+- bounded planner-side company-brain learning ingest/update dispatch
 - action-level input/output contract validation
 - preset-level final output validation
 - normalized fail-soft error handling
@@ -179,6 +180,8 @@ When the invalid item is inside `steps`, the error payload may also carry:
 
 `execution_result` may now also carry an additional `formatted_output` field for successful company-brain read flows; this is a presentation-layer enrichment on top of the raw tool result, not a replacement for the bounded route output.
 
+Successful company-brain detail-like flows may now also expose `learning_status`, `learning_concepts`, and `learning_tags` inside that formatted layer when the underlying doc has learning state.
+
 The planner runtime also now keeps a small in-memory read context:
 
 - `active_doc`
@@ -263,7 +266,7 @@ For company-brain planner actions, `data` now keeps the planner-facing query env
 }
 ```
 
-That query envelope is where structured summaries, search match metadata, and doc detail summaries now live; the public planner wrapper remains unchanged.
+That query envelope is where structured summaries, search match metadata, doc detail summaries, and per-document `learning_state` now live; the public planner wrapper remains unchanged.
 
 Current `runPlannerMultiStep(...)` output:
 

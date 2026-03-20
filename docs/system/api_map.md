@@ -130,14 +130,14 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Handler: `handleAgentListCompanyBrainDocs`
   - Purpose: planner-facing list action over the verified-doc mirror
   - Response shape: `{ ok, action, data, trace_id }`, where `data` keeps a unified `{ success, data, error }` envelope
-  - Data note: result items contain structured `summary`; no raw full text is returned
+  - Data note: result items contain structured `summary` and `learning_state`; no raw full text is returned
   - Log note: emits `stage=agent_bridge`
 
 - `GET /agent/company-brain/search?q=...`
   - Handler: `handleAgentSearchCompanyBrainDocs`
   - Purpose: planner-facing search action with keyword match plus a basic semantic-lite ranking pass
   - Response shape: `{ ok, action, data, trace_id }`, where `data` keeps a unified `{ success, data, error }` envelope
-  - Data note: search items contain structured `summary` and `match`
+  - Data note: search items contain structured `summary`, `learning_state`, and `match`; learned `key_concepts` / `tags` can contribute to planner-facing hits
   - Validation note: empty `q` returns `ok=false` with `error=invalid_query`
   - Log note: emits `stage=agent_bridge`
 
@@ -145,9 +145,23 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Handler: `handleAgentGetCompanyBrainDocDetail`
   - Purpose: planner-facing detail action for one mirrored doc
   - Response shape: `{ ok, action, data, trace_id }`, where `data` keeps a unified `{ success, data, error }` envelope
-  - Data note: detail result returns `{ doc, summary }`; no raw full text is returned
+  - Data note: detail result returns `{ doc, summary, learning_state }`; no raw full text is returned
   - Not-found note: returns `ok=false` with `error=not_found`
   - Log note: emits `stage=agent_bridge`
+
+- `POST /agent/company-brain/learning/ingest`
+  - Handler: `handleAgentIngestLearningDoc`
+  - Purpose: learn one verified company-brain mirror doc into the simplified learning sidecar
+  - Response shape: `{ ok, action, data, trace_id }`, where `data` keeps a unified `{ success, data, error }` envelope
+  - Data note: success returns `{ doc, learning_state }`, where `learning_state` stores deterministic `structured_summary`, `key_concepts`, and `tags`
+  - Boundary note: this is not approved company-brain admission; it only updates the simplified learning sidecar
+
+- `POST /agent/company-brain/learning/state`
+  - Handler: `handleAgentUpdateLearningState`
+  - Purpose: update one mirrored doc's simplified learning state
+  - Response shape: `{ ok, action, data, trace_id }`, where `data` keeps a unified `{ success, data, error }` envelope
+  - Input note: accepts `doc_id` plus optional `status`, `notes`, `tags`, and `key_concepts`
+  - Boundary note: this stays outside approval-governed company-brain memory admission
 
 - `POST /api/doc/lifecycle/retry`
   - Handler: `handleDocumentLifecycleRetry`
