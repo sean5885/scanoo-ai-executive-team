@@ -69,6 +69,18 @@ Recommended release-demo verification:
 node scripts/demo-release-v1.mjs quick
 ```
 
+The demo runner now prints each executed command with a stable operator-facing structure:
+
+- `Step`: the current verification/demo stage name
+- `Command`: the exact child command being executed
+- `Result`: `PASS` or `FAIL` with elapsed time
+- `Summary`: compact step-specific highlights
+  - self-check: system/agent/route/service counts
+  - Node test runs: tests/pass/fail/duration
+- `Error`: only on failure, with explicit exit code and the most relevant output tail
+
+This output change is presentation-only. It does not change release verification commands, test coverage, or the underlying success/failure semantics of the frozen `v1.0.0` baseline.
+
 Optional live tenant validation:
 
 ```bash
