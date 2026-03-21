@@ -38,6 +38,9 @@ Current data source:
 - `company_brain_docs`
 - mirrored `lark_documents.raw_text` for summary/search enrichment
 - optional `company_brain_learning_state` for planner-side learned summaries/concepts/tags
+- internal-only review/approval persistence:
+  - `company_brain_review_state`
+  - `company_brain_approved_knowledge`
 
 This means `company_brain_agent` currently maps to a narrow read-oriented route/repository capability layer, not to an independent long-running agent process.
 
@@ -46,7 +49,7 @@ This means `company_brain_agent` currently maps to a narrow read-oriented route/
 `company_brain_agent` currently aligns to the following responsibilities:
 
 - list verified document mirrors from `company_brain_docs`
-- search company-brain records by `title` / `doc_id` with a basic semantic-lite ranking pass
+- search company-brain records by `title` / `doc_id` with a composite ranking pass over keyword match, semantic-lite similarity, learning tags/key concepts, and recency
 - fetch detail for one mirrored document by `doc_id`
 - derive planner-safe structured summaries from mirrored document text
 - ingest a mirrored document into a simplified learning sidecar
@@ -76,11 +79,11 @@ Still out of scope for current runtime:
 - direct document creation
 - document lifecycle control
 - verifier ownership
-- write approval logic
+- standalone write approval runtime
 - direct Feishu write orchestration
 - independent knowledge synthesis engine
 - autonomous company-brain worker/runtime
-- approval-governed long-term memory promotion
+- planner-facing approval-governed long-term memory routes
 
 ## Input Shape
 
@@ -107,7 +110,8 @@ Current effective input shapes are:
 ```json
 {
   "q": "string",
-  "limit": "number|null"
+  "limit": "number|null",
+  "top_k": "number|null"
 }
 ```
 
@@ -161,9 +165,11 @@ Planner-facing `data` is summary-oriented:
   - each item includes `summary` and `learning_state`
 - search:
   - `q`
+  - `top_k`
   - `total`
   - `items[]`
   - each item includes `summary`, `learning_state`, and `match`
+  - `match` now carries composite `score`, per-signal component scores, and simplified `ranking_basis`
 - detail:
   - `doc`
   - `summary`
@@ -179,6 +185,7 @@ Current practical handoff behavior:
 
 - planner/runtime may hand off a bounded read request to company-brain routes
 - this is currently implemented as direct route dispatch plus a small internal query module, not as a separate handoff runtime module
+- detail-like planner presets still derive the follow-up `doc_id` from the ranked search result order, so higher-weight documents are preferred before detail fetch when the search side can safely narrow to one candidate
 
 Minimum handoff-compatible request types today:
 
@@ -194,6 +201,7 @@ Requests that should stay with planner instead of company-brain handoff:
 - document lifecycle query/retry
 - runtime info
 - any write path outside the bounded learning sidecar actions above
+- helper-driven review/approval promotion, which currently exists only as an internal persistence boundary
 
 ## Stop / Escalation Behavior
 

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import db from "../src/db.mjs";
+import { updateLearningStateAction } from "../src/company-brain-learning.mjs";
 import {
   getCompanyBrainDocDetailAction,
   searchCompanyBrainDocsAction,
@@ -33,8 +34,12 @@ function insertDocFixture({
   title,
   rawText,
   source = "api",
+  createdAt = null,
+  updatedAt = null,
 }) {
   const timestamp = new Date().toISOString();
+  const effectiveCreatedAt = createdAt || timestamp;
+  const effectiveUpdatedAt = updatedAt || effectiveCreatedAt;
   db.prepare(`
     INSERT INTO lark_documents (
       id, account_id, source_id, source_type, external_key, external_id, file_token, node_id,
@@ -64,9 +69,9 @@ function insertDocFixture({
     title,
     url: `https://larksuite.com/docx/${docId}`,
     raw_text: rawText,
-    synced_at: timestamp,
-    created_at: timestamp,
-    updated_at: timestamp,
+    synced_at: effectiveUpdatedAt,
+    created_at: effectiveCreatedAt,
+    updated_at: effectiveUpdatedAt,
   });
 
   db.prepare(`
@@ -86,16 +91,17 @@ function insertDocFixture({
     doc_id: docId,
     title,
     source,
-    created_at: timestamp,
+    created_at: effectiveCreatedAt,
     creator_json: JSON.stringify({
       account_id: accountId,
       open_id: `ou_test_${accountId}`,
     }),
-    updated_at: timestamp,
+    updated_at: effectiveUpdatedAt,
   });
 }
 
 function cleanupAccountFixtures(accountId) {
+  db.prepare("DELETE FROM company_brain_learning_state WHERE account_id = ?").run(accountId);
   db.prepare("DELETE FROM company_brain_docs WHERE account_id = ?").run(accountId);
   db.prepare("DELETE FROM lark_documents WHERE account_id = ?").run(accountId);
   db.prepare("DELETE FROM lark_sources WHERE account_id = ?").run(accountId);
@@ -137,6 +143,132 @@ test("searchCompanyBrainDocsAction hits matching docs and returns structured sum
     ]);
     assert.equal(Array.isArray(result.data.items[0].summary.highlights), true);
     assert.equal(result.data.items[0].match.score > 0, true);
+    assert.equal(result.data.top_k, 5);
+    assert.equal(result.data.items[0].match.keyword_score > 0, true);
+    assert.equal(result.data.items[0].match.recency_score > 0, true);
+    assert.equal(Array.isArray(result.data.items[0].match.ranking_basis), true);
+    assert.equal(result.data.items[0].match.ranking_basis.length > 0, true);
+  } finally {
+    cleanupAccountFixtures(accountId);
+  }
+});
+
+test("searchCompanyBrainDocsAction ranking weights can change document order", () => {
+  const accountId = `acct_company_brain_weighted_rank_${Date.now()}`;
+  ensureTestAccount(accountId);
+
+  const oldTimestamp = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString();
+  const recentTimestamp = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+
+  insertDocFixture({
+    accountId,
+    docId: "doc_company_brain_rank_keyword",
+    title: "Launch Handoff Guide",
+    rawText: [
+      "# Launch Handoff Guide",
+      "Launch handoff checklist, owner map, and rollout steps.",
+    ].join("\n"),
+    createdAt: oldTimestamp,
+    updatedAt: oldTimestamp,
+  });
+  insertDocFixture({
+    accountId,
+    docId: "doc_company_brain_rank_learning",
+    title: "Executive Notes",
+    rawText: [
+      "# Executive Notes",
+      "Weekly execution review without the target keywords in title or body.",
+    ].join("\n"),
+    createdAt: recentTimestamp,
+    updatedAt: recentTimestamp,
+  });
+
+  try {
+    const updateResult = updateLearningStateAction({
+      accountId,
+      docId: "doc_company_brain_rank_learning",
+      status: "learned",
+      tags: ["launch handoff"],
+      key_concepts: ["launch handoff operating model"],
+      notes: "Learning metadata should be able to outrank old keyword-only docs when weighted higher.",
+    });
+    assert.equal(updateResult.success, true);
+
+    const keywordFirst = searchCompanyBrainDocsAction({
+      accountId,
+      q: "launch handoff",
+      top_k: 2,
+      ranking_weights: {
+        keyword: 1,
+        semantic_lite: 0,
+        learning: 0,
+        recency: 0,
+      },
+    });
+    assert.equal(keywordFirst.success, true);
+    assert.deepEqual(keywordFirst.data.items.map((item) => item.doc_id), [
+      "doc_company_brain_rank_keyword",
+      "doc_company_brain_rank_learning",
+    ]);
+
+    const learningFirst = searchCompanyBrainDocsAction({
+      accountId,
+      q: "launch handoff",
+      top_k: 2,
+      ranking_weights: {
+        keyword: 0,
+        semantic_lite: 0,
+        learning: 1,
+        recency: 0.5,
+      },
+    });
+    assert.equal(learningFirst.success, true);
+    assert.deepEqual(learningFirst.data.items.map((item) => item.doc_id), [
+      "doc_company_brain_rank_learning",
+      "doc_company_brain_rank_keyword",
+    ]);
+    assert.equal(learningFirst.data.items[0].match.learning_score > 0, true);
+    assert.equal(learningFirst.data.items[0].match.recency_score >= learningFirst.data.items[1].match.recency_score, true);
+  } finally {
+    cleanupAccountFixtures(accountId);
+  }
+});
+
+test("searchCompanyBrainDocsAction applies top_k and defaults to 5", () => {
+  const accountId = `acct_company_brain_top_k_${Date.now()}`;
+  ensureTestAccount(accountId);
+
+  try {
+    for (let index = 0; index < 6; index += 1) {
+      const timestamp = new Date(Date.now() - index * 60 * 1000).toISOString();
+      insertDocFixture({
+        accountId,
+        docId: `doc_company_brain_top_k_${index + 1}`,
+        title: `Retention Handoff Playbook ${index + 1}`,
+        rawText: `Retention handoff checklist version ${index + 1}.`,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    }
+
+    const defaultResult = searchCompanyBrainDocsAction({
+      accountId,
+      q: "retention handoff",
+    });
+    assert.equal(defaultResult.success, true);
+    assert.equal(defaultResult.data.top_k, 5);
+    assert.equal(defaultResult.data.total, 5);
+    assert.equal(defaultResult.data.items.length, 5);
+
+    const limitedResult = searchCompanyBrainDocsAction({
+      accountId,
+      q: "retention handoff",
+      top_k: 2,
+    });
+    assert.equal(limitedResult.success, true);
+    assert.equal(limitedResult.data.top_k, 2);
+    assert.equal(limitedResult.data.total, 2);
+    assert.equal(limitedResult.data.items.length, 2);
   } finally {
     cleanupAccountFixtures(accountId);
   }

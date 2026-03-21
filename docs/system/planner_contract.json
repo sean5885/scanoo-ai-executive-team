@@ -153,7 +153,8 @@
         "required": ["q"],
         "properties": {
           "q": { "type": "string" },
-          "limit": { "type": ["number", "string", "null"] }
+          "limit": { "type": ["number", "string", "null"] },
+          "top_k": { "type": ["number", "string", "null"] }
         }
       },
       "output_schema": {
@@ -174,6 +175,7 @@
                 "required": ["q", "total", "items"],
                 "properties": {
                   "q": { "type": "string" },
+                  "top_k": { "type": "number" },
                   "total": { "type": "number" },
                   "items": {
                     "type": "array",
@@ -234,7 +236,10 @@
                             "type": { "type": "string" },
                             "keyword_score": { "type": "number" },
                             "semantic_score": { "type": "number" },
-                            "score": { "type": "number" }
+                            "learning_score": { "type": "number" },
+                            "recency_score": { "type": "number" },
+                            "score": { "type": "number" },
+                            "ranking_basis": { "type": "array" }
                           }
                         }
                       }

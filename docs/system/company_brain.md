@@ -9,6 +9,9 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `company_brain_docs`
 - A separate simplified learning sidecar table now also exists:
   - `company_brain_learning_state`
+- A minimal review/approval persistence layer now also exists:
+  - `company_brain_review_state`
+  - `company_brain_approved_knowledge`
 - This table is only populated by verified API-created documents from `/Users/seanhan/Documents/Playground/src/http-server.mjs`.
 
 ## Storage Location
@@ -36,20 +39,32 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
     - centralizes planner-facing list/search/detail actions
     - joins `company_brain_docs` with mirrored `lark_documents.raw_text`
     - joins optional `company_brain_learning_state`
-    - lets planner-side search rank against learned `key_concepts` / `tags` in addition to title/raw text
+    - lets planner-side search rank with a composite score over keyword match, semantic-lite similarity, learned `key_concepts` / `tags`, and document recency from mirror timestamps
+    - supports `top_k` search limiting with a default of `5` while keeping `limit` as a compatibility alias
     - returns unified `{ success, data, error }` payloads
     - keeps results as structured summaries instead of raw full text
   - `/Users/seanhan/Documents/Playground/src/company-brain-learning.mjs`
     - derives deterministic `structured_summary`, `key_concepts`, and `tags`
     - writes simplified per-doc `learning_state`
     - does not perform approval/governance admission
+  - `/Users/seanhan/Documents/Playground/src/company-brain-review.mjs`
+    - persists bounded per-doc review state with:
+      - `pending_review`
+      - `conflict_detected`
+      - `approved`
+      - `rejected`
+    - promotes only `approved` review results into `company_brain_approved_knowledge`
+    - keeps approval storage separate from both mirror and learning sidecar
+  - `/Users/seanhan/Documents/Playground/src/company-brain-query.mjs`
+    - now also exposes internal approved-knowledge query actions that only read from `company_brain_approved_knowledge`
+    - keeps the existing mirror read-side actions unchanged
 
 ## Completeness
 
 - Minimal only.
 - It stores a verified-doc mirror, not a canonical memory graph or approval-governed knowledge layer.
 - the learning sidecar is also minimal; it is not approved long-term memory
-- intake classification now exists, but formal approval/governance still does not.
+- review/approval persistence now exists, but there is still no standalone approval runtime, company-brain-owned verifier, or human review UI
 - Public list/detail/search routes only return:
   - `doc_id`
   - `title`
@@ -59,8 +74,9 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - Planner-facing agent routes additionally return:
   - structured `summary`
   - `learning_state`
-  - search-time `match` metadata
+  - search-time `match` metadata including composite `score` plus simplified `ranking_basis`
   - no raw full-text body
+- approved knowledge is now stored separately and can only be queried through the new approved-only internal query boundary after explicit review approval
 
 ## Knowledge Sources That Do Exist
 
@@ -83,4 +99,4 @@ Observed sources:
 
 ## Conclusion
 
-At scan time, this repo still does not have a full company_brain governance system. It now has a small `company_brain_docs` mirror for verified API-created docs and a separate simplified `company_brain_learning_state` sidecar for planner-facing learning metadata, but retrieval knowledge and lifecycle/indexing remain the primary implemented layers.
+At scan time, this repo still does not have a full company_brain governance system. It now has a small `company_brain_docs` mirror for verified API-created docs, a separate simplified `company_brain_learning_state` sidecar for planner-facing learning metadata, and a minimal `company_brain_review_state` + `company_brain_approved_knowledge` persistence boundary for explicit approval-gated promotion. Retrieval knowledge and lifecycle/indexing remain the primary implemented layers, and formal approval is still not a standalone runtime.

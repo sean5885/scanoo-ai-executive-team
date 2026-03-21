@@ -97,6 +97,7 @@ import {
   listDocumentComments,
 } from "./lark-content.mjs";
 import { searchKnowledgeBase } from "./answer-service.mjs";
+import { stageCompanyBrainReviewState } from "./company-brain-review.mjs";
 import { resolveCompanyBrainWriteIntake } from "./company-brain-write-intake.mjs";
 import { applyRewrittenDocument, rewriteDocumentFromComments } from "./doc-comment-rewrite.mjs";
 import { buildPlannedUserInputEnvelope, executePlannedUserInput } from "./executive-planner.mjs";
@@ -324,7 +325,13 @@ function buildCompanyBrainDocView(row) {
 
 function parseCompanyBrainLimit(requestUrl, body, fallback = 50) {
   const limitRaw = Number.parseInt(
-    String(requestUrl.searchParams.get("limit") || body.limit || String(fallback)).trim(),
+    String(
+      requestUrl.searchParams.get("top_k")
+      || body.top_k
+      || requestUrl.searchParams.get("limit")
+      || body.limit
+      || String(fallback)
+    ).trim(),
     10,
   );
   return Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : fallback;
@@ -483,6 +490,7 @@ function ingestVerifiedDocumentToCompanyBrain({ account, row, logger = noopHttpL
       account_id: account.id,
       doc_id: payload.doc_id,
       intake_state: intakeBoundary.intake_state,
+      review_status: intakeBoundary.review_status,
       direct_intake_allowed: intakeBoundary.direct_intake_allowed,
       review_required: intakeBoundary.review_required,
       conflict_check_required: intakeBoundary.conflict_check_required,
@@ -493,6 +501,34 @@ function ingestVerifiedDocumentToCompanyBrain({ account, row, logger = noopHttpL
         match_type: item.match_type,
       })),
     });
+    if (intakeBoundary.review_status) {
+      const stagedReview = stageCompanyBrainReviewState({
+        accountId: account.id,
+        docId: payload.doc_id,
+        sourceStage: intakeBoundary.target_stage,
+        proposedAction: intakeBoundary.action,
+        reviewStatus: intakeBoundary.review_status,
+        conflictItems: intakeBoundary.matched_docs,
+        reviewNotes: intakeBoundary.review_status === "conflict_detected"
+          ? "conflict evidence detected during verified mirror ingest"
+          : "",
+      });
+      if (stagedReview.success === true) {
+        logger.info("document_company_brain_review_staged", {
+          stage: "company_brain_review_state",
+          account_id: account.id,
+          doc_id: payload.doc_id,
+          review_status: stagedReview.data.review_state?.status || intakeBoundary.review_status,
+        });
+      } else {
+        logger.warn("document_company_brain_review_stage_failed", {
+          stage: "company_brain_review_state",
+          account_id: account.id,
+          doc_id: payload.doc_id,
+          error: stagedReview.error,
+        });
+      }
+    }
     logger.info("document_company_brain_ingested", {
       stage: "company_brain_ingest",
       account_id: account.id,
@@ -2229,17 +2265,17 @@ async function handleAgentSearchCompanyBrainDocs(res, requestUrl, body, logger =
   }
 
   const q = parseCompanyBrainSearchQuery(requestUrl, body);
-  const limit = parseCompanyBrainLimit(requestUrl, body);
+  const topK = parseCompanyBrainLimit(requestUrl, body, 5);
   const result = searchCompanyBrainDocsAction({
     accountId: context.account.id,
     q,
-    limit,
+    top_k: topK,
   });
 
   logCompanyBrainCollectionRead(logger, "company_brain_search", {
     accountId: context.account.id,
     q,
-    limit,
+    limit: topK,
     total: result?.data?.total || 0,
   });
 
@@ -2425,19 +2461,19 @@ async function handleCompanyBrainSearch(res, requestUrl, body, logger = noopHttp
     return;
   }
 
-  const limit = parseCompanyBrainLimit(requestUrl, body);
-  const items = readCompanyBrainSearchItems(context.account.id, q, limit);
+  const topK = parseCompanyBrainLimit(requestUrl, body, 5);
+  const items = readCompanyBrainSearchItems(context.account.id, q, topK);
 
   logCompanyBrainCollectionRead(logger, "company_brain_search", {
     accountId: context.account.id,
     q,
-    limit,
+    limit: topK,
     total: items.length,
   });
 
   respondCompanyBrainReadSuccess(res, 200, buildCompanyBrainCollectionResult(context, "company_brain_docs_search", {
     q,
-    limit,
+    limit: topK,
     total: items.length,
     items,
   }));
@@ -2790,11 +2826,33 @@ async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogg
     account_id: context.account.id,
     doc_id: finalDocumentId,
     intake_state: intakeBoundary.intake_state,
+    review_status: intakeBoundary.review_status,
     review_required: intakeBoundary.review_required,
     conflict_check_required: intakeBoundary.conflict_check_required,
     approval_required_for_formal_source: intakeBoundary.approval_required_for_formal_source,
     target_stage: intakeBoundary.target_stage,
   });
+  if (intakeBoundary.review_status) {
+    const stagedReview = stageCompanyBrainReviewState({
+      accountId: context.account.id,
+      docId: finalDocumentId,
+      sourceStage: intakeBoundary.target_stage,
+      proposedAction: intakeBoundary.action,
+      reviewStatus: intakeBoundary.review_status,
+      conflictItems: intakeBoundary.matched_docs,
+      reviewNotes: intakeBoundary.review_status === "conflict_detected"
+        ? "conflict evidence detected during document update"
+        : "",
+    });
+    if (stagedReview.success !== true) {
+      logger.warn("document_company_brain_update_review_stage_failed", {
+        stage: "company_brain_review_state",
+        account_id: context.account.id,
+        doc_id: finalDocumentId,
+        error: stagedReview.error,
+      });
+    }
+  }
   respondDocumentWriteSuccess(res, 200, buildDocumentUpdateResult({
     context,
     mode: resolvedMode,

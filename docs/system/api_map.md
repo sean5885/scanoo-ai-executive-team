@@ -20,6 +20,7 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Handler: inline callback branch
   - Module: OAuth
   - Purpose: exchange code and persist token
+  - Persistence note: stores `access_token`, `refresh_token`, `expires_at`, and `refresh_expires_at` into the local SQLite token table before later API use
 
 - `GET /api/auth/status`
   - Handler: `handleAuthStatus`
@@ -135,9 +136,10 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
 
 - `GET /agent/company-brain/search?q=...`
   - Handler: `handleAgentSearchCompanyBrainDocs`
-  - Purpose: planner-facing search action with keyword match plus a basic semantic-lite ranking pass
+  - Purpose: planner-facing search action with composite ranking over keyword match, semantic-lite similarity, learning tags/key concepts, and recency
   - Response shape: `{ ok, action, data, trace_id }`, where `data` keeps a unified `{ success, data, error }` envelope
-  - Data note: search items contain structured `summary`, `learning_state`, and `match`; learned `key_concepts` / `tags` can contribute to planner-facing hits
+  - Input note: accepts `q` plus `top_k` (default `5`); legacy `limit` remains as a compatibility alias
+  - Data note: search items contain structured `summary`, `learning_state`, and `match`; `match` now includes composite `score`, per-signal scores, and simplified `ranking_basis`
   - Validation note: empty `q` returns `ok=false` with `error=invalid_query`
   - Log note: emits `stage=agent_bridge`
 
