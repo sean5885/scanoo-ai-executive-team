@@ -143,7 +143,12 @@ Current strict user-input planner output before execution supports both the lega
 ```json
 {
   "action": "string",
-  "params": "object"
+  "params": "object",
+  "why": "string|null",
+  "alternative": {
+    "action": "string|null",
+    "summary": "string|null"
+  }
 }
 ```
 
@@ -154,9 +159,16 @@ Current strict user-input planner output before execution supports both the lega
       "action": "string",
       "params": "object"
     }
-  ]
+  ],
+  "why": "string|null",
+  "alternative": {
+    "action": "string|null",
+    "summary": "string|null"
+  }
 }
 ```
+
+For strict user-input planning, `why` and simplified `alternative` are runtime-generated explanation fields added after the core `{ action, params }` / `{ steps }` contract has already been validated. The model is still constrained to produce the existing bounded planner JSON core, and the runtime appends explanation metadata deterministically so the decision remains stable and machine-checkable.
 
 For the multi-step shape:
 
@@ -195,7 +207,14 @@ The planner envelope built for lane execution now also exposes a minimal trace s
 {
   "trace": {
     "chosen_action": "string|null",
-    "fallback_reason": "string|null"
+    "fallback_reason": "string|null",
+    "reasoning": {
+      "why": "string|null",
+      "alternative": {
+        "action": "string|null",
+        "summary": "string|null"
+      }
+    }
   }
 }
 ```
@@ -234,6 +253,35 @@ This summary layer is used only for planner prompt assembly. When conversation t
 The same planner memory layer is now persisted through a minimal JSON file store, so `latest_summary`, bounded `recent_messages`, and `last_compacted_at` survive process restart and are auto-loaded before later planner prompt assembly. When runtime doc-query context is empty, the planner now lazily restores `active_doc` / `active_candidates` / `active_theme` from that persisted summary before later flow routing and prompt assembly.
 
 The executive planner decision prompt now also reads a bounded task-state summary from that same local `task lifecycle v1` store: before agent selection, `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` asks `/Users/seanhan/Documents/Playground/src/planner-task-lifecycle-v1.mjs` for the latest relevant snapshot summary and injects `unfinished_hint`, `blocked_hint`, and `in_progress_hint` into prompt assembly, so decisions can preferentially reference unfinished tasks, surface blocked-task risk, and reuse in-progress execution summaries without changing the public planner JSON shape.
+
+The normalized executive decision shape in that same module now also carries deterministic explainability metadata:
+
+```json
+{
+  "action": "start|continue|handoff|clarify",
+  "objective": "string",
+  "primary_agent_id": "string",
+  "next_agent_id": "string",
+  "supporting_agent_ids": ["string"],
+  "reason": "string",
+  "why": "string|null",
+  "alternative": {
+    "action": "start|continue|handoff|clarify|null",
+    "agent_id": "string|null",
+    "summary": "string|null"
+  },
+  "pending_questions": ["string"],
+  "work_items": [
+    {
+      "agent_id": "string",
+      "task": "string",
+      "role": "primary|supporting"
+    }
+  ]
+}
+```
+
+`why` and simplified `alternative` are normalized by runtime rather than trusted as free-form model output, so executive routing stays explainable without loosening the existing JSON decision boundary.
 
 That same decision-side task context now also includes a bounded `focus task` layer on top of `task driving v1`. It remains deterministic and local-only:
 

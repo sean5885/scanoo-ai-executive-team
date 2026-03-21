@@ -81,7 +81,9 @@ test("planUserInputAction rejects wrapped non-JSON output", async () => {
     },
   });
 
-  assert.deepEqual(result, { error: "planner_failed" });
+  assert.equal(result.error, "planner_failed");
+  assert.match(result.why || "", /沒有產出可安全執行的合法 decision/);
+  assert.match(result.alternative?.summary || "", /替代 action|重新規劃|沒有更簡單/);
 });
 
 test("planUserInputAction rejects action outside planner_contract", async () => {
@@ -99,6 +101,7 @@ test("planUserInputAction rejects action outside planner_contract", async () => 
   assert.equal(result.error, "invalid_action");
   assert.equal(result.action, "free_chat_answer");
   assert.deepEqual(result.params, {});
+  assert.match(result.why || "", /contract 之外/);
 });
 
 test("planUserInputAction returns structured semantic_mismatch when action does not match user intent", async () => {
@@ -162,11 +165,57 @@ test("buildPlannedUserInputEnvelope exposes chosen_action and fallback_reason fo
       q: "最近對話",
     },
     reason: "conversation_summary_not_supported_by_planner_contract",
+    why: "這個 decision 和使用者意圖不一致，所以被 runtime 拒絕。",
+    alternative: {
+      action: null,
+      summary: "改用與使用者意圖一致的合法 action 後重新規劃。",
+    },
     trace_id: "trace_semantic",
   });
 
   assert.equal(envelope.trace?.chosen_action, "search_company_brain_docs");
   assert.equal(envelope.trace?.fallback_reason, "conversation_summary_not_supported_by_planner_contract");
+  assert.equal(envelope.trace?.reasoning?.why, "這個 decision 和使用者意圖不一致，所以被 runtime 拒絕。");
+  assert.equal(envelope.trace?.reasoning?.alternative?.summary, "改用與使用者意圖一致的合法 action 後重新規劃。");
+});
+
+test("runPlannerToolFlow includes reasoning in planner_end_to_end trace", async () => {
+  const infoEvents = [];
+  const result = await runPlannerToolFlow({
+    userIntent: "查 runtime",
+    disableAutoRouting: true,
+    logger: {
+      info(message, event) {
+        infoEvents.push({ message, event });
+      },
+      debug() {},
+      warn() {},
+    },
+    selector() {
+      return {
+        selected_action: "get_runtime_info",
+        reason: "測試選擇 runtime action",
+      };
+    },
+    async dispatcher() {
+      return {
+        ok: true,
+        action: "get_runtime_info",
+        trace_id: "trace_runtime_reasoning",
+        data: {
+          db_path: "/tmp/db.sqlite",
+          node_pid: 123,
+          cwd: "/tmp",
+          service_start_time: "2026-03-19T00:00:00.000Z",
+        },
+      };
+    },
+  });
+
+  const traceEvent = infoEvents.find((item) => item.message === "planner_end_to_end")?.event;
+  assert.equal(result.trace_id, "trace_runtime_reasoning");
+  assert.equal(traceEvent?.reasoning?.why, "測試選擇 runtime action");
+  assert.equal(typeof traceEvent?.reasoning?.alternative?.summary, "string");
 });
 
 test("different planner inputs do not collapse into the same fixed envelope", async () => {
@@ -245,22 +294,22 @@ test("planUserInputAction accepts strict multi-step output", async () => {
     },
   });
 
-  assert.deepEqual(result, {
-    steps: [
-      {
-        action: "create_doc",
-        params: {
-          title: "demo",
-        },
+  assert.deepEqual(result.steps, [
+    {
+      action: "create_doc",
+      params: {
+        title: "demo",
       },
-      {
-        action: "list_company_brain_docs",
-        params: {
-          limit: 3,
-        },
+    },
+    {
+      action: "list_company_brain_docs",
+      params: {
+        limit: 3,
       },
-    ],
-  });
+    },
+  ]);
+  assert.match(result.why || "", /順序依賴/);
+  assert.equal(result.alternative?.action, "create_doc");
 });
 
 test("planExecutiveTurn accepts injected planner requester", async () => {
@@ -289,6 +338,8 @@ test("planExecutiveTurn accepts injected planner requester", async () => {
   assert.equal(decision.next_agent_id, "cmo");
   assert.equal(decision.supporting_agent_ids.includes("consult"), true);
   assert.equal(decision.work_items.length, 2);
+  assert.match(decision.why || "", /\/cmo/);
+  assert.equal(typeof decision.alternative?.summary, "string");
 });
 
 test("planExecutiveTurn auto-generates latest summary when conversation grows long", async () => {

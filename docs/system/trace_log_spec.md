@@ -30,6 +30,7 @@ All minimum trace/log events should align around these fields:
 - `healed`
 - `stopped`
 - `stop_reason`
+- `reasoning`
 
 ### Minimum Common Shape
 
@@ -50,7 +51,15 @@ All minimum trace/log events should align around these fields:
   "retry_count": "number|null",
   "healed": "boolean|null",
   "stopped": "boolean|null",
-  "stop_reason": "string|null"
+  "stop_reason": "string|null",
+  "reasoning": {
+    "why": "string|null",
+    "alternative": {
+      "action": "string|null",
+      "agent_id": "string|null",
+      "summary": "string|null"
+    }
+  }
 }
 ```
 
@@ -67,6 +76,7 @@ All minimum trace/log events should align around these fields:
 - `healed` in self-heal path
 - `stopped`
 - `stop_reason`
+- bounded `reasoning` in planner decision / end-to-end trace events, exposing `why` and a simplified `alternative`
 - a partial runtime trace stream now also emits explicit planner event types for:
   - `action_dispatch`
   - `action_result`
@@ -74,6 +84,9 @@ All minimum trace/log events should align around these fields:
   - `preset_result`
   - `self_heal_attempt`
   - `retry_attempt`
+- executive planner decision selection now also emits:
+  - `executive_decision`
+  - `executive_decision_fallback`
 - `stopped`
  - planner-side company-brain doc-query flow now also emits minimal internal debug events for:
    - `doc_query_route`
@@ -86,10 +99,11 @@ All minimum trace/log events should align around these fields:
    - `request_id`
    - `action`
    - `params`
-   - `result.success`
-   - `result.data`
-   - `result.error`
-   - optional `trace_id`
+ - `result.success`
+ - `result.data`
+ - `result.error`
+ - optional `trace_id`
+- the HTTP runtime now also persists one compact SQLite request-monitor row per finished request keyed by `trace_id`; this is a query surface over request outcomes, not a replacement for structured logs
 
 ### Fields not yet consistently runtimeized
 

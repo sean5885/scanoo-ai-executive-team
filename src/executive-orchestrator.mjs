@@ -765,12 +765,32 @@ export async function executeExecutiveTurn({ accountId, event, scope, logger = n
       next_agent_id: nextAgent.id,
       supporting_agent_ids: activeTask?.supporting_agent_ids || [],
       reason: "使用者明確指定 agent",
+      why: `使用者直接指定 /${nextAgent.id}，所以這輪不再重新做 agent 選擇。`,
+      alternative: {
+        action: activeTask ? "continue" : "clarify",
+        agent_id: activeTask?.current_agent_id || null,
+        summary: activeTask
+          ? "也可維持目前 agent 繼續，但這輪以使用者明確指定為優先。"
+          : "也可先問澄清問題，但這輪指定對象已經足夠明確。",
+      },
       pending_questions: [],
     };
   } else {
-    decision = await planExecutiveTurn({ text, activeTask });
+    decision = await planExecutiveTurn({ text, activeTask, logger });
     nextAgent = getRegisteredAgent(decision.next_agent_id) || getRegisteredAgent("generalist");
   }
+
+  logger?.info?.("executive_orchestrator_decision", {
+    trace_id: cleanText(scope?.trace_id || event?.trace_id || activeTask?.trace_id || "") || null,
+    action: cleanText(decision?.action || "") || null,
+    primary_agent_id: cleanText(decision?.primary_agent_id || "") || null,
+    next_agent_id: cleanText(decision?.next_agent_id || "") || null,
+    reason: cleanText(decision?.reason || "") || null,
+    reasoning: {
+      why: cleanText(decision?.why || "") || null,
+      alternative: decision?.alternative || null,
+    },
+  });
 
   if (!task) {
     const initialization = buildTaskInitialization({
@@ -807,6 +827,9 @@ export async function executeExecutiveTurn({ accountId, event, scope, logger = n
       meta: {
         source: slashCommand ? "slash_agent" : "executive_planner",
         lane: cleanText(scope?.capability_lane || ""),
+        last_reason: decision.reason || "",
+        last_why: decision.why || "",
+        last_alternative: decision.alternative || null,
         // TODO(control-unification-phase2): replace free-form meta with workflow-specific active_task contract.
       },
     });
@@ -831,6 +854,8 @@ export async function executeExecutiveTurn({ accountId, event, scope, logger = n
       work_plan: normalizeWorkPlan(task, decision, requestText),
       meta: {
         last_reason: decision.reason || "",
+        last_why: decision.why || "",
+        last_alternative: decision.alternative || null,
       },
     });
   }

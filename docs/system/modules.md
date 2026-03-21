@@ -54,13 +54,17 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - `/Users/seanhan/Documents/Playground/src/runtime-conflict-guard.mjs`
   - `/Users/seanhan/Documents/Playground/src/runtime-message-deduper.mjs`
   - `/Users/seanhan/Documents/Playground/src/runtime-observability.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/monitoring-cli.mjs`
 - Responsibility:
   - start long-connection listener and/or HTTP server
   - disable known competing local LaunchAgents before starting the Playground long-connection listener
   - suppress duplicate Lark event re-deliveries by `message_id` before lane execution
   - emit structured runtime logs for long-connection event intake, lane routing, tool/doc/group steps, reply send, and failure paths
+  - emit immediate console alerts for `oauth_reauth_required` and `planner_failed` through a shared in-memory rate-limited helper
   - attach a per-event and per-request `trace_id` so chain breaks can be located from logs
   - preserve incoming `X-Request-Id` or mint a local `request_id` for HTTP request-log correlation, and echo it back in the response header
+  - echo `X-Trace-Id` for every HTTP response, including HTML and redirects
+  - provide a local CLI for reading persisted request-monitor data
 - Main entry:
   - `startHttpServer()`
   - `enforceSingleLarkResponderRuntime()`
@@ -94,6 +98,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 - Location:
   - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
   - `/Users/seanhan/Documents/Playground/src/http-route-contracts.mjs`
+  - `/Users/seanhan/Documents/Playground/src/monitoring-store.mjs`
 - Responsibility:
   - route parsing
   - route method contract
@@ -102,6 +107,9 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - response shaping
   - per-request trace creation and request lifecycle logging
   - `trace_id` injection into JSON responses for easier cross-log correlation
+  - `X-Trace-Id` response-header echo for every request
+  - response-finish persistence into SQLite `http_request_monitor`
+  - read-only monitoring routes for recent requests, recent errors, latest error, and aggregate request metrics
   - key route child-log coverage for `auth_status`, `doc_create`, `doc_update`, `meeting_process`, `meeting_confirm`, `messages_list`, `message_reply`, `knowledge_search`, `knowledge_answer`, `drive_*`, `wiki_*`, `bitable_*`, `calendar_*`, and `tasks_*`
   - `/api/doc/update` now also accepts minimal heading-targeted insert input (`target_heading`, optional `target_position`), resolves the target section against the current markdown content during preview, and then reuses the existing replace preview/apply safety gate instead of changing the underlying Lark block-write adapter
   - the same route still accepts shared doc URLs for preview-time resolution, but the real write step now requires explicit `document_id` plus `section_heading`; missing either fails soft with structured `missing_explicit_write_target` instead of depending on resolver state
@@ -120,6 +128,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - `src/company-brain-query.mjs` now centralizes planner-facing company-brain list/search/detail actions, joins `company_brain_docs` with mirrored `lark_documents.raw_text` plus optional `company_brain_learning_state`, ranks search results with a composite score over keyword match, semantic-lite similarity, learned `key_concepts` / `tags`, and mirror recency, supports `top_k` with default `5` (`limit` remains a compatibility alias), and emits unified `{ success, data, error }` payloads that keep only structured summaries plus `learning_state`
   - `src/company-brain-learning.mjs` now provides a bounded learning sidecar for verified company-brain docs: `ingestLearningDocAction(...)` derives deterministic `structured_summary`, `key_concepts`, and `tags`; `updateLearningStateAction(...)` updates simplified per-doc learning state; both write into SQLite `company_brain_learning_state` and do not claim approval-governed memory admission
   - `GET /answer` no longer calls `answer-service.mjs` directly; it now first requires a strict planner decision shaped as either legacy single-step `{ action, params }` or bounded multi-step `{ steps: [{ action, params }] }`, rejects wrapped/non-JSON planner output with `{ error: "planner_failed" }`, rejects contract-external actions with structured `invalid_action`, and returns a structured planner envelope instead of free-text fallback
+  - that same strict planner path now also attaches deterministic explanation metadata to each normalized decision and envelope: `why` plus a simplified `alternative`, while `trace.reasoning` exposes the same pair for downstream lane/debug consumption without relaxing the core planner JSON contract
   - `/agent/docs/create`, `/agent/company-brain/docs`, `/agent/company-brain/search`, `/agent/company-brain/docs/:doc_id`, `/agent/company-brain/learning/ingest`, `/agent/company-brain/learning/state`, and `/agent/system/runtime-info` now provide thin agent-facing bridges over the corresponding document/runtime/query routes, normalizing output into `{ ok, action, data, trace_id }`; the learning routes additionally log `stage=company_brain_learning`
   - `executive-planner.mjs` now enforces a minimal fail-soft contract check around planner action dispatch using [planner_contract.json](/Users/seanhan/Documents/Playground/docs/system/planner_contract.json); invalid required fields or simple `string/object/number` type mismatches return `ok=false` with `error=contract_violation` instead of throwing
   - `executive-planner.mjs` now also enforces a minimal fail-soft final-output contract check for successful planner presets using [planner_contract.json](/Users/seanhan/Documents/Playground/docs/system/planner_contract.json); preset-level violations return `ok=false` with `error=contract_violation`, but step-level preset validation is still intentionally out of scope
@@ -128,6 +137,8 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - `executive-planner.mjs` now also attempts one minimal self-healing pass for input-side planner `contract_violation` cases before dispatch, limited to filling missing required fields and basic `String()` / `Number()` coercion, and marks successful healed requests with `data.healed=true`
   - `executive-planner.mjs` now also enforces a small fixed execution policy/fail boundary: `contract_violation` can self-heal once then stops, `tool_error` / `runtime_exception` retry once then stop, `business_error` stops immediately, and final controlled failures are normalized into a shared stopped shape under `data.stopped` / `data.stop_reason` while keeping existing `stopped` / `stopped_at_step` fields intact
   - `executive-planner.mjs` now also emits a minimal planner trace runtime on top of the internal trace helpers, covering `action_dispatch`, `action_result`, `preset_start`, `preset_result`, `self_heal_attempt`, `retry_attempt`, and `stopped`; this currently lands through the planner module logger path and does not yet replace the broader system logging model
+  - executive planning decisions in that same module now also normalize `why` and simplified `alternative` fields, log `executive_decision` / `executive_decision_fallback` trace events with `reasoning`, and let `executive-orchestrator.mjs` persist the latest explainability snapshot in task meta (`last_reason`, `last_why`, `last_alternative`)
+  - the same planner path now also emits an immediate console alert for `planner_failed`; the shared runtime helper keeps that alert rate-limited in-memory so repeated invalid JSON failures do not flood logs
   - `src/planner-flow-runtime.mjs` now defines the minimum reusable planner flow interface and registry/runtime helpers, covering: `route`, `shapePayload`, `readContext`, `writeContext`, `formatResult`, and planner-flow-level context reset/lookup; this lets `executive-planner.mjs` attach multiple internal flows without changing its public planner contract
   - the same planner flow runtime now also resolves competing flow matches dynamically: flow metadata can carry `priority` and `matchKeywords`, and route selection compares `priority` first, then keyword-hit count, before falling back to declaration order
   - `src/planner-conversation-memory.mjs` now provides a minimal planner conversation summary layer backed by a small JSON file store: it keeps `latest_summary`, bounded `recent_messages`, and `last_compacted_at`, auto-loads persisted memory when planner runtime starts, writes back after compact/record updates, and exposes manual/auto compact helpers so planner prompt assembly can prefer `latest_summary + recent_messages + current query` instead of replaying long history; the compacted summary now also preserves `active_theme`
@@ -145,12 +156,25 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 - Main entry:
   - `startHttpServer()`
 - Depends on:
-  - OAuth, content, sync, answer, security bridge modules
+  - OAuth, content, sync, answer, security bridge, and monitoring modules
 - Core path:
   - yes
 - Coupling note:
   - still high, but route method contracts now live outside the server file
   - comment suggestion cards and preview-confirm doc writes are also coordinated here
+
+### 2A. Request Monitoring
+
+- Location:
+  - `/Users/seanhan/Documents/Playground/src/monitoring-store.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/monitoring-cli.mjs`
+- Responsibility:
+  - persist one compact row per HTTP request into SQLite `http_request_monitor`
+  - normalize request outcome fields (`status_code`, `ok`, `error_code`, `error_message`, `duration_ms`)
+  - expose recent-request, recent-error, latest-error, and success/error-rate queries
+  - provide a simple local CLI so operators can inspect request health without scraping logs
+- Core path:
+  - yes for runtime observability
 
 ### 3. OAuth and User Context
 
@@ -243,6 +267,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - persistence
   - FTS indexing
   - sync job recording
+  - request-monitor storage through `http_request_monitor`
   - `db.mjs` now keeps the SQLite singleton reopenable and exposes a test-only close hook so integration suites can exit cleanly without mutating production behavior
 - Core path:
   - yes

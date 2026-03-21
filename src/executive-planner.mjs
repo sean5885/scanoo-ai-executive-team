@@ -20,7 +20,7 @@ import {
 import { getRegisteredAgent, listRegisteredAgents, parseRegisteredAgentCommand } from "./agent-registry.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import { callOpenClawTextGeneration } from "./openclaw-text-service.mjs";
-import { createRequestId, emitToolExecutionLog } from "./runtime-observability.mjs";
+import { createRequestId, emitRateLimitedAlert, emitToolExecutionLog } from "./runtime-observability.mjs";
 import {
   compactPlannerConversationMemory as compactPlannerConversationMemoryLayer,
   getPlannerConversationMemory as getPlannerConversationMemoryLayer,
@@ -88,6 +88,21 @@ const PLANNER_CONTEXT_WINDOW_MAX_CHARS = 2400;
 const PLANNER_CONTEXT_WINDOW_SUMMARY_MAX_CHARS = 640;
 const PLANNER_RECENT_STEP_LIMIT = 6;
 const PLANNER_HIGH_WEIGHT_DOC_LIMIT = 3;
+const PLANNER_FAILED_ALERT_KEY = "planner_failed:user_input_planner";
+
+function emitPlannerFailedAlert({ text = "", reason = "", source = "planner" } = {}) {
+  const textHint = cleanText(text);
+  emitRateLimitedAlert({
+    code: "planner_failed",
+    scope: source,
+    dedupeKey: PLANNER_FAILED_ALERT_KEY,
+    message: "Planner failed to produce a valid strict JSON decision.",
+    details: {
+      reason: cleanText(reason) || null,
+      text_hint: textHint ? textHint.slice(0, 160) : null,
+    },
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Executive intent helpers
@@ -620,6 +635,48 @@ function getPlannerRetryBudget(errorCode = "") {
   return Number(getPlannerExecutionPolicy(errorCode)?.retry || 0);
 }
 
+function normalizeDecisionAlternative(value = null, fallback = {}) {
+  const fallbackAction = cleanText(fallback?.action || "") || null;
+  const fallbackAgentId = cleanText(fallback?.agent_id || "") || null;
+  const fallbackSummary = cleanText(fallback?.summary || "") || "";
+
+  if (typeof value === "string") {
+    const summary = cleanText(value);
+    return {
+      action: fallbackAction,
+      agent_id: fallbackAgentId,
+      summary: summary || fallbackSummary || null,
+    };
+  }
+
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {
+      action: fallbackAction,
+      agent_id: fallbackAgentId,
+      summary: fallbackSummary || null,
+    };
+  }
+
+  const action = cleanText(value.action || value.selected_action || "") || fallbackAction;
+  const agentId = cleanText(value.agent_id || value.next_agent_id || "") || fallbackAgentId;
+  const summary = cleanText(value.summary || value.reason || "") || fallbackSummary;
+  return {
+    action: action || null,
+    agent_id: agentId || null,
+    summary: summary || null,
+  };
+}
+
+function normalizeDecisionReasoning({
+  why = "",
+  alternative = null,
+} = {}) {
+  return {
+    why: cleanText(why) || null,
+    alternative: normalizeDecisionAlternative(alternative),
+  };
+}
+
 function buildPlannerTraceEvent({
   eventType = "",
   action = null,
@@ -632,6 +689,7 @@ function buildPlannerTraceEvent({
   healed = null,
   stopped = null,
   stopReason = null,
+  reasoning = null,
   extra = {},
 } = {}) {
   return {
@@ -647,6 +705,7 @@ function buildPlannerTraceEvent({
     healed: typeof healed === "boolean" ? healed : healed ?? null,
     stopped: typeof stopped === "boolean" ? stopped : stopped ?? null,
     stop_reason: cleanText(stopReason) || null,
+    reasoning: reasoning ? normalizeDecisionReasoning(reasoning) : null,
     ...(extra && typeof extra === "object" && !Array.isArray(extra) ? extra : {}),
   };
 }
@@ -1803,6 +1862,11 @@ export function selectPlannerTool({
     reason = "未命中受控工具規則，保持空選擇。";
   }
 
+  const reasoning = normalizeDecisionReasoning({
+    why: reason || null,
+    alternative: buildUserInputDecisionAlternative({ action: selectedAction }),
+  });
+
   logger?.info?.("planner_tool_select", {
     stage: "planner_tool_select",
     user_intent: normalizedIntent || null,
@@ -1811,11 +1875,14 @@ export function selectPlannerTool({
     chosen_action: selectedAction || null,
     fallback_reason: selectedAction ? null : reason || null,
     reason: reason || null,
+    reasoning,
   });
 
   return {
     selected_action: selectedAction || null,
     reason: reason || null,
+    why: reasoning.why,
+    alternative: reasoning.alternative,
   };
 }
 
@@ -2195,6 +2262,12 @@ export async function runPlannerToolFlow({
         taskType: agentInput.task_type,
         logger,
       });
+  const selectionReasoning = normalizeDecisionReasoning({
+    why: selection?.why || selection?.reason || null,
+    alternative: selection?.alternative || buildUserInputDecisionAlternative({
+      action: selection?.selected_action || null,
+    }),
+  });
 
   let executionResult = null;
   let traceId = null;
@@ -2293,6 +2366,7 @@ export async function runPlannerToolFlow({
     eventType: "planner_end_to_end",
     ok: executionResult?.ok ?? false,
     traceId,
+    reasoning: selectionReasoning,
     extra: {
       user_intent: cleanText(String(userIntent || "").toLowerCase()) || null,
       task_type: cleanText(String(taskType || "").toLowerCase()) || null,
@@ -3987,6 +4061,136 @@ function validatePlannerDecisionFreshness({
   };
 }
 
+function buildUserInputDecisionAlternative(decision = {}) {
+  if (Array.isArray(decision?.steps) && decision.steps.length > 0) {
+    return normalizeDecisionAlternative({
+      action: cleanText(decision.steps[0]?.action || "") || null,
+      summary: "也可只先執行第一步取得中間結果，但這輪需求需要完整多步流程。",
+    });
+  }
+
+  const action = cleanText(decision?.action || "");
+  switch (action) {
+    case "list_company_brain_docs":
+      return normalizeDecisionAlternative({
+        action: "search_company_brain_docs",
+        summary: "若需要縮小範圍，也可先 search；這輪需求更像直接看清單。",
+      });
+    case "search_company_brain_docs":
+      return normalizeDecisionAlternative({
+        action: "get_company_brain_doc_detail",
+        summary: "若已經有明確 doc_id，也可直接 detail；這輪先 search 是因為尚未鎖定單一文件。",
+      });
+    case "get_company_brain_doc_detail":
+      return normalizeDecisionAlternative({
+        action: "search_company_brain_docs",
+        summary: "也可先 search 候選文件；這輪已有足夠定位資訊可直接 detail。",
+      });
+    case "search_and_detail_doc":
+      return normalizeDecisionAlternative({
+        action: "search_company_brain_docs",
+        summary: "也可只先 search 候選文件；這輪需要直接推進到單一文件內容。",
+      });
+    case "create_doc":
+      return normalizeDecisionAlternative({
+        action: "create_and_list_doc",
+        summary: "也可建立後順手列出文件；這輪只需要先完成建立。",
+      });
+    case "create_and_list_doc":
+      return normalizeDecisionAlternative({
+        action: "create_doc",
+        summary: "也可只先建立文件；這輪多加 list 是為了立即確認結果。",
+      });
+    case "runtime_and_list_docs":
+      return normalizeDecisionAlternative({
+        action: "get_runtime_info",
+        summary: "也可只看 runtime 狀態；這輪多加 list 是為了把環境與文件鏡像一起對齊。",
+      });
+    case "create_search_detail_list_doc":
+      return normalizeDecisionAlternative({
+        action: "create_doc",
+        summary: "也可只先建立文件；這輪選完整 preset 是因為需求包含後續查找與確認。",
+      });
+    default:
+      return normalizeDecisionAlternative({
+        action: null,
+        summary: "沒有更簡單且同樣安全的替代 action。",
+      });
+  }
+}
+
+function buildUserInputDecisionWhy({
+  result = {},
+  semantics = null,
+} = {}) {
+  if (cleanText(result?.reason || "")) {
+    if (result?.error) {
+      return cleanText(result.reason);
+    }
+  }
+
+  if (result?.error) {
+    switch (cleanText(result.error)) {
+      case "semantic_mismatch":
+        return "這個 decision 和使用者意圖不一致，所以被 runtime 拒絕。";
+      case "stale_decision_reused":
+        return "這個 decision 和上一輪完全相同，但目前訊息不是明確的同 task 延續。";
+      case "invalid_action":
+        return "模型選到 contract 之外的 action，所以不能直接執行。";
+      case "contract_violation":
+        return "decision 的 params 不符合對應 action contract，所以不能安全執行。";
+      default:
+        return "這一輪 planner 沒有產出可安全執行的合法 decision。";
+    }
+  }
+
+  if (Array.isArray(result?.steps) && result.steps.length > 0) {
+    return `使用者需求包含順序依賴，所以決策成 ${result.steps.map((step) => cleanText(step?.action || "")).filter(Boolean).join(" -> ")}。`;
+  }
+
+  if (semantics?.wants_runtime_info) {
+    return "需求明確在查 runtime / db path / pid 等執行環境資訊。";
+  }
+  if (semantics?.wants_create_doc) {
+    return "需求核心是建立文件，所以先走受控文件建立路徑。";
+  }
+  if (cleanText(result?.action || "") === "get_company_brain_doc_detail") {
+    return "這輪已經有足夠線索指向單一文件，所以直接走 detail。";
+  }
+  if (cleanText(result?.action || "") === "search_company_brain_docs") {
+    return "需求偏向查資料或找文件，先 search 才能定位候選來源。";
+  }
+  if (cleanText(result?.action || "") === "list_company_brain_docs") {
+    return "需求偏向列出已驗證文件鏡像，而不是鎖定單一文件內容。";
+  }
+  return "這個 action 最接近目前 user_request，且仍在受控 planner contract 內。";
+}
+
+function withUserInputDecisionExplanation(result = {}, {
+  text = "",
+  semantics = null,
+} = {}) {
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    return result;
+  }
+
+  const effectiveSemantics = semantics || derivePlannerUserInputSemantics(text);
+  const why = cleanText(result?.why || "") || buildUserInputDecisionWhy({
+    result,
+    semantics: effectiveSemantics,
+  });
+  const alternative = normalizeDecisionAlternative(
+    result?.alternative,
+    buildUserInputDecisionAlternative(result),
+  );
+
+  return {
+    ...result,
+    why: why || null,
+    alternative,
+  };
+}
+
 export async function planUserInputAction({ text = "", requester = requestPlannerJson } = {}) {
   restorePlannerRuntimeContextFromSummary();
   maybeCompactPlannerConversationMemory({
@@ -4007,14 +4211,16 @@ export async function planUserInputAction({ text = "", requester = requestPlanne
       const parsed = parseStrictPlannerUserInputJson(raw);
       const validation = validatePlannerUserInputDecision(parsed);
       if (validation.ok) {
-        const decision = Array.isArray(validation.steps)
+        const decision = withUserInputDecisionExplanation(Array.isArray(validation.steps)
           ? {
               steps: validation.steps,
             }
           : {
               action: validation.action,
               params: validation.params,
-            };
+            }, {
+          text,
+        });
         const semanticValidation = validatePlannerDecisionSemantics({
           text,
           decision,
@@ -4066,7 +4272,7 @@ export async function planUserInputAction({ text = "", requester = requestPlanne
   }
 
   const errorResult = lastInvalidDecision
-    ? {
+    ? withUserInputDecisionExplanation({
         error: lastInvalidDecision.error,
         action: lastInvalidDecision.action,
         params: lastInvalidDecision.params,
@@ -4076,8 +4282,19 @@ export async function planUserInputAction({ text = "", requester = requestPlanne
         ...(cleanText(lastInvalidDecision.reason || "") ? { reason: cleanText(lastInvalidDecision.reason) } : {}),
         ...(cleanText(lastInvalidDecision.previous_user_text || "") ? { previous_user_text: cleanText(lastInvalidDecision.previous_user_text) } : {}),
         ...(lastInvalidDecision.semantics ? { semantics: lastInvalidDecision.semantics } : {}),
-      }
-    : { error: "planner_failed" };
+      }, {
+        text,
+        semantics: lastInvalidDecision.semantics || null,
+      })
+    : withUserInputDecisionExplanation({ error: "planner_failed" }, { text });
+
+  if (errorResult.error === "planner_failed") {
+    emitPlannerFailedAlert({
+      text,
+      reason: cleanText(lastInvalidDecision?.reason || "") || "invalid_or_non_json_planner_output",
+      source: "plan_user_input_action",
+    });
+  }
 
   recordPlannerConversationExchange({
     userQuery: text,
@@ -4109,17 +4326,27 @@ export async function executePlannedUserInput({
     ? (() => {
         const validatedDecision = validatePlannerUserInputDecision(plannedDecision);
         if (validatedDecision?.ok !== true) {
-          return validatedDecision;
+          return withUserInputDecisionExplanation(validatedDecision, { text });
         }
-        return Array.isArray(validatedDecision.steps)
-          ? { steps: validatedDecision.steps }
-          : {
-              action: validatedDecision.action,
-              params: validatedDecision.params,
-            };
+        return withUserInputDecisionExplanation(
+          Array.isArray(validatedDecision.steps)
+            ? { steps: validatedDecision.steps }
+            : {
+                action: validatedDecision.action,
+                params: validatedDecision.params,
+              },
+          { text },
+        );
       })()
     : await planUserInputAction({ text, requester });
   if (decision?.error) {
+    if (decision.error === "planner_failed") {
+      emitPlannerFailedAlert({
+        text,
+        reason: "invalid_planned_decision",
+        source: "execute_planned_user_input",
+      });
+    }
     return {
       ok: false,
       ...decision,
@@ -4152,6 +4379,8 @@ export async function executePlannedUserInput({
       error: cleanText(runtimeResult?.error || "") || null,
       execution_result: runtimeResult || null,
       trace_id: runtimeResult?.trace_id || null,
+      why: cleanText(decision?.why || "") || null,
+      alternative: normalizeDecisionAlternative(decision?.alternative),
     };
   }
 
@@ -4175,6 +4404,8 @@ export async function executePlannedUserInput({
     error: cleanText(runtimeResult?.execution_result?.error || "") || null,
     execution_result: runtimeResult?.execution_result || null,
     trace_id: runtimeResult?.trace_id || null,
+    why: cleanText(decision?.why || "") || null,
+    alternative: normalizeDecisionAlternative(decision?.alternative),
   };
 }
 
@@ -4187,7 +4418,15 @@ export function buildPlannedUserInputEnvelope(result = {}) {
     || result.error
     || "",
   ) || null;
+  const reasoning = normalizeDecisionReasoning({
+    why: result?.why || "",
+    alternative: result?.alternative || null,
+  });
   if (!result || typeof result !== "object") {
+    emitPlannerFailedAlert({
+      reason: "invalid_execution_result_shape",
+      source: "planned_user_input_envelope",
+    });
     return {
       ok: false,
       error: "planner_failed",
@@ -4195,11 +4434,18 @@ export function buildPlannedUserInputEnvelope(result = {}) {
       trace: {
         chosen_action: null,
         fallback_reason: "planner_failed",
+        reasoning,
       },
     };
   }
 
   if (result.error && !result.execution_result) {
+    if (cleanText(result.error || "") === "planner_failed") {
+      emitPlannerFailedAlert({
+        reason: cleanText(result.reason || "") || "planner_failed_without_execution_result",
+        source: "planned_user_input_envelope",
+      });
+    }
     return {
       ok: false,
       error: cleanText(result.error || "") || "planner_failed",
@@ -4220,10 +4466,13 @@ export function buildPlannedUserInputEnvelope(result = {}) {
       ...(cleanText(result.reason || "") ? { reason: cleanText(result.reason) } : {}),
       ...(cleanText(result.previous_user_text || "") ? { previous_user_text: cleanText(result.previous_user_text) } : {}),
       ...(result.semantics ? { semantics: result.semantics } : {}),
+      why: reasoning.why,
+      alternative: reasoning.alternative,
       trace_id: result.trace_id || null,
       trace: {
         chosen_action: chosenAction,
         fallback_reason: fallbackReason,
+        reasoning,
       },
     };
   }
@@ -4244,18 +4493,90 @@ export function buildPlannedUserInputEnvelope(result = {}) {
       : {}),
     error: cleanText(result.error || "") || null,
     execution_result: result.execution_result?.formatted_output || result.execution_result || null,
+    why: reasoning.why,
+    alternative: reasoning.alternative,
     trace_id: result.trace_id || null,
     trace: {
       chosen_action: chosenAction,
       fallback_reason: fallbackReason,
+      reasoning,
     },
   };
 }
 
-function normalizePlannerDecision(decision = {}, fallbackText = "") {
+function buildExecutiveDecisionAlternative({
+  action = "",
+  activeTask = null,
+  primaryAgentId = "",
+  nextAgentId = "",
+} = {}) {
+  const currentAgentId = cleanText(activeTask?.current_agent_id || "");
+  const primaryAgent = cleanText(primaryAgentId || "");
+  const nextAgent = cleanText(nextAgentId || "");
+
+  if (action === "handoff") {
+    return normalizeDecisionAlternative({
+      action: "continue",
+      agent_id: currentAgentId || primaryAgent || null,
+      summary: "也可維持目前 agent 繼續，但這輪判斷換手更能對準下一步工作型態。",
+    });
+  }
+
+  if (action === "clarify") {
+    return normalizeDecisionAlternative({
+      action: activeTask ? "continue" : "start",
+      agent_id: nextAgent || primaryAgent || "generalist",
+      summary: "也可直接開始執行，但這輪判斷先補關鍵資訊更安全。",
+    });
+  }
+
+  if (action === "continue") {
+    return normalizeDecisionAlternative({
+      action: "handoff",
+      agent_id: nextAgent && nextAgent !== currentAgentId ? nextAgent : null,
+      summary: "若下一步變得更專業化，也可 handoff；這輪先保留上下文連續性。",
+    });
+  }
+
+  return normalizeDecisionAlternative({
+    action: "clarify",
+    agent_id: null,
+    summary: "也可先問一個關鍵澄清問題；這輪判斷已有足夠資訊可以開始。",
+  });
+}
+
+function buildExecutiveDecisionWhy({
+  action = "",
+  reason = "",
+  nextAgentId = "",
+} = {}) {
+  const normalizedReason = cleanText(reason);
+  const agentLabel = cleanText(nextAgentId) ? `/${cleanText(nextAgentId)}` : "目前 agent";
+
+  if (action === "handoff") {
+    return normalizedReason
+      ? `${normalizedReason}，由 ${agentLabel} 接手更符合這輪任務所需能力。`
+      : `這一輪需要換成 ${agentLabel} 接手，才能更直接推進目標。`;
+  }
+  if (action === "clarify") {
+    return normalizedReason
+      ? `${normalizedReason}，現在缺的資訊會直接阻塞下一步。`
+      : "目前缺少關鍵資訊，直接往下做的風險高於先澄清。";
+  }
+  if (action === "continue") {
+    return normalizedReason
+      ? `${normalizedReason}，延續 ${agentLabel} 可以保留上下文與現有進度。`
+      : `目前已有可延續的工作脈絡，先由 ${agentLabel} 繼續最穩定。`;
+  }
+  return normalizedReason
+    ? `${normalizedReason}，先由 ${agentLabel} 啟動可以最快形成可執行路徑。`
+    : `這看起來是新的工作輪次，先由 ${agentLabel} 啟動最穩定。`;
+}
+
+function normalizePlannerDecision(decision = {}, fallbackText = "", activeTask = null) {
   const primaryAgentId = cleanText(decision.primary_agent_id || decision.primary_agent || "");
   const nextAgentId = cleanText(decision.next_agent_id || decision.next_agent || primaryAgentId);
-  return {
+  const normalized = {
     action: cleanText(decision.action || "continue") || "continue",
     objective: cleanText(decision.objective || fallbackText),
     primary_agent_id: getRegisteredAgent(primaryAgentId) ? primaryAgentId : "generalist",
@@ -4276,6 +4597,24 @@ function normalizePlannerDecision(decision = {}, fallbackText = "") {
       }))
       .filter((item) => getRegisteredAgent(item.agent_id) && item.task)
       .slice(0, 8),
+  };
+
+  return {
+    ...normalized,
+    why: cleanText(decision?.why || "") || buildExecutiveDecisionWhy({
+      action: normalized.action,
+      reason: normalized.reason,
+      nextAgentId: normalized.next_agent_id,
+    }),
+    alternative: normalizeDecisionAlternative(
+      decision?.alternative,
+      buildExecutiveDecisionAlternative({
+        action: normalized.action,
+        activeTask,
+        primaryAgentId: normalized.primary_agent_id,
+        nextAgentId: normalized.next_agent_id,
+      }),
+    ),
   };
 }
 
@@ -4324,13 +4663,33 @@ function enrichPlannerDecisionWithTaskDriving(decision = {}, {
         : `延續既有 task，主動推進下一步：${cleanText(taskDriving?.task?.title) || "未命名 task"}`;
   }
 
+  normalizedDecision.why = buildExecutiveDecisionWhy({
+    action: cleanText(normalizedDecision.action || ""),
+    reason: cleanText(normalizedDecision.reason || ""),
+    nextAgentId: cleanText(normalizedDecision.next_agent_id || ""),
+  });
+  normalizedDecision.alternative = normalizeDecisionAlternative(
+    normalizedDecision.alternative,
+    buildExecutiveDecisionAlternative({
+      action: cleanText(normalizedDecision.action || ""),
+      primaryAgentId: cleanText(normalizedDecision.primary_agent_id || ""),
+      nextAgentId: cleanText(normalizedDecision.next_agent_id || ""),
+    }),
+  );
+
   return normalizedDecision;
 }
 
-export async function planExecutiveTurn({ text = "", activeTask = null, requester = requestPlannerJson } = {}) {
+export async function planExecutiveTurn({
+  text = "",
+  activeTask = null,
+  requester = requestPlannerJson,
+  logger = console,
+} = {}) {
   restorePlannerRuntimeContextFromSummary();
   maybeCompactPlannerConversationMemory({
     flows: buildPlannerFlowSnapshots(plannerFlows),
+    logger,
     reason: "pre_plan_executive_turn",
   });
   const promptInput = await buildPlannerPrompt({ text, activeTask });
@@ -4344,22 +4703,35 @@ export async function planExecutiveTurn({ text = "", activeTask = null, requeste
         sessionIdSuffix: cleanText(activeTask?.id || text).slice(0, 48) || "executive-planner",
       });
       const normalizedDecision = enrichPlannerDecisionWithTaskDriving(
-        normalizePlannerDecision(parsePlannerJson(raw), text),
+        normalizePlannerDecision(parsePlannerJson(raw), text, activeTask),
         {
           taskDecisionContext: promptInput.taskDecisionContext,
         },
       );
-      recordPlannerConversationExchange({
-        userQuery: text,
-        plannerReply: JSON.stringify({
-          action: normalizedDecision.action,
+      logPlannerTrace(logger, "info", buildPlannerTraceEvent({
+        eventType: "executive_decision",
+        action: normalizedDecision.action,
+        agent: normalizedDecision.next_agent_id,
+        traceId: cleanText(activeTask?.trace_id || "") || null,
+        reasoning: {
+          why: normalizedDecision.why,
+          alternative: normalizedDecision.alternative,
+        },
+        extra: {
           primary_agent_id: normalizedDecision.primary_agent_id,
           next_agent_id: normalizedDecision.next_agent_id,
-          reason: normalizedDecision.reason,
-        }),
+          supporting_agent_ids: normalizedDecision.supporting_agent_ids,
+          pending_questions_count: normalizedDecision.pending_questions.length,
+          work_items_count: normalizedDecision.work_items.length,
+        },
+      }));
+      recordPlannerConversationExchange({
+        userQuery: text,
+        plannerReply: JSON.stringify(normalizedDecision),
       });
       maybeCompactPlannerConversationMemory({
         flows: buildPlannerFlowSnapshots(plannerFlows),
+        logger,
         unfinishedItems: normalizedDecision.pending_questions.map((question) => ({
           type: "pending_question",
           label: question,
@@ -4377,22 +4749,35 @@ export async function planExecutiveTurn({ text = "", activeTask = null, requeste
   }
 
   const fallbackDecision = enrichPlannerDecisionWithTaskDriving(
-    heuristicPlanExecutiveTurn(text, activeTask),
+    normalizePlannerDecision(heuristicPlanExecutiveTurn(text, activeTask), text, activeTask),
     {
       taskDecisionContext: promptInput.taskDecisionContext,
     },
   );
-  recordPlannerConversationExchange({
-    userQuery: text,
-    plannerReply: JSON.stringify({
-      action: fallbackDecision.action,
+  logPlannerTrace(logger, "warn", buildPlannerTraceEvent({
+    eventType: "executive_decision_fallback",
+    action: fallbackDecision.action,
+    agent: fallbackDecision.next_agent_id,
+    traceId: cleanText(activeTask?.trace_id || "") || null,
+    reasoning: {
+      why: fallbackDecision.why,
+      alternative: fallbackDecision.alternative,
+    },
+    extra: {
       primary_agent_id: fallbackDecision.primary_agent_id,
       next_agent_id: fallbackDecision.next_agent_id,
-      reason: fallbackDecision.reason,
-    }),
+      supporting_agent_ids: fallbackDecision.supporting_agent_ids,
+      pending_questions_count: fallbackDecision.pending_questions.length,
+      work_items_count: fallbackDecision.work_items.length,
+    },
+  }));
+  recordPlannerConversationExchange({
+    userQuery: text,
+    plannerReply: JSON.stringify(fallbackDecision),
   });
   maybeCompactPlannerConversationMemory({
     flows: buildPlannerFlowSnapshots(plannerFlows),
+    logger,
     unfinishedItems: fallbackDecision.pending_questions.map((question) => ({
       type: "pending_question",
       label: question,
