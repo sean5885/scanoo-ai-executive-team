@@ -267,6 +267,230 @@ export function promoteApprovedCompanyBrainKnowledge({
   });
 }
 
+function buildApprovalStateEnvelope(accountId = "", docId = "") {
+  return getCompanyBrainApprovalState({ accountId, docId }) || {
+    review_state: null,
+    approval: null,
+  };
+}
+
+export function reviewCompanyBrainDocAction({
+  accountId = "",
+  docId = "",
+  title = "",
+  action = "ingest_doc",
+  targetStage = "approved_knowledge",
+  limit = 6,
+  overlapSignal = false,
+  replacesExisting = false,
+} = {}) {
+  const normalizedAccountId = cleanText(accountId);
+  const normalizedDocId = cleanText(docId);
+  if (!normalizedAccountId) {
+    return buildUnifiedResult(false, {}, "missing_account_id");
+  }
+  if (!normalizedDocId) {
+    return buildUnifiedResult(false, {}, "missing_doc_id");
+  }
+
+  const staged = stageCompanyBrainReviewFromIntake({
+    accountId: normalizedAccountId,
+    action,
+    targetStage,
+    limit,
+    candidate: {
+      doc_id: normalizedDocId,
+      title: cleanText(title) || null,
+      overlap_signal: overlapSignal === true,
+      replaces_existing: replacesExisting === true,
+    },
+  });
+
+  if (staged.success !== true) {
+    return buildUnifiedResult(false, {
+      doc_id: normalizedDocId,
+      intake_boundary: staged?.data?.intake_boundary || null,
+      approval_state: buildApprovalStateEnvelope(normalizedAccountId, normalizedDocId),
+    }, staged.error || "review_stage_failed");
+  }
+
+  return buildUnifiedResult(true, {
+    doc_id: normalizedDocId,
+    intake_boundary: staged.data.intake_boundary,
+    review_state: staged.data.review_state,
+    approval_state: buildApprovalStateEnvelope(normalizedAccountId, normalizedDocId),
+  });
+}
+
+export function checkCompanyBrainConflictAction({
+  accountId = "",
+  docId = "",
+  title = "",
+  action = "ingest_doc",
+  targetStage = "approved_knowledge",
+  limit = 6,
+  overlapSignal = false,
+  replacesExisting = false,
+} = {}) {
+  const normalizedAccountId = cleanText(accountId);
+  const normalizedDocId = cleanText(docId);
+  if (!normalizedAccountId) {
+    return buildUnifiedResult(false, {}, "missing_account_id");
+  }
+  if (!normalizedDocId) {
+    return buildUnifiedResult(false, {}, "missing_doc_id");
+  }
+
+  const doc = getCompanyBrainDoc(normalizedAccountId, normalizedDocId);
+  if (!doc) {
+    return buildUnifiedResult(false, {}, "not_found");
+  }
+
+  const effectiveTitle = cleanText(title) || cleanText(doc.title) || null;
+  const intakeBoundary = resolveCompanyBrainWriteIntake({
+    accountId: normalizedAccountId,
+    action,
+    targetStage,
+    limit,
+    candidate: {
+      doc_id: normalizedDocId,
+      title: effectiveTitle,
+      overlap_signal: overlapSignal === true,
+      replaces_existing: replacesExisting === true,
+    },
+  });
+
+  if (intakeBoundary.ok !== true) {
+    return buildUnifiedResult(false, {
+      doc_id: normalizedDocId,
+      approval_state: buildApprovalStateEnvelope(normalizedAccountId, normalizedDocId),
+    }, "invalid_candidate");
+  }
+
+  const conflictItems = Array.isArray(intakeBoundary.matched_docs) ? intakeBoundary.matched_docs : [];
+  const explicitConflict = overlapSignal === true || replacesExisting === true;
+  const hasExactOverlap = conflictItems.some((item) => cleanText(item?.match_type) === "same_title");
+  const conflictState = intakeBoundary.conflict_check_required !== true
+    ? "none"
+    : explicitConflict || hasExactOverlap
+      ? "confirmed"
+      : conflictItems.length > 0
+        ? "possible"
+        : "none";
+
+  const existingApprovalState = buildApprovalStateEnvelope(normalizedAccountId, normalizedDocId);
+  let reviewState = existingApprovalState.review_state;
+  if (
+    conflictState !== "none"
+    && reviewState?.status !== "approved"
+    && reviewState?.status !== "rejected"
+  ) {
+    const staged = stageCompanyBrainReviewState({
+      accountId: normalizedAccountId,
+      docId: normalizedDocId,
+      sourceStage: intakeBoundary.target_stage,
+      proposedAction: intakeBoundary.action,
+      reviewStatus: "conflict_detected",
+      conflictItems,
+      reviewNotes: "explicit conflict_check detected overlap before company-brain admission",
+    });
+    if (staged.success === true) {
+      reviewState = staged.data.review_state;
+    }
+  }
+
+  return buildUnifiedResult(true, {
+    doc_id: normalizedDocId,
+    title: effectiveTitle,
+    conflict_state: conflictState,
+    conflict_items: conflictItems,
+    intake_boundary: intakeBoundary,
+    review_state: reviewState,
+    approval_state: buildApprovalStateEnvelope(normalizedAccountId, normalizedDocId),
+  });
+}
+
+export function approvalTransitionCompanyBrainDocAction({
+  accountId = "",
+  docId = "",
+  decision = "",
+  notes = "",
+  actor = "unknown",
+} = {}) {
+  const normalizedAccountId = cleanText(accountId);
+  const normalizedDocId = cleanText(docId);
+  const normalizedDecision = cleanText(decision).toLowerCase();
+  if (!normalizedAccountId) {
+    return buildUnifiedResult(false, {}, "missing_account_id");
+  }
+  if (!normalizedDocId) {
+    return buildUnifiedResult(false, {}, "missing_doc_id");
+  }
+  if (normalizedDecision !== "approve" && normalizedDecision !== "reject") {
+    return buildUnifiedResult(false, {}, "invalid_decision");
+  }
+
+  const resolved = resolveCompanyBrainReviewDecision({
+    accountId: normalizedAccountId,
+    docId: normalizedDocId,
+    approved: normalizedDecision === "approve",
+    notes,
+    actor,
+  });
+
+  if (resolved.success !== true) {
+    return buildUnifiedResult(false, {
+      doc_id: normalizedDocId,
+      approval_state: buildApprovalStateEnvelope(normalizedAccountId, normalizedDocId),
+    }, resolved.error || "approval_transition_failed");
+  }
+
+  return buildUnifiedResult(true, {
+    doc_id: normalizedDocId,
+    decision: normalizedDecision,
+    review_state: resolved.data.review_state,
+    approval_state: buildApprovalStateEnvelope(normalizedAccountId, normalizedDocId),
+  });
+}
+
+export function applyApprovedCompanyBrainKnowledgeAction({
+  accountId = "",
+  docId = "",
+  actor = "unknown",
+  sourceStage = "approved_knowledge",
+} = {}) {
+  const normalizedAccountId = cleanText(accountId);
+  const normalizedDocId = cleanText(docId);
+  if (!normalizedAccountId) {
+    return buildUnifiedResult(false, {}, "missing_account_id");
+  }
+  if (!normalizedDocId) {
+    return buildUnifiedResult(false, {}, "missing_doc_id");
+  }
+
+  const promoted = promoteApprovedCompanyBrainKnowledge({
+    accountId: normalizedAccountId,
+    docId: normalizedDocId,
+    actor,
+    sourceStage,
+  });
+
+  if (promoted.success !== true) {
+    return buildUnifiedResult(false, {
+      doc_id: normalizedDocId,
+      review_state: promoted?.data?.review_state || null,
+      approval_state: buildApprovalStateEnvelope(normalizedAccountId, normalizedDocId),
+    }, promoted.error || "approval_apply_failed");
+  }
+
+  return buildUnifiedResult(true, {
+    doc_id: normalizedDocId,
+    review_state: promoted.data.review_state,
+    approval: promoted.data.approval,
+    approval_state: buildApprovalStateEnvelope(normalizedAccountId, normalizedDocId),
+  });
+}
+
 export function getCompanyBrainApprovalState({
   accountId = "",
   docId = "",

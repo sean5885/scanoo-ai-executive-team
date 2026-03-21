@@ -8,8 +8,11 @@ import {
   searchTopK,
 } from "./config.mjs";
 import {
+  getApprovedCompanyBrainKnowledgeDetailAction,
   getCompanyBrainDocDetailAction,
+  listApprovedCompanyBrainKnowledgeAction,
   listCompanyBrainDocsAction,
+  searchApprovedCompanyBrainKnowledgeAction,
   searchCompanyBrainDocsAction,
 } from "./company-brain-query.mjs";
 import {
@@ -98,7 +101,13 @@ import {
   listDocumentComments,
 } from "./lark-content.mjs";
 import { searchKnowledgeBase } from "./answer-service.mjs";
-import { stageCompanyBrainReviewState } from "./company-brain-review.mjs";
+import {
+  applyApprovedCompanyBrainKnowledgeAction,
+  approvalTransitionCompanyBrainDocAction,
+  checkCompanyBrainConflictAction,
+  reviewCompanyBrainDocAction,
+  stageCompanyBrainReviewState,
+} from "./company-brain-review.mjs";
 import { resolveCompanyBrainWriteIntake } from "./company-brain-write-intake.mjs";
 import { applyRewrittenDocument, rewriteDocumentFromComments } from "./doc-comment-rewrite.mjs";
 import { buildPlannedUserInputEnvelope, executePlannedUserInput } from "./executive-planner.mjs";
@@ -687,7 +696,7 @@ function parseCompanyBrainLimit(requestUrl, body, fallback = 50) {
 
 function parseCompanyBrainDocId(requestUrl, body) {
   return String(
-    requestUrl.pathname.match(/^\/(?:api|agent)\/company-brain\/docs\/([^/]+)$/)?.[1]
+    requestUrl.pathname.match(/^\/(?:api|agent)\/company-brain\/(?:approved\/)?docs\/([^/]+)(?:\/apply)?$/)?.[1]
     || body.doc_id
     || ""
   ).trim();
@@ -803,6 +812,19 @@ function buildCompanyBrainAgentResult(res, action, result = {}) {
     },
     ...(result?.success === true ? {} : { error: result?.error || "business_error" }),
   });
+}
+
+function getCompanyBrainAgentStatusCode(result = {}) {
+  if (result?.success === true) {
+    return 200;
+  }
+  if (result?.error === "not_found") {
+    return 404;
+  }
+  if (result?.error === "approval_required") {
+    return 409;
+  }
+  return 400;
 }
 
 // ---------------------------------------------------------------------------
@@ -3076,6 +3098,229 @@ async function handleAgentGetCompanyBrainDocDetail(res, requestUrl, body, logger
   jsonResponse(res, statusCode, buildCompanyBrainAgentResult(res, "get_company_brain_doc_detail", result));
 }
 
+async function handleAgentListApprovedCompanyBrainKnowledge(res, requestUrl, body, logger = noopHttpLogger) {
+  const context = await resolveCompanyBrainReadContext(res, requestUrl, body, logger);
+  if (!context) {
+    return;
+  }
+
+  const limit = parseCompanyBrainLimit(requestUrl, body);
+  const result = listApprovedCompanyBrainKnowledgeAction({
+    accountId: context.account.id,
+    limit,
+  });
+
+  logCompanyBrainCollectionRead(logger, "company_brain_approved_list", {
+    accountId: context.account.id,
+    limit,
+    total: result?.data?.total || 0,
+  });
+
+  logger.info("agent_bridge_completed", {
+    stage: "agent_bridge",
+    action: "list_approved_company_brain_knowledge",
+    ok: result.success === true,
+    status_code: getCompanyBrainAgentStatusCode(result),
+  });
+
+  jsonResponse(
+    res,
+    getCompanyBrainAgentStatusCode(result),
+    buildCompanyBrainAgentResult(res, "list_approved_company_brain_knowledge", result),
+  );
+}
+
+async function handleAgentSearchApprovedCompanyBrainKnowledge(res, requestUrl, body, logger = noopHttpLogger) {
+  const context = await resolveCompanyBrainReadContext(res, requestUrl, body, logger);
+  if (!context) {
+    return;
+  }
+
+  const q = parseCompanyBrainSearchQuery(requestUrl, body);
+  const topK = parseCompanyBrainLimit(requestUrl, body, 5);
+  const result = searchApprovedCompanyBrainKnowledgeAction({
+    accountId: context.account.id,
+    q,
+    top_k: topK,
+  });
+
+  logCompanyBrainCollectionRead(logger, "company_brain_approved_search", {
+    accountId: context.account.id,
+    q,
+    limit: topK,
+    total: result?.data?.total || 0,
+  });
+
+  logger.info("agent_bridge_completed", {
+    stage: "agent_bridge",
+    action: "search_approved_company_brain_knowledge",
+    ok: result.success === true,
+    status_code: getCompanyBrainAgentStatusCode(result),
+  });
+
+  jsonResponse(
+    res,
+    getCompanyBrainAgentStatusCode(result),
+    buildCompanyBrainAgentResult(res, "search_approved_company_brain_knowledge", result),
+  );
+}
+
+async function handleAgentGetApprovedCompanyBrainKnowledgeDetail(res, requestUrl, body, logger = noopHttpLogger) {
+  const context = await resolveCompanyBrainReadContext(res, requestUrl, body, logger);
+  if (!context) {
+    return;
+  }
+
+  const docId = parseCompanyBrainDocId(requestUrl, body);
+  const result = getApprovedCompanyBrainKnowledgeDetailAction({
+    accountId: context.account.id,
+    docId,
+  });
+  const statusCode = getCompanyBrainAgentStatusCode(result);
+
+  logCompanyBrainDetailRead(logger, {
+    accountId: context.account.id,
+    docId,
+    found: result.success === true,
+  });
+
+  logger.info("agent_bridge_completed", {
+    stage: "agent_bridge",
+    action: "get_approved_company_brain_knowledge_detail",
+    ok: result.success === true,
+    status_code: statusCode,
+  });
+
+  jsonResponse(
+    res,
+    statusCode,
+    buildCompanyBrainAgentResult(res, "get_approved_company_brain_knowledge_detail", result),
+  );
+}
+
+async function handleAgentReviewCompanyBrainDoc(res, requestUrl, body, logger = noopHttpLogger) {
+  const context = await resolveCompanyBrainReadContext(res, requestUrl, body, logger);
+  if (!context) {
+    return;
+  }
+
+  const docId = parseCompanyBrainDocId(requestUrl, body);
+  const result = reviewCompanyBrainDocAction({
+    accountId: context.account.id,
+    docId,
+    title: body?.title ?? body?.candidate?.title,
+    action: body?.action,
+    targetStage: body?.target_stage,
+    limit: parseCompanyBrainLimit(requestUrl, body, 6),
+    overlapSignal: body?.overlap_signal === true || body?.candidate?.overlap_signal === true,
+    replacesExisting: body?.replaces_existing === true || body?.candidate?.replaces_existing === true,
+  });
+  const statusCode = getCompanyBrainAgentStatusCode(result);
+
+  logger.info("company_brain_review", {
+    stage: "company_brain_review",
+    action: "review_company_brain_doc",
+    account_id: context.account.id,
+    doc_id: docId || null,
+    ok: result.success === true,
+    status_code: statusCode,
+    review_status: result?.data?.review_state?.status || null,
+  });
+
+  jsonResponse(res, statusCode, buildCompanyBrainAgentResult(res, "review_company_brain_doc", result));
+}
+
+async function handleAgentCheckCompanyBrainConflicts(res, requestUrl, body, logger = noopHttpLogger) {
+  const context = await resolveCompanyBrainReadContext(res, requestUrl, body, logger);
+  if (!context) {
+    return;
+  }
+
+  const docId = parseCompanyBrainDocId(requestUrl, body);
+  const result = checkCompanyBrainConflictAction({
+    accountId: context.account.id,
+    docId,
+    title: body?.title ?? body?.candidate?.title,
+    action: body?.action,
+    targetStage: body?.target_stage,
+    limit: parseCompanyBrainLimit(requestUrl, body, 6),
+    overlapSignal: body?.overlap_signal === true || body?.candidate?.overlap_signal === true,
+    replacesExisting: body?.replaces_existing === true || body?.candidate?.replaces_existing === true,
+  });
+  const statusCode = getCompanyBrainAgentStatusCode(result);
+
+  logger.info("company_brain_conflict_check", {
+    stage: "company_brain_conflict_check",
+    action: "check_company_brain_conflicts",
+    account_id: context.account.id,
+    doc_id: docId || null,
+    ok: result.success === true,
+    status_code: statusCode,
+    conflict_state: result?.data?.conflict_state || null,
+    conflict_items: Array.isArray(result?.data?.conflict_items) ? result.data.conflict_items.length : 0,
+  });
+
+  jsonResponse(res, statusCode, buildCompanyBrainAgentResult(res, "check_company_brain_conflicts", result));
+}
+
+async function handleAgentCompanyBrainApprovalTransition(res, requestUrl, body, logger = noopHttpLogger) {
+  const context = await resolveCompanyBrainReadContext(res, requestUrl, body, logger);
+  if (!context) {
+    return;
+  }
+
+  const docId = parseCompanyBrainDocId(requestUrl, body);
+  const result = approvalTransitionCompanyBrainDocAction({
+    accountId: context.account.id,
+    docId,
+    decision: body?.decision,
+    notes: body?.notes,
+    actor: body?.actor,
+  });
+  const statusCode = getCompanyBrainAgentStatusCode(result);
+
+  logger.info("company_brain_approval_transition", {
+    stage: "company_brain_approval_transition",
+    action: "approval_transition_company_brain_doc",
+    account_id: context.account.id,
+    doc_id: docId || null,
+    ok: result.success === true,
+    status_code: statusCode,
+    decision: result?.data?.decision || null,
+    review_status: result?.data?.review_state?.status || null,
+  });
+
+  jsonResponse(res, statusCode, buildCompanyBrainAgentResult(res, "approval_transition_company_brain_doc", result));
+}
+
+async function handleAgentApplyApprovedCompanyBrainKnowledge(res, requestUrl, body, logger = noopHttpLogger) {
+  const context = await resolveCompanyBrainReadContext(res, requestUrl, body, logger);
+  if (!context) {
+    return;
+  }
+
+  const docId = parseCompanyBrainDocId(requestUrl, body);
+  const result = applyApprovedCompanyBrainKnowledgeAction({
+    accountId: context.account.id,
+    docId,
+    actor: body?.actor,
+    sourceStage: body?.source_stage,
+  });
+  const statusCode = getCompanyBrainAgentStatusCode(result);
+
+  logger.info("company_brain_apply", {
+    stage: "company_brain_apply",
+    action: "apply_company_brain_approved_knowledge",
+    account_id: context.account.id,
+    doc_id: docId || null,
+    ok: result.success === true,
+    status_code: statusCode,
+    approved_at: result?.data?.approval?.approved_at || null,
+  });
+
+  jsonResponse(res, statusCode, buildCompanyBrainAgentResult(res, "apply_company_brain_approved_knowledge", result));
+}
+
 async function handleAgentIngestLearningDoc(res, requestUrl, body, logger = noopHttpLogger) {
   const context = await resolveCompanyBrainReadContext(res, requestUrl, body, logger);
   if (!context) {
@@ -5277,7 +5522,7 @@ async function handleSecureTaskStart(res, body) {
     jsonResponse(res, 400, { ok: false, error: "missing_task_name" });
     return;
   }
-  const task = await startSecureTask(name);
+  const task = await getHttpService("startSecureTask", startSecureTask)(name);
   jsonResponse(res, 200, { ok: true, task });
 }
 
@@ -5286,7 +5531,7 @@ async function handleSecureAction(res, taskId, body) {
     jsonResponse(res, 400, { ok: false, error: "missing_action" });
     return;
   }
-  const result = await executeSecureAction(taskId, body.action);
+  const result = await getHttpService("executeSecureAction", executeSecureAction)(taskId, body.action);
   if (result.status === "approval_required") {
     jsonResponse(res, 409, result);
     return;
@@ -5295,28 +5540,28 @@ async function handleSecureAction(res, taskId, body) {
 }
 
 async function handleSecureTaskFinish(res, taskId, body) {
-  const diff = await finishSecureTask(taskId, Boolean(body.success));
+  const diff = await getHttpService("finishSecureTask", finishSecureTask)(taskId, Boolean(body.success));
   jsonResponse(res, 200, { ok: true, diff });
 }
 
 async function handleSecureTaskRollback(res, taskId, body) {
-  const diff = await rollbackSecureTask(taskId, Boolean(body.dry_run));
+  const diff = await getHttpService("rollbackSecureTask", rollbackSecureTask)(taskId, Boolean(body.dry_run));
   jsonResponse(res, 200, { ok: true, diff });
 }
 
 async function handleSecurityStatus(res) {
-  const status = await getSecurityStatus();
+  const status = await getHttpService("getSecurityStatus", getSecurityStatus)();
   jsonResponse(res, 200, status);
 }
 
 async function handleApprovalList(res) {
-  const items = await listPendingApprovals();
+  const items = await getHttpService("listPendingApprovals", listPendingApprovals)();
   jsonResponse(res, 200, { ok: true, total: items.length, items });
 }
 
 async function handleApprovalResolution(res, requestId, body, approved) {
   const actor = typeof body.actor === "string" && body.actor.trim() ? body.actor.trim() : "openclaw";
-  const result = await resolvePendingApproval(requestId, approved, actor);
+  const result = await getHttpService("resolvePendingApproval", resolvePendingApproval)(requestId, approved, actor);
   jsonResponse(res, 200, result);
 }
 
@@ -5609,9 +5854,44 @@ export function startHttpServer({
         return;
       }
 
+      if (requestUrl.pathname === "/agent/company-brain/approved/docs" && req.method === "GET") {
+        await runHttpRoute(requestLogger, "agent_company_brain_approved_docs_list", (routeLogger) =>
+          handleAgentListApprovedCompanyBrainKnowledge(res, requestUrl, body, routeLogger)
+        );
+        return;
+      }
+
       if (requestUrl.pathname === "/agent/company-brain/search" && req.method === "GET") {
         await runHttpRoute(requestLogger, "agent_company_brain_search", (routeLogger) =>
           handleAgentSearchCompanyBrainDocs(res, requestUrl, body, routeLogger)
+        );
+        return;
+      }
+
+      if (requestUrl.pathname === "/agent/company-brain/approved/search" && req.method === "GET") {
+        await runHttpRoute(requestLogger, "agent_company_brain_approved_search", (routeLogger) =>
+          handleAgentSearchApprovedCompanyBrainKnowledge(res, requestUrl, body, routeLogger)
+        );
+        return;
+      }
+
+      if (requestUrl.pathname === "/agent/company-brain/review" && req.method === "POST") {
+        await runHttpRoute(requestLogger, "agent_company_brain_review", (routeLogger) =>
+          handleAgentReviewCompanyBrainDoc(res, requestUrl, body, routeLogger)
+        );
+        return;
+      }
+
+      if (requestUrl.pathname === "/agent/company-brain/conflicts" && req.method === "POST") {
+        await runHttpRoute(requestLogger, "agent_company_brain_conflicts", (routeLogger) =>
+          handleAgentCheckCompanyBrainConflicts(res, requestUrl, body, routeLogger)
+        );
+        return;
+      }
+
+      if (requestUrl.pathname === "/agent/company-brain/approval-transition" && req.method === "POST") {
+        await runHttpRoute(requestLogger, "agent_company_brain_approval_transition", (routeLogger) =>
+          handleAgentCompanyBrainApprovalTransition(res, requestUrl, body, routeLogger)
         );
         return;
       }
@@ -5633,6 +5913,20 @@ export function startHttpServer({
       if (/^\/agent\/company-brain\/docs\/[^/]+$/.test(requestUrl.pathname) && req.method === "GET") {
         await runHttpRoute(requestLogger, "agent_company_brain_doc_detail", (routeLogger) =>
           handleAgentGetCompanyBrainDocDetail(res, requestUrl, body, routeLogger)
+        );
+        return;
+      }
+
+      if (/^\/agent\/company-brain\/approved\/docs\/[^/]+$/.test(requestUrl.pathname) && req.method === "GET") {
+        await runHttpRoute(requestLogger, "agent_company_brain_approved_doc_detail", (routeLogger) =>
+          handleAgentGetApprovedCompanyBrainKnowledgeDetail(res, requestUrl, body, routeLogger)
+        );
+        return;
+      }
+
+      if (/^\/agent\/company-brain\/docs\/[^/]+\/apply$/.test(requestUrl.pathname) && req.method === "POST") {
+        await runHttpRoute(requestLogger, "agent_company_brain_apply", (routeLogger) =>
+          handleAgentApplyApprovedCompanyBrainKnowledge(res, requestUrl, body, routeLogger)
         );
         return;
       }

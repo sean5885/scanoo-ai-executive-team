@@ -19,12 +19,14 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - SQLite:
   - `company_brain_docs`
   - `company_brain_learning_state`
+  - `company_brain_review_state`
+  - `company_brain_approved_knowledge`
 
 ## Used By Agents
 
 - Current usage is still bounded, but planner-facing query paths now exist:
   - route-side non-blocking ingestion on verified API-created docs
-  - a small internal write-intake policy helper that classifies direct mirror intake vs review/conflict-required promotion paths
+  - a small write-intake policy helper that classifies direct mirror intake vs review/conflict-required promotion paths
   - read-only public HTTP routes:
     - `GET /api/company-brain/docs`
     - `GET /api/company-brain/docs/:doc_id`
@@ -33,6 +35,13 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
     - `GET /agent/company-brain/docs`
     - `GET /agent/company-brain/search`
     - `GET /agent/company-brain/docs/:doc_id`
+    - `GET /agent/company-brain/approved/docs`
+    - `GET /agent/company-brain/approved/search`
+    - `GET /agent/company-brain/approved/docs/:doc_id`
+    - `POST /agent/company-brain/review`
+    - `POST /agent/company-brain/conflicts`
+    - `POST /agent/company-brain/approval-transition`
+    - `POST /agent/company-brain/docs/:doc_id/apply`
     - `POST /agent/company-brain/learning/ingest`
     - `POST /agent/company-brain/learning/state`
   - `/Users/seanhan/Documents/Playground/src/company-brain-query.mjs`
@@ -53,18 +62,23 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
       - `conflict_detected`
       - `approved`
       - `rejected`
+    - exposes bounded actions for:
+      - review staging
+      - conflict checking
+      - approval decision transition
+      - explicit approved-knowledge apply
     - promotes only `approved` review results into `company_brain_approved_knowledge`
     - keeps approval storage separate from both mirror and learning sidecar
   - `/Users/seanhan/Documents/Playground/src/company-brain-query.mjs`
-    - now also exposes internal approved-knowledge query actions that only read from `company_brain_approved_knowledge`
-    - keeps the existing mirror read-side actions unchanged
+    - now also exposes approved-knowledge list/search/detail actions that only read from `company_brain_approved_knowledge`
+    - keeps the existing mirror read-side actions unchanged and separate
 
 ## Completeness
 
 - Minimal only.
 - It stores a verified-doc mirror, not a canonical memory graph or approval-governed knowledge layer.
 - the learning sidecar is also minimal; it is not approved long-term memory
-- review/approval persistence now exists, but there is still no standalone approval runtime, company-brain-owned verifier, or human review UI
+- a minimal agent-facing review/conflict/approval/apply runtime now exists, but there is still no company-brain-owned verifier, human review UI, or semantic conflict resolver
 - Public list/detail/search routes only return:
   - `doc_id`
   - `title`
@@ -76,7 +90,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `learning_state`
   - search-time `match` metadata including composite `score` plus simplified `ranking_basis`
   - no raw full-text body
-- approved knowledge is now stored separately and can only be queried through the new approved-only internal query boundary after explicit review approval
+- approved knowledge is now stored separately and can only be queried through approved-only agent/query routes after explicit review approval plus apply
 
 ## Knowledge Sources That Do Exist
 
@@ -99,4 +113,4 @@ Observed sources:
 
 ## Conclusion
 
-At scan time, this repo still does not have a full company_brain governance system. It now has a small `company_brain_docs` mirror for verified API-created docs, a separate simplified `company_brain_learning_state` sidecar for planner-facing learning metadata, and a minimal `company_brain_review_state` + `company_brain_approved_knowledge` persistence boundary for explicit approval-gated promotion. Retrieval knowledge and lifecycle/indexing remain the primary implemented layers, and formal approval is still not a standalone runtime.
+At scan time, this repo still does not have a full company_brain governance system. It now has a small `company_brain_docs` mirror for verified API-created docs, a separate simplified `company_brain_learning_state` sidecar for planner-facing learning metadata, and a minimal agent-facing `review -> conflict -> approval-transition -> apply` runtime backed by `company_brain_review_state` plus `company_brain_approved_knowledge`. Retrieval knowledge and lifecycle/indexing remain the primary implemented layers, and company-brain governance is still bounded rather than full-fidelity.

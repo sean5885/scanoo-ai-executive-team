@@ -505,6 +505,115 @@ test("agent company-brain search and detail routes return structured summaries f
   ]);
 });
 
+test("agent company-brain review conflict approval apply slice is end-to-end verifiable", async (t) => {
+  const docId = `doc-agent-company-brain-approval-${Date.now()}`;
+  insertCompanyBrainFixture({
+    docId,
+    title: "Formal Launch Runbook",
+    rawText: [
+      "# Formal Launch Runbook",
+      "## Owners",
+      "Launch owner",
+      "## Checklist",
+      "- Confirm launch owner",
+      "- Approve the final checklist",
+    ].join("\n"),
+  });
+  t.after(() => {
+    db.prepare("DELETE FROM company_brain_approved_knowledge WHERE account_id = ? AND doc_id = ?").run("acct-1", docId);
+    db.prepare("DELETE FROM company_brain_review_state WHERE account_id = ? AND doc_id = ?").run("acct-1", docId);
+    db.prepare("DELETE FROM company_brain_docs WHERE account_id = ? AND doc_id = ?").run("acct-1", docId);
+    db.prepare("DELETE FROM lark_documents WHERE account_id = ? AND document_id = ?").run("acct-1", docId);
+  });
+
+  const { server } = await startTestServer(t, {});
+  const { port } = server.address();
+
+  const beforeResponse = await fetch(`http://127.0.0.1:${port}/agent/company-brain/approved/search?q=launch%20owner`);
+  const beforePayload = await beforeResponse.json();
+  assert.equal(beforeResponse.status, 200);
+  assert.equal(beforePayload.data.data.total, 0);
+
+  const reviewResponse = await fetch(`http://127.0.0.1:${port}/agent/company-brain/review`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      doc_id: docId,
+      title: "Formal Launch Runbook",
+      target_stage: "approved_knowledge",
+    }),
+  });
+  const reviewPayload = await reviewResponse.json();
+  assert.equal(reviewResponse.status, 200);
+  assert.equal(reviewPayload.ok, true);
+  assert.equal(reviewPayload.action, "review_company_brain_doc");
+  assert.equal(reviewPayload.data.data.review_state.status, "pending_review");
+  assert.equal(reviewPayload.data.data.intake_boundary.approval_required_for_formal_source, true);
+
+  const conflictResponse = await fetch(`http://127.0.0.1:${port}/agent/company-brain/conflicts`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      doc_id: docId,
+      title: "Formal Launch Runbook",
+      target_stage: "approved_knowledge",
+    }),
+  });
+  const conflictPayload = await conflictResponse.json();
+  assert.equal(conflictResponse.status, 200);
+  assert.equal(conflictPayload.ok, true);
+  assert.equal(conflictPayload.action, "check_company_brain_conflicts");
+  assert.equal(conflictPayload.data.data.conflict_state, "none");
+  assert.equal(conflictPayload.data.data.intake_boundary.conflict_check_required, false);
+
+  const approvalResponse = await fetch(`http://127.0.0.1:${port}/agent/company-brain/approval-transition`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      doc_id: docId,
+      decision: "approve",
+      actor: "reviewer@test",
+      notes: "Approved for formal knowledge admission.",
+    }),
+  });
+  const approvalPayload = await approvalResponse.json();
+  assert.equal(approvalResponse.status, 200);
+  assert.equal(approvalPayload.ok, true);
+  assert.equal(approvalPayload.action, "approval_transition_company_brain_doc");
+  assert.equal(approvalPayload.data.data.review_state.status, "approved");
+  assert.equal(approvalPayload.data.data.approval_state.approval, null);
+
+  const applyResponse = await fetch(`http://127.0.0.1:${port}/agent/company-brain/docs/${docId}/apply`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      actor: "reviewer@test",
+      source_stage: "approved_knowledge",
+    }),
+  });
+  const applyPayload = await applyResponse.json();
+  assert.equal(applyResponse.status, 200);
+  assert.equal(applyPayload.ok, true);
+  assert.equal(applyPayload.action, "apply_company_brain_approved_knowledge");
+  assert.equal(applyPayload.data.data.approval.status, "approved");
+
+  const approvedSearchResponse = await fetch(`http://127.0.0.1:${port}/agent/company-brain/approved/search?q=launch%20owner`);
+  const approvedSearchPayload = await approvedSearchResponse.json();
+  assert.equal(approvedSearchResponse.status, 200);
+  assert.equal(approvedSearchPayload.ok, true);
+  assert.equal(approvedSearchPayload.data.data.total, 1);
+  assert.equal(approvedSearchPayload.data.data.items[0].doc_id, docId);
+  assert.equal(approvedSearchPayload.data.data.items[0].knowledge_state.stage, "approved");
+
+  const approvedDetailResponse = await fetch(`http://127.0.0.1:${port}/agent/company-brain/approved/docs/${docId}`);
+  const approvedDetailPayload = await approvedDetailResponse.json();
+  assert.equal(approvedDetailResponse.status, 200);
+  assert.equal(approvedDetailPayload.ok, true);
+  assert.equal(approvedDetailPayload.action, "get_approved_company_brain_knowledge_detail");
+  assert.equal(approvedDetailPayload.data.data.doc.doc_id, docId);
+  assert.equal(approvedDetailPayload.data.data.knowledge_state.stage, "approved");
+});
+
 test("cloud doc apply route requires prior preview and cannot bypass verifier path", async (t) => {
   const { server } = await startTestServer(t, {
     resolveDriveRootFolderToken: async () => "fld-root",

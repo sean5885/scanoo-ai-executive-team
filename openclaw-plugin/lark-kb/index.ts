@@ -662,6 +662,227 @@ export default function register(api: { registerTool: Function; pluginConfig?: P
 
   api.registerTool(
     {
+      name: "company_brain_search_approved",
+      description:
+        "Search only explicitly approved company-brain knowledge. Use this when mirrored or learning-only material is not sufficient evidence.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          q: { type: "string" },
+          top_k: { type: "number" },
+          account_id: { type: "string" }
+        },
+        required: ["q"]
+      },
+      async execute(_id: string, params: Record<string, unknown>) {
+        const query = toQuery({
+          q: params.q,
+          top_k: params.top_k,
+          account_id: params.account_id,
+        });
+        const result = await callJson(api, `/agent/company-brain/approved/search${query}`);
+        if (result.status >= 400) {
+          throw errorFromResponse("company_brain_search_approved", result.status, result.data);
+        }
+        return formatResult("company_brain_search_approved", result.data);
+      },
+    },
+    { optional: true },
+  );
+
+  api.registerTool(
+    {
+      name: "company_brain_get_approved_doc",
+      description:
+        "Fetch one explicitly approved company-brain document summary and learning metadata by doc id.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          doc_id: { type: "string" },
+          account_id: { type: "string" }
+        },
+        required: ["doc_id"]
+      },
+      async execute(_id: string, params: Record<string, unknown>) {
+        const query = toQuery({ account_id: params.account_id });
+        const result = await callJson(
+          api,
+          `/agent/company-brain/approved/docs/${encodeURIComponent(String(params.doc_id))}${query}`,
+        );
+        if (result.status >= 400) {
+          throw errorFromResponse("company_brain_get_approved_doc", result.status, result.data);
+        }
+        return formatResult("company_brain_get_approved_doc", result.data);
+      },
+    },
+    { optional: true },
+  );
+
+  api.registerTool(
+    {
+      name: "company_brain_review_doc",
+      description:
+        "Stage the company-brain review boundary for one mirrored document before formal knowledge admission.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          doc_id: { type: "string" },
+          title: { type: "string" },
+          action: { type: "string", enum: ["ingest_doc", "update_doc"] },
+          target_stage: { type: "string", enum: ["mirror", "approved_knowledge"] },
+          limit: { type: "number" },
+          overlap_signal: { type: "boolean" },
+          replaces_existing: { type: "boolean" },
+          account_id: { type: "string" },
+        },
+        required: ["doc_id"],
+      },
+      async execute(_id: string, params: Record<string, unknown>) {
+        const result = await callJson(api, "/agent/company-brain/review", {
+          method: "POST",
+          body: JSON.stringify({
+            doc_id: params.doc_id,
+            title: params.title,
+            action: params.action,
+            target_stage: params.target_stage,
+            limit: params.limit,
+            overlap_signal: params.overlap_signal === true,
+            replaces_existing: params.replaces_existing === true,
+            account_id: params.account_id,
+          }),
+        });
+        if (result.status >= 400) {
+          throw errorFromResponse("company_brain_review_doc", result.status, result.data);
+        }
+        return formatResult("company_brain_review_doc", result.data);
+      },
+    },
+    { optional: true },
+  );
+
+  api.registerTool(
+    {
+      name: "company_brain_conflict_check",
+      description:
+        "Run the explicit company-brain conflict check boundary for one mirrored document before approval/apply.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          doc_id: { type: "string" },
+          title: { type: "string" },
+          action: { type: "string", enum: ["ingest_doc", "update_doc"] },
+          target_stage: { type: "string", enum: ["mirror", "approved_knowledge"] },
+          limit: { type: "number" },
+          overlap_signal: { type: "boolean" },
+          replaces_existing: { type: "boolean" },
+          account_id: { type: "string" },
+        },
+        required: ["doc_id"],
+      },
+      async execute(_id: string, params: Record<string, unknown>) {
+        const result = await callJson(api, "/agent/company-brain/conflicts", {
+          method: "POST",
+          body: JSON.stringify({
+            doc_id: params.doc_id,
+            title: params.title,
+            action: params.action,
+            target_stage: params.target_stage,
+            limit: params.limit,
+            overlap_signal: params.overlap_signal === true,
+            replaces_existing: params.replaces_existing === true,
+            account_id: params.account_id,
+          }),
+        });
+        if (result.status >= 400) {
+          throw errorFromResponse("company_brain_conflict_check", result.status, result.data);
+        }
+        return formatResult("company_brain_conflict_check", result.data);
+      },
+    },
+    { optional: true },
+  );
+
+  api.registerTool(
+    {
+      name: "company_brain_approval_transition",
+      description:
+        "Approve or reject one company-brain review decision before the final apply step.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          doc_id: { type: "string" },
+          decision: { type: "string", enum: ["approve", "reject"] },
+          actor: { type: "string" },
+          notes: { type: "string" },
+          account_id: { type: "string" },
+        },
+        required: ["doc_id", "decision"],
+      },
+      async execute(_id: string, params: Record<string, unknown>) {
+        const result = await callJson(api, "/agent/company-brain/approval-transition", {
+          method: "POST",
+          body: JSON.stringify({
+            doc_id: params.doc_id,
+            decision: params.decision,
+            actor: params.actor,
+            notes: params.notes,
+            account_id: params.account_id,
+          }),
+        });
+        if (result.status >= 400) {
+          throw errorFromResponse("company_brain_approval_transition", result.status, result.data);
+        }
+        return formatResult("company_brain_approval_transition", result.data);
+      },
+    },
+    { optional: true },
+  );
+
+  api.registerTool(
+    {
+      name: "company_brain_apply",
+      description:
+        "Apply one already-approved company-brain document into the approved knowledge boundary.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          doc_id: { type: "string" },
+          actor: { type: "string" },
+          source_stage: { type: "string" },
+          account_id: { type: "string" },
+        },
+        required: ["doc_id"],
+      },
+      async execute(_id: string, params: Record<string, unknown>) {
+        const result = await callJson(
+          api,
+          `/agent/company-brain/docs/${encodeURIComponent(String(params.doc_id))}/apply`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              actor: params.actor,
+              source_stage: params.source_stage,
+              account_id: params.account_id,
+            }),
+          },
+        );
+        if (result.status >= 400) {
+          throw errorFromResponse("company_brain_apply", result.status, result.data);
+        }
+        return formatResult("company_brain_apply", result.data);
+      },
+    },
+    { optional: true },
+  );
+
+  api.registerTool(
+    {
       name: "lark_doc_read",
       description:
         "Read a Lark docx document directly with the authorized user OAuth token. Use this when the user gives a specific document id or asks to inspect one document in detail.",

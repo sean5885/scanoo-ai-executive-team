@@ -6,12 +6,14 @@ const BASELINES = {
     "tests/control-unification-phase2-meeting.test.mjs",
     "tests/control-unification-phase2-doc-rewrite.test.mjs",
     "tests/control-unification-phase2-cloud-doc.test.mjs",
+    "tests/openclaw-plugin-regression.test.mjs",
   ],
   integration: [
     "tests/http-server.route-success.test.mjs",
     "tests/cloud-doc-organization-regression.test.mjs",
     "tests/lane-executor.test.mjs",
     "tests/chain-integration.test.mjs",
+    "tests/lobster-security-bridge.integration.test.mjs",
   ],
   meeting: [
     "tests/control-unification-phase2-meeting.test.mjs",

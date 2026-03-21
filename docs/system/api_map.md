@@ -205,6 +205,48 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Not-found note: returns `ok=false` with `error=not_found`
   - Log note: emits `stage=agent_bridge`
 
+- `GET /agent/company-brain/approved/docs`
+  - Handler: `handleAgentListApprovedCompanyBrainKnowledge`
+  - Purpose: list only explicitly applied approved company-brain knowledge
+  - Response shape: `{ ok, action, data, trace_id }`, with the same unified `{ success, data, error }` envelope
+  - Data note: items include `knowledge_state.stage=approved` and still avoid raw full text
+
+- `GET /agent/company-brain/approved/search?q=...`
+  - Handler: `handleAgentSearchApprovedCompanyBrainKnowledge`
+  - Purpose: search only approved company-brain knowledge after review and apply have completed
+  - Response shape: `{ ok, action, data, trace_id }`, with the same unified `{ success, data, error }` envelope
+  - Data note: search items include `knowledge_state`, `match`, `summary`, and `learning_state`
+
+- `GET /agent/company-brain/approved/docs/:doc_id`
+  - Handler: `handleAgentGetApprovedCompanyBrainKnowledgeDetail`
+  - Purpose: fetch one explicitly approved company-brain doc
+  - Response shape: `{ ok, action, data, trace_id }`, with the same unified `{ success, data, error }` envelope
+  - Data note: detail result returns `{ doc, summary, learning_state, knowledge_state }`
+
+- `POST /agent/company-brain/review`
+  - Handler: `handleAgentReviewCompanyBrainDoc`
+  - Purpose: stage the explicit review boundary for one mirrored doc before formal admission
+  - Input note: accepts `doc_id`, optional `title`, optional `action`, optional `target_stage`, and bounded overlap hints
+  - Response note: success returns both `intake_boundary` and persisted `review_state`
+
+- `POST /agent/company-brain/conflicts`
+  - Handler: `handleAgentCheckCompanyBrainConflicts`
+  - Purpose: run the explicit bounded conflict-check step before approval/apply
+  - Input note: accepts `doc_id`, optional `title`, optional `action`, optional `target_stage`, and bounded overlap hints
+  - Response note: success returns `conflict_state=none|possible|confirmed`, `conflict_items`, and the current review/approval state envelope
+
+- `POST /agent/company-brain/approval-transition`
+  - Handler: `handleAgentCompanyBrainApprovalTransition`
+  - Purpose: record the explicit approve/reject decision for one company-brain candidate
+  - Input note: accepts `doc_id`, `decision=approve|reject`, optional `actor`, and optional `notes`
+  - Boundary note: this decision step is explicit, but it still does not apply the doc into approved knowledge by itself
+
+- `POST /agent/company-brain/docs/:doc_id/apply`
+  - Handler: `handleAgentApplyApprovedCompanyBrainKnowledge`
+  - Purpose: apply one already-approved review decision into `company_brain_approved_knowledge`
+  - Input note: accepts `doc_id`, optional `actor`, and optional `source_stage`
+  - Validation note: returns `ok=false` with `error=approval_required` until the approval-transition step has recorded `review_status=approved`
+
 - `POST /agent/company-brain/learning/ingest`
   - Handler: `handleAgentIngestLearningDoc`
   - Purpose: learn one verified company-brain mirror doc into the simplified learning sidecar
