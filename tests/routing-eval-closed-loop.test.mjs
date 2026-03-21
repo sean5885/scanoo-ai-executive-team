@@ -23,8 +23,11 @@ test("routing eval closed loop writes decision artifacts and warns on rerun accu
   const pointer = readJson(path.join(baseDir, "latest-session.json"));
   const degradedDatasetPath = path.join(baseDir, "degraded-routing-eval-set.mjs");
 
-  assert.match(prepareOutput, /Decision advice: observe_only \(info\)/);
-  assert.equal(readJson(pointer.artifacts.initial_decision_json).minimal_decision.action, "observe_only");
+  assert.match(prepareOutput, /Diagnostics summary: observe_only \(info\)/);
+  assert.equal(
+    readJson(pointer.artifacts.initial_diagnostics_summary_json).decision_advice.minimal_decision.action,
+    "observe_only",
+  );
 
   writeFileSync(
     degradedDatasetPath,
@@ -58,9 +61,9 @@ test("routing eval closed loop writes decision artifacts and warns on rerun accu
     encoding: "utf8",
   });
   const nextPointer = readJson(path.join(baseDir, "latest-session.json"));
-  const rerunAdvice = readJson(nextPointer.artifacts.rerun_decision_json);
+  const rerunDiagnostics = readJson(nextPointer.artifacts.rerun_diagnostics_summary_json);
 
-  assert.match(rerunOutput, /Decision advice: warn_accuracy_decline \(warning\)/);
-  assert.equal(rerunAdvice.trend.status, "declined");
-  assert.equal(rerunAdvice.minimal_decision.action, "warn_accuracy_decline");
+  assert.match(rerunOutput, /Diagnostics summary: warn_accuracy_decline \(warning\)/);
+  assert.equal(rerunDiagnostics.decision_advice.trend.status, "declined");
+  assert.equal(rerunDiagnostics.decision_advice.minimal_decision.action, "warn_accuracy_decline");
 });

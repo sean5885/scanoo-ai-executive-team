@@ -2,17 +2,17 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
-  buildRoutingTrendReport,
   formatRoutingEvalReport,
-  formatRoutingTrendReport,
   loadRoutingEvalSet,
   runRoutingEval,
 } from "../src/routing-eval.mjs";
 import {
-  buildRoutingEvalDecisionAdvice,
-  formatRoutingEvalDecisionAdvice,
   prepareRoutingEvalFixtureCandidates,
 } from "../src/routing-eval-fixture-candidates.mjs";
+import {
+  buildRoutingDiagnosticsSummary,
+  formatRoutingDiagnosticsSummary,
+} from "../src/routing-eval-diagnostics.mjs";
 
 const DEFAULT_BASE_DIR = path.resolve(process.cwd(), ".tmp/routing-eval-closed-loop");
 const DEFAULT_DATASET_PATH = path.resolve(process.cwd(), "evals/routing-eval-set.mjs");
@@ -76,21 +76,12 @@ async function tryReadJson(filePath) {
   }
 }
 
-function buildTrendArtifactPaths(sessionDir) {
+function buildDiagnosticsArtifactPaths(sessionDir) {
   return {
-    initial_trend_json: path.join(sessionDir, "07-initial-trend-report.json"),
-    initial_trend_report: path.join(sessionDir, "08-initial-trend-report.txt"),
-    rerun_trend_json: path.join(sessionDir, "09-rerun-trend-report.json"),
-    rerun_trend_report: path.join(sessionDir, "10-rerun-trend-report.txt"),
-  };
-}
-
-function buildDecisionArtifactPaths(sessionDir) {
-  return {
-    initial_decision_json: path.join(sessionDir, "11-initial-decision-advice.json"),
-    initial_decision_report: path.join(sessionDir, "12-initial-decision-advice.txt"),
-    rerun_decision_json: path.join(sessionDir, "13-rerun-decision-advice.json"),
-    rerun_decision_report: path.join(sessionDir, "14-rerun-decision-advice.txt"),
+    initial_diagnostics_summary_json: path.join(sessionDir, "07-initial-diagnostics-summary.json"),
+    initial_diagnostics_summary_report: path.join(sessionDir, "08-initial-diagnostics-summary.txt"),
+    rerun_diagnostics_summary_json: path.join(sessionDir, "09-rerun-diagnostics-summary.json"),
+    rerun_diagnostics_summary_report: path.join(sessionDir, "10-rerun-diagnostics-summary.txt"),
   };
 }
 
@@ -121,8 +112,7 @@ function buildSessionMetadata({
   run,
   prepared,
 }) {
-  const trendArtifacts = buildTrendArtifactPaths(sessionDir);
-  const decisionArtifacts = buildDecisionArtifactPaths(sessionDir);
+  const diagnosticsArtifacts = buildDiagnosticsArtifactPaths(sessionDir);
   return {
     session_id: sessionId,
     session_dir: sessionDir,
@@ -144,14 +134,10 @@ function buildSessionMetadata({
       review_checklist: path.join(sessionDir, "04-review-checklist.md"),
       rerun_eval_json: path.join(sessionDir, "05-rerun-routing-eval.json"),
       rerun_eval_report: path.join(sessionDir, "06-rerun-routing-eval-report.txt"),
-      initial_trend_json: trendArtifacts.initial_trend_json,
-      initial_trend_report: trendArtifacts.initial_trend_report,
-      rerun_trend_json: trendArtifacts.rerun_trend_json,
-      rerun_trend_report: trendArtifacts.rerun_trend_report,
-      initial_decision_json: decisionArtifacts.initial_decision_json,
-      initial_decision_report: decisionArtifacts.initial_decision_report,
-      rerun_decision_json: decisionArtifacts.rerun_decision_json,
-      rerun_decision_report: decisionArtifacts.rerun_decision_report,
+      initial_diagnostics_summary_json: diagnosticsArtifacts.initial_diagnostics_summary_json,
+      initial_diagnostics_summary_report: diagnosticsArtifacts.initial_diagnostics_summary_report,
+      rerun_diagnostics_summary_json: diagnosticsArtifacts.rerun_diagnostics_summary_json,
+      rerun_diagnostics_summary_report: diagnosticsArtifacts.rerun_diagnostics_summary_report,
     },
   };
 }
@@ -172,7 +158,9 @@ function buildReviewChecklist({
   const addFixture = (prepared?.fixture_candidates || [])
     .filter((item) => item?.suggested_dataset_action === "add_fixture")
     .length;
-  const minimalDecision = prepared?.decision_advice?.minimal_decision || null;
+  const minimalDecision = prepared?.diagnostics_summary?.decision_advice?.minimal_decision
+    || prepared?.decision_advice?.minimal_decision
+    || null;
 
   return [
     "# Routing Eval Closed-Loop Review Checklist",
@@ -193,8 +181,7 @@ function buildReviewChecklist({
     "",
     "1. Eval",
     `   - Inspect \`01-routing-eval.json\` and \`02-routing-eval-report.txt\`.`,
-    "   - Inspect `07-initial-trend-report.json` and `08-initial-trend-report.txt` for current vs previous-session drift.",
-    "   - Inspect `11-initial-decision-advice.json` and `12-initial-decision-advice.txt` for the minimal recommendation.",
+    "   - Inspect `07-initial-diagnostics-summary.json` and `08-initial-diagnostics-summary.txt` for the single decision view.",
     "2. Candidates",
     "   - Inspect `03-routing-eval-candidates.json`.",
     "3. Review",
@@ -271,8 +258,8 @@ async function runPrepare({
     run,
     prepared,
   });
-  const initialTrendReport = buildRoutingTrendReport({
-    currentRun: run,
+  const diagnosticsSummary = buildRoutingDiagnosticsSummary({
+    run,
     previousRun: previousRunArtifact?.run || null,
     currentLabel: `${sessionId}:initial`,
     previousLabel: previousRunArtifact?.path
@@ -283,12 +270,10 @@ async function runPrepare({
   await writeJson(metadata.artifacts.initial_eval_json, run);
   await writeText(metadata.artifacts.initial_eval_report, report);
   await writeJson(metadata.artifacts.fixture_candidates_json, prepared);
-  await writeJson(metadata.artifacts.initial_trend_json, initialTrendReport);
-  await writeText(metadata.artifacts.initial_trend_report, formatRoutingTrendReport(initialTrendReport));
-  await writeJson(metadata.artifacts.initial_decision_json, prepared.decision_advice);
+  await writeJson(metadata.artifacts.initial_diagnostics_summary_json, diagnosticsSummary);
   await writeText(
-    metadata.artifacts.initial_decision_report,
-    formatRoutingEvalDecisionAdvice(prepared.decision_advice),
+    metadata.artifacts.initial_diagnostics_summary_report,
+    formatRoutingDiagnosticsSummary(diagnosticsSummary),
   );
   await writeText(
     metadata.artifacts.review_checklist,
@@ -311,9 +296,8 @@ async function runPrepare({
     `Dataset: ${datasetPath}`,
     `Eval gate: ${run.ok ? "pass" : "fail"}`,
     `Fixture candidates: ${prepared.fixture_candidates?.length || 0}`,
-    `Trend report: ${metadata.artifacts.initial_trend_report}`,
-    `Decision advice: ${prepared?.decision_advice?.minimal_decision?.action || "observe_only"} (${prepared?.decision_advice?.minimal_decision?.severity || "info"})`,
-    `Decision report: ${metadata.artifacts.initial_decision_report}`,
+    `Diagnostics summary: ${diagnosticsSummary?.decision_advice?.minimal_decision?.action || "observe_only"} (${diagnosticsSummary?.decision_advice?.minimal_decision?.severity || "info"})`,
+    `Diagnostics report: ${metadata.artifacts.initial_diagnostics_summary_report}`,
     `Review checklist: ${metadata.artifacts.review_checklist}`,
     "Next: review candidates, update dataset manually, then run `npm run routing:closed-loop -- rerun`.",
   ].join("\n"));
@@ -344,37 +328,39 @@ async function runRerun({
   sessionInput,
 }) {
   const { sessionDir, metadata } = await resolveRerunContext(baseDir, sessionInput);
+  const diagnosticsArtifacts = buildDiagnosticsArtifactPaths(sessionDir);
   const effectiveDatasetPath = datasetPath || metadata?.dataset_path || DEFAULT_DATASET_PATH;
   const testCases = await loadRoutingEvalSet(effectiveDatasetPath);
   const run = await runRoutingEval({ testCases });
   const report = formatRoutingEvalReport(run);
   const initialRun = await tryReadJson(metadata?.artifacts?.initial_eval_json);
-  const rerunTrendReport = buildRoutingTrendReport({
-    currentRun: run,
+  const rerunDiagnosticsSummary = buildRoutingDiagnosticsSummary({
+    run,
     previousRun: initialRun,
     currentLabel: `${metadata?.session_id || path.basename(sessionDir)}:rerun`,
     previousLabel: metadata?.artifacts?.initial_eval_json
       ? path.relative(process.cwd(), metadata.artifacts.initial_eval_json) || metadata.artifacts.initial_eval_json
       : "initial",
   });
-  const rerunDecisionAdvice = buildRoutingEvalDecisionAdvice({
-    run,
-    previousRun: initialRun,
-  });
 
-  await writeJson(path.join(sessionDir, "05-rerun-routing-eval.json"), run);
-  await writeText(path.join(sessionDir, "06-rerun-routing-eval-report.txt"), report);
-  await writeJson(path.join(sessionDir, "09-rerun-trend-report.json"), rerunTrendReport);
-  await writeText(path.join(sessionDir, "10-rerun-trend-report.txt"), formatRoutingTrendReport(rerunTrendReport));
-  await writeJson(metadata.artifacts.rerun_decision_json, rerunDecisionAdvice);
+  await writeJson(metadata?.artifacts?.rerun_eval_json || path.join(sessionDir, "05-rerun-routing-eval.json"), run);
+  await writeText(metadata?.artifacts?.rerun_eval_report || path.join(sessionDir, "06-rerun-routing-eval-report.txt"), report);
+  await writeJson(
+    metadata?.artifacts?.rerun_diagnostics_summary_json || diagnosticsArtifacts.rerun_diagnostics_summary_json,
+    rerunDiagnosticsSummary,
+  );
   await writeText(
-    metadata.artifacts.rerun_decision_report,
-    formatRoutingEvalDecisionAdvice(rerunDecisionAdvice),
+    metadata?.artifacts?.rerun_diagnostics_summary_report || diagnosticsArtifacts.rerun_diagnostics_summary_report,
+    formatRoutingDiagnosticsSummary(rerunDiagnosticsSummary),
   );
 
   const nextMetadata = {
     ...metadata,
     dataset_path: effectiveDatasetPath,
+    artifacts: {
+      ...(metadata?.artifacts || {}),
+      ...buildDiagnosticsArtifactPaths(sessionDir),
+    },
     rerun_at: new Date().toISOString(),
     rerun_summary: {
       total_cases: run?.summary?.total_cases || 0,
@@ -392,10 +378,9 @@ async function runRerun({
     `Session dir: ${sessionDir}`,
     `Dataset: ${effectiveDatasetPath}`,
     `Eval gate: ${run.ok ? "pass" : "fail"}`,
-    `Rerun report: ${path.join(sessionDir, "06-rerun-routing-eval-report.txt")}`,
-    `Trend report: ${path.join(sessionDir, "10-rerun-trend-report.txt")}`,
-    `Decision advice: ${rerunDecisionAdvice?.minimal_decision?.action || "observe_only"} (${rerunDecisionAdvice?.minimal_decision?.severity || "info"})`,
-    `Decision report: ${metadata.artifacts.rerun_decision_report}`,
+    `Rerun report: ${metadata?.artifacts?.rerun_eval_report || path.join(sessionDir, "06-rerun-routing-eval-report.txt")}`,
+    `Diagnostics summary: ${rerunDiagnosticsSummary?.decision_advice?.minimal_decision?.action || "observe_only"} (${rerunDiagnosticsSummary?.decision_advice?.minimal_decision?.severity || "info"})`,
+    `Diagnostics report: ${metadata?.artifacts?.rerun_diagnostics_summary_report || diagnosticsArtifacts.rerun_diagnostics_summary_report}`,
   ].join("\n"));
 
   process.exitCode = run.ok ? 0 : 1;

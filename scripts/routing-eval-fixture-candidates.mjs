@@ -85,6 +85,48 @@ try {
       gate_ok: false,
       min_accuracy_ratio: 0,
     },
+    diagnostics_summary: {
+      accuracy_ratio: 0,
+      by_lane_accuracy: {},
+      by_action_accuracy: {},
+      error_breakdown: {},
+      trend_report: {
+        available: false,
+        current_label: "current",
+        previous_label: null,
+        current: {
+          total_cases: 0,
+          miss_count: 0,
+          comparable_summary: {
+            accuracy_ratio: 0,
+            by_lane_accuracy: {},
+            by_action_accuracy: {},
+            error_breakdown: {},
+          },
+        },
+        previous: null,
+        delta: null,
+      },
+      decision_advice: {
+        trend: {
+          available: false,
+          status: "unknown",
+          accuracy_ratio: {
+            current: 0,
+            previous: null,
+            delta: null,
+          },
+        },
+        warnings: [],
+        recommendations: [],
+        minimal_decision: {
+          action: "observe_only",
+          severity: "info",
+          kind: "trend",
+          summary: "No actionable drift detected from trend or error breakdown.",
+        },
+      },
+    },
     trend: {
       available: false,
       status: "unknown",

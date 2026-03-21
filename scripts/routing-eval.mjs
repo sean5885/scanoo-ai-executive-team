@@ -11,11 +11,12 @@ restoreStdout = () => {
 };
 
 const {
-  buildRoutingTrendReport,
-  formatRoutingEvalReport,
-  formatRoutingTrendReport,
   runRoutingEval,
 } = await import("../src/routing-eval.mjs");
+const {
+  buildRoutingDiagnosticsSummary,
+  formatRoutingDiagnosticsSummary,
+} = await import("../src/routing-eval-diagnostics.mjs");
 
 restoreStdout?.();
 
@@ -78,8 +79,8 @@ async function resolveCompareRun() {
 
 const run = await runRoutingEval();
 const compareRun = await resolveCompareRun();
-const trendReport = buildRoutingTrendReport({
-  currentRun: run,
+const diagnosticsSummary = buildRoutingDiagnosticsSummary({
+  run,
   previousRun: compareRun?.run || null,
   currentLabel: "current",
   previousLabel: compareRun?.label || "previous",
@@ -88,12 +89,11 @@ const trendReport = buildRoutingTrendReport({
 if (asJson) {
   console.log(JSON.stringify({
     ...run,
-    trend_report: trendReport,
+    trend_report: diagnosticsSummary.trend_report,
+    diagnostics_summary: diagnosticsSummary,
   }, null, 2));
 } else {
-  console.log(formatRoutingEvalReport(run));
-  console.log("");
-  console.log(formatRoutingTrendReport(trendReport));
+  console.log(formatRoutingDiagnosticsSummary(diagnosticsSummary));
   if (run.validation_issues?.length) {
     console.log("");
     console.log("Validation issues");

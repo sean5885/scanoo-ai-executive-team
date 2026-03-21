@@ -53,8 +53,16 @@ test("routing eval CLI supports json output", () => {
   assert.equal(parsed.summary.miss_count, 0);
   assert.ok(parsed.summary.total_cases >= 50);
   assert.ok(Array.isArray(parsed.summary.top_miss_cases));
+  assert.equal(parsed.diagnostics_summary.accuracy_ratio, 1);
   assert.equal(parsed.summary.comparable_summary.accuracy_ratio, 1);
+  assert.equal(parsed.diagnostics_summary.trend_report.available, false);
+  assert.equal(parsed.diagnostics_summary.decision_advice.minimal_decision.action, "observe_only");
   assert.deepEqual(Object.keys(parsed.summary.error_breakdown), [
+    ROUTING_NO_MATCH,
+    INVALID_ACTION,
+    FALLBACK_DISABLED,
+  ]);
+  assert.deepEqual(Object.keys(parsed.diagnostics_summary.error_breakdown), [
     ROUTING_NO_MATCH,
     INVALID_ACTION,
     FALLBACK_DISABLED,
@@ -64,6 +72,18 @@ test("routing eval CLI supports json output", () => {
     INVALID_ACTION,
     FALLBACK_DISABLED,
   ]);
+});
+
+test("routing eval CLI human-readable output is a single diagnostics summary view", () => {
+  const raw = execFileSync("node", ["scripts/routing-eval.mjs"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+  });
+
+  assert.match(raw, /Routing Diagnostics Summary/);
+  assert.match(raw, /Decision: observe_only \| severity info/);
+  assert.doesNotMatch(raw, /^Routing Eval$/m);
+  assert.doesNotMatch(raw, /^Routing Trend$/m);
 });
 
 test("routing eval summary tracks hard routing error breakdown by code", () => {
@@ -352,6 +372,8 @@ test("routing eval CLI supports json compare output", async () => {
   const parsed = JSON.parse(raw);
 
   assert.equal(parsed.ok, true);
+  assert.equal(parsed.diagnostics_summary.trend_report.available, true);
+  assert.equal(parsed.diagnostics_summary.decision_advice.trend.status, "improved");
   assert.equal(parsed.trend_report.available, true);
   assert.equal(parsed.trend_report.previous_label.endsWith("previous-run.json"), true);
   assert.equal(parsed.trend_report.delta.accuracy_ratio.delta > 0, true);

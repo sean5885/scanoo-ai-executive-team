@@ -155,4 +155,6 @@ test("routing eval fixture candidate CLI emits trend-aware decision advice when 
 
   assert.equal(parsed.trend.status, "stable");
   assert.equal(parsed.decision_advice.minimal_decision.action, "no_change");
+  assert.equal(parsed.diagnostics_summary.decision_advice.minimal_decision.action, "no_change");
+  assert.equal(parsed.diagnostics_summary.trend_report.available, true);
 });

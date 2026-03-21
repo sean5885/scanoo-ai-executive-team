@@ -40,6 +40,7 @@ npm run routing:closed-loop -- rerun
 ```
 
 這條路徑會把 routing regression 操作固定成 `eval -> candidates -> review -> dataset -> eval`，artifact 會寫到 `.tmp/routing-eval-closed-loop/<session-id>/`。
+目前 `routing-eval`、prepare、rerun 都以 `diagnostics_summary` 作為單一決策視圖。
 完整 runbook 見：
 
 - [/Users/seanhan/Documents/Playground/docs/system/routing_eval_closed_loop_runbook.md](/Users/seanhan/Documents/Playground/docs/system/routing_eval_closed_loop_runbook.md)

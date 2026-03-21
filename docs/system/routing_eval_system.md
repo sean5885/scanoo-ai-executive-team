@@ -14,6 +14,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - Thread 37 routing dataset coverage checkpoint
 - Thread 38 routing trend report checkpoint
 - Thread 39 routing decision advice checkpoint
+- Thread 40 routing diagnostics single-view checkpoint
 
 Thread 35 closed-loop checkpoint 針對 `top_miss_cases` / `error_breakdown` -> candidate fixture -> dataset review -> rerun eval -> baseline gate 的閉環流程補上最小工具與文件，且不改 routing 決策、fallback 行為或 baseline fixture。
 
@@ -24,6 +25,10 @@ Thread 37 routing dataset coverage checkpoint 只擴充 checked-in dataset cover
 Thread 38 routing trend report checkpoint 在既有 deterministic eval / compare / closed-loop 路徑上補上最小 `comparable_summary`、`trend_report`、`--compare` / `--compare-last`、closed-loop trend artifacts、測試與文件；不新增邏輯、不改 routing 決策，也不新增 fallback。
 
 Thread 39 routing decision advice checkpoint 在既有 deterministic eval / compare / closed-loop 路徑上補上最小 `trend`、`decision_advice`、closed-loop decision artifacts、CLI 摘要、測試與文件；不新增 routing 邏輯、不改 routing 決策，也不新增 fallback。
+
+Thread 40 routing diagnostics single-view checkpoint 把既有 summary、trend、decision advice 收斂成單一 `diagnostics_summary` 決策視圖，對齊 `routing-eval`、fixture-candidates、closed-loop prepare / rerun 的 artifact 與文件；不新增 routing 邏輯、不改 routing 決策，也不新增 fallback。
+
+目前這條路徑已再收斂成 `diagnostics_summary` 單一決策視圖，讓 operator 只看一個 summary 就能決定要補 fixture、檢查 routing rule，或保持不動；不新增 routing 邏輯、不新增 fallback，也不改 baseline/tag。
 
 固定操作 runbook 見：
 
@@ -40,6 +45,7 @@ Thread 39 routing decision advice checkpoint 在既有 deterministic eval / comp
 ## Files
 
 - `/Users/seanhan/Documents/Playground/src/routing-eval.mjs`
+- `/Users/seanhan/Documents/Playground/src/routing-eval-diagnostics.mjs`
 - `/Users/seanhan/Documents/Playground/src/routing-eval-fixture-candidates.mjs`
 - `/Users/seanhan/Documents/Playground/evals/routing-eval-set.mjs`
 - `/Users/seanhan/Documents/Playground/scripts/routing-eval.mjs`
@@ -191,26 +197,37 @@ node scripts/routing-eval-fixture-candidates.mjs --input /tmp/routing-eval.json 
 - `comparable_summary`
 - latency avg / p95 / max
 - top miss cases
-- minimal `trend_report`（當提供上一輪結果時）
+- `diagnostics_summary`
 
 CLI 會以 overall accuracy ratio 當作強制 regression gate；目前這份 checked-in baseline 為 regression gate baseline v2（`routing-eval-baseline-v2`），門檻是 `0.9`。
 
 - overall accuracy ratio `< 0.9` 時，CLI 會以 non-zero exit code 結束
 - overall accuracy ratio `>= 0.9` 時，CLI 保持 zero exit code，即使仍有少量 miss case
-- `--json` 會輸出完整結果、gate threshold 與 `top_miss_cases`（最多前 10 筆錯誤）
-- `--json` 與文字 report 都會固定輸出 hard-routing 錯誤分佈 `error_breakdown`
+- `--json` 會輸出完整結果、gate threshold、`top_miss_cases`（最多前 10 筆錯誤）與完整 `diagnostics_summary`
+- 預設文字輸出改為單一 `diagnostics_summary` 視圖，不再把 eval / trend / decision advice 分散列印
 - `scripts/routing-eval-fixture-candidates.mjs` 會在 JSON 內輸出：
+  - `diagnostics_summary`
   - `trend`
   - `decision_advice.warnings`
   - `decision_advice.recommendations`
   - `decision_advice.minimal_decision`
+- `diagnostics_summary` 固定包含：
+  - `accuracy_ratio`
+  - `by_lane_accuracy`
+  - `by_action_accuracy`
+  - `error_breakdown`
+  - `trend_report`
+  - `decision_advice`
 - `summary.comparable_summary` 是 compare-ready snapshot，固定只保留：
   - `accuracy_ratio`
   - `by_lane_accuracy`
   - `by_action_accuracy`
   - `error_breakdown`
-- `node scripts/routing-eval.mjs --compare <run-json>` 會輸出「本次 vs 指定結果」的最小 trend report
+- `node scripts/routing-eval.mjs --compare <run-json>` 會把 trend 比較結果收進同一份 `diagnostics_summary.trend_report`
 - `node scripts/routing-eval.mjs --compare-last` 會把本次結果與 `.tmp/routing-eval-closed-loop/latest-session.json` 指向的最新 artifact 比較
+
+`diagnostics_summary` 是 operator 的 single source of truth。  
+`summary.comparable_summary` 仍保留給 compare / conversion 使用，但不是操作決策入口。
 
 `trend_report` 是最小比較輸出，不改 gate，也不改 routing 決策。它固定比較：
 
@@ -238,9 +255,30 @@ CLI 會以 overall accuracy ratio 當作強制 regression gate；目前這份 ch
 
 這一層只補 observability，不改 routing 決策、fallback 行為或 baseline fixture。
 
+## Diagnostics Summary
+
+`diagnostics_summary` 是唯一決策輸出物。  
+它把 current comparable snapshot、trend 與 decision advice 整合進同一個 object：
+
+- `accuracy_ratio`
+- `by_lane_accuracy`
+- `by_action_accuracy`
+- `error_breakdown`
+- `trend_report`
+- `decision_advice`
+
+判讀順序固定為：
+
+1. 先看 `decision_advice.minimal_decision`
+2. 再用 `accuracy_ratio`、`by_lane_accuracy`、`by_action_accuracy`、`error_breakdown`、`trend_report` 驗證
+3. 最終只做三種決策：
+   - 補 fixture
+   - 檢查 routing rule
+   - 不動
+
 ## Minimal Decision Advice
 
-fixture-candidate JSON 與 closed-loop artifact 會根據 `trend` 與 `error_breakdown` 產出最小 decision 建議，但只做建議，不會自動修改 routing rule、fallback 或 dataset。
+fixture-candidate JSON 與 closed-loop diagnostics artifact 會根據 `trend` 與 `error_breakdown` 產出最小 decision 建議，但只做建議，不會自動修改 routing rule、fallback 或 dataset。
 
 固定規則如下：
 
@@ -264,6 +302,26 @@ fixture-candidate JSON 與 closed-loop artifact 會根據 `trend` 與 `error_bre
 
 若沒有前一次 run，`trend.status = "unknown"`，系統只會根據目前 `error_breakdown` 產出建議。
 
+### 三種情境
+
+#### a. 補 fixture
+
+- 看 `diagnostics_summary.decision_advice.minimal_decision.action = review_fixture_coverage`
+- 主看 `error_breakdown.ROUTING_NO_MATCH`
+- 若 drift 可被解釋為 coverage 缺口，補 dataset fixture；不要順手改 routing rule
+
+#### b. 檢查 routing rule
+
+- 看 `diagnostics_summary.decision_advice.minimal_decision.action = check_routing_rule`
+- 主看 `error_breakdown.INVALID_ACTION`
+- 若 `trend_report` 也顯示既有 lane / action bucket 下滑，優先檢查 routing rule / precedence / action contract
+
+#### c. 不動（穩定）
+
+- 看 `diagnostics_summary.decision_advice.minimal_decision.action = no_change`
+- `trend_report` stable，且 `accuracy_ratio` / `error_breakdown` 沒新增 drift
+- code 與 dataset 都不動
+
 ## Miss / Error To Dataset Loop
 
 這個 loop 只補「收集 -> 整理 -> 候選 fixture -> dataset review -> rerun eval -> baseline gate」；不直接改 routing 決策，也不新增 fallback。
@@ -280,21 +338,17 @@ fixture-candidate JSON 與 closed-loop artifact 會根據 `trend` 與 `error_bre
 npm run routing:closed-loop
 ```
 
-closed-loop session 現在也會固定輸出最小 trend artifact：
+closed-loop session 現在固定輸出單一 diagnostics artifact：
 
-- `07-initial-trend-report.json`
-- `08-initial-trend-report.txt`
-- `09-rerun-trend-report.json`
-- `10-rerun-trend-report.txt`
-- `11-initial-decision-advice.json`
-- `12-initial-decision-advice.txt`
-- `13-rerun-decision-advice.json`
-- `14-rerun-decision-advice.txt`
+- `07-initial-diagnostics-summary.json`
+- `08-initial-diagnostics-summary.txt`
+- `09-rerun-diagnostics-summary.json`
+- `10-rerun-diagnostics-summary.txt`
 
 其中：
 
-- initial trend 比較「本次 prepare」vs「上一個 session 的最新 eval artifact」
-- rerun trend 比較「本次 rerun」vs「同一 session 的 initial eval」
+- initial diagnostics 比較「本次 prepare」vs「上一個 session 的最新 eval artifact」
+- rerun diagnostics 比較「本次 rerun」vs「同一 session 的 initial eval」
 
 細部操作與 decision rules 見：
 
@@ -312,6 +366,7 @@ node scripts/routing-eval.mjs --json > /tmp/routing-eval.json
 
 - `summary.top_miss_cases`
 - `summary.error_breakdown`
+- `diagnostics_summary`
 - 如需 trend / minimal decision，一併準備前一次 eval JSON
 - `results`
 
@@ -321,7 +376,7 @@ node scripts/routing-eval.mjs --json > /tmp/routing-eval.json
 node scripts/routing-eval-fixture-candidates.mjs --input /tmp/routing-eval.json > /tmp/routing-eval-candidates.json
 ```
 
-若要連同 trend 與 minimal decision 一起輸出：
+若要連同 current vs previous 的 diagnostics 一起輸出：
 
 ```bash
 node scripts/routing-eval-fixture-candidates.mjs \
@@ -330,18 +385,14 @@ node scripts/routing-eval-fixture-candidates.mjs \
   > /tmp/routing-eval-candidates.json
 ```
 
-轉換器會輸出三層資料：
+轉換器會輸出四層資料：
 
+- `diagnostics_summary`
+  - 單一決策視圖，直接用來判斷補 fixture / 檢查 routing rule / 不動
 - `conversion_input.top_miss_cases_input`
   - 把 `top_miss_cases` 整理成可直接審查的逐案輸入
 - `conversion_input.error_breakdown_input`
   - 把 aggregate `error_breakdown` 展開成 per-error-code、per-case 的可轉換輸入
-- `trend`
-  - 以目前 run 對前一次 run 的 overall accuracy ratio 變化做最小趨勢判讀
-- `decision_advice`
-  - `warnings`
-  - `recommendations`
-  - `minimal_decision`
 - `fixture_candidates`
   - 預設以 `observed_actual_route` 產生候選 fixture，至少帶：
     - `lane`
@@ -389,12 +440,33 @@ node scripts/routing-eval.mjs --compare-last
 ```json
 {
   "source_summary": {
-    "total_cases": 62,
+    "total_cases": 88,
     "miss_count": 0,
     "overall_accuracy_ratio": 1,
     "overall_accuracy": 100,
     "gate_ok": true,
     "min_accuracy_ratio": 0.9
+  },
+  "diagnostics_summary": {
+    "accuracy_ratio": 1,
+    "by_lane_accuracy": {},
+    "by_action_accuracy": {},
+    "error_breakdown": {
+      "ROUTING_NO_MATCH": {
+        "expected": 1,
+        "actual": 1,
+        "matched": 1,
+        "misses": 0
+      }
+    },
+    "trend_report": {
+      "available": false
+    },
+    "decision_advice": {
+      "minimal_decision": {
+        "action": "observe_only"
+      }
+    }
   },
   "conversion_input": {
     "top_miss_cases_input": [],

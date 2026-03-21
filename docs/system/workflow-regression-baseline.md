@@ -190,6 +190,7 @@ node scripts/run-workflow-baseline.mjs all
 Routing eval regression gate baseline（v2 / `routing-eval-baseline-v2`）：
 
 Thread 36 operations checkpoint 固定了 runbook 與單一入口，但不改 routing 決策、不改 eval gate，也不新增 fallback。
+Thread 40 diagnostics checkpoint 把 operator 決策入口收斂為單一 `diagnostics_summary`，但不新增 routing 邏輯、不改 routing 決策，也不新增 fallback。
 
 ```bash
 npm run routing:closed-loop
@@ -207,12 +208,13 @@ node --test tests/routing-eval-decision-advice.test.mjs tests/routing-eval-close
 - 驗證 checked-in deterministic routing baseline 是否仍與 eval set 一致
 - 這份 checked-in 結果即為 routing eval regression gate baseline v2（`routing-eval-baseline-v2`）
 - 提供 `lane / planner_action / agent_or_tool / latency` 的固定 regression 量測
-- 提供 `top_miss_cases` / `error_breakdown` 到候選 fixture 的閉環轉換入口
+- 提供 `diagnostics_summary` 單一決策視圖，以及 `top_miss_cases` / `error_breakdown` 到候選 fixture 的閉環轉換入口
 - `npm run routing:closed-loop` 提供固定 `eval -> candidates -> review -> dataset -> eval` 操作入口，並把 artifact 寫到 `.tmp/routing-eval-closed-loop/<session-id>/`
 - 以 overall accuracy ratio `0.9` 作為強制門檻；`< 0.9` 時 CLI 會以 non-zero exit code 結束
-- `--json` 模式會輸出完整結果與 `top_miss_cases`（前 10 筆錯誤）
+- `--json` 模式會輸出完整結果、`top_miss_cases`（前 10 筆錯誤）與完整 `diagnostics_summary`
 - `scripts/routing-eval-fixture-candidates.mjs` 會把 `top_miss_cases` 與 `error_breakdown` 展開成 machine-readable candidate fixture input，供人工審查後加入 dataset
-- `scripts/routing-eval-fixture-candidates.mjs --previous <run-json>` 會額外輸出 `trend` 與 `decision_advice.minimal_decision`
-- `tests/routing-eval-decision-advice.test.mjs` 與 `tests/routing-eval-closed-loop.test.mjs` 會覆蓋最小 decision advice 的 JSON / CLI 輸出
+- `scripts/routing-eval-fixture-candidates.mjs --previous <run-json>` 會額外把 trend 與 decision advice 收進同一份 `diagnostics_summary`
+- `prepare` / `rerun` 的 closed-loop artifact 統一為 `*-diagnostics-summary.{json,txt}`
+- `tests/routing-eval-decision-advice.test.mjs` 與 `tests/routing-eval-closed-loop.test.mjs` 會覆蓋 diagnostics summary 的 JSON / CLI 輸出
 
 目前 monitoring learning baseline 尚未納入 `scripts/run-workflow-baseline.mjs` 的 workflow-only runner；需要驗證這條路徑時，直接使用上面的 `node --test ...` 與 CLI 命令。

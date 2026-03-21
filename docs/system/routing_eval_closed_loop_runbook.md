@@ -5,6 +5,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 Operations checkpoint: Thread 36
 Trend checkpoint: Thread 38
 Decision checkpoint: Thread 39
+Diagnostics checkpoint: Thread 40
 
 ## Purpose
 
@@ -13,6 +14,9 @@ Decision checkpoint: Thread 39
 `eval -> candidates -> review -> dataset -> eval`
 
 它只負責 regression 操作流程與 dataset 維護節奏，不改 routing 邏輯，也不新增 fallback。
+
+本路徑的單一決策視圖是 `diagnostics_summary`。  
+prepare / rerun / `node scripts/routing-eval.mjs` 都以同一個 `diagnostics_summary` shape 產出目前 accuracy、bucket 分佈、error breakdown、trend 與 decision advice。
 
 ## Single Entrypoint
 
@@ -54,10 +58,8 @@ npm run routing:closed-loop
 
 - `01-routing-eval.json`
 - `02-routing-eval-report.txt`
-- `07-initial-trend-report.json`
-- `08-initial-trend-report.txt`
-- `11-initial-decision-advice.json`
-- `12-initial-decision-advice.txt`
+- `07-initial-diagnostics-summary.json`
+- `08-initial-diagnostics-summary.txt`
 
 這一步的目的是先確認目前 checked-in routing 行為與 eval dataset 的落差，不先改資料。
 
@@ -67,11 +69,11 @@ npm run routing:closed-loop
 
 - `03-routing-eval-candidates.json`
 
-這份資料來自既有 `top_miss_cases` 與 `error_breakdown` 展開，並可選擇帶入上一輪 run 產出 `trend` / `decision_advice`；它不會自動寫回 dataset。
+這份資料來自既有 `top_miss_cases` 與 `error_breakdown` 展開，並會帶同一份 `diagnostics_summary`；它不會自動寫回 dataset。
 
 ### 3. Review
 
-人工審核 `03-routing-eval-candidates.json`、`04-review-checklist.md`、`11-initial-decision-advice.json` 與 `12-initial-decision-advice.txt`。
+人工審核 `03-routing-eval-candidates.json`、`04-review-checklist.md`、`07-initial-diagnostics-summary.json` 與 `08-initial-diagnostics-summary.txt`。
 
 審核時只接受兩種候選：
 
@@ -110,14 +112,31 @@ rerun artifact：
 
 - `05-rerun-routing-eval.json`
 - `06-rerun-routing-eval-report.txt`
-- `09-rerun-trend-report.json`
-- `10-rerun-trend-report.txt`
-- `13-rerun-decision-advice.json`
-- `14-rerun-decision-advice.txt`
+- `09-rerun-diagnostics-summary.json`
+- `10-rerun-diagnostics-summary.txt`
 
 只有 rerun 後 gate 與審查結果一致，這輪 closed-loop 才算收口。
 
 ## Decision Rules
+
+### 只看 `diagnostics_summary` 就能決策
+
+決策順序固定如下：
+
+1. 先看 `diagnostics_summary.decision_advice.minimal_decision`
+2. 再用 `accuracy_ratio`、`by_lane_accuracy`、`by_action_accuracy`、`error_breakdown`、`trend_report` 驗證這個建議是否成立
+3. 最終只落到三種操作：補 fixture、檢查 routing rule、不動
+
+建議對應欄位：
+
+- `review_fixture_coverage`
+  - 主看 `error_breakdown.ROUTING_NO_MATCH`
+- `check_routing_rule`
+  - 主看 `error_breakdown.INVALID_ACTION`
+- `no_change`
+  - 主看 `trend_report` 與 current `accuracy_ratio`
+
+`manual_review_high_risk` 仍是最高優先級告警，但它不是新 decision 類型；它只是在既有規則內要求先停下來做人審，再決定是否進入補 fixture 或檢查 routing rule。
 
 ### 最小 decision advice 規則
 
@@ -140,6 +159,50 @@ CLI 與 JSON 只會挑一個最高優先級摘要，順序固定為：
 3. `check_routing_rule`
 4. `review_fixture_coverage`
 5. `no_change`
+
+### 三種情境
+
+#### a. 補 fixture
+
+適用於：
+
+- `diagnostics_summary.decision_advice.minimal_decision.action = review_fixture_coverage`
+- `error_breakdown.ROUTING_NO_MATCH` 有 drift
+- `by_lane_accuracy` / `by_action_accuracy` 沒顯示既有 intended bucket 系統性下滑
+
+操作：
+
+- 只補 dataset coverage
+- 不改 routing rule
+- rerun 後確認 `diagnostics_summary` 回到穩定
+
+#### b. 檢查 routing rule
+
+適用於：
+
+- `diagnostics_summary.decision_advice.minimal_decision.action = check_routing_rule`
+- `error_breakdown.INVALID_ACTION` 有 drift
+- 或 `trend_report` 顯示既有 lane / action bucket accuracy 下滑，而不是單純新增 wording bucket
+
+操作：
+
+- 先檢查 routing rule / precedence / action contract
+- 不用 dataset 掩蓋錯誤 route
+- 修完後再用同一個 closed-loop 重跑驗證
+
+#### c. 不動（穩定）
+
+適用於：
+
+- `diagnostics_summary.decision_advice.minimal_decision.action = no_change`
+- `trend_report` 顯示 stable
+- `accuracy_ratio`、`by_lane_accuracy`、`by_action_accuracy`、`error_breakdown` 沒有新的 drift
+
+操作：
+
+- code 不動
+- dataset 不動
+- 直接保留目前 baseline
 
 ### 何時更新 baseline
 
