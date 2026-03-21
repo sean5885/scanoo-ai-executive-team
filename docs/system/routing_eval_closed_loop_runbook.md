@@ -3,6 +3,7 @@
 Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 Operations checkpoint: Thread 36
+Decision checkpoint: Thread 39
 
 ## Purpose
 
@@ -52,6 +53,10 @@ npm run routing:closed-loop
 
 - `01-routing-eval.json`
 - `02-routing-eval-report.txt`
+- `07-initial-trend-report.json`
+- `08-initial-trend-report.txt`
+- `11-initial-decision-advice.json`
+- `12-initial-decision-advice.txt`
 
 這一步的目的是先確認目前 checked-in routing 行為與 eval dataset 的落差，不先改資料。
 
@@ -61,11 +66,11 @@ npm run routing:closed-loop
 
 - `03-routing-eval-candidates.json`
 
-這份資料來自既有 `top_miss_cases` 與 `error_breakdown` 展開，不會自動寫回 dataset。
+這份資料來自既有 `top_miss_cases` 與 `error_breakdown` 展開，並可選擇帶入上一輪 run 產出 `trend` / `decision_advice`；它不會自動寫回 dataset。
 
 ### 3. Review
 
-人工審核 `03-routing-eval-candidates.json` 與 `04-review-checklist.md`。
+人工審核 `03-routing-eval-candidates.json`、`04-review-checklist.md`、`11-initial-decision-advice.json` 與 `12-initial-decision-advice.txt`。
 
 審核時只接受兩種候選：
 
@@ -104,10 +109,36 @@ rerun artifact：
 
 - `05-rerun-routing-eval.json`
 - `06-rerun-routing-eval-report.txt`
+- `09-rerun-trend-report.json`
+- `10-rerun-trend-report.txt`
+- `13-rerun-decision-advice.json`
+- `14-rerun-decision-advice.txt`
 
 只有 rerun 後 gate 與審查結果一致，這輪 closed-loop 才算收口。
 
 ## Decision Rules
+
+### 最小 decision advice 規則
+
+closed-loop 會固定輸出一個 `minimal_decision`，只做摘要建議，不會自動執行任何變更。
+
+- `ROUTING_NO_MATCH`
+  - 若 `misses > 0` 或 `actual > matched`，建議補 fixture coverage
+- `INVALID_ACTION`
+  - 若 `misses > 0` 或 `actual > matched`，建議檢查 routing rule / action contract
+- `FALLBACK_DISABLED`
+  - 若 `actual > 0` 或 `misses > 0`，標記高風險，需人工審查
+- accuracy trend
+  - 相對前一次下降：輸出 warning
+  - 相對前一次穩定：建議不動
+
+CLI 與 JSON 只會挑一個最高優先級摘要，順序固定為：
+
+1. `manual_review_high_risk`
+2. `warn_accuracy_decline`
+3. `check_routing_rule`
+4. `review_fixture_coverage`
+5. `no_change`
 
 ### 何時更新 baseline
 
@@ -127,8 +158,19 @@ rerun artifact：
 - 新 query 形態屬於既有規則已經涵蓋的意圖，只是 dataset 沒收進來
 - 現行實際 route 與產品預期一致，但 fixture 標註落後
 - 需要補 context case，例如 `active_doc`、`active_candidates`、`active_theme`、workflow follow-up 狀態
+- trend report 顯示新增或變動只落在單一 wording / context bucket，且對應實際 route 已符合既有 intended behavior
 
 如果沒有任何 intended behavior change，只是 coverage 不足，這就是 dataset-only 更新。
+
+### 何時補 fixture
+
+補 fixture 是 dataset-only 的更具體子集，適用於：
+
+- 新 wording、同義句、語序變體，實際 route 已命中既有正確 lane / action / tool
+- 只缺 checked-in coverage，沒有 evidence 顯示 rule precedence 或 route boundary 出錯
+- trend report 的新增差異能被解釋成「多了一個 bucket 觀測點」而不是「既有 bucket 準確率下降」
+
+這時只需要把新 case 納入 dataset；不要順手改 routing rule。
 
 ### 何時需要改 routing rule
 
@@ -138,8 +180,19 @@ rerun artifact：
 - `observed_actual_route` 明顯違反產品預期或受控 route 邊界
 - 你必須把錯誤行為寫進 dataset 才能讓 eval 變綠
 - miss 反映的是 rule precedence、hard-route selector、workflow follow-up 判定本身錯了
+- trend report 顯示既有 lane / action bucket accuracy 下滑，而不是單純多一筆新 fixture
+- 同一個 `error_breakdown` code 的 `misses` 持續增加，表示 hard-route 邊界或 precedence 出現 regression
 
 遇到這種情況，應先開 routing rule 修改，再用同一個 runbook 驗證修改後的行為；不能用 dataset 掩蓋。
+
+### 何時不動
+
+以下情況應保持 code 與 dataset 都不動：
+
+- current vs previous 的 `comparable_summary` 完全一致
+- 差異只來自 latency 或 artifact 時間戳，routing accuracy / error buckets 沒變
+- 差異已由同一輪刻意接受的 checked-in dataset 更新完整解釋，且 rerun 沒有留下新的 accuracy regression
+- 無法從 code 與 checked-in fixture 證明 intended behavior；這時應先記錄 open question，而不是先改 dataset 或 rule
 
 ## Non-Goals
 

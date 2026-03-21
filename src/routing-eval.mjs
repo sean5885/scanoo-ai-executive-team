@@ -263,6 +263,141 @@ function buildErrorBreakdown(results = []) {
   return breakdown;
 }
 
+function normalizeBucketMetric(metric = {}) {
+  return {
+    hits: Number(metric?.hits || 0),
+    total: Number(metric?.total || 0),
+    accuracy_ratio: Number(metric?.accuracy_ratio || 0),
+    accuracy: Number(metric?.accuracy || 0),
+  };
+}
+
+function buildComparableBucketSummary(buckets = {}) {
+  return Object.fromEntries(
+    Object.entries(buckets || {})
+      .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+      .map(([bucketKey, metric]) => [bucketKey, normalizeBucketMetric(metric)]),
+  );
+}
+
+function buildComparableErrorBreakdown(breakdown = {}) {
+  return Object.fromEntries(
+    ROUTING_ERROR_CODES.map((code) => [code, {
+      expected: Number(breakdown?.[code]?.expected || 0),
+      actual: Number(breakdown?.[code]?.actual || 0),
+      matched: Number(breakdown?.[code]?.matched || 0),
+      misses: Number(breakdown?.[code]?.misses || 0),
+    }]),
+  );
+}
+
+function buildNumericDelta(currentValue = 0, previousValue = 0, precision = 4) {
+  const current = Number(currentValue || 0);
+  const previous = Number(previousValue || 0);
+  return {
+    current,
+    previous,
+    delta: Number((current - previous).toFixed(precision)),
+  };
+}
+
+function buildBucketTrend(currentBuckets = {}, previousBuckets = {}) {
+  const keys = new Set([
+    ...Object.keys(currentBuckets || {}),
+    ...Object.keys(previousBuckets || {}),
+  ]);
+
+  return Object.fromEntries(
+    [...keys]
+      .sort((leftKey, rightKey) => leftKey.localeCompare(rightKey))
+      .map((bucketKey) => {
+        const current = currentBuckets?.[bucketKey]
+          ? normalizeBucketMetric(currentBuckets[bucketKey])
+          : null;
+        const previous = previousBuckets?.[bucketKey]
+          ? normalizeBucketMetric(previousBuckets[bucketKey])
+          : null;
+        let status = "unchanged";
+        if (current && previous) {
+          if (
+            current.accuracy_ratio === previous.accuracy_ratio
+            && current.hits === previous.hits
+            && current.total === previous.total
+          ) {
+            status = "unchanged";
+          } else if (current.accuracy_ratio > previous.accuracy_ratio) {
+            status = "improved";
+          } else if (current.accuracy_ratio < previous.accuracy_ratio) {
+            status = "regressed";
+          } else {
+            status = "changed";
+          }
+        } else if (current) {
+          status = "added";
+        } else {
+          status = "removed";
+        }
+
+        return [
+          bucketKey,
+          {
+            status,
+            current,
+            previous,
+            delta_accuracy_ratio: current && previous
+              ? Number((current.accuracy_ratio - previous.accuracy_ratio).toFixed(4))
+              : null,
+          },
+        ];
+      }),
+  );
+}
+
+function buildErrorBreakdownTrend(currentBreakdown = {}, previousBreakdown = {}) {
+  return Object.fromEntries(
+    ROUTING_ERROR_CODES.map((code) => [code, {
+      expected: buildNumericDelta(
+        currentBreakdown?.[code]?.expected || 0,
+        previousBreakdown?.[code]?.expected || 0,
+        0,
+      ),
+      actual: buildNumericDelta(
+        currentBreakdown?.[code]?.actual || 0,
+        previousBreakdown?.[code]?.actual || 0,
+        0,
+      ),
+      matched: buildNumericDelta(
+        currentBreakdown?.[code]?.matched || 0,
+        previousBreakdown?.[code]?.matched || 0,
+        0,
+      ),
+      misses: buildNumericDelta(
+        currentBreakdown?.[code]?.misses || 0,
+        previousBreakdown?.[code]?.misses || 0,
+        0,
+      ),
+    }]),
+  );
+}
+
+function collectChangedEntries(record = {}, predicate = () => false) {
+  return Object.entries(record || {}).filter(([, value]) => predicate(value));
+}
+
+function formatSignedNumber(value, precision = 4) {
+  const normalized = Number(value || 0);
+  return `${normalized >= 0 ? "+" : ""}${normalized.toFixed(precision)}`;
+}
+
+export function buildComparableRoutingSummary(summary = summarizeRoutingEval([])) {
+  return {
+    accuracy_ratio: Number(summary?.overall?.accuracy_ratio || 0),
+    by_lane_accuracy: buildComparableBucketSummary(summary?.by_lane_accuracy || {}),
+    by_action_accuracy: buildComparableBucketSummary(summary?.by_action_accuracy || {}),
+    error_breakdown: buildComparableErrorBreakdown(summary?.error_breakdown || {}),
+  };
+}
+
 function buildEvalEvent(testCase = {}) {
   const text = cleanText(testCase.text);
   const scope = testCase.scope && typeof testCase.scope === "object" && !Array.isArray(testCase.scope)
@@ -709,7 +844,7 @@ export function summarizeRoutingEval(results = []) {
     };
   }
 
-  return {
+  const summary = {
     total_cases: total,
     overall: buildMetric("overall"),
     lane_accuracy: buildMetric("lane"),
@@ -725,6 +860,74 @@ export function summarizeRoutingEval(results = []) {
     },
     top_miss_cases: misses.slice(0, 10),
     miss_count: misses.length,
+  };
+
+  return {
+    ...summary,
+    comparable_summary: buildComparableRoutingSummary(summary),
+  };
+}
+
+export function buildRoutingTrendReport({
+  currentRun = {},
+  previousRun = null,
+  currentLabel = "current",
+  previousLabel = "previous",
+} = {}) {
+  const currentSummary = currentRun?.summary || summarizeRoutingEval([]);
+  const previousSummary = previousRun?.summary || null;
+  const currentComparable = buildComparableRoutingSummary(currentSummary);
+  const previousComparable = previousSummary
+    ? buildComparableRoutingSummary(previousSummary)
+    : null;
+
+  return {
+    available: Boolean(previousSummary),
+    current_label: cleanText(currentLabel) || "current",
+    previous_label: previousComparable ? (cleanText(previousLabel) || "previous") : null,
+    current: {
+      total_cases: Number(currentSummary?.total_cases || 0),
+      miss_count: Number(currentSummary?.miss_count || 0),
+      comparable_summary: currentComparable,
+    },
+    previous: previousComparable
+      ? {
+          total_cases: Number(previousSummary?.total_cases || 0),
+          miss_count: Number(previousSummary?.miss_count || 0),
+          comparable_summary: previousComparable,
+        }
+      : null,
+    delta: previousComparable
+      ? {
+          total_cases: buildNumericDelta(
+            currentSummary?.total_cases || 0,
+            previousSummary?.total_cases || 0,
+            0,
+          ),
+          miss_count: buildNumericDelta(
+            currentSummary?.miss_count || 0,
+            previousSummary?.miss_count || 0,
+            0,
+          ),
+          accuracy_ratio: buildNumericDelta(
+            currentComparable?.accuracy_ratio || 0,
+            previousComparable?.accuracy_ratio || 0,
+            4,
+          ),
+          by_lane_accuracy: buildBucketTrend(
+            currentComparable?.by_lane_accuracy || {},
+            previousComparable?.by_lane_accuracy || {},
+          ),
+          by_action_accuracy: buildBucketTrend(
+            currentComparable?.by_action_accuracy || {},
+            previousComparable?.by_action_accuracy || {},
+          ),
+          error_breakdown: buildErrorBreakdownTrend(
+            currentComparable?.error_breakdown || {},
+            previousComparable?.error_breakdown || {},
+          ),
+        }
+      : null,
   };
 }
 
@@ -876,6 +1079,100 @@ export function formatRoutingEvalReport(run = {}) {
       .map((key) => `${key}: expected=${miss.expected?.[key] || "-"} actual=${miss.actual?.[key] || "-"}`)
       .join(" | ");
     lines.push(`- ${miss.id} [${miss.category}] ${mismatchDetail}`);
+  }
+
+  return lines.join("\n");
+}
+
+export function formatRoutingTrendReport(trendReport = {}) {
+  const lines = [
+    "Routing Trend",
+  ];
+
+  if (!trendReport?.available || !trendReport?.previous || !trendReport?.delta) {
+    lines.push("Previous run: none");
+    return lines.join("\n");
+  }
+
+  const delta = trendReport.delta || {};
+  const laneChanges = collectChangedEntries(
+    delta.by_lane_accuracy,
+    (metric) => metric?.status !== "unchanged",
+  );
+  const actionChanges = collectChangedEntries(
+    delta.by_action_accuracy,
+    (metric) => metric?.status !== "unchanged",
+  );
+  const errorChanges = collectChangedEntries(
+    delta.error_breakdown,
+    (metric) => (
+      Number(metric?.expected?.delta || 0) !== 0
+      || Number(metric?.actual?.delta || 0) !== 0
+      || Number(metric?.matched?.delta || 0) !== 0
+      || Number(metric?.misses?.delta || 0) !== 0
+    ),
+  );
+
+  lines.push(`Current: ${trendReport.current_label}`);
+  lines.push(`Previous: ${trendReport.previous_label}`);
+  lines.push(
+    `Accuracy ratio: ${delta.accuracy_ratio.current} vs ${delta.accuracy_ratio.previous} | delta ${formatSignedNumber(delta.accuracy_ratio.delta, 4)}`,
+  );
+  lines.push(
+    `Miss count: ${delta.miss_count.current} vs ${delta.miss_count.previous} | delta ${formatSignedNumber(delta.miss_count.delta, 0)}`,
+  );
+  lines.push(
+    `Cases: ${delta.total_cases.current} vs ${delta.total_cases.previous} | delta ${formatSignedNumber(delta.total_cases.delta, 0)}`,
+  );
+  lines.push("");
+  lines.push("Lane changes");
+
+  if (laneChanges.length === 0) {
+    lines.push("- none");
+  } else {
+    for (const [lane, metric] of laneChanges) {
+      const current = metric?.current
+        ? `${metric.current.accuracy_ratio} (${metric.current.hits}/${metric.current.total})`
+        : "none";
+      const previous = metric?.previous
+        ? `${metric.previous.accuracy_ratio} (${metric.previous.hits}/${metric.previous.total})`
+        : "none";
+      lines.push(
+        `- ${lane}: ${current} vs ${previous} | delta ${metric.delta_accuracy_ratio === null ? "n/a" : formatSignedNumber(metric.delta_accuracy_ratio, 4)} | ${metric.status}`,
+      );
+    }
+  }
+
+  lines.push("");
+  lines.push("Action changes");
+
+  if (actionChanges.length === 0) {
+    lines.push("- none");
+  } else {
+    for (const [action, metric] of actionChanges) {
+      const current = metric?.current
+        ? `${metric.current.accuracy_ratio} (${metric.current.hits}/${metric.current.total})`
+        : "none";
+      const previous = metric?.previous
+        ? `${metric.previous.accuracy_ratio} (${metric.previous.hits}/${metric.previous.total})`
+        : "none";
+      lines.push(
+        `- ${action}: ${current} vs ${previous} | delta ${metric.delta_accuracy_ratio === null ? "n/a" : formatSignedNumber(metric.delta_accuracy_ratio, 4)} | ${metric.status}`,
+      );
+    }
+  }
+
+  lines.push("");
+  lines.push("Error changes");
+
+  if (errorChanges.length === 0) {
+    lines.push("- none");
+  } else {
+    for (const [code, metric] of errorChanges) {
+      lines.push(
+        `- ${code}: expected ${formatSignedNumber(metric.expected.delta, 0)} | actual ${formatSignedNumber(metric.actual.delta, 0)} | matched ${formatSignedNumber(metric.matched.delta, 0)} | misses ${formatSignedNumber(metric.misses.delta, 0)}`,
+      );
+    }
   }
 
   return lines.join("\n");

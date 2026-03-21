@@ -6,18 +6,21 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 這份文件描述 repo 內的 deterministic routing eval regression gate baseline（v2 / `routing-eval-baseline-v2`）。
 
-目前這份 mirror 同時保留兩個已提交 checkpoint：
+目前這份 mirror 同時保留多個已提交 checkpoint：
 
 - Thread 34 observability checkpoint
 - Thread 35 closed-loop checkpoint
 - Thread 36 operations checkpoint
 - Thread 37 routing dataset coverage checkpoint
+- Thread 39 routing decision advice checkpoint
 
 Thread 35 closed-loop checkpoint 針對 `top_miss_cases` / `error_breakdown` -> candidate fixture -> dataset review -> rerun eval -> baseline gate 的閉環流程補上最小工具與文件，且不改 routing 決策、fallback 行為或 baseline fixture。
 
 Thread 36 operations checkpoint 把這條閉環路徑固定成 operator runbook 與單一入口 `npm run routing:closed-loop`，補上 session artifact、review checklist 與 rerun 入口；不新增 routing 邏輯、不改 routing 決策，也不調整 eval gate（仍為 `0.9`）。
 
 Thread 37 routing dataset coverage checkpoint 只擴充 checked-in dataset coverage，新增 26 筆 fixture，補強模糊查詢、搜尋+打開、`doc` / `runtime` 邊界與中文自然語句；不新增 routing 邏輯、不改 routing 決策，也不調整 eval gate（仍為 `0.9`）。
+
+Thread 39 routing decision advice checkpoint 在既有 deterministic eval / compare / closed-loop 路徑上補上最小 `trend`、`decision_advice`、closed-loop decision artifacts、CLI 摘要、測試與文件；不新增 routing 邏輯、不改 routing 決策，也不新增 fallback。
 
 固定操作 runbook 見：
 
@@ -41,6 +44,8 @@ Thread 37 routing dataset coverage checkpoint 只擴充 checked-in dataset cover
 - `/Users/seanhan/Documents/Playground/scripts/routing-eval-closed-loop.mjs`
 - `/Users/seanhan/Documents/Playground/tests/routing-eval.test.mjs`
 - `/Users/seanhan/Documents/Playground/tests/routing-eval-fixture-candidates.test.mjs`
+- `/Users/seanhan/Documents/Playground/tests/routing-eval-decision-advice.test.mjs`
+- `/Users/seanhan/Documents/Playground/tests/routing-eval-closed-loop.test.mjs`
 
 ## Scope
 
@@ -158,7 +163,10 @@ npm run routing:closed-loop
 npm run routing:closed-loop -- rerun
 node scripts/routing-eval.mjs
 node scripts/routing-eval.mjs --json
+node scripts/routing-eval.mjs --compare .tmp/routing-eval-closed-loop/<session-id>/01-routing-eval.json
+node scripts/routing-eval.mjs --compare-last
 node scripts/routing-eval.mjs --json | node scripts/routing-eval-fixture-candidates.mjs
+node scripts/routing-eval-fixture-candidates.mjs --input /tmp/routing-eval.json --previous /tmp/previous-routing-eval.json
 ```
 
 其中 `npm run routing:closed-loop` 是固定操作入口：
@@ -170,14 +178,17 @@ node scripts/routing-eval.mjs --json | node scripts/routing-eval-fixture-candida
 輸出包含：
 
 - overall accuracy
+- comparable `accuracy_ratio`
 - lane accuracy
 - planner accuracy
 - agent/tool accuracy
 - `by_lane_accuracy`
 - `by_action_accuracy`
 - `error_breakdown`
+- `comparable_summary`
 - latency avg / p95 / max
 - top miss cases
+- minimal `trend_report`（當提供上一輪結果時）
 
 CLI 會以 overall accuracy ratio 當作強制 regression gate；目前這份 checked-in baseline 為 regression gate baseline v2（`routing-eval-baseline-v2`），門檻是 `0.9`。
 
@@ -185,6 +196,27 @@ CLI 會以 overall accuracy ratio 當作強制 regression gate；目前這份 ch
 - overall accuracy ratio `>= 0.9` 時，CLI 保持 zero exit code，即使仍有少量 miss case
 - `--json` 會輸出完整結果、gate threshold 與 `top_miss_cases`（最多前 10 筆錯誤）
 - `--json` 與文字 report 都會固定輸出 hard-routing 錯誤分佈 `error_breakdown`
+- `scripts/routing-eval-fixture-candidates.mjs` 會在 JSON 內輸出：
+  - `trend`
+  - `decision_advice.warnings`
+  - `decision_advice.recommendations`
+  - `decision_advice.minimal_decision`
+- `summary.comparable_summary` 是 compare-ready snapshot，固定只保留：
+  - `accuracy_ratio`
+  - `by_lane_accuracy`
+  - `by_action_accuracy`
+  - `error_breakdown`
+- `node scripts/routing-eval.mjs --compare <run-json>` 會輸出「本次 vs 指定結果」的最小 trend report
+- `node scripts/routing-eval.mjs --compare-last` 會把本次結果與 `.tmp/routing-eval-closed-loop/latest-session.json` 指向的最新 artifact 比較
+
+`trend_report` 是最小比較輸出，不改 gate，也不改 routing 決策。它固定比較：
+
+- `accuracy_ratio`
+- total case count
+- miss count
+- changed `by_lane_accuracy` buckets
+- changed `by_action_accuracy` buckets
+- changed `error_breakdown`
 
 `by_lane_accuracy` 與 `by_action_accuracy` 都是以 expected bucket 做分桶，統計該 bucket 內整筆 case 的 overall accuracy，而不是只看單一欄位命中率。
 
@@ -203,6 +235,32 @@ CLI 會以 overall accuracy ratio 當作強制 regression gate；目前這份 ch
 
 這一層只補 observability，不改 routing 決策、fallback 行為或 baseline fixture。
 
+## Minimal Decision Advice
+
+fixture-candidate JSON 與 closed-loop artifact 會根據 `trend` 與 `error_breakdown` 產出最小 decision 建議，但只做建議，不會自動修改 routing rule、fallback 或 dataset。
+
+固定規則如下：
+
+- `ROUTING_NO_MATCH`
+  - 若出現 drift（例如 `misses > 0` 或 `actual > matched`），建議補 fixture coverage
+- `INVALID_ACTION`
+  - 若出現 drift，建議檢查 routing rule / action contract
+- `FALLBACK_DISABLED`
+  - 若觀測到實際命中或 miss，標記為高風險，要求人工審查
+- accuracy trend
+  - 相對前一次 run 下降：輸出 warning
+  - 相對前一次 run 穩定：建議不動
+
+`minimal_decision` 只會選一個最高優先級摘要給 CLI / JSON，優先順序為：
+
+1. `manual_review_high_risk`
+2. `warn_accuracy_decline`
+3. `check_routing_rule`
+4. `review_fixture_coverage`
+5. `no_change`
+
+若沒有前一次 run，`trend.status = "unknown"`，系統只會根據目前 `error_breakdown` 產出建議。
+
 ## Miss / Error To Dataset Loop
 
 這個 loop 只補「收集 -> 整理 -> 候選 fixture -> dataset review -> rerun eval -> baseline gate」；不直接改 routing 決策，也不新增 fallback。
@@ -218,6 +276,22 @@ CLI 會以 overall accuracy ratio 當作強制 regression gate；目前這份 ch
 ```bash
 npm run routing:closed-loop
 ```
+
+closed-loop session 現在也會固定輸出最小 trend artifact：
+
+- `07-initial-trend-report.json`
+- `08-initial-trend-report.txt`
+- `09-rerun-trend-report.json`
+- `10-rerun-trend-report.txt`
+- `11-initial-decision-advice.json`
+- `12-initial-decision-advice.txt`
+- `13-rerun-decision-advice.json`
+- `14-rerun-decision-advice.txt`
+
+其中：
+
+- initial trend 比較「本次 prepare」vs「上一個 session 的最新 eval artifact」
+- rerun trend 比較「本次 rerun」vs「同一 session 的 initial eval」
 
 細部操作與 decision rules 見：
 
@@ -235,6 +309,7 @@ node scripts/routing-eval.mjs --json > /tmp/routing-eval.json
 
 - `summary.top_miss_cases`
 - `summary.error_breakdown`
+- 如需 trend / minimal decision，一併準備前一次 eval JSON
 - `results`
 
 ### 2. 轉成可審查的候選 fixture
@@ -243,12 +318,27 @@ node scripts/routing-eval.mjs --json > /tmp/routing-eval.json
 node scripts/routing-eval-fixture-candidates.mjs --input /tmp/routing-eval.json > /tmp/routing-eval-candidates.json
 ```
 
+若要連同 trend 與 minimal decision 一起輸出：
+
+```bash
+node scripts/routing-eval-fixture-candidates.mjs \
+  --input /tmp/routing-eval.json \
+  --previous /tmp/previous-routing-eval.json \
+  > /tmp/routing-eval-candidates.json
+```
+
 轉換器會輸出三層資料：
 
 - `conversion_input.top_miss_cases_input`
   - 把 `top_miss_cases` 整理成可直接審查的逐案輸入
 - `conversion_input.error_breakdown_input`
   - 把 aggregate `error_breakdown` 展開成 per-error-code、per-case 的可轉換輸入
+- `trend`
+  - 以目前 run 對前一次 run 的 overall accuracy ratio 變化做最小趨勢判讀
+- `decision_advice`
+  - `warnings`
+  - `recommendations`
+  - `minimal_decision`
 - `fixture_candidates`
   - 預設以 `observed_actual_route` 產生候選 fixture，至少帶：
     - `lane`
@@ -279,6 +369,7 @@ node scripts/routing-eval-fixture-candidates.mjs --input /tmp/routing-eval.json 
 ```bash
 node scripts/routing-eval.mjs
 node scripts/routing-eval.mjs --json
+node scripts/routing-eval.mjs --compare-last
 ```
 
 ### 5. Baseline Gate

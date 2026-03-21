@@ -1,8 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 import {
+  buildRoutingTrendReport,
+  formatRoutingTrendReport,
   formatRoutingEvalReport,
   ROUTING_EVAL_MIN_ACCURACY_RATIO,
   loadRoutingEvalSet,
@@ -48,7 +53,13 @@ test("routing eval CLI supports json output", () => {
   assert.equal(parsed.summary.miss_count, 0);
   assert.ok(parsed.summary.total_cases >= 50);
   assert.ok(Array.isArray(parsed.summary.top_miss_cases));
+  assert.equal(parsed.summary.comparable_summary.accuracy_ratio, 1);
   assert.deepEqual(Object.keys(parsed.summary.error_breakdown), [
+    ROUTING_NO_MATCH,
+    INVALID_ACTION,
+    FALLBACK_DISABLED,
+  ]);
+  assert.deepEqual(Object.keys(parsed.summary.comparable_summary.error_breakdown), [
     ROUTING_NO_MATCH,
     INVALID_ACTION,
     FALLBACK_DISABLED,
@@ -180,6 +191,171 @@ test("routing eval report prints hard routing error breakdown", () => {
 
   assert.match(report, /Error breakdown/);
   assert.match(report, /ROUTING_NO_MATCH: expected 1 \| actual 1 \| matched 1 \| misses 0/);
+});
+
+test("routing eval summary exposes comparable summary for trend diffs", () => {
+  const summary = summarizeRoutingEval([
+    {
+      expected: {
+        lane: "knowledge_assistant",
+        planner_action: "search_company_brain_docs",
+        agent_or_tool: "tool:search_company_brain_docs",
+      },
+      actual: {
+        lane: "knowledge_assistant",
+        planner_action: "search_company_brain_docs",
+        agent_or_tool: "tool:search_company_brain_docs",
+      },
+      matches: {
+        overall: true,
+        lane: true,
+        planner_action: true,
+        agent_or_tool: true,
+      },
+      miss_dimensions: [],
+      latency_ms: 1,
+    },
+  ]);
+
+  assert.deepEqual(summary.comparable_summary, {
+    accuracy_ratio: 1,
+    by_lane_accuracy: {
+      knowledge_assistant: {
+        hits: 1,
+        total: 1,
+        accuracy_ratio: 1,
+        accuracy: 100,
+      },
+    },
+    by_action_accuracy: {
+      search_company_brain_docs: {
+        hits: 1,
+        total: 1,
+        accuracy_ratio: 1,
+        accuracy: 100,
+      },
+    },
+    error_breakdown: {
+      [ROUTING_NO_MATCH]: {
+        expected: 0,
+        actual: 0,
+        matched: 0,
+        misses: 0,
+      },
+      [INVALID_ACTION]: {
+        expected: 0,
+        actual: 0,
+        matched: 0,
+        misses: 0,
+      },
+      [FALLBACK_DISABLED]: {
+        expected: 0,
+        actual: 0,
+        matched: 0,
+        misses: 0,
+      },
+    },
+  });
+});
+
+test("routing trend report compares current run against previous run", () => {
+  const previousRun = {
+    summary: {
+      total_cases: 2,
+      overall: { hits: 1, total: 2, accuracy_ratio: 0.5, accuracy: 50 },
+      by_lane_accuracy: {
+        knowledge_assistant: { hits: 1, total: 2, accuracy_ratio: 0.5, accuracy: 50 },
+      },
+      by_action_accuracy: {
+        get_runtime_info: { hits: 1, total: 2, accuracy_ratio: 0.5, accuracy: 50 },
+      },
+      error_breakdown: {
+        [ROUTING_NO_MATCH]: { expected: 1, actual: 1, matched: 1, misses: 0 },
+        [INVALID_ACTION]: { expected: 0, actual: 0, matched: 0, misses: 0 },
+        [FALLBACK_DISABLED]: { expected: 0, actual: 0, matched: 0, misses: 0 },
+      },
+      miss_count: 1,
+    },
+  };
+  const currentRun = {
+    summary: {
+      total_cases: 2,
+      overall: { hits: 2, total: 2, accuracy_ratio: 1, accuracy: 100 },
+      by_lane_accuracy: {
+        knowledge_assistant: { hits: 2, total: 2, accuracy_ratio: 1, accuracy: 100 },
+      },
+      by_action_accuracy: {
+        get_runtime_info: { hits: 2, total: 2, accuracy_ratio: 1, accuracy: 100 },
+      },
+      error_breakdown: {
+        [ROUTING_NO_MATCH]: { expected: 0, actual: 0, matched: 0, misses: 0 },
+        [INVALID_ACTION]: { expected: 0, actual: 0, matched: 0, misses: 0 },
+        [FALLBACK_DISABLED]: { expected: 0, actual: 0, matched: 0, misses: 0 },
+      },
+      miss_count: 0,
+    },
+  };
+
+  const trend = buildRoutingTrendReport({
+    currentRun,
+    previousRun,
+    currentLabel: "current",
+    previousLabel: "previous",
+  });
+  const report = formatRoutingTrendReport(trend);
+
+  assert.equal(trend.available, true);
+  assert.equal(trend.delta.accuracy_ratio.delta, 0.5);
+  assert.equal(trend.delta.miss_count.delta, -1);
+  assert.equal(trend.delta.by_lane_accuracy.knowledge_assistant.status, "improved");
+  assert.equal(trend.delta.error_breakdown.ROUTING_NO_MATCH.expected.delta, -1);
+  assert.match(report, /Accuracy ratio: 1 vs 0.5 \| delta \+0.5000/);
+  assert.match(report, /knowledge_assistant: 1 \(2\/2\) vs 0.5 \(1\/2\) \| delta \+0.5000 \| improved/);
+});
+
+test("routing eval CLI supports json compare output", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "routing-eval-"));
+  const comparePath = path.join(tempDir, "previous-run.json");
+
+  await writeFile(comparePath, `${JSON.stringify({
+    ok: false,
+    threshold: {
+      min_accuracy_ratio: ROUTING_EVAL_MIN_ACCURACY_RATIO,
+    },
+    summary: {
+      total_cases: 88,
+      overall: { hits: 80, total: 88, accuracy_ratio: 0.9091, accuracy: 90.91 },
+      lane_accuracy: { hits: 82, total: 88, accuracy_ratio: 0.9318, accuracy: 93.18 },
+      planner_accuracy: { hits: 81, total: 88, accuracy_ratio: 0.9205, accuracy: 92.05 },
+      agent_tool_accuracy: { hits: 80, total: 88, accuracy_ratio: 0.9091, accuracy: 90.91 },
+      by_lane_accuracy: {
+        knowledge_assistant: { hits: 37, total: 45, accuracy_ratio: 0.8222, accuracy: 82.22 },
+      },
+      by_action_accuracy: {
+        get_runtime_info: { hits: 10, total: 16, accuracy_ratio: 0.625, accuracy: 62.5 },
+      },
+      error_breakdown: {
+        [ROUTING_NO_MATCH]: { expected: 5, actual: 7, matched: 4, misses: 4 },
+        [INVALID_ACTION]: { expected: 0, actual: 0, matched: 0, misses: 0 },
+        [FALLBACK_DISABLED]: { expected: 0, actual: 0, matched: 0, misses: 0 },
+      },
+      latency_ms: { avg: 1, p95: 1, max: 1 },
+      top_miss_cases: [],
+      miss_count: 8,
+    },
+  }, null, 2)}\n`, "utf8");
+
+  const raw = execFileSync("node", ["scripts/routing-eval.mjs", "--json", "--compare", comparePath], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+  });
+  const parsed = JSON.parse(raw);
+
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.trend_report.available, true);
+  assert.equal(parsed.trend_report.previous_label.endsWith("previous-run.json"), true);
+  assert.equal(parsed.trend_report.delta.accuracy_ratio.delta > 0, true);
+  assert.equal(parsed.trend_report.delta.miss_count.delta < 0, true);
 });
 
 test("routing eval gate fails when overall accuracy ratio drops below 0.9", async () => {

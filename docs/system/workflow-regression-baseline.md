@@ -198,6 +198,8 @@ node scripts/routing-eval.mjs
 node scripts/routing-eval.mjs --json
 node scripts/routing-eval.mjs --json > /tmp/routing-eval.json
 node scripts/routing-eval-fixture-candidates.mjs --input /tmp/routing-eval.json
+node scripts/routing-eval-fixture-candidates.mjs --input /tmp/routing-eval.json --previous /tmp/previous-routing-eval.json
+node --test tests/routing-eval-decision-advice.test.mjs tests/routing-eval-closed-loop.test.mjs
 ```
 
 用途：
@@ -210,5 +212,7 @@ node scripts/routing-eval-fixture-candidates.mjs --input /tmp/routing-eval.json
 - 以 overall accuracy ratio `0.9` 作為強制門檻；`< 0.9` 時 CLI 會以 non-zero exit code 結束
 - `--json` 模式會輸出完整結果與 `top_miss_cases`（前 10 筆錯誤）
 - `scripts/routing-eval-fixture-candidates.mjs` 會把 `top_miss_cases` 與 `error_breakdown` 展開成 machine-readable candidate fixture input，供人工審查後加入 dataset
+- `scripts/routing-eval-fixture-candidates.mjs --previous <run-json>` 會額外輸出 `trend` 與 `decision_advice.minimal_decision`
+- `tests/routing-eval-decision-advice.test.mjs` 與 `tests/routing-eval-closed-loop.test.mjs` 會覆蓋最小 decision advice 的 JSON / CLI 輸出
 
 目前 monitoring learning baseline 尚未納入 `scripts/run-workflow-baseline.mjs` 的 workflow-only runner；需要驗證這條路徑時，直接使用上面的 `node --test ...` 與 CLI 命令。

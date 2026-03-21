@@ -30,6 +30,14 @@ async function loadRunInput(runRoutingEval) {
   return runRoutingEval();
 }
 
+async function loadPreviousRunInput() {
+  const inputPath = getArgValue("--previous");
+  if (!inputPath) {
+    return null;
+  }
+  return JSON.parse(await readFile(inputPath, "utf8"));
+}
+
 const originalWrite = process.stdout.write.bind(process.stdout);
 process.stdout.write = (() => true);
 
@@ -50,11 +58,13 @@ const datasetPath = getArgValue("--dataset");
 
 try {
   const run = await loadRunInput(runRoutingEval);
+  const previousRun = await loadPreviousRunInput();
   const testCases = datasetPath
     ? await loadRoutingEvalSet(datasetPath)
     : await loadRoutingEvalSet();
   const prepared = prepareRoutingEvalFixtureCandidates({
     run,
+    previousRun,
     testCases,
     prefer,
   });
@@ -74,6 +84,34 @@ try {
       overall_accuracy: 0,
       gate_ok: false,
       min_accuracy_ratio: 0,
+    },
+    trend: {
+      available: false,
+      status: "unknown",
+      accuracy_ratio: {
+        current: 0,
+        previous: null,
+        delta: null,
+      },
+    },
+    decision_advice: {
+      trend: {
+        available: false,
+        status: "unknown",
+        accuracy_ratio: {
+          current: 0,
+          previous: null,
+          delta: null,
+        },
+      },
+      warnings: [],
+      recommendations: [],
+      minimal_decision: {
+        action: "observe_only",
+        severity: "info",
+        kind: "trend",
+        summary: "No actionable drift detected from trend or error breakdown.",
+      },
     },
     conversion_input: {
       source_summary: {
