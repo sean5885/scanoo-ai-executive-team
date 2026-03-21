@@ -231,6 +231,10 @@ export const runtimeMessageDedupWindowMs = Number.parseInt(
   process.env.RUNTIME_MESSAGE_DEDUP_WINDOW_MS || "120000",
   10,
 );
+export const httpRequestTimeoutMs = Number.parseInt(
+  process.env.HTTP_REQUEST_TIMEOUT_MS || "60000",
+  10,
+);
 
 export const lobsterSecurityProjectRoot =
   process.env.LOBSTER_SECURITY_PROJECT_ROOT || path.resolve(process.cwd(), "lobster_security");
