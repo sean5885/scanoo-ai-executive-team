@@ -8,6 +8,8 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 目標是讓變更 `meeting`、`doc_rewrite`、`cloud_doc`、HTTP route、task-state harness 或 verifier gate 後，有一套固定的最低回歸檢查可跑。
 
+若變更內容涉及 lane / planner / registered agent / meeting / cloud-doc 的 routing 決策，也應同步跑 deterministic routing eval baseline。
+
 ## Baseline Tiers
 
 ### 1. Smoke Baseline
@@ -184,5 +186,17 @@ node scripts/run-workflow-baseline.mjs doc-rewrite
 node scripts/run-workflow-baseline.mjs cloud-doc
 node scripts/run-workflow-baseline.mjs all
 ```
+
+Routing eval baseline：
+
+```bash
+node scripts/routing-eval.mjs
+node scripts/routing-eval.mjs --json
+```
+
+用途：
+
+- 驗證 checked-in deterministic routing baseline 是否仍與 eval set 一致
+- 提供 `lane / planner_action / agent_or_tool / latency` 的固定 regression 量測
 
 目前 monitoring learning baseline 尚未納入 `scripts/run-workflow-baseline.mjs` 的 workflow-only runner；需要驗證這條路徑時，直接使用上面的 `node --test ...` 與 CLI 命令。

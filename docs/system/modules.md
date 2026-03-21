@@ -40,6 +40,8 @@ Planner runtime refactor plan: [planner_agent_refactor_plan.md](/Users/seanhan/D
 
 Routing / handoff layer: [routing_handoff_spec.md](/Users/seanhan/Documents/Playground/docs/system/routing_handoff_spec.md)
 
+Routing eval baseline: [routing_eval_system.md](/Users/seanhan/Documents/Playground/docs/system/routing_eval_system.md)
+
 Skill layer: [skill_spec.md](/Users/seanhan/Documents/Playground/docs/system/skill_spec.md)
 
 Trace / log layer: [trace_log_spec.md](/Users/seanhan/Documents/Playground/docs/system/trace_log_spec.md)
@@ -198,6 +200,31 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - `scripts/monitoring-cli.mjs` now also exposes a `learning` command for the same review-first summary surface
 - Core path:
   - yes for runtime observability
+
+### 2B. Routing Eval Baseline
+
+- Location:
+  - `/Users/seanhan/Documents/Playground/src/routing-eval.mjs`
+  - `/Users/seanhan/Documents/Playground/evals/routing-eval-set.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/routing-eval.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/routing-eval.test.mjs`
+- Responsibility:
+  - provide a deterministic routing baseline for checked-in heuristic routing behavior
+  - normalize route outcomes into `lane`, `planner_action`, and `agent_or_tool`
+  - replay 50~100 checked-in fixtures without calling live LLM / network dependencies
+  - report overall accuracy, per-dimension accuracy, latency summary, and top miss cases
+  - return non-zero exit status on mismatches so the baseline can act as a regression gate
+- Depends on:
+  - `capability-lane.mjs`
+  - `lane-executor.mjs`
+  - `meeting-agent.mjs`
+  - `cloud-doc-organization-workflow.mjs`
+  - `agent-registry.mjs`
+  - `planner-flow-runtime.mjs`
+  - planner flow modules
+- Core path:
+  - no for production request handling
+  - yes for routing regression protection
 
 ### 3. OAuth and User Context
 

@@ -136,6 +136,18 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
    - Conflicting doc:
      - `/Users/seanhan/Documents/Playground/README.md`
 
+19. Planner-side runtime-info support exists, but top-level lane heuristics do not guarantee that a generic runtime query reaches planner mode.
+   - Why it matters:
+     - `executive-planner.mjs` and `planner-runtime-info-flow.mjs` both support `get_runtime_info`, but the top-level capability lane still only forwards clearly knowledge-like requests into planner execution
+     - plain runtime questions without a knowledge-style cue can still stay in personal-assistant fallback paths instead of hitting planner
+   - Current code truth:
+     - `/Users/seanhan/Documents/Playground/src/capability-lane.mjs`
+     - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
+     - `/Users/seanhan/Documents/Playground/src/executive-planner.mjs`
+     - `/Users/seanhan/Documents/Playground/src/planner-runtime-info-flow.mjs`
+   - Related mirror note:
+     - `/Users/seanhan/Documents/Playground/docs/system/routing_eval_system.md` therefore treats runtime-info coverage as a deterministic planner-adapter baseline, not as proof that every live runtime query already reaches planner end-to-end
+
 ## Cannot Be Confirmed From Code Alone
 
 - whether any hosted deployment exists outside the local machine

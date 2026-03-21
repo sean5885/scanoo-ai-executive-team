@@ -22,7 +22,11 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 - `/Users/seanhan/Documents/Playground/scripts`
   - Small utility scripts.
-  - Current checked-in script surface is minimal.
+  - Includes workflow baseline, monitoring, trace debug, and routing eval entrypoints.
+
+- `/Users/seanhan/Documents/Playground/evals`
+  - Checked-in deterministic eval fixtures.
+  - Currently stores the routing regression baseline set.
 
 - `/Users/seanhan/Documents/Playground/.data`
   - Local runtime data.
@@ -50,6 +54,11 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 - Search and answer
   - `/Users/seanhan/Documents/Playground/src/answer-service.mjs`
+
+- Routing eval baseline
+  - `/Users/seanhan/Documents/Playground/src/routing-eval.mjs`
+  - `/Users/seanhan/Documents/Playground/evals/routing-eval-set.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/routing-eval.mjs`
 
 - Document organization
   - `/Users/seanhan/Documents/Playground/src/lark-drive-organizer.mjs`
