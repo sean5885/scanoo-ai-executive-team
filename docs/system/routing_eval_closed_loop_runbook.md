@@ -3,6 +3,7 @@
 Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 Operations checkpoint: Thread 36
+Trend checkpoint: Thread 38
 Decision checkpoint: Thread 39
 
 ## Purpose

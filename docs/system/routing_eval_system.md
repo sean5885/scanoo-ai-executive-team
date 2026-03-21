@@ -12,6 +12,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - Thread 35 closed-loop checkpoint
 - Thread 36 operations checkpoint
 - Thread 37 routing dataset coverage checkpoint
+- Thread 38 routing trend report checkpoint
 - Thread 39 routing decision advice checkpoint
 
 Thread 35 closed-loop checkpoint 針對 `top_miss_cases` / `error_breakdown` -> candidate fixture -> dataset review -> rerun eval -> baseline gate 的閉環流程補上最小工具與文件，且不改 routing 決策、fallback 行為或 baseline fixture。
@@ -19,6 +20,8 @@ Thread 35 closed-loop checkpoint 針對 `top_miss_cases` / `error_breakdown` -> 
 Thread 36 operations checkpoint 把這條閉環路徑固定成 operator runbook 與單一入口 `npm run routing:closed-loop`，補上 session artifact、review checklist 與 rerun 入口；不新增 routing 邏輯、不改 routing 決策，也不調整 eval gate（仍為 `0.9`）。
 
 Thread 37 routing dataset coverage checkpoint 只擴充 checked-in dataset coverage，新增 26 筆 fixture，補強模糊查詢、搜尋+打開、`doc` / `runtime` 邊界與中文自然語句；不新增 routing 邏輯、不改 routing 決策，也不調整 eval gate（仍為 `0.9`）。
+
+Thread 38 routing trend report checkpoint 在既有 deterministic eval / compare / closed-loop 路徑上補上最小 `comparable_summary`、`trend_report`、`--compare` / `--compare-last`、closed-loop trend artifacts、測試與文件；不新增邏輯、不改 routing 決策，也不新增 fallback。
 
 Thread 39 routing decision advice checkpoint 在既有 deterministic eval / compare / closed-loop 路徑上補上最小 `trend`、`decision_advice`、closed-loop decision artifacts、CLI 摘要、測試與文件；不新增 routing 邏輯、不改 routing 決策，也不新增 fallback。
 
