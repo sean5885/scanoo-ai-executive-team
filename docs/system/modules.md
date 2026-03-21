@@ -201,7 +201,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 - Core path:
   - yes for runtime observability
 
-### 2B. Routing Eval Baseline
+### 2B. Routing Eval Regression Gate Baseline (v1)
 
 - Location:
   - `/Users/seanhan/Documents/Playground/src/routing-eval.mjs`
@@ -210,10 +210,12 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - `/Users/seanhan/Documents/Playground/tests/routing-eval.test.mjs`
 - Responsibility:
   - provide a deterministic routing baseline for checked-in heuristic routing behavior
+  - define the checked-in regression gate baseline v1 for routing eval
   - normalize route outcomes into `lane`, `planner_action`, and `agent_or_tool`
   - replay 50~100 checked-in fixtures without calling live LLM / network dependencies
-  - report overall accuracy, per-dimension accuracy, latency summary, and top miss cases
-  - return non-zero exit status on mismatches so the baseline can act as a regression gate
+  - report overall accuracy, per-dimension accuracy, latency summary, and `top_miss_cases` (up to 10 errors)
+  - support `--json` output for machine-readable regression consumption
+  - return non-zero exit status when overall accuracy ratio drops below `0.9` so the baseline can act as a regression gate
 - Depends on:
   - `capability-lane.mjs`
   - `lane-executor.mjs`

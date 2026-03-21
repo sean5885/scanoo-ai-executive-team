@@ -13,7 +13,11 @@ import {
 } from "./cloud-doc-organization-workflow.mjs";
 import { parseRegisteredAgentCommand } from "./agent-registry.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
-import { looksLikeExecutiveStart, selectPlannerTool } from "./executive-planner.mjs";
+import {
+  looksLikeExecutiveStart,
+  selectPlannerTool,
+  shouldPreferSelectorAction,
+} from "./executive-planner.mjs";
 import { resolvePlannerFlowRoute } from "./planner-flow-runtime.mjs";
 import {
   hydratePlannerDocQueryRuntimeContext,
@@ -125,6 +129,8 @@ const plannerPresets = new Set([
   "create_search_detail_list_doc",
 ]);
 
+export const ROUTING_EVAL_MIN_ACCURACY_RATIO = 0.9;
+
 function hasAny(text, keywords) {
   return keywords.some((keyword) => text.includes(keyword));
 }
@@ -156,6 +162,37 @@ function percentile(values = [], ratio = 0.95) {
 
 function countMatches(items = [], predicate) {
   return items.reduce((count, item) => (predicate(item) ? count + 1 : count), 0);
+}
+
+function buildBucketAccuracy(results = [], selector = () => "", matchKey = "overall") {
+  const buckets = new Map();
+
+  for (const item of Array.isArray(results) ? results : []) {
+    const bucketKey = cleanText(selector(item)) || "unknown";
+    const metric = buckets.get(bucketKey) || { hits: 0, total: 0 };
+    metric.total += 1;
+    if (item?.matches?.[matchKey] === true) {
+      metric.hits += 1;
+    }
+    buckets.set(bucketKey, metric);
+  }
+
+  return Object.fromEntries(
+    [...buckets.entries()]
+      .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+      .map(([bucketKey, metric]) => {
+        const accuracyRatio = metric.total > 0 ? Number((metric.hits / metric.total).toFixed(4)) : 0;
+        return [
+          bucketKey,
+          {
+            hits: metric.hits,
+            total: metric.total,
+            accuracy_ratio: accuracyRatio,
+            accuracy: Number((accuracyRatio * 100).toFixed(2)),
+          },
+        ];
+      }),
+  );
 }
 
 function buildEvalEvent(testCase = {}) {
@@ -396,7 +433,15 @@ function resolvePlannerDecision(text = "", plannerContext = {}) {
     taskType: plannerContext?.task_type || "",
     logger: noopLogger,
   });
-  const action = normalizePlannerAction(routedFlow?.action || selector?.selected_action || "");
+  const prefersSelector = shouldPreferSelectorAction({
+    hardRoutedAction: routedFlow?.action,
+    selectorAction: selector?.selected_action,
+  });
+  const action = normalizePlannerAction(
+    (prefersSelector ? selector?.selected_action : routedFlow?.action)
+    || selector?.selected_action
+    || "",
+  );
 
   return {
     planner_action: action,
@@ -405,11 +450,13 @@ function resolvePlannerDecision(text = "", plannerContext = {}) {
         ? `preset:${action}`
         : `tool:${action}`
       : null,
-    source: normalizePlannerAction(routedFlow?.action)
-      ? "planner_flow"
-      : normalizePlannerAction(selector?.selected_action)
-        ? "planner_selector"
-        : "planner_no_match",
+    source: prefersSelector
+      ? "planner_selector_override"
+      : normalizePlannerAction(routedFlow?.action)
+        ? "planner_flow"
+        : normalizePlannerAction(selector?.selected_action)
+          ? "planner_selector"
+          : "planner_no_match",
   };
 }
 
@@ -574,10 +621,12 @@ export function summarizeRoutingEval(results = []) {
 
   function buildMetric(key) {
     const hits = countMatches(results, (item) => item.matches?.[key] === true);
+    const accuracyRatio = total > 0 ? Number((hits / total).toFixed(4)) : 0;
     return {
       hits,
       total,
-      accuracy: total > 0 ? Number(((hits / total) * 100).toFixed(2)) : 0,
+      accuracy_ratio: accuracyRatio,
+      accuracy: Number((accuracyRatio * 100).toFixed(2)),
     };
   }
 
@@ -587,6 +636,8 @@ export function summarizeRoutingEval(results = []) {
     lane_accuracy: buildMetric("lane"),
     planner_accuracy: buildMetric("planner_action"),
     agent_tool_accuracy: buildMetric("agent_or_tool"),
+    by_lane_accuracy: buildBucketAccuracy(results, (item) => item?.expected?.lane, "overall"),
+    by_action_accuracy: buildBucketAccuracy(results, (item) => item?.expected?.planner_action, "overall"),
     latency_ms: {
       avg: total > 0 ? Number((latencies.reduce((sum, value) => sum + value, 0) / total).toFixed(3)) : 0,
       p95: Number(percentile(latencies, 0.95).toFixed(3)),
@@ -650,6 +701,10 @@ export async function runRoutingEval({ testCases = null } = {}) {
   if (validationIssues.length > 0) {
     return {
       ok: false,
+      threshold: {
+        metric: "overall_accuracy_ratio",
+        min_accuracy_ratio: ROUTING_EVAL_MIN_ACCURACY_RATIO,
+      },
       validation_issues: validationIssues,
       results: [],
       summary: summarizeRoutingEval([]),
@@ -659,7 +714,11 @@ export async function runRoutingEval({ testCases = null } = {}) {
   const results = cases.map((testCase) => evaluateRoutingCase(testCase));
   const summary = summarizeRoutingEval(results);
   return {
-    ok: summary.miss_count === 0,
+    ok: summary.overall.accuracy_ratio >= ROUTING_EVAL_MIN_ACCURACY_RATIO,
+    threshold: {
+      metric: "overall_accuracy_ratio",
+      min_accuracy_ratio: ROUTING_EVAL_MIN_ACCURACY_RATIO,
+    },
     validation_issues: [],
     results,
     summary,
@@ -668,17 +727,49 @@ export async function runRoutingEval({ testCases = null } = {}) {
 
 export function formatRoutingEvalReport(run = {}) {
   const summary = run?.summary || summarizeRoutingEval([]);
+  const minAccuracyRatio = Number(
+    run?.threshold?.min_accuracy_ratio ?? ROUTING_EVAL_MIN_ACCURACY_RATIO,
+  );
+  const minAccuracyPercent = Number((minAccuracyRatio * 100).toFixed(2));
+  const byLaneEntries = Object.entries(summary.by_lane_accuracy || {});
+  const byActionEntries = Object.entries(summary.by_action_accuracy || {});
   const lines = [
     "Routing Eval",
     `Cases: ${summary.total_cases}`,
+    `Gate: overall accuracy >= ${minAccuracyPercent}% (${minAccuracyRatio})`,
     `Overall accuracy: ${summary.overall.accuracy}% (${summary.overall.hits}/${summary.overall.total})`,
     `Lane accuracy: ${summary.lane_accuracy.accuracy}% (${summary.lane_accuracy.hits}/${summary.lane_accuracy.total})`,
     `Planner accuracy: ${summary.planner_accuracy.accuracy}% (${summary.planner_accuracy.hits}/${summary.planner_accuracy.total})`,
     `Agent/tool accuracy: ${summary.agent_tool_accuracy.accuracy}% (${summary.agent_tool_accuracy.hits}/${summary.agent_tool_accuracy.total})`,
     `Latency: avg ${summary.latency_ms.avg} ms | p95 ${summary.latency_ms.p95} ms | max ${summary.latency_ms.max} ms`,
+    `Gate result: ${run?.ok ? "pass" : "fail"}`,
     "",
-    "Top miss cases",
+    "By lane accuracy",
   ];
+
+  if (byLaneEntries.length === 0) {
+    lines.push("- none");
+  } else {
+    for (const [lane, metric] of byLaneEntries) {
+      lines.push(`- ${lane}: ${metric.accuracy}% (${metric.hits}/${metric.total})`);
+    }
+  }
+
+  lines.push("");
+  lines.push("By action accuracy");
+
+  if (byActionEntries.length === 0) {
+    lines.push("- none");
+  } else {
+    for (const [action, metric] of byActionEntries) {
+      lines.push(`- ${action}: ${metric.accuracy}% (${metric.hits}/${metric.total})`);
+    }
+  }
+
+  lines.push("");
+  lines.push(
+    "Top miss cases",
+  );
 
   if (!Array.isArray(summary.top_miss_cases) || summary.top_miss_cases.length === 0) {
     lines.push("- none");

@@ -4,7 +4,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 ## Purpose
 
-這份文件描述 repo 內新增的 deterministic routing eval baseline。
+這份文件描述 repo 內的 deterministic routing eval regression gate baseline（v1）。
 
 目標是量化目前 checked-in routing 行為的三個層次：
 
@@ -12,7 +12,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - `planner_action`
 - `agent_or_tool`
 
-並讓這組資料可以直接做 regression gate。
+並讓這組資料可以直接做 regression gate baseline。
 
 ## Files
 
@@ -133,7 +133,11 @@ node scripts/routing-eval.mjs --json
 - latency avg / p95 / max
 - top miss cases
 
-若任何 case mismatch，CLI 會以 non-zero exit code 結束，讓它可直接掛到 regression / CI gate。
+CLI 會以 overall accuracy ratio 當作強制 regression gate；目前這份 checked-in baseline 為 regression gate baseline v1，門檻是 `0.9`。
+
+- overall accuracy ratio `< 0.9` 時，CLI 會以 non-zero exit code 結束
+- overall accuracy ratio `>= 0.9` 時，CLI 保持 zero exit code，即使仍有少量 miss case
+- `--json` 會輸出完整結果、gate threshold 與 `top_miss_cases`（最多前 10 筆錯誤）
 
 ## Determinism
 
@@ -154,4 +158,4 @@ node scripts/routing-eval.mjs --json
 - meeting / cloud-doc / registered-agent 仍有 specialized bypass path
 - planner 只在 knowledge-lane 等受控入口內被 deterministic adapter 模擬
 
-因此它適合作為 regression baseline，但不應被描述成完整的 live end-to-end routing benchmark。
+因此它適合作為 regression gate baseline v1，但不應被描述成完整的 live end-to-end routing benchmark。

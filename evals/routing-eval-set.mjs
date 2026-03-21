@@ -395,6 +395,16 @@ const mixedCases = [
     planner_action: "start",
     agent_or_tool: "agent:product",
   }),
+  createCase("mixed", "011", "幫我搜尋 onboarding 文件並直接打開內容", {
+    lane: "knowledge_assistant",
+    planner_action: "search_and_detail_doc",
+    agent_or_tool: "tool:search_and_detail_doc",
+  }),
+  createCase("mixed", "012", "幫我列出知識庫文件", {
+    lane: "knowledge_assistant",
+    planner_action: "list_company_brain_docs",
+    agent_or_tool: "tool:list_company_brain_docs",
+  }),
 ];
 
 const routingEvalSet = Object.freeze([
