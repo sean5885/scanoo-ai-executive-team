@@ -288,6 +288,37 @@ export async function resolveRoutingDiagnosticsSnapshot({
   return resolveSnapshotPayloadByPath(matched.snapshot_path);
 }
 
+export async function resolvePreviousRoutingDiagnosticsSnapshot({
+  reference = "latest",
+  baseDir = DEFAULT_ROUTING_DIAGNOSTICS_ARCHIVE_DIR,
+} = {}) {
+  const manifest = await readRoutingDiagnosticsManifest(baseDir);
+  const snapshots = Array.isArray(manifest?.snapshots) ? manifest.snapshots : [];
+  if (snapshots.length < 2) {
+    throw new Error(`Previous routing diagnostics snapshot not found in ${manifest.manifest_path}`);
+  }
+
+  const normalizedReference = cleanText(reference) || "latest";
+  const targetRunId = normalizedReference === "latest"
+    ? cleanText(manifest?.latest_run_id)
+    : normalizedReference;
+  const currentIndex = snapshots.findIndex((entry) => cleanText(entry?.run_id) === targetRunId);
+
+  if (currentIndex === -1) {
+    throw new Error(`Routing diagnostics snapshot not found for run_id: ${targetRunId}`);
+  }
+  if (currentIndex + 1 >= snapshots.length) {
+    throw new Error(`Previous routing diagnostics snapshot not found for run_id: ${targetRunId}`);
+  }
+
+  const previousEntry = snapshots[currentIndex + 1];
+  if (!previousEntry?.snapshot_path) {
+    throw new Error(`Snapshot path missing for previous routing diagnostics snapshot: ${cleanText(previousEntry?.run_id) || "unknown"}`);
+  }
+
+  return resolveSnapshotPayloadByPath(previousEntry.snapshot_path);
+}
+
 async function assertGitTagExists(tag = "") {
   const normalizedTag = cleanText(tag);
   if (!normalizedTag) {

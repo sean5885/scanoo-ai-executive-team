@@ -37,10 +37,15 @@
 ```bash
 npm run routing:closed-loop
 npm run routing:closed-loop -- rerun
+npm run routing:diagnostics
+npm run routing:diagnostics -- --compare-previous
+npm run routing:diagnostics -- --compare-tag routing-eval-baseline-v2
 ```
 
 這條路徑會把 routing regression 操作固定成 `eval -> candidates -> review -> dataset -> eval`，artifact 會寫到 `.tmp/routing-eval-closed-loop/<session-id>/`。
 目前 `routing-eval`、prepare、rerun 都以 `diagnostics_summary` 作為單一決策視圖。
+`routing:diagnostics` 是 read-only 檢視入口，直接讀 `.tmp/routing-diagnostics-history/` 的最新 snapshot；預設看最新狀態，也可快速比上一筆或既有 baseline/tag，不會重跑 eval、也不會改 baseline/tag。
+這組入口目前已固定為 Thread 42 daily-entry checkpoint。
 完整 runbook 見：
 
 - [/Users/seanhan/Documents/Playground/docs/system/routing_eval_closed_loop_runbook.md](/Users/seanhan/Documents/Playground/docs/system/routing_eval_closed_loop_runbook.md)

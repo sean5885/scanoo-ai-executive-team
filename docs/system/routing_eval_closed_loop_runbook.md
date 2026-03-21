@@ -7,6 +7,7 @@ Trend checkpoint: Thread 38
 Decision checkpoint: Thread 39
 Diagnostics checkpoint: Thread 40
 History checkpoint: Thread 41
+Daily-entry checkpoint: Thread 42
 
 ## Purpose
 
@@ -54,6 +55,17 @@ npm run routing:closed-loop -- rerun --compare-snapshot <run-id>
 node scripts/routing-eval.mjs --compare-tag routing-eval-baseline-v2
 node scripts/routing-eval.mjs --compare-snapshot <run-id>
 ```
+
+固定檢視入口：
+
+```bash
+npm run routing:diagnostics
+npm run routing:diagnostics -- --compare-previous
+npm run routing:diagnostics -- --compare-snapshot <run-id>
+npm run routing:diagnostics -- --compare-tag routing-eval-baseline-v2
+```
+
+這個入口只讀 `.tmp/routing-diagnostics-history/` 的最新 snapshot，不重跑 eval、不改 routing 決策，也不新增或修改 baseline/tag。
 
 ## Fixed Flow
 
@@ -149,6 +161,43 @@ manifest 是最小 index，只保留：
 
 單筆 snapshot 仍會保留完整 `diagnostics_summary`、`run`、`compare_target` 與 session 關聯資訊，方便後續指定某一筆 history 做 compare。
 
+## Daily Checks
+
+### 每日或每次改動後先看什麼
+
+固定順序：
+
+1. 跑 `npm run routing:diagnostics`
+2. 先看 `Decision`、`Accuracy`、`Errors`
+3. 若剛做過 routing / lane / planner / eval fixture 相關修改，再看 `npm run routing:diagnostics -- --compare-previous`
+4. 若要確認是否偏離已接受 checkpoint，再看 `npm run routing:diagnostics -- --compare-tag routing-eval-baseline-v2`
+
+建議解讀順序：
+
+- `Decision`
+  - 先決定這輪是 `review_fixture_coverage`、`check_routing_rule`、`manual_review_high_risk`、還是 `no_change`
+- `Errors`
+  - `ROUTING_NO_MATCH` 先看 coverage / wording gap
+  - `INVALID_ACTION` 先看 rule / action contract
+  - `FALLBACK_DISABLED` 直接做人審，不加 fallback
+- `Trend`
+  - 只在 compare mode 下確認 drift 是單次波動、連續惡化，還是相對 baseline 才成立
+
+### 什麼情況要 rerun
+
+以下情況應重跑 `npm run routing:closed-loop -- rerun`：
+
+- 人工調整過 [/Users/seanhan/Documents/Playground/evals/routing-eval-set.mjs](/Users/seanhan/Documents/Playground/evals/routing-eval-set.mjs)
+- 修改了 lane / planner / registered agent / meeting / cloud-doc organization 的 routing 決策相關程式
+- `npm run routing:diagnostics -- --compare-previous` 顯示 accuracy decline、miss count 上升，且已經做過修正
+- `03-routing-eval-candidates.json` 審完後，需要確認 dataset 修正沒有引入新的 drift
+
+以下情況先不要 rerun，先做人審：
+
+- 最新 decision 是 `manual_review_high_risk`
+- 你還無法判斷 drift 是 fixture coverage 問題還是 routing rule 問題
+- compare 顯示掉點，但沒有足夠 evidence 證明哪個 bucket 應該被改
+
 ## 何時看哪一種比較
 
 ### 何時看最新一次
@@ -161,7 +210,8 @@ manifest 是最小 index，只保留：
 
 操作：
 
-- 看 `.tmp/routing-diagnostics-history/manifest.json` 的 `latest_run_id`
+- 直接跑 `npm run routing:diagnostics`
+- 或看 `.tmp/routing-diagnostics-history/manifest.json` 的 `latest_run_id`
 - 或直接看當前 session 的 `07/08`、`09/10` diagnostics artifacts
 
 ### 何時看歷史趨勢
@@ -174,8 +224,9 @@ manifest 是最小 index，只保留：
 
 操作：
 
-- 先從 manifest 找 `run_id`
-- 再用 `node scripts/routing-eval.mjs --compare-snapshot <run-id>` 對指定歷史 snapshot 比
+- 先跑 `npm run routing:diagnostics -- --compare-previous`
+- 若需要更早的參照，再從 manifest 找 `run_id`
+- 再用 `npm run routing:diagnostics -- --compare-snapshot <run-id>` 或 `node scripts/routing-eval.mjs --compare-snapshot <run-id>` 對指定歷史 snapshot 比
 
 ### 何時和 baseline 比
 
@@ -187,6 +238,7 @@ manifest 是最小 index，只保留：
 
 操作：
 
+- `npm run routing:diagnostics -- --compare-tag routing-eval-baseline-v2`
 - `node scripts/routing-eval.mjs --compare-tag routing-eval-baseline-v2`
 - `npm run routing:closed-loop -- prepare --compare-tag routing-eval-baseline-v2`
 
@@ -201,6 +253,21 @@ manifest 是最小 index，只保留：
 1. 先看 `diagnostics_summary.decision_advice.minimal_decision`
 2. 再用 `accuracy_ratio`、`by_lane_accuracy`、`by_action_accuracy`、`error_breakdown`、`trend_report` 驗證這個建議是否成立
 3. 最終只落到三種操作：補 fixture、檢查 routing rule、不動
+
+### 什麼情況要補 fixture 或檢查 routing rule
+
+- 補 fixture
+  - `minimal_decision=review_fixture_coverage`
+  - `ROUTING_NO_MATCH` 有 miss，但現有 checked-in 行為其實正確，只是 dataset 沒覆蓋新 wording / controlled variant
+  - 候選 case 能明確對應到既有 intended route，而不是把錯誤行為寫成 expected
+- 檢查 routing rule
+  - `minimal_decision=check_routing_rule`
+  - `INVALID_ACTION` 有 drift，代表 action contract、precedence 或 handoff 邊界可能不對
+  - 同一 lane / action bucket 在 compare-previous 或 compare-tag 下持續掉點，而不是單一字句漏測
+- 先停下做人審
+  - `minimal_decision=manual_review_high_risk`
+  - 出現 `FALLBACK_DISABLED`
+  - 無法證明是 coverage gap，或修 dataset 會掩蓋真實 regression
 
 建議對應欄位：
 

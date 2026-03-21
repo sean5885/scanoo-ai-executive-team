@@ -16,6 +16,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - Thread 39 routing decision advice checkpoint
 - Thread 40 routing diagnostics single-view checkpoint
 - Thread 41 routing diagnostics history checkpoint
+- Thread 42 routing diagnostics daily-entry checkpoint
 
 Thread 35 closed-loop checkpoint 針對 `top_miss_cases` / `error_breakdown` -> candidate fixture -> dataset review -> rerun eval -> baseline gate 的閉環流程補上最小工具與文件，且不改 routing 決策、fallback 行為或 baseline fixture。
 
@@ -30,6 +31,8 @@ Thread 39 routing decision advice checkpoint 在既有 deterministic eval / comp
 Thread 40 routing diagnostics single-view checkpoint 把既有 summary、trend、decision advice 收斂成單一 `diagnostics_summary` 決策視圖，對齊 `routing-eval`、fixture-candidates、closed-loop prepare / rerun 的 artifact 與文件；不新增 routing 邏輯、不改 routing 決策，也不新增 fallback。
 
 Thread 41 routing diagnostics history checkpoint 在既有 deterministic eval / compare / closed-loop 路徑上補上可歸檔 snapshot、最小 manifest/index、`--compare-snapshot`、`--compare-tag`、歷史趨勢判讀口徑與測試；不新增邏輯、不改 routing 決策，也不新增 fallback。
+
+Thread 42 routing diagnostics daily-entry checkpoint 在既有 diagnostics history 基礎上補上固定 read-only `routing:diagnostics` 檢視入口、上一筆 history lookup、日常查看口徑與測試；不新增邏輯、不改 routing 決策，也不新增 fallback。
 
 目前這條路徑已再收斂成 `diagnostics_summary` 單一決策視圖，讓 operator 只看一個 summary 就能決定要補 fixture、檢查 routing rule，或保持不動；不新增 routing 邏輯、不新增 fallback，也不改 baseline/tag。
 
@@ -54,10 +57,13 @@ Thread 41 routing diagnostics history checkpoint 在既有 deterministic eval / 
 - `/Users/seanhan/Documents/Playground/scripts/routing-eval.mjs`
 - `/Users/seanhan/Documents/Playground/scripts/routing-eval-fixture-candidates.mjs`
 - `/Users/seanhan/Documents/Playground/scripts/routing-eval-closed-loop.mjs`
+- `/Users/seanhan/Documents/Playground/scripts/routing-diagnostics.mjs`
+- `/Users/seanhan/Documents/Playground/src/routing-diagnostics-history.mjs`
 - `/Users/seanhan/Documents/Playground/tests/routing-eval.test.mjs`
 - `/Users/seanhan/Documents/Playground/tests/routing-eval-fixture-candidates.test.mjs`
 - `/Users/seanhan/Documents/Playground/tests/routing-eval-decision-advice.test.mjs`
 - `/Users/seanhan/Documents/Playground/tests/routing-eval-closed-loop.test.mjs`
+- `/Users/seanhan/Documents/Playground/tests/routing-diagnostics-cli.test.mjs`
 
 ## Scope
 
@@ -173,6 +179,10 @@ CLI:
 ```bash
 npm run routing:closed-loop
 npm run routing:closed-loop -- rerun
+npm run routing:diagnostics
+npm run routing:diagnostics -- --compare-previous
+npm run routing:diagnostics -- --compare-snapshot <run-id>
+npm run routing:diagnostics -- --compare-tag routing-eval-baseline-v2
 node scripts/routing-eval.mjs
 node scripts/routing-eval.mjs --json
 node scripts/routing-eval.mjs --compare .tmp/routing-eval-closed-loop/<session-id>/01-routing-eval.json
@@ -191,6 +201,14 @@ node scripts/routing-eval-fixture-candidates.mjs --input /tmp/routing-eval.json 
 - `prepare`（預設）會一次完成 `eval -> candidates`，並把 review checklist 與 artifacts 寫到 `.tmp/routing-eval-closed-loop/<session-id>/`
 - `rerun` 會在 dataset 審核更新後重跑 eval，沿用同一個 session
 - 這層只做 orchestration，不改 routing 邏輯，也不新增 fallback
+
+其中 `npm run routing:diagnostics` 是固定檢視入口：
+
+- 預設直接讀 diagnostics history 的最新 snapshot，輸出簡潔人類可讀摘要
+- `--compare-previous` 會拿最新 snapshot 對 manifest 內上一筆 snapshot 做 compare
+- `--compare-snapshot <run-id|path>` 會拿最新 snapshot 對指定歷史 snapshot 做 compare
+- `--compare-tag <git-tag>` 會拿最新 snapshot 對既有 baseline / checkpoint tag 做 compare
+- 這層只讀 history / tag，不重跑最新 eval，也不改 baseline/tag
 
 輸出包含：
 
@@ -213,6 +231,12 @@ node scripts/routing-eval-fixture-candidates.mjs --input /tmp/routing-eval.json 
 - `.tmp/routing-diagnostics-history/snapshots/<run-id>.json`
 
 `--json` 也會回傳 `diagnostics_archive`，指出本次 snapshot 與 manifest 路徑。
+
+日常查看這份 archive 時，固定先看：
+
+1. `npm run routing:diagnostics`
+2. 若剛改過 routing 相關程式或 fixture，再看 `npm run routing:diagnostics -- --compare-previous`
+3. 若要回答是否偏離已接受 checkpoint，再看 `npm run routing:diagnostics -- --compare-tag routing-eval-baseline-v2`
 
 CLI 會以 overall accuracy ratio 當作強制 regression gate；目前這份 checked-in baseline 為 regression gate baseline v2（`routing-eval-baseline-v2`），門檻是 `0.9`。
 

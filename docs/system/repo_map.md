@@ -64,6 +64,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `/Users/seanhan/Documents/Playground/scripts/routing-eval.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/routing-eval-fixture-candidates.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/routing-eval-closed-loop.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/routing-diagnostics.mjs`
 
 - Document organization
   - `/Users/seanhan/Documents/Playground/src/lark-drive-organizer.mjs`
