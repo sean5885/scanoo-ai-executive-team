@@ -144,6 +144,11 @@ import { getAllowedMethodsForPath } from "./http-route-contracts.mjs";
 import { listResolvedSessions } from "./session-scope-store.mjs";
 import { createMeetingCoordinator } from "./meeting-agent.mjs";
 import { extractDocumentId } from "./message-intent-utils.mjs";
+import {
+  buildHttpIdempotencyScopeKey,
+  getHttpIdempotencyRecord,
+  storeHttpIdempotencyRecord,
+} from "./http-idempotency-store.mjs";
 import { normalizeText, nowIso } from "./text-utils.mjs";
 import { createRequestId, createRuntimeLogger, createTraceId, emitRateLimitedAlert } from "./runtime-observability.mjs";
 import { getDbPath } from "./db.mjs";
@@ -164,6 +169,7 @@ const meetingCoordinator = createMeetingCoordinator({
 });
 let activeHttpServiceOverrides = {};
 const serviceStartTime = nowIso();
+const inFlightIdempotentRequests = new Map();
 
 function emitOauthReauthAlert({ accountId = null, scope = "http", pathname = null, reason = null } = {}) {
   emitRateLimitedAlert({
@@ -1748,6 +1754,174 @@ function buildRequestInputTrace({ req, requestUrl, body }) {
     query,
     body: normalizedBody,
   });
+}
+
+function getRequestIdempotencyKey(body) {
+  if (!body || Array.isArray(body) || typeof body !== "object") {
+    return "";
+  }
+  return typeof body.idempotency_key === "string" ? body.idempotency_key.trim() : "";
+}
+
+function cloneReplayPayload(payload, traceId) {
+  if (payload == null || Array.isArray(payload) || typeof payload !== "object") {
+    return payload;
+  }
+  return {
+    ...payload,
+    trace_id: traceId || payload.trace_id || null,
+  };
+}
+
+function createBufferedResponse(actualRes, onEnd) {
+  const headers = new Map();
+
+  return {
+    __trace_id: actualRes.__trace_id,
+    __request_id: actualRes.__request_id,
+    __pathname: actualRes.__pathname,
+    __monitor_payload: null,
+    statusCode: 200,
+    setHeader(name, value) {
+      headers.set(name, value);
+    },
+    getHeader(name) {
+      return headers.get(name);
+    },
+    removeHeader(name) {
+      headers.delete(name);
+    },
+    writeHead(statusCode, extraHeaders = {}) {
+      this.statusCode = Number.parseInt(String(statusCode || "200"), 10) || 200;
+      for (const [name, value] of Object.entries(extraHeaders || {})) {
+        headers.set(name, value);
+      }
+    },
+    end(serialized = "") {
+      onEnd({
+        statusCode: this.statusCode,
+        headers: Object.fromEntries(headers.entries()),
+        serialized,
+        payload: this.__monitor_payload,
+      });
+    },
+  };
+}
+
+function flushBufferedResponse(actualRes, { statusCode = 200, headers = {}, serialized = "", payload = null } = {}) {
+  actualRes.__monitor_payload = payload;
+  actualRes.writeHead(statusCode, headers);
+  actualRes.end(serialized);
+}
+
+async function prepareIdempotentRequest({ req, res, requestUrl, body, logger = noopHttpLogger } = {}) {
+  const method = normalizeText(req?.method)?.toUpperCase() || "GET";
+  if (!["POST", "PUT", "PATCH"].includes(method)) {
+    return { replayed: false, res, finalizeError() {} };
+  }
+
+  const idempotencyKey = getRequestIdempotencyKey(body);
+  if (!idempotencyKey) {
+    return { replayed: false, res, finalizeError() {} };
+  }
+
+  const accountId = getAccountId(requestUrl, body);
+  const scopeKey = buildHttpIdempotencyScopeKey({
+    accountId,
+    method,
+    pathname: requestUrl?.pathname,
+    idempotencyKey,
+  });
+  if (!scopeKey) {
+    return { replayed: false, res, finalizeError() {} };
+  }
+
+  const existing = getHttpIdempotencyRecord({ scopeKey });
+  if (existing) {
+    logger.info("request_idempotency_replayed", {
+      idempotency_key: idempotencyKey,
+      pathname: requestUrl?.pathname || null,
+      account_id: accountId || null,
+      source: "db",
+      original_trace_id: existing.first_trace_id,
+    });
+    jsonResponse(res, existing.status_code, cloneReplayPayload(existing.response_payload, res.__trace_id));
+    return { replayed: true, res, finalizeError() {} };
+  }
+
+  const inFlight = inFlightIdempotentRequests.get(scopeKey);
+  if (inFlight) {
+    logger.info("request_idempotency_waiting", {
+      idempotency_key: idempotencyKey,
+      pathname: requestUrl?.pathname || null,
+      account_id: accountId || null,
+      source: "in_flight",
+    });
+    const awaitedRecord = await inFlight.promise.catch(() => null);
+    const replayRecord = awaitedRecord || getHttpIdempotencyRecord({ scopeKey });
+    if (replayRecord) {
+      jsonResponse(res, replayRecord.status_code, cloneReplayPayload(replayRecord.response_payload, res.__trace_id));
+      return { replayed: true, res, finalizeError() {} };
+    }
+    return { replayed: false, res, finalizeError() {} };
+  }
+
+  let settled = false;
+  let resolveRecord;
+  let rejectRecord;
+  const promise = new Promise((resolve, reject) => {
+    resolveRecord = resolve;
+    rejectRecord = reject;
+  });
+  inFlightIdempotentRequests.set(scopeKey, { promise });
+
+  const bufferedRes = createBufferedResponse(res, ({ statusCode, headers, serialized, payload }) => {
+    try {
+      const record = storeHttpIdempotencyRecord({
+        accountId,
+        method,
+        pathname: requestUrl?.pathname,
+        idempotencyKey,
+        statusCode,
+        responsePayload: payload,
+        firstTraceId: res.__trace_id,
+        firstRequestId: res.__request_id,
+      });
+      settled = true;
+      resolveRecord(record);
+    } catch (error) {
+      logger.error("request_idempotency_persist_failed", {
+        idempotency_key: idempotencyKey,
+        pathname: requestUrl?.pathname || null,
+        account_id: accountId || null,
+        error: logger.compactError(error),
+      });
+      settled = true;
+      rejectRecord(error);
+    } finally {
+      inFlightIdempotentRequests.delete(scopeKey);
+    }
+
+    flushBufferedResponse(res, {
+      statusCode,
+      headers,
+      serialized,
+      payload,
+    });
+  });
+
+  return {
+    replayed: false,
+    res: bufferedRes,
+    finalizeError(error) {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      inFlightIdempotentRequests.delete(scopeKey);
+      rejectRecord(error);
+    },
+  };
 }
 
 async function invokeAgentBridge(handler, { requestUrl, body, logger, res, action }) {
@@ -5074,14 +5248,31 @@ export function startHttpServer({ logger = console, port = oauthPort, listen = t
     res.on("close", () => {
       persistRequestRecord();
     });
+    let body = {};
+    let idempotentRequest = {
+      replayed: false,
+      res,
+      finalizeError() {},
+    };
     try {
       cleanupOauthStates();
-      const body = await readJsonBody(req).catch((error) => {
+      body = await readJsonBody(req).catch((error) => {
         requestLogger.warn("request_body_parse_failed", {
           error: requestLogger.compactError(error),
         });
         return {};
       });
+      idempotentRequest = await prepareIdempotentRequest({
+        req,
+        res,
+        requestUrl,
+        body,
+        logger: requestLogger,
+      });
+      if (idempotentRequest.replayed) {
+        return;
+      }
+      res = idempotentRequest.res || res;
       requestLogger.info("request_input", {
         request_input: buildRequestInputTrace({
           req,
@@ -5942,6 +6133,7 @@ export function startHttpServer({ logger = console, port = oauthPort, listen = t
 
       jsonResponse(res, 404, { ok: false, error: "not_found" });
     } catch (error) {
+      idempotentRequest.finalizeError(error);
       if (isOAuthReauthRequiredError(error)) {
         emitOauthReauthAlert({
           accountId: getAccountId(requestUrl, body),

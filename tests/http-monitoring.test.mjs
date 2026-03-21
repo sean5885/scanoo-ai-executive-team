@@ -121,3 +121,60 @@ test("monitoring CLI reports recent requests and metrics", async () => {
   assert.ok(metricsPayload.metrics.total_requests >= 1);
   assert.ok(typeof metricsPayload.metrics.success_rate_percent === "number");
 });
+
+test("monitoring dashboard page renders rates and recent request sections", async (t) => {
+  const server = await startTestServer(t);
+  const { port } = server.address();
+  const missingPath = `/__monitoring_dashboard_missing_${Date.now()}__`;
+
+  await fetch(`http://127.0.0.1:${port}${missingPath}`);
+  const response = await fetch(`http://127.0.0.1:${port}/monitoring?requests_limit=200&errors_limit=200`);
+  const html = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type") || "", /text\/html/);
+  assert.match(response.headers.get("x-trace-id") || "", /^http_/);
+  assert.match(html, /Monitoring Dashboard/);
+  assert.match(html, /Success Rate/);
+  assert.match(html, /Error Rate/);
+  assert.match(html, /Recent Errors/);
+  assert.match(html, /Recent Requests/);
+  assert.match(html, new RegExp(missingPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
+test("monitoring CLI dashboard prints rates plus recent errors and requests", async () => {
+  const successTraceId = `cli_dashboard_success_${Date.now()}`;
+  const errorTraceId = `${successTraceId}_error`;
+  const successPath = `/__cli_dashboard_success_${Date.now()}__`;
+  const errorPath = `/__cli_dashboard_error_${Date.now()}__`;
+
+  recordHttpRequest({
+    traceId: successTraceId,
+    requestId: `req_${successTraceId}`,
+    method: "GET",
+    pathname: successPath,
+    statusCode: 200,
+    payload: { ok: true },
+  });
+  recordHttpRequest({
+    traceId: errorTraceId,
+    requestId: `req_${errorTraceId}`,
+    method: "POST",
+    pathname: errorPath,
+    statusCode: 500,
+    payload: { ok: false, error: "cli_dashboard_error", message: "boom" },
+  });
+
+  const result = await execFileAsync(process.execPath, ["scripts/monitoring-cli.mjs", "dashboard", "200", "200"], {
+    cwd: process.cwd(),
+    env: process.env,
+  });
+
+  assert.match(result.stdout, /Lobster Monitoring Dashboard/);
+  assert.match(result.stdout, /Success rate:/);
+  assert.match(result.stdout, /Error rate:/);
+  assert.match(result.stdout, /Recent errors/);
+  assert.match(result.stdout, /Recent requests/);
+  assert.match(result.stdout, new RegExp(successPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(result.stdout, new RegExp(errorPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});

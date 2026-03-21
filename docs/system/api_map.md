@@ -11,6 +11,13 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Module: HTTP API
   - Purpose: health check
 
+- `GET /monitoring`
+  - Handler: `handleMonitoringDashboard`
+  - Module: runtime / monitoring
+  - Purpose: render a simple local HTML monitoring dashboard
+  - Query note: supports `requests_limit|recent_limit` and `errors_limit|error_limit`
+  - Output note: shows success rate, error rate, recent errors, and recent requests from the persisted request-monitor store
+
 - `GET /oauth/lark/login`
   - Handler: inline redirect branch
   - Module: OAuth

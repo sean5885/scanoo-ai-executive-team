@@ -3,6 +3,8 @@ import { normalizeText, nowIso } from "./text-utils.mjs";
 
 const DEFAULT_RECENT_LIMIT = 50;
 const DEFAULT_ERROR_LIMIT = 10;
+const DEFAULT_DASHBOARD_RECENT_LIMIT = 10;
+const DEFAULT_DASHBOARD_ERROR_LIMIT = 10;
 const DEFAULT_TRACE_EVENT_LIMIT = 500;
 const MAX_LIMIT = 200;
 const MAX_TRACE_EVENT_LIMIT = 1_000;
@@ -564,5 +566,25 @@ export function getRequestMetrics() {
     error_count: errorCount,
     success_rate: totalRequests > 0 ? successCount / totalRequests : 0,
     error_rate: totalRequests > 0 ? errorCount / totalRequests : 0,
+  };
+}
+
+export function getMonitoringDashboard({
+  recentLimit = DEFAULT_DASHBOARD_RECENT_LIMIT,
+  errorLimit = DEFAULT_DASHBOARD_ERROR_LIMIT,
+} = {}) {
+  const metrics = getRequestMetrics();
+  return {
+    generated_at: nowIso(),
+    request_limit: clampLimit(recentLimit, DEFAULT_DASHBOARD_RECENT_LIMIT),
+    error_limit: clampLimit(errorLimit, DEFAULT_DASHBOARD_ERROR_LIMIT),
+    metrics: {
+      ...metrics,
+      success_rate_percent: Number((metrics.success_rate * 100).toFixed(2)),
+      error_rate_percent: Number((metrics.error_rate * 100).toFixed(2)),
+    },
+    latest_error: getLatestError(),
+    recent_errors: listRecentErrors({ limit: errorLimit }),
+    recent_requests: listRecentRequests({ limit: recentLimit }),
   };
 }

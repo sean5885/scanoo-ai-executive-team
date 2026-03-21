@@ -1,9 +1,14 @@
 const EXACT_METHODS = new Map([
   ["/health", ["GET"]],
+  ["/monitoring", ["GET"]],
   ["/oauth/lark/login", ["GET"]],
   ["/api/auth/status", ["GET"]],
   ["/api/runtime/resolve-scopes", ["POST"]],
   ["/api/runtime/sessions", ["GET"]],
+  ["/api/monitoring/requests", ["GET"]],
+  ["/api/monitoring/errors", ["GET"]],
+  ["/api/monitoring/errors/latest", ["GET"]],
+  ["/api/monitoring/metrics", ["GET"]],
   ["/api/drive/root", ["GET"]],
   ["/api/drive/list", ["GET"]],
   ["/api/drive/create-folder", ["POST"]],
@@ -49,6 +54,9 @@ const EXACT_METHODS = new Map([
   ["/agent/improvements", ["GET"]],
   ["/agent/docs/create", ["POST"]],
   ["/agent/company-brain/docs", ["GET"]],
+  ["/agent/company-brain/search", ["GET"]],
+  ["/agent/company-brain/learning/ingest", ["POST"]],
+  ["/agent/company-brain/learning/state", ["POST"]],
   ["/agent/system/runtime-info", ["GET"]],
   ["/api/company-brain/search", ["GET"]],
   ["/agent/tasks", ["POST"]],
@@ -56,6 +64,7 @@ const EXACT_METHODS = new Map([
 
 const REGEX_METHODS = [
   [/^\/api\/company-brain\/docs\/[^/]+$/, ["GET"]],
+  [/^\/agent\/company-brain\/docs\/[^/]+$/, ["GET"]],
   [/^\/agent\/approvals\/[^/]+\/(approve|reject)$/, ["POST"]],
   [/^\/agent\/improvements\/[^/]+\/(approve|reject)$/, ["POST"]],
   [/^\/agent\/improvements\/[^/]+\/apply$/, ["POST"]],

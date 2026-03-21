@@ -124,9 +124,10 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
    - calendar event create/freebusy
    - task get/create/comments list/create/update/delete
 7. `/api/monitoring/requests`, `/api/monitoring/errors`, `/api/monitoring/errors/latest`, and `/api/monitoring/metrics` query that persisted request-monitor table
-8. `scripts/monitoring-cli.mjs` exposes the same request-monitor data through `recent`, `errors`, `error`, and `metrics`
-9. success-path smoke fixtures verify these routes can initialize and return shaped JSON with `trace_id`
-10. self-check verifies both preview/read and apply/write route-contract presence for these high-risk HTTP families
+8. `/monitoring` renders a simple server-side HTML dashboard from the same monitoring snapshot, showing success rate, error rate, recent errors, and recent requests
+9. `scripts/monitoring-cli.mjs` exposes the same request-monitor data through `dashboard`, `recent`, `errors`, `error`, and `metrics`
+10. success-path smoke fixtures verify these routes can initialize and return shaped JSON with `trace_id`
+11. self-check verifies both preview/read and apply/write route-contract presence for these high-risk HTTP families
 
 ### Meeting Flow
 
