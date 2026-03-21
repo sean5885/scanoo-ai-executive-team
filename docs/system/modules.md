@@ -209,6 +209,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 
 - Location:
   - `/Users/seanhan/Documents/Playground/src/routing-eval.mjs`
+  - `/Users/seanhan/Documents/Playground/src/routing-diagnostics-history.mjs`
   - `/Users/seanhan/Documents/Playground/src/routing-eval-fixture-candidates.mjs`
   - `/Users/seanhan/Documents/Playground/evals/routing-eval-set.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/routing-eval.mjs`
@@ -223,6 +224,8 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - replay 50~100 checked-in fixtures without calling live LLM / network dependencies
   - report overall accuracy, per-dimension accuracy, hard-routing `error_breakdown`, latency summary, and `top_miss_cases` (up to 10 errors)
   - support `--json` output for machine-readable regression consumption
+  - archive every standalone / closed-loop diagnostics run into `.tmp/routing-diagnostics-history` with a minimal manifest (`run_id`, `timestamp`, `accuracy_ratio`, `error_breakdown`, `trend_report_summary`)
+  - resolve compare targets from archived snapshot ids/paths and existing git baseline/checkpoint tags without changing routing logic or tags
   - convert `top_miss_cases` plus `error_breakdown` into candidate fixture input for dataset review without changing routing logic
   - provide one closed-loop operator entrypoint for `eval -> candidates -> review -> dataset -> eval`, with session artifacts and rerun support
   - return non-zero exit status when overall accuracy ratio drops below `0.9` so the baseline can act as a regression gate

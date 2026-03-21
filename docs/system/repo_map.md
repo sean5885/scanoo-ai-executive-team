@@ -58,6 +58,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - Routing eval baseline
   - `/Users/seanhan/Documents/Playground/src/routing-eval.mjs`
   - `/Users/seanhan/Documents/Playground/src/routing-eval-diagnostics.mjs`
+  - `/Users/seanhan/Documents/Playground/src/routing-diagnostics-history.mjs`
   - `/Users/seanhan/Documents/Playground/src/routing-eval-fixture-candidates.mjs`
   - `/Users/seanhan/Documents/Playground/evals/routing-eval-set.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/routing-eval.mjs`

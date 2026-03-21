@@ -6,6 +6,7 @@ Operations checkpoint: Thread 36
 Trend checkpoint: Thread 38
 Decision checkpoint: Thread 39
 Diagnostics checkpoint: Thread 40
+History checkpoint: Thread 41
 
 ## Purpose
 
@@ -44,6 +45,16 @@ npm run routing:closed-loop -- prepare --dataset evals/routing-eval-set.mjs --ou
 npm run routing:closed-loop -- rerun --session .tmp/routing-eval-closed-loop/<session-id>
 ```
 
+若要明確指定 compare target：
+
+```bash
+npm run routing:closed-loop -- prepare --compare-tag routing-eval-baseline-v2
+npm run routing:closed-loop -- prepare --compare-snapshot latest
+npm run routing:closed-loop -- rerun --compare-snapshot <run-id>
+node scripts/routing-eval.mjs --compare-tag routing-eval-baseline-v2
+node scripts/routing-eval.mjs --compare-snapshot <run-id>
+```
+
 ## Fixed Flow
 
 ### 1. Eval
@@ -60,6 +71,8 @@ npm run routing:closed-loop
 - `02-routing-eval-report.txt`
 - `07-initial-diagnostics-summary.json`
 - `08-initial-diagnostics-summary.txt`
+- `.tmp/routing-diagnostics-history/manifest.json`
+- `.tmp/routing-diagnostics-history/snapshots/<run-id>.json`
 
 這一步的目的是先確認目前 checked-in routing 行為與 eval dataset 的落差，不先改資料。
 
@@ -114,8 +127,70 @@ rerun artifact：
 - `06-rerun-routing-eval-report.txt`
 - `09-rerun-diagnostics-summary.json`
 - `10-rerun-diagnostics-summary.txt`
+- `.tmp/routing-diagnostics-history/manifest.json`
+- `.tmp/routing-diagnostics-history/snapshots/<run-id>.json`
 
 只有 rerun 後 gate 與審查結果一致，這輪 closed-loop 才算收口。
+
+## Diagnostics History
+
+每次 standalone `routing-eval`、closed-loop `prepare`、closed-loop `rerun` 都會固定寫一份 diagnostics snapshot 到：
+
+- `.tmp/routing-diagnostics-history/manifest.json`
+- `.tmp/routing-diagnostics-history/snapshots/<run-id>.json`
+
+manifest 是最小 index，只保留：
+
+- `run_id`
+- `timestamp`
+- `accuracy_ratio`
+- `error_breakdown`
+- `trend_report_summary`
+
+單筆 snapshot 仍會保留完整 `diagnostics_summary`、`run`、`compare_target` 與 session 關聯資訊，方便後續指定某一筆 history 做 compare。
+
+## 何時看哪一種比較
+
+### 何時看最新一次
+
+看最新一次，適用於：
+
+- 剛完成 `prepare` 或 `rerun`，只想確認這次有沒有新的 drift
+- 想知道目前單一 decision 應該是補 fixture、檢查 rule，還是不動
+- 只需要當前 `diagnostics_summary`，不需要跨多輪回看
+
+操作：
+
+- 看 `.tmp/routing-diagnostics-history/manifest.json` 的 `latest_run_id`
+- 或直接看當前 session 的 `07/08`、`09/10` diagnostics artifacts
+
+### 何時看歷史趨勢
+
+看歷史趨勢，適用於：
+
+- 同一類 drift 反覆出現，想知道是單次波動還是持續惡化
+- 想比較某一輪 rerun 和更早之前的 snapshot，而不是只看預設 previous
+- 要檢查某個 lane / action bucket 是最近才掉，還是長期偏低
+
+操作：
+
+- 先從 manifest 找 `run_id`
+- 再用 `node scripts/routing-eval.mjs --compare-snapshot <run-id>` 對指定歷史 snapshot 比
+
+### 何時和 baseline 比
+
+和 baseline / checkpoint tag 比，適用於：
+
+- 要確認目前結果是否偏離已接受的 checkpoint
+- 需要用既有 git tag 當固定參照，而不是拿最近一次操作當參照
+- 想回答「這次 drift 是相對最新 run，還是相對既有 baseline 才成立」
+
+操作：
+
+- `node scripts/routing-eval.mjs --compare-tag routing-eval-baseline-v2`
+- `npm run routing:closed-loop -- prepare --compare-tag routing-eval-baseline-v2`
+
+這一層只解析既有 git tag，不新增或改動任何 baseline/tag。
 
 ## Decision Rules
 

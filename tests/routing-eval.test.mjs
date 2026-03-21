@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -20,6 +21,10 @@ import {
   INVALID_ACTION,
   ROUTING_NO_MATCH,
 } from "../src/planner-error-codes.mjs";
+
+function readJson(filePath) {
+  return JSON.parse(readFileSync(filePath, "utf8"));
+}
 
 test("routing eval set stays within deterministic baseline size and schema", async () => {
   const testCases = await loadRoutingEvalSet();
@@ -42,9 +47,14 @@ test("routing eval baseline currently has zero mismatches", async () => {
 });
 
 test("routing eval CLI supports json output", () => {
+  const archiveDir = path.join(os.tmpdir(), `routing-diagnostics-${Date.now()}-json`);
   const raw = execFileSync("node", ["scripts/routing-eval.mjs", "--json"], {
     cwd: process.cwd(),
     encoding: "utf8",
+    env: {
+      ...process.env,
+      ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archiveDir,
+    },
   });
   const parsed = JSON.parse(raw);
 
@@ -57,6 +67,8 @@ test("routing eval CLI supports json output", () => {
   assert.equal(parsed.summary.comparable_summary.accuracy_ratio, 1);
   assert.equal(parsed.diagnostics_summary.trend_report.available, false);
   assert.equal(parsed.diagnostics_summary.decision_advice.minimal_decision.action, "observe_only");
+  assert.ok(parsed.diagnostics_archive?.run_id);
+  assert.ok(parsed.diagnostics_archive?.snapshot_path.endsWith(".json"));
   assert.deepEqual(Object.keys(parsed.summary.error_breakdown), [
     ROUTING_NO_MATCH,
     INVALID_ACTION,
@@ -72,6 +84,33 @@ test("routing eval CLI supports json output", () => {
     INVALID_ACTION,
     FALLBACK_DISABLED,
   ]);
+});
+
+test("routing eval archives diagnostics snapshots into a manifest", () => {
+  const archiveDir = path.join(os.tmpdir(), `routing-diagnostics-${Date.now()}-manifest`);
+  const raw = execFileSync("node", ["scripts/routing-eval.mjs", "--json"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archiveDir,
+    },
+  });
+  const parsed = JSON.parse(raw);
+  const manifest = readJson(path.join(archiveDir, "manifest.json"));
+
+  assert.equal(manifest.latest_run_id, parsed.diagnostics_archive.run_id);
+  assert.equal(Array.isArray(manifest.snapshots), true);
+  assert.equal(manifest.snapshots.length >= 1, true);
+  assert.equal(manifest.snapshots[0].run_id, parsed.diagnostics_archive.run_id);
+  assert.equal(typeof manifest.snapshots[0].timestamp, "string");
+  assert.equal(typeof manifest.snapshots[0].accuracy_ratio, "number");
+  assert.deepEqual(Object.keys(manifest.snapshots[0].error_breakdown).sort(), [
+    FALLBACK_DISABLED,
+    INVALID_ACTION,
+    ROUTING_NO_MATCH,
+  ].sort());
+  assert.equal(typeof manifest.snapshots[0].trend_report_summary.available, "boolean");
 });
 
 test("routing eval CLI human-readable output is a single diagnostics summary view", () => {
@@ -378,6 +417,62 @@ test("routing eval CLI supports json compare output", async () => {
   assert.equal(parsed.trend_report.previous_label.endsWith("previous-run.json"), true);
   assert.equal(parsed.trend_report.delta.accuracy_ratio.delta > 0, true);
   assert.equal(parsed.trend_report.delta.miss_count.delta < 0, true);
+});
+
+test("routing eval CLI supports compare by archived snapshot run id", () => {
+  const archiveDir = path.join(os.tmpdir(), `routing-diagnostics-${Date.now()}-snapshot-compare`);
+  const firstRaw = execFileSync("node", ["scripts/routing-eval.mjs", "--json"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archiveDir,
+    },
+  });
+  const firstParsed = JSON.parse(firstRaw);
+  const secondRaw = execFileSync("node", [
+    "scripts/routing-eval.mjs",
+    "--json",
+    "--compare-snapshot",
+    firstParsed.diagnostics_archive.run_id,
+  ], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archiveDir,
+    },
+  });
+  const secondParsed = JSON.parse(secondRaw);
+
+  assert.equal(secondParsed.diagnostics_summary.trend_report.available, true);
+  assert.equal(
+    secondParsed.diagnostics_summary.trend_report.previous_label,
+    `snapshot:${firstParsed.diagnostics_archive.run_id}`,
+  );
+  assert.equal(secondParsed.diagnostics_summary.decision_advice.trend.status, "stable");
+});
+
+test("routing eval CLI supports compare by existing git tag", () => {
+  const archiveDir = path.join(os.tmpdir(), `routing-diagnostics-${Date.now()}-tag-compare`);
+  const raw = execFileSync("node", [
+    "scripts/routing-eval.mjs",
+    "--json",
+    "--compare-tag",
+    "routing-eval-baseline-v2",
+  ], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archiveDir,
+    },
+    maxBuffer: 20 * 1024 * 1024,
+  });
+  const parsed = JSON.parse(raw);
+
+  assert.equal(parsed.diagnostics_summary.trend_report.available, true);
+  assert.equal(parsed.diagnostics_summary.trend_report.previous_label, "tag:routing-eval-baseline-v2");
 });
 
 test("routing eval gate fails when overall accuracy ratio drops below 0.9", async () => {

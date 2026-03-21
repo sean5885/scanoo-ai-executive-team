@@ -15,6 +15,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - Thread 38 routing trend report checkpoint
 - Thread 39 routing decision advice checkpoint
 - Thread 40 routing diagnostics single-view checkpoint
+- Thread 41 routing diagnostics history checkpoint
 
 Thread 35 closed-loop checkpoint 針對 `top_miss_cases` / `error_breakdown` -> candidate fixture -> dataset review -> rerun eval -> baseline gate 的閉環流程補上最小工具與文件，且不改 routing 決策、fallback 行為或 baseline fixture。
 
@@ -27,6 +28,8 @@ Thread 38 routing trend report checkpoint 在既有 deterministic eval / compare
 Thread 39 routing decision advice checkpoint 在既有 deterministic eval / compare / closed-loop 路徑上補上最小 `trend`、`decision_advice`、closed-loop decision artifacts、CLI 摘要、測試與文件；不新增 routing 邏輯、不改 routing 決策，也不新增 fallback。
 
 Thread 40 routing diagnostics single-view checkpoint 把既有 summary、trend、decision advice 收斂成單一 `diagnostics_summary` 決策視圖，對齊 `routing-eval`、fixture-candidates、closed-loop prepare / rerun 的 artifact 與文件；不新增 routing 邏輯、不改 routing 決策，也不新增 fallback。
+
+Thread 41 routing diagnostics history checkpoint 在既有 deterministic eval / compare / closed-loop 路徑上補上可歸檔 snapshot、最小 manifest/index、`--compare-snapshot`、`--compare-tag`、歷史趨勢判讀口徑與測試；不新增邏輯、不改 routing 決策，也不新增 fallback。
 
 目前這條路徑已再收斂成 `diagnostics_summary` 單一決策視圖，讓 operator 只看一個 summary 就能決定要補 fixture、檢查 routing rule，或保持不動；不新增 routing 邏輯、不新增 fallback，也不改 baseline/tag。
 
@@ -174,6 +177,11 @@ node scripts/routing-eval.mjs
 node scripts/routing-eval.mjs --json
 node scripts/routing-eval.mjs --compare .tmp/routing-eval-closed-loop/<session-id>/01-routing-eval.json
 node scripts/routing-eval.mjs --compare-last
+node scripts/routing-eval.mjs --compare-snapshot latest
+node scripts/routing-eval.mjs --compare-snapshot <run-id>
+node scripts/routing-eval.mjs --compare-tag routing-eval-baseline-v2
+npm run routing:closed-loop -- prepare --compare-tag routing-eval-baseline-v2
+npm run routing:closed-loop -- rerun --compare-snapshot <run-id>
 node scripts/routing-eval.mjs --json | node scripts/routing-eval-fixture-candidates.mjs
 node scripts/routing-eval-fixture-candidates.mjs --input /tmp/routing-eval.json --previous /tmp/previous-routing-eval.json
 ```
@@ -198,6 +206,13 @@ node scripts/routing-eval-fixture-candidates.mjs --input /tmp/routing-eval.json 
 - latency avg / p95 / max
 - top miss cases
 - `diagnostics_summary`
+
+每次 `node scripts/routing-eval.mjs` 與 `npm run routing:closed-loop` / `rerun` 執行後，現在都會額外把同一份 decision view 歸檔到：
+
+- `.tmp/routing-diagnostics-history/manifest.json`
+- `.tmp/routing-diagnostics-history/snapshots/<run-id>.json`
+
+`--json` 也會回傳 `diagnostics_archive`，指出本次 snapshot 與 manifest 路徑。
 
 CLI 會以 overall accuracy ratio 當作強制 regression gate；目前這份 checked-in baseline 為 regression gate baseline v2（`routing-eval-baseline-v2`），門檻是 `0.9`。
 
@@ -225,6 +240,45 @@ CLI 會以 overall accuracy ratio 當作強制 regression gate；目前這份 ch
   - `error_breakdown`
 - `node scripts/routing-eval.mjs --compare <run-json>` 會把 trend 比較結果收進同一份 `diagnostics_summary.trend_report`
 - `node scripts/routing-eval.mjs --compare-last` 會把本次結果與 `.tmp/routing-eval-closed-loop/latest-session.json` 指向的最新 artifact 比較
+- `node scripts/routing-eval.mjs --compare-snapshot <run-id|path>` 會把本次結果與 diagnostics history 內指定 snapshot 比較；`latest` 會解析 manifest 的最新一筆
+- `node scripts/routing-eval.mjs --compare-tag <git-tag>` 會把本次結果與既有 git baseline / checkpoint tag 的 routing-eval 產出比較，不改任何既有 tag
+
+## Diagnostics Archive
+
+routing diagnostics history 是獨立於 closed-loop session 的最小歸檔層，只負責保存可比較的 diagnostics snapshot，不改 routing 邏輯、不改 gate，也不改 baseline/tag。
+
+固定檔案：
+
+- `.tmp/routing-diagnostics-history/manifest.json`
+  - 最新 manifest / index
+- `.tmp/routing-diagnostics-history/snapshots/<run-id>.json`
+  - 單次可歸檔 snapshot
+
+manifest 每筆最小欄位固定包含：
+
+- `run_id`
+- `timestamp`
+- `accuracy_ratio`
+- `error_breakdown`
+- `trend_report_summary`
+
+其中 `trend_report_summary` 只保留最小摘要：
+
+- `available`
+- `status`
+- `previous_label`
+- `accuracy_ratio_delta`
+- `miss_count_delta`
+- `total_cases_delta`
+
+單筆 snapshot 會在這個最小索引之外，再保留：
+
+- `diagnostics_summary`
+- `run`
+- `compare_target`
+- `scope`
+- `stage`
+- `session_id`
 
 `diagnostics_summary` 是 operator 的 single source of truth。  
 `summary.comparable_summary` 仍保留給 compare / conversion 使用，但不是操作決策入口。
@@ -344,11 +398,14 @@ closed-loop session 現在固定輸出單一 diagnostics artifact：
 - `08-initial-diagnostics-summary.txt`
 - `09-rerun-diagnostics-summary.json`
 - `10-rerun-diagnostics-summary.txt`
+- `.tmp/routing-diagnostics-history/manifest.json`
+- `.tmp/routing-diagnostics-history/snapshots/<run-id>.json`
 
 其中：
 
 - initial diagnostics 比較「本次 prepare」vs「上一個 session 的最新 eval artifact」
 - rerun diagnostics 比較「本次 rerun」vs「同一 session 的 initial eval」
+- 若明確指定 `--compare` / `--compare-snapshot` / `--compare-tag` / `--compare-last`，則以明確 compare target 覆蓋預設比較對象
 
 細部操作與 decision rules 見：
 

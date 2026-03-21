@@ -13,6 +13,11 @@ import {
   buildRoutingDiagnosticsSummary,
   formatRoutingDiagnosticsSummary,
 } from "../src/routing-eval-diagnostics.mjs";
+import {
+  archiveRoutingDiagnosticsSnapshot,
+  resolveRoutingDiagnosticsSnapshot,
+  resolveRoutingDiagnosticsTag,
+} from "../src/routing-diagnostics-history.mjs";
 
 const DEFAULT_BASE_DIR = path.resolve(process.cwd(), ".tmp/routing-eval-closed-loop");
 const DEFAULT_DATASET_PATH = path.resolve(process.cwd(), "evals/routing-eval-set.mjs");
@@ -32,7 +37,7 @@ function getCommand() {
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (!arg || arg.startsWith("--")) {
-      if (arg && ["--out-dir", "--dataset", "--prefer", "--session"].includes(arg)) {
+      if (arg && ["--out-dir", "--dataset", "--prefer", "--session", "--compare", "--compare-snapshot", "--compare-tag"].includes(arg)) {
         index += 1;
       }
       continue;
@@ -99,6 +104,67 @@ async function resolveRunArtifactFromMetadata(metadata = {}) {
         run,
       };
     }
+  }
+
+  return null;
+}
+
+async function resolveCompareRunFromLatest(baseDir) {
+  const pointer = await loadPointer(baseDir);
+  const artifact = await resolveRunArtifactFromMetadata(pointer);
+  if (!artifact) {
+    throw new Error(`No routing eval artifact found in ${path.join(baseDir, POINTER_FILE)}`);
+  }
+  return {
+    type: "latest-session",
+    label: path.relative(process.cwd(), artifact.path) || artifact.path,
+    ref: artifact.path,
+    path: artifact.path,
+    run: artifact.run,
+  };
+}
+
+async function resolveExplicitCompareRun(baseDir) {
+  const comparePath = getArgValue("--compare");
+  const compareSnapshot = getArgValue("--compare-snapshot");
+  const compareTag = getArgValue("--compare-tag");
+  const wantsCompareLast = process.argv.includes("--compare-last");
+  const selectors = [
+    Boolean(comparePath),
+    Boolean(compareSnapshot),
+    Boolean(compareTag),
+    wantsCompareLast,
+  ].filter(Boolean);
+
+  if (selectors.length > 1) {
+    throw new Error("Choose only one compare selector: --compare, --compare-snapshot, --compare-tag, or --compare-last");
+  }
+
+  if (compareSnapshot) {
+    return resolveRoutingDiagnosticsSnapshot({
+      reference: compareSnapshot,
+    });
+  }
+
+  if (compareTag) {
+    return resolveRoutingDiagnosticsTag({
+      tag: compareTag,
+    });
+  }
+
+  if (comparePath) {
+    const resolvedPath = resolvePath(comparePath);
+    return {
+      type: "path",
+      label: path.relative(process.cwd(), resolvedPath) || resolvedPath,
+      ref: resolvedPath,
+      path: resolvedPath,
+      run: await readJson(resolvedPath),
+    };
+  }
+
+  if (wantsCompareLast) {
+    return resolveCompareRunFromLatest(baseDir);
   }
 
   return null;
@@ -243,9 +309,11 @@ async function runPrepare({
 
   const testCases = await loadRoutingEvalSet(datasetPath);
   const run = await runRoutingEval({ testCases });
+  const explicitCompareRun = await resolveExplicitCompareRun(baseDir);
+  const compareRun = explicitCompareRun || previousRunArtifact;
   const prepared = prepareRoutingEvalFixtureCandidates({
     run,
-    previousRun: previousRunArtifact?.run || null,
+    previousRun: compareRun?.run || null,
     testCases,
     prefer,
   });
@@ -260,12 +328,43 @@ async function runPrepare({
   });
   const diagnosticsSummary = buildRoutingDiagnosticsSummary({
     run,
-    previousRun: previousRunArtifact?.run || null,
+    previousRun: compareRun?.run || null,
     currentLabel: `${sessionId}:initial`,
-    previousLabel: previousRunArtifact?.path
-      ? path.relative(process.cwd(), previousRunArtifact.path) || previousRunArtifact.path
-      : "previous",
+    previousLabel: compareRun?.label || (
+      previousRunArtifact?.path
+        ? path.relative(process.cwd(), previousRunArtifact.path) || previousRunArtifact.path
+        : "previous"
+    ),
   });
+  const archivedSnapshot = await archiveRoutingDiagnosticsSnapshot({
+    runId: `${sessionId}-initial`,
+    timestamp: metadata.created_at,
+    scope: "routing-eval-closed-loop",
+    stage: "prepare",
+    run,
+    diagnosticsSummary,
+    sessionId,
+    compareTarget: compareRun
+      ? {
+          type: compareRun.type || "custom",
+          label: compareRun.label || null,
+          ref: compareRun.ref || compareRun.path || null,
+        }
+      : null,
+    artifacts: {
+      session_dir: sessionDir,
+      initial_eval_json: metadata.artifacts.initial_eval_json,
+      initial_diagnostics_summary_json: metadata.artifacts.initial_diagnostics_summary_json,
+    },
+    metadata: {
+      dataset_path: datasetPath,
+      prefer,
+    },
+  });
+  metadata.history = {
+    ...(metadata.history || {}),
+    initial_snapshot: archivedSnapshot,
+  };
 
   await writeJson(metadata.artifacts.initial_eval_json, run);
   await writeText(metadata.artifacts.initial_eval_report, report);
@@ -298,6 +397,12 @@ async function runPrepare({
     `Fixture candidates: ${prepared.fixture_candidates?.length || 0}`,
     `Diagnostics summary: ${diagnosticsSummary?.decision_advice?.minimal_decision?.action || "observe_only"} (${diagnosticsSummary?.decision_advice?.minimal_decision?.severity || "info"})`,
     `Diagnostics report: ${metadata.artifacts.initial_diagnostics_summary_report}`,
+    ...(archivedSnapshot?.snapshot_path
+      ? [
+          `Diagnostics snapshot: ${archivedSnapshot.snapshot_path}`,
+          `Diagnostics manifest: ${archivedSnapshot.manifest_path}`,
+        ]
+      : []),
     `Review checklist: ${metadata.artifacts.review_checklist}`,
     "Next: review candidates, update dataset manually, then run `npm run routing:closed-loop -- rerun`.",
   ].join("\n"));
@@ -334,13 +439,46 @@ async function runRerun({
   const run = await runRoutingEval({ testCases });
   const report = formatRoutingEvalReport(run);
   const initialRun = await tryReadJson(metadata?.artifacts?.initial_eval_json);
-  const rerunDiagnosticsSummary = buildRoutingDiagnosticsSummary({
-    run,
-    previousRun: initialRun,
-    currentLabel: `${metadata?.session_id || path.basename(sessionDir)}:rerun`,
-    previousLabel: metadata?.artifacts?.initial_eval_json
+  const explicitCompareRun = await resolveExplicitCompareRun(baseDir);
+  const compareRun = explicitCompareRun || {
+    type: "initial-session",
+    label: metadata?.artifacts?.initial_eval_json
       ? path.relative(process.cwd(), metadata.artifacts.initial_eval_json) || metadata.artifacts.initial_eval_json
       : "initial",
+    ref: metadata?.artifacts?.initial_eval_json || null,
+    path: metadata?.artifacts?.initial_eval_json || null,
+    run: initialRun,
+  };
+  const rerunDiagnosticsSummary = buildRoutingDiagnosticsSummary({
+    run,
+    previousRun: compareRun?.run || null,
+    currentLabel: `${metadata?.session_id || path.basename(sessionDir)}:rerun`,
+    previousLabel: compareRun?.label || "initial",
+  });
+  const rerunTimestamp = new Date().toISOString();
+  const archivedSnapshot = await archiveRoutingDiagnosticsSnapshot({
+    runId: `${metadata?.session_id || path.basename(sessionDir)}-rerun`,
+    timestamp: rerunTimestamp,
+    scope: "routing-eval-closed-loop",
+    stage: "rerun",
+    run,
+    diagnosticsSummary: rerunDiagnosticsSummary,
+    sessionId: metadata?.session_id || path.basename(sessionDir),
+    compareTarget: compareRun
+      ? {
+          type: compareRun.type || "custom",
+          label: compareRun.label || null,
+          ref: compareRun.ref || compareRun.path || null,
+        }
+      : null,
+    artifacts: {
+      session_dir: sessionDir,
+      rerun_eval_json: metadata?.artifacts?.rerun_eval_json || path.join(sessionDir, "05-rerun-routing-eval.json"),
+      rerun_diagnostics_summary_json: metadata?.artifacts?.rerun_diagnostics_summary_json || diagnosticsArtifacts.rerun_diagnostics_summary_json,
+    },
+    metadata: {
+      dataset_path: effectiveDatasetPath,
+    },
   });
 
   await writeJson(metadata?.artifacts?.rerun_eval_json || path.join(sessionDir, "05-rerun-routing-eval.json"), run);
@@ -361,7 +499,11 @@ async function runRerun({
       ...(metadata?.artifacts || {}),
       ...buildDiagnosticsArtifactPaths(sessionDir),
     },
-    rerun_at: new Date().toISOString(),
+    history: {
+      ...(metadata?.history || {}),
+      rerun_snapshot: archivedSnapshot,
+    },
+    rerun_at: rerunTimestamp,
     rerun_summary: {
       total_cases: run?.summary?.total_cases || 0,
       overall_accuracy_ratio: run?.summary?.overall?.accuracy_ratio || 0,
@@ -381,6 +523,12 @@ async function runRerun({
     `Rerun report: ${metadata?.artifacts?.rerun_eval_report || path.join(sessionDir, "06-rerun-routing-eval-report.txt")}`,
     `Diagnostics summary: ${rerunDiagnosticsSummary?.decision_advice?.minimal_decision?.action || "observe_only"} (${rerunDiagnosticsSummary?.decision_advice?.minimal_decision?.severity || "info"})`,
     `Diagnostics report: ${metadata?.artifacts?.rerun_diagnostics_summary_report || diagnosticsArtifacts.rerun_diagnostics_summary_report}`,
+    ...(archivedSnapshot?.snapshot_path
+      ? [
+          `Diagnostics snapshot: ${archivedSnapshot.snapshot_path}`,
+          `Diagnostics manifest: ${archivedSnapshot.manifest_path}`,
+        ]
+      : []),
   ].join("\n"));
 
   process.exitCode = run.ok ? 0 : 1;
@@ -390,8 +538,8 @@ function printHelp() {
   console.log([
     "Usage:",
     "  npm run routing:closed-loop",
-    "  npm run routing:closed-loop -- prepare [--out-dir <dir>] [--dataset <path>] [--prefer actual|expected]",
-    "  npm run routing:closed-loop -- rerun [--out-dir <dir>] [--dataset <path>] [--session <session-dir>]",
+    "  npm run routing:closed-loop -- prepare [--out-dir <dir>] [--dataset <path>] [--prefer actual|expected] [--compare <run-json>|--compare-snapshot <run-id|path>|--compare-tag <git-tag>|--compare-last]",
+    "  npm run routing:closed-loop -- rerun [--out-dir <dir>] [--dataset <path>] [--session <session-dir>] [--compare <run-json>|--compare-snapshot <run-id|path>|--compare-tag <git-tag>|--compare-last]",
     "",
     "Commands:",
     "  prepare  Run eval, generate fixture candidates, and create a review checklist. Default.",

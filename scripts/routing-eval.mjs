@@ -17,6 +17,11 @@ const {
   buildRoutingDiagnosticsSummary,
   formatRoutingDiagnosticsSummary,
 } = await import("../src/routing-eval-diagnostics.mjs");
+const {
+  archiveRoutingDiagnosticsSnapshot,
+  resolveRoutingDiagnosticsSnapshot,
+  resolveRoutingDiagnosticsTag,
+} = await import("../src/routing-diagnostics-history.mjs");
 
 restoreStdout?.();
 
@@ -45,7 +50,9 @@ async function resolveCompareRunFromLatest(baseDir = DEFAULT_CLOSED_LOOP_DIR) {
   for (const artifactPath of artifactCandidates) {
     try {
       return {
+        type: "latest-session",
         label: path.relative(process.cwd(), artifactPath) || artifactPath,
+        ref: artifactPath,
         path: artifactPath,
         run: await readJson(artifactPath),
       };
@@ -61,10 +68,38 @@ async function resolveCompareRunFromLatest(baseDir = DEFAULT_CLOSED_LOOP_DIR) {
 
 async function resolveCompareRun() {
   const comparePath = getArgValue("--compare");
+  const compareSnapshot = getArgValue("--compare-snapshot");
+  const compareTag = getArgValue("--compare-tag");
+  const wantsCompareLast = process.argv.includes("--compare-last");
+  const selectors = [
+    Boolean(comparePath),
+    Boolean(compareSnapshot),
+    Boolean(compareTag),
+    wantsCompareLast,
+  ].filter(Boolean);
+
+  if (selectors.length > 1) {
+    throw new Error("Choose only one compare selector: --compare, --compare-snapshot, --compare-tag, or --compare-last");
+  }
+
+  if (compareSnapshot) {
+    return resolveRoutingDiagnosticsSnapshot({
+      reference: compareSnapshot,
+    });
+  }
+
+  if (compareTag) {
+    return resolveRoutingDiagnosticsTag({
+      tag: compareTag,
+    });
+  }
+
   if (comparePath) {
     const resolvedPath = path.resolve(process.cwd(), comparePath);
     return {
+      type: "path",
       label: path.relative(process.cwd(), resolvedPath) || resolvedPath,
+      ref: resolvedPath,
       path: resolvedPath,
       run: await readJson(resolvedPath),
     };
@@ -85,15 +120,34 @@ const diagnosticsSummary = buildRoutingDiagnosticsSummary({
   currentLabel: "current",
   previousLabel: compareRun?.label || "previous",
 });
+const archivedSnapshot = await archiveRoutingDiagnosticsSnapshot({
+  scope: "routing-eval",
+  stage: "standalone",
+  run,
+  diagnosticsSummary,
+  compareTarget: compareRun
+    ? {
+        type: compareRun.type || "custom",
+        label: compareRun.label || null,
+        ref: compareRun.ref || compareRun.path || null,
+      }
+    : null,
+});
 
 if (asJson) {
   console.log(JSON.stringify({
     ...run,
     trend_report: diagnosticsSummary.trend_report,
     diagnostics_summary: diagnosticsSummary,
+    diagnostics_archive: archivedSnapshot,
   }, null, 2));
 } else {
   console.log(formatRoutingDiagnosticsSummary(diagnosticsSummary));
+  if (archivedSnapshot?.snapshot_path) {
+    console.log("");
+    console.log(`Diagnostics snapshot: ${path.relative(process.cwd(), archivedSnapshot.snapshot_path) || archivedSnapshot.snapshot_path}`);
+    console.log(`Diagnostics manifest: ${path.relative(process.cwd(), archivedSnapshot.manifest_path) || archivedSnapshot.manifest_path}`);
+  }
   if (run.validation_issues?.length) {
     console.log("");
     console.log("Validation issues");

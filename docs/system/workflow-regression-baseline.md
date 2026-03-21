@@ -191,6 +191,7 @@ Routing eval regression gate baseline（v2 / `routing-eval-baseline-v2`）：
 
 Thread 36 operations checkpoint 固定了 runbook 與單一入口，但不改 routing 決策、不改 eval gate，也不新增 fallback。
 Thread 40 diagnostics checkpoint 把 operator 決策入口收斂為單一 `diagnostics_summary`，但不新增 routing 邏輯、不改 routing 決策，也不新增 fallback。
+Thread 41 history checkpoint 補上 diagnostics snapshot 歸檔、manifest、snapshot/tag compare，但不新增 routing 邏輯、不改 routing 決策，也不新增 fallback。
 
 ```bash
 npm run routing:closed-loop
