@@ -19,6 +19,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 2. request-layer adapters (`lark-content.mjs` / `lark-connectors.mjs`) re-check token validity before each Lark API call
 3. if the stored token is expired, the request layer refreshes it with the persisted `refresh_token` and writes the replacement token back into SQLite
 4. only when refresh cannot recover does the HTTP path fail soft with `error=oauth_reauth_required`
+   - runtime observability now also emits an immediate console alert for `oauth_reauth_required`, rate-limited in-memory to avoid repeated bursts from the same failing account
 5. for heading-targeted doc updates, preview may still resolve the target doc from explicit IDs or shared doc URLs and then read current raw markdown
 6. the handler resolves the target heading section and turns the requested insert into a full-document replace candidate
 7. targeted updates then reuse the same preview/confirm replace gate instead of introducing a second Lark write primitive
@@ -48,6 +49,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 5. `/answer` first goes through `executive-planner.mjs`
    - planner must emit strict legacy `{ action, params }` or bounded multi-step `{ steps: [{ action, params }] }`
    - wrapped/non-JSON planner output is rejected as `{ error: "planner_failed" }`
+   - runtime observability now also emits an immediate console alert for `planner_failed`, rate-limited in-memory to avoid repeated bursts from malformed planner output
    - actions outside `planner_contract.json` are rejected before execution
    - valid single-step decisions run the corresponding contract-bound action/preset; valid multi-step decisions run ordered contract-bound tool actions through the existing planner dispatcher and return a structured planner envelope
 6. the legacy/internal `answer-service.mjs` prompt path still prefers:
@@ -111,16 +113,20 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 ### HTTP High-Risk Route Governance
 
 1. `http-server.mjs` creates a per-request `trace_id`
-2. high-risk routes use route-level child loggers (`route_started` / `route_succeeded` / `route_failed`)
-3. high-risk handlers emit step logs for start, validation failure, and completion
-4. current high-risk coverage includes:
+2. the HTTP layer echoes that trace through JSON `trace_id` payload injection when the response is an object, and through the `X-Trace-Id` header for every response
+3. when the response finishes, the runtime writes one compact row into SQLite `http_request_monitor` with request identity, status, outcome, error summary, and duration
+4. high-risk routes use route-level child loggers (`route_started` / `route_succeeded` / `route_failed`)
+5. high-risk handlers emit step logs for start, validation failure, and completion
+6. current high-risk coverage includes:
    - drive organize preview/apply
    - wiki organize preview/apply
    - bitable records list/search/create/get/update/delete
    - calendar event create/freebusy
    - task get/create/comments list/create/update/delete
-5. success-path smoke fixtures verify these routes can initialize and return shaped JSON with `trace_id`
-6. self-check verifies both preview/read and apply/write route-contract presence for these high-risk HTTP families
+7. `/api/monitoring/requests`, `/api/monitoring/errors`, `/api/monitoring/errors/latest`, and `/api/monitoring/metrics` query that persisted request-monitor table
+8. `scripts/monitoring-cli.mjs` exposes the same request-monitor data through `recent`, `errors`, `error`, and `metrics`
+9. success-path smoke fixtures verify these routes can initialize and return shaped JSON with `trace_id`
+10. self-check verifies both preview/read and apply/write route-contract presence for these high-risk HTTP families
 
 ### Meeting Flow
 

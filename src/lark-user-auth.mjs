@@ -8,6 +8,7 @@ import {
   oauthScopes,
 } from "./config.mjs";
 import { getAccountContext, getAccountContextByOpenId, saveToken, upsertAccount } from "./rag-repository.mjs";
+import { emitRateLimitedAlert } from "./runtime-observability.mjs";
 
 const userClient = new Lark.Client(baseConfig);
 let activeLarkAuthServiceOverrides = {};
@@ -148,6 +149,7 @@ export function isUserTokenFresh(token, skewSeconds = 120) {
 export async function getValidUserTokenState(accountId) {
   const context = getAccountContext(accountId);
   const token = context?.token;
+  const resolvedAccountId = context?.account?.id || accountId || null;
 
   if (!token?.access_token) {
     return {
@@ -170,6 +172,16 @@ export async function getValidUserTokenState(accountId) {
   }
 
   if (!token.refresh_token) {
+    emitRateLimitedAlert({
+      code: "oauth_reauth_required",
+      scope: "lark_user_auth",
+      dedupeKey: `oauth_reauth_required:${resolvedAccountId || "unknown_account"}`,
+      message: "Stored OAuth token can no longer refresh and requires reauthorization.",
+      details: {
+        account_id: resolvedAccountId,
+        reason: "missing_refresh_token",
+      },
+    });
     return {
       status: "reauth_required",
       reason: "missing_refresh_token",
@@ -190,6 +202,17 @@ export async function getValidUserTokenState(accountId) {
       error: null,
     };
   } catch (error) {
+    emitRateLimitedAlert({
+      code: "oauth_reauth_required",
+      scope: "lark_user_auth",
+      dedupeKey: `oauth_reauth_required:${resolvedAccountId || "unknown_account"}`,
+      message: "Stored OAuth token refresh failed and requires reauthorization.",
+      details: {
+        account_id: resolvedAccountId,
+        reason: "refresh_failed",
+        error_message: error?.message || String(error),
+      },
+    });
     return {
       status: "reauth_required",
       reason: "refresh_failed",

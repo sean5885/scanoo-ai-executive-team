@@ -2,6 +2,9 @@ import crypto from "node:crypto";
 
 import { cleanText } from "./message-intent-utils.mjs";
 
+const DEFAULT_RUNTIME_ALERT_RATE_LIMIT_MS = 60_000;
+const runtimeAlertState = new Map();
+
 function compactError(error) {
   if (!error) {
     return null;
@@ -49,6 +52,72 @@ export function createTraceId(prefix = "trace") {
 
 export function createRequestId(prefix = "req") {
   return createTraceId(prefix);
+}
+
+export function resetRuntimeAlertsForTests() {
+  runtimeAlertState.clear();
+}
+
+export function emitRateLimitedAlert({
+  consoleLike = console,
+  code = "",
+  scope = "",
+  message = "",
+  dedupeKey = "",
+  details = {},
+  minIntervalMs = DEFAULT_RUNTIME_ALERT_RATE_LIMIT_MS,
+  now = Date.now(),
+} = {}) {
+  const normalizedCode = cleanText(code) || "runtime_alert";
+  const normalizedScope = cleanText(scope) || "runtime";
+  const normalizedMessage = cleanText(message) || normalizedCode;
+  const normalizedDedupeKey = cleanText(dedupeKey) || `${normalizedCode}:${normalizedScope}`;
+  const normalizedInterval = Number.isFinite(Number(minIntervalMs)) && Number(minIntervalMs) > 0
+    ? Number(minIntervalMs)
+    : DEFAULT_RUNTIME_ALERT_RATE_LIMIT_MS;
+  const previous = runtimeAlertState.get(normalizedDedupeKey);
+
+  if (previous && now - previous.emittedAt < normalizedInterval) {
+    runtimeAlertState.set(normalizedDedupeKey, {
+      emittedAt: previous.emittedAt,
+      suppressedCount: Number(previous.suppressedCount || 0) + 1,
+    });
+    return {
+      emitted: false,
+      suppressed: true,
+      dedupe_key: normalizedDedupeKey,
+      code: normalizedCode,
+      scope: normalizedScope,
+    };
+  }
+
+  const suppressedCount = Number(previous?.suppressedCount || 0);
+  runtimeAlertState.set(normalizedDedupeKey, {
+    emittedAt: now,
+    suppressedCount: 0,
+  });
+
+  const fallback = consoleLike?.log ? consoleLike.log.bind(consoleLike) : console.error.bind(console);
+  const sink = typeof consoleLike?.error === "function" ? consoleLike.error.bind(consoleLike) : fallback;
+
+  sink("[lobster_alert]", {
+    ts: new Date(now).toISOString(),
+    code: normalizedCode,
+    scope: normalizedScope,
+    message: normalizedMessage,
+    rate_limit_ms: normalizedInterval,
+    dedupe_key: normalizedDedupeKey,
+    suppressed_duplicates: suppressedCount,
+    ...(details && typeof details === "object" && !Array.isArray(details) ? details : {}),
+  });
+
+  return {
+    emitted: true,
+    suppressed: false,
+    dedupe_key: normalizedDedupeKey,
+    code: normalizedCode,
+    scope: normalizedScope,
+  };
 }
 
 function toToolLogObject(value, fallbackKey = "value") {

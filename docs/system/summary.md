@@ -12,6 +12,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - repo thread / commit inventory:
   - [repo_thread_inventory.md](/Users/seanhan/Documents/Playground/docs/system/repo_thread_inventory.md)
 - Lark user OAuth
+- SQLite-backed OAuth token persistence with automatic refresh via stored `refresh_token`
 - Drive / Wiki / Doc browse and write
 - local sync into SQLite
 - hybrid retrieval (`FTS + local semantic embedding`)
@@ -31,6 +32,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - bounded planner-side task driving v1 for unfinished / blocked / in-progress tasks, using local JSON task snapshots to suggest next steps, unblock actions, and minimal action-layer reminders without changing public planner contracts
 - lane-specific execution strategies for DM / group / doc / knowledge requests
 - structured runtime logging for long-connection event handling and doc resolution debugging
+- immediate console alerts for `oauth_reauth_required` and `planner_failed`, with in-memory rate limiting to reduce log bursts
 - prompt-budget governance, external workflow checkpoints, and tool-output compression for AI-heavy paths
 - XML-governed prompts with anti-hallucination and user-intent self-check rules
 - shared low-variance LLM settings (`temperature=0.1`, clamped `top_p=0.7~0.8`)
@@ -84,7 +86,7 @@ AI-like components exist, and now include:
 
 ## Completed
 
-- OAuth and account/token persistence
+- OAuth and account/token persistence with automatic per-call refresh in the Lark request layer
 - Drive / Wiki / Doc operations
 - Sync and FTS retrieval
 - search and answer

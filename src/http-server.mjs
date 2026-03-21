@@ -145,8 +145,15 @@ import { listResolvedSessions } from "./session-scope-store.mjs";
 import { createMeetingCoordinator } from "./meeting-agent.mjs";
 import { extractDocumentId } from "./message-intent-utils.mjs";
 import { normalizeText, nowIso } from "./text-utils.mjs";
-import { createRequestId, createRuntimeLogger, createTraceId } from "./runtime-observability.mjs";
+import { createRequestId, createRuntimeLogger, createTraceId, emitRateLimitedAlert } from "./runtime-observability.mjs";
 import { getDbPath } from "./db.mjs";
+import {
+  getLatestError,
+  getRequestMetrics,
+  listRecentErrors,
+  listRecentRequests,
+  recordHttpRequest,
+} from "./monitoring-store.mjs";
 
 const pendingOauthStates = new Map();
 const meetingCoordinator = createMeetingCoordinator({
@@ -155,6 +162,20 @@ const meetingCoordinator = createMeetingCoordinator({
 });
 let activeHttpServiceOverrides = {};
 const serviceStartTime = nowIso();
+
+function emitOauthReauthAlert({ accountId = null, scope = "http", pathname = null, reason = null } = {}) {
+  emitRateLimitedAlert({
+    code: "oauth_reauth_required",
+    scope,
+    dedupeKey: `oauth_reauth_required:${accountId || "unknown_account"}`,
+    message: "Stored OAuth token requires reauthorization before the request can continue.",
+    details: {
+      account_id: accountId || null,
+      pathname: pathname || null,
+      reason: reason || null,
+    },
+  });
+}
 
 function setActiveHttpServiceOverrides(overrides = {}) {
   activeHttpServiceOverrides = overrides && typeof overrides === "object" ? overrides : {};
@@ -188,14 +209,23 @@ function withTracePayload(res, payload) {
   return payload;
 }
 
+function captureResponsePayload(res, payload) {
+  const tracedPayload = withTracePayload(res, payload);
+  if (res) {
+    res.__monitor_payload = tracedPayload;
+  }
+  return tracedPayload;
+}
+
 function jsonResponse(res, statusCode, payload) {
   res.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
   });
-  res.end(`${JSON.stringify(withTracePayload(res, payload), null, 2)}\n`);
+  res.end(`${JSON.stringify(captureResponsePayload(res, payload), null, 2)}\n`);
 }
 
 function htmlResponse(res, statusCode, html) {
+  res.__monitor_payload = null;
   res.writeHead(statusCode, {
     "Content-Type": "text/html; charset=utf-8",
   });
@@ -203,15 +233,16 @@ function htmlResponse(res, statusCode, html) {
 }
 
 function methodNotAllowed(res, allowedMethods) {
+  const payload = captureResponsePayload(res, {
+    ok: false,
+    error: "method_not_allowed",
+    allowed_methods: allowedMethods,
+  });
   res.writeHead(405, {
     "Content-Type": "application/json; charset=utf-8",
     Allow: allowedMethods.join(", "),
   });
-  res.end(`${JSON.stringify(withTracePayload(res, {
-    ok: false,
-    error: "method_not_allowed",
-    allowed_methods: allowedMethods,
-  }), null, 2)}\n`);
+  res.end(`${JSON.stringify(payload, null, 2)}\n`);
 }
 
 const noopHttpLogger = {
@@ -1484,6 +1515,14 @@ async function requireUserContext(res, accountId, logger = noopHttpLogger) {
     logger.warn(reauthRequired ? "auth_context_reauth_required" : "auth_context_missing_user_token", {
       account_id: accountId || null,
     });
+    if (reauthRequired) {
+      emitOauthReauthAlert({
+        accountId: context?.account?.id || accountId || null,
+        scope: "http.require_user_context",
+        pathname: res?.__pathname || null,
+        reason: context?.reason || "reauth_required",
+      });
+    }
     jsonResponse(res, 401, reauthRequired
       ? {
         ok: false,
@@ -1529,6 +1568,12 @@ async function handleAuthStatus(res, accountId, logger = noopHttpLogger) {
     logger.warn("auth_status_refresh_failed", {
       account_id: accountId || null,
     });
+    emitOauthReauthAlert({
+      accountId,
+      scope: "http.auth_status",
+      pathname: res?.__pathname || null,
+      reason: "resolve_account_context_failed",
+    });
     jsonResponse(res, 200, {
       ok: false,
       authorized: false,
@@ -1541,6 +1586,12 @@ async function handleAuthStatus(res, accountId, logger = noopHttpLogger) {
   if (!context.token?.access_token) {
     logger.warn("auth_status_refresh_failed", {
       account_id: accountId || null,
+    });
+    emitOauthReauthAlert({
+      accountId: context?.account?.id || accountId || null,
+      scope: "http.auth_status",
+      pathname: res?.__pathname || null,
+      reason: context?.reason || "missing_access_token_after_refresh",
     });
     jsonResponse(res, 200, {
       ok: false,
@@ -2217,6 +2268,40 @@ async function handleRuntimeInfo(res, requestUrl, body, logger = noopHttpLogger)
     ok: true,
     action: "runtime_info",
     ...payload,
+  });
+}
+
+async function handleMonitoringRequests(res, requestUrl) {
+  const limit = requestUrl.searchParams.get("limit") || "50";
+  const items = listRecentRequests({ limit });
+  jsonResponse(res, 200, {
+    ok: true,
+    total: items.length,
+    items,
+  });
+}
+
+async function handleMonitoringErrors(res, requestUrl) {
+  const limit = requestUrl.searchParams.get("limit") || "10";
+  const items = listRecentErrors({ limit });
+  jsonResponse(res, 200, {
+    ok: true,
+    total: items.length,
+    items,
+  });
+}
+
+async function handleMonitoringLatestError(res) {
+  jsonResponse(res, 200, {
+    ok: true,
+    item: getLatestError(),
+  });
+}
+
+async function handleMonitoringMetrics(res) {
+  jsonResponse(res, 200, {
+    ok: true,
+    metrics: getRequestMetrics(),
   });
 }
 
@@ -4618,6 +4703,8 @@ export function startHttpServer({ logger = console, port = oauthPort, listen = t
   const httpLogger = createRuntimeLogger({ logger, component: "http" });
   const server = http.createServer(async (req, res) => {
     const requestUrl = new URL(req.url || "/", oauthBaseUrl);
+    const requestStartedAt = Date.now();
+    const requestStartedAtIso = nowIso();
     const traceId = createTraceId("http");
     const requestId = normalizeText(Array.isArray(req.headers["x-request-id"]) ? req.headers["x-request-id"][0] : req.headers["x-request-id"])
       || createRequestId("http_request");
@@ -4629,12 +4716,44 @@ export function startHttpServer({ logger = console, port = oauthPort, listen = t
     });
     res.__trace_id = traceId;
     res.__request_id = requestId;
+    res.__pathname = requestUrl.pathname;
+    res.__monitor_payload = null;
     res.setHeader("X-Request-Id", requestId);
+    res.setHeader("X-Trace-Id", traceId);
     requestLogger.info("request_started");
+    let requestRecorded = false;
+    const persistRequestRecord = () => {
+      if (requestRecorded) {
+        return;
+      }
+      requestRecorded = true;
+      try {
+        recordHttpRequest({
+          traceId,
+          requestId,
+          method: req.method || "GET",
+          pathname: requestUrl.pathname,
+          routeName: res.__monitor_route || null,
+          statusCode: res.statusCode,
+          payload: res.__monitor_payload,
+          durationMs: Date.now() - requestStartedAt,
+          startedAt: requestStartedAtIso,
+          finishedAt: nowIso(),
+        });
+      } catch (error) {
+        requestLogger.error("request_monitor_persist_failed", {
+          error: requestLogger.compactError(error),
+        });
+      }
+    };
     res.on("finish", () => {
       requestLogger.info("request_finished", {
         status_code: res.statusCode,
       });
+      persistRequestRecord();
+    });
+    res.on("close", () => {
+      persistRequestRecord();
     });
     try {
       cleanupOauthStates();
@@ -4911,6 +5030,34 @@ export function startHttpServer({ logger = console, port = oauthPort, listen = t
       if (requestUrl.pathname === "/api/system/runtime-info" && req.method === "GET") {
         await runHttpRoute(requestLogger, "runtime_info", (routeLogger) =>
           handleRuntimeInfo(res, requestUrl, body, routeLogger)
+        );
+        return;
+      }
+
+      if (requestUrl.pathname === "/api/monitoring/requests" && req.method === "GET") {
+        await runHttpRoute(requestLogger, "monitoring_requests", () =>
+          handleMonitoringRequests(res, requestUrl)
+        );
+        return;
+      }
+
+      if (requestUrl.pathname === "/api/monitoring/errors" && req.method === "GET") {
+        await runHttpRoute(requestLogger, "monitoring_errors", () =>
+          handleMonitoringErrors(res, requestUrl)
+        );
+        return;
+      }
+
+      if (requestUrl.pathname === "/api/monitoring/errors/latest" && req.method === "GET") {
+        await runHttpRoute(requestLogger, "monitoring_latest_error", () =>
+          handleMonitoringLatestError(res)
+        );
+        return;
+      }
+
+      if (requestUrl.pathname === "/api/monitoring/metrics" && req.method === "GET") {
+        await runHttpRoute(requestLogger, "monitoring_metrics", () =>
+          handleMonitoringMetrics(res)
         );
         return;
       }
@@ -5463,6 +5610,12 @@ export function startHttpServer({ logger = console, port = oauthPort, listen = t
       jsonResponse(res, 404, { ok: false, error: "not_found" });
     } catch (error) {
       if (isOAuthReauthRequiredError(error)) {
+        emitOauthReauthAlert({
+          accountId: getAccountId(requestUrl, body),
+          scope: "http.request_catch",
+          pathname: requestUrl.pathname,
+          reason: error?.code || error?.name || "oauth_reauth_required",
+        });
         jsonResponse(res, 401, {
           ok: false,
           error: "oauth_reauth_required",
