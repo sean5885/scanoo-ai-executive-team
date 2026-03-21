@@ -4,6 +4,8 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 ## Request Flow
 
+This request-flow mirror now reflects the current fail-closed routing baseline.
+
 ### OAuth
 
 1. User opens `/oauth/lark/login`
@@ -264,7 +266,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
    - event-level failures
 10. duplicate long-connection message re-deliveries with the same `message_id` are skipped before lane execution
 11. while meeting capture is active, normal note text is suppressed into the transcript but explicit status checks can still return a short reply
-12. if lane execution fails after the event is accepted, the bot now sends a user-visible fallback reply instead of failing silently
+12. if lane execution fails after the event is accepted, the bot now returns a user-visible structured error envelope (for example `ROUTING_NO_MATCH`, `INVALID_ACTION`, or `FALLBACK_DISABLED`) instead of silently failing or emitting a canned default reply
 
 This is now a capability-lane event path with a closed-loop executive planner layered inside it. It is still not an async job-queue planner system.
 

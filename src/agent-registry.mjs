@@ -1,4 +1,5 @@
 import { cleanText } from "./message-intent-utils.mjs";
+import { ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
 
 const BASE_AGENT_RULES = [
   "優先引用檢索到的 Lark 文件與知識片段。",
@@ -30,7 +31,7 @@ function createPersonaAgent({
   retrievalQueryPrefix = "",
   downstreamConsumer = "lark_reply",
   allowedTools = ["knowledge_search", "image_understanding", "text_generation"],
-  fallbackBehavior = "fallback_to_grounded_retrieval_summary",
+  fallbackBehavior = "fail_closed",
   status = "ready",
 }) {
   return {
@@ -66,7 +67,7 @@ function createKnowledgeAgent({
   retrievalQueryPrefix = "",
   downstreamConsumer = "lark_reply",
   allowedTools = ["knowledge_search", "semantic_classifier", "image_understanding", "text_generation"],
-  fallbackBehavior = "fallback_to_grounded_retrieval_summary",
+  fallbackBehavior = "fail_closed",
   status = "ready",
 }) {
   return {
@@ -286,7 +287,7 @@ export function listAgentCapabilityMatrix() {
     output_schema: agent.contract?.expected_output_schema || DEFAULT_OUTPUT_SCHEMA,
     allowed_tools: agent.contract?.allowed_tools || [],
     downstream_consumer: agent.contract?.downstream_consumer || "lark_reply",
-    fallback_behavior: agent.contract?.fallback_behavior || "fallback_to_grounded_retrieval_summary",
+    fallback_behavior: agent.contract?.fallback_behavior || "fail_closed",
     status: agent.contract?.status || "ready",
   }));
 }
@@ -313,9 +314,8 @@ export function parseRegisteredAgentCommand(text = "") {
     const [rawSubcommand = "", ...rest] = rawRemainder.split(/\s+/).filter(Boolean);
     const subcommand = rawSubcommand.toLowerCase();
     if (!knowledgeAgentSubcommands.includes(subcommand)) {
-      const fallback = agentRegistry["knowledge-brain"];
       return {
-        agent: fallback,
+        error: ROUTING_NO_MATCH,
         body: rawRemainder,
         raw: normalized,
       };

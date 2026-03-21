@@ -79,7 +79,7 @@ export function resolveRuntimeInfoRoute({
   logRuntimeInfoTrace(logger, buildRuntimeInfoTraceEvent({
     eventType: "runtime_info_route",
     userQuery: userIntent,
-    routedIntent: action ? "hard_route" : "selector_fallback",
+    routedIntent: action ? "hard_route" : "routing_no_match",
     tool: action,
   }));
   return {

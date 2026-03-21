@@ -59,6 +59,7 @@ import {
 } from "./cloud-doc-organization-workflow.mjs";
 import { ensureCloudDocWorkflowTask } from "./executive-orchestrator.mjs";
 import { formatIdentifierHint } from "./runtime-observability.mjs";
+import { ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
 import { createMeetingCoordinator, parseMeetingCommand } from "./meeting-agent.mjs";
 import {
   getMeetingAudioCaptureStatus,
@@ -224,6 +225,21 @@ function buildLaneStructuredErrorEnvelope({
   });
 }
 
+function buildLaneRoutingNoMatchReply({ scope, lanePlan, message = "no_supported_lane_action" } = {}) {
+  const errorEnvelope = buildLaneStructuredErrorEnvelope({
+    scope,
+    error: ROUTING_NO_MATCH,
+    chosenAction: lanePlan?.chosen_action,
+    fallbackReason: lanePlan?.fallback_reason || ROUTING_NO_MATCH,
+    details: {
+      message,
+    },
+  });
+  return {
+    text: JSON.stringify(errorEnvelope, null, 2),
+  };
+}
+
 export function resolveLaneExecutionPlan({ event, scope } = {}) {
   const lane = cleanText(scope?.capability_lane || "personal-assistant") || "personal-assistant";
   const text = normalizeMessageText(event);
@@ -260,7 +276,7 @@ export function resolveLaneExecutionPlan({ event, scope } = {}) {
     return buildLaneTrace({
       scope,
       chosenAction: null,
-      fallbackReason: "group_lane_default_reply",
+      fallbackReason: ROUTING_NO_MATCH,
     });
   }
 
@@ -296,7 +312,7 @@ export function resolveLaneExecutionPlan({ event, scope } = {}) {
   return buildLaneTrace({
     scope,
     chosenAction: null,
-    fallbackReason: "personal_lane_default_reply",
+    fallbackReason: ROUTING_NO_MATCH,
   });
 }
 
@@ -1922,6 +1938,14 @@ async function executePersonalAssistant({ event, scope, logger = noopLogger }) {
     };
   }
 
+  if (lanePlan.fallback_reason === ROUTING_NO_MATCH) {
+    return buildLaneRoutingNoMatchReply({
+      scope,
+      lanePlan,
+      message: "personal_lane_requires_explicit_supported_action",
+    });
+  }
+
   if (hasAny(text, ["日程", "行程", "calendar", "會議", "会议"])) {
     const calendar = await getPrimaryCalendar(context.token);
     const events = await listCalendarEvents(context.token, calendar.calendar_id, {
@@ -1965,18 +1989,11 @@ async function executePersonalAssistant({ event, scope, logger = noopLogger }) {
     };
   }
 
-  return {
-    text: [
-      "結論",
-      "我會先用你的私聊上下文處理這件事。",
-      "",
-      "重點",
-      "- 這條 lane 比較適合：個人任務、日程、訊息整理、私人工作流。",
-      "",
-      "下一步",
-      "- 你可以直接叫我看今天日程、整理待辦，或幫你總結最近對話。",
-    ].join("\n"),
-  };
+  return buildLaneRoutingNoMatchReply({
+    scope,
+    lanePlan,
+    message: "personal_lane_requires_explicit_supported_action",
+  });
 }
 
 async function executeGroupSharedAssistant({ event, scope, logger = noopLogger }) {
@@ -2012,18 +2029,11 @@ async function executeGroupSharedAssistant({ event, scope, logger = noopLogger }
     };
   }
 
-  return {
-    text: [
-      "結論",
-      "我會先用群組共享上下文處理這件事。",
-      "",
-      "重點",
-      "- 這條 lane 比較適合：群聊摘要、群內回覆建議、共享知識協作。",
-      "",
-      "下一步",
-      "- 你可以直接叫我整理這段群聊，或幫你起草回覆。",
-    ].join("\n"),
-  };
+  return buildLaneRoutingNoMatchReply({
+    scope,
+    lanePlan,
+    message: "group_lane_requires_explicit_supported_action",
+  });
 }
 
 export async function executeCapabilityLane({ event, scope, logger = noopLogger }) {

@@ -26,6 +26,7 @@ import { analyzeImageTask, buildStructuredImageContext } from "./image-understan
 import { classifyInputModality } from "./modality-router.mjs";
 import { buildVisibleMessageText, cleanText } from "./message-intent-utils.mjs";
 import { callOpenClawTextGeneration } from "./openclaw-text-service.mjs";
+import { FALLBACK_DISABLED, ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
 
 const noopLogger = {
   info() {},
@@ -171,20 +172,6 @@ export async function requestAgentAnswer({
   return data.choices?.[0]?.message?.content || "";
 }
 
-function buildExtractiveAgentReply(agent, request, items = []) {
-  const topItems = items.slice(0, 4);
-  const sourceLines = topItems.length
-    ? topItems.map((item) => `- ${item.title}${item.url ? `｜${item.url}` : ""}`).join("\n")
-    : "- 目前沒有可用來源";
-  return [
-    `${agent?.label || "Agent"} 先按目前找到的資料替你整理了一版可用答案。`,
-    "",
-    sourceLines,
-    "",
-    `如果你要，我可以繼續把這題往 ${agent?.label || "對應 agent"} 的角度收斂得更完整。`,
-  ].join("\n");
-}
-
 function buildSourceFooter(items = []) {
   const topItems = items.slice(0, 3);
   if (!topItems.length) {
@@ -297,12 +284,20 @@ export async function executeRegisteredAgent({
       error: logger.compactError(error),
     });
     if (!llmApiKey) {
+      const failureEnvelope = {
+        ok: false,
+        error: FALLBACK_DISABLED,
+        details: {
+          message: "registered_agent_generation_fallback_disabled",
+          agent_id: agent.id,
+        },
+      };
       return {
-        text: buildExtractiveAgentReply(agent, effectiveQuestion, items),
+        text: JSON.stringify(failureEnvelope, null, 2),
         agentId: agent.id,
         metadata: {
           retrieval_count: items.length,
-          fallback_used: true,
+          fallback_used: false,
           image_context_used: Boolean(imageContext),
           supporting_context_used: Boolean(supportingContext),
           source_titles: items.slice(0, 4).map((item) => item.title),
@@ -346,6 +341,17 @@ export async function executeRegisteredAgent({
 export async function dispatchRegisteredAgentCommand({ accountId, event, scope }) {
   const rawText = buildVisibleMessageText(event);
   const command = parseRegisteredAgentCommand(rawText);
+  if (command?.error === ROUTING_NO_MATCH) {
+    return {
+      text: JSON.stringify({
+        ok: false,
+        error: ROUTING_NO_MATCH,
+        details: {
+          message: "registered_agent_command_no_match",
+        },
+      }, null, 2),
+    };
+  }
   if (!command?.agent) {
     return null;
   }

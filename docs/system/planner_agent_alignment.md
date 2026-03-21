@@ -6,6 +6,8 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 This document aligns the `planner_agent` spec in [agent_spec.md](/Users/seanhan/Documents/Playground/docs/system/agent_spec.md) with the current checked-in runtime in `/Users/seanhan/Documents/Playground/src/executive-planner.mjs`.
 
+This document now reflects the current fail-closed baseline for planner routing and execution.
+
 It is an alignment document:
 
 - it states what is already implemented
@@ -124,6 +126,7 @@ This path is bounded by the checked-in planner contract:
 
 - `action` must exist in `planner_contract.json` (`actions` or `presets`)
 - wrapped / non-JSON model output is rejected as `{ "error": "planner_failed" }`
+- unmatched routing now fails closed as `ROUTING_NO_MATCH` instead of silently falling through selector/default-reply paths
 - no heuristic or free-text fallback is used on this strict user-input planning path
 
 ## Output Shape
@@ -180,7 +183,7 @@ Current strict user-input planner error boundary:
 
 ```json
 {
-  "error": "planner_failed|invalid_action|contract_violation|semantic_mismatch|stale_decision_reused"
+  "error": "planner_failed|INVALID_ACTION|contract_violation|semantic_mismatch|stale_decision_reused|ROUTING_NO_MATCH"
 }
 ```
 
@@ -220,6 +223,8 @@ The planner envelope built for lane execution now also exposes a minimal trace s
 ```
 
 `execution_result` may now also carry an additional `formatted_output` field for successful company-brain read flows; this is a presentation-layer enrichment on top of the raw tool result, not a replacement for the bounded route output.
+
+When `runPlannerToolFlow(...)` cannot resolve either a hard route or a selector target, it now stops with `error = "ROUTING_NO_MATCH"` and does not emit a business-error fallback reply.
 
 Successful company-brain detail-like flows may now also expose `learning_status`, `learning_concepts`, and `learning_tags` inside that formatted layer when the underlying doc has learning state.
 

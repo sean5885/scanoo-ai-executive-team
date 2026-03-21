@@ -1,4 +1,5 @@
 import { cleanText } from "./message-intent-utils.mjs";
+import { ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
 
 function normalizePlannerFlow(flow = null) {
   if (!flow || typeof flow !== "object") {
@@ -117,6 +118,7 @@ export function resolvePlannerFlowRoute({
     action: null,
     payload: normalizePlannerPayload(payload),
     context: null,
+    error: ROUTING_NO_MATCH,
   };
 }
 

@@ -136,10 +136,10 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
    - Conflicting doc:
      - `/Users/seanhan/Documents/Playground/README.md`
 
-19. Planner-side runtime-info support exists, but top-level lane heuristics do not guarantee that a generic runtime query reaches planner mode.
+19. Planner-side runtime-info support exists, but top-level lane heuristics still do not guarantee that a generic runtime query reaches planner mode.
    - Why it matters:
      - `executive-planner.mjs` and `planner-runtime-info-flow.mjs` both support `get_runtime_info`, but the top-level capability lane still only forwards clearly knowledge-like requests into planner execution
-     - plain runtime questions without a knowledge-style cue can still stay in personal-assistant fallback paths instead of hitting planner
+     - plain runtime questions without a knowledge-style cue no longer get a default-reply fallback, but they can still stop as `ROUTING_NO_MATCH` in personal/group lane instead of reaching planner mode
    - Current code truth:
      - `/Users/seanhan/Documents/Playground/src/capability-lane.mjs`
      - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`

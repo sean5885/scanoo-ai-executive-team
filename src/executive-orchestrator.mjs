@@ -8,6 +8,7 @@ import {
 import { buildLifecycleTransition } from "./executive-lifecycle.mjs";
 import { buildVisibleMessageText, cleanText } from "./message-intent-utils.mjs";
 import { looksLikeExecutiveExit, looksLikeExecutiveStart, planExecutiveTurn } from "./executive-planner.mjs";
+import { FALLBACK_DISABLED, ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
 import {
   appendExecutiveAgentOutput,
   appendExecutiveTaskHandoff,
@@ -746,6 +747,17 @@ export async function executeExecutiveTurn({ accountId, event, scope, logger = n
   }
 
   const slashCommand = parseRegisteredAgentCommand(text);
+  if (slashCommand?.error === ROUTING_NO_MATCH) {
+    return {
+      text: JSON.stringify({
+        ok: false,
+        error: ROUTING_NO_MATCH,
+        details: {
+          message: "registered_agent_command_no_match",
+        },
+      }, null, 2),
+    };
+  }
   if (!slashCommand && !activeTask && !looksLikeExecutiveStart(text)) {
     return null;
   }
@@ -777,6 +789,17 @@ export async function executeExecutiveTurn({ accountId, event, scope, logger = n
     };
   } else {
     decision = await planExecutiveTurn({ text, activeTask, logger });
+    if (decision?.error === FALLBACK_DISABLED) {
+      return {
+        text: JSON.stringify({
+          ok: false,
+          error: FALLBACK_DISABLED,
+          details: {
+            message: cleanText(decision.reason || "") || "executive_planner_fallback_disabled",
+          },
+        }, null, 2),
+      };
+    }
     nextAgent = getRegisteredAgent(decision.next_agent_id) || getRegisteredAgent("generalist");
   }
 

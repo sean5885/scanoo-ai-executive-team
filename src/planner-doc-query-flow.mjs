@@ -1,5 +1,6 @@
 import { oauthBaseUrl } from "./config.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
+import { ROUTING_NO_MATCH, isRoutingNoMatch } from "./planner-error-codes.mjs";
 import { createPlannerFlow } from "./planner-flow-runtime.mjs";
 import { route as routeDocQuery } from "./router.js";
 
@@ -329,10 +330,11 @@ export function resolveDocQueryRoute({
   activeCandidates = [],
   logger = console,
 } = {}) {
-  const action = selectDocQueryAction(userIntent, {
+  const selectedAction = selectDocQueryAction(userIntent, {
     activeDoc,
     activeCandidates,
   });
+  const action = isRoutingNoMatch(selectedAction) ? null : selectedAction;
   const routedPayload = buildDocQueryPayload({
     action,
     userIntent,
@@ -343,7 +345,7 @@ export function resolveDocQueryRoute({
   logDocQueryTrace(logger, buildDocQueryTraceEvent({
     eventType: "doc_query_route",
     userQuery: userIntent,
-    routedIntent: action ? "hard_route" : "selector_fallback",
+    routedIntent: action ? "hard_route" : "routing_no_match",
     tool: action,
     activeDoc,
     activeCandidates,
@@ -351,6 +353,7 @@ export function resolveDocQueryRoute({
   return {
     action,
     payload: routedPayload,
+    error: action ? null : ROUTING_NO_MATCH,
   };
 }
 
