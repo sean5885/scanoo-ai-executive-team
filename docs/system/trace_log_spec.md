@@ -104,6 +104,8 @@ All minimum trace/log events should align around these fields:
  - `result.error`
  - optional `trace_id`
 - the HTTP runtime now also persists one compact SQLite request-monitor row per finished request keyed by `trace_id`; this is a query surface over request outcomes, not a replacement for structured logs
+- the monitoring layer now also persists trace-scoped runtime events into SQLite `http_request_trace_events`; this stays a local observability/debug surface and does not replace the runtime logger stream
+- a local CLI `node scripts/debug-trace.mjs <trace_id>` can now reconstruct one persisted request timeline from those trace events plus the compact request row
 
 ### Fields not yet consistently runtimeized
 
@@ -113,6 +115,44 @@ All minimum trace/log events should align around these fields:
 - dedicated `handoff` / `escalation` runtime events as first-class logger outputs
 - planner trace events currently use the planner module logger path only; they are not yet a full shared system logging runtime
 - doc-query trace events are also planner-module-local debug events; they are not a separate public logging surface
+
+## Persisted Local Debug Surface
+
+Current local monitoring persistence now has two layers keyed by `trace_id`:
+
+- `http_request_monitor`
+  - one compact terminal row per HTTP request
+  - optimized for recent requests, errors, and aggregate metrics
+- `http_request_trace_events`
+  - ordered request-scoped runtime events persisted from the structured runtime logger
+  - carries request input, route/lane/planner/action steps, and terminal failure/success signals
+  - intended for local debug reconstruction, not as a public API contract
+
+The reconstruction CLI reads both tables so operators can quickly inspect:
+
+- request input
+- planner decision `why`
+- lane / action
+- final result / error
+- timeline step ordering and most likely failure layer
+
+## `request_input`
+
+- purpose:
+  - persist a sanitized snapshot of HTTP request input for later trace reconstruction
+- trigger:
+  - HTTP request body/query parsing completes
+- required fields:
+  - `trace_id`
+  - `event_type`
+  - `request_input.method`
+  - `request_input.pathname`
+- optional fields:
+  - `request_input.query`
+  - `request_input.body`
+- boundary:
+  - request input is sanitized and redacted before persistence
+  - persisted request input is a debug hint, not an exact raw wire replay
 
 ## 0. `tool_execution`
 

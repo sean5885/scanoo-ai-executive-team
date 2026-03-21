@@ -55,6 +55,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - `/Users/seanhan/Documents/Playground/src/runtime-message-deduper.mjs`
   - `/Users/seanhan/Documents/Playground/src/runtime-observability.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/monitoring-cli.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/debug-trace.mjs`
 - Responsibility:
   - start long-connection listener and/or HTTP server
   - disable known competing local LaunchAgents before starting the Playground long-connection listener
@@ -62,9 +63,11 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - emit structured runtime logs for long-connection event intake, lane routing, tool/doc/group steps, reply send, and failure paths
   - emit immediate console alerts for `oauth_reauth_required` and `planner_failed` through a shared in-memory rate-limited helper
   - attach a per-event and per-request `trace_id` so chain breaks can be located from logs
+  - persist trace-scoped runtime events into SQLite so one `trace_id` can reconstruct request input, planner decision `why`, lane/action, and final result/error
   - preserve incoming `X-Request-Id` or mint a local `request_id` for HTTP request-log correlation, and echo it back in the response header
   - echo `X-Trace-Id` for every HTTP response, including HTML and redirects
   - provide a local CLI for reading persisted request-monitor data
+  - provide a local CLI for reconstructing one persisted trace timeline by `trace_id`
 - Main entry:
   - `startHttpServer()`
   - `enforceSingleLarkResponderRuntime()`
@@ -168,11 +171,13 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 - Location:
   - `/Users/seanhan/Documents/Playground/src/monitoring-store.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/monitoring-cli.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/debug-trace.mjs`
 - Responsibility:
   - persist one compact row per HTTP request into SQLite `http_request_monitor`
+  - persist trace-correlated runtime events into SQLite `http_request_trace_events`
   - normalize request outcome fields (`status_code`, `ok`, `error_code`, `error_message`, `duration_ms`)
-  - expose recent-request, recent-error, latest-error, and success/error-rate queries
-  - provide a simple local CLI so operators can inspect request health without scraping logs
+  - expose recent-request, recent-error, latest-error, success/error-rate, and per-trace reconstruction queries
+  - provide local CLIs so operators can inspect request health and reconstruct one request timeline without scraping logs
 - Core path:
   - yes for runtime observability
 

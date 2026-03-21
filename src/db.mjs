@@ -340,6 +340,23 @@ function initializeDb(db) {
 
   CREATE INDEX IF NOT EXISTS idx_http_request_monitor_errors
   ON http_request_monitor(finished_at DESC, status_code, error_code);
+
+  CREATE TABLE IF NOT EXISTS http_request_trace_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trace_id TEXT NOT NULL,
+    request_id TEXT,
+    component TEXT,
+    event TEXT NOT NULL,
+    level TEXT,
+    payload_json TEXT,
+    created_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_http_request_trace_events_trace
+  ON http_request_trace_events(trace_id, id);
+
+  CREATE INDEX IF NOT EXISTS idx_http_request_trace_events_created_at
+  ON http_request_trace_events(created_at DESC);
 `);
 
   return db;

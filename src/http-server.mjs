@@ -153,6 +153,7 @@ import {
   listRecentErrors,
   listRecentRequests,
   recordHttpRequest,
+  sanitizeTracePayload,
 } from "./monitoring-store.mjs";
 
 const pendingOauthStates = new Map();
@@ -1440,6 +1441,35 @@ async function readJsonBody(req) {
   }
 
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+function buildSearchParamObject(searchParams) {
+  const result = {};
+  for (const [key, value] of searchParams.entries()) {
+    if (Object.prototype.hasOwnProperty.call(result, key)) {
+      const existing = result[key];
+      result[key] = Array.isArray(existing) ? [...existing, value] : [existing, value];
+      continue;
+    }
+    result[key] = value;
+  }
+  return result;
+}
+
+function buildRequestInputTrace({ req, requestUrl, body }) {
+  const query = buildSearchParamObject(requestUrl.searchParams);
+  const normalizedBody = body && typeof body === "object" && !Array.isArray(body)
+    ? body
+    : body == null
+      ? null
+      : { raw_body: String(body) };
+
+  return sanitizeTracePayload({
+    method: req.method || "GET",
+    pathname: requestUrl.pathname,
+    query,
+    body: normalizedBody,
+  });
 }
 
 async function invokeAgentBridge(handler, { requestUrl, body, logger, res, action }) {
@@ -4762,6 +4792,13 @@ export function startHttpServer({ logger = console, port = oauthPort, listen = t
           error: requestLogger.compactError(error),
         });
         return {};
+      });
+      requestLogger.info("request_input", {
+        request_input: buildRequestInputTrace({
+          req,
+          requestUrl,
+          body,
+        }),
       });
 
       if (requestUrl.pathname === "/health") {

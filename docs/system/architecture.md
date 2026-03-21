@@ -136,7 +136,8 @@ These describe code structure and responsibility, not how many processes are run
 
 - `monitoring-store.mjs`
   - persists one compact summary row per HTTP request into SQLite
-  - supports recent-request, recent-error, and success/error-rate queries for local monitoring routes and CLI
+  - persists trace-correlated runtime events into SQLite for request reconstruction
+  - supports recent-request, recent-error, trace-reconstruction, and success/error-rate queries for local monitoring routes and CLI
 
 - `binding-runtime.mjs`
   - converts Lark event identity into binding/session/workspace/sandbox keys
@@ -197,9 +198,10 @@ Actual process startup commands and dependency boundaries are documented in [dep
 3. Long-connection events or plugin/API callers resolve peer scope.
 4. User or plugin calls browse, sync, search, answer, doc-write, or security endpoints.
 5. Each HTTP request is tagged with a `trace_id`, echoed back to the caller, and persisted as a compact request-monitor row at response finish.
-6. For sync/search, content is stored and queried from SQLite FTS plus local semantic embedding.
-7. For OpenClaw usage, plugin tools call the same HTTP API.
-8. For guarded local actions, HTTP routes forward to the Python `lobster_security` CLI.
+6. The same request-scoped runtime logger now also persists structured trace events keyed by `trace_id`, including request input, route/planner/lane steps, and terminal failure/success signals.
+7. For sync/search, content is stored and queried from SQLite FTS plus local semantic embedding.
+8. For OpenClaw usage, plugin tools call the same HTTP API.
+9. For guarded local actions, HTTP routes forward to the Python `lobster_security` CLI.
 
 ## Deployment Shape That Can Be Confirmed
 

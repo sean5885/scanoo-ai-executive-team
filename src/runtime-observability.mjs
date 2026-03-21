@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
 import { cleanText } from "./message-intent-utils.mjs";
+import { recordTraceEvent } from "./monitoring-store.mjs";
 
 const DEFAULT_RUNTIME_ALERT_RATE_LIMIT_MS = 60_000;
 const runtimeAlertState = new Map();
@@ -193,14 +194,28 @@ export function createRuntimeLogger({
   const fallback = logger?.log ? logger.log.bind(logger) : console.log.bind(console);
 
   function emit(level, event, fields = {}) {
-    const sink = typeof logger?.[level] === "function" ? logger[level].bind(logger) : fallback;
-    sink("lobster_runtime", {
+    const payload = {
       ts: new Date().toISOString(),
       component,
       event,
       ...baseFields,
       ...fields,
-    });
+    };
+    const sink = typeof logger?.[level] === "function" ? logger[level].bind(logger) : fallback;
+    sink("lobster_runtime", payload);
+    try {
+      recordTraceEvent({
+        traceId: payload.trace_id,
+        requestId: payload.request_id || null,
+        component: payload.component || component,
+        event,
+        level,
+        payload,
+        createdAt: payload.ts,
+      });
+    } catch {
+      // Monitoring persistence must stay fail-soft and must not break the caller's main path.
+    }
   }
 
   return {
