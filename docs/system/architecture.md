@@ -50,6 +50,7 @@ Use [deployment.md](/Users/seanhan/Documents/Playground/docs/system/deployment.m
 - request handlers and route dispatch
   - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
   - `/Users/seanhan/Documents/Playground/src/http-route-contracts.mjs`
+  - `/Users/seanhan/Documents/Playground/src/monitoring-store.mjs`
 - comment rewrite orchestration
   - `/Users/seanhan/Documents/Playground/src/doc-comment-rewrite.mjs`
   - `/Users/seanhan/Documents/Playground/src/doc-preview-cards.mjs`
@@ -97,10 +98,13 @@ Use [deployment.md](/Users/seanhan/Documents/Playground/docs/system/deployment.m
   - `/Users/seanhan/Documents/Playground/src/db.mjs`
 - repository operations and FTS indexing
   - `/Users/seanhan/Documents/Playground/src/rag-repository.mjs`
+- request monitoring persistence and query
+  - `/Users/seanhan/Documents/Playground/src/monitoring-store.mjs`
 - local semantic embedding
   - `/Users/seanhan/Documents/Playground/src/semantic-embeddings.mjs`
-- token JSON store helper
-  - `/Users/seanhan/Documents/Playground/src/token-store.mjs`
+- SQLite-backed OAuth token store
+  - `/Users/seanhan/Documents/Playground/src/db.mjs`
+  - `/Users/seanhan/Documents/Playground/src/rag-repository.mjs`
 - token encryption helper
   - `/Users/seanhan/Documents/Playground/src/secret-crypto.mjs`
 - local runtime files
@@ -128,7 +132,11 @@ These describe code structure and responsibility, not how many processes are run
 - `http-server.mjs`
   - central runtime process
   - exposes all HTTP routes
-  - calls OAuth, Lark content, sync, search/answer, and security bridge modules
+  - calls OAuth, Lark content, sync, search/answer, security bridge, and monitoring query modules
+
+- `monitoring-store.mjs`
+  - persists one compact summary row per HTTP request into SQLite
+  - supports recent-request, recent-error, and success/error-rate queries for local monitoring routes and CLI
 
 - `binding-runtime.mjs`
   - converts Lark event identity into binding/session/workspace/sandbox keys
@@ -188,9 +196,10 @@ Actual process startup commands and dependency boundaries are documented in [dep
 2. HTTP server resolves account and valid user token.
 3. Long-connection events or plugin/API callers resolve peer scope.
 4. User or plugin calls browse, sync, search, answer, doc-write, or security endpoints.
-5. For sync/search, content is stored and queried from SQLite FTS plus local semantic embedding.
-6. For OpenClaw usage, plugin tools call the same HTTP API.
-7. For guarded local actions, HTTP routes forward to the Python `lobster_security` CLI.
+5. Each HTTP request is tagged with a `trace_id`, echoed back to the caller, and persisted as a compact request-monitor row at response finish.
+6. For sync/search, content is stored and queried from SQLite FTS plus local semantic embedding.
+7. For OpenClaw usage, plugin tools call the same HTTP API.
+8. For guarded local actions, HTTP routes forward to the Python `lobster_security` CLI.
 
 ## Deployment Shape That Can Be Confirmed
 
@@ -208,6 +217,7 @@ Detailed startup paths, runtime dependencies, and external service boundaries li
 Implemented:
 
 - OAuth and token refresh
+- per-call request-layer token validation and refresh for Lark adapters
 - Drive / Docx / Wiki browse and organization
 - local sync and FTS search
 - answer generation

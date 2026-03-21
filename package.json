@@ -16,6 +16,7 @@
     "test:workflow:all": "node scripts/run-workflow-baseline.mjs all",
     "eval:long-task": "node scripts/evaluate-long-task-governance.mjs",
     "self-check": "node scripts/self-check.mjs",
+    "monitor": "node scripts/monitoring-cli.mjs",
     "auth:check": "node scripts/check-auth.mjs",
     "sync:full": "curl -X POST http://localhost:3333/sync/full",
     "sync:incremental": "curl -X POST http://localhost:3333/sync/incremental"

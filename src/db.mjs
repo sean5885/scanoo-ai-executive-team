@@ -319,6 +319,27 @@ function initializeDb(db) {
     PRIMARY KEY (account_id, pref_key),
     FOREIGN KEY (account_id) REFERENCES lark_accounts(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS http_request_monitor (
+    trace_id TEXT PRIMARY KEY,
+    request_id TEXT,
+    method TEXT NOT NULL,
+    pathname TEXT NOT NULL,
+    route_name TEXT,
+    status_code INTEGER,
+    ok INTEGER,
+    error_code TEXT,
+    error_message TEXT,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    started_at TEXT NOT NULL,
+    finished_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_http_request_monitor_finished_at
+  ON http_request_monitor(finished_at DESC);
+
+  CREATE INDEX IF NOT EXISTS idx_http_request_monitor_errors
+  ON http_request_monitor(finished_at DESC, status_code, error_code);
 `);
 
   return db;

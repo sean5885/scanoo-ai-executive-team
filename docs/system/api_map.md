@@ -43,6 +43,31 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Module: runtime scope resolution
   - Purpose: inspect persisted peer-scoped session keys and capability lanes
 
+- `GET /api/monitoring/requests`
+  - Handler: `handleMonitoringRequests`
+  - Module: runtime / monitoring
+  - Purpose: list recent persisted HTTP request summaries
+  - Query note: supports `limit`, default `50`
+  - Response shape: `trace_id`, `request_id`, `method`, `pathname`, `route_name`, `status_code`, `ok`, `error_code`, `error_message`, `duration_ms`, `started_at`, `finished_at`
+
+- `GET /api/monitoring/errors`
+  - Handler: `handleMonitoringErrors`
+  - Module: runtime / monitoring
+  - Purpose: list recent persisted error requests
+  - Query note: supports `limit`, default `10`
+  - Response shape: same as `/api/monitoring/requests`, filtered to error requests
+
+- `GET /api/monitoring/errors/latest`
+  - Handler: `handleMonitoringLatestError`
+  - Module: runtime / monitoring
+  - Purpose: return the latest persisted error request, or `null` when none exists
+
+- `GET /api/monitoring/metrics`
+  - Handler: `handleMonitoringMetrics`
+  - Module: runtime / monitoring
+  - Purpose: return aggregate request counts plus `success_rate` and `error_rate`
+  - Response shape: `total_requests`, `success_count`, `error_count`, `success_rate`, `error_rate`
+
 - `GET /api/drive/root`
 - `GET /api/drive/list`
   - Handler: `handleDriveList`
