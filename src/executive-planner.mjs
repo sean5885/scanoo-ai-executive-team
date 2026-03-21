@@ -1884,6 +1884,17 @@ export function listPlannerTools() {
   }));
 }
 
+export function listPlannerPresets() {
+  return Array.from(plannerPresetRegistry.values()).map((preset) => ({
+    preset: preset.preset,
+    step_actions: Array.isArray(preset.buildSteps?.({}))
+      ? preset.buildSteps({})
+        .map((step) => cleanText(step?.action || ""))
+        .filter(Boolean)
+      : [],
+  }));
+}
+
 export function getPlannerTool(action = "") {
   return plannerToolRegistry.get(cleanText(action));
 }

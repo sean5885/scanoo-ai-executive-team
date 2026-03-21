@@ -129,6 +129,65 @@ This path is bounded by the checked-in planner contract:
 - unmatched routing now fails closed as `ROUTING_NO_MATCH` instead of silently falling through selector/default-reply paths
 - no heuristic or free-text fallback is used on this strict user-input planning path
 
+## Contract Consistency Check
+
+Checkpoint status:
+
+- `consistency-check checkpoint`
+
+Current checked-in consistency checker:
+
+- `/Users/seanhan/Documents/Playground/src/planner-contract-consistency.mjs`
+- `/Users/seanhan/Documents/Playground/scripts/planner-contract-check.mjs`
+
+Current purpose:
+
+- compare checked-in planner contract targets against the runtime tool registry
+- compare checked-in planner contract targets against the runtime preset registry and preset step actions
+- compare selector / hard-route / flow-route outputs against the same contract target catalog
+- emit a minimal CLI report and a machine-readable JSON report
+- detect drift without changing routing or applying auto-fixes
+
+Current drift judgment rules:
+
+- `undefined_action`
+  - a tool-registry action, preset step action, or action-slot route target does not exist in `planner_contract.json.actions`
+- `undefined_preset`
+  - a runtime preset entry does not exist in `planner_contract.json.presets`
+- `deprecated_reachable_target`
+  - a reachable contract target is still emitted after that target is explicitly marked deprecated in the checked-in contract metadata
+- `selector_contract_mismatch`
+  - a selector / route target is in the contract, but the contract kind does not match the slot semantics used by runtime
+  - current example: a route field named `action` emitting a contract `preset`
+
+Current checked-in code truth from this checker:
+
+- no undefined planner actions were found in the current tool registry, preset steps, or sampled route outputs
+- no undefined planner presets were found in the current preset registry
+- no deprecated reachable targets were found because the current planner contract does not yet mark any target as deprecated
+- the current drift comes from `search_and_detail_doc`: it exists in the contract as a `preset`, but multiple hard-route / flow-route paths still emit it through an `action` slot
+
+When to add/update contract:
+
+- the runtime target is intentional, reachable, and stable
+- the target kind is clear (`action` vs `preset`)
+- the target has a bounded input/output contract that can be validated without changing routing semantics
+- the same target is already used by runtime and the checker is only failing because the contract mirror is missing or stale
+
+When to change planner implementation instead:
+
+- a route/selector emits a target name that is not part of the checked-in contract
+- a route/selector emits a target through the wrong slot kind, for example `action` carrying a contract `preset`
+- the target is legacy/deprecated and should no longer be reachable
+- the change would otherwise require the contract to encode accidental runtime behavior rather than an intended stable interface
+
+Current operating rule:
+
+- this checker is report-only
+- it must not modify routing precedence
+- it must not add fallback behavior
+- contract drift is first surfaced as evidence; any later fix must decide explicitly between contract update and planner/runtime update
+
 ## Output Shape
 
 Current `runPlannerToolFlow(...)` output:

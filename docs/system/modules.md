@@ -452,7 +452,9 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 
 - Location:
   - `/Users/seanhan/Documents/Playground/src/system-self-check.mjs`
+  - `/Users/seanhan/Documents/Playground/src/planner-contract-consistency.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/self-check.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/planner-contract-check.mjs`
   - `/Users/seanhan/Documents/Playground/docs/system/agent_capability_matrix.md`
   - `/Users/seanhan/Documents/Playground/docs/system/chain_health_checklist.md`
 - Responsibility:
@@ -460,6 +462,9 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - validate minimum agent contracts
   - validate route-contract coverage for key HTTP endpoints
   - validate that core service modules still initialize
+  - validate planner tool/preset registries and selector/flow targets against `docs/system/planner_contract.json`
+  - classify planner contract drift into undefined action, undefined preset, deprecated reachable target, and selector-contract mismatch
+  - emit a minimal CLI report plus JSON report without changing routing logic
   - keep a human-readable capability matrix and chain checklist in sync with code
 - Core path:
   - important for regression prevention and operator debugging
