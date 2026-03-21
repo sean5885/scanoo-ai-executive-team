@@ -1,6 +1,7 @@
 import http from "node:http";
 import process from "node:process";
 import {
+  httpRequestTimeoutMs,
   oauthBaseUrl,
   oauthCallbackPath,
   oauthPort,
@@ -170,6 +171,7 @@ const meetingCoordinator = createMeetingCoordinator({
 let activeHttpServiceOverrides = {};
 const serviceStartTime = nowIso();
 const inFlightIdempotentRequests = new Map();
+const REQUEST_CANCELLED_STATUS_CODE = 499;
 
 function emitOauthReauthAlert({ accountId = null, scope = "http", pathname = null, reason = null } = {}) {
   emitRateLimitedAlert({
@@ -225,19 +227,38 @@ function captureResponsePayload(res, payload) {
   return tracedPayload;
 }
 
+function canWriteResponse(res) {
+  return Boolean(res) && res.writableEnded !== true && res.destroyed !== true;
+}
+
 function jsonResponse(res, statusCode, payload) {
+  if (!canWriteResponse(res)) {
+    captureResponsePayload(res, payload);
+    if (res && Number.isFinite(Number(statusCode))) {
+      res.statusCode = Number(statusCode);
+    }
+    return false;
+  }
   res.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
   });
   res.end(`${JSON.stringify(captureResponsePayload(res, payload), null, 2)}\n`);
+  return true;
 }
 
 function htmlResponse(res, statusCode, html) {
   res.__monitor_payload = null;
+  if (!canWriteResponse(res)) {
+    if (res && Number.isFinite(Number(statusCode))) {
+      res.statusCode = Number(statusCode);
+    }
+    return false;
+  }
   res.writeHead(statusCode, {
     "Content-Type": "text/html; charset=utf-8",
   });
   res.end(html);
+  return true;
 }
 
 function escapeHtml(value) {
@@ -523,11 +544,18 @@ function methodNotAllowed(res, allowedMethods) {
     error: "method_not_allowed",
     allowed_methods: allowedMethods,
   });
+  if (!canWriteResponse(res)) {
+    if (res) {
+      res.statusCode = 405;
+    }
+    return false;
+  }
   res.writeHead(405, {
     "Content-Type": "application/json; charset=utf-8",
     Allow: allowedMethods.join(", "),
   });
   res.end(`${JSON.stringify(payload, null, 2)}\n`);
+  return true;
 }
 
 const noopHttpLogger = {
@@ -1691,17 +1719,106 @@ function buildWikiOrganizeResponse({
   };
 }
 
-async function runHttpRoute(logger, routeName, fn) {
+function buildRequestAbortReason({
+  code = "request_cancelled",
+  pathname = "",
+  timeoutMs = null,
+} = {}) {
+  const normalizedCode = normalizeText(code) === "request_timeout" ? "request_timeout" : "request_cancelled";
+  return {
+    name: "AbortError",
+    code: normalizedCode,
+    message: normalizedCode === "request_timeout"
+      ? `Request timed out after ${Number(timeoutMs || 0)}ms.`
+      : "Request was cancelled before completion.",
+    pathname: normalizeText(pathname) || null,
+    ...(Number.isFinite(Number(timeoutMs)) ? { timeout_ms: Number(timeoutMs) } : {}),
+  };
+}
+
+function resolveRequestAbortInfo({ signal = null, error = null } = {}) {
+  const source = signal?.aborted ? signal.reason || error : error;
+  if (!source && !signal?.aborted) {
+    return null;
+  }
+
+  const codeCandidate = normalizeText(source?.code || error?.code || "") || null;
+  const nameCandidate = normalizeText(source?.name || error?.name || "") || null;
+  if (!signal?.aborted && codeCandidate !== "request_timeout" && codeCandidate !== "request_cancelled" && nameCandidate !== "AbortError") {
+    return null;
+  }
+
+  return {
+    code: codeCandidate === "request_timeout" ? "request_timeout" : "request_cancelled",
+    message: normalizeText(source?.message || error?.message)
+      || (codeCandidate === "request_timeout"
+        ? "Request timed out before completion."
+        : "Request was cancelled before completion."),
+    timeout_ms: Number.isFinite(Number(source?.timeout_ms))
+      ? Number(source.timeout_ms)
+      : Number.isFinite(Number(error?.timeout_ms))
+        ? Number(error.timeout_ms)
+        : null,
+  };
+}
+
+function emitRequestTimeoutAlert({
+  traceId = null,
+  requestId = null,
+  pathname = null,
+  routeName = null,
+  timeoutMs = null,
+} = {}) {
+  emitRateLimitedAlert({
+    code: "request_timeout",
+    scope: "http",
+    dedupeKey: `request_timeout:${routeName || pathname || "unknown"}`,
+    message: "HTTP request timed out before completion.",
+    details: {
+      trace_id: traceId,
+      request_id: requestId,
+      pathname: pathname || null,
+      route_name: routeName || null,
+      timeout_ms: Number.isFinite(Number(timeoutMs)) ? Number(timeoutMs) : null,
+    },
+  });
+}
+
+async function runHttpRoute(logger, routeName, fn, { signal = null } = {}) {
   const routeLogger = (logger || noopHttpLogger).child(routeName, { route: routeName });
+  routeLogger.__abort_signal = signal || logger?.__abort_signal || null;
   const startedAt = Date.now();
   routeLogger.info("route_started");
   try {
-    const result = await fn(routeLogger);
+    const result = await fn(routeLogger, { signal: routeLogger.__abort_signal });
+    const abortInfo = resolveRequestAbortInfo({ signal: routeLogger.__abort_signal });
+    if (abortInfo) {
+      throw Object.assign(new Error(abortInfo.message), {
+        name: "AbortError",
+        code: abortInfo.code,
+        timeout_ms: abortInfo.timeout_ms,
+      });
+    }
     routeLogger.info("route_succeeded", {
       duration_ms: Date.now() - startedAt,
     });
     return result;
   } catch (error) {
+    const abortInfo = resolveRequestAbortInfo({ signal: routeLogger.__abort_signal, error });
+    if (abortInfo) {
+      routeLogger[abortInfo.code === "request_timeout" ? "error" : "warn"]("route_failed", {
+        duration_ms: Date.now() - startedAt,
+        error: abortInfo.code,
+        error_message: abortInfo.message,
+        timeout_ms: abortInfo.timeout_ms,
+        aborted: true,
+      });
+      throw Object.assign(new Error(abortInfo.message), {
+        name: "AbortError",
+        code: abortInfo.code,
+        timeout_ms: abortInfo.timeout_ms,
+      });
+    }
     routeLogger.error("route_failed", {
       duration_ms: Date.now() - startedAt,
       error: routeLogger.compactError(error),
@@ -5045,10 +5162,11 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger) {
       account_id: getAccountId(requestUrl, body) || null,
       q_len: q.trim().length,
     });
-    const result = await executePlannedUserInput({
+    const result = await getHttpService("executePlannedUserInput", executePlannedUserInput)({
       text: q,
       logger,
       baseUrl: oauthBaseUrl,
+      signal: logger?.__abort_signal || res?.__abort_signal || null,
     });
     const envelope = buildPlannedUserInputEnvelope(result);
     logger.info("knowledge_answer_completed", {
@@ -5056,8 +5174,33 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger) {
       ok: envelope.ok,
       planner_error: envelope.error || null,
     });
-    jsonResponse(res, envelope.error && !envelope.execution_result ? 422 : 200, envelope);
+    const statusCode = envelope.error === "request_timeout"
+      || envelope.execution_result?.error === "request_timeout"
+      ? 504
+      : envelope.error && !envelope.execution_result
+        ? 422
+        : 200;
+    jsonResponse(res, statusCode, envelope);
   } catch (error) {
+    const abortInfo = resolveRequestAbortInfo({
+      signal: logger?.__abort_signal || res?.__abort_signal || null,
+      error,
+    });
+    if (abortInfo) {
+      logger.warn("knowledge_answer_aborted", {
+        account_id: getAccountId(requestUrl, body) || null,
+        error: abortInfo.code,
+        error_message: abortInfo.message,
+        timeout_ms: abortInfo.timeout_ms,
+      });
+      jsonResponse(res, abortInfo.code === "request_timeout" ? 504 : REQUEST_CANCELLED_STATUS_CODE, {
+        ok: false,
+        error: abortInfo.code,
+        message: abortInfo.message,
+        ...(abortInfo.timeout_ms != null ? { timeout_ms: abortInfo.timeout_ms } : {}),
+      });
+      return;
+    }
     logger.warn("knowledge_answer_failed", {
       account_id: getAccountId(requestUrl, body) || null,
       error: logger.compactError(error),
@@ -5191,7 +5334,13 @@ async function handleImprovementApply(res, proposalId, body, logger = noopHttpLo
   }
 }
 
-export function startHttpServer({ logger = console, port = oauthPort, listen = true, serviceOverrides = {} } = {}) {
+export function startHttpServer({
+  logger = console,
+  port = oauthPort,
+  listen = true,
+  serviceOverrides = {},
+  requestTimeoutMs = httpRequestTimeoutMs,
+} = {}) {
   setActiveHttpServiceOverrides(serviceOverrides);
   const httpLogger = createRuntimeLogger({ logger, component: "http" });
   const server = http.createServer(async (req, res) => {
@@ -5206,15 +5355,59 @@ export function startHttpServer({ logger = console, port = oauthPort, listen = t
       request_id: requestId,
       method: req.method || "GET",
       pathname: requestUrl.pathname,
+      request_timeout_ms: Number.isFinite(Number(requestTimeoutMs)) ? Number(requestTimeoutMs) : null,
     });
+    const abortController = new AbortController();
+    const effectiveRequestTimeoutMs = Number.isFinite(Number(requestTimeoutMs)) && Number(requestTimeoutMs) > 0
+      ? Number(requestTimeoutMs)
+      : null;
+    let requestCompleted = false;
+    let responseFinished = false;
+    let timeoutTriggered = false;
     res.__trace_id = traceId;
     res.__request_id = requestId;
     res.__pathname = requestUrl.pathname;
     res.__monitor_payload = null;
+    res.__abort_signal = abortController.signal;
+    requestLogger.__abort_signal = abortController.signal;
     res.setHeader("X-Request-Id", requestId);
     res.setHeader("X-Trace-Id", traceId);
     requestLogger.info("request_started");
     let requestRecorded = false;
+    const timeoutHandle = effectiveRequestTimeoutMs == null
+      ? null
+      : setTimeout(() => {
+          if (requestCompleted || abortController.signal.aborted) {
+            return;
+          }
+          timeoutTriggered = true;
+          const abortReason = buildRequestAbortReason({
+            code: "request_timeout",
+            pathname: requestUrl.pathname,
+            timeoutMs: effectiveRequestTimeoutMs,
+          });
+          abortController.abort(abortReason);
+          emitRequestTimeoutAlert({
+            traceId,
+            requestId,
+            pathname: requestUrl.pathname,
+            routeName: res.__monitor_route || null,
+            timeoutMs: effectiveRequestTimeoutMs,
+          });
+          requestLogger.error("request_timeout", {
+            error: "request_timeout",
+            error_message: abortReason.message,
+            timeout_ms: effectiveRequestTimeoutMs,
+            status_code: 504,
+          });
+          jsonResponse(res, 504, {
+            ok: false,
+            error: "request_timeout",
+            message: abortReason.message,
+            timeout_ms: effectiveRequestTimeoutMs,
+          });
+        }, effectiveRequestTimeoutMs)
+      : null;
     const persistRequestRecord = () => {
       if (requestRecorded) {
         return;
@@ -5240,12 +5433,39 @@ export function startHttpServer({ logger = console, port = oauthPort, listen = t
       }
     };
     res.on("finish", () => {
+      responseFinished = true;
+      requestCompleted = true;
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
       requestLogger.info("request_finished", {
         status_code: res.statusCode,
       });
       persistRequestRecord();
     });
     res.on("close", () => {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+      if (!responseFinished && !abortController.signal.aborted) {
+        const abortReason = buildRequestAbortReason({
+          code: "request_cancelled",
+          pathname: requestUrl.pathname,
+        });
+        abortController.abort(abortReason);
+        requestLogger.warn("request_cancelled", {
+          error: "request_cancelled",
+          error_message: abortReason.message,
+          status_code: REQUEST_CANCELLED_STATUS_CODE,
+        });
+        res.statusCode = REQUEST_CANCELLED_STATUS_CODE;
+        captureResponsePayload(res, {
+          ok: false,
+          error: "request_cancelled",
+          message: abortReason.message,
+        });
+      }
+      requestCompleted = true;
       persistRequestRecord();
     });
     let body = {};
@@ -5262,6 +5482,13 @@ export function startHttpServer({ logger = console, port = oauthPort, listen = t
         });
         return {};
       });
+      requestLogger.info("request_input", {
+        request_input: buildRequestInputTrace({
+          req,
+          requestUrl,
+          body,
+        }),
+      });
       idempotentRequest = await prepareIdempotentRequest({
         req,
         res,
@@ -5273,13 +5500,7 @@ export function startHttpServer({ logger = console, port = oauthPort, listen = t
         return;
       }
       res = idempotentRequest.res || res;
-      requestLogger.info("request_input", {
-        request_input: buildRequestInputTrace({
-          req,
-          requestUrl,
-          body,
-        }),
-      });
+      res.__abort_signal = abortController.signal;
 
       if (requestUrl.pathname === "/health") {
         jsonResponse(res, 200, { ok: true });
@@ -6134,6 +6355,29 @@ export function startHttpServer({ logger = console, port = oauthPort, listen = t
       jsonResponse(res, 404, { ok: false, error: "not_found" });
     } catch (error) {
       idempotentRequest.finalizeError(error);
+      const abortInfo = resolveRequestAbortInfo({ signal: abortController.signal, error });
+      if (abortInfo) {
+        if (abortInfo.code === "request_timeout") {
+          if (!timeoutTriggered) {
+            jsonResponse(res, 504, {
+              ok: false,
+              error: "request_timeout",
+              message: abortInfo.message,
+              ...(abortInfo.timeout_ms != null ? { timeout_ms: abortInfo.timeout_ms } : {}),
+            });
+          }
+          return;
+        }
+        if (!responseFinished) {
+          res.statusCode = REQUEST_CANCELLED_STATUS_CODE;
+          captureResponsePayload(res, {
+            ok: false,
+            error: "request_cancelled",
+            message: abortInfo.message,
+          });
+        }
+        return;
+      }
       if (isOAuthReauthRequiredError(error)) {
         emitOauthReauthAlert({
           accountId: getAccountId(requestUrl, body),

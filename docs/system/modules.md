@@ -103,6 +103,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 - Location:
   - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
   - `/Users/seanhan/Documents/Playground/src/http-route-contracts.mjs`
+  - `/Users/seanhan/Documents/Playground/src/http-idempotency-store.mjs`
   - `/Users/seanhan/Documents/Playground/src/monitoring-store.mjs`
 - Responsibility:
   - route parsing
@@ -110,6 +111,9 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - auth checks
   - HTTP endpoint handling
   - response shaping
+  - optional request-body idempotency for JSON `POST` / `PUT` / `PATCH` routes via `idempotency_key`
+  - replay the first persisted JSON result for repeated keyed requests instead of re-running the handler
+  - persist first-response idempotency rows into SQLite `http_request_idempotency`
   - per-request trace creation and request lifecycle logging
   - shared request/route runtime logs now guarantee `trace_id`, `action`, and `status` in the emitted structured payload, while preserving the existing `event` field as a compatibility alias
   - `trace_id` injection into JSON responses for easier cross-log correlation

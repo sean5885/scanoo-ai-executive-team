@@ -357,6 +357,23 @@ function initializeDb(db) {
 
   CREATE INDEX IF NOT EXISTS idx_http_request_trace_events_created_at
   ON http_request_trace_events(created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS http_request_idempotency (
+    scope_key TEXT PRIMARY KEY,
+    account_id TEXT,
+    method TEXT NOT NULL,
+    pathname TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    status_code INTEGER NOT NULL,
+    response_json TEXT NOT NULL,
+    first_trace_id TEXT,
+    first_request_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_http_request_idempotency_lookup
+  ON http_request_idempotency(account_id, method, pathname, updated_at DESC);
 `);
 
   return db;

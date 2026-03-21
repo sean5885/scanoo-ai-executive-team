@@ -28,7 +28,9 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 10. `lark-content.mjs` calls Lark SDK
 11. for Lobster-created `docx` files, the initiating user's `open_id` is granted `full_access`
 12. Result is normalized and returned
-13. direct-message cleanup requests can also delete the latest Lobster meeting doc through tenant-token fallback and persist a chat-only failure-report preference
+13. if the JSON write request included `idempotency_key`, the HTTP layer persists the first response into SQLite `http_request_idempotency`
+14. later repeated requests with the same `method + pathname + explicit account_id when provided + idempotency_key` replay that first persisted result instead of re-running the write path
+15. direct-message cleanup requests can also delete the latest Lobster meeting doc through tenant-token fallback and persist a chat-only failure-report preference
 
 ### Sync Flow
 

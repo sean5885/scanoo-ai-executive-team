@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 
 import db from "../src/db.mjs";
+import { getHttpIdempotencyRecord } from "../src/http-idempotency-store.mjs";
 import { startHttpServer } from "../src/http-server.mjs";
 import { docUpdateConfirmationStorePath, executiveImprovementStorePath } from "../src/config.mjs";
 import { setupExecutiveTaskStateTestHarness } from "./helpers/executive-task-state-harness.mjs";
@@ -157,6 +158,14 @@ async function restoreFile(filePath, content) {
     return;
   }
   await fs.writeFile(filePath, content, "utf8");
+}
+
+function stripTrace(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return payload;
+  }
+  const { trace_id: _traceId, ...rest } = payload;
+  return rest;
 }
 
 test("drive organize preview success route returns trace and handler step logs", async (t) => {
@@ -699,6 +708,60 @@ test("task get/create and comment update/delete success routes return trace and 
   assert.equal(calls.some((entry) => entry[1]?.event === "task_comment_update_completed"), true);
   assert.equal(calls.some((entry) => entry[1]?.event === "task_comment_delete_started"), true);
   assert.equal(calls.some((entry) => entry[1]?.event === "task_comment_delete_completed"), true);
+});
+
+test("task create idempotency replays first result without rerunning handler", async (t) => {
+  let createCalls = 0;
+  const { server } = await startTestServer(t, {
+    createTask: async () => {
+      createCalls += 1;
+      return {
+        task: {
+          task_id: `task-created-${createCalls}`,
+          summary: "Ship feature",
+        },
+      };
+    },
+  });
+
+  const { port } = server.address();
+  const idempotencyKey = `task-create-${Date.now()}`;
+  const requestBody = {
+    summary: "Ship feature",
+    idempotency_key: idempotencyKey,
+  };
+
+  const firstResponse = await fetch(`http://127.0.0.1:${port}/api/tasks/create`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(requestBody),
+  });
+  const firstPayload = await firstResponse.json();
+
+  const secondResponse = await fetch(`http://127.0.0.1:${port}/api/tasks/create`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(requestBody),
+  });
+  const secondPayload = await secondResponse.json();
+
+  assert.equal(firstResponse.status, 200);
+  assert.equal(secondResponse.status, 200);
+  assert.equal(createCalls, 1);
+  assert.deepEqual(stripTrace(secondPayload), stripTrace(firstPayload));
+  assert.equal(secondPayload.task?.task_id, firstPayload.task?.task_id);
+
+  const record = getHttpIdempotencyRecord({
+    method: "POST",
+    pathname: "/api/tasks/create",
+    idempotencyKey,
+  });
+
+  assert.ok(record);
+  assert.equal(record.status_code, 200);
+  assert.equal(record.account_id, null);
+  assert.equal(record.first_trace_id, firstPayload.trace_id);
+  assert.equal(record.response_payload?.task?.task_id, firstPayload.task?.task_id);
 });
 
 test("document update can preview a heading-targeted insert", async (t) => {

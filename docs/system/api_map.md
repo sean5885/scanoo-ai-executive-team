@@ -4,6 +4,13 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src/http-server.mjs`.
 
+## Write-Route Idempotency
+
+- JSON write requests handled by `POST` / `PUT` / `PATCH` may include an optional `idempotency_key` in the request body
+  - runtime scope is `method + pathname + explicit account_id when provided + idempotency_key`
+  - repeated requests with the same scope do not re-run the handler; they replay the first persisted JSON result
+  - first-response persistence lives in SQLite `http_request_idempotency`
+
 ## Core HTTP Routes
 
 - `GET /health`
