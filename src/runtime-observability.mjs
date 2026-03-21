@@ -210,8 +210,12 @@ export function buildToolExecutionLog({
   data = {},
   error = null,
   traceId = null,
+  durationMs = null,
   extra = {},
 } = {}) {
+  const normalizedDurationMs = Number.isFinite(Number(durationMs)) && Number(durationMs) >= 0
+    ? Math.round(Number(durationMs))
+    : null;
   return {
     ts: new Date().toISOString(),
     timestamp: new Date().toISOString(),
@@ -227,6 +231,7 @@ export function buildToolExecutionLog({
       error: cleanText(error) || null,
     },
     trace_id: cleanText(traceId) || null,
+    duration_ms: normalizedDurationMs,
     ...(extra && typeof extra === "object" && !Array.isArray(extra) ? extra : {}),
   };
 }
@@ -240,6 +245,7 @@ export function emitToolExecutionLog({
   data = {},
   error = null,
   traceId = null,
+  durationMs = null,
   extra = {},
 } = {}) {
   const entry = buildToolExecutionLog({
@@ -250,6 +256,7 @@ export function emitToolExecutionLog({
     data,
     error,
     traceId,
+    durationMs,
     extra,
   });
   const level = entry.result.success ? "info" : "error";
@@ -259,6 +266,19 @@ export function emitToolExecutionLog({
     label: "lobster_tool_execution",
     payload: entry,
   });
+  try {
+    recordTraceEvent({
+      traceId: entry.trace_id,
+      requestId: entry.request_id || null,
+      component: cleanText(entry.component) || "tool_execution",
+      event: "tool_execution",
+      level,
+      payload: entry,
+      createdAt: entry.ts,
+    });
+  } catch {
+    // Tool tracing must stay fail-soft and must not break the caller's main path.
+  }
   return entry;
 }
 

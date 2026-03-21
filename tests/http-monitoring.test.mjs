@@ -8,6 +8,7 @@ import {
   getRequestMetrics,
   listRecentRequests,
   recordHttpRequest,
+  recordTraceEvent,
 } from "../src/monitoring-store.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -155,6 +156,175 @@ test("monitoring CLI reports recent requests and metrics", async () => {
   assert.equal(metricsPayload.ok, true);
   assert.ok(metricsPayload.metrics.total_requests >= 1);
   assert.ok(typeof metricsPayload.metrics.success_rate_percent === "number");
+});
+
+test("monitoring learning route returns routing/tool summary", async (t) => {
+  const server = await startTestServer(t);
+  const { port } = server.address();
+  const stamp = Date.now();
+  const traceId = `http_learning_${stamp}`;
+  const requestId = `req_${traceId}`;
+
+  recordHttpRequest({
+    traceId,
+    requestId,
+    method: "POST",
+    pathname: `/api/learning_${stamp}`,
+    routeName: `learning_route_${stamp}`,
+    statusCode: 200,
+    payload: { ok: true },
+    durationMs: 15,
+  });
+
+  recordTraceEvent({
+    traceId,
+    requestId,
+    component: "planner.tool",
+    event: "tool_execution",
+    payload: {
+      event_type: "tool_execution",
+      action: `learning_tool_${stamp}`,
+      trace_id: traceId,
+      duration_ms: 15,
+      result: {
+        success: true,
+        data: {},
+        error: null,
+      },
+    },
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/monitoring/learning?lookback_hours=1&min_sample_size=1`);
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.ok, true);
+  assert.ok(payload.summary);
+  assert.ok(Array.isArray(payload.summary.high_success_tools));
+  assert.ok(payload.summary.high_success_tools.some((item) => item.tool_name === `learning_tool_${stamp}`));
+});
+
+test("monitoring CLI learning command returns draft proposals", async () => {
+  const stamp = Date.now();
+  for (const suffix of ["a", "b"]) {
+    const traceId = `cli_learning_${stamp}_${suffix}`;
+    const requestId = `req_${traceId}`;
+
+    recordHttpRequest({
+      traceId,
+      requestId,
+      method: "POST",
+      pathname: `/api/cli_learning_${stamp}`,
+      routeName: `cli_learning_route_${stamp}`,
+      statusCode: 422,
+      payload: { ok: false, error: "not_found", message: "missing" },
+      durationMs: 31,
+    });
+    recordTraceEvent({
+      traceId,
+      requestId,
+      component: "http.request.learning",
+      event: "lane_execution_planned",
+      payload: {
+        chosen_lane: "knowledge-assistant",
+        chosen_action: "planner_user_input",
+      },
+    });
+    recordTraceEvent({
+      traceId,
+      requestId,
+      component: "planner.tool",
+      event: "tool_execution",
+      level: "error",
+      payload: {
+        event_type: "tool_execution",
+        action: `cli_learning_tool_${stamp}`,
+        trace_id: traceId,
+        duration_ms: 31,
+        result: {
+          success: false,
+          data: {},
+          error: "not_found",
+        },
+      },
+    });
+  }
+
+  const result = await execFileAsync(process.execPath, ["scripts/monitoring-cli.mjs", "learning", "1", "1"], {
+    cwd: process.cwd(),
+    env: process.env,
+  });
+  const payload = JSON.parse(result.stdout);
+
+  assert.equal(payload.ok, true);
+  assert.ok(Array.isArray(payload.summary.draft_proposals));
+  assert.ok(payload.summary.low_success_tools.some((item) => item.tool_name === `cli_learning_tool_${stamp}`));
+});
+
+test("learning proposal route persists pending improvements for human review", async (t) => {
+  const server = await startTestServer(t);
+  const { port } = server.address();
+  const stamp = Date.now();
+  const traceId = `route_learning_${stamp}`;
+  const requestId = `req_${traceId}`;
+
+  recordHttpRequest({
+    traceId,
+    requestId,
+    method: "POST",
+    pathname: `/api/route_learning_${stamp}`,
+    routeName: `route_learning_${stamp}`,
+    statusCode: 422,
+    payload: { ok: false, error: "tool_error", message: "boom" },
+    durationMs: 29,
+  });
+  recordTraceEvent({
+    traceId,
+    requestId,
+    component: "http.request.learning",
+    event: "lane_execution_planned",
+    payload: {
+      chosen_lane: "knowledge-assistant",
+      chosen_action: "planner_user_input",
+    },
+  });
+  recordTraceEvent({
+    traceId,
+    requestId,
+    component: "planner.tool",
+    event: "tool_execution",
+    level: "error",
+    payload: {
+      event_type: "tool_execution",
+      action: `route_learning_tool_${stamp}`,
+      trace_id: traceId,
+      duration_ms: 29,
+      result: {
+        success: false,
+        data: {},
+        error: "tool_error",
+      },
+    },
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/agent/improvements/learning/generate`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      account_id: "acct-http-learning",
+      session_key: "sess-http-learning",
+      lookback_hours: 1,
+      min_sample_size: 1,
+    }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.ok, true);
+  assert.ok(Array.isArray(payload.items));
+  assert.ok(payload.items.every((item) => item.status === "pending_approval"));
 });
 
 test("monitoring dashboard page renders rates and recent request sections", async (t) => {

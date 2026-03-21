@@ -139,6 +139,11 @@ These describe code structure and responsibility, not how many processes are run
   - persists trace-correlated runtime events into SQLite for request reconstruction
   - supports recent-request, recent-error, trace-reconstruction, and success/error-rate queries for local monitoring routes and CLI
 
+- `agent-learning-loop.mjs`
+  - reads recent request-monitor rows plus persisted trace events
+  - summarizes routing failure patterns, tool success-rate/latency patterns, and draft routing/tool-weight proposals
+  - writes those proposals into the existing improvement workflow only as human-reviewable pending items
+
 - `binding-runtime.mjs`
   - converts Lark event identity into binding/session/workspace/sandbox keys
 
@@ -199,9 +204,11 @@ Actual process startup commands and dependency boundaries are documented in [dep
 4. User or plugin calls browse, sync, search, answer, doc-write, or security endpoints.
 5. Each HTTP request is tagged with a `trace_id`, echoed back to the caller, and persisted as a compact request-monitor row at response finish.
 6. The same request-scoped runtime logger now also persists structured trace events keyed by `trace_id`, including request input, route/planner/lane steps, and terminal failure/success signals.
-7. For sync/search, content is stored and queried from SQLite FTS plus local semantic embedding.
-8. For OpenClaw usage, plugin tools call the same HTTP API.
-9. For guarded local actions, HTTP routes forward to the Python `lobster_security` CLI.
+7. Planner tool executions now also persist normalized `tool_execution` trace events with success/failure and `duration_ms`, so monitoring can be used as a learning signal instead of only a debug surface.
+8. The learning loop can summarize that recent monitoring window into routing/tool proposals and persist them for human review before any apply step.
+9. For sync/search, content is stored and queried from SQLite FTS plus local semantic embedding.
+10. For OpenClaw usage, plugin tools call the same HTTP API.
+11. For guarded local actions, HTTP routes forward to the Python `lobster_security` CLI.
 
 ## Deployment Shape That Can Be Confirmed
 

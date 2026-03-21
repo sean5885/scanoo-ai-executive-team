@@ -127,9 +127,11 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
    - task get/create/comments list/create/update/delete
 7. `/api/monitoring/requests`, `/api/monitoring/errors`, `/api/monitoring/errors/latest`, and `/api/monitoring/metrics` query that persisted request-monitor table
 8. `/monitoring` renders a simple server-side HTML dashboard from the same monitoring snapshot, showing success rate, error rate, recent errors, and recent requests
-9. `scripts/monitoring-cli.mjs` exposes the same request-monitor data through `dashboard`, `recent`, `errors`, `error`, and `metrics`
-10. success-path smoke fixtures verify these routes can initialize and return shaped JSON with `trace_id`
-11. self-check verifies both preview/read and apply/write route-contract presence for these high-risk HTTP families
+9. `tool_execution` events now also persist into `http_request_trace_events`, including `duration_ms`, so later analysis can measure per-tool success rate and latency without scraping console logs
+10. `/api/monitoring/learning` and `scripts/monitoring-cli.mjs learning ...` derive a review-first learning summary from recent request rows plus trace events
+11. `POST /agent/improvements/learning/generate` converts that summary into `pending_approval` improvement proposals instead of auto-applying routing/tool changes
+12. success-path smoke fixtures verify these routes can initialize and return shaped JSON with `trace_id`
+13. self-check verifies both preview/read and apply/write route-contract presence for these high-risk HTTP families
 
 ### Meeting Flow
 
@@ -289,12 +291,14 @@ This is now a capability-lane event path with a closed-loop executive planner la
    - `human_approval` -> stored as `pending_approval`
 5. operators can use:
    - `GET /agent/improvements`
+   - `POST /agent/improvements/learning/generate`
    - `POST /agent/improvements/:proposal_id/approve`
    - `POST /agent/improvements/:proposal_id/reject`
    - `POST /agent/improvements/:proposal_id/apply`
 6. approve / reject / apply now target the newest matching stored proposal record for a given `proposal_id`, so old archived duplicates do not silently update the wrong task-local proposal state
-7. once approved and applied, the proposal is written into approved memory as an `improvement_applied` record
-8. if every proposal on the task is applied, the task can advance to `improved`
+7. monitoring-derived routing/tool proposals reuse the same workflow, but stay `pending_approval` by default even when the suggestion is a weight adjustment
+8. once approved and applied, the proposal is written into approved memory as an `improvement_applied` record
+9. if every proposal on the task is applied, the task can advance to `improved`
 
 ## Async and Background Flow
 

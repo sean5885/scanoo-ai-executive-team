@@ -72,6 +72,7 @@ Implemented through:
 - `src/executive-improvement.mjs`
 - memory stores in `src/executive-memory.mjs`
 - workflow persistence and approval routes in `src/executive-improvement-workflow.mjs`
+- `src/agent-learning-loop.mjs` now also derives review-first improvement proposals from persisted monitoring / trace history, including routing-failure summaries and suggested tool-weight adjustments
 
 ## Lifecycle States
 
@@ -154,3 +155,7 @@ Closed-loop layer 對齊的 evidence 類型為：
 - `auto_apply` proposals are persisted and marked applied immediately
 - `proposal_only` and `human_approval` proposals are persisted as pending items
 - approval and apply are now explicit HTTP workflow steps instead of only task-local fields
+- a monitoring-driven learning summary can now draft the same pending improvement items without auto-applying them:
+  - `GET /api/monitoring/learning`
+  - `POST /agent/improvements/learning/generate`
+- routing and tool-weight suggestions produced from monitoring stay human-review-first; they are archived as `pending_approval` until explicitly approved and applied

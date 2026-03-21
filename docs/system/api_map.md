@@ -82,6 +82,13 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Purpose: return aggregate request counts plus `success_rate` and `error_rate`
   - Response shape: `total_requests`, `success_count`, `error_count`, `success_rate`, `error_rate`
 
+- `GET /api/monitoring/learning`
+  - Handler: `handleMonitoringLearningSummary`
+  - Module: runtime / monitoring
+  - Purpose: summarize recent monitoring / trace history into routing hotspots, tool success-rate summaries, latency metrics, and draft improvement proposals
+  - Query note: supports `lookback_hours`, `request_limit`, `min_sample_size`, `max_routing_items`, and `max_tool_items`
+  - Review note: this route does not apply changes; it only returns a review-first summary plus `draft_proposals`
+
 - `GET /api/drive/root`
 - `GET /api/drive/list`
   - Handler: `handleDriveList`
@@ -172,6 +179,12 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Response shape: `{ ok, action, data, trace_id }`, where `data` keeps a unified `{ success, data, error }` envelope
   - Data note: result items contain structured `summary` and `learning_state`; no raw full text is returned
   - Log note: emits `stage=agent_bridge`
+
+- `POST /agent/improvements/learning/generate`
+  - Handler: `handleLearningImprovementGeneration`
+  - Purpose: convert the current monitoring-backed learning summary into persisted improvement proposals for human review
+  - Input note: accepts optional `account_id`, `session_key`, `lookback_hours`, `request_limit`, `min_sample_size`, `max_routing_items`, and `max_tool_items`
+  - Response note: generated items are archived through the existing improvement workflow and returned as `pending_approval` entries; no routing/tool weight is auto-applied
 
 - `GET /agent/company-brain/search?q=...`
   - Handler: `handleAgentSearchCompanyBrainDocs`

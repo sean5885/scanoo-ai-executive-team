@@ -1,13 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { listTraceEvents } from "../src/monitoring-store.mjs";
 import {
   buildToolExecutionLog,
   createRequestId,
   createRuntimeLogger,
   createTraceId,
+  emitRateLimitedAlert,
   emitToolExecutionLog,
   formatIdentifierHint,
+  resetRuntimeAlertsForTests,
   summarizeLarkEvent,
 } from "../src/runtime-observability.mjs";
 
@@ -60,8 +63,12 @@ test("createRuntimeLogger 會輸出結構化 runtime log", () => {
   assert.equal(calls[0][0], "lobster_runtime");
   assert.equal(calls[0][1].component, "test_component");
   assert.equal(calls[0][1].event, "lane_resolved");
+  assert.equal(calls[0][1].event_type, "lane_resolved");
+  assert.equal(calls[0][1].action, "lane_resolved");
+  assert.equal(calls[0][1].status, "info");
   assert.equal(calls[0][1].capability_lane, "doc-editor");
   assert.ok(typeof calls[0][1].ts === "string");
+  assert.ok(typeof calls[0][1].timestamp === "string");
 });
 
 test("createTraceId 會建立可讀 trace id，child logger 會繼承 base fields", () => {
@@ -86,6 +93,7 @@ test("createTraceId 會建立可讀 trace id，child logger 會繼承 base field
   assert.match(calls[0][1].trace_id, /^evt_/);
   assert.equal(calls[0][1].request_kind, "lark_event");
   assert.equal(calls[0][1].tool_name, "sendMessage");
+  assert.equal(calls[0][1].action, "tool_called");
 });
 
 test("buildToolExecutionLog 會產生統一 tool execution log shape", () => {
@@ -100,6 +108,8 @@ test("buildToolExecutionLog 會產生統一 tool execution log shape", () => {
   });
 
   assert.match(log.request_id, /^tool_/);
+  assert.equal(log.event_type, "tool_execution");
+  assert.equal(log.status, "success");
   assert.equal(log.action, "create_doc");
   assert.deepEqual(log.params, { title: "Weekly report" });
   assert.deepEqual(log.result, {
@@ -112,6 +122,7 @@ test("buildToolExecutionLog 會產生統一 tool execution log shape", () => {
 
 test("emitToolExecutionLog 會在失敗時輸出錯誤等級 log", () => {
   const calls = [];
+  const traceId = `trace_fail_${Date.now()}`;
   emitToolExecutionLog({
     logger: {
       error(...args) {
@@ -124,12 +135,71 @@ test("emitToolExecutionLog 會在失敗時輸出錯誤等級 log", () => {
     success: false,
     data: { message: "timeout" },
     error: "runtime_exception",
-    traceId: "trace_fail",
+    traceId,
+    durationMs: 42,
   });
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0], "lobster_tool_execution");
+  assert.equal(calls[0][1].event_type, "tool_execution");
+  assert.equal(calls[0][1].status, "error");
   assert.equal(calls[0][1].request_id, "req_123");
   assert.equal(calls[0][1].result.success, false);
   assert.equal(calls[0][1].result.error, "runtime_exception");
+  assert.equal(calls[0][1].duration_ms, 42);
+
+  const persisted = listTraceEvents({ traceId }).find((item) => item.event === "tool_execution");
+  assert.ok(persisted);
+  assert.equal(persisted?.payload?.action, "search_company_brain_docs");
+  assert.equal(persisted?.payload?.duration_ms, 42);
+});
+
+test("emitRateLimitedAlert 會在 rate limit 期間抑制重複 alert", () => {
+  resetRuntimeAlertsForTests();
+  const calls = [];
+  const consoleLike = {
+    error(...args) {
+      calls.push(args);
+    },
+  };
+
+  const first = emitRateLimitedAlert({
+    consoleLike,
+    code: "planner_failed",
+    scope: "test",
+    dedupeKey: "planner_failed:test",
+    message: "planner failed",
+    now: 1000,
+    minIntervalMs: 60_000,
+  });
+  const second = emitRateLimitedAlert({
+    consoleLike,
+    code: "planner_failed",
+    scope: "test",
+    dedupeKey: "planner_failed:test",
+    message: "planner failed",
+    now: 2000,
+    minIntervalMs: 60_000,
+  });
+  const third = emitRateLimitedAlert({
+    consoleLike,
+    code: "planner_failed",
+    scope: "test",
+    dedupeKey: "planner_failed:test",
+    message: "planner failed",
+    now: 62_000,
+    minIntervalMs: 60_000,
+  });
+
+  assert.equal(first.emitted, true);
+  assert.equal(second.emitted, false);
+  assert.equal(second.suppressed, true);
+  assert.equal(third.emitted, true);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0][0], "[lobster_alert]");
+  assert.equal(calls[0][1].event_type, "runtime_alert");
+  assert.equal(calls[0][1].action, "planner_failed");
+  assert.equal(calls[0][1].status, "alert");
+  assert.equal(calls[1][1].suppressed_duplicates, 1);
+  resetRuntimeAlertsForTests();
 });

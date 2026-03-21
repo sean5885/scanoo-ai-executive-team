@@ -39,6 +39,7 @@ What now exists in current code:
 - explicit capability contracts for registered agents
 - self-check script plus maintainable capability/checklist documents for chain governance
 - evidence-based verifier, reflection records, and improvement proposal generation
+- monitoring-backed learning summaries that can draft routing/tool improvement proposals for human review
 - proposal-first knowledge writeback path for uncertain meeting/executive conclusions
 
 ## Current Agent-Like Components
@@ -66,12 +67,14 @@ What now exists in current code:
 - Code:
   - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
 - Role:
-  - provide thin agent-facing wrappers over selected document/runtime routes
-  - preserve the underlying route logic instead of re-implementing it
+  - provide thin agent-facing wrappers over selected document/runtime/query routes
+  - preserve the underlying route or query logic instead of re-implementing it
   - normalize agent-facing responses to `{ ok, action, data, trace_id }`
 - Current bridges:
   - `POST /agent/docs/create`
   - `GET /agent/company-brain/docs`
+  - `GET /agent/company-brain/search`
+  - `GET /agent/company-brain/docs/:doc_id`
   - `GET /agent/system/runtime-info`
 - Logging:
   - `stage=agent_bridge`

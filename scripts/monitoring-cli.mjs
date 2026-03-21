@@ -5,6 +5,7 @@ import {
   listRecentErrors,
   listRecentRequests,
 } from "../src/monitoring-store.mjs";
+import { buildAgentLearningSummary } from "../src/agent-learning-loop.mjs";
 
 function printUsage() {
   console.log(
@@ -17,6 +18,7 @@ function printUsage() {
       "  errors [limit]   Show recent error requests (default: 10)",
       "  error            Show the latest error request",
       "  metrics          Show request success/error metrics",
+      "  learning [lookbackHours] [minSampleSize]   Show routing/tool learning summary",
     ].join("\n"),
   );
 }
@@ -107,6 +109,15 @@ if (command === "dashboard") {
       success_rate_percent: Number((metrics.success_rate * 100).toFixed(2)),
       error_rate_percent: Number((metrics.error_rate * 100).toFixed(2)),
     },
+  }, null, 2));
+} else if (command === "learning") {
+  const summary = buildAgentLearningSummary({
+    lookbackHours: limit,
+    minSampleSize: errorLimit,
+  });
+  console.log(JSON.stringify({
+    ok: true,
+    summary,
   }, null, 2));
 } else {
   printUsage();

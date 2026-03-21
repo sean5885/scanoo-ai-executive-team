@@ -20,6 +20,7 @@ It does **not** claim that a standalone review/conflict/approval runtime already
 Current grounded structure is split across adjacent layers:
 
 - document/runtime write path in `/Users/seanhan/Documents/Playground/src/http-server.mjs`
+- minimum review/approval helper in `/Users/seanhan/Documents/Playground/src/company-brain-review.mjs`
 - document SDK/write adapters in `/Users/seanhan/Documents/Playground/src/lark-content.mjs`
 - lifecycle and mirror persistence in `/Users/seanhan/Documents/Playground/src/rag-repository.mjs`
 - company-brain read-side list/detail/search over `company_brain_docs`
@@ -27,11 +28,14 @@ Current grounded structure is split across adjacent layers:
 Current review/conflict/approval behavior is only partial:
 
 - `review_doc`
-  - only adjacent review concepts exist through preview/confirm/review style flows
+  - adjacent review concepts exist through preview/confirm/review style flows
+  - minimum persisted statuses now exist in `company_brain_review_state`
 - `conflict_check`
-  - only adjacent conflict signals and read-side evidence sources exist
+  - adjacent conflict signals and read-side evidence sources exist
+  - overlap candidates can now persist `conflict_detected`
 - `approval_transition`
-  - only the weaker boundary of `verified -> mirror ingest` exists
+  - verified -> mirror ingest still exists
+  - explicit `approved|rejected` persistence plus `company_brain_approved_knowledge` now exists as a minimal boundary
 
 ## Target Structure
 
@@ -146,6 +150,17 @@ Guardrail:
 - no full approval mesh
 - no independent runtime wrapper yet
 
+Status:
+
+- completed
+
+Landed scope:
+
+- added minimum helper-level review state persistence in `company_brain_review_state`
+- added minimum helper-level approved storage in `company_brain_approved_knowledge`
+- kept public mirror read-side routes unchanged
+- added approved-only internal query boundary so formal knowledge reads do not include mirror/learning-only rows
+
 ## What Must Not Move Yet
 
 These are too risky to change now:
@@ -172,7 +187,6 @@ These belong to later work, not this plan's early phases:
 - formal `review_doc` runtime
 - formal `conflict_check` runtime
 - formal `approval_transition` runtime
-- approval state persistence
 - approval-specific verifier behavior
 - approval UI / workflow / human approval routing
 
@@ -209,5 +223,6 @@ This plan is intentionally conservative:
   - document/runtime path
   - verified mirror ingest
   - company-brain read-side
+- helper-driven review/conflict/approval persistence is now grounded
 - review/conflict/approval is not yet an independent runtime
 - formal approval remains future work

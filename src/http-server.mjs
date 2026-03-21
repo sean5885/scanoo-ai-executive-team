@@ -131,6 +131,10 @@ import {
   resolveImprovementWorkflowProposal,
 } from "./executive-improvement-workflow.mjs";
 import {
+  buildAgentLearningSummary,
+  generateLearningLoopImprovementProposals,
+} from "./agent-learning-loop.mjs";
+import {
   ensureDocRewriteWorkflowTask,
   ensureCloudDocWorkflowTask,
   finalizeDocRewriteWorkflowTask,
@@ -2148,6 +2152,10 @@ function getAccountId(requestUrl, body) {
   return requestUrl.searchParams.get("account_id") || body.account_id || undefined;
 }
 
+function getSessionKey(requestUrl, body) {
+  return requestUrl.searchParams.get("session_key") || body.session_key || undefined;
+}
+
 async function handleAuthStatus(res, accountId, logger = noopHttpLogger) {
   const stored = await getHttpService("getStoredUserToken", getStoredUserToken)(accountId);
   if (!stored?.access_token) {
@@ -2901,6 +2909,56 @@ async function handleMonitoringMetrics(res) {
   jsonResponse(res, 200, {
     ok: true,
     metrics: getRequestMetrics(),
+  });
+}
+
+async function handleMonitoringLearningSummary(res, requestUrl, body, logger = noopHttpLogger) {
+  const summary = buildAgentLearningSummary({
+    lookbackHours: requestUrl.searchParams.get("lookback_hours") || body.lookback_hours,
+    requestLimit: requestUrl.searchParams.get("request_limit") || body.request_limit,
+    minSampleSize: requestUrl.searchParams.get("min_sample_size") || body.min_sample_size,
+    maxRoutingItems: requestUrl.searchParams.get("max_routing_items") || body.max_routing_items,
+    maxToolItems: requestUrl.searchParams.get("max_tool_items") || body.max_tool_items,
+  });
+  logger.info("monitoring_learning_summary_completed", {
+    sampled_requests: summary.sampled_requests,
+    routing_issue_count: summary.routing_issues.length,
+    high_success_tool_count: summary.high_success_tools.length,
+    low_success_tool_count: summary.low_success_tools.length,
+    draft_proposal_count: summary.draft_proposals.length,
+  });
+  jsonResponse(res, 200, {
+    ok: true,
+    summary,
+  });
+}
+
+async function handleLearningImprovementGeneration(res, requestUrl, body, logger = noopHttpLogger) {
+  const accountId = getAccountId(requestUrl, body);
+  const sessionKey = getSessionKey(requestUrl, body);
+  logger.info("learning_improvement_generation_started", {
+    account_id: accountId || null,
+    session_key: sessionKey || null,
+  });
+  const result = await generateLearningLoopImprovementProposals({
+    accountId,
+    sessionKey,
+    lookbackHours: requestUrl.searchParams.get("lookback_hours") || body.lookback_hours,
+    requestLimit: requestUrl.searchParams.get("request_limit") || body.request_limit,
+    minSampleSize: requestUrl.searchParams.get("min_sample_size") || body.min_sample_size,
+    maxRoutingItems: requestUrl.searchParams.get("max_routing_items") || body.max_routing_items,
+    maxToolItems: requestUrl.searchParams.get("max_tool_items") || body.max_tool_items,
+  });
+  logger.info("learning_improvement_generation_completed", {
+    account_id: accountId || null,
+    session_key: sessionKey || null,
+    proposal_count: result.proposals.length,
+  });
+  jsonResponse(res, 200, {
+    ok: true,
+    total: result.proposals.length,
+    summary: result.summary,
+    items: result.proposals,
   });
 }
 
@@ -5530,6 +5588,13 @@ export function startHttpServer({
         return;
       }
 
+      if (requestUrl.pathname === "/agent/improvements/learning/generate" && req.method === "POST") {
+        await runHttpRoute(requestLogger, "learning_improvement_generate", (routeLogger) =>
+          handleLearningImprovementGeneration(res, requestUrl, body, routeLogger)
+        );
+        return;
+      }
+
       if (requestUrl.pathname === "/agent/docs/create" && req.method === "POST") {
         await runHttpRoute(requestLogger, "agent_create_doc", (routeLogger) =>
           handleAgentCreateDoc(res, requestUrl, body, routeLogger)
@@ -5802,6 +5867,13 @@ export function startHttpServer({
       if (requestUrl.pathname === "/api/monitoring/metrics" && req.method === "GET") {
         await runHttpRoute(requestLogger, "monitoring_metrics", () =>
           handleMonitoringMetrics(res)
+        );
+        return;
+      }
+
+      if (requestUrl.pathname === "/api/monitoring/learning" && req.method === "GET") {
+        await runHttpRoute(requestLogger, "monitoring_learning", (routeLogger) =>
+          handleMonitoringLearningSummary(res, requestUrl, body, routeLogger)
         );
         return;
       }

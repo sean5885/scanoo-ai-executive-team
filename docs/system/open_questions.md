@@ -46,9 +46,9 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
    - Why it matters:
      - practical for local use, but still not equivalent to a managed secret store
    - Files:
-      - `/Users/seanhan/Documents/Playground/src/token-store.mjs`
-      - `/Users/seanhan/Documents/Playground/src/secret-crypto.mjs`
       - `/Users/seanhan/Documents/Playground/src/db.mjs`
+      - `/Users/seanhan/Documents/Playground/src/rag-repository.mjs`
+      - `/Users/seanhan/Documents/Playground/src/secret-crypto.mjs`
 
 ## Medium
 
