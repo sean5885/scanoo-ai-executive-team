@@ -138,6 +138,40 @@ function initializeDb(db) {
   CREATE INDEX IF NOT EXISTS idx_company_brain_learning_state_account_id
   ON company_brain_learning_state(account_id, learning_status, updated_at DESC);
 
+  CREATE TABLE IF NOT EXISTS company_brain_review_state (
+    account_id TEXT NOT NULL,
+    doc_id TEXT NOT NULL,
+    review_status TEXT NOT NULL,
+    source_stage TEXT,
+    proposed_action TEXT,
+    conflict_items_json TEXT NOT NULL DEFAULT '[]',
+    review_notes TEXT,
+    decided_by TEXT,
+    decided_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (account_id, doc_id),
+    FOREIGN KEY (account_id) REFERENCES lark_accounts(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_company_brain_review_state_account_id
+  ON company_brain_review_state(account_id, review_status, updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS company_brain_approved_knowledge (
+    account_id TEXT NOT NULL,
+    doc_id TEXT NOT NULL,
+    source_stage TEXT,
+    approved_by TEXT,
+    approved_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (account_id, doc_id),
+    FOREIGN KEY (account_id) REFERENCES lark_accounts(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_company_brain_approved_knowledge_account_id
+  ON company_brain_approved_knowledge(account_id, approved_at DESC, updated_at DESC);
+
   CREATE TABLE IF NOT EXISTS lark_chunks (
     id TEXT PRIMARY KEY,
     document_id TEXT NOT NULL,

@@ -37,9 +37,14 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - `/api/doc/lifecycle/summary` returns the current count of each tracked lifecycle status for one account
 - when an API-created doc reaches `status=verified`, a non-blocking mirror row is also upserted into `company_brain_docs` with `{ doc_id, title, source, created_at, creator }`; this is still only a minimal ingestion surface, not a full company-brain governance layer
 - planner/runtime can now additionally create a simplified learned sidecar row in `company_brain_learning_state`, but only through explicit bounded agent actions; verified mirror ingest alone does not auto-promote documents into learned state
+- review/approval persistence is now stored separately from both mirror and learning:
+  - `company_brain_review_state`
+  - `company_brain_approved_knowledge`
+- only documents with `review_status=approved` may be promoted into `company_brain_approved_knowledge`; mirror or learning state alone does not count as formal knowledge
 - the verified-ingest path now also runs a small internal write-intake policy helper:
   - no overlap signal -> direct mirror intake
-  - title overlap -> mark review/conflict required for any later stable promotion
+  - title overlap -> mark review/conflict required for any later stable promotion and persist `review_status=conflict_detected`
+  - update/promotion-like paths -> persist `review_status=pending_review`
   - formal knowledge admission remains a separate approval-gated step and is not executed by the current ingest path
 - `GET /api/company-brain/docs` can list that minimal mirror with `doc_id`, `title`, `source`, `created_at`, and `creator`
 - `GET /api/company-brain/docs/:doc_id` can fetch one mirrored row with that same minimal shape
@@ -78,12 +83,18 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 - no full semantic knowledge conflict detection pipeline found
 - company-brain write-intake now has a bounded overlap heuristic based on existing read-side title matches
+- overlap candidates now persist into `company_brain_review_state` as `conflict_detected`, so they cannot be promoted directly into formal knowledge
 
 ## Review Pipeline
 
 - organization preview/apply exists
 - comment rewrite preview/apply exists
-- company-brain write-intake can now mark review-required candidates internally, but no standalone document-ingest approval pipeline exists
+- company-brain write-intake can now persist minimum review states:
+  - `pending_review`
+  - `conflict_detected`
+  - `approved`
+  - `rejected`
+- no standalone document-ingest approval route or UI exists yet; review/approval remains helper-driven
 
 ## Write-Back
 
@@ -98,4 +109,4 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - no company-brain canonical layer
 - no source-of-truth approval governance for knowledge ingestion
 - no full Bitable/Sheet content extraction into retrieval index
-- no approval-governed learned-memory promotion path; current learning store is only a simplified sidecar
+- no standalone approval runtime, approval UI, or verifier-owned promotion flow; current approved layer is a minimal persistence boundary

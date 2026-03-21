@@ -109,6 +109,11 @@ export function resolveCompanyBrainWriteIntake({
   const reviewRequired = updateLikeAction || overlapDetected || promotionRequested;
   const conflictCheckRequired = overlapDetected || (updateLikeAction && promotionRequested);
   const directIntakeAllowed = !reviewRequired && normalizedTargetStage === "mirror";
+  const reviewStatus = !reviewRequired
+    ? null
+    : overlapDetected
+      ? "conflict_detected"
+      : "pending_review";
 
   const rationale = [];
   if (directIntakeAllowed) {
@@ -131,6 +136,7 @@ export function resolveCompanyBrainWriteIntake({
     action: normalizedAction,
     target_stage: normalizedTargetStage,
     intake_state: directIntakeAllowed ? "mirrored" : "pending_review",
+    review_status: reviewStatus,
     direct_intake_allowed: directIntakeAllowed,
     review_required: reviewRequired,
     conflict_check_required: conflictCheckRequired,

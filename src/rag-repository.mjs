@@ -415,6 +415,152 @@ export function upsertCompanyBrainLearningState({
   return getCompanyBrainLearningState(account_id, doc_id);
 }
 
+export function getCompanyBrainReviewState(accountId, docId) {
+  return db.prepare(`
+    SELECT
+      account_id,
+      doc_id,
+      review_status,
+      source_stage,
+      proposed_action,
+      conflict_items_json,
+      review_notes,
+      decided_by,
+      decided_at,
+      created_at,
+      updated_at
+    FROM company_brain_review_state
+    WHERE account_id = ?
+      AND doc_id = ?
+    LIMIT 1
+  `).get(accountId, docId) || null;
+}
+
+export function upsertCompanyBrainReviewState({
+  account_id,
+  doc_id,
+  review_status,
+  source_stage = null,
+  proposed_action = null,
+  conflict_items = [],
+  review_notes = "",
+  decided_by = null,
+  decided_at = null,
+}) {
+  const timestamp = nowIso();
+  db.prepare(`
+    INSERT INTO company_brain_review_state (
+      account_id,
+      doc_id,
+      review_status,
+      source_stage,
+      proposed_action,
+      conflict_items_json,
+      review_notes,
+      decided_by,
+      decided_at,
+      created_at,
+      updated_at
+    ) VALUES (
+      @account_id,
+      @doc_id,
+      @review_status,
+      @source_stage,
+      @proposed_action,
+      @conflict_items_json,
+      @review_notes,
+      @decided_by,
+      @decided_at,
+      @created_at,
+      @updated_at
+    )
+    ON CONFLICT(account_id, doc_id) DO UPDATE SET
+      review_status = excluded.review_status,
+      source_stage = excluded.source_stage,
+      proposed_action = excluded.proposed_action,
+      conflict_items_json = excluded.conflict_items_json,
+      review_notes = excluded.review_notes,
+      decided_by = excluded.decided_by,
+      decided_at = excluded.decided_at,
+      updated_at = excluded.updated_at
+  `).run({
+    account_id,
+    doc_id,
+    review_status,
+    source_stage: source_stage || null,
+    proposed_action: proposed_action || null,
+    conflict_items_json: JSON.stringify(Array.isArray(conflict_items) ? conflict_items : []),
+    review_notes: review_notes || "",
+    decided_by: decided_by || null,
+    decided_at: decided_at || null,
+    created_at: timestamp,
+    updated_at: timestamp,
+  });
+
+  return getCompanyBrainReviewState(account_id, doc_id);
+}
+
+export function getCompanyBrainApprovedKnowledge(accountId, docId) {
+  return db.prepare(`
+    SELECT
+      account_id,
+      doc_id,
+      source_stage,
+      approved_by,
+      approved_at,
+      created_at,
+      updated_at
+    FROM company_brain_approved_knowledge
+    WHERE account_id = ?
+      AND doc_id = ?
+    LIMIT 1
+  `).get(accountId, docId) || null;
+}
+
+export function upsertCompanyBrainApprovedKnowledge({
+  account_id,
+  doc_id,
+  source_stage = "mirror",
+  approved_by = null,
+  approved_at = null,
+}) {
+  const timestamp = nowIso();
+  db.prepare(`
+    INSERT INTO company_brain_approved_knowledge (
+      account_id,
+      doc_id,
+      source_stage,
+      approved_by,
+      approved_at,
+      created_at,
+      updated_at
+    ) VALUES (
+      @account_id,
+      @doc_id,
+      @source_stage,
+      @approved_by,
+      @approved_at,
+      @created_at,
+      @updated_at
+    )
+    ON CONFLICT(account_id, doc_id) DO UPDATE SET
+      source_stage = excluded.source_stage,
+      approved_by = excluded.approved_by,
+      approved_at = excluded.approved_at,
+      updated_at = excluded.updated_at
+  `).run({
+    account_id,
+    doc_id,
+    source_stage: source_stage || "mirror",
+    approved_by: approved_by || null,
+    approved_at: approved_at || timestamp,
+    created_at: timestamp,
+    updated_at: timestamp,
+  });
+
+  return getCompanyBrainApprovedKnowledge(account_id, doc_id);
+}
+
 // Keep read-side field selection and query execution centralized so the
 // list/detail/search routes stay aligned while Phase 1 only improves clarity.
 const companyBrainDocReadFields = `
@@ -444,6 +590,28 @@ const companyBrainDocQueryFields = `
   d.parent_path
 `;
 
+const companyBrainApprovedQueryFields = `
+  cb.doc_id,
+  cb.title,
+  cb.source,
+  cb.created_at,
+  cb.creator_json,
+  cb.updated_at,
+  cls.learning_status,
+  cls.structured_summary_json,
+  cls.key_concepts_json,
+  cls.tags_json,
+  cls.notes,
+  cls.learned_at,
+  cls.updated_at AS learning_updated_at,
+  d.raw_text,
+  d.url,
+  d.parent_path,
+  cak.source_stage AS approved_source_stage,
+  cak.approved_by,
+  cak.approved_at
+`;
+
 function runCompanyBrainReadQuery({ sql, params = [], mode = "all" }) {
   const statement = db.prepare(sql);
   if (mode === "get") {
@@ -467,6 +635,26 @@ function buildCompanyBrainQuerySelectSql(whereClause, suffix = "") {
     SELECT
       ${companyBrainDocQueryFields}
     FROM company_brain_docs cb
+    LEFT JOIN company_brain_learning_state cls
+      ON cls.account_id = cb.account_id
+      AND cls.doc_id = cb.doc_id
+    LEFT JOIN lark_documents d
+      ON d.account_id = cb.account_id
+      AND d.document_id = cb.doc_id
+      AND d.active = 1
+    WHERE ${whereClause}
+    ${suffix}
+  `;
+}
+
+function buildCompanyBrainApprovedQuerySelectSql(whereClause, suffix = "") {
+  return `
+    SELECT
+      ${companyBrainApprovedQueryFields}
+    FROM company_brain_approved_knowledge cak
+    INNER JOIN company_brain_docs cb
+      ON cb.account_id = cak.account_id
+      AND cb.doc_id = cak.doc_id
     LEFT JOIN company_brain_learning_state cls
       ON cls.account_id = cb.account_id
       AND cls.doc_id = cb.doc_id
@@ -532,6 +720,28 @@ export function listCompanyBrainDocQueryRecords(accountId, limit = null) {
 export function getCompanyBrainDocQueryRecord(accountId, docId) {
   return runCompanyBrainReadQuery({
     sql: buildCompanyBrainQuerySelectSql("cb.account_id = ? AND cb.doc_id = ?", "LIMIT 1"),
+    params: [accountId, docId],
+    mode: "get",
+  });
+}
+
+export function listApprovedCompanyBrainDocQueryRecords(accountId, limit = null) {
+  const hasLimit = limit !== null && limit !== undefined && Number.isFinite(Number(limit));
+  const suffix = hasLimit
+    ? "ORDER BY cak.approved_at DESC, cak.updated_at DESC LIMIT ?"
+    : "ORDER BY cak.approved_at DESC, cak.updated_at DESC";
+  const params = hasLimit
+    ? [accountId, Number(limit)]
+    : [accountId];
+  return runCompanyBrainReadQuery({
+    sql: buildCompanyBrainApprovedQuerySelectSql("cak.account_id = ?", suffix),
+    params,
+  });
+}
+
+export function getApprovedCompanyBrainDocQueryRecord(accountId, docId) {
+  return runCompanyBrainReadQuery({
+    sql: buildCompanyBrainApprovedQuerySelectSql("cak.account_id = ? AND cak.doc_id = ?", "LIMIT 1"),
     params: [accountId, docId],
     mode: "get",
   });
