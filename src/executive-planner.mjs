@@ -746,6 +746,9 @@ function buildPlannerMultiStepOutput({
   error = null,
   stopped = false,
   stoppedAtStep = null,
+  currentStepIndex = null,
+  lastError = null,
+  retryCount = 0,
 } = {}) {
   return {
     ok,
@@ -755,6 +758,17 @@ function buildPlannerMultiStepOutput({
     error: cleanText(error) || null,
     stopped: stopped === true,
     stopped_at_step: Number.isInteger(stoppedAtStep) ? stoppedAtStep : null,
+    current_step_index: Number.isInteger(currentStepIndex) ? currentStepIndex : currentStepIndex === 0 ? 0 : null,
+    last_error: lastError && typeof lastError === "object" && !Array.isArray(lastError)
+      ? {
+          error: cleanText(lastError.error || "") || null,
+          trace_id: lastError.trace_id ?? null,
+          data: lastError.data && typeof lastError.data === "object" && !Array.isArray(lastError.data)
+            ? lastError.data
+            : {},
+        }
+      : null,
+    retry_count: Number.isFinite(retryCount) ? Number(retryCount) : 0,
   };
 }
 
@@ -766,6 +780,10 @@ function buildPlannerPresetOutput({
   traceId = null,
   stopped = false,
   stoppedAtStep = null,
+  currentStepIndex = null,
+  lastError = null,
+  retryCount = 0,
+  error = null,
 } = {}) {
   return {
     ok,
@@ -775,6 +793,18 @@ function buildPlannerPresetOutput({
     trace_id: traceId,
     stopped,
     stopped_at_step: stoppedAtStep,
+    current_step_index: Number.isInteger(currentStepIndex) ? currentStepIndex : currentStepIndex === 0 ? 0 : null,
+    last_error: lastError && typeof lastError === "object" && !Array.isArray(lastError)
+      ? {
+          error: cleanText(lastError.error || "") || null,
+          trace_id: lastError.trace_id ?? null,
+          data: lastError.data && typeof lastError.data === "object" && !Array.isArray(lastError.data)
+            ? lastError.data
+            : {},
+        }
+      : null,
+    retry_count: Number.isFinite(retryCount) ? Number(retryCount) : 0,
+    error: cleanText(error) || null,
   };
 }
 
@@ -884,6 +914,69 @@ function withDispatchMeta(result = null, { retryCount = 0, healed = false } = {}
 function shouldRetryPlannerError(result = null) {
   const errorCode = cleanText(result?.error || "");
   return getPlannerRetryBudget(errorCode) > 0;
+}
+
+function normalizePlannerStepIndex(value, stepCount = 0, fallback = 0) {
+  if (!Number.isInteger(value)) {
+    return Math.min(Math.max(Number.isInteger(fallback) ? fallback : 0, 0), Math.max(stepCount, 0));
+  }
+  return Math.min(Math.max(value, 0), Math.max(stepCount, 0));
+}
+
+function normalizePlannerRetryableErrorTypes(errorTypes = [], fallback = ["tool_error", "runtime_exception"]) {
+  const source = Array.isArray(errorTypes) && errorTypes.length > 0 ? errorTypes : fallback;
+  return new Set(
+    source
+      .map((errorType) => cleanText(errorType))
+      .filter(Boolean),
+  );
+}
+
+function buildPlannerLastErrorRecord(result = null) {
+  if (!result || typeof result !== "object" || result.ok !== false) {
+    return null;
+  }
+  return {
+    error: cleanText(result.error || "") || "business_error",
+    trace_id: result.trace_id ?? null,
+    data: result.data && typeof result.data === "object" && !Array.isArray(result.data)
+      ? result.data
+      : {},
+  };
+}
+
+function getLatestPlannerTraceId(results = []) {
+  if (!Array.isArray(results)) {
+    return null;
+  }
+  for (let index = results.length - 1; index >= 0; index -= 1) {
+    const traceId = results[index]?.trace_id ?? null;
+    if (traceId != null) {
+      return traceId;
+    }
+  }
+  return null;
+}
+
+function countCompletedPlannerSteps(steps = [], previousResults = []) {
+  if (!Array.isArray(steps) || !Array.isArray(previousResults)) {
+    return 0;
+  }
+
+  let completedCount = 0;
+  for (let index = 0; index < steps.length; index += 1) {
+    const step = steps[index];
+    const result = previousResults[index];
+    if (!result || typeof result !== "object" || result.ok !== true) {
+      break;
+    }
+    const resultAction = cleanText(result.action || "");
+    if (resultAction && resultAction !== step.action) {
+      break;
+    }
+    completedCount += 1;
+  }
+  return completedCount;
 }
 
 function defaultHealedValue(schema = null) {
@@ -1467,7 +1560,7 @@ const plannerToolRegistry = new Map([
     action: "search_company_brain_docs",
     method: "GET",
     pathname: "/agent/company-brain/search",
-    queryKeys: ["q", "limit"],
+    queryKeys: ["q", "limit", "top_k"],
   }],
   ["get_company_brain_doc_detail", {
     action: "get_company_brain_doc_detail",
@@ -1539,7 +1632,21 @@ const plannerPresetRegistry = new Map([
   }],
   ["create_search_detail_list_doc", {
     preset: "create_search_detail_list_doc",
-    buildSteps({ title = "", folder_token = "", q = "", doc_id = "", limit = 10 } = {}) {
+    buildSteps(input = {}) {
+      const {
+        title = "",
+        folder_token = "",
+        q = "",
+        doc_id = "",
+        top_k = null,
+      } = input && typeof input === "object" ? input : {};
+      const hasLimit = Boolean(input && typeof input === "object" && Object.prototype.hasOwnProperty.call(input, "limit"));
+      const listLimit = hasLimit ? input.limit : 10;
+      const searchPayload = top_k !== null && top_k !== undefined
+        ? { q, top_k }
+        : hasLimit
+          ? { q, limit: input.limit }
+          : { q, top_k: 5 };
       return [
         {
           action: "create_doc",
@@ -1550,10 +1657,7 @@ const plannerPresetRegistry = new Map([
         },
         {
           action: "search_company_brain_docs",
-          payload: {
-            q,
-            limit,
-          },
+          payload: searchPayload,
         },
         {
           action: "get_company_brain_doc_detail",
@@ -1564,7 +1668,7 @@ const plannerPresetRegistry = new Map([
         {
           action: "list_company_brain_docs",
           payload: {
-            limit,
+            limit: listLimit,
           },
         },
       ];
@@ -1572,14 +1676,22 @@ const plannerPresetRegistry = new Map([
   }],
   ["search_and_detail_doc", {
     preset: "search_and_detail_doc",
-    buildSteps({ q = "", doc_id = "", limit = 10 } = {}) {
+    buildSteps(input = {}) {
+      const {
+        q = "",
+        doc_id = "",
+        top_k = null,
+      } = input && typeof input === "object" ? input : {};
+      const hasLimit = Boolean(input && typeof input === "object" && Object.prototype.hasOwnProperty.call(input, "limit"));
+      const searchPayload = top_k !== null && top_k !== undefined
+        ? { q, top_k }
+        : hasLimit
+          ? { q, limit: input.limit }
+          : { q, top_k: 5 };
       return [
         {
           action: "search_company_brain_docs",
-          payload: {
-            q,
-            limit,
-          },
+          payload: searchPayload,
         },
         {
           action: "get_company_brain_doc_detail",
@@ -2245,6 +2357,10 @@ export async function runPlannerMultiStep({
   logger = console,
   dispatcher = dispatchPlannerTool,
   stopOnError = true,
+  resume_from_step = null,
+  previous_results = [],
+  max_retries = 0,
+  retryable_error_types = ["tool_error", "runtime_exception"],
 } = {}) {
   const normalizedSteps = Array.isArray(steps)
     ? steps
@@ -2261,27 +2377,88 @@ export async function runPlannerMultiStep({
         .filter((step) => step.action)
     : [];
 
-  const results = [];
-  let traceId = null;
+  const completedStepCount = countCompletedPlannerSteps(normalizedSteps, previous_results);
+  const hasPreviousResults = Array.isArray(previous_results) && previous_results.length > 0;
+  const startStepIndex = hasPreviousResults
+    ? completedStepCount
+    : normalizePlannerStepIndex(resume_from_step, normalizedSteps.length, 0);
+  const results = hasPreviousResults
+    ? previous_results.slice(0, completedStepCount)
+    : [];
+  const retryableErrorTypes = normalizePlannerRetryableErrorTypes(retryable_error_types);
+  const maxRetries = Math.max(0, Number.isFinite(Number(max_retries)) ? Number(max_retries) : 0);
+  let traceId = getLatestPlannerTraceId(results);
   let error = null;
   let stopped = false;
   let stoppedAtStep = null;
+  let currentStepIndex = normalizedSteps.length > 0 ? startStepIndex : null;
+  let lastError = null;
+  let retryCount = 0;
 
-  for (let index = 0; index < normalizedSteps.length; index += 1) {
+  for (let index = startStepIndex; index < normalizedSteps.length; index += 1) {
     const step = normalizedSteps[index];
-    const result = await dispatcher({
-      action: step.action,
-      payload: step.payload,
-      logger,
-    });
-    results.push(result);
-    traceId = result?.trace_id || traceId;
-    if (stopOnError !== false && result?.ok === false) {
+    currentStepIndex = index;
+    let stepRetryCount = 0;
+
+    while (true) {
+      const result = await dispatcher({
+        action: step.action,
+        payload: step.payload,
+        logger,
+      });
+      results.push(result);
+      traceId = result?.trace_id || traceId;
+
+      if (result?.ok !== false) {
+        break;
+      }
+
+      lastError = buildPlannerLastErrorRecord(result);
+      const retryableError = retryableErrorTypes.has(cleanText(result?.error || ""));
+      if (retryableError && stepRetryCount < maxRetries) {
+        stepRetryCount += 1;
+        retryCount += 1;
+        results.pop();
+        emitPlannerRuntimeTrace(logger, buildPlannerTraceEvent({
+          eventType: "multi_step_retry_attempt",
+          action: step.action,
+          error: lastError?.error || result?.error || "business_error",
+          retryCount,
+          traceId: traceId || lastError?.trace_id || null,
+          extra: {
+            step_index: index,
+            step_retry_count: stepRetryCount,
+          },
+        }));
+        logPlannerTrace(logger, "info", buildPlannerTraceEvent({
+          eventType: "planner_multi_step_retry",
+          action: step.action,
+          error: lastError?.error || result?.error || "business_error",
+          retryCount,
+          traceId: traceId || lastError?.trace_id || null,
+          extra: {
+            step_index: index,
+            step_retry_count: stepRetryCount,
+          },
+        }));
+        continue;
+      }
+
       error = cleanText(result?.error || "") || "business_error";
-      stopped = true;
-      stoppedAtStep = index;
+      if (stopOnError !== false) {
+        stopped = true;
+        stoppedAtStep = index;
+      }
       break;
     }
+
+    if (stopped) {
+      break;
+    }
+  }
+
+  if (normalizedSteps.length > 0 && stopped !== true) {
+    currentStepIndex = normalizedSteps.length;
   }
 
   logger?.info?.("planner_multi_step", buildPlannerTraceEvent({
@@ -2289,21 +2466,29 @@ export async function runPlannerMultiStep({
     traceId,
     extra: {
       step_count: normalizedSteps.length,
+      resume_from_step: Number.isInteger(resume_from_step) ? resume_from_step : null,
+      resumed_from_step: startStepIndex,
       actions: normalizedSteps.map((step) => step.action),
       ok_count: results.filter((item) => item?.ok).length,
+      retry_count: retryCount,
       stopped,
       stopped_at_step: stoppedAtStep,
     },
   }));
 
   return buildPlannerMultiStepOutput({
-    ok: results.every((item) => item?.ok === true) && stopped !== true,
-    steps: normalizedSteps.slice(0, results.length).map((step) => ({ action: step.action })),
+    ok: results.length === normalizedSteps.length
+      && results.every((item) => item?.ok === true)
+      && stopped !== true,
+    steps: normalizedSteps.map((step) => ({ action: step.action })),
     results,
     traceId,
     error,
     stopped,
     stoppedAtStep,
+    currentStepIndex,
+    lastError,
+    retryCount,
   });
 }
 
@@ -2317,6 +2502,10 @@ export async function runPlannerPreset({
   logger = console,
   multiStepRunner = runPlannerMultiStep,
   stop_on_error = true,
+  resume_from_step = null,
+  previous_results = [],
+  max_retries = 0,
+  retryable_error_types = ["tool_error", "runtime_exception"],
 } = {}) {
   const runtimeInput = buildPlannerPresetRuntimeInput({
     preset,
@@ -2366,17 +2555,29 @@ export async function runPlannerPreset({
 
     let execution;
     if (runtimeInput.stop_on_error) {
-      const results = [];
-      let traceId = null;
+      const completedStepCount = countCompletedPlannerSteps(steps, previous_results);
+      const hasPreviousResults = Array.isArray(previous_results) && previous_results.length > 0;
+      const executionStartIndex = hasPreviousResults
+        ? completedStepCount
+        : normalizePlannerStepIndex(resume_from_step, steps.length, 0);
+      const results = hasPreviousResults
+        ? previous_results.slice(0, completedStepCount)
+        : [];
+      let traceId = getLatestPlannerTraceId(results);
       let stopped = false;
       let stoppedAtStep = null;
       let completedEarly = false;
       let effectiveDocId = cleanText(String(runtimeInput.input?.doc_id || ""));
-      for (let index = 0; index < steps.length; index += 1) {
+      let currentStepIndex = steps.length > 0 ? executionStartIndex : null;
+      let retryCount = 0;
+      let lastError = null;
+      let error = null;
+      for (let index = executionStartIndex; index < steps.length; index += 1) {
         const step = {
           ...steps[index],
           payload: { ...(steps[index]?.payload || {}) },
         };
+        currentStepIndex = index;
 
         if (
           ["search_and_detail_doc", "create_search_detail_list_doc"].includes(selectedPreset.preset)
@@ -2401,17 +2602,27 @@ export async function runPlannerPreset({
         const result = await multiStepRunner({
           steps: [step],
           logger,
+          max_retries,
+          retryable_error_types,
         });
         const singleResult = result?.results?.[0] ?? null;
         if (singleResult) {
           results.push(singleResult);
-          traceId = singleResult.trace_id || traceId;
+          traceId = singleResult.trace_id || result?.trace_id || traceId;
+        }
+        retryCount += Number(result?.retry_count || 0);
+        if (result?.last_error) {
+          lastError = result.last_error;
         }
         if (singleResult?.ok === false) {
           stopped = true;
           stoppedAtStep = index;
+          error = cleanText(result?.error || singleResult?.error || "") || "business_error";
           break;
         }
+      }
+      if (!stopped && !completedEarly && steps.length > 0) {
+        currentStepIndex = steps.length;
       }
       execution = {
         steps: steps.slice(0, results.length).map((step) => ({ action: step.action })),
@@ -2420,12 +2631,20 @@ export async function runPlannerPreset({
         stopped,
         stopped_at_step: stoppedAtStep,
         completed_early: completedEarly,
+        current_step_index: currentStepIndex,
+        last_error: lastError,
+        retry_count: retryCount,
+        error,
       };
     } else {
       const multiStepExecution = await multiStepRunner({
         steps,
         logger,
         stopOnError: false,
+        resume_from_step,
+        previous_results,
+        max_retries,
+        retryable_error_types,
       });
       execution = {
         ...multiStepExecution,
@@ -2446,6 +2665,10 @@ export async function runPlannerPreset({
       traceId: execution.trace_id,
       stopped: execution.stopped,
       stoppedAtStep: execution.stopped_at_step,
+      currentStepIndex: execution.current_step_index,
+      lastError: execution.last_error,
+      retryCount: execution.retry_count,
+      error: execution.error,
     });
 
     logger?.info?.("planner_preset", buildPlannerTraceEvent({
@@ -2457,6 +2680,8 @@ export async function runPlannerPreset({
       extra: {
         step_count: finalResult.steps.length,
         stopped_at_step: finalResult.stopped_at_step,
+        current_step_index: finalResult.current_step_index,
+        retry_count: finalResult.retry_count,
       },
     }));
     maybeInvokePlannerHook(hooks, "onPresetResult", {
@@ -3874,8 +4099,26 @@ export async function executePlannedUserInput({
   toolFlowRunner = runPlannerToolFlow,
   multiStepRunner = runPlannerMultiStep,
   dispatcher = dispatchPlannerTool,
+  plannedDecision = null,
+  resume_from_step = null,
+  previous_results = [],
+  max_retries = 0,
+  retryable_error_types = ["tool_error", "runtime_exception"],
 } = {}) {
-  const decision = await planUserInputAction({ text, requester });
+  const decision = plannedDecision
+    ? (() => {
+        const validatedDecision = validatePlannerUserInputDecision(plannedDecision);
+        if (validatedDecision?.ok !== true) {
+          return validatedDecision;
+        }
+        return Array.isArray(validatedDecision.steps)
+          ? { steps: validatedDecision.steps }
+          : {
+              action: validatedDecision.action,
+              params: validatedDecision.params,
+            };
+      })()
+    : await planUserInputAction({ text, requester });
   if (decision?.error) {
     return {
       ok: false,
@@ -3889,6 +4132,10 @@ export async function executePlannedUserInput({
     const runtimeResult = await multiStepRunner({
       steps: decision.steps,
       logger,
+      resume_from_step,
+      previous_results,
+      max_retries,
+      retryable_error_types,
       async dispatcher({ action, payload }) {
         return dispatcher({
           action,

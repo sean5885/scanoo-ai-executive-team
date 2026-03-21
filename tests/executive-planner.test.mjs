@@ -4090,6 +4090,198 @@ test("runPlannerMultiStep ignores invalid steps and keeps null trace when nothin
   assert.equal(dispatcherCalled, false);
 });
 
+test("runPlannerMultiStep resumes from stopped step without rerunning successful steps", async () => {
+  const firstRunCalls = [];
+  const firstRun = await runPlannerMultiStep({
+    steps: [
+      { action: "create_doc", payload: { title: "demo" } },
+      { action: "search_company_brain_docs", payload: { q: "demo" } },
+      { action: "list_company_brain_docs", payload: { limit: 5 } },
+    ],
+    logger: console,
+    async dispatcher({ action, payload }) {
+      firstRunCalls.push({ action, payload });
+      if (action === "search_company_brain_docs") {
+        return {
+          ok: false,
+          action,
+          error: "tool_error",
+          data: {
+            stopped: true,
+            stop_reason: "tool_error",
+          },
+          trace_id: "trace_search_fail",
+        };
+      }
+      return {
+        ok: true,
+        action,
+        data: { echoed: payload },
+        trace_id: action === "create_doc" ? "trace_create" : "trace_list",
+      };
+    },
+  });
+
+  assert.deepEqual(firstRunCalls, [
+    { action: "create_doc", payload: { title: "demo" } },
+    { action: "search_company_brain_docs", payload: { q: "demo" } },
+  ]);
+  assert.equal(firstRun.ok, false);
+  assert.equal(firstRun.error, "tool_error");
+  assert.equal(firstRun.stopped, true);
+  assert.equal(firstRun.stopped_at_step, 1);
+  assert.equal(firstRun.current_step_index, 1);
+
+  const resumeCalls = [];
+  const resumedRun = await runPlannerMultiStep({
+    steps: [
+      { action: "create_doc", payload: { title: "demo" } },
+      { action: "search_company_brain_docs", payload: { q: "demo" } },
+      { action: "list_company_brain_docs", payload: { limit: 5 } },
+    ],
+    logger: console,
+    resume_from_step: firstRun.current_step_index,
+    previous_results: firstRun.results,
+    async dispatcher({ action, payload }) {
+      resumeCalls.push({ action, payload });
+      return {
+        ok: true,
+        action,
+        data: { echoed: payload },
+        trace_id: action === "search_company_brain_docs" ? "trace_search_resume" : "trace_list_resume",
+      };
+    },
+  });
+
+  assert.deepEqual(resumeCalls, [
+    { action: "search_company_brain_docs", payload: { q: "demo" } },
+    { action: "list_company_brain_docs", payload: { limit: 5 } },
+  ]);
+  assert.equal(resumedRun.ok, true);
+  assert.equal(resumedRun.stopped, false);
+  assert.equal(resumedRun.error, null);
+  assert.equal(resumedRun.current_step_index, 3);
+  assert.equal(resumedRun.results.length, 3);
+  assert.deepEqual(resumedRun.results.map((item) => item.action), [
+    "create_doc",
+    "search_company_brain_docs",
+    "list_company_brain_docs",
+  ]);
+});
+
+test("runPlannerMultiStep retries retryable step failure and can succeed", async () => {
+  const calls = [];
+  let searchAttempts = 0;
+  const result = await runPlannerMultiStep({
+    steps: [
+      { action: "create_doc", payload: { title: "demo" } },
+      { action: "search_company_brain_docs", payload: { q: "demo" } },
+    ],
+    logger: console,
+    max_retries: 2,
+    retryable_error_types: ["tool_error"],
+    async dispatcher({ action, payload }) {
+      calls.push({ action, payload });
+      if (action === "search_company_brain_docs") {
+        searchAttempts += 1;
+        if (searchAttempts === 1) {
+          return {
+            ok: false,
+            action,
+            error: "tool_error",
+            data: {
+              stopped: true,
+              stop_reason: "tool_error",
+            },
+            trace_id: "trace_retry_fail",
+          };
+        }
+      }
+      return {
+        ok: true,
+        action,
+        data: { echoed: payload },
+        trace_id: action === "create_doc" ? "trace_create" : "trace_retry_success",
+      };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.retry_count, 1);
+  assert.equal(result.last_error?.error, "tool_error");
+  assert.deepEqual(calls, [
+    { action: "create_doc", payload: { title: "demo" } },
+    { action: "search_company_brain_docs", payload: { q: "demo" } },
+    { action: "search_company_brain_docs", payload: { q: "demo" } },
+  ]);
+});
+
+test("runPlannerMultiStep stops after retry budget is exhausted", async () => {
+  let attempts = 0;
+  const result = await runPlannerMultiStep({
+    steps: [
+      { action: "search_company_brain_docs", payload: { q: "demo" } },
+    ],
+    logger: console,
+    max_retries: 2,
+    retryable_error_types: ["tool_error"],
+    async dispatcher({ action, payload }) {
+      attempts += 1;
+      return {
+        ok: false,
+        action,
+        error: "tool_error",
+        data: {
+          echoed: payload,
+          stopped: true,
+          stop_reason: "tool_error",
+        },
+        trace_id: `trace_retry_fail_${attempts}`,
+      };
+    },
+  });
+
+  assert.equal(attempts, 3);
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "tool_error");
+  assert.equal(result.stopped, true);
+  assert.equal(result.stopped_at_step, 0);
+  assert.equal(result.retry_count, 2);
+  assert.equal(result.current_step_index, 0);
+});
+
+test("runPlannerMultiStep does not retry non-retryable errors", async () => {
+  let attempts = 0;
+  const result = await runPlannerMultiStep({
+    steps: [
+      { action: "create_doc", payload: { title: "demo" } },
+    ],
+    logger: console,
+    max_retries: 3,
+    retryable_error_types: ["tool_error"],
+    async dispatcher({ action, payload }) {
+      attempts += 1;
+      return {
+        ok: false,
+        action,
+        error: "business_error",
+        data: {
+          echoed: payload,
+          stopped: true,
+          stop_reason: "business_error",
+        },
+        trace_id: "trace_non_retryable",
+      };
+    },
+  });
+
+  assert.equal(attempts, 1);
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "business_error");
+  assert.equal(result.retry_count, 0);
+  assert.equal(result.stopped, true);
+});
+
 test("executePlannedUserInput runs multi-step decisions through sequential tool dispatch", async () => {
   const calls = [];
   const result = await executePlannedUserInput({

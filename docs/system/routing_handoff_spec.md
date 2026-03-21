@@ -186,6 +186,7 @@ It is intentionally small:
 - failure handling:
   - fail-soft only
   - preserve existing `stopped` / `stopped_at_step` if already present
+  - preserve existing multi-step resume state (`current_step_index`, `last_error`, `retry_count`) if already present
 - boundary:
   - stop is terminal for the current bounded planner/action chain
   - stop is not equal to workflow completion

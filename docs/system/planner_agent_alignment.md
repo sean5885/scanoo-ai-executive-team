@@ -300,7 +300,10 @@ Current `runPlannerMultiStep(...)` output:
   "trace_id": "string|null",
   "error": "string|null",
   "stopped": "boolean",
-  "stopped_at_step": "number|null"
+  "stopped_at_step": "number|null",
+  "current_step_index": "number|null",
+  "last_error": "object|null",
+  "retry_count": "number"
 }
 ```
 
@@ -310,6 +313,17 @@ Current multi-step runtime behavior:
 - each step goes through `dispatchPlannerTool(...)`
 - default behavior is stop-on-first-error
 - stopped runs return the failing step index and normalized error instead of continuing silently
+- multi-step runtime now records bounded execution state for resume/retry:
+  - `current_step_index` points to the current stop point on failure and to `steps.length` after full completion
+  - `last_error` captures the latest failed step attempt as `{ error, trace_id, data }`
+  - `retry_count` counts multi-step step-level retries performed by `runPlannerMultiStep(...)`
+- multi-step runtime now accepts:
+  - `resume_from_step`
+  - `previous_results`
+  - `max_retries`
+  - `retryable_error_types`
+- when `previous_results` carries a contiguous successful prefix, runtime resumes from the first unresolved step and does not rerun already successful steps
+- planner resume is execution-only; the runtime can continue an existing bounded plan without recomputing the whole planner decision
 
 Current `runPlannerPreset(...)` output:
 
@@ -321,7 +335,11 @@ Current `runPlannerPreset(...)` output:
   "results": "array",
   "trace_id": "string|null",
   "stopped": "boolean",
-  "stopped_at_step": "number|null"
+  "stopped_at_step": "number|null",
+  "current_step_index": "number|null",
+  "last_error": "object|null",
+  "retry_count": "number",
+  "error": "string|null"
 }
 ```
 
@@ -430,6 +448,11 @@ Already implemented in `executive-planner.mjs`:
 - one-time retry for `tool_error` / `runtime_exception`
 - one-time self-heal for input-side `contract_violation`
 - `data.healed=true` on healed success
+- multi-step step-level retry / resume state:
+  - configurable `max_retries`
+  - configurable `retryable_error_types`
+  - bounded `resume_from_step` continuation
+  - reuse of `previous_results` successful prefix so completed steps are not rerun
 - minimal ambiguity handling for company-brain search/detail flows:
   - zero-hit `search_and_detail_doc` returns a controlled not-found-style formatted result
   - multi-hit `search_and_detail_doc` returns bounded candidates instead of auto-opening a document
@@ -438,8 +461,9 @@ Already implemented in `executive-planner.mjs`:
 Boundary:
 
 - self-heal is minimal and shallow
-- retry is action-dispatch only
-- preset-level retry policy does not exist as an independent runtime layer
+- action-dispatch retry still exists independently inside `dispatchPlannerTool(...)`
+- multi-step retry is step-level and bounded to the current ordered plan
+- preset resume/retry is still implemented inside `runPlannerPreset(...)`, not as a separate workflow engine
 
 ## What Is Already Landed vs Spec-Only
 
