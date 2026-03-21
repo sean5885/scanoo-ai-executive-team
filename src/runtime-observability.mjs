@@ -6,6 +6,63 @@ import { recordTraceEvent } from "./monitoring-store.mjs";
 const DEFAULT_RUNTIME_ALERT_RATE_LIMIT_MS = 60_000;
 const runtimeAlertState = new Map();
 
+function inferLogStatus({ level = "info", event = "", fields = {} } = {}) {
+  const explicitStatus = cleanText(fields?.status);
+  if (explicitStatus) {
+    return explicitStatus;
+  }
+  if (typeof fields?.ok === "boolean") {
+    return fields.ok ? "success" : "error";
+  }
+
+  const normalizedEvent = cleanText(event) || "";
+  if (normalizedEvent.endsWith("_started")) {
+    return "started";
+  }
+  if (
+    normalizedEvent.endsWith("_completed")
+    || normalizedEvent.endsWith("_succeeded")
+    || normalizedEvent.endsWith("_finished")
+    || normalizedEvent.endsWith("_ready")
+  ) {
+    return "success";
+  }
+  if (normalizedEvent.endsWith("_skipped")) {
+    return "skipped";
+  }
+  if (normalizedEvent.endsWith("_failed")) {
+    return level === "warn" ? "warning" : "error";
+  }
+  if (level === "error") {
+    return "error";
+  }
+  if (level === "warn") {
+    return "warning";
+  }
+  return "info";
+}
+
+function inferLogAction({ event = "", baseFields = {}, fields = {} } = {}) {
+  return (
+    cleanText(fields?.action)
+    || cleanText(fields?.route)
+    || cleanText(fields?.stage)
+    || cleanText(baseFields?.action)
+    || cleanText(event)
+    || null
+  );
+}
+
+function writeStructuredLog({ logger = console, level = "info", label = "lobster_runtime", payload = {} } = {}) {
+  const fallback = logger?.log ? logger.log.bind(logger) : console.log.bind(console);
+  const sink = typeof logger?.[level] === "function" ? logger[level].bind(logger) : fallback;
+  if (logger === console) {
+    sink(JSON.stringify(payload));
+    return;
+  }
+  sink(label, payload);
+}
+
 function compactError(error) {
   if (!error) {
     return null;
@@ -101,8 +158,14 @@ export function emitRateLimitedAlert({
   const fallback = consoleLike?.log ? consoleLike.log.bind(consoleLike) : console.error.bind(console);
   const sink = typeof consoleLike?.error === "function" ? consoleLike.error.bind(consoleLike) : fallback;
 
-  sink("[lobster_alert]", {
+  const payload = {
     ts: new Date(now).toISOString(),
+    timestamp: new Date(now).toISOString(),
+    event: "runtime_alert",
+    event_type: "runtime_alert",
+    trace_id: cleanText(details?.trace_id) || null,
+    action: normalizedCode,
+    status: "alert",
     code: normalizedCode,
     scope: normalizedScope,
     message: normalizedMessage,
@@ -110,7 +173,12 @@ export function emitRateLimitedAlert({
     dedupe_key: normalizedDedupeKey,
     suppressed_duplicates: suppressedCount,
     ...(details && typeof details === "object" && !Array.isArray(details) ? details : {}),
-  });
+  };
+  if (consoleLike === console) {
+    sink(JSON.stringify(payload));
+  } else {
+    sink("[lobster_alert]", payload);
+  }
 
   return {
     emitted: true,
@@ -145,6 +213,11 @@ export function buildToolExecutionLog({
   extra = {},
 } = {}) {
   return {
+    ts: new Date().toISOString(),
+    timestamp: new Date().toISOString(),
+    event: "tool_execution",
+    event_type: "tool_execution",
+    status: success === true ? "success" : "error",
     request_id: cleanText(requestId) || createRequestId("req"),
     action: cleanText(action) || null,
     params: toToolLogObject(params, "params"),
@@ -180,9 +253,12 @@ export function emitToolExecutionLog({
     extra,
   });
   const level = entry.result.success ? "info" : "error";
-  const fallback = logger?.log ? logger.log.bind(logger) : console.log.bind(console);
-  const sink = typeof logger?.[level] === "function" ? logger[level].bind(logger) : fallback;
-  sink("lobster_tool_execution", entry);
+  writeStructuredLog({
+    logger,
+    level,
+    label: "lobster_tool_execution",
+    payload: entry,
+  });
   return entry;
 }
 
@@ -191,18 +267,25 @@ export function createRuntimeLogger({
   component = "runtime",
   baseFields = {},
 } = {}) {
-  const fallback = logger?.log ? logger.log.bind(logger) : console.log.bind(console);
-
   function emit(level, event, fields = {}) {
+    const timestamp = new Date().toISOString();
     const payload = {
-      ts: new Date().toISOString(),
+      ts: timestamp,
+      timestamp,
       component,
+      event_type: event,
       event,
+      action: inferLogAction({ event, baseFields, fields }),
+      status: inferLogStatus({ level, event, fields }),
       ...baseFields,
       ...fields,
     };
-    const sink = typeof logger?.[level] === "function" ? logger[level].bind(logger) : fallback;
-    sink("lobster_runtime", payload);
+    writeStructuredLog({
+      logger,
+      level,
+      label: "lobster_runtime",
+      payload,
+    });
     try {
       recordTraceEvent({
         traceId: payload.trace_id,

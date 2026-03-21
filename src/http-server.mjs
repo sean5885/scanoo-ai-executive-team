@@ -148,6 +148,7 @@ import { normalizeText, nowIso } from "./text-utils.mjs";
 import { createRequestId, createRuntimeLogger, createTraceId, emitRateLimitedAlert } from "./runtime-observability.mjs";
 import { getDbPath } from "./db.mjs";
 import {
+  getMonitoringDashboard,
   getLatestError,
   getRequestMetrics,
   listRecentErrors,
@@ -231,6 +232,283 @@ function htmlResponse(res, statusCode, html) {
     "Content-Type": "text/html; charset=utf-8",
   });
   res.end(html);
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("\"", "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function formatMonitoringRate(percent, count, total) {
+  return `${Number(percent || 0).toFixed(2)}% (${Number(count || 0)}/${Number(total || 0)})`;
+}
+
+function formatMonitoringOutcome(item = {}) {
+  return item.error_code || item.status_code || "unknown";
+}
+
+function renderMonitoringTableRows(items = []) {
+  if (!items.length) {
+    return `
+      <tr>
+        <td colspan="6" class="monitoring-empty">No entries yet.</td>
+      </tr>
+    `;
+  }
+
+  return items.map((item) => `
+    <tr>
+      <td>${escapeHtml(item.finished_at || item.started_at || "-")}</td>
+      <td>${escapeHtml(item.method || "-")}</td>
+      <td>${escapeHtml(item.pathname || "-")}</td>
+      <td>${escapeHtml(item.route_name || "-")}</td>
+      <td>${escapeHtml(formatMonitoringOutcome(item))}</td>
+      <td>${escapeHtml(`${Number(item.duration_ms || 0)}ms`)}</td>
+    </tr>
+  `).join("");
+}
+
+function renderMonitoringDashboardPage({ dashboard, traceId = null } = {}) {
+  const metrics = dashboard?.metrics || {};
+  const latestError = dashboard?.latest_error || null;
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lobster Monitoring Dashboard</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f1e8;
+      --panel: rgba(255, 252, 247, 0.88);
+      --ink: #1f2a2a;
+      --muted: #59676a;
+      --line: rgba(31, 42, 42, 0.12);
+      --accent: #0f766e;
+      --danger: #b42318;
+      --shadow: 0 18px 48px rgba(31, 42, 42, 0.08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(15, 118, 110, 0.18), transparent 32%),
+        radial-gradient(circle at top right, rgba(180, 35, 24, 0.14), transparent 28%),
+        linear-gradient(180deg, #f8f4ec 0%, var(--bg) 100%);
+      min-height: 100vh;
+    }
+    main {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 40px 20px 56px;
+    }
+    .monitoring-header {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      align-items: flex-end;
+      justify-content: space-between;
+      margin-bottom: 24px;
+    }
+    .monitoring-title {
+      margin: 0;
+      font-size: clamp(2rem, 5vw, 3.75rem);
+      line-height: 0.95;
+      letter-spacing: -0.04em;
+    }
+    .monitoring-subtitle,
+    .monitoring-meta,
+    .monitoring-links {
+      margin: 0;
+      color: var(--muted);
+    }
+    .monitoring-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .monitoring-card,
+    .monitoring-panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(8px);
+    }
+    .monitoring-card {
+      padding: 20px;
+    }
+    .monitoring-card h2,
+    .monitoring-panel h2 {
+      margin: 0 0 10px;
+      font-size: 0.95rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+    }
+    .monitoring-value {
+      margin: 0;
+      font-size: clamp(2rem, 6vw, 3rem);
+      line-height: 1;
+    }
+    .monitoring-caption {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+    .monitoring-panels {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 16px;
+    }
+    .monitoring-panel {
+      overflow: hidden;
+    }
+    .monitoring-panel-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: baseline;
+      padding: 20px 20px 0;
+    }
+    .monitoring-panel-body {
+      padding: 0 20px 20px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.95rem;
+    }
+    th, td {
+      padding: 10px 0;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      color: var(--muted);
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    tbody tr:last-child td {
+      border-bottom: none;
+    }
+    .monitoring-empty {
+      color: var(--muted);
+      padding: 18px 0;
+    }
+    .monitoring-alert {
+      margin: 0 0 24px;
+      padding: 16px 18px;
+      border-radius: 18px;
+      background: rgba(180, 35, 24, 0.08);
+      border: 1px solid rgba(180, 35, 24, 0.18);
+    }
+    .monitoring-alert strong {
+      color: var(--danger);
+    }
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="monitoring-header">
+      <div>
+        <p class="monitoring-subtitle">Playground Runtime</p>
+        <h1 class="monitoring-title">Monitoring Dashboard</h1>
+      </div>
+      <div>
+        <p class="monitoring-meta">Generated: ${escapeHtml(dashboard?.generated_at || "-")}</p>
+        <p class="monitoring-meta">Trace ID: ${escapeHtml(traceId || "-")}</p>
+        <p class="monitoring-links"><a href="/api/monitoring/metrics">Metrics JSON</a> · <a href="/api/monitoring/requests">Requests JSON</a> · <a href="/api/monitoring/errors">Errors JSON</a></p>
+      </div>
+    </section>
+    ${latestError ? `
+      <section class="monitoring-alert">
+        <strong>Latest error:</strong>
+        ${escapeHtml(latestError.pathname || "-")}
+        (${escapeHtml(latestError.error_code || String(latestError.status_code || "unknown"))})
+      </section>
+    ` : ""}
+    <section class="monitoring-grid">
+      <article class="monitoring-card">
+        <h2>Success Rate</h2>
+        <p class="monitoring-value">${escapeHtml(`${Number(metrics.success_rate_percent || 0).toFixed(2)}%`)}</p>
+        <p class="monitoring-caption">${escapeHtml(formatMonitoringRate(metrics.success_rate_percent, metrics.success_count, metrics.total_requests))}</p>
+      </article>
+      <article class="monitoring-card">
+        <h2>Error Rate</h2>
+        <p class="monitoring-value">${escapeHtml(`${Number(metrics.error_rate_percent || 0).toFixed(2)}%`)}</p>
+        <p class="monitoring-caption">${escapeHtml(formatMonitoringRate(metrics.error_rate_percent, metrics.error_count, metrics.total_requests))}</p>
+      </article>
+      <article class="monitoring-card">
+        <h2>Total Requests</h2>
+        <p class="monitoring-value">${escapeHtml(String(metrics.total_requests || 0))}</p>
+        <p class="monitoring-caption">Persisted HTTP requests in local monitoring storage.</p>
+      </article>
+    </section>
+    <section class="monitoring-panels">
+      <article class="monitoring-panel">
+        <div class="monitoring-panel-header">
+          <h2>Recent Errors</h2>
+          <p class="monitoring-meta">Last ${escapeHtml(String(dashboard?.error_limit || 0))}</p>
+        </div>
+        <div class="monitoring-panel-body">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Method</th>
+                <th>Path</th>
+                <th>Route</th>
+                <th>Error</th>
+                <th>Duration</th>
+              </tr>
+            </thead>
+            <tbody>${renderMonitoringTableRows(dashboard?.recent_errors || [])}</tbody>
+          </table>
+        </div>
+      </article>
+      <article class="monitoring-panel">
+        <div class="monitoring-panel-header">
+          <h2>Recent Requests</h2>
+          <p class="monitoring-meta">Last ${escapeHtml(String(dashboard?.request_limit || 0))}</p>
+        </div>
+        <div class="monitoring-panel-body">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Method</th>
+                <th>Path</th>
+                <th>Route</th>
+                <th>Status</th>
+                <th>Duration</th>
+              </tr>
+            </thead>
+            <tbody>${renderMonitoringTableRows(dashboard?.recent_requests || [])}</tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+  </main>
+</body>
+</html>`;
 }
 
 function methodNotAllowed(res, allowedMethods) {
@@ -2333,6 +2611,17 @@ async function handleMonitoringMetrics(res) {
     ok: true,
     metrics: getRequestMetrics(),
   });
+}
+
+async function handleMonitoringDashboard(res, requestUrl) {
+  const dashboard = getMonitoringDashboard({
+    recentLimit: requestUrl.searchParams.get("requests_limit") || requestUrl.searchParams.get("recent_limit") || "10",
+    errorLimit: requestUrl.searchParams.get("errors_limit") || requestUrl.searchParams.get("error_limit") || "10",
+  });
+  htmlResponse(res, 200, renderMonitoringDashboardPage({
+    dashboard,
+    traceId: res.__trace_id || null,
+  }));
 }
 
 async function handleAgentCreateDoc(res, requestUrl, body, logger = noopHttpLogger) {
@@ -4806,6 +5095,13 @@ export function startHttpServer({ logger = console, port = oauthPort, listen = t
         return;
       }
 
+      if (requestUrl.pathname === "/monitoring" && req.method === "GET") {
+        await runHttpRoute(requestLogger, "monitoring_dashboard", () =>
+          handleMonitoringDashboard(res, requestUrl)
+        );
+        return;
+      }
+
       if (requestUrl.pathname === "/agent/security/status") {
         await handleSecurityStatus(res);
         return;
@@ -5674,8 +5970,12 @@ export function startHttpServer({ logger = console, port = oauthPort, listen = t
 
   if (listen) {
     server.listen(port, () => {
-      logger.log(`HTTP server listening on ${oauthBaseUrl}`);
-      logger.log(`Open this URL to sign in: ${oauthBaseUrl}/oauth/lark/login`);
+      httpLogger.info("server_listening", {
+        action: "server_start",
+        status: "listening",
+        base_url: oauthBaseUrl,
+        login_url: `${oauthBaseUrl}/oauth/lark/login`,
+      });
     });
   }
 

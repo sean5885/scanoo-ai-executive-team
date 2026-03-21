@@ -18,6 +18,8 @@ All minimum trace/log events should align around these fields:
 
 - `request_id`
 - `trace_id`
+- `action`
+- `status`
 - `event_type`
 - `timestamp`
 - `action|preset|agent`
@@ -38,9 +40,10 @@ All minimum trace/log events should align around these fields:
 {
   "request_id": "string|null",
   "trace_id": "string|null",
+  "action": "string|null",
+  "status": "string|null",
   "event_type": "string",
   "timestamp": "string|null",
-  "action": "string|null",
   "preset": "string|null",
   "agent": "string|null",
   "chosen_lane": "string|null",
@@ -68,6 +71,8 @@ All minimum trace/log events should align around these fields:
 ### Fields already commonly present in current runtime logs
 
 - `trace_id`
+- `action`
+- `status`
 - event name / event-like label
 - `action` or `preset`
 - `ok`
@@ -106,11 +111,12 @@ All minimum trace/log events should align around these fields:
 - the HTTP runtime now also persists one compact SQLite request-monitor row per finished request keyed by `trace_id`; this is a query surface over request outcomes, not a replacement for structured logs
 - the monitoring layer now also persists trace-scoped runtime events into SQLite `http_request_trace_events`; this stays a local observability/debug surface and does not replace the runtime logger stream
 - a local CLI `node scripts/debug-trace.mjs <trace_id>` can now reconstruct one persisted request timeline from those trace events plus the compact request row
+- runtime console/log sinks now emit one JSON log object per line for the shared runtime logger, rate-limited alerts, and tool execution logs; the runtime payload keeps `event` as a compatibility alias while `event_type` is the canonical analysis key
 
 ### Fields not yet consistently runtimeized
 
-- `event_type` as one unified key across every log family
-- `timestamp` as an explicit event payload field in every planner log
+- `event_type` as one unified key across every remaining log family outside the shared runtime/tool helpers
+- `timestamp` as an explicit event payload field in every remaining planner-module-local log
 - one fully standardized shape shared by planner, bridge, company-brain, and future handoff/escalation events
 - dedicated `handoff` / `escalation` runtime events as first-class logger outputs
 - planner trace events currently use the planner module logger path only; they are not yet a full shared system logging runtime

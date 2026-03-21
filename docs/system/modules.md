@@ -61,12 +61,14 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - disable known competing local LaunchAgents before starting the Playground long-connection listener
   - suppress duplicate Lark event re-deliveries by `message_id` before lane execution
   - emit structured runtime logs for long-connection event intake, lane routing, tool/doc/group steps, reply send, and failure paths
+  - shared runtime/tool/alert logs now emit one JSON object per line with canonical `trace_id`, `action`, `status`, `event_type`, and `timestamp` fields for downstream analysis
   - emit immediate console alerts for `oauth_reauth_required` and `planner_failed` through a shared in-memory rate-limited helper
   - attach a per-event and per-request `trace_id` so chain breaks can be located from logs
   - persist trace-scoped runtime events into SQLite so one `trace_id` can reconstruct request input, planner decision `why`, lane/action, and final result/error
   - preserve incoming `X-Request-Id` or mint a local `request_id` for HTTP request-log correlation, and echo it back in the response header
   - echo `X-Trace-Id` for every HTTP response, including HTML and redirects
   - provide a local CLI for reading persisted request-monitor data
+  - provide a local CLI dashboard for request health overview
   - provide a local CLI for reconstructing one persisted trace timeline by `trace_id`
 - Main entry:
   - `startHttpServer()`
@@ -109,10 +111,12 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - HTTP endpoint handling
   - response shaping
   - per-request trace creation and request lifecycle logging
+  - shared request/route runtime logs now guarantee `trace_id`, `action`, and `status` in the emitted structured payload, while preserving the existing `event` field as a compatibility alias
   - `trace_id` injection into JSON responses for easier cross-log correlation
   - `X-Trace-Id` response-header echo for every request
   - response-finish persistence into SQLite `http_request_monitor`
   - read-only monitoring routes for recent requests, recent errors, latest error, and aggregate request metrics
+  - serve a simple local `/monitoring` HTML dashboard with success/error rates plus recent error/request tables
   - key route child-log coverage for `auth_status`, `doc_create`, `doc_update`, `meeting_process`, `meeting_confirm`, `messages_list`, `message_reply`, `knowledge_search`, `knowledge_answer`, `drive_*`, `wiki_*`, `bitable_*`, `calendar_*`, and `tasks_*`
   - `/api/doc/update` now also accepts minimal heading-targeted insert input (`target_heading`, optional `target_position`), resolves the target section against the current markdown content during preview, and then reuses the existing replace preview/apply safety gate instead of changing the underlying Lark block-write adapter
   - the same route still accepts shared doc URLs for preview-time resolution, but the real write step now requires explicit `document_id` plus `section_heading`; missing either fails soft with structured `missing_explicit_write_target` instead of depending on resolver state
@@ -176,8 +180,8 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - persist one compact row per HTTP request into SQLite `http_request_monitor`
   - persist trace-correlated runtime events into SQLite `http_request_trace_events`
   - normalize request outcome fields (`status_code`, `ok`, `error_code`, `error_message`, `duration_ms`)
-  - expose recent-request, recent-error, latest-error, success/error-rate, and per-trace reconstruction queries
-  - provide local CLIs so operators can inspect request health and reconstruct one request timeline without scraping logs
+  - expose recent-request, recent-error, latest-error, success/error-rate, dashboard-snapshot, and per-trace reconstruction queries
+  - provide local CLIs so operators can inspect request health, view one compact dashboard, and reconstruct one request timeline without scraping logs
 - Core path:
   - yes for runtime observability
 

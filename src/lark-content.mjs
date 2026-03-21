@@ -1,8 +1,10 @@
 import * as Lark from "@larksuiteoapi/node-sdk";
 import { apiBaseUrl, baseConfig } from "./config.mjs";
 import { resolveLarkRequestAuth } from "./lark-request-auth.mjs";
+import { createRuntimeLogger } from "./runtime-observability.mjs";
 
 const userClient = new Lark.Client(baseConfig);
+const contentLogger = createRuntimeLogger({ logger: console, component: "lark_content" });
 const WIKI_PAGE_SIZE = 50;
 const DRIVE_PAGE_SIZE = 200;
 const DOC_BLOCK_PAGE_SIZE = 500;
@@ -158,7 +160,9 @@ function logDocCreateDiagnostic({
   platformMsg = "",
   logId = null,
 } = {}) {
-  console.info("[lark_doc_create]", {
+  contentLogger.info("lark_doc_create_diagnostic", {
+    action: "document_create",
+    status: "diagnostic",
     token_type: tokenType,
     has_folder_token: Boolean(folderToken),
     mode,

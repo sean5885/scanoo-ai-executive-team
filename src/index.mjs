@@ -76,6 +76,7 @@ const eventDispatcher = new Lark.EventDispatcher({}).register({
       scope = resolveLarkBindingRuntime({ event: data });
       eventLogger.info("lane_resolved", {
         capability_lane: scope.capability_lane,
+        chosen_lane: scope.capability_lane,
         lane_reason: scope.lane_reason,
         session_key: scope.session_key,
       });
@@ -144,19 +145,31 @@ const httpServer = startHttpServer();
 const commentSuggestionPoller = startCommentSuggestionPoller({ logger: console });
 
 process.on("SIGINT", () => {
-  console.log("Shutting down Lark services...");
+  runtimeLogger.info("service_shutdown_requested", {
+    action: "service_shutdown",
+    signal: "SIGINT",
+    status: "stopping",
+  });
   commentSuggestionPoller.stop();
   httpServer.close();
   process.exit(0);
 });
 
 process.on("SIGTERM", () => {
-  console.log("Shutting down Lark services...");
+  runtimeLogger.info("service_shutdown_requested", {
+    action: "service_shutdown",
+    signal: "SIGTERM",
+    status: "stopping",
+  });
   commentSuggestionPoller.stop();
   httpServer.close();
   process.exit(0);
 });
 
-console.log(`Starting ${botName} with long connection...`);
+runtimeLogger.info("service_starting", {
+  action: "service_start",
+  bot_name: botName,
+  status: "starting",
+});
 await enforceSingleLarkResponderRuntime({ logger: runtimeLogger.child("runtime_guard") });
 wsClient.start({ eventDispatcher });

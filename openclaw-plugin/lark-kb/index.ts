@@ -88,7 +88,12 @@ function emitToolExecutionLog({
   traceId?: string | null;
 }) {
   const sink = success ? console.info.bind(console) : console.error.bind(console);
-  sink("lobster_tool_execution", {
+  sink(JSON.stringify({
+    ts: new Date().toISOString(),
+    timestamp: new Date().toISOString(),
+    event: "tool_execution",
+    event_type: "tool_execution",
+    status: success ? "success" : "error",
     request_id: requestId,
     action,
     params: normalizeLogObject(params, "params"),
@@ -98,7 +103,7 @@ function emitToolExecutionLog({
       error,
     },
     trace_id: traceId,
-  });
+  }));
 }
 
 function getConfig(api: { pluginConfig?: PluginConfig }) {
