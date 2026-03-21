@@ -192,6 +192,8 @@ Routing eval regression gate baseline（v2 / `routing-eval-baseline-v2`）：
 ```bash
 node scripts/routing-eval.mjs
 node scripts/routing-eval.mjs --json
+node scripts/routing-eval.mjs --json > /tmp/routing-eval.json
+node scripts/routing-eval-fixture-candidates.mjs --input /tmp/routing-eval.json
 ```
 
 用途：
@@ -199,7 +201,9 @@ node scripts/routing-eval.mjs --json
 - 驗證 checked-in deterministic routing baseline 是否仍與 eval set 一致
 - 這份 checked-in 結果即為 routing eval regression gate baseline v2（`routing-eval-baseline-v2`）
 - 提供 `lane / planner_action / agent_or_tool / latency` 的固定 regression 量測
+- 提供 `top_miss_cases` / `error_breakdown` 到候選 fixture 的閉環轉換入口
 - 以 overall accuracy ratio `0.9` 作為強制門檻；`< 0.9` 時 CLI 會以 non-zero exit code 結束
 - `--json` 模式會輸出完整結果與 `top_miss_cases`（前 10 筆錯誤）
+- `scripts/routing-eval-fixture-candidates.mjs` 會把 `top_miss_cases` 與 `error_breakdown` 展開成 machine-readable candidate fixture input，供人工審查後加入 dataset
 
 目前 monitoring learning baseline 尚未納入 `scripts/run-workflow-baseline.mjs` 的 workflow-only runner；需要驗證這條路徑時，直接使用上面的 `node --test ...` 與 CLI 命令。

@@ -6,7 +6,12 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 這份文件描述 repo 內的 deterministic routing eval regression gate baseline（v2 / `routing-eval-baseline-v2`）。
 
-目前這份 mirror 同時作為 Thread 34 的 observability checkpoint，保存 hard-routing error distribution / `error_breakdown` 的受控觀測面，且不改 routing 決策、fallback 行為或 baseline fixture。
+目前這份 mirror 同時保留兩個已提交 checkpoint：
+
+- Thread 34 observability checkpoint
+- Thread 35 closed-loop checkpoint
+
+Thread 35 closed-loop checkpoint 針對 `top_miss_cases` / `error_breakdown` -> candidate fixture -> dataset review -> rerun eval -> baseline gate 的閉環流程補上最小工具與文件，且不改 routing 決策、fallback 行為或 baseline fixture。
 
 目標是量化目前 checked-in routing 行為的三個層次：
 
@@ -19,9 +24,12 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 ## Files
 
 - `/Users/seanhan/Documents/Playground/src/routing-eval.mjs`
+- `/Users/seanhan/Documents/Playground/src/routing-eval-fixture-candidates.mjs`
 - `/Users/seanhan/Documents/Playground/evals/routing-eval-set.mjs`
 - `/Users/seanhan/Documents/Playground/scripts/routing-eval.mjs`
+- `/Users/seanhan/Documents/Playground/scripts/routing-eval-fixture-candidates.mjs`
 - `/Users/seanhan/Documents/Playground/tests/routing-eval.test.mjs`
+- `/Users/seanhan/Documents/Playground/tests/routing-eval-fixture-candidates.test.mjs`
 
 ## Scope
 
@@ -130,6 +138,7 @@ CLI:
 ```bash
 node scripts/routing-eval.mjs
 node scripts/routing-eval.mjs --json
+node scripts/routing-eval.mjs --json | node scripts/routing-eval-fixture-candidates.mjs
 ```
 
 輸出包含：
@@ -167,6 +176,134 @@ CLI 會以 overall accuracy ratio 當作強制 regression gate；目前這份 ch
 - `misses`: 涉及該錯誤碼但 expected / actual 不一致的 case 數
 
 這一層只補 observability，不改 routing 決策、fallback 行為或 baseline fixture。
+
+## Miss / Error To Dataset Loop
+
+這個 loop 只補「收集 -> 整理 -> 候選 fixture -> dataset review -> rerun eval -> baseline gate」；不直接改 routing 決策，也不新增 fallback。
+
+### 1. 收集 miss / error
+
+先跑 routing eval，保留完整 JSON：
+
+```bash
+node scripts/routing-eval.mjs --json > /tmp/routing-eval.json
+```
+
+來源重點：
+
+- `summary.top_miss_cases`
+- `summary.error_breakdown`
+- `results`
+
+### 2. 轉成可審查的候選 fixture
+
+```bash
+node scripts/routing-eval-fixture-candidates.mjs --input /tmp/routing-eval.json > /tmp/routing-eval-candidates.json
+```
+
+轉換器會輸出三層資料：
+
+- `conversion_input.top_miss_cases_input`
+  - 把 `top_miss_cases` 整理成可直接審查的逐案輸入
+- `conversion_input.error_breakdown_input`
+  - 把 aggregate `error_breakdown` 展開成 per-error-code、per-case 的可轉換輸入
+- `fixture_candidates`
+  - 預設以 `observed_actual_route` 產生候選 fixture，至少帶：
+    - `lane`
+    - `planner_action`
+    - `agent_or_tool`
+  - 若原 case 已存在於 dataset，`suggested_dataset_action` 會是 `update_existing_fixture`
+  - 若找不到原 case，`suggested_dataset_action` 會是 `add_fixture`
+
+若要改用目前 dataset 的 expected route 當草稿，可改：
+
+```bash
+node scripts/routing-eval-fixture-candidates.mjs --input /tmp/routing-eval.json --prefer expected
+```
+
+### 3. 加入 dataset
+
+審查 `fixture_candidates` 後：
+
+- `update_existing_fixture`
+  - 到 `/Users/seanhan/Documents/Playground/evals/routing-eval-set.mjs` 對應 case 更新 `expected`
+- `add_fixture`
+  - 將 `fixture_source` 轉成新的 `createCase(...)` entry 加進 dataset
+
+這一步是人工審查後納入，不是自動寫回。
+
+### 4. 重跑 eval
+
+```bash
+node scripts/routing-eval.mjs
+node scripts/routing-eval.mjs --json
+```
+
+### 5. Baseline Gate
+
+只有在 overall accuracy ratio `>= 0.9` 時，才可把更新後的 dataset 視為新的 checked-in regression baseline。
+
+- `< 0.9`：不得當作 baseline 完成，必須繼續修 case / 調整 dataset 標註
+- `>= 0.9`：可納入 baseline review
+
+## Example Output
+
+以下是目前 checked-in baseline 轉出的一組示例。因為 baseline 目前沒有 miss，示例來自已存在的 hard-routing error case：
+
+```json
+{
+  "source_summary": {
+    "total_cases": 62,
+    "miss_count": 0,
+    "overall_accuracy_ratio": 1,
+    "overall_accuracy": 100,
+    "gate_ok": true,
+    "min_accuracy_ratio": 0.9
+  },
+  "conversion_input": {
+    "top_miss_cases_input": [],
+    "error_breakdown_input": [
+      {
+        "error_code": "ROUTING_NO_MATCH",
+        "summary": {
+          "expected": 1,
+          "actual": 1,
+          "matched": 1,
+          "misses": 0
+        },
+        "cases": [
+          {
+            "source_case_id": "runtime-010",
+            "source_kind": "routing_error_case",
+            "category": "runtime",
+            "text": "晚點提醒我一下",
+            "current_expected": {
+              "lane": "personal_assistant",
+              "planner_action": "ROUTING_NO_MATCH",
+              "agent_or_tool": "error:ROUTING_NO_MATCH"
+            },
+            "observed_actual": {
+              "lane": "personal_assistant",
+              "planner_action": "ROUTING_NO_MATCH",
+              "agent_or_tool": "error:ROUTING_NO_MATCH",
+              "route_source": "lane_execution_plan"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "fixture_candidates": [
+    {
+      "source_case_id": "runtime-010",
+      "suggested_dataset_action": "update_existing_fixture",
+      "lane": "personal_assistant",
+      "planner_action": "ROUTING_NO_MATCH",
+      "agent_or_tool": "error:ROUTING_NO_MATCH"
+    }
+  ]
+}
+```
 
 ## Determinism
 

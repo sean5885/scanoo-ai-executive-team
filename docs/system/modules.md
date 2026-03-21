@@ -203,20 +203,24 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 - Core path:
   - yes for runtime observability
 
-### 2B. Routing Eval Regression Gate Baseline (v1)
+### 2B. Routing Eval Regression Gate Baseline (v2)
 
 - Location:
   - `/Users/seanhan/Documents/Playground/src/routing-eval.mjs`
+  - `/Users/seanhan/Documents/Playground/src/routing-eval-fixture-candidates.mjs`
   - `/Users/seanhan/Documents/Playground/evals/routing-eval-set.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/routing-eval.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/routing-eval-fixture-candidates.mjs`
   - `/Users/seanhan/Documents/Playground/tests/routing-eval.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/routing-eval-fixture-candidates.test.mjs`
 - Responsibility:
   - provide a deterministic routing baseline for checked-in heuristic routing behavior
-  - define the checked-in regression gate baseline v1 for routing eval
+  - define the checked-in regression gate baseline v2 for routing eval
   - normalize route outcomes into `lane`, `planner_action`, and `agent_or_tool`
   - replay 50~100 checked-in fixtures without calling live LLM / network dependencies
   - report overall accuracy, per-dimension accuracy, hard-routing `error_breakdown`, latency summary, and `top_miss_cases` (up to 10 errors)
   - support `--json` output for machine-readable regression consumption
+  - convert `top_miss_cases` plus `error_breakdown` into candidate fixture input for dataset review without changing routing logic
   - return non-zero exit status when overall accuracy ratio drops below `0.9` so the baseline can act as a regression gate
 - Depends on:
   - `capability-lane.mjs`
