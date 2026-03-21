@@ -23,6 +23,7 @@ import {
   hydratePlannerDocQueryRuntimeContext,
   resetPlannerDocQueryRuntimeContext,
 } from "./planner-doc-query-flow.mjs";
+import { ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
 import { plannerDocQueryFlow } from "./planner-doc-query-flow.mjs";
 import { plannerRuntimeInfoFlow } from "./planner-runtime-info-flow.mjs";
 import { plannerOkrFlow } from "./planner-okr-flow.mjs";
@@ -250,6 +251,9 @@ function inferLaneToolForAction(action = "", lane = "") {
   if (action === "bitable_preview") {
     return "tool:bitable_read";
   }
+  if (action === ROUTING_NO_MATCH) {
+    return `error:${ROUTING_NO_MATCH}`;
+  }
   return action ? "reply:default" : null;
 }
 
@@ -444,19 +448,19 @@ function resolvePlannerDecision(text = "", plannerContext = {}) {
   );
 
   return {
-    planner_action: action,
+    planner_action: action || ROUTING_NO_MATCH,
     agent_or_tool: action
       ? plannerPresets.has(action)
         ? `preset:${action}`
         : `tool:${action}`
-      : null,
+      : `error:${ROUTING_NO_MATCH}`,
     source: prefersSelector
       ? "planner_selector_override"
       : normalizePlannerAction(routedFlow?.action)
         ? "planner_flow"
         : normalizePlannerAction(selector?.selected_action)
           ? "planner_selector"
-          : "planner_no_match",
+          : "routing_no_match",
   };
 }
 
@@ -502,8 +506,8 @@ function resolveCapabilityRoute(testCase = {}) {
 
   return {
     lane: normalizedLane,
-    planner_action: plannerAction || "default_reply",
-    agent_or_tool: inferLaneToolForAction(plannerAction || "default_reply", normalizedLane),
+    planner_action: plannerAction || ROUTING_NO_MATCH,
+    agent_or_tool: inferLaneToolForAction(plannerAction || ROUTING_NO_MATCH, normalizedLane),
     route_source: "lane_execution_plan",
   };
 }
@@ -546,6 +550,14 @@ export function resolveRoutingEvalCase(testCase = {}) {
   }
 
   const registeredAgent = parseRegisteredAgentCommand(text);
+  if (registeredAgent?.error === ROUTING_NO_MATCH) {
+    return {
+      lane: "registered_agent",
+      planner_action: ROUTING_NO_MATCH,
+      agent_or_tool: `error:${ROUTING_NO_MATCH}`,
+      route_source: "slash_agent_no_match",
+    };
+  }
   if (registeredAgent?.agent?.id) {
     return {
       lane: "registered_agent",

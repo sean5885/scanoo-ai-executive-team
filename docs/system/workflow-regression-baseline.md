@@ -187,7 +187,7 @@ node scripts/run-workflow-baseline.mjs cloud-doc
 node scripts/run-workflow-baseline.mjs all
 ```
 
-Routing eval regression gate baseline（v1）：
+Routing eval regression gate baseline（v2 / `routing-eval-baseline-v2`）：
 
 ```bash
 node scripts/routing-eval.mjs
@@ -197,7 +197,7 @@ node scripts/routing-eval.mjs --json
 用途：
 
 - 驗證 checked-in deterministic routing baseline 是否仍與 eval set 一致
-- 這份 checked-in 結果即為 routing eval regression gate baseline v1
+- 這份 checked-in 結果即為 routing eval regression gate baseline v2（`routing-eval-baseline-v2`）
 - 提供 `lane / planner_action / agent_or_tool / latency` 的固定 regression 量測
 - 以 overall accuracy ratio `0.9` 作為強制門檻；`< 0.9` 時 CLI 會以 non-zero exit code 結束
 - `--json` 模式會輸出完整結果與 `top_miss_cases`（前 10 筆錯誤）

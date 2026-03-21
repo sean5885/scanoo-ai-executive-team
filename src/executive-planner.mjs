@@ -20,6 +20,7 @@ import {
 import { getRegisteredAgent, listRegisteredAgents, parseRegisteredAgentCommand } from "./agent-registry.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import { callOpenClawTextGeneration } from "./openclaw-text-service.mjs";
+import { FALLBACK_DISABLED, INVALID_ACTION, ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
 import { createRequestId, emitRateLimitedAlert, emitToolExecutionLog } from "./runtime-observability.mjs";
 import {
   compactPlannerConversationMemory as compactPlannerConversationMemoryLayer,
@@ -687,6 +688,21 @@ export function normalizeError(result = null, {
 }
 
 const plannerExecutionPolicy = {
+  [INVALID_ACTION]: {
+    self_heal: 0,
+    retry: 0,
+    stop_reason: INVALID_ACTION,
+  },
+  [ROUTING_NO_MATCH]: {
+    self_heal: 0,
+    retry: 0,
+    stop_reason: ROUTING_NO_MATCH,
+  },
+  [FALLBACK_DISABLED]: {
+    self_heal: 0,
+    retry: 0,
+    stop_reason: FALLBACK_DISABLED,
+  },
   contract_violation: {
     self_heal: 1,
     retry: 0,
@@ -1620,7 +1636,7 @@ export function validatePlannerUserInputDecision(decision = {}) {
       if (!contract) {
         return {
           ok: false,
-          error: "invalid_action",
+          error: INVALID_ACTION,
           action,
           params,
           steps,
@@ -1670,7 +1686,7 @@ export function validatePlannerUserInputDecision(decision = {}) {
   if (!contractTarget) {
     return {
       ok: false,
-      error: "invalid_action",
+      error: INVALID_ACTION,
       action,
       params,
     };
@@ -1907,6 +1923,12 @@ export function selectPlannerTool({
     selectedAction = "create_and_list_doc";
     reason = "命中複合任務，優先使用 preset。";
   } else if (
+    (normalizedIntent.includes("搜尋") || normalizedIntent.includes("搜索") || normalizedIntent.includes("search") || normalizedIntent.includes("查詢") || normalizedIntent.includes("查询") || normalizedIntent.includes("找"))
+    && (normalizedIntent.includes("打開") || normalizedIntent.includes("打开") || normalizedIntent.includes("讀") || normalizedIntent.includes("读") || normalizedIntent.includes("內容") || normalizedIntent.includes("内容"))
+  ) {
+    selectedAction = "search_and_detail_doc";
+    reason = "使用者同時要求搜尋與打開內容，優先走 search-and-detail。";
+  } else if (
     normalizedTaskType === "doc_write"
     || normalizedIntent.includes("建立文件")
     || normalizedIntent.includes("创建文档")
@@ -1955,7 +1977,7 @@ export function selectPlannerTool({
   }
 
   if (!selectedAction) {
-    reason = "未命中受控工具規則，保持空選擇。";
+    reason = ROUTING_NO_MATCH;
   }
 
   const reasoning = normalizeDecisionReasoning({
@@ -1980,6 +2002,18 @@ export function selectPlannerTool({
     why: reasoning.why,
     alternative: reasoning.alternative,
   };
+}
+
+export function shouldPreferSelectorAction({
+  hardRoutedAction = "",
+  selectorAction = "",
+} = {}) {
+  const normalizedHardRoutedAction = cleanText(hardRoutedAction);
+  const normalizedSelectorAction = cleanText(selectorAction);
+
+  return normalizedHardRoutedAction === "search_company_brain_docs"
+    && Boolean(normalizedSelectorAction)
+    && normalizedSelectorAction !== normalizedHardRoutedAction;
 }
 
 // ---------------------------------------------------------------------------
@@ -2023,9 +2057,9 @@ export async function dispatchPlannerTool({
   if (!tool) {
     const stoppedResult = buildPlannerStoppedResult({
       action: runtimeInput.action,
-      error: "not_found",
+      error: INVALID_ACTION,
       data: {
-        message: `planner_tool_not_found:${runtimeInput.action}`,
+        message: `planner_tool_not_allowed:${runtimeInput.action}`,
       },
       traceId: null,
     });
@@ -2390,18 +2424,32 @@ export async function runPlannerToolFlow({
           });
   const hardRoutedAction = taskLifecycleFollowUp?.selected_action || (!disableAutoRouting ? routedFlow.action : null);
   const routedPayload = taskLifecycleFollowUp?.execution_result?.data || routedFlow.payload;
-  const selection = normalizedForcedSelection
-    ? normalizedForcedSelection
-    : hardRoutedAction
-    ? {
-        selected_action: hardRoutedAction,
-        reason: taskLifecycleFollowUp?.reason || "命中硬路由規則。",
-      }
+  const selectorSelection = normalizedForcedSelection
+    ? null
     : selector({
         userIntent: agentInput.user_intent,
         taskType: agentInput.task_type,
         logger,
       });
+  const prefersSelectorSelection = !normalizedForcedSelection
+    && !taskLifecycleFollowUp?.selected_action
+    && shouldPreferSelectorAction({
+      hardRoutedAction: !disableAutoRouting ? routedFlow.action : null,
+      selectorAction: selectorSelection?.selected_action,
+    });
+  const selection = normalizedForcedSelection
+    ? normalizedForcedSelection
+    : prefersSelectorSelection
+    ? {
+        ...selectorSelection,
+        reason: selectorSelection?.reason || "命中更具體的 selector 規則，覆蓋 generic search hard route。",
+      }
+    : hardRoutedAction
+    ? {
+        selected_action: hardRoutedAction,
+        reason: taskLifecycleFollowUp?.reason || "命中硬路由規則。",
+      }
+    : selectorSelection;
   const selectionReasoning = normalizeDecisionReasoning({
     why: selection?.why || selection?.reason || null,
     alternative: selection?.alternative || buildUserInputDecisionAlternative({
@@ -2412,8 +2460,33 @@ export async function runPlannerToolFlow({
   let executionResult = null;
   let traceId = null;
   let lifecycleSnapshot = taskLifecycleFollowUp?.snapshot || null;
+  const selectionAction = cleanText(selection?.selected_action || "");
 
-  if (selection.selected_action) {
+  if (!selectionAction) {
+    maybeInvokePlannerHook(hooks, "onEscalation", {
+      from: "planner_selection",
+      reason: selection?.reason || ROUTING_NO_MATCH,
+    });
+    executionResult = buildPlannerStoppedResult({
+      action: null,
+      error: ROUTING_NO_MATCH,
+      data: {
+        reason: cleanText(selection?.reason || "") || ROUTING_NO_MATCH,
+      },
+      traceId: null,
+    });
+  } else if (!taskLifecycleFollowUp?.execution_result && !getPlannerActionContract(selectionAction) && !getPlannerPreset(selectionAction)) {
+    executionResult = buildPlannerStoppedResult({
+      action: selectionAction,
+      error: INVALID_ACTION,
+      data: {
+        reason: cleanText(selection?.reason || "") || INVALID_ACTION,
+      },
+      traceId: null,
+    });
+  }
+
+  if (!executionResult && selection.selected_action) {
     if (taskLifecycleFollowUp?.execution_result) {
       executionResult = taskLifecycleFollowUp.execution_result;
       traceId = executionResult?.trace_id || null;
@@ -2466,19 +2539,6 @@ export async function runPlannerToolFlow({
       });
       traceId = executionResult?.trace_id || null;
     }
-  } else {
-    maybeInvokePlannerHook(hooks, "onEscalation", {
-      from: "planner_selection",
-      reason: selection.reason || "no_selected_action",
-    });
-    executionResult = buildPlannerStoppedResult({
-      action: null,
-      error: "business_error",
-      data: {
-        reason: selection.reason,
-      },
-      traceId: null,
-    });
   }
 
   const selectedFlow = routedFlow.flow || getPlannerFlowForAction(plannerFlows, selection.selected_action);
@@ -4340,10 +4400,15 @@ function buildUserInputDecisionWhy({
         return "這個 decision 和使用者意圖不一致，所以被 runtime 拒絕。";
       case "stale_decision_reused":
         return "這個 decision 和上一輪完全相同，但目前訊息不是明確的同 task 延續。";
+      case INVALID_ACTION:
       case "invalid_action":
         return "模型選到 contract 之外的 action，所以不能直接執行。";
+      case ROUTING_NO_MATCH:
+        return "目前 routing 沒有命中任何受控 action，所以被 fail-closed 拒絕。";
       case "contract_violation":
         return "decision 的 params 不符合對應 action contract，所以不能安全執行。";
+      case FALLBACK_DISABLED:
+        return "原本的 fallback 路徑已被關閉，所以這輪會直接停在結構化錯誤。";
       default:
         return "這一輪 planner 沒有產出可安全執行的合法 decision。";
     }
@@ -4465,7 +4530,8 @@ export async function planUserInputAction({ text = "", requester = requestPlanne
       }
 
       if (
-        validation.error === "invalid_action"
+        validation.error === INVALID_ACTION
+        || validation.error === "invalid_action"
         || validation.error === "contract_violation"
         || validation.error === "semantic_mismatch"
         || validation.error === "stale_decision_reused"
@@ -5033,42 +5099,49 @@ export async function planExecutiveTurn({
     }
   }
 
-  const fallbackDecision = enrichPlannerDecisionWithTaskDriving(
-    normalizePlannerDecision(heuristicPlanExecutiveTurn(text, activeTask), text, activeTask),
-    {
-      taskDecisionContext: promptInput.taskDecisionContext,
-    },
-  );
+  const blockedDecision = {
+    error: FALLBACK_DISABLED,
+    action: null,
+    objective: activeTask?.objective || text,
+    primary_agent_id: cleanText(activeTask?.primary_agent_id || "") || null,
+    next_agent_id: cleanText(activeTask?.current_agent_id || "") || null,
+    supporting_agent_ids: Array.isArray(activeTask?.supporting_agent_ids) ? activeTask.supporting_agent_ids : [],
+    reason: "executive_planner_fallback_disabled",
+    why: "LLM planner 沒有產出可用 JSON，而且 heuristic fallback 已被停用。",
+    alternative: normalizeDecisionAlternative({
+      action: "clarify",
+      agent_id: cleanText(activeTask?.current_agent_id || "") || null,
+      summary: "如需繼續，必須先提供更明確的 agent 指令或讓 planner 重新產生合法 JSON。",
+    }),
+    pending_questions: [],
+    work_items: [],
+  };
   logPlannerTrace(logger, "warn", buildPlannerTraceEvent({
-    eventType: "executive_decision_fallback",
-    action: fallbackDecision.action,
-    agent: fallbackDecision.next_agent_id,
+    eventType: "executive_decision_failed",
+    action: null,
+    agent: blockedDecision.next_agent_id,
     traceId: cleanText(activeTask?.trace_id || "") || null,
     reasoning: {
-      why: fallbackDecision.why,
-      alternative: fallbackDecision.alternative,
+      why: blockedDecision.why,
+      alternative: blockedDecision.alternative,
     },
     extra: {
-      primary_agent_id: fallbackDecision.primary_agent_id,
-      next_agent_id: fallbackDecision.next_agent_id,
-      supporting_agent_ids: fallbackDecision.supporting_agent_ids,
-      pending_questions_count: fallbackDecision.pending_questions.length,
-      work_items_count: fallbackDecision.work_items.length,
+      error: FALLBACK_DISABLED,
     },
   }));
   recordPlannerConversationExchange({
     userQuery: text,
-    plannerReply: JSON.stringify(fallbackDecision),
+    plannerReply: JSON.stringify(blockedDecision),
   });
   maybeCompactPlannerConversationMemory({
     flows: buildPlannerFlowSnapshots(plannerFlows),
     logger,
-    unfinishedItems: fallbackDecision.pending_questions.map((question) => ({
+    unfinishedItems: blockedDecision.pending_questions.map((question) => ({
       type: "pending_question",
       label: question,
     })),
-    latestSelectedAction: fallbackDecision.action,
-    reason: "post_plan_executive_turn_fallback",
+    latestSelectedAction: "",
+    reason: "post_plan_executive_turn_failed",
   });
-  return fallbackDecision;
+  return blockedDecision;
 }

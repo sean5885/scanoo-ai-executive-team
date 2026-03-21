@@ -61,17 +61,22 @@ function selectBdAction(userIntent = "", {
   activeCandidates = [],
 } = {}) {
   const normalizedIntent = cleanText(String(userIntent || ""));
+  const followupAction = selectDocQueryAction(normalizedIntent, {
+    activeDoc,
+    activeCandidates,
+  });
+
   if (!isBdQuery(normalizedIntent)) {
     if (cleanText(activeTheme) === "bd") {
-      const followupAction = selectDocQueryAction(normalizedIntent, {
-        activeDoc,
-        activeCandidates,
-      });
       if (followupAction === "get_company_brain_doc_detail" || followupAction === "search_and_detail_doc") {
         return followupAction;
       }
     }
     return null;
+  }
+
+  if (followupAction === "get_company_brain_doc_detail" || followupAction === "search_and_detail_doc") {
+    return followupAction;
   }
 
   if (/整理|進度|进度|跟進|跟进|分析/.test(normalizedIntent)) {
@@ -117,7 +122,7 @@ export function resolveBdFlowRoute({
   logBdTrace(logger, buildBdTraceEvent({
     eventType: "bd_route",
     userQuery: userIntent,
-    routedIntent: action ? "hard_route" : "selector_fallback",
+    routedIntent: action ? "hard_route" : "routing_no_match",
     tool: action,
   }));
 

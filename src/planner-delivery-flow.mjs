@@ -59,17 +59,22 @@ function selectDeliveryAction(userIntent = "", {
   activeCandidates = [],
 } = {}) {
   const normalizedIntent = cleanText(String(userIntent || ""));
+  const followupAction = selectDocQueryAction(normalizedIntent, {
+    activeDoc,
+    activeCandidates,
+  });
+
   if (!isDeliveryQuery(normalizedIntent)) {
     if (cleanText(activeTheme) === "delivery") {
-      const followupAction = selectDocQueryAction(normalizedIntent, {
-        activeDoc,
-        activeCandidates,
-      });
       if (followupAction === "get_company_brain_doc_detail" || followupAction === "search_and_detail_doc") {
         return followupAction;
       }
     }
     return null;
+  }
+
+  if (followupAction === "get_company_brain_doc_detail" || followupAction === "search_and_detail_doc") {
+    return followupAction;
   }
 
   if (/流程|解釋|解释|整理|驗收|验收/.test(normalizedIntent)) {
@@ -115,7 +120,7 @@ export function resolveDeliveryFlowRoute({
   logDeliveryTrace(logger, buildDeliveryTraceEvent({
     eventType: "delivery_route",
     userQuery: userIntent,
-    routedIntent: action ? "hard_route" : "selector_fallback",
+    routedIntent: action ? "hard_route" : "routing_no_match",
     tool: action,
   }));
 

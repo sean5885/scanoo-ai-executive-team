@@ -63,17 +63,22 @@ function selectOkrAction(userIntent = "", {
   activeCandidates = [],
 } = {}) {
   const normalizedIntent = cleanText(String(userIntent || ""));
+  const followupAction = selectDocQueryAction(normalizedIntent, {
+    activeDoc,
+    activeCandidates,
+  });
+
   if (!isOkrQuery(normalizedIntent)) {
     if (cleanText(activeTheme) === "okr") {
-      const followupAction = selectDocQueryAction(normalizedIntent, {
-        activeDoc,
-        activeCandidates,
-      });
       if (followupAction === "get_company_brain_doc_detail" || followupAction === "search_and_detail_doc") {
         return followupAction;
       }
     }
     return null;
+  }
+
+  if (followupAction === "get_company_brain_doc_detail" || followupAction === "search_and_detail_doc") {
+    return followupAction;
   }
 
   if (
@@ -120,7 +125,7 @@ export function resolveOkrFlowRoute({
   logOkrTrace(logger, buildOkrTraceEvent({
     eventType: "okr_route",
     userQuery: userIntent,
-    routedIntent: action ? "hard_route" : "selector_fallback",
+    routedIntent: action ? "hard_route" : "routing_no_match",
     tool: action,
   }));
 

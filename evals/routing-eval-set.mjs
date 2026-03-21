@@ -339,8 +339,8 @@ const runtimeCases = [
   }),
   createCase("runtime", "010", "晚點提醒我一下", {
     lane: "personal_assistant",
-    planner_action: "default_reply",
-    agent_or_tool: "reply:default",
+    planner_action: "ROUTING_NO_MATCH",
+    agent_or_tool: "error:ROUTING_NO_MATCH",
   }),
 ];
 

@@ -4,7 +4,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 ## Purpose
 
-這份文件描述 repo 內的 deterministic routing eval regression gate baseline（v1）。
+這份文件描述 repo 內的 deterministic routing eval regression gate baseline（v2 / `routing-eval-baseline-v2`）。
 
 目標是量化目前 checked-in routing 行為的三個層次：
 
@@ -32,7 +32,8 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - registered slash-agent dispatch
 - executive fallback heuristic
 - capability-lane routing
-- planner hard-route / selector fallback
+- planner hard-route / explicit `ROUTING_NO_MATCH`
+- generic `search_company_brain_docs` hard-route 被更具體 selector action 覆蓋的 deterministic 規則
 
 它刻意不量：
 
@@ -69,7 +70,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - `search_and_detail_doc`
 - `get_runtime_info`
 - `calendar_summary`
-- `default_reply`
+- `ROUTING_NO_MATCH`
 
 對 specialized workflow 而言，這欄不一定是 planner contract action；它是 eval 層統一後的「下一步 route action」。
 
@@ -88,7 +89,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 ## Eval Set
 
-目前 eval set 共有 60 筆，覆蓋：
+目前 eval set 共有 62 筆，覆蓋：
 
 - `doc`
 - `meeting`
@@ -115,6 +116,11 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 這些 context 只在 eval adapter 內部使用，不會對 production runtime 寫入持久狀態。
 
+`mixed` 類別目前額外覆蓋：
+
+- 搜尋後直接打開內容（`search_and_detail_doc`）
+- 列出知識庫文件（`list_company_brain_docs`）
+
 ## Execution
 
 CLI:
@@ -130,14 +136,18 @@ node scripts/routing-eval.mjs --json
 - lane accuracy
 - planner accuracy
 - agent/tool accuracy
+- `by_lane_accuracy`
+- `by_action_accuracy`
 - latency avg / p95 / max
 - top miss cases
 
-CLI 會以 overall accuracy ratio 當作強制 regression gate；目前這份 checked-in baseline 為 regression gate baseline v1，門檻是 `0.9`。
+CLI 會以 overall accuracy ratio 當作強制 regression gate；目前這份 checked-in baseline 為 regression gate baseline v2（`routing-eval-baseline-v2`），門檻是 `0.9`。
 
 - overall accuracy ratio `< 0.9` 時，CLI 會以 non-zero exit code 結束
 - overall accuracy ratio `>= 0.9` 時，CLI 保持 zero exit code，即使仍有少量 miss case
 - `--json` 會輸出完整結果、gate threshold 與 `top_miss_cases`（最多前 10 筆錯誤）
+
+`by_lane_accuracy` 與 `by_action_accuracy` 都是以 expected bucket 做分桶，統計該 bucket 內整筆 case 的 overall accuracy，而不是只看單一欄位命中率。
 
 ## Determinism
 
@@ -157,5 +167,6 @@ CLI 會以 overall accuracy ratio 當作強制 regression gate；目前這份 ch
 - top-level routing 仍有大量 heuristic
 - meeting / cloud-doc / registered-agent 仍有 specialized bypass path
 - planner 只在 knowledge-lane 等受控入口內被 deterministic adapter 模擬
+- 當 hard-route 只命中 generic `search_company_brain_docs`，但 selector 能判定出更具體的 create / list / learning / search-and-detail action 時，會優先採用 selector 結果
 
-因此它適合作為 regression gate baseline v1，但不應被描述成完整的 live end-to-end routing benchmark。
+因此它適合作為 regression gate baseline v2，但不應被描述成完整的 live end-to-end routing benchmark。
