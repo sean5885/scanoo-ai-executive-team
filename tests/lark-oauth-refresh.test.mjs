@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 
-import db from "../src/db.mjs";
+import db, { closeDbForTests } from "../src/db.mjs";
 import { startHttpServer } from "../src/http-server.mjs";
 import {
   exchangeCodeForUserToken,
@@ -130,6 +130,56 @@ test("request auth automatically refreshes an expired token and persists the rep
   assert.equal(auth.refreshed, true);
   assert.equal(stored.access_token, "access-refreshed");
   assert.equal(stored.refresh_token, "refresh-refreshed");
+});
+
+test("request auth still refreshes persisted oauth after db reopen", async (t) => {
+  const account = createTestAccount();
+  let refreshCalls = 0;
+
+  saveToken(account.id, {
+    access_token: "access-before-restart",
+    refresh_token: "refresh-before-restart",
+    token_type: "Bearer",
+    scope: "offline_access",
+    expires_at: nowSeconds() - 30,
+    refresh_expires_at: nowSeconds() + 7200,
+  });
+
+  closeDbForTests();
+
+  setLarkAuthServiceOverridesForTests({
+    postAuthenJson: async (pathname, payload) => {
+      refreshCalls += 1;
+      assert.equal(pathname, "/open-apis/authen/v1/refresh_access_token");
+      assert.equal(payload.refresh_token, "refresh-before-restart");
+      return {
+        access_token: "access-after-restart",
+        refresh_token: "refresh-after-restart",
+        expires_in: 3600,
+        refresh_expires_in: 7200,
+        scope: "offline_access",
+        open_id: account.open_id,
+      };
+    },
+    getUserProfile: async () => ({
+      open_id: account.open_id,
+      name: "Restarted OAuth User",
+    }),
+  });
+  t.after(() => {
+    setLarkAuthServiceOverridesForTests({});
+    cleanupAccount(account.id);
+    closeDbForTests();
+  });
+
+  const auth = await resolveLarkRequestAuth({ account_id: account.id });
+  const stored = getTokenForAccount(account.id);
+
+  assert.equal(refreshCalls, 1);
+  assert.equal(auth.accessToken, "access-after-restart");
+  assert.equal(auth.refreshed, true);
+  assert.equal(stored.access_token, "access-after-restart");
+  assert.equal(stored.refresh_token, "refresh-after-restart");
 });
 
 test("http route returns oauth_reauth_required only when refresh cannot recover", async (t) => {

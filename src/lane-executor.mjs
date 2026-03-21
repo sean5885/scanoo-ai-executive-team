@@ -1246,7 +1246,12 @@ async function executeMeetingCommand({ event, scope, logger = noopLogger }) {
           );
           clearMeetingCaptureDocument(activeSession.id);
           deletedFailureDoc = true;
-        } catch {}
+        } catch (error) {
+          logger.warn("meeting_doc_delete_failed_fallback_to_failure_doc", {
+            document_id: formatIdentifierHint(meetingDoc.document_id),
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
       if (!deletedFailureDoc) {
         await runLoggedStep(

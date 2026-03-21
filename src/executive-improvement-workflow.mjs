@@ -26,6 +26,19 @@ async function loadStore(filePath) {
   return raw;
 }
 
+function findLatestProposalIndex(store, proposalId = "") {
+  const normalizedProposalId = cleanText(proposalId);
+  if (!normalizedProposalId || !Array.isArray(store?.items)) {
+    return -1;
+  }
+  for (let index = store.items.length - 1; index >= 0; index -= 1) {
+    if (cleanText(store.items[index]?.id) === normalizedProposalId) {
+      return index;
+    }
+  }
+  return -1;
+}
+
 async function saveStore(filePath, store) {
   await writeJsonFile(filePath, store);
 }
@@ -194,7 +207,7 @@ async function syncTaskImprovementLifecycle(taskId = "") {
 
 async function updateProposalRecord(proposalId, updater) {
   const store = await loadStore(executiveImprovementStorePath);
-  const index = store.items.findIndex((item) => cleanText(item?.id) === cleanText(proposalId));
+  const index = findLatestProposalIndex(store, proposalId);
   if (index < 0) {
     return null;
   }
@@ -257,6 +270,7 @@ export async function applyImprovementWorkflowProposal({
 
 export async function getImprovementWorkflowProposal(proposalId = "") {
   const store = await loadStore(executiveImprovementStorePath);
-  const record = store.items.find((item) => cleanText(item?.id) === cleanText(proposalId));
+  const index = findLatestProposalIndex(store, proposalId);
+  const record = index >= 0 ? store.items[index] : null;
   return record ? normalizeImprovementEntry(record) : null;
 }

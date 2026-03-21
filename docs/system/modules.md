@@ -354,6 +354,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - maintain session / approved / proposal memory stores
   - persist reflection records and improvement proposals into dedicated stores
   - expose approve / reject / apply workflow for improvement proposals
+  - resolve approve / reject / apply against the newest matching proposal record in the persisted workflow store so stale archived duplicates do not mutate the wrong task
 - Core path:
   - yes for executive orchestration and knowledge governance
 

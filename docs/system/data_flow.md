@@ -283,8 +283,9 @@ This is now a capability-lane event path with a closed-loop executive planner la
    - `POST /agent/improvements/:proposal_id/approve`
    - `POST /agent/improvements/:proposal_id/reject`
    - `POST /agent/improvements/:proposal_id/apply`
-6. once approved and applied, the proposal is written into approved memory as an `improvement_applied` record
-7. if every proposal on the task is applied, the task can advance to `improved`
+6. approve / reject / apply now target the newest matching stored proposal record for a given `proposal_id`, so old archived duplicates do not silently update the wrong task-local proposal state
+7. once approved and applied, the proposal is written into approved memory as an `improvement_applied` record
+8. if every proposal on the task is applied, the task can advance to `improved`
 
 ## Async and Background Flow
 

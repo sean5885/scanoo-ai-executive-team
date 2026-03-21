@@ -52,6 +52,33 @@ test("improvement workflow archives reflections and supports approve/apply loop"
     await Promise.all(files.map((filePath, index) => restoreFile(filePath, snapshots[index])));
   });
 
+  await fs.writeFile(
+    executiveImprovementStorePath,
+    `${JSON.stringify({
+      items: [{
+        id: "proposal-1",
+        task_id: "stale-task",
+        account_id: "acct-1",
+        session_key: "sess-stale",
+        reflection_id: "reflection-stale",
+        category: "meeting_agent_improvement",
+        mode: "proposal_only",
+        title: "Require owner checklist",
+        description: "stale proposal",
+        target: "meeting-agent",
+        source_error_type: "missing_owner",
+        status: "pending_approval",
+        decision_actor: "",
+        decision_at: null,
+        applied_by: "",
+        applied_at: null,
+        created_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-01T00:00:00.000Z",
+      }],
+    }, null, 2)}\n`,
+    "utf8",
+  );
+
   const task = await startExecutiveTask({
     accountId: "acct-1",
     sessionKey: "sess-1",
