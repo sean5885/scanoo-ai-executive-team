@@ -5406,8 +5406,7 @@ export function startHttpServer({
             message: abortReason.message,
             timeout_ms: effectiveRequestTimeoutMs,
           });
-        }, effectiveRequestTimeoutMs)
-      : null;
+        }, effectiveRequestTimeoutMs);
     const persistRequestRecord = () => {
       if (requestRecorded) {
         return;

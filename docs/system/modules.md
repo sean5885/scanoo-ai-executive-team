@@ -62,7 +62,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - suppress duplicate Lark event re-deliveries by `message_id` before lane execution
   - emit structured runtime logs for long-connection event intake, lane routing, tool/doc/group steps, reply send, and failure paths
   - shared runtime/tool/alert logs now emit one JSON object per line with canonical `trace_id`, `action`, `status`, `event_type`, and `timestamp` fields for downstream analysis
-  - emit immediate console alerts for `oauth_reauth_required` and `planner_failed` through a shared in-memory rate-limited helper
+  - emit immediate console alerts for `oauth_reauth_required`, `planner_failed`, and request-timeout failures through a shared in-memory rate-limited helper
   - attach a per-event and per-request `trace_id` so chain breaks can be located from logs
   - persist trace-scoped runtime events into SQLite so one `trace_id` can reconstruct request input, planner decision `why`, lane/action, and final result/error
   - preserve incoming `X-Request-Id` or mint a local `request_id` for HTTP request-log correlation, and echo it back in the response header
@@ -115,6 +115,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - replay the first persisted JSON result for repeated keyed requests instead of re-running the handler
   - persist first-response idempotency rows into SQLite `http_request_idempotency`
   - per-request trace creation and request lifecycle logging
+  - per-request timeout/cancel context with one shared `AbortSignal`
   - shared request/route runtime logs now guarantee `trace_id`, `action`, and `status` in the emitted structured payload, while preserving the existing `event` field as a compatibility alias
   - `trace_id` injection into JSON responses for easier cross-log correlation
   - `X-Trace-Id` response-header echo for every request
@@ -140,10 +141,12 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - `src/company-brain-learning.mjs` now provides a bounded learning sidecar for verified company-brain docs: `ingestLearningDocAction(...)` derives deterministic `structured_summary`, `key_concepts`, and `tags`; `updateLearningStateAction(...)` updates simplified per-doc learning state; both write into SQLite `company_brain_learning_state` and do not claim approval-governed memory admission
   - `GET /answer` no longer calls `answer-service.mjs` directly; it now first requires a strict planner decision shaped as either legacy single-step `{ action, params }` or bounded multi-step `{ steps: [{ action, params }] }`, rejects wrapped/non-JSON planner output with `{ error: "planner_failed" }`, rejects contract-external actions with structured `invalid_action`, and returns a structured planner envelope instead of free-text fallback
   - that same strict planner path now also attaches deterministic explanation metadata to each normalized decision and envelope: `why` plus a simplified `alternative`, while `trace.reasoning` exposes the same pair for downstream lane/debug consumption without relaxing the core planner JSON contract
+  - the same HTTP request path now also enforces `HTTP_REQUEST_TIMEOUT_MS` as a per-request timeout budget; timeout emits `event=request_timeout`, returns `504 { ok: false, error: "request_timeout" }`, records that error into `http_request_monitor`, and raises a rate-limited alert keyed by route/path
   - `/agent/docs/create`, `/agent/company-brain/docs`, `/agent/company-brain/search`, `/agent/company-brain/docs/:doc_id`, `/agent/company-brain/learning/ingest`, `/agent/company-brain/learning/state`, and `/agent/system/runtime-info` now provide thin agent-facing bridges over the corresponding document/runtime/query routes, normalizing output into `{ ok, action, data, trace_id }`; the learning routes additionally log `stage=company_brain_learning`
   - `executive-planner.mjs` now enforces a minimal fail-soft contract check around planner action dispatch using [planner_contract.json](/Users/seanhan/Documents/Playground/docs/system/planner_contract.json); invalid required fields or simple `string/object/number` type mismatches return `ok=false` with `error=contract_violation` instead of throwing
   - `executive-planner.mjs` now also enforces a minimal fail-soft final-output contract check for successful planner presets using [planner_contract.json](/Users/seanhan/Documents/Playground/docs/system/planner_contract.json); preset-level violations return `ok=false` with `error=contract_violation`, but step-level preset validation is still intentionally out of scope
-  - `executive-planner.mjs` now also normalizes planner runtime failures into a small shared error taxonomy while preserving any pre-existing `error` field from routes/tools; current planner-generated fallbacks mainly use `tool_error`, `runtime_exception`, and `business_error`
+  - `executive-planner.mjs` now also normalizes planner runtime failures into a small shared error taxonomy while preserving any pre-existing `error` field from routes/tools; current planner-generated fallbacks mainly use `tool_error`, `runtime_exception`, `business_error`, plus abort-boundary `request_timeout` / `request_cancelled`
+  - the same planner/runtime path now also accepts a shared abort signal from the HTTP request boundary; `planUserInputAction(...)`, `requestPlannerJson(...)`, `dispatchPlannerTool(...)`, `runPlannerMultiStep(...)`, `runPlannerPreset(...)`, and `executePlannedUserInput(...)` all stop fail-soft on `request_timeout` / `request_cancelled` instead of retrying past the abort boundary
   - `executive-planner.mjs` now also applies a minimal one-retry policy for dispatch-time `tool_error` / `runtime_exception` cases, preserving a sticky `trace_id` across retry attempts and returning `data.retry_count` in the final action result
   - `executive-planner.mjs` now also attempts one minimal self-healing pass for input-side planner `contract_violation` cases before dispatch, limited to filling missing required fields and basic `String()` / `Number()` coercion, and marks successful healed requests with `data.healed=true`
   - `executive-planner.mjs` now also enforces a small fixed execution policy/fail boundary: `contract_violation` can self-heal once then stops, `tool_error` / `runtime_exception` retry once then stop, `business_error` stops immediately, and final controlled failures are normalized into a shared stopped shape under `data.stopped` / `data.stop_reason` while keeping existing `stopped` / `stopped_at_step` fields intact
@@ -184,6 +187,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - persist one compact row per HTTP request into SQLite `http_request_monitor`
   - persist trace-correlated runtime events into SQLite `http_request_trace_events`
   - normalize request outcome fields (`status_code`, `ok`, `error_code`, `error_message`, `duration_ms`)
+  - persist timeout/cancel outcomes as normal request-monitor rows so operators can query `request_timeout` / `request_cancelled` the same way as other failures
   - expose recent-request, recent-error, latest-error, success/error-rate, dashboard-snapshot, and per-trace reconstruction queries
   - provide local CLIs so operators can inspect request health, view one compact dashboard, and reconstruct one request timeline without scraping logs
 - Core path:

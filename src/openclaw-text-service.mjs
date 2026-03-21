@@ -29,6 +29,45 @@ function safeSessionIdSuffix(value = "") {
   return normalized || "default";
 }
 
+function throwIfAborted(signal) {
+  if (!signal?.aborted) {
+    return;
+  }
+  throw signal.reason || Object.assign(new Error("request_cancelled"), {
+    name: "AbortError",
+    code: "request_cancelled",
+  });
+}
+
+function waitWithSignal(delayMs, signal) {
+  if (!signal) {
+    return new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, delayMs);
+
+    function onAbort() {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      reject(signal.reason || Object.assign(new Error("request_cancelled"), {
+        name: "AbortError",
+        code: "request_cancelled",
+      }));
+    }
+
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export function parseOpenClawJson(rawText = "") {
   const text = String(rawText || "").trim();
   try {
@@ -45,7 +84,9 @@ export async function callOpenClawTextGeneration({
   prompt = "",
   sessionIdSuffix = "default",
   timeoutMs = llmOpenClawTimeoutMs,
+  signal = null,
 } = {}) {
+  throwIfAborted(signal);
   const args = [
     "agent",
     "--agent",
@@ -63,11 +104,13 @@ export async function callOpenClawTextGeneration({
 
   let lastError = null;
   for (let attempt = 0; attempt <= OPENCLAW_LOCK_RETRY_MAX; attempt += 1) {
+    throwIfAborted(signal);
     try {
       const { stdout } = await execFile("openclaw", args, {
         cwd: process.cwd(),
         timeout: timeoutMs + 3000,
         maxBuffer: 1024 * 1024 * 8,
+        signal,
       });
       const outer = parseOpenClawJson(stdout);
       const payloadText = outer?.payloads?.[0]?.text || outer?.result?.payloads?.[0]?.text || "";
@@ -81,7 +124,7 @@ export async function callOpenClawTextGeneration({
       if (attempt >= OPENCLAW_LOCK_RETRY_MAX || !stderr.includes("session file locked")) {
         break;
       }
-      await new Promise((resolve) => setTimeout(resolve, OPENCLAW_LOCK_RETRY_DELAY_MS));
+      await waitWithSignal(OPENCLAW_LOCK_RETRY_DELAY_MS, signal);
     }
   }
   throw lastError || new Error("openclaw_text_generation_failed");

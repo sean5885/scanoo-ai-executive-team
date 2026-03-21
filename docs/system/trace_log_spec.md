@@ -32,6 +32,7 @@ All minimum trace/log events should align around these fields:
 - `healed`
 - `stopped`
 - `stop_reason`
+- `timeout_ms`
 - `reasoning`
 
 ### Minimum Common Shape
@@ -55,6 +56,7 @@ All minimum trace/log events should align around these fields:
   "healed": "boolean|null",
   "stopped": "boolean|null",
   "stop_reason": "string|null",
+  "timeout_ms": "number|null",
   "reasoning": {
     "why": "string|null",
     "alternative": {
@@ -109,6 +111,7 @@ All minimum trace/log events should align around these fields:
  - `result.error`
  - optional `trace_id`
 - the HTTP runtime now also persists one compact SQLite request-monitor row per finished request keyed by `trace_id`; this is a query surface over request outcomes, not a replacement for structured logs
+- the HTTP runtime now also emits explicit `request_timeout` / `request_cancelled` trace events and persists the corresponding `error_code` into `http_request_monitor`
 - the monitoring layer now also persists trace-scoped runtime events into SQLite `http_request_trace_events`; this stays a local observability/debug surface and does not replace the runtime logger stream
 - a local CLI `node scripts/debug-trace.mjs <trace_id>` can now reconstruct one persisted request timeline from those trace events plus the compact request row
 - runtime console/log sinks now emit one JSON log object per line for the shared runtime logger, rate-limited alerts, and tool execution logs; the runtime payload keeps `event` as a compatibility alias while `event_type` is the canonical analysis key
@@ -140,6 +143,7 @@ The reconstruction CLI reads both tables so operators can quickly inspect:
 - planner decision `why`
 - lane / action
 - final result / error
+- timeout budget when the failure is a timeout
 - timeline step ordering and most likely failure layer
 
 ## `request_input`

@@ -179,6 +179,83 @@ test("buildPlannedUserInputEnvelope exposes chosen_action and fallback_reason fo
   assert.equal(envelope.trace?.reasoning?.alternative?.summary, "改用與使用者意圖一致的合法 action 後重新規劃。");
 });
 
+test("executePlannedUserInput forwards abort signal and completes normally", async () => {
+  const controller = new AbortController();
+  let requesterSignal = null;
+  let toolFlowSignal = null;
+
+  const result = await executePlannedUserInput({
+    text: "查 runtime",
+    signal: controller.signal,
+    async requester({ signal }) {
+      requesterSignal = signal;
+      return JSON.stringify({
+        action: "get_runtime_info",
+        params: {},
+      });
+    },
+    async toolFlowRunner({ signal }) {
+      toolFlowSignal = signal;
+      return {
+        selected_action: "get_runtime_info",
+        trace_id: "trace_signal_ok",
+        execution_result: {
+          ok: true,
+          action: "get_runtime_info",
+          trace_id: "trace_signal_ok",
+          data: {
+            db_path: "/tmp/db.sqlite",
+          },
+        },
+      };
+    },
+  });
+
+  assert.equal(requesterSignal, controller.signal);
+  assert.equal(toolFlowSignal, controller.signal);
+  assert.equal(result.ok, true);
+  assert.equal(result.action, "get_runtime_info");
+  assert.equal(result.trace_id, "trace_signal_ok");
+});
+
+test("dispatchPlannerTool stops immediately when abort signal is already timed out", async () => {
+  const controller = new AbortController();
+  controller.abort({
+    name: "AbortError",
+    code: "request_timeout",
+    message: "Request timed out after 25ms.",
+    timeout_ms: 25,
+  });
+
+  const originalFetch = global.fetch;
+  let fetchCalled = false;
+  global.fetch = async () => {
+    fetchCalled = true;
+    throw new Error("fetch should not be called after abort");
+  };
+
+  try {
+    const result = await dispatchPlannerTool({
+      action: "get_runtime_info",
+      signal: controller.signal,
+      logger: {
+        info() {},
+        debug() {},
+        warn() {},
+        error() {},
+      },
+    });
+
+    assert.equal(fetchCalled, false);
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "request_timeout");
+    assert.equal(result.data?.stopped, true);
+    assert.equal(result.data?.timeout_ms, 25);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("runPlannerToolFlow includes reasoning in planner_end_to_end trace", async () => {
   const infoEvents = [];
   const result = await runPlannerToolFlow({

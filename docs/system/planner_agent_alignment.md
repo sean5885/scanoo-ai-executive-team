@@ -359,6 +359,7 @@ Current multi-step runtime behavior:
 
 - steps are executed in order
 - each step goes through `dispatchPlannerTool(...)`
+- planner dispatch, planner JSON request, preset execution, and multi-step execution now all accept a shared abort signal from the HTTP request boundary
 - default behavior is stop-on-first-error
 - stopped runs return the failing step index and normalized error instead of continuing silently
 - multi-step runtime now records bounded execution state for resume/retry:
@@ -401,6 +402,10 @@ Current stop behavior already implemented in runtime:
   - retry once, then stop
 - `runtime_exception`
   - retry once, then stop
+- `request_timeout`
+  - stop immediately; no retry after the timeout boundary
+- `request_cancelled`
+  - stop immediately; no retry after the cancel boundary
 - `business_error`
   - stop immediately
 

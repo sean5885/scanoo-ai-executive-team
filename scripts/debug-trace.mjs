@@ -109,6 +109,9 @@ function buildTimelineDetails(event = {}) {
   pushDetail(lines, "ok", payload.ok);
   pushDetail(lines, "status_code", payload.status_code);
   pushDetail(lines, "error", payload.error);
+  pushDetail(lines, "error_message", payload.error_message || payload.message);
+  pushDetail(lines, "timeout_ms", payload.timeout_ms);
+  pushDetail(lines, "aborted", payload.aborted);
   pushDetail(lines, "why", payload.reasoning?.why || payload.why || payload.reason);
   pushDetail(lines, "duration_ms", payload.duration_ms);
   return lines;
@@ -141,6 +144,7 @@ function formatFailurePoint(failurePoint, timeline) {
   pushDetail(lines, "error", payload.error || payload.error_code || null);
   pushDetail(lines, "message", payload.error_message || payload.message || null);
   pushDetail(lines, "status_code", payload.status_code || null);
+  pushDetail(lines, "timeout_ms", payload.timeout_ms || null);
   return lines;
 }
 

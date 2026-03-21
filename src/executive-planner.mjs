@@ -550,6 +550,92 @@ function buildContractViolationResult({
 // Planner error normalization and stop boundary
 // ---------------------------------------------------------------------------
 
+function normalizePlannerAbortCode(value = "") {
+  const normalized = cleanText(value);
+  if (normalized === "request_timeout" || normalized === "request_cancelled") {
+    return normalized;
+  }
+  return "request_cancelled";
+}
+
+function isPlannerAbortCode(value = "") {
+  const normalized = cleanText(value);
+  return normalized === "request_timeout" || normalized === "request_cancelled";
+}
+
+function derivePlannerAbortInfo({
+  signal = null,
+  error = null,
+} = {}) {
+  const source = signal?.aborted ? signal.reason || error : error;
+  if (!source && !signal?.aborted) {
+    return null;
+  }
+
+  const codeCandidate = cleanText(source?.code || error?.code || "");
+  const nameCandidate = cleanText(source?.name || error?.name || "");
+  if (!signal?.aborted && !isPlannerAbortCode(codeCandidate) && nameCandidate !== "AbortError") {
+    return null;
+  }
+
+  const code = normalizePlannerAbortCode(codeCandidate || (signal?.aborted ? "request_cancelled" : ""));
+  const timeoutMs = Number.isFinite(Number(source?.timeout_ms))
+    ? Number(source.timeout_ms)
+    : Number.isFinite(Number(error?.timeout_ms))
+      ? Number(error.timeout_ms)
+      : null;
+  const message = cleanText(source?.message || error?.message || "")
+    || (code === "request_timeout"
+      ? "Request timed out before completion."
+      : "Request was cancelled before completion.");
+
+  return {
+    code,
+    message,
+    timeout_ms: timeoutMs,
+  };
+}
+
+function throwIfPlannerSignalAborted(signal) {
+  const abortInfo = derivePlannerAbortInfo({ signal });
+  if (!abortInfo) {
+    return;
+  }
+  const error = new Error(abortInfo.message);
+  error.name = "AbortError";
+  error.code = abortInfo.code;
+  if (abortInfo.timeout_ms != null) {
+    error.timeout_ms = abortInfo.timeout_ms;
+  }
+  throw error;
+}
+
+function buildPlannerAbortResult({
+  action = "",
+  preset = "",
+  signal = null,
+  error = null,
+  traceId = null,
+} = {}) {
+  const abortInfo = derivePlannerAbortInfo({ signal, error });
+  if (!abortInfo) {
+    return null;
+  }
+
+  return buildPlannerStoppedResult({
+    action,
+    preset,
+    error: abortInfo.code,
+    data: {
+      message: abortInfo.message,
+      aborted: true,
+      ...(abortInfo.timeout_ms != null ? { timeout_ms: abortInfo.timeout_ms } : {}),
+    },
+    traceId: traceId || null,
+    stopReason: abortInfo.code,
+  });
+}
+
 export function normalizeError(result = null, {
   action = "",
   preset = "",
@@ -615,6 +701,16 @@ const plannerExecutionPolicy = {
     self_heal: 0,
     retry: 1,
     stop_reason: "runtime_exception",
+  },
+  request_timeout: {
+    self_heal: 0,
+    retry: 0,
+    stop_reason: "request_timeout",
+  },
+  request_cancelled: {
+    self_heal: 0,
+    retry: 0,
+    stop_reason: "request_cancelled",
   },
   business_error: {
     self_heal: 0,
@@ -1896,6 +1992,7 @@ export async function dispatchPlannerTool({
   logger = console,
   baseUrl = oauthBaseUrl,
   maxRetry = 1,
+  signal = null,
 } = {}) {
   const runtimeInput = buildPlannerActionRuntimeInput({
     action,
@@ -1906,6 +2003,23 @@ export async function dispatchPlannerTool({
   const requestId = createRequestId("planner_tool");
   const hooks = createPlannerRuntimeHooks();
   const tool = getPlannerTool(runtimeInput.action);
+  const preAbortResult = buildPlannerAbortResult({
+    action: runtimeInput.action,
+    signal,
+  });
+  if (preAbortResult) {
+    emitToolExecutionLog({
+      logger,
+      requestId,
+      action: runtimeInput.action,
+      params: runtimeInput.payload,
+      success: false,
+      data: buildPlannerToolExecutionData(preAbortResult),
+      error: preAbortResult.error,
+      traceId: preAbortResult.trace_id || null,
+    });
+    return preAbortResult;
+  }
   if (!tool) {
     const stoppedResult = buildPlannerStoppedResult({
       action: runtimeInput.action,
@@ -1984,6 +2098,7 @@ export async function dispatchPlannerTool({
   let runtimeRetryCount = 0;
 
   async function attemptDispatch() {
+    throwIfPlannerSignalAborted(signal);
     const { resolvedPathname, url } = buildPlannerDispatchUrl(tool, effectivePayload, runtimeInput.base_url);
     maybeInvokePlannerHook(hooks, "onActionDispatchStart", {
       action: tool.action,
@@ -2013,12 +2128,14 @@ export async function dispatchPlannerTool({
         ...(tool.method === "POST" ? { "Content-Type": "application/json" } : {}),
         "X-Request-Id": requestId,
       },
+      signal,
       body: tool.method === "POST"
         ? JSON.stringify(effectivePayload && typeof effectivePayload === "object" ? effectivePayload : {})
         : undefined,
     });
 
     const rawText = await response.text();
+    throwIfPlannerSignalAborted(signal);
     const data = normalizeCompanyBrainActionResult(
       tool.action,
       parsePlannerDispatchResponse(rawText, tool.action),
@@ -2101,6 +2218,15 @@ export async function dispatchPlannerTool({
     try {
       return await attemptDispatch();
     } catch (error) {
+      const abortResult = buildPlannerAbortResult({
+        action: tool.action,
+        signal,
+        error,
+        traceId: stickyTraceId,
+      });
+      if (abortResult) {
+        return abortResult;
+      }
       return normalizeError({
         ok: false,
         action: tool.action,
@@ -2122,6 +2248,7 @@ export async function dispatchPlannerTool({
     runtimeRetryCount < runtimeInput.max_retry
     && result?.ok === false
     && shouldRetryPlannerError(result)
+    && !isPlannerAbortCode(result?.error || "")
   ) {
     runtimeRetryCount += 1;
     emitPlannerRuntimeTrace(logger, buildPlannerTraceEvent({
@@ -2193,7 +2320,19 @@ export async function runPlannerToolFlow({
   baseUrl = oauthBaseUrl,
   forcedSelection = null,
   disableAutoRouting = false,
+  signal = null,
 } = {}) {
+  const preAbortResult = buildPlannerAbortResult({
+    action: cleanText(forcedSelection?.selected_action || forcedSelection?.action || "") || null,
+    signal,
+  });
+  if (preAbortResult) {
+    return buildPlannerAgentOutput({
+      selectedAction: cleanText(forcedSelection?.selected_action || forcedSelection?.action || "") || null,
+      executionResult: preAbortResult,
+      traceId: preAbortResult.trace_id || null,
+    });
+  }
   restorePlannerRuntimeContextFromSummary();
   maybeCompactPlannerConversationMemory({
     flows: buildPlannerFlowSnapshots(plannerFlows),
@@ -2221,6 +2360,7 @@ export async function runPlannerToolFlow({
         logger,
       })
     : null;
+  throwIfPlannerSignalAborted(signal);
   const routedFlow = normalizedForcedSelection
     ? {
         flow: getPlannerFlowForAction(plannerFlows, normalizedForcedSelection.selected_action),
@@ -2294,6 +2434,7 @@ export async function runPlannerToolFlow({
           logger,
         }),
         logger,
+        signal,
       });
       traceId = executionResult?.trace_id || null;
       if (executionResult?.ok === false) {
@@ -2321,6 +2462,7 @@ export async function runPlannerToolFlow({
           logger,
         }),
         logger,
+        signal,
       });
       traceId = executionResult?.trace_id || null;
     }
@@ -2340,6 +2482,7 @@ export async function runPlannerToolFlow({
   }
 
   const selectedFlow = routedFlow.flow || getPlannerFlowForAction(plannerFlows, selection.selected_action);
+  throwIfPlannerSignalAborted(signal);
   if (!taskLifecycleFollowUp?.execution_result) {
     executionResult = await formatPlannerFlowResult({
       flow: selectedFlow,
@@ -2360,6 +2503,7 @@ export async function runPlannerToolFlow({
       logger,
     });
   }
+  throwIfPlannerSignalAborted(signal);
   traceId = executionResult?.trace_id || traceId || null;
 
   logger?.info?.("planner_end_to_end", buildPlannerTraceEvent({
@@ -2435,7 +2579,23 @@ export async function runPlannerMultiStep({
   previous_results = [],
   max_retries = 0,
   retryable_error_types = ["tool_error", "runtime_exception"],
+  signal = null,
 } = {}) {
+  const preAbortResult = buildPlannerAbortResult({ signal });
+  if (preAbortResult) {
+    return buildPlannerMultiStepOutput({
+      ok: false,
+      steps: [],
+      results: [],
+      traceId: preAbortResult.trace_id || null,
+      error: preAbortResult.error,
+      stopped: true,
+      stoppedAtStep: null,
+      currentStepIndex: 0,
+      lastError: buildPlannerLastErrorRecord(preAbortResult),
+      retryCount: 0,
+    });
+  }
   const normalizedSteps = Array.isArray(steps)
     ? steps
         .map((step) => ({
@@ -2470,15 +2630,18 @@ export async function runPlannerMultiStep({
   let retryCount = 0;
 
   for (let index = startStepIndex; index < normalizedSteps.length; index += 1) {
+    throwIfPlannerSignalAborted(signal);
     const step = normalizedSteps[index];
     currentStepIndex = index;
     let stepRetryCount = 0;
 
     while (true) {
+      throwIfPlannerSignalAborted(signal);
       const result = await dispatcher({
         action: step.action,
         payload: step.payload,
         logger,
+        signal,
       });
       results.push(result);
       traceId = result?.trace_id || traceId;
@@ -2580,7 +2743,15 @@ export async function runPlannerPreset({
   previous_results = [],
   max_retries = 0,
   retryable_error_types = ["tool_error", "runtime_exception"],
+  signal = null,
 } = {}) {
+  const preAbortResult = buildPlannerAbortResult({
+    preset,
+    signal,
+  });
+  if (preAbortResult) {
+    return preAbortResult;
+  }
   const runtimeInput = buildPlannerPresetRuntimeInput({
     preset,
     input,
@@ -2647,6 +2818,7 @@ export async function runPlannerPreset({
       let lastError = null;
       let error = null;
       for (let index = executionStartIndex; index < steps.length; index += 1) {
+        throwIfPlannerSignalAborted(signal);
         const step = {
           ...steps[index],
           payload: { ...(steps[index]?.payload || {}) },
@@ -2678,6 +2850,7 @@ export async function runPlannerPreset({
           logger,
           max_retries,
           retryable_error_types,
+          signal,
         });
         const singleResult = result?.results?.[0] ?? null;
         if (singleResult) {
@@ -2719,6 +2892,7 @@ export async function runPlannerPreset({
         previous_results,
         max_retries,
         retryable_error_types,
+        signal,
       });
       execution = {
         ...multiStepExecution,
@@ -2849,6 +3023,32 @@ export async function runPlannerPreset({
     }));
     return finalResult;
   } catch (error) {
+    const abortedResult = buildPlannerAbortResult({
+      preset: selectedPreset.preset,
+      signal,
+      error,
+    });
+    if (abortedResult) {
+      emitPlannerRuntimeTrace(logger, buildPlannerTraceEvent({
+        eventType: "preset_result",
+        preset: selectedPreset.preset,
+        ok: false,
+        error: abortedResult.error,
+        stopped: true,
+        stopReason: abortedResult?.data?.stop_reason || abortedResult.error,
+        traceId: abortedResult?.trace_id || null,
+      }));
+      emitPlannerRuntimeTrace(logger, buildPlannerTraceEvent({
+        eventType: "stopped",
+        preset: selectedPreset.preset,
+        ok: false,
+        error: abortedResult.error,
+        stopped: true,
+        stopReason: abortedResult?.data?.stop_reason || abortedResult.error,
+        traceId: abortedResult?.trace_id || null,
+      }));
+      return abortedResult;
+    }
     const stoppedResult = buildPlannerStoppedResult({
       preset: selectedPreset.preset,
       error: "runtime_exception",
@@ -3628,12 +3828,15 @@ export async function requestPlannerJson({
   systemPrompt,
   prompt,
   sessionIdSuffix = "executive-planner",
+  signal = null,
 } = {}) {
+  throwIfPlannerSignalAborted(signal);
   if (!llmApiKey) {
     return callOpenClawTextGeneration({
       systemPrompt,
       prompt,
       sessionIdSuffix,
+      signal,
     });
   }
 
@@ -3652,8 +3855,10 @@ export async function requestPlannerJson({
         { role: "user", content: prompt },
       ],
     }),
+    signal,
   });
   const data = await response.json();
+  throwIfPlannerSignalAborted(signal);
   if (!response.ok) {
     throw new Error(data.error?.message || `executive_planner_failed:${response.status}`);
   }
@@ -4191,7 +4396,14 @@ function withUserInputDecisionExplanation(result = {}, {
   };
 }
 
-export async function planUserInputAction({ text = "", requester = requestPlannerJson } = {}) {
+export async function planUserInputAction({ text = "", requester = requestPlannerJson, signal = null } = {}) {
+  const preAbortInfo = derivePlannerAbortInfo({ signal });
+  if (preAbortInfo) {
+    return withUserInputDecisionExplanation({
+      error: preAbortInfo.code,
+      reason: preAbortInfo.code,
+    }, { text });
+  }
   restorePlannerRuntimeContextFromSummary();
   maybeCompactPlannerConversationMemory({
     flows: buildPlannerFlowSnapshots(plannerFlows),
@@ -4203,11 +4415,14 @@ export async function planUserInputAction({ text = "", requester = requestPlanne
 
   for (let attempt = 0; attempt <= llmJsonRetryMax; attempt += 1) {
     try {
+      throwIfPlannerSignalAborted(signal);
       const raw = await requester({
         systemPrompt: promptInput.systemPrompt,
         prompt,
         sessionIdSuffix: cleanText(text).slice(0, 48) || "user-input-planner",
+        signal,
       });
+      throwIfPlannerSignalAborted(signal);
       const parsed = parseStrictPlannerUserInputJson(raw);
       const validation = validatePlannerUserInputDecision(parsed);
       if (validation.ok) {
@@ -4258,7 +4473,23 @@ export async function planUserInputAction({ text = "", requester = requestPlanne
         lastInvalidDecision = validation;
         break;
       }
-    } catch {
+    } catch (error) {
+      const abortInfo = derivePlannerAbortInfo({ signal, error });
+      if (abortInfo) {
+        const abortedResult = withUserInputDecisionExplanation({
+          error: abortInfo.code,
+          reason: abortInfo.code,
+        }, { text });
+        recordPlannerConversationExchange({
+          userQuery: text,
+          plannerReply: JSON.stringify(abortedResult),
+        });
+        maybeCompactPlannerConversationMemory({
+          flows: buildPlannerFlowSnapshots(plannerFlows),
+          reason: "post_plan_user_input_action_aborted",
+        });
+        return abortedResult;
+      }
       // Continue into the bounded retry path below.
     }
 
@@ -4321,7 +4552,19 @@ export async function executePlannedUserInput({
   previous_results = [],
   max_retries = 0,
   retryable_error_types = ["tool_error", "runtime_exception"],
+  signal = null,
 } = {}) {
+  const preAbortInfo = derivePlannerAbortInfo({ signal });
+  if (preAbortInfo) {
+    return {
+      ok: false,
+      error: preAbortInfo.code,
+      execution_result: null,
+      trace_id: null,
+      why: null,
+      alternative: normalizeDecisionAlternative(null),
+    };
+  }
   const decision = plannedDecision
     ? (() => {
         const validatedDecision = validatePlannerUserInputDecision(plannedDecision);
@@ -4338,7 +4581,7 @@ export async function executePlannedUserInput({
           { text },
         );
       })()
-    : await planUserInputAction({ text, requester });
+    : await planUserInputAction({ text, requester, signal });
   if (decision?.error) {
     if (decision.error === "planner_failed") {
       emitPlannerFailedAlert({
@@ -4356,22 +4599,45 @@ export async function executePlannedUserInput({
   }
 
   if (Array.isArray(decision.steps)) {
-    const runtimeResult = await multiStepRunner({
-      steps: decision.steps,
-      logger,
-      resume_from_step,
-      previous_results,
-      max_retries,
-      retryable_error_types,
-      async dispatcher({ action, payload }) {
-        return dispatcher({
-          action,
-          payload,
-          logger,
-          baseUrl,
+    let runtimeResult;
+    try {
+      runtimeResult = await multiStepRunner({
+        steps: decision.steps,
+        logger,
+        resume_from_step,
+        previous_results,
+        max_retries,
+        retryable_error_types,
+        signal,
+        async dispatcher({ action, payload }) {
+          return dispatcher({
+            action,
+            payload,
+            logger,
+            baseUrl,
+            signal,
+          });
+        },
+      });
+    } catch (error) {
+      const abortedResult = buildPlannerAbortResult({ signal, error });
+      if (abortedResult) {
+        runtimeResult = buildPlannerMultiStepOutput({
+          ok: false,
+          steps: decision.steps.map((step) => ({ action: step.action })),
+          results: [],
+          traceId: abortedResult.trace_id || null,
+          error: abortedResult.error,
+          stopped: true,
+          stoppedAtStep: null,
+          currentStepIndex: 0,
+          lastError: buildPlannerLastErrorRecord(abortedResult),
+          retryCount: 0,
         });
-      },
-    });
+      } else {
+        throw error;
+      }
+    }
 
     return {
       ok: runtimeResult?.ok === true,
@@ -4384,18 +4650,37 @@ export async function executePlannedUserInput({
     };
   }
 
-  const runtimeResult = await toolFlowRunner({
-    userIntent: text,
-    payload: decision.params,
-    logger,
-    contentReader,
-    baseUrl,
-    forcedSelection: {
-      selected_action: decision.action,
-      reason: "strict_user_input_planner",
-    },
-    disableAutoRouting: true,
-  });
+  let runtimeResult;
+  try {
+    runtimeResult = await toolFlowRunner({
+      userIntent: text,
+      payload: decision.params,
+      logger,
+      contentReader,
+      baseUrl,
+      forcedSelection: {
+        selected_action: decision.action,
+        reason: "strict_user_input_planner",
+      },
+      disableAutoRouting: true,
+      signal,
+    });
+  } catch (error) {
+    const abortedResult = buildPlannerAbortResult({
+      action: decision.action,
+      signal,
+      error,
+    });
+    if (abortedResult) {
+      runtimeResult = buildPlannerAgentOutput({
+        selectedAction: decision.action,
+        executionResult: abortedResult,
+        traceId: abortedResult.trace_id || null,
+      });
+    } else {
+      throw error;
+    }
+  }
 
   return {
     ok: runtimeResult?.execution_result?.ok === true,

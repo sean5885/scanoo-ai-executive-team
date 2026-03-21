@@ -106,6 +106,7 @@ Key values:
 
 - Lark app credentials
 - domain and OAuth callback settings
+- HTTP request timeout budget (`HTTP_REQUEST_TIMEOUT_MS`)
 - OAuth scopes
 - token encryption secret
 - comment suggestion poller enablement, interval, and watch-file path

@@ -112,6 +112,8 @@ It is intentionally narrow:
     - `contract_violation`
     - `tool_error`
     - `runtime_exception`
+    - `request_timeout`
+    - `request_cancelled`
     - `business_error`
     - `not_found`
     - `permission_denied`

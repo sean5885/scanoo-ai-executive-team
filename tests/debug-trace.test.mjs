@@ -215,3 +215,88 @@ test("debug trace CLI locates the failing step for error traces", async () => {
   assert.match(result.stdout, /message: planner tool not found/);
   assert.match(result.stdout, /status_code: 422/);
 });
+
+test("debug trace CLI reconstructs timeout failures", async () => {
+  const traceId = `trace_timeout_${Date.now()}`;
+  const requestId = `req_${traceId}`;
+
+  recordHttpRequest({
+    traceId,
+    requestId,
+    method: "GET",
+    pathname: "/answer",
+    routeName: "knowledge_answer",
+    statusCode: 504,
+    payload: {
+      ok: false,
+      error: "request_timeout",
+      message: "Request timed out after 25ms.",
+      timeout_ms: 25,
+    },
+    durationMs: 25,
+  });
+  recordTraceEvent({
+    traceId,
+    requestId,
+    component: "http.request",
+    event: "request_input",
+    payload: {
+      request_input: {
+        method: "GET",
+        pathname: "/answer",
+        query: {
+          q: "查 runtime info",
+        },
+      },
+    },
+  });
+  recordTraceEvent({
+    traceId,
+    requestId,
+    component: "http.request",
+    event: "request_timeout",
+    level: "error",
+    payload: {
+      error: "request_timeout",
+      message: "Request timed out after 25ms.",
+      timeout_ms: 25,
+      status_code: 504,
+    },
+  });
+  recordTraceEvent({
+    traceId,
+    requestId,
+    component: "http.request.knowledge_answer",
+    event: "route_failed",
+    level: "error",
+    payload: {
+      route: "knowledge_answer",
+      error: "request_timeout",
+      error_message: "Request timed out after 25ms.",
+      timeout_ms: 25,
+      aborted: true,
+    },
+  });
+  recordTraceEvent({
+    traceId,
+    requestId,
+    component: "http.request",
+    event: "request_finished",
+    payload: {
+      status_code: 504,
+      ok: false,
+      error: "request_timeout",
+      error_message: "Request timed out after 25ms.",
+      timeout_ms: 25,
+    },
+  });
+
+  const result = await runDebugTrace(traceId);
+
+  assert.match(result.stdout, /Final Result/);
+  assert.match(result.stdout, /error: request_timeout/);
+  assert.match(result.stdout, /timeout_ms: 25/);
+  assert.match(result.stdout, /Failure Point/);
+  assert.match(result.stdout, /event: route_failed/);
+  assert.match(result.stdout, /message: Request timed out after 25ms\./);
+});

@@ -89,6 +89,41 @@ test("http monitoring routes expose latest error and metrics", async (t) => {
   assert.equal(requestsPayload.items.some((item) => item.trace_id === missingPayload.trace_id), true);
 });
 
+test("http server records timed out requests in monitoring store", async (t) => {
+  const server = startHttpServer({
+    listen: false,
+    logger: createLogger(),
+    requestTimeoutMs: 25,
+    serviceOverrides: {
+      executePlannedUserInput: async ({ signal }) => new Promise((resolve, reject) => {
+        if (signal?.aborted) {
+          reject(signal.reason);
+          return;
+        }
+        signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+      }),
+    },
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/answer?q=${encodeURIComponent("查 runtime info")}`);
+  const payload = await response.json();
+
+  assert.equal(response.status, 504);
+  assert.equal(payload.error, "request_timeout");
+  assert.match(payload.trace_id, /^http_/);
+
+  const recentRequests = listRecentRequests({ limit: 200 });
+  const item = recentRequests.find((entry) => entry.trace_id === payload.trace_id);
+
+  assert.ok(item);
+  assert.equal(item.status_code, 504);
+  assert.equal(item.error_code, "request_timeout");
+  assert.equal(item.ok, false);
+});
+
 test("monitoring CLI reports recent requests and metrics", async () => {
   const traceId = `cli_test_${Date.now()}`;
 
