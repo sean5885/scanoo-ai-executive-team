@@ -10,8 +10,11 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 - Thread 34 observability checkpoint
 - Thread 35 closed-loop checkpoint
+- Thread 37 routing dataset coverage checkpoint
 
 Thread 35 closed-loop checkpoint 針對 `top_miss_cases` / `error_breakdown` -> candidate fixture -> dataset review -> rerun eval -> baseline gate 的閉環流程補上最小工具與文件，且不改 routing 決策、fallback 行為或 baseline fixture。
+
+Thread 37 routing dataset coverage checkpoint 只擴充 checked-in dataset coverage，新增 26 筆 fixture，補強模糊查詢、搜尋+打開、`doc` / `runtime` 邊界與中文自然語句；不新增 routing 邏輯、不改 routing 決策，也不調整 eval gate（仍為 `0.9`）。
 
 目標是量化目前 checked-in routing 行為的三個層次：
 
@@ -99,7 +102,7 @@ Thread 35 closed-loop checkpoint 針對 `top_miss_cases` / `error_breakdown` -> 
 
 ## Eval Set
 
-目前 eval set 共有 62 筆，覆蓋：
+目前 eval set 共有 88 筆，覆蓋：
 
 - `doc`
 - `meeting`
@@ -130,6 +133,13 @@ Thread 35 closed-loop checkpoint 針對 `top_miss_cases` / `error_breakdown` -> 
 
 - 搜尋後直接打開內容（`search_and_detail_doc`）
 - 列出知識庫文件（`list_company_brain_docs`）
+
+新增的 checked-in coverage 重點：
+
+- 中文自然語句的模糊文件跟進，包含會落到 `ROUTING_NO_MATCH` 的 fail-closed 邊界
+- 搜尋後直接打開內容的多種中文表述
+- `doc` / `runtime` 邊界語句，包含同時帶有 `文件` / `摘要` / `db path` / `runtime` 等信號時，實際仍被 runtime flow 優先接走的 case
+- doc editor 類的自然中文改稿請求
 
 ## Execution
 

@@ -184,8 +184,9 @@ test("routing eval report prints hard routing error breakdown", () => {
 
 test("routing eval gate fails when overall accuracy ratio drops below 0.9", async () => {
   const testCases = await loadRoutingEvalSet();
+  const failingMisses = Math.floor(testCases.length * (1 - ROUTING_EVAL_MIN_ACCURACY_RATIO)) + 1;
   const degradedCases = testCases.map((testCase, index) => (
-    index < 7
+    index < failingMisses
       ? {
           ...testCase,
           expected: {
@@ -199,10 +200,10 @@ test("routing eval gate fails when overall accuracy ratio drops below 0.9", asyn
   const run = await runRoutingEval({ testCases: degradedCases });
 
   assert.equal(run.ok, false);
-  assert.equal(run.summary.overall.hits, testCases.length - 7);
-  assert.equal(run.summary.miss_count, 7);
+  assert.equal(run.summary.overall.hits, testCases.length - failingMisses);
+  assert.equal(run.summary.miss_count, failingMisses);
   assert.equal(run.summary.overall.accuracy_ratio < ROUTING_EVAL_MIN_ACCURACY_RATIO, true);
-  assert.equal(run.summary.top_miss_cases.length, 7);
+  assert.equal(run.summary.top_miss_cases.length, Math.min(failingMisses, 10));
 });
 
 test("routing eval gate passes when overall accuracy ratio stays above 0.9", async () => {

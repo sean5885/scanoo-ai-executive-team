@@ -195,6 +195,95 @@ const docCases = [
       },
     },
   }),
+  createCase("doc", "026", "查一下這份文件", {
+    lane: "knowledge_assistant",
+    planner_action: "search_company_brain_docs",
+    agent_or_tool: "tool:search_company_brain_docs",
+  }),
+  createCase("doc", "027", "根據文件幫我看這份", {
+    lane: "knowledge_assistant",
+    planner_action: "get_company_brain_doc_detail",
+    agent_or_tool: "tool:get_company_brain_doc_detail",
+  }, {
+    context: {
+      planner: {
+        active_doc: {
+          doc_id: "doc-followup-1",
+          title: "Onboarding SOP",
+        },
+      },
+    },
+  }),
+  createCase("doc", "028", "根據文件打開第3份內容", {
+    lane: "knowledge_assistant",
+    planner_action: "get_company_brain_doc_detail",
+    agent_or_tool: "tool:get_company_brain_doc_detail",
+  }, {
+    context: {
+      planner: {
+        active_candidates: [
+          { doc_id: "doc-followup-1", title: "Onboarding SOP" },
+          { doc_id: "doc-followup-2", title: "Delivery Guide" },
+          { doc_id: "doc-followup-3", title: "Runtime Notes" },
+        ],
+      },
+    },
+  }),
+  createCase("doc", "029", "搜尋 onboarding SOP 然後打開內容", {
+    lane: "knowledge_assistant",
+    planner_action: "search_and_detail_doc",
+    agent_or_tool: "tool:search_and_detail_doc",
+  }),
+  createCase("doc", "030", "搜索交付驗收文件並讀內容", {
+    lane: "knowledge_assistant",
+    planner_action: "search_and_detail_doc",
+    agent_or_tool: "tool:search_and_detail_doc",
+  }),
+  createCase("doc", "031", "查詢客戶提案文件內容", {
+    lane: "knowledge_assistant",
+    planner_action: "search_and_detail_doc",
+    agent_or_tool: "tool:search_and_detail_doc",
+  }),
+  createCase("doc", "032", "幫我搜尋客戶跟進文件並打開內容", {
+    lane: "knowledge_assistant",
+    planner_action: "search_and_detail_doc",
+    agent_or_tool: "tool:search_and_detail_doc",
+  }),
+  createCase("doc", "033", "查一下 onboarding 文件內容", {
+    lane: "knowledge_assistant",
+    planner_action: "search_and_detail_doc",
+    agent_or_tool: "tool:search_and_detail_doc",
+  }),
+  createCase("doc", "034", "搜尋 onboarding 文件", {
+    lane: "knowledge_assistant",
+    planner_action: "search_company_brain_docs",
+    agent_or_tool: "tool:search_company_brain_docs",
+  }),
+  createCase("doc", "035", "整理 onboarding 文件重點", {
+    lane: "knowledge_assistant",
+    planner_action: "search_and_detail_doc",
+    agent_or_tool: "tool:search_and_detail_doc",
+  }),
+  createCase("doc", "036", "幫我把這份文件的評論整合後改稿", {
+    lane: "doc_editor",
+    planner_action: "comment_rewrite_preview",
+    agent_or_tool: "tool:lark_doc_rewrite_from_comments",
+  }),
+  createCase("doc", "037", "看一下這份文檔評論並幫我修改", {
+    lane: "doc_editor",
+    planner_action: "comment_rewrite_preview",
+    agent_or_tool: "tool:lark_doc_rewrite_from_comments",
+  }),
+  createCase("doc", "038", "這份文件在講什麼", {
+    lane: "personal_assistant",
+    planner_action: "ROUTING_NO_MATCH",
+    agent_or_tool: "error:ROUTING_NO_MATCH",
+  }),
+  createCase("doc", "039", "打開這份給我看", {
+    lane: "personal_assistant",
+    planner_action: "ROUTING_NO_MATCH",
+    agent_or_tool: "error:ROUTING_NO_MATCH",
+  }),
 ];
 
 const meetingCases = [
@@ -341,6 +430,66 @@ const runtimeCases = [
     lane: "personal_assistant",
     planner_action: "ROUTING_NO_MATCH",
     agent_or_tool: "error:ROUTING_NO_MATCH",
+  }),
+  createCase("runtime", "011", "查一下現在的 db path", {
+    lane: "knowledge_assistant",
+    planner_action: "get_runtime_info",
+    agent_or_tool: "tool:get_runtime_info",
+  }),
+  createCase("runtime", "012", "查一下 runtime pid", {
+    lane: "knowledge_assistant",
+    planner_action: "get_runtime_info",
+    agent_or_tool: "tool:get_runtime_info",
+  }),
+  createCase("runtime", "013", "查一下 runtime cwd", {
+    lane: "knowledge_assistant",
+    planner_action: "get_runtime_info",
+    agent_or_tool: "tool:get_runtime_info",
+  }),
+  createCase("runtime", "014", "查詢 service start runtime", {
+    lane: "knowledge_assistant",
+    planner_action: "get_runtime_info",
+    agent_or_tool: "tool:get_runtime_info",
+  }),
+  createCase("runtime", "015", "查一下 runtime onboarding 文件", {
+    lane: "knowledge_assistant",
+    planner_action: "get_runtime_info",
+    agent_or_tool: "tool:get_runtime_info",
+  }),
+  createCase("runtime", "016", "查一下 onboarding runtime 流程", {
+    lane: "knowledge_assistant",
+    planner_action: "get_runtime_info",
+    agent_or_tool: "tool:get_runtime_info",
+  }),
+  createCase("runtime", "017", "查一下 db path 文件", {
+    lane: "knowledge_assistant",
+    planner_action: "get_runtime_info",
+    agent_or_tool: "tool:get_runtime_info",
+  }),
+  createCase("runtime", "018", "查詢 service start 文件", {
+    lane: "knowledge_assistant",
+    planner_action: "get_runtime_info",
+    agent_or_tool: "tool:get_runtime_info",
+  }),
+  createCase("runtime", "019", "幫我搜尋 runtime db path 文件", {
+    lane: "knowledge_assistant",
+    planner_action: "get_runtime_info",
+    agent_or_tool: "tool:get_runtime_info",
+  }),
+  createCase("runtime", "020", "查一下這份文件的 db path 說明", {
+    lane: "knowledge_assistant",
+    planner_action: "get_runtime_info",
+    agent_or_tool: "tool:get_runtime_info",
+  }),
+  createCase("runtime", "021", "我想看 runtime 的文件摘要", {
+    lane: "knowledge_assistant",
+    planner_action: "get_runtime_info",
+    agent_or_tool: "tool:get_runtime_info",
+  }),
+  createCase("runtime", "022", "幫我整理 runtime 文件重點", {
+    lane: "knowledge_assistant",
+    planner_action: "get_runtime_info",
+    agent_or_tool: "tool:get_runtime_info",
   }),
 ];
 
