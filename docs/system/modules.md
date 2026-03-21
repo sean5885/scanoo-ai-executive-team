@@ -44,6 +44,8 @@ Routing / handoff layer: [routing_handoff_spec.md](/Users/seanhan/Documents/Play
 
 Routing eval baseline: [routing_eval_system.md](/Users/seanhan/Documents/Playground/docs/system/routing_eval_system.md)
 
+Routing eval closed-loop runbook: [routing_eval_closed_loop_runbook.md](/Users/seanhan/Documents/Playground/docs/system/routing_eval_closed_loop_runbook.md)
+
 Skill layer: [skill_spec.md](/Users/seanhan/Documents/Playground/docs/system/skill_spec.md)
 
 Trace / log layer: [trace_log_spec.md](/Users/seanhan/Documents/Playground/docs/system/trace_log_spec.md)
@@ -211,6 +213,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - `/Users/seanhan/Documents/Playground/evals/routing-eval-set.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/routing-eval.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/routing-eval-fixture-candidates.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/routing-eval-closed-loop.mjs`
   - `/Users/seanhan/Documents/Playground/tests/routing-eval.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/routing-eval-fixture-candidates.test.mjs`
 - Responsibility:
@@ -221,6 +224,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - report overall accuracy, per-dimension accuracy, hard-routing `error_breakdown`, latency summary, and `top_miss_cases` (up to 10 errors)
   - support `--json` output for machine-readable regression consumption
   - convert `top_miss_cases` plus `error_breakdown` into candidate fixture input for dataset review without changing routing logic
+  - provide one closed-loop operator entrypoint for `eval -> candidates -> review -> dataset -> eval`, with session artifacts and rerun support
   - return non-zero exit status when overall accuracy ratio drops below `0.9` so the baseline can act as a regression gate
 - Depends on:
   - `capability-lane.mjs`

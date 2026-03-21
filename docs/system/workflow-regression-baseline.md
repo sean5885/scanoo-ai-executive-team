@@ -189,7 +189,11 @@ node scripts/run-workflow-baseline.mjs all
 
 Routing eval regression gate baseline（v2 / `routing-eval-baseline-v2`）：
 
+Thread 36 operations checkpoint 固定了 runbook 與單一入口，但不改 routing 決策、不改 eval gate，也不新增 fallback。
+
 ```bash
+npm run routing:closed-loop
+npm run routing:closed-loop -- rerun
 node scripts/routing-eval.mjs
 node scripts/routing-eval.mjs --json
 node scripts/routing-eval.mjs --json > /tmp/routing-eval.json
@@ -202,6 +206,7 @@ node scripts/routing-eval-fixture-candidates.mjs --input /tmp/routing-eval.json
 - 這份 checked-in 結果即為 routing eval regression gate baseline v2（`routing-eval-baseline-v2`）
 - 提供 `lane / planner_action / agent_or_tool / latency` 的固定 regression 量測
 - 提供 `top_miss_cases` / `error_breakdown` 到候選 fixture 的閉環轉換入口
+- `npm run routing:closed-loop` 提供固定 `eval -> candidates -> review -> dataset -> eval` 操作入口，並把 artifact 寫到 `.tmp/routing-eval-closed-loop/<session-id>/`
 - 以 overall accuracy ratio `0.9` 作為強制門檻；`< 0.9` 時 CLI 會以 non-zero exit code 結束
 - `--json` 模式會輸出完整結果與 `top_miss_cases`（前 10 筆錯誤）
 - `scripts/routing-eval-fixture-candidates.mjs` 會把 `top_miss_cases` 與 `error_breakdown` 展開成 machine-readable candidate fixture input，供人工審查後加入 dataset

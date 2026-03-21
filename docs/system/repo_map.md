@@ -59,6 +59,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `/Users/seanhan/Documents/Playground/src/routing-eval.mjs`
   - `/Users/seanhan/Documents/Playground/evals/routing-eval-set.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/routing-eval.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/routing-eval-closed-loop.mjs`
 
 - Document organization
   - `/Users/seanhan/Documents/Playground/src/lark-drive-organizer.mjs`

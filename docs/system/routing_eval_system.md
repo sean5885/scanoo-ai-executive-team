@@ -10,11 +10,18 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 - Thread 34 observability checkpoint
 - Thread 35 closed-loop checkpoint
+- Thread 36 operations checkpoint
 - Thread 37 routing dataset coverage checkpoint
 
 Thread 35 closed-loop checkpoint 針對 `top_miss_cases` / `error_breakdown` -> candidate fixture -> dataset review -> rerun eval -> baseline gate 的閉環流程補上最小工具與文件，且不改 routing 決策、fallback 行為或 baseline fixture。
 
+Thread 36 operations checkpoint 把這條閉環路徑固定成 operator runbook 與單一入口 `npm run routing:closed-loop`，補上 session artifact、review checklist 與 rerun 入口；不新增 routing 邏輯、不改 routing 決策，也不調整 eval gate（仍為 `0.9`）。
+
 Thread 37 routing dataset coverage checkpoint 只擴充 checked-in dataset coverage，新增 26 筆 fixture，補強模糊查詢、搜尋+打開、`doc` / `runtime` 邊界與中文自然語句；不新增 routing 邏輯、不改 routing 決策，也不調整 eval gate（仍為 `0.9`）。
+
+固定操作 runbook 見：
+
+- [routing_eval_closed_loop_runbook.md](/Users/seanhan/Documents/Playground/docs/system/routing_eval_closed_loop_runbook.md)
 
 目標是量化目前 checked-in routing 行為的三個層次：
 
@@ -31,6 +38,7 @@ Thread 37 routing dataset coverage checkpoint 只擴充 checked-in dataset cover
 - `/Users/seanhan/Documents/Playground/evals/routing-eval-set.mjs`
 - `/Users/seanhan/Documents/Playground/scripts/routing-eval.mjs`
 - `/Users/seanhan/Documents/Playground/scripts/routing-eval-fixture-candidates.mjs`
+- `/Users/seanhan/Documents/Playground/scripts/routing-eval-closed-loop.mjs`
 - `/Users/seanhan/Documents/Playground/tests/routing-eval.test.mjs`
 - `/Users/seanhan/Documents/Playground/tests/routing-eval-fixture-candidates.test.mjs`
 
@@ -146,10 +154,18 @@ Thread 37 routing dataset coverage checkpoint 只擴充 checked-in dataset cover
 CLI:
 
 ```bash
+npm run routing:closed-loop
+npm run routing:closed-loop -- rerun
 node scripts/routing-eval.mjs
 node scripts/routing-eval.mjs --json
 node scripts/routing-eval.mjs --json | node scripts/routing-eval-fixture-candidates.mjs
 ```
+
+其中 `npm run routing:closed-loop` 是固定操作入口：
+
+- `prepare`（預設）會一次完成 `eval -> candidates`，並把 review checklist 與 artifacts 寫到 `.tmp/routing-eval-closed-loop/<session-id>/`
+- `rerun` 會在 dataset 審核更新後重跑 eval，沿用同一個 session
+- 這層只做 orchestration，不改 routing 邏輯，也不新增 fallback
 
 輸出包含：
 
@@ -190,6 +206,22 @@ CLI 會以 overall accuracy ratio 當作強制 regression gate；目前這份 ch
 ## Miss / Error To Dataset Loop
 
 這個 loop 只補「收集 -> 整理 -> 候選 fixture -> dataset review -> rerun eval -> baseline gate」；不直接改 routing 決策，也不新增 fallback。
+
+### Fixed Runbook
+
+固定流程是：
+
+`eval -> candidates -> review -> dataset -> eval`
+
+建議直接使用單一入口：
+
+```bash
+npm run routing:closed-loop
+```
+
+細部操作與 decision rules 見：
+
+- [routing_eval_closed_loop_runbook.md](/Users/seanhan/Documents/Playground/docs/system/routing_eval_closed_loop_runbook.md)
 
 ### 1. 收集 miss / error
 

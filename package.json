@@ -15,6 +15,7 @@
     "test:workflow:cloud-doc": "node scripts/run-workflow-baseline.mjs cloud-doc",
     "test:workflow:all": "node scripts/run-workflow-baseline.mjs all",
     "eval:long-task": "node scripts/evaluate-long-task-governance.mjs",
+    "routing:closed-loop": "node scripts/routing-eval-closed-loop.mjs",
     "self-check": "node scripts/self-check.mjs",
     "monitor": "node scripts/monitoring-cli.mjs",
     "auth:check": "node scripts/check-auth.mjs",

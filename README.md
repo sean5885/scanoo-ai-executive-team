@@ -30,6 +30,20 @@
 
 之後若 code、API、資料流、plugin tools 或安全流程有變動，應同步更新這裡的文件。
 
+## Routing Eval Closed Loop
+
+固定操作入口：
+
+```bash
+npm run routing:closed-loop
+npm run routing:closed-loop -- rerun
+```
+
+這條路徑會把 routing regression 操作固定成 `eval -> candidates -> review -> dataset -> eval`，artifact 會寫到 `.tmp/routing-eval-closed-loop/<session-id>/`。
+完整 runbook 見：
+
+- [/Users/seanhan/Documents/Playground/docs/system/routing_eval_closed_loop_runbook.md](/Users/seanhan/Documents/Playground/docs/system/routing_eval_closed_loop_runbook.md)
+
 ## 架構說明
 
 ### OAuth
