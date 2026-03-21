@@ -93,6 +93,33 @@ node --test \
   tests/lane-executor.test.mjs
 ```
 
+### 4. Monitoring Learning Baseline
+
+用途：
+
+- 驗證 monitoring-backed learning summary 沒有被歷史資料污染
+- 驗證 top-N output 會保留最新的 routing/tool regression 樣本
+- 驗證 CLI 與 HTTP route 對同一批樣本能穩定產生 deterministic learning summary
+
+命令：
+
+```bash
+node --test \
+  tests/agent-learning-loop.test.mjs \
+  tests/http-monitoring.test.mjs
+```
+
+CLI 檢查：
+
+```bash
+node scripts/monitoring-cli.mjs learning 1 1
+```
+
+說明：
+
+- `tests/agent-learning-loop.test.mjs` 會驗證 learning summary 連續執行結果一致，draft proposal 也保持穩定
+- `tests/http-monitoring.test.mjs` 會驗證 `/api/monitoring/learning` 與 CLI `learning` 都覆蓋 monitoring-backed regression path，且 top-N 不會讓舊 high-score buckets 擠掉新樣本
+
 ## When To Run
 
 ### Run Smoke Baseline When
@@ -110,6 +137,8 @@ node --test \
 - 修改 `src/meeting-agent.mjs`
 - 修改 `src/doc-comment-rewrite.mjs`
 - 修改 `src/cloud-doc-organization-workflow.mjs`
+- 修改 `src/monitoring-store.mjs`
+- 修改 `src/agent-learning-loop.mjs`
 
 ### Run Workflow-specific Baseline When
 
@@ -155,3 +184,5 @@ node scripts/run-workflow-baseline.mjs doc-rewrite
 node scripts/run-workflow-baseline.mjs cloud-doc
 node scripts/run-workflow-baseline.mjs all
 ```
+
+目前 monitoring learning baseline 尚未納入 `scripts/run-workflow-baseline.mjs` 的 workflow-only runner；需要驗證這條路徑時，直接使用上面的 `node --test ...` 與 CLI 命令。

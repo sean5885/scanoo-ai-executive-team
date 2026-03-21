@@ -7,6 +7,9 @@ Last verified in this repo on 2026-03-21.
 ## Build And Test
 
 - [x] `npm test` passes end to end
+- [x] monitoring learning regression stays green across unit, HTTP route, and CLI paths
+- [x] monitoring learning summaries are deterministic for a fixed sampled request set, including stable draft-proposal ids
+- [x] monitoring learning top-N output now prefers fresher equal-score samples so older buckets do not crowd out new regression evidence
 - [x] prompt-budget regressions remain green in the full suite
 - [x] closed-loop improvement workflow no longer updates stale archived proposals when duplicate `proposal_id` values exist in the local workflow store
 

@@ -118,6 +118,15 @@ test("agent learning summary finds routing failures and tool weight candidates",
   assert.ok(summary.draft_proposals.some((item) => item.category === "routing_improvement"));
   assert.ok(summary.draft_proposals.some((item) => item.category === "tool_weight_adjustment" && item.context?.tool_name === goodTool));
 
+  const repeatedSummary = buildAgentLearningSummary({
+    lookbackHours: 1,
+    requestLimit: 50,
+    minSampleSize: 2,
+    maxRoutingItems: 10,
+    maxToolItems: 10,
+  });
+  assert.deepEqual(repeatedSummary, summary);
+
   const persisted = await generateLearningLoopImprovementProposals({
     accountId: "acct-learning",
     sessionKey: "sess-learning",

@@ -3,7 +3,6 @@ import crypto from "node:crypto";
 import db from "./db.mjs";
 import { registerImprovementWorkflowProposals } from "./executive-improvement-workflow.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
-import { nowIso } from "./text-utils.mjs";
 
 const DEFAULT_LOOKBACK_HOURS = 24 * 7;
 const DEFAULT_REQUEST_LIMIT = 200;
@@ -14,6 +13,7 @@ const DEFAULT_MAX_TOOL_ITEMS = 5;
 const TRACE_ID_CHUNK_SIZE = 200;
 const SAMPLE_TRACE_LIMIT = 5;
 const COMMON_ERROR_LIMIT = 3;
+const MAX_RECENCY_RANK = Number.MAX_SAFE_INTEGER;
 
 const listRequestsForLearningStmt = db.prepare(`
   SELECT
@@ -31,7 +31,7 @@ const listRequestsForLearningStmt = db.prepare(`
     finished_at
   FROM http_request_monitor
   WHERE finished_at >= ?
-  ORDER BY finished_at DESC
+  ORDER BY finished_at DESC, trace_id DESC
   LIMIT ?
 `);
 
@@ -125,6 +125,66 @@ function chunk(items = [], chunkSize = TRACE_ID_CHUNK_SIZE) {
     result.push(items.slice(index, index + chunkSize));
   }
   return result;
+}
+
+function compareIsoDesc(left, right) {
+  const leftText = cleanText(left) || "";
+  const rightText = cleanText(right) || "";
+  if (!leftText && !rightText) {
+    return 0;
+  }
+  return rightText.localeCompare(leftText);
+}
+
+function compareRecencyDesc(left = {}, right = {}) {
+  return compareIsoDesc(left.latest_finished_at, right.latest_finished_at)
+    || (Number(left.latest_request_rank ?? MAX_RECENCY_RANK) - Number(right.latest_request_rank ?? MAX_RECENCY_RANK))
+    || (cleanText(right.latest_trace_id) || "").localeCompare(cleanText(left.latest_trace_id) || "");
+}
+
+function buildTraceRecencyByTraceId(requests = []) {
+  const traceRecency = new Map();
+  for (let index = 0; index < requests.length; index += 1) {
+    const request = requests[index];
+    const traceId = cleanText(request?.trace_id);
+    if (!traceId) {
+      continue;
+    }
+    traceRecency.set(traceId, {
+      latest_request_rank: index,
+      latest_finished_at: cleanText(request?.finished_at) || cleanText(request?.started_at) || null,
+      latest_trace_id: traceId,
+    });
+  }
+  return traceRecency;
+}
+
+function toSampleTraceIds(traceIds = [], traceRecencyByTraceId = new Map()) {
+  return Array.from(new Set(Array.isArray(traceIds) ? traceIds : []))
+    .sort((left, right) => {
+      const leftMeta = traceRecencyByTraceId.get(left) || {};
+      const rightMeta = traceRecencyByTraceId.get(right) || {};
+      return compareRecencyDesc(leftMeta, rightMeta) || left.localeCompare(right);
+    })
+    .slice(0, SAMPLE_TRACE_LIMIT);
+}
+
+function buildDeterministicProposalId(prefix, seedParts = []) {
+  const seed = (Array.isArray(seedParts) ? seedParts : [])
+    .map((item) => cleanText(item) || String(item ?? ""))
+    .join("|");
+  const digest = crypto.createHash("sha256").update(seed).digest("hex").slice(0, 16);
+  return `${prefix}_${digest}`;
+}
+
+function stripRankingMeta(item = {}) {
+  const {
+    latest_request_rank,
+    latest_finished_at,
+    latest_trace_id,
+    ...rest
+  } = item || {};
+  return rest;
 }
 
 function listTraceEventsForTraceIds(traceIds = []) {
@@ -272,7 +332,14 @@ function truncateLabel(value = "", max = 80) {
 function buildRoutingDraftProposal(item, lookbackHours) {
   const topError = item.common_errors[0]?.error_type || "unknown_error";
   return {
-    id: crypto.randomUUID(),
+    id: buildDeterministicProposalId("routing", [
+      item.routing_key,
+      lookbackHours,
+      item.sample_count,
+      item.failure_count,
+      item.failure_rate,
+      item.sample_trace_ids.join(","),
+    ]),
     category: "routing_improvement",
     mode: "human_approval",
     title: `Review routing: ${truncateLabel(item.routing_key, 60)}`,
@@ -306,7 +373,15 @@ function buildToolDraftProposal(item, lookbackHours) {
   }
   const direction = delta > 0 ? "increase" : "decrease";
   return {
-    id: crypto.randomUUID(),
+    id: buildDeterministicProposalId("tool_weight", [
+      item.tool_name,
+      lookbackHours,
+      delta,
+      item.sample_count,
+      item.success_count,
+      item.failure_count,
+      item.sample_trace_ids.join(","),
+    ]),
     category: "tool_weight_adjustment",
     mode: "human_approval",
     title: `${direction === "increase" ? "Increase" : "Decrease"} tool weight: ${item.tool_name}`,
@@ -348,10 +423,17 @@ function buildRequestSummary(requests = []) {
   };
 }
 
-function buildRoutingInsights(requests = [], traceEventsByTraceId = new Map(), minSampleSize, maxItems) {
+function buildRoutingInsights(
+  requests = [],
+  traceEventsByTraceId = new Map(),
+  traceRecencyByTraceId = new Map(),
+  minSampleSize,
+  maxItems,
+) {
   const buckets = new Map();
 
-  for (const request of requests) {
+  for (let index = 0; index < requests.length; index += 1) {
+    const request = requests[index];
     const events = traceEventsByTraceId.get(request.trace_id) || [];
     const descriptor = buildRoutingDescriptor(request, events);
     const key = descriptor.routing_key;
@@ -370,6 +452,9 @@ function buildRoutingInsights(requests = [], traceEventsByTraceId = new Map(), m
         failure_count: 0,
         latencies: [],
         error_counts: new Map(),
+        latest_request_rank: index,
+        latest_finished_at: cleanText(request.finished_at) || cleanText(request.started_at) || null,
+        latest_trace_id: cleanText(request.trace_id) || null,
         sample_trace_ids: [],
       });
     }
@@ -404,19 +489,24 @@ function buildRoutingInsights(requests = [], traceEventsByTraceId = new Map(), m
         failure_rate_percent: toPercent(failureRate),
         ...computeLatencyStats(item.latencies),
         common_errors: summarizeErrors(item.error_counts),
-        sample_trace_ids: item.sample_trace_ids.slice(0, SAMPLE_TRACE_LIMIT),
+        latest_request_rank: item.latest_request_rank,
+        latest_finished_at: item.latest_finished_at,
+        latest_trace_id: item.latest_trace_id,
+        sample_trace_ids: toSampleTraceIds(item.sample_trace_ids, traceRecencyByTraceId),
       };
     })
     .sort((left, right) => (
       right.failure_rate - left.failure_rate
+      || compareRecencyDesc(left, right)
       || right.failure_count - left.failure_count
       || right.sample_count - left.sample_count
       || left.routing_key.localeCompare(right.routing_key)
     ))
-    .slice(0, maxItems);
+    .slice(0, maxItems)
+    .map(stripRankingMeta);
 }
 
-function buildToolInsights(events = [], minSampleSize, maxItems) {
+function buildToolInsights(events = [], traceRecencyByTraceId = new Map(), minSampleSize, maxItems) {
   const buckets = new Map();
 
   for (const event of events) {
@@ -435,10 +525,14 @@ function buildToolInsights(events = [], minSampleSize, maxItems) {
         failure_count: 0,
         latencies: [],
         error_counts: new Map(),
+        latest_request_rank: MAX_RECENCY_RANK,
+        latest_finished_at: null,
+        latest_trace_id: null,
         sample_trace_ids: [],
       });
     }
     const bucket = buckets.get(action);
+    const traceMeta = traceRecencyByTraceId.get(event.trace_id) || {};
     const success = event?.payload?.result?.success === true;
     const errorType = cleanText(event?.payload?.result?.error || event?.payload?.error);
     const durationMs = normalizeDuration(event?.payload?.duration_ms);
@@ -453,7 +547,12 @@ function buildToolInsights(events = [], minSampleSize, maxItems) {
     if (durationMs != null) {
       bucket.latencies.push(durationMs);
     }
-    if (bucket.sample_trace_ids.length < SAMPLE_TRACE_LIMIT && event.trace_id) {
+    if (compareRecencyDesc(traceMeta, bucket) < 0) {
+      bucket.latest_request_rank = Number(traceMeta.latest_request_rank ?? MAX_RECENCY_RANK);
+      bucket.latest_finished_at = traceMeta.latest_finished_at || cleanText(event.created_at) || bucket.latest_finished_at;
+      bucket.latest_trace_id = cleanText(event.trace_id) || bucket.latest_trace_id;
+    }
+    if (event.trace_id && !bucket.sample_trace_ids.includes(event.trace_id)) {
       bucket.sample_trace_ids.push(event.trace_id);
     }
   }
@@ -479,7 +578,10 @@ function buildToolInsights(events = [], minSampleSize, maxItems) {
         suggested_weight_delta: suggestedWeightDelta,
         ...computeLatencyStats(item.latencies),
         common_errors: summarizeErrors(item.error_counts),
-        sample_trace_ids: item.sample_trace_ids.slice(0, SAMPLE_TRACE_LIMIT),
+        latest_request_rank: item.latest_request_rank,
+        latest_finished_at: item.latest_finished_at,
+        latest_trace_id: item.latest_trace_id,
+        sample_trace_ids: toSampleTraceIds(item.sample_trace_ids, traceRecencyByTraceId),
       };
     });
 
@@ -487,20 +589,24 @@ function buildToolInsights(events = [], minSampleSize, maxItems) {
     .filter((item) => item.suggested_weight_delta > 0)
     .sort((left, right) => (
       right.success_rate - left.success_rate
+      || compareRecencyDesc(left, right)
       || right.sample_count - left.sample_count
       || left.tool_name.localeCompare(right.tool_name)
     ))
-    .slice(0, maxItems);
+    .slice(0, maxItems)
+    .map(stripRankingMeta);
 
   const lowSuccessTools = normalized
     .filter((item) => item.suggested_weight_delta < 0)
     .sort((left, right) => (
       left.success_rate - right.success_rate
+      || compareRecencyDesc(left, right)
       || right.failure_count - left.failure_count
       || right.sample_count - left.sample_count
       || left.tool_name.localeCompare(right.tool_name)
     ))
-    .slice(0, maxItems);
+    .slice(0, maxItems)
+    .map(stripRankingMeta);
 
   const totalToolExecutions = normalized.reduce((sum, item) => sum + item.sample_count, 0);
   const totalToolSuccess = normalized.reduce((sum, item) => sum + item.success_count, 0);
@@ -536,6 +642,7 @@ export function buildAgentLearningSummary({
   const requests = listRequestsForLearningStmt
     .all(sinceIso, normalizedRequestLimit)
     .map(toRequestRecord);
+  const traceRecencyByTraceId = buildTraceRecencyByTraceId(requests);
   const traceEvents = listTraceEventsForTraceIds(requests.map((item) => item.trace_id));
   const traceEventsByTraceId = new Map();
   for (const event of traceEvents) {
@@ -549,11 +656,13 @@ export function buildAgentLearningSummary({
   const routingIssues = buildRoutingInsights(
     requests,
     traceEventsByTraceId,
+    traceRecencyByTraceId,
     normalizedMinSampleSize,
     normalizedMaxRoutingItems,
   );
   const toolInsights = buildToolInsights(
     traceEvents,
+    traceRecencyByTraceId,
     normalizedMinSampleSize,
     normalizedMaxToolItems,
   );
@@ -570,7 +679,7 @@ export function buildAgentLearningSummary({
   ];
 
   return {
-    generated_at: nowIso(),
+    generated_at: requests[0]?.finished_at || requests[0]?.started_at || null,
     lookback_hours: normalizedLookbackHours,
     request_limit: normalizedRequestLimit,
     min_sample_size: normalizedMinSampleSize,

@@ -87,6 +87,8 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Module: runtime / monitoring
   - Purpose: summarize recent monitoring / trace history into routing hotspots, tool success-rate summaries, latency metrics, and draft improvement proposals
   - Query note: supports `lookback_hours`, `request_limit`, `min_sample_size`, `max_routing_items`, and `max_tool_items`
+  - Ranking note: routing/tool lists keep the strongest failure/success signal first, but equal-score ties now break toward the newest sampled requests so older buckets do not crowd out fresher regression samples
+  - Determinism note: for a fixed sampled request set, the returned summary and `draft_proposals` are deterministic; proposal ids are stable instead of per-call random
   - Review note: this route does not apply changes; it only returns a review-first summary plus `draft_proposals`
 
 - `GET /api/drive/root`

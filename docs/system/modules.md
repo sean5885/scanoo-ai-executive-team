@@ -191,6 +191,8 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - persist timeout/cancel outcomes as normal request-monitor rows so operators can query `request_timeout` / `request_cancelled` the same way as other failures
   - expose recent-request, recent-error, latest-error, success/error-rate, dashboard-snapshot, and per-trace reconstruction queries
   - derive monitoring-backed learning summaries over recent requests/traces, including routing failure-rate hotspots, per-tool success-rate/latency summaries, and human-reviewable improvement drafts
+  - learning summaries now rank equal-score routing/tool buckets by latest sampled request recency so top-N output does not let older buckets squeeze out fresher regression samples
+  - the same learning summary path now keeps `generated_at` and proposal ids deterministic for a fixed sampled request set, so CLI/test regression output is reproducible
   - persist generated learning-loop proposals into the existing executive improvement workflow as `pending_approval` items rather than auto-applying them
   - provide local CLIs so operators can inspect request health, view one compact dashboard, and reconstruct one request timeline without scraping logs
   - `scripts/monitoring-cli.mjs` now also exposes a `learning` command for the same review-first summary surface

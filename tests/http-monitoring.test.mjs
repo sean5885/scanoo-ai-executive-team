@@ -162,6 +162,40 @@ test("monitoring learning route returns routing/tool summary", async (t) => {
   const server = await startTestServer(t);
   const { port } = server.address();
   const stamp = Date.now();
+  for (let index = 0; index < 6; index += 1) {
+    for (let sample = 0; sample < 2; sample += 1) {
+      const traceId = `http_learning_legacy_${stamp}_${index}_${sample}`;
+      const requestId = `req_${traceId}`;
+      recordHttpRequest({
+        traceId,
+        requestId,
+        method: "POST",
+        pathname: `/api/legacy_learning_${stamp}_${index}`,
+        routeName: `legacy_learning_route_${stamp}_${index}`,
+        statusCode: 200,
+        payload: { ok: true },
+        durationMs: 12 + sample,
+      });
+      recordTraceEvent({
+        traceId,
+        requestId,
+        component: "planner.tool",
+        event: "tool_execution",
+        payload: {
+          event_type: "tool_execution",
+          action: `legacy_learning_tool_${stamp}_${index}`,
+          trace_id: traceId,
+          duration_ms: 12 + sample,
+          result: {
+            success: true,
+            data: {},
+            error: null,
+          },
+        },
+      });
+    }
+  }
+
   const traceId = `http_learning_${stamp}`;
   const requestId = `req_${traceId}`;
 
@@ -202,6 +236,7 @@ test("monitoring learning route returns routing/tool summary", async (t) => {
   assert.ok(payload.summary);
   assert.ok(Array.isArray(payload.summary.high_success_tools));
   assert.ok(payload.summary.high_success_tools.some((item) => item.tool_name === `learning_tool_${stamp}`));
+  assert.ok(payload.summary.high_success_tools.length <= 5);
 });
 
 test("monitoring CLI learning command returns draft proposals", async () => {
@@ -254,9 +289,15 @@ test("monitoring CLI learning command returns draft proposals", async () => {
     cwd: process.cwd(),
     env: process.env,
   });
+  const repeated = await execFileAsync(process.execPath, ["scripts/monitoring-cli.mjs", "learning", "1", "1"], {
+    cwd: process.cwd(),
+    env: process.env,
+  });
   const payload = JSON.parse(result.stdout);
+  const repeatedPayload = JSON.parse(repeated.stdout);
 
   assert.equal(payload.ok, true);
+  assert.deepEqual(repeatedPayload.summary, payload.summary);
   assert.ok(Array.isArray(payload.summary.draft_proposals));
   assert.ok(payload.summary.low_success_tools.some((item) => item.tool_name === `cli_learning_tool_${stamp}`));
 });
