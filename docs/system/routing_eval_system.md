@@ -6,6 +6,8 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 這份文件描述 repo 內的 deterministic routing eval regression gate baseline（v2 / `routing-eval-baseline-v2`）。
 
+目前這份 mirror 同時作為 Thread 34 的 observability checkpoint，保存 hard-routing error distribution / `error_breakdown` 的受控觀測面，且不改 routing 決策、fallback 行為或 baseline fixture。
+
 目標是量化目前 checked-in routing 行為的三個層次：
 
 - `lane`
@@ -138,6 +140,7 @@ node scripts/routing-eval.mjs --json
 - agent/tool accuracy
 - `by_lane_accuracy`
 - `by_action_accuracy`
+- `error_breakdown`
 - latency avg / p95 / max
 - top miss cases
 
@@ -146,8 +149,24 @@ CLI 會以 overall accuracy ratio 當作強制 regression gate；目前這份 ch
 - overall accuracy ratio `< 0.9` 時，CLI 會以 non-zero exit code 結束
 - overall accuracy ratio `>= 0.9` 時，CLI 保持 zero exit code，即使仍有少量 miss case
 - `--json` 會輸出完整結果、gate threshold 與 `top_miss_cases`（最多前 10 筆錯誤）
+- `--json` 與文字 report 都會固定輸出 hard-routing 錯誤分佈 `error_breakdown`
 
 `by_lane_accuracy` 與 `by_action_accuracy` 都是以 expected bucket 做分桶，統計該 bucket 內整筆 case 的 overall accuracy，而不是只看單一欄位命中率。
+
+`error_breakdown` 是受控錯誤觀測欄位，只統計目前 checked-in hard-routing error code：
+
+- `ROUTING_NO_MATCH`
+- `INVALID_ACTION`
+- `FALLBACK_DISABLED`
+
+每個錯誤碼都固定輸出：
+
+- `expected`: fixture 期望該錯誤碼的 case 數
+- `actual`: eval 實際命中該錯誤碼的 case 數
+- `matched`: expected / actual 同時命中同一錯誤碼的 case 數
+- `misses`: 涉及該錯誤碼但 expected / actual 不一致的 case 數
+
+這一層只補 observability，不改 routing 決策、fallback 行為或 baseline fixture。
 
 ## Determinism
 

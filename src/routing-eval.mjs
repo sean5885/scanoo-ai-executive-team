@@ -23,7 +23,11 @@ import {
   hydratePlannerDocQueryRuntimeContext,
   resetPlannerDocQueryRuntimeContext,
 } from "./planner-doc-query-flow.mjs";
-import { ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
+import {
+  FALLBACK_DISABLED,
+  INVALID_ACTION,
+  ROUTING_NO_MATCH,
+} from "./planner-error-codes.mjs";
 import { plannerDocQueryFlow } from "./planner-doc-query-flow.mjs";
 import { plannerRuntimeInfoFlow } from "./planner-runtime-info-flow.mjs";
 import { plannerOkrFlow } from "./planner-okr-flow.mjs";
@@ -132,6 +136,12 @@ const plannerPresets = new Set([
 
 export const ROUTING_EVAL_MIN_ACCURACY_RATIO = 0.9;
 
+const ROUTING_ERROR_CODES = [
+  ROUTING_NO_MATCH,
+  INVALID_ACTION,
+  FALLBACK_DISABLED,
+];
+
 function hasAny(text, keywords) {
   return keywords.some((keyword) => text.includes(keyword));
 }
@@ -150,6 +160,22 @@ function normalizePlannerAction(action = "") {
 
 function normalizeAgentOrTool(value = "") {
   return cleanText(value) || null;
+}
+
+function extractRoutingErrorCode(...values) {
+  for (const rawValue of values) {
+    const value = cleanText(rawValue);
+    if (!value) {
+      continue;
+    }
+    const normalizedCode = value.startsWith("error:")
+      ? cleanText(value.slice("error:".length))
+      : value;
+    if (ROUTING_ERROR_CODES.includes(normalizedCode)) {
+      return normalizedCode;
+    }
+  }
+  return null;
 }
 
 function percentile(values = [], ratio = 0.95) {
@@ -194,6 +220,47 @@ function buildBucketAccuracy(results = [], selector = () => "", matchKey = "over
         ];
       }),
   );
+}
+
+function buildErrorBreakdown(results = []) {
+  const breakdown = Object.fromEntries(
+    ROUTING_ERROR_CODES.map((code) => [code, {
+      expected: 0,
+      actual: 0,
+      matched: 0,
+      misses: 0,
+    }]),
+  );
+
+  for (const item of Array.isArray(results) ? results : []) {
+    const expectedCode = extractRoutingErrorCode(
+      item?.expected?.planner_action,
+      item?.expected?.agent_or_tool,
+    );
+    const actualCode = extractRoutingErrorCode(
+      item?.actual?.planner_action,
+      item?.actual?.agent_or_tool,
+    );
+
+    if (expectedCode) {
+      breakdown[expectedCode].expected += 1;
+    }
+    if (actualCode) {
+      breakdown[actualCode].actual += 1;
+    }
+    if (expectedCode && actualCode && expectedCode === actualCode) {
+      breakdown[expectedCode].matched += 1;
+      continue;
+    }
+    if (expectedCode) {
+      breakdown[expectedCode].misses += 1;
+    }
+    if (actualCode) {
+      breakdown[actualCode].misses += 1;
+    }
+  }
+
+  return breakdown;
 }
 
 function buildEvalEvent(testCase = {}) {
@@ -650,6 +717,7 @@ export function summarizeRoutingEval(results = []) {
     agent_tool_accuracy: buildMetric("agent_or_tool"),
     by_lane_accuracy: buildBucketAccuracy(results, (item) => item?.expected?.lane, "overall"),
     by_action_accuracy: buildBucketAccuracy(results, (item) => item?.expected?.planner_action, "overall"),
+    error_breakdown: buildErrorBreakdown(results),
     latency_ms: {
       avg: total > 0 ? Number((latencies.reduce((sum, value) => sum + value, 0) / total).toFixed(3)) : 0,
       p95: Number(percentile(latencies, 0.95).toFixed(3)),
@@ -745,6 +813,12 @@ export function formatRoutingEvalReport(run = {}) {
   const minAccuracyPercent = Number((minAccuracyRatio * 100).toFixed(2));
   const byLaneEntries = Object.entries(summary.by_lane_accuracy || {});
   const byActionEntries = Object.entries(summary.by_action_accuracy || {});
+  const errorEntries = ROUTING_ERROR_CODES.map((code) => [code, summary?.error_breakdown?.[code] || {
+    expected: 0,
+    actual: 0,
+    matched: 0,
+    misses: 0,
+  }]);
   const lines = [
     "Routing Eval",
     `Cases: ${summary.total_cases}`,
@@ -776,6 +850,15 @@ export function formatRoutingEvalReport(run = {}) {
     for (const [action, metric] of byActionEntries) {
       lines.push(`- ${action}: ${metric.accuracy}% (${metric.hits}/${metric.total})`);
     }
+  }
+
+  lines.push("");
+  lines.push("Error breakdown");
+
+  for (const [code, metric] of errorEntries) {
+    lines.push(
+      `- ${code}: expected ${metric.expected} | actual ${metric.actual} | matched ${metric.matched} | misses ${metric.misses}`,
+    );
   }
 
   lines.push("");
