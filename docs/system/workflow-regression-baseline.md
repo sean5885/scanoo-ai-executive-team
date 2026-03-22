@@ -195,6 +195,7 @@ Thread 41 history checkpoint 補上 diagnostics snapshot 歸檔、manifest、sna
 Thread 42 daily-entry checkpoint 補上固定 `routing:diagnostics` 日常入口、latest/previous/tag compare 檢視口徑與文件，但不新增邏輯、不改 routing 決策，也不新增 fallback。
 
 ```bash
+node scripts/regression-check.mjs
 npm run routing:closed-loop
 npm run routing:closed-loop -- rerun
 npm run routing:diagnostics
@@ -210,6 +211,7 @@ node --test tests/routing-eval-decision-advice.test.mjs tests/routing-eval-close
 
 用途：
 
+- `node scripts/regression-check.mjs` 提供最小的 read-side regression quick check，固定串接 `scripts/retrieval-eval.mjs` 與 `tests/routing-eval-lite.mjs`
 - 驗證 checked-in deterministic routing baseline 是否仍與 eval set 一致
 - 這份 checked-in 結果即為 routing eval regression gate baseline v2（`routing-eval-baseline-v2`）
 - 提供 `lane / planner_action / agent_or_tool / latency` 的固定 regression 量測
