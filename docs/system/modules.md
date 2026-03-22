@@ -842,15 +842,29 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 
 - `/Users/seanhan/Documents/Playground/src/planner/knowledge-bridge.mjs`
   - local planner-side bridge over `queryKnowledgeWithContext(keyword)`
-  - exposes async `plannerAnswer({ keyword }) -> { answer, count }`
-  - reads the same local `{ id, snippet }` preview rows, summarizes them through `summarizeWithMinimax({ keyword, results })`, and fail-soft falls back to `{ answer: "請提供查詢關鍵字", count: 0 }` when the keyword is missing
+  - exposes async `plannerAnswer({ keyword, question }) -> { answer, count }`
+  - prefers an explicit `keyword`; otherwise uses `parseIntent(question)` to derive one fail-soft before querying local planner-side knowledge previews
+  - reads the same local `{ id, snippet }` preview rows, summarizes them through `summarizeWithMinimax({ keyword, results })`, and fail-soft falls back to `{ answer: "請提供查詢關鍵字", count: 0 }` when neither the keyword nor parsed question yields a usable search term
   - not wired into `executive-planner.mjs`, planner contract routing, SQLite persistence, or company-brain approval/governance paths
 
 - `/Users/seanhan/Documents/Playground/src/planner/llm-summary.mjs`
   - planner-side LLM summary helper for local knowledge previews
   - exposes `summarizeWithMinimax({ keyword, results }) -> string`
-  - uses the repo-wide text-model path (`MINIMAX_TEXT_MODEL` first, legacy `LLM_MODEL` fallback) through direct LLM or OpenClaw text generation, and fail-soft falls back to `buildAnswer(keyword, results)` when generation fails or returns empty text
+  - uses `/Users/seanhan/Documents/Playground/src/llm/generate-text.mjs` for the repo-wide text-model path (`MINIMAX_TEXT_MODEL` first, legacy `LLM_MODEL` fallback), and fail-soft falls back to `buildAnswer(keyword, results)` when generation fails or returns empty text
   - not wired into `executive-planner.mjs`, planner contract routing, SQLite persistence, or company-brain approval/governance paths
+
+- `/Users/seanhan/Documents/Playground/src/planner/intent-parser.mjs`
+  - planner-side fail-soft intent helper for local knowledge lookups
+  - exposes `parseIntent(question) -> keyword | null`
+  - first prefers a small built-in allowlist of technical terms when the user question already contains one, so brand/company wording does not outrank system/process/module terms
+  - otherwise uses `/Users/seanhan/Documents/Playground/src/llm/generate-text.mjs` to extract one document-search keyword, normalizes the reply down to the first keyword, and returns `null` when the question is empty or generation fails
+  - not wired into `executive-planner.mjs`, planner contract routing, SQLite persistence, or company-brain approval/governance paths
+
+- `/Users/seanhan/Documents/Playground/src/llm/generate-text.mjs`
+  - shared local text-generation helper
+  - exposes `generateText({ systemPrompt, prompt, sessionIdSuffix, temperature, topP, signal }) -> string`
+  - centralizes direct-LLM vs OpenClaw text generation and keeps planner-side helpers on the repo-wide text-model policy (`MINIMAX_TEXT_MODEL` first, legacy `LLM_MODEL` fallback)
+  - not a planner/public API surface on its own
 
 - `/Users/seanhan/Documents/Playground/src/planner/answer-builder.mjs`
   - local deterministic planner-side formatter for knowledge preview results

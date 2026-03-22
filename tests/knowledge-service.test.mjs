@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { filterKnowledgeContextResults } from "../src/knowledge/knowledge-service.mjs";
 import { plannerAnswer } from "../src/planner/knowledge-bridge.mjs";
+import { parseIntent } from "../src/planner/intent-parser.mjs";
 import { summarizeWithMinimax } from "../src/planner/llm-summary.mjs";
 
 test("filterKnowledgeContextResults drops label-like and metadata-like snippets", () => {
@@ -68,6 +69,67 @@ test("plannerAnswer uses injected summarizer and passes filtered live previews",
   assert.ok(result.count > 0);
 });
 
+test("parseIntent returns the first normalized keyword from generator output when no allowlisted term matches", async () => {
+  const result = await parseIntent("文件審核流程在哪裡？", {
+    generateText: async (request) => {
+      assert.match(request.prompt, /文件審核流程在哪裡/);
+      assert.equal(request.temperature, 0);
+      return "「審核流程」, 文件";
+    },
+  });
+
+  assert.equal(result, "審核流程");
+});
+
+test("parseIntent prefers known technical terms before calling generator", async () => {
+  let called = false;
+
+  const result = await parseIntent("Scanoo 的 routing 是怎麼運作的？", {
+    generateText: async () => {
+      called = true;
+      return "scanoo";
+    },
+  });
+
+  assert.equal(result, "routing");
+  assert.equal(called, false);
+});
+
+test("plannerAnswer parses question when keyword is missing", async () => {
+  const result = await plannerAnswer(
+    { question: "planner 的 verification 在哪裡？" },
+    {
+      parse: async (question) => {
+        assert.match(question, /verification/);
+        return "verification";
+      },
+      summarize: async ({ keyword, results }) => {
+        assert.equal(keyword, "verification");
+        assert.ok(results.length > 0);
+        return "這是從問題解析後整理的摘要。";
+      },
+    },
+  );
+
+  assert.equal(result.answer, "這是從問題解析後整理的摘要。");
+  assert.ok(result.count > 0);
+});
+
+test("plannerAnswer prefers technical term parsing over brand-like question terms", async () => {
+  const result = await plannerAnswer(
+    { question: "Scanoo 的 routing 是怎麼運作的？" },
+    {
+      summarize: async ({ keyword }) => {
+        assert.equal(keyword, "routing");
+        return "routing 摘要";
+      },
+    },
+  );
+
+  assert.equal(result.answer, "routing 摘要");
+  assert.ok(result.count > 0);
+});
+
 test("plannerAnswer falls back to deterministic summary when summarizer fails", async () => {
   const result = await plannerAnswer(
     { keyword: "routing" },
@@ -85,6 +147,20 @@ test("plannerAnswer falls back to deterministic summary when summarizer fails", 
 
 test("plannerAnswer returns fail-soft prompt when keyword is missing", async () => {
   const result = await plannerAnswer({});
+
+  assert.deepEqual(result, {
+    answer: "請提供查詢關鍵字",
+    count: 0,
+  });
+});
+
+test("plannerAnswer keeps fail-soft prompt when question parsing returns nothing", async () => {
+  const result = await plannerAnswer(
+    { question: "這是什麼？" },
+    {
+      parse: async () => null,
+    },
+  );
 
   assert.deepEqual(result, {
     answer: "請提供查詢關鍵字",

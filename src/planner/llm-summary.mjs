@@ -1,11 +1,4 @@
-import {
-  llmApiKey,
-  llmBaseUrl,
-  llmModel,
-  llmTemperature,
-  llmTopP,
-} from "../config.mjs";
-import { callOpenClawTextGeneration, normalizeAbortSignal } from "../openclaw-text-service.mjs";
+import { generateText as defaultGenerateText } from "../llm/generate-text.mjs";
 import { buildAnswer, buildNoResultAnswer, cleanSnippet } from "./answer-builder.mjs";
 
 const SUMMARY_SYSTEM_PROMPT = [
@@ -41,59 +34,6 @@ export function buildSummaryPrompt({ keyword, results } = {}) {
   ].join("\n");
 }
 
-async function defaultGenerateSummaryText({
-  systemPrompt,
-  prompt,
-  keyword,
-  signal = null,
-} = {}) {
-  const abortSignal = normalizeAbortSignal(signal);
-
-  if (!llmApiKey) {
-    const request = {
-      systemPrompt,
-      prompt,
-      sessionIdSuffix: `planner-summary-${keyword || "default"}`,
-    };
-
-    if (abortSignal) {
-      request.signal = abortSignal;
-    }
-
-    return callOpenClawTextGeneration(request);
-  }
-
-  const requestInit = {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${llmApiKey}`,
-    },
-    body: JSON.stringify({
-      model: llmModel,
-      temperature: llmTemperature,
-      top_p: llmTopP,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: prompt },
-      ],
-    }),
-  };
-
-  if (abortSignal) {
-    requestInit.signal = abortSignal;
-  }
-
-  const response = await fetch(`${llmBaseUrl}/chat/completions`, requestInit);
-
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data?.error?.message || `planner_summary_llm_failed:${response.status}`);
-  }
-
-  return data?.choices?.[0]?.message?.content || "";
-}
-
 function normalizeSummaryText(text) {
   return String(text || "").trim().replace(/\n{3,}/g, "\n\n");
 }
@@ -101,7 +41,7 @@ function normalizeSummaryText(text) {
 export async function summarizeWithMinimax({
   keyword,
   results,
-  generateText = defaultGenerateSummaryText,
+  generateText = defaultGenerateText,
   signal = null,
 } = {}) {
   const normalizedKeyword = typeof keyword === "string" ? keyword.trim() : "";
@@ -115,30 +55,20 @@ export async function summarizeWithMinimax({
   const prompt = buildSummaryPrompt({ keyword: normalizedKeyword, results: rows });
 
   try {
-    // debug removed for production
     const request = {
       systemPrompt: SUMMARY_SYSTEM_PROMPT,
       prompt,
-      keyword: normalizedKeyword,
+      sessionIdSuffix: `planner-summary-${normalizedKeyword || "default"}`,
+      signal,
     };
 
-    const abortSignal = normalizeAbortSignal(signal);
-
-    if (abortSignal) {
-      request.signal = abortSignal;
-    }
-
     const text = await generateText(request);
-    // debug removed
     const normalizedText = normalizeSummaryText(text);
     if (!normalizedText) {
-      // debug removed
       return fallbackAnswer;
     }
-    // debug removed
     return normalizedText;
   } catch {
-    // keep fail-soft, no debug noise in production
     return fallbackAnswer;
   }
 }
