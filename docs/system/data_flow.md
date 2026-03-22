@@ -273,7 +273,7 @@ This is now a capability-lane event path with a closed-loop executive planner la
 ## Governance / Health Flow
 
 1. `npm run release-check`
-2. `scripts/release-check.mjs` imports `src/release-check.mjs`
+2. local operator entry = `scripts/release-check.mjs`; CI/pipeline entry = `scripts/release-check-ci.mjs`
 3. release-check internally reuses `runSystemSelfCheck(...)` from `src/system-self-check.mjs`
 4. self-check validates:
    - registered agent completeness
@@ -298,11 +298,26 @@ This is now a capability-lane event path with a closed-loop executive planner la
 5. `release-check` then compresses the same evidence into one merge/release preflight answer:
    - human-readable output only answers:
      - `能否放心合併/發布：可以 / 先不要`
-     - `若不能，先修哪一條線：self-check 基礎項目 / routing / planner / 無`
+     - `若不能，先修哪一條線：system regression / routing regression / planner contract failure / 無`
    - `--json` output stays minimal:
      - `overall_status`
      - `blocking_checks`
      - `suggested_next_step`
+   - `blocking_checks` only emits first-level triage classes:
+     - `system_regression`
+     - `routing_regression`
+     - `planner_contract_failure`
+   - `suggested_next_step` stays single-line and points to the module family or file type to inspect first:
+     - system regression -> `src/agent-registry.mjs`, `src/http-route-contracts.mjs`, or failing service modules
+     - routing regression -> routing rule modules (`src/router.js`, `src/planner-*-flow.mjs`) or eval fixture files (`evals/routing-eval-set.mjs`, `tests/routing-eval*.test.mjs`)
+     - planner contract failure -> planner registry / flow-route modules first, and `docs/system/planner_contract.json` only for intentional stable targets
+   - CI output stays on the same minimal JSON shape:
+     - `overall_status`
+     - `blocking_checks`
+     - `suggested_next_step`
+   - exit code contract is strict and binary:
+     - `overall_status = pass` -> exit `0` -> pass -> can proceed in merge/deploy pipeline
+     - `overall_status = fail` -> exit `1` -> fail -> must block merge/deploy until the blocking line is fixed
    - `release-check` is read-only:
      - it does not rerun routing eval
      - it does not change routing
@@ -317,7 +332,11 @@ This is now a capability-lane event path with a closed-loop executive planner la
    - routing line = archived behavior regression evidence from latest snapshot / compare (`accuracy_ratio`, `trend_report`, `decision_advice`, error drift)
    - planner line = current runtime / contract drift evidence (`gate`, `undefined_actions`, `undefined_presets`, `selector_contract_mismatches`, `deprecated_reachable_targets`)
 8. when to run each entry:
-   - run `npm run release-check` right before merge or release as the single operator-facing preflight entry
+   - local/manual use: run `npm run release-check` when a developer wants the bounded two-line merge/release verdict
+   - CI/pipeline use: run `npm run release-check:ci` when a job needs machine-readable JSON plus strict exit code
+   - PR validation: if the PR changes planner contract, selector/route wiring, release gate scripts, or `docs/system` governance/runtime docs tied to those checks, `release-check:ci` must run in the PR pipeline
+   - merge gate: run `npm run release-check:ci` before allowing merge to the protected branch
+   - release gate: rerun `npm run release-check:ci` in the release/deploy pipeline before deployment
    - run `npm run self-check` during normal development when you still need the fuller base/routing/planner summary
    - `release-check` does not replace `npm test` or other release verification commands; it only compresses the governance/readiness lines above into one preflight verdict
 9. default `self-check` CLI output is still the short human-readable verdict; `npm run self-check -- --json` emits the full JSON report for CI or follow-up tooling
@@ -329,6 +348,19 @@ This is now a capability-lane event path with a closed-loop executive planner la
      - whether `routing` regressed
      - whether `planner` regressed
    - compare does not modify routing, add fallback, change planner gate rules, or auto-fix anything
+
+Minimal platform-neutral pipeline shape:
+
+```bash
+npm ci
+npm test
+npm run release-check:ci
+```
+
+The last command is the merge/deploy blocker for this preflight line:
+
+- exit `0` = pass = can continue the current pipeline stage
+- exit `1` = fail = stop merge/deploy and inspect `blocking_checks[0]` first
 
 ## Improvement Approval Flow
 

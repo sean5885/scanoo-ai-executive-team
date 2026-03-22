@@ -239,11 +239,16 @@ Thread 50 self-check history checkpoint 在既有 unified `self-check` 基礎上
 
 Thread 51 release-check preflight checkpoint 在既有 `self-check`、routing diagnostics 與 planner gate 基礎上，補上單一 `release-check` merge/release preflight 入口、最小 human-readable / JSON 輸出、相關測試與文件同步；不改 routing、不新增 fallback、不改 planner gate，也不做 auto-fix。
 
+Thread 52 release-check CI checkpoint 在既有 `release-check` preflight 基礎上，補上 `release-check:ci` 專用入口、固定最小 JSON 輸出與 strict exit code contract；不改 routing、不新增 fallback、不改 planner gate，也不做 auto-fix。
+
+Thread 53 release decision layer checkpoint 在既有 `release-check` / `release-check:ci` 基礎上，把 fail triage 收斂為 `system_regression`、`routing_regression`、`planner_contract_failure` 三條線，並把 `suggested_next_step` 升級成模組 / 檔案類型指引；不改 routing、不新增 fallback、不改 planner gate，也不做 auto-fix。
+
 用途：
 
 - 固定阻擋 planner contract drift，不更動 routing 決策
 - 在 planner selector / preset / flow-route 相關變更後，第一時間確認 contract mirror 仍與 runtime 對齊
 - 在 merge / release 前，用單一 preflight 入口壓縮 self-check、routing、planner 三條線的 operator 判斷
+- 在 merge / release 前，提供完整 release decision layer：CI entry、strict exit code、最小 triage、模組級 next-step 指引
 
 命令：
 
@@ -255,6 +260,7 @@ npm run self-check
 npm run self-check -- --compare-previous
 npm run self-check -- --compare-snapshot <run-id|path>
 npm run release-check
+npm run release-check:ci
 ```
 
 說明：
@@ -263,6 +269,7 @@ npm run release-check
 - `planner-contract-check` 本身是 read-only gate，不做 auto-fix
 - `npm run self-check` 已固定包含同一個 planner contract gate，並會把 current planner 結果對最新 archived planner snapshot 做 compare（若存在）
 - `npm run release-check` 是 release / merge 前的單一 preflight 入口；它重用同一份 self-check、routing、planner 證據，但把 operator-facing 輸出壓成 merge/release verdict
+- `npm run release-check:ci` 是 CI / pipeline 專用入口；它重用同一份 report，只保留最小 JSON，並以 exit `0/1` 嚴格對應 pass/fail
 - `planner:diagnostics` 與 `planner:contract-check` 每次執行都會額外把當次 JSON report 歸檔到 `.tmp/planner-diagnostics-history/`
 - `self-check` 每次執行也會額外把 unified JSON report 歸檔到 `.tmp/system-self-check-history/`
 - archive 是 snapshot-only：
@@ -300,6 +307,17 @@ npm run release-check
   - `overall_status`
   - `blocking_checks`
   - `suggested_next_step`
+- `blocking_checks` 固定只分類成：
+  - `system_regression`
+  - `routing_regression`
+  - `planner_contract_failure`
+- `suggested_next_step` 固定維持單行，但要點到模組族或檔案類型：
+  - system regression -> agent registry / route contract / service modules
+  - routing regression -> routing rule modules 或 eval fixture files
+  - planner contract failure -> planner registry / flow-route modules，`planner_contract.json` 只在 intentional stable target 時才看
+- `release-check:ci` exit contract 固定為：
+  - exit `0` = `pass` = 可放行到下一個 merge/deploy stage
+  - exit `1` = `fail` = 阻擋 merge/deploy，先修 `blocking_checks[0]`
 - fail 條件僅限：
   - `undefined actions > 0`
   - `undefined presets > 0`
@@ -346,3 +364,18 @@ npm run release-check
 3. 只有確認 target 是 intentional / stable contract surface 時，才更新 `docs/system/planner_contract.json`，並在同一個變更說清楚原因
 4. 若只剩 `deprecated_reachable_targets`，視為 warning；不阻擋 gate，但應列入後續清理
 5. 準備 merge / release 前再跑 `npm run planner:contract-check` 或 `npm run self-check`
+
+### Run Release Check When
+
+- 本地手動確認 merge/release 風險時，跑 `npm run release-check`
+- PR 涉及 planner contract、selector/route wiring、release gate script、或相依的 `docs/system` 治理文件時，PR pipeline 必跑 `npm run release-check:ci`
+- merge 到受保護分支前，merge gate 必跑 `npm run release-check:ci`
+- 正式 release / deploy 前，release pipeline 必須重新跑 `npm run release-check:ci`
+
+Minimal platform-neutral CI shape:
+
+```bash
+npm ci
+npm test
+npm run release-check:ci
+```

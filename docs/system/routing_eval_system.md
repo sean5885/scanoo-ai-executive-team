@@ -37,7 +37,7 @@ Thread 42 routing diagnostics daily-entry checkpoint 在既有 diagnostics histo
 
 Thread 49 unified-self-check checkpoint 把既有 routing diagnostics latest snapshot / previous compare 整合進 `self-check` 的 unified summary，提供 `routing_summary.status`、明顯 regression 判讀與短 human-readable verdict；不新增 routing 邏輯、不改 fallback，也不改原本 eval gate。
 
-Thread 51 release-check preflight checkpoint 把既有 unified `self-check` 的 routing line再壓成 merge/release 單一 preflight 入口的一部分；它只讀最新 routing snapshot 與 compare 判讀，不重跑 eval、不改 routing，也不新增 fallback。
+Thread 51 release-check preflight checkpoint 把既有 unified `self-check` 的 routing line再壓成 merge/release 單一 preflight 入口的一部分；routing block 在這個入口下只分類成 `routing_regression`，且 next-step 只指向 routing rule 模組或 eval fixture 檔；它只讀最新 routing snapshot 與 compare 判讀，不重跑 eval、不改 routing，也不新增 fallback。
 
 目前這條路徑已再收斂成 `diagnostics_summary` 單一決策視圖，讓 operator 只看一個 summary 就能決定要補 fixture、檢查 routing rule，或保持不動；不新增 routing 邏輯、不新增 fallback，也不改 baseline/tag。
 

@@ -458,6 +458,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - `/Users/seanhan/Documents/Playground/src/planner-diagnostics-history.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/self-check.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/release-check.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/release-check-ci.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/planner-contract-check.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/planner-diagnostics.mjs`
   - `/Users/seanhan/Documents/Playground/docs/system/agent_capability_matrix.md`
@@ -478,6 +479,10 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - expose `release-check` as the single merge/release preflight entry over the same self-check, routing, and planner evidence
   - keep `release-check` human output bounded to `能否放心合併/發布` and `若不能，先修哪一條線`
   - keep `release-check -- --json` bounded to `overall_status`, `blocking_checks`, and `suggested_next_step`
+  - classify `blocking_checks` only as `system_regression`, `routing_regression`, or `planner_contract_failure`
+  - keep `suggested_next_step` single-line but module-specific: base modules for system regression, routing rule/fixture files for routing regression, planner registry/flow modules before `planner_contract.json` for planner contract failure
+  - expose `release-check:ci` as the CI/pipeline entry with the same minimal JSON report and strict `0/1` exit contract
+  - define `pass` as merge/deploy may proceed and `fail` as merge/deploy must stop on this preflight line
   - expose a fixed human-readable daily-entry view through `planner:diagnostics`
   - expose a minimal self-check compare view through `--compare-previous` and `--compare-snapshot <run-id|path>`
   - fail the planner contract gate only on undefined action, undefined preset, and selector-contract mismatch

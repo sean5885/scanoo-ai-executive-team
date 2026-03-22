@@ -4,7 +4,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 Prepared on 2026-03-21.
 
-Release / preflight checkpoint: Thread 51 (`release-check-v1`).
+Release / decision checkpoint: Thread 52 + 53 (`release-decision-v1`).
 
 ## Release Identity
 
@@ -60,6 +60,7 @@ Minimum baseline verification:
 
 ```bash
 npm run release-check
+npm run release-check:ci
 npm test
 node scripts/self-check.mjs
 node scripts/run-workflow-baseline.mjs smoke
@@ -93,6 +94,25 @@ node scripts/check-auth.mjs
 Notes:
 
 - `npm run release-check` is the single operator-facing preflight for merge/release and only compresses self-check + routing status + planner gate into one verdict
+- `npm run release-check:ci` is the CI/pipeline entry for the same verdict; it emits only the minimal JSON report and exits `0` on `pass`, `1` on `fail`
+- the current release decision layer checkpoint is the CI + triage complete version:
+  - CI entry = `release-check:ci`
+  - triage classes = `system_regression` / `routing_regression` / `planner_contract_failure`
+  - `suggested_next_step` stays minimal but points to the first module family or file type to inspect
+- on this preflight line, `fail` means block merge/deploy; `pass` means this gate can release the next pipeline stage
+- recommended cadence:
+  - local development: `npm run release-check`
+  - PR pipeline: `npm run release-check:ci`
+  - protected-branch merge gate: `npm run release-check:ci`
+  - release/deploy pipeline: rerun `npm run release-check:ci`
 - `npm test` is the release gate for the checked-in code baseline
 - `check-auth.mjs` only validates app credentials and tenant-token issuance, not every user OAuth path
 - real post-restart live OAuth/Lark smoke validation remains an operator step outside repo-only evidence
+
+Minimal platform-neutral CI shape:
+
+```bash
+npm ci
+npm test
+npm run release-check:ci
+```

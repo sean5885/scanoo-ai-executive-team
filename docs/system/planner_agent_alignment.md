@@ -233,6 +233,8 @@ Thread 51 release-check preflight checkpoint:
 - keeps the same planner gate and compare semantics
 - adds `release-check` as the single merge/release preflight entry over the existing self-check, routing, and planner evidence
 - keeps human output bounded to merge/release verdict plus first repair line
+- classifies planner-side blocking output under the minimal `planner_contract_failure` triage line
+- keeps planner next-step guidance module-first: inspect planner registry / flow-route files before considering `docs/system/planner_contract.json`
 - keeps JSON output minimal and read-only; no routing change, no fallback, no planner gate mutation, no auto-fix
 
 Current daily-entry CLI:
