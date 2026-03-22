@@ -299,10 +299,14 @@ This is now a capability-lane event path with a closed-loop executive planner la
    - human-readable output only answers:
      - `能否放心合併/發布：可以 / 先不要`
      - `若不能，先修哪一條線：system regression / routing regression / planner contract failure / 無`
+     - `先看哪類 case：doc / meeting / runtime / mixed / 無`
    - `--json` output stays minimal:
      - `overall_status`
      - `blocking_checks`
      - `suggested_next_step`
+     - `failing_area`
+     - `representative_fail_case`
+     - `drilldown_source`
    - `blocking_checks` only emits first-level triage classes:
      - `system_regression`
      - `routing_regression`
@@ -312,6 +316,16 @@ This is now a capability-lane event path with a closed-loop executive planner la
      - routing regression -> routing rule modules (`src/router.js`, `src/planner-*-flow.mjs`) or eval fixture files (`evals/routing-eval-set.mjs`, `tests/routing-eval*.test.mjs`)
      - planner contract failure -> planner registry / flow-route modules first, and `docs/system/planner_contract.json` only for intentional stable targets
    - CI output stays on the same minimal JSON shape:
+     - `overall_status`
+     - `blocking_checks`
+     - `suggested_next_step`
+     - `failing_area`
+     - `representative_fail_case`
+     - `drilldown_source`
+   - every `release-check` and `release-check:ci` run also archives the current report into `.tmp/release-check-history/`
+   - release-check archive manifest fields:
+     - `run_id`
+     - `timestamp`
      - `overall_status`
      - `blocking_checks`
      - `suggested_next_step`
@@ -348,6 +362,16 @@ This is now a capability-lane event path with a closed-loop executive planner la
      - whether `routing` regressed
      - whether `planner` regressed
    - compare does not modify routing, add fallback, change planner gate rules, or auto-fix anything
+11. release-check compare is also available on the same read-only archive path:
+   - `npm run release-check -- --compare-previous`
+   - `npm run release-check -- --compare-snapshot <run-id|path>`
+   - `npm run release-check:ci -- --compare-previous`
+   - `npm run release-check:ci -- --compare-snapshot <run-id|path>`
+   - compare only answers:
+     - whether `release` status became better / worse / unchanged
+     - whether `blocking_checks` changed
+     - whether `suggested_next_step` changed
+   - compare does not modify gate ordering, add fallback, auto-fix anything, or introduce a new decision layer
 
 Minimal platform-neutral pipeline shape:
 

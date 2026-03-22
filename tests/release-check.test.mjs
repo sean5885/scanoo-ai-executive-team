@@ -1,11 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { mkdtemp, mkdir } from "node:fs/promises";
 
 import {
+  buildReleaseCheckCompareSummary,
   buildReleaseCheckDrilldown,
   buildReleaseCheckReport,
   getReleaseCheckExitCode,
@@ -66,9 +68,18 @@ async function seedReleaseCheckArchives() {
 
   return {
     plannerArchiveDir,
+    releaseCheckArchiveDir: path.join(baseDir, "release-check"),
     routingArchiveDir,
     selfCheckArchiveDir,
   };
+}
+
+function readJson(filePath) {
+  return JSON.parse(readFileSync(filePath, "utf8"));
+}
+
+function writeJson(filePath, payload) {
+  writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
 test("release-check report passes when self-check, routing, and planner are stable", async () => {
@@ -82,6 +93,25 @@ test("release-check report passes when self-check, routing, and planner are stab
     failing_area: null,
     representative_fail_case: [],
     drilldown_source: [],
+  });
+});
+
+test("release-check compare summary only reports status and field changes", () => {
+  assert.deepEqual(buildReleaseCheckCompareSummary({
+    currentReport: {
+      overall_status: "pass",
+      blocking_checks: [],
+      suggested_next_step: "目前這個入口沒有 blocking check；若要正式 release，仍需跑既有測試與發布驗證流程。",
+    },
+    previousReport: {
+      overall_status: "fail",
+      blocking_checks: ["routing_regression"],
+      suggested_next_step: "先看 routing regression 的 rule 模組：src/router.js 與 src/planner-*-flow.mjs。",
+    },
+  }), {
+    release_status: "better",
+    blocking_checks_changed: true,
+    suggested_next_step_changed: true,
   });
 });
 
@@ -386,6 +416,7 @@ test("release-check CLI emits only the minimal JSON structure", async () => {
     encoding: "utf8",
     env: {
       ...process.env,
+      RELEASE_CHECK_ARCHIVE_DIR: archives.releaseCheckArchiveDir,
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
@@ -394,6 +425,33 @@ test("release-check CLI emits only the minimal JSON structure", async () => {
   const parsed = JSON.parse(raw);
 
   assert.deepEqual(parsed, {
+    overall_status: "pass",
+    blocking_checks: [],
+    suggested_next_step: "目前這個入口沒有 blocking check；若要正式 release，仍需跑既有測試與發布驗證流程。",
+    failing_area: null,
+    representative_fail_case: [],
+    drilldown_source: [],
+  });
+
+  const manifest = readJson(path.join(archives.releaseCheckArchiveDir, "manifest.json"));
+  const latestEntry = manifest.snapshots[0];
+  const snapshot = readJson(path.join(
+    archives.releaseCheckArchiveDir,
+    "snapshots",
+    `${manifest.latest_run_id}.json`,
+  ));
+
+  assert.equal(manifest.latest_run_id, latestEntry.run_id);
+  assert.deepEqual(latestEntry, {
+    run_id: manifest.latest_run_id,
+    timestamp: latestEntry.timestamp,
+    overall_status: "pass",
+    blocking_checks: [],
+    suggested_next_step: "目前這個入口沒有 blocking check；若要正式 release，仍需跑既有測試與發布驗證流程。",
+  });
+  assert.deepEqual(snapshot, {
+    run_id: manifest.latest_run_id,
+    timestamp: latestEntry.timestamp,
     overall_status: "pass",
     blocking_checks: [],
     suggested_next_step: "目前這個入口沒有 blocking check；若要正式 release，仍需跑既有測試與發布驗證流程。",
@@ -410,6 +468,7 @@ test("release-check CLI default output stays limited to three lines", async () =
     encoding: "utf8",
     env: {
       ...process.env,
+      RELEASE_CHECK_ARCHIVE_DIR: archives.releaseCheckArchiveDir,
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
@@ -429,6 +488,121 @@ test("release-check exit code maps pass/fail strictly", () => {
   assert.equal(getReleaseCheckExitCode({}), 1);
 });
 
+test("release-check CLI compare-previous prints only the minimal compare view", async () => {
+  const archives = await seedReleaseCheckArchives();
+  const firstRaw = execFileSync("node", ["scripts/release-check.mjs", "--json"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      RELEASE_CHECK_ARCHIVE_DIR: archives.releaseCheckArchiveDir,
+      ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
+      PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
+      SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+    },
+  });
+  const firstReport = JSON.parse(firstRaw);
+  const manifestPath = path.join(archives.releaseCheckArchiveDir, "manifest.json");
+  const manifest = readJson(manifestPath);
+  const firstSnapshotPath = path.join(
+    archives.releaseCheckArchiveDir,
+    "snapshots",
+    `${manifest.latest_run_id}.json`,
+  );
+  const firstSnapshot = readJson(firstSnapshotPath);
+
+  firstSnapshot.overall_status = "fail";
+  firstSnapshot.blocking_checks = ["routing_regression"];
+  firstSnapshot.suggested_next_step = "先看 routing regression 的 rule 模組：src/router.js 與 src/planner-*-flow.mjs。";
+  writeJson(firstSnapshotPath, firstSnapshot);
+
+  manifest.snapshots[0].overall_status = "fail";
+  manifest.snapshots[0].blocking_checks = ["routing_regression"];
+  manifest.snapshots[0].suggested_next_step = "先看 routing regression 的 rule 模組：src/router.js 與 src/planner-*-flow.mjs。";
+  writeJson(manifestPath, manifest);
+
+  const output = execFileSync("node", ["scripts/release-check.mjs", "--compare-previous"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      RELEASE_CHECK_ARCHIVE_DIR: archives.releaseCheckArchiveDir,
+      ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
+      PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
+      SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+    },
+  });
+
+  assert.deepEqual(firstReport, {
+    overall_status: "pass",
+    blocking_checks: [],
+    suggested_next_step: "目前這個入口沒有 blocking check；若要正式 release，仍需跑既有測試與發布驗證流程。",
+    failing_area: null,
+    representative_fail_case: [],
+    drilldown_source: [],
+  });
+  assert.equal(output.trim(), [
+    "release 狀態：變好",
+    "blocking_checks：有改變",
+    "suggested_next_step：有改變",
+  ].join("\n"));
+});
+
+test("release-check CLI json compare-snapshot only returns the compare summary", async () => {
+  const archives = await seedReleaseCheckArchives();
+  execFileSync("node", ["scripts/release-check.mjs", "--json"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      RELEASE_CHECK_ARCHIVE_DIR: archives.releaseCheckArchiveDir,
+      ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
+      PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
+      SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+    },
+  });
+
+  const manifestPath = path.join(archives.releaseCheckArchiveDir, "manifest.json");
+  const manifest = readJson(manifestPath);
+  const firstRunId = manifest.latest_run_id;
+  const firstSnapshotPath = path.join(archives.releaseCheckArchiveDir, "snapshots", `${firstRunId}.json`);
+  const firstSnapshot = readJson(firstSnapshotPath);
+
+  firstSnapshot.overall_status = "fail";
+  firstSnapshot.blocking_checks = ["planner_contract_failure"];
+  firstSnapshot.suggested_next_step = "先看 planner contract failure 的 registry 模組：src/executive-planner.mjs；只有 intentional stable target 才改 docs/system/planner_contract.json。";
+  writeJson(firstSnapshotPath, firstSnapshot);
+
+  manifest.snapshots[0].overall_status = "fail";
+  manifest.snapshots[0].blocking_checks = ["planner_contract_failure"];
+  manifest.snapshots[0].suggested_next_step = "先看 planner contract failure 的 registry 模組：src/executive-planner.mjs；只有 intentional stable target 才改 docs/system/planner_contract.json。";
+  writeJson(manifestPath, manifest);
+
+  const raw = execFileSync("node", [
+    "scripts/release-check.mjs",
+    "--json",
+    "--compare-snapshot",
+    firstRunId,
+  ], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      RELEASE_CHECK_ARCHIVE_DIR: archives.releaseCheckArchiveDir,
+      ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
+      PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
+      SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+    },
+  });
+  const parsed = JSON.parse(raw);
+
+  assert.deepEqual(parsed, {
+    release_status: "better",
+    blocking_checks_changed: true,
+    suggested_next_step_changed: true,
+  });
+});
+
 test("release-check CI entry emits minimal JSON and exits 0 on pass", async () => {
   const archives = await seedReleaseCheckArchives();
   const result = spawnSync("node", ["scripts/release-check-ci.mjs"], {
@@ -436,6 +610,7 @@ test("release-check CI entry emits minimal JSON and exits 0 on pass", async () =
     encoding: "utf8",
     env: {
       ...process.env,
+      RELEASE_CHECK_ARCHIVE_DIR: archives.releaseCheckArchiveDir,
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
@@ -451,13 +626,71 @@ test("release-check CI entry emits minimal JSON and exits 0 on pass", async () =
     representative_fail_case: [],
     drilldown_source: [],
   });
+
+  const manifest = readJson(path.join(archives.releaseCheckArchiveDir, "manifest.json"));
+  assert.match(manifest.latest_run_id, /^release-check-/);
+});
+
+test("release-check CI compare-previous emits only the compare summary JSON", async () => {
+  const archives = await seedReleaseCheckArchives();
+  spawnSync("node", ["scripts/release-check-ci.mjs"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      RELEASE_CHECK_ARCHIVE_DIR: archives.releaseCheckArchiveDir,
+      ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
+      PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
+      SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+    },
+  });
+
+  const manifestPath = path.join(archives.releaseCheckArchiveDir, "manifest.json");
+  const manifest = readJson(manifestPath);
+  const firstSnapshotPath = path.join(
+    archives.releaseCheckArchiveDir,
+    "snapshots",
+    `${manifest.latest_run_id}.json`,
+  );
+  const firstSnapshot = readJson(firstSnapshotPath);
+
+  firstSnapshot.overall_status = "fail";
+  firstSnapshot.blocking_checks = ["system_regression"];
+  firstSnapshot.suggested_next_step = "先看 system regression 的 agent registry / contract：src/agent-registry.mjs。";
+  writeJson(firstSnapshotPath, firstSnapshot);
+
+  manifest.snapshots[0].overall_status = "fail";
+  manifest.snapshots[0].blocking_checks = ["system_regression"];
+  manifest.snapshots[0].suggested_next_step = "先看 system regression 的 agent registry / contract：src/agent-registry.mjs。";
+  writeJson(manifestPath, manifest);
+
+  const result = spawnSync("node", ["scripts/release-check-ci.mjs", "--compare-previous"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      RELEASE_CHECK_ARCHIVE_DIR: archives.releaseCheckArchiveDir,
+      ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
+      PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
+      SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+    },
+  });
+
+  assert.equal(result.status, 0);
+  assert.deepEqual(JSON.parse(result.stdout), {
+    release_status: "better",
+    blocking_checks_changed: true,
+    suggested_next_step_changed: true,
+  });
 });
 
 test("release-check CI entry exits 1 on fail", async () => {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "release-check-ci-fail-"));
+  const releaseCheckArchiveDir = path.join(baseDir, "release-check");
   const routingArchiveDir = path.join(baseDir, "routing");
   const plannerArchiveDir = path.join(baseDir, "planner");
   const selfCheckArchiveDir = path.join(baseDir, "self-check");
+  await mkdir(releaseCheckArchiveDir, { recursive: true });
   await mkdir(routingArchiveDir, { recursive: true });
   await mkdir(plannerArchiveDir, { recursive: true });
   await mkdir(selfCheckArchiveDir, { recursive: true });
@@ -467,6 +700,7 @@ test("release-check CI entry exits 1 on fail", async () => {
     encoding: "utf8",
     env: {
       ...process.env,
+      RELEASE_CHECK_ARCHIVE_DIR: releaseCheckArchiveDir,
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: selfCheckArchiveDir,

@@ -1,16 +1,46 @@
+function getArgValue(flag = "") {
+  const index = process.argv.indexOf(flag);
+  if (index === -1) {
+    return null;
+  }
+  return process.argv[index + 1] || null;
+}
+
+function printUsage() {
+  console.log([
+    "Usage:",
+    "  npm run release-check:ci",
+    "  npm run release-check:ci -- --compare-previous",
+    "  npm run release-check:ci -- --compare-snapshot <run-id|path>",
+  ].join("\n"));
+}
+
+if (process.argv.includes("--help")) {
+  printUsage();
+  process.exit(0);
+}
+
 const originalWrite = process.stdout.write.bind(process.stdout);
 process.stdout.write = (() => true);
 
 try {
+  let buildReleaseCheckCompareSummary;
   let getReleaseCheckExitCode;
   let runReleaseCheck;
+  let resolvePreviousReleaseCheckSnapshot;
+  let resolveReleaseCheckSnapshot;
   let result;
 
   try {
     ({
+      buildReleaseCheckCompareSummary,
       getReleaseCheckExitCode,
       runReleaseCheck,
     } = await import("../src/release-check.mjs"));
+    ({
+      resolvePreviousReleaseCheckSnapshot,
+      resolveReleaseCheckSnapshot,
+    } = await import("../src/release-check-history.mjs"));
     result = await runReleaseCheck();
   } finally {
     process.stdout.write = originalWrite;
@@ -24,8 +54,33 @@ try {
     representative_fail_case: ["release-check execution failed"],
     drilldown_source: ["release-check triage"],
   };
+  const compareSnapshot = getArgValue("--compare-snapshot");
+  const comparePrevious = process.argv.includes("--compare-previous");
+  const selectors = [
+    Boolean(compareSnapshot),
+    comparePrevious,
+  ].filter(Boolean);
 
-  console.log(JSON.stringify(report, null, 2));
+  if (selectors.length > 1) {
+    throw new Error("Choose only one compare selector: --compare-previous or --compare-snapshot");
+  }
+
+  let output = report;
+  if (comparePrevious || compareSnapshot) {
+    const compareTarget = comparePrevious
+      ? await resolvePreviousReleaseCheckSnapshot({
+          reference: result?.release_check_archive?.run_id || "latest",
+        })
+      : await resolveReleaseCheckSnapshot({
+          reference: compareSnapshot,
+        });
+    output = buildReleaseCheckCompareSummary({
+      currentReport: report,
+      previousReport: compareTarget?.report || {},
+    });
+  }
+
+  console.log(JSON.stringify(output, null, 2));
   process.exit(getReleaseCheckExitCode(report));
 } catch (error) {
   process.stdout.write = originalWrite;

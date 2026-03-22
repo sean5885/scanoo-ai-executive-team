@@ -453,6 +453,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 - Location:
   - `/Users/seanhan/Documents/Playground/src/system-self-check.mjs`
   - `/Users/seanhan/Documents/Playground/src/release-check.mjs`
+  - `/Users/seanhan/Documents/Playground/src/release-check-history.mjs`
   - `/Users/seanhan/Documents/Playground/src/system-self-check-history.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner-contract-consistency.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner-diagnostics-history.mjs`
@@ -477,6 +478,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - expose a unified self-check summary through `system_summary`, `routing_summary`, and `planner_summary`
   - answer the operator-facing question `現在系統能不能放心改`
   - expose `release-check` as the single merge/release preflight entry over the same self-check, routing, and planner evidence
+  - archive every `release-check` / `release-check:ci` execution into snapshot-only release-check history
   - keep `release-check` human output bounded to three lines only:
     - `能否放心合併/發布`
     - `若不能，先修哪一條線`
@@ -495,6 +497,11 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
     - `representative_fail_case` only carries 1~2 representative case strings
     - `drilldown_source` only reuses `release-check triage`, `routing-eval diagnostics/history`, and `planner diagnostics/history`
   - expose `release-check:ci` as the CI/pipeline entry with the same minimal JSON report and strict `0/1` exit contract
+  - expose a minimal `release-check` compare view through `--compare-previous` and `--compare-snapshot <run-id|path>`
+  - keep release-check compare output bounded to:
+    - `release` 狀態變好 / 變差 / 無變化
+    - `blocking_checks` 是否改變
+    - `suggested_next_step` 是否改變
   - define `pass` as merge/deploy may proceed and `fail` as merge/deploy must stop on this preflight line
   - expose a fixed human-readable daily-entry view through `planner:diagnostics`
   - expose a minimal self-check compare view through `--compare-previous` and `--compare-snapshot <run-id|path>`

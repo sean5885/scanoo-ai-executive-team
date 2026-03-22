@@ -1,5 +1,6 @@
 import { cleanText } from "./message-intent-utils.mjs";
 import { runPlannerContractConsistencyCheck } from "./planner-contract-consistency.mjs";
+import { archiveReleaseCheckSnapshot } from "./release-check-history.mjs";
 import { resolveRoutingDiagnosticsSnapshot } from "./routing-diagnostics-history.mjs";
 import { runSystemSelfCheck } from "./system-self-check.mjs";
 
@@ -19,6 +20,10 @@ const PLANNER_FINDING_ORDER = [
   "selector_contract_mismatches",
   "deprecated_reachable_targets",
 ];
+const RELEASE_STATUS_ORDER = {
+  fail: 0,
+  pass: 1,
+};
 
 function normalizeServiceModule(modulePath = "") {
   const normalized = cleanText(modulePath);
@@ -147,6 +152,14 @@ function normalizeRepresentativeFailCases(value) {
     return [];
   }
   return value.map((item) => cleanText(item)).filter(Boolean).slice(0, 2);
+}
+
+function normalizeBlockingChecks(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map((item) => cleanText(item)).filter(Boolean);
 }
 
 function normalizeDrilldownSource(value) {
@@ -444,6 +457,49 @@ export function getReleaseCheckExitCode(report = {}) {
   return cleanText(report?.overall_status) === "pass" ? 0 : 1;
 }
 
+export function normalizeReleaseCheckStatus(report = {}) {
+  return cleanText(report?.overall_status) === "pass" ? "pass" : "fail";
+}
+
+function compareStatusDirection(currentStatus = "", previousStatus = "") {
+  const currentRank = Number(RELEASE_STATUS_ORDER[currentStatus] ?? RELEASE_STATUS_ORDER.fail);
+  const previousRank = Number(RELEASE_STATUS_ORDER[previousStatus] ?? RELEASE_STATUS_ORDER.fail);
+
+  if (currentRank > previousRank) {
+    return "better";
+  }
+  if (currentRank < previousRank) {
+    return "worse";
+  }
+  return "unchanged";
+}
+
+function hasArrayChanged(currentValue = [], previousValue = []) {
+  if (currentValue.length !== previousValue.length) {
+    return true;
+  }
+
+  return currentValue.some((value, index) => value !== previousValue[index]);
+}
+
+export function buildReleaseCheckCompareSummary({
+  currentReport = {},
+  previousReport = {},
+} = {}) {
+  return {
+    release_status: compareStatusDirection(
+      normalizeReleaseCheckStatus(currentReport),
+      normalizeReleaseCheckStatus(previousReport),
+    ),
+    blocking_checks_changed: hasArrayChanged(
+      normalizeBlockingChecks(currentReport?.blocking_checks),
+      normalizeBlockingChecks(previousReport?.blocking_checks),
+    ),
+    suggested_next_step_changed: cleanText(currentReport?.suggested_next_step)
+      !== cleanText(previousReport?.suggested_next_step),
+  };
+}
+
 export async function runReleaseCheck(options = {}) {
   const selfCheckResult = await runSystemSelfCheck(options);
   let latestRoutingSnapshot = null;
@@ -485,9 +541,14 @@ export async function runReleaseCheck(options = {}) {
     selfCheckResult,
     drilldown,
   });
+  const releaseCheckArchive = await archiveReleaseCheckSnapshot({
+    ...(options?.releaseCheckArchiveDir ? { baseDir: options.releaseCheckArchiveDir } : {}),
+    report,
+  });
 
   return {
     report,
     self_check_result: selfCheckResult,
+    release_check_archive: releaseCheckArchive,
   };
 }

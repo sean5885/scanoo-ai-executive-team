@@ -243,12 +243,15 @@ Thread 52 release-check CI checkpoint 在既有 `release-check` preflight 基礎
 
 Thread 53 release decision layer checkpoint 在既有 `release-check` / `release-check:ci` 基礎上，把 fail triage 收斂為 `system_regression`、`routing_regression`、`planner_contract_failure` 三條線，並把 `suggested_next_step` 升級成模組 / 檔案類型指引；不改 routing、不新增 fallback、不改 planner gate，也不做 auto-fix。
 
+Thread 55 release history checkpoint 在既有 `release-check` / `release-check:ci` 基礎上，補上 release-check 自身 snapshot 歷史、最小 manifest、`--compare-previous` / `--compare-snapshot <run-id|path>`、相關測試與文件同步；不改 gate 規則、不新增 fallback、不做 auto-fix，也不重做新的 decision 系統。
+
 用途：
 
 - 固定阻擋 planner contract drift，不更動 routing 決策
 - 在 planner selector / preset / flow-route 相關變更後，第一時間確認 contract mirror 仍與 runtime 對齊
 - 在 merge / release 前，用單一 preflight 入口壓縮 self-check、routing、planner 三條線的 operator 判斷
 - 在 merge / release 前，提供完整 release decision layer：CI entry、strict exit code、最小 triage、模組級 next-step 指引
+- 在 merge / release 前，保留最小 release-check 歷史歸檔與 compare checkpoint，方便只讀比對 release verdict 變化
 
 命令：
 
@@ -260,7 +263,11 @@ npm run self-check
 npm run self-check -- --compare-previous
 npm run self-check -- --compare-snapshot <run-id|path>
 npm run release-check
+npm run release-check -- --compare-previous
+npm run release-check -- --compare-snapshot <run-id|path>
 npm run release-check:ci
+npm run release-check:ci -- --compare-previous
+npm run release-check:ci -- --compare-snapshot <run-id|path>
 ```
 
 說明：
@@ -272,12 +279,16 @@ npm run release-check:ci
 - `npm run release-check:ci` 是 CI / pipeline 專用入口；它重用同一份 report，只保留最小 JSON，並以 exit `0/1` 嚴格對應 pass/fail
 - `planner:diagnostics` 與 `planner:contract-check` 每次執行都會額外把當次 JSON report 歸檔到 `.tmp/planner-diagnostics-history/`
 - `self-check` 每次執行也會額外把 unified JSON report 歸檔到 `.tmp/system-self-check-history/`
+- `release-check` / `release-check:ci` 每次執行也都會額外把當次 report 歸檔到 `.tmp/release-check-history/`
 - archive 是 snapshot-only：
   - manifest: `.tmp/planner-diagnostics-history/manifest.json`
   - snapshots: `.tmp/planner-diagnostics-history/snapshots/<run-id>.json`
 - unified self-check archive 也是 snapshot-only：
   - manifest: `.tmp/system-self-check-history/manifest.json`
   - snapshots: `.tmp/system-self-check-history/snapshots/<run-id>.json`
+- release-check archive 也是 snapshot-only：
+  - manifest: `.tmp/release-check-history/manifest.json`
+  - snapshots: `.tmp/release-check-history/snapshots/<run-id>.json`
 - unified self-check manifest per-run entry 固定最小欄位為：
   - `run_id`
   - `timestamp`
@@ -303,10 +314,14 @@ npm run release-check:ci
 - `release-check` human output 固定只回答：
   - `能否放心合併/發布`
   - `若不能，先修哪一條線`
+  - `先看哪類 case`
 - `release-check -- --json` 固定只保留：
   - `overall_status`
   - `blocking_checks`
   - `suggested_next_step`
+  - `failing_area`
+  - `representative_fail_case`
+  - `drilldown_source`
 - `blocking_checks` 固定只分類成：
   - `system_regression`
   - `routing_regression`
@@ -318,6 +333,19 @@ npm run release-check:ci
 - `release-check:ci` exit contract 固定為：
   - exit `0` = `pass` = 可放行到下一個 merge/deploy stage
   - exit `1` = `fail` = 阻擋 merge/deploy，先修 `blocking_checks[0]`
+- release-check archive manifest per-run entry 固定最小欄位為：
+  - `run_id`
+  - `timestamp`
+  - `overall_status`
+  - `blocking_checks`
+  - `suggested_next_step`
+- `release-check` / `release-check:ci` 現在也額外暴露最小 compare CLI：
+  - `--compare-previous`
+  - `--compare-snapshot <run-id|path>`
+- release-check compare 固定只回答：
+  - `release` 狀態變好 / 變差 / 無變化
+  - `blocking_checks` 是否改變
+  - `suggested_next_step` 是否改變
 - fail 條件僅限：
   - `undefined actions > 0`
   - `undefined presets > 0`
