@@ -38,7 +38,9 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - `/Users/seanhan/Documents/Playground/src/knowledge/doc-index.mjs` now provides a small in-memory helper with `{ version, docs[] }`, `addDoc`, `findDocById`, case-sensitive `searchDocs`, and case-insensitive `searchDocsByKeyword`
 - `/Users/seanhan/Documents/Playground/src/knowledge/doc-loader.mjs` now provides `loadDocsFromDir(dir)`, which scans one local directory, reads `.md` files, and loads them into that in-memory index as `company_brain` doc types
 - `/Users/seanhan/Documents/Playground/src/knowledge/knowledge-service.mjs` now provides a tiny cached query wrapper: `getIndex()` lazily loads `./docs/system` once per process, and `queryKnowledge(keyword)` runs case-insensitive keyword search over that cached in-memory index
+- `/Users/seanhan/Documents/Playground/src/planner/knowledge-bridge.mjs` now provides a tiny planner-side adapter over that same local helper: `plannerQueryKnowledge({ keyword })` returns `{ count, top }` using the cached in-memory `docs/system` index
 - this helper is not connected to SQLite, sync ingestion, planner/company-brain routes, or approved-knowledge governance; it is only a local utility module at this time
+- the planner bridge is likewise only a local utility module at this time; it is not wired into `executive-planner.mjs`, planner contract routing, or company-brain read/write governance paths
 - API-created docx files can also be inserted into the same temporary index directly from `/api/doc/create`, using normalized metadata `{ doc_id, source, created_at, creator: { account_id, open_id }, title, folder_token }`
 - API-created docx files can also carry a minimal lifecycle in `lark_documents`: `status`, `indexed_at`, `verified_at`, `failure_reason`
 - lifecycle rows can be queried from `/api/doc/lifecycle?status=...`, and only `index_failed` / `verify_failed` may be retried through `/api/doc/lifecycle/retry`
