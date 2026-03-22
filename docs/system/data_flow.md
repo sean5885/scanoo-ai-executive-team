@@ -281,6 +281,14 @@ This is now a capability-lane event path with a closed-loop executive planner la
      - `今天能不能安心合併：可以 / 先不要`
      - `今天能不能安心發布：可以 / 先不要`
      - `若不能，先看哪一條線：routing / planner / release / 無`
+   - compare mode reuses release-check history only:
+     - `npm run daily-status -- --compare-previous`
+     - `npm run daily-status -- --compare-snapshot <run-id|path>`
+     - compare human-readable keeps the same four daily lines and only adds:
+       - `為什麼變差：<極簡提示>`
+     - compare JSON reuses the same four daily fields and only adds:
+       - `changed_line`
+       - `change_reason_hint`
    - `--json` output stays minimal:
      - `routing_status`
      - `planner_status`
@@ -295,6 +303,12 @@ This is now a capability-lane event path with a closed-loop executive planner la
      - `check_routing_first`
      - `check_planner_first`
      - `check_release_first`
+   - compare-only minimal reason source is fixed:
+     - `changed_line` = `routing` / `planner` / `release` / `none`
+     - `change_reason_hint`:
+       - routing -> `doc` / `meeting` / `runtime` / `mixed`
+       - planner -> `contract` / `selector`
+       - release -> first `blocking_checks` type
    - `daily-status` is read-only in the same sense as `release-check`:
      - it does not rerun routing eval
      - it does not change routing

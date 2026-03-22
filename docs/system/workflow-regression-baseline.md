@@ -277,6 +277,10 @@ npm run release-check:ci -- --compare-snapshot <run-id|path>
 - `npm run self-check` 已固定包含同一個 planner contract gate，並會把 current planner 結果對最新 archived planner snapshot 做 compare（若存在）
 - `npm run release-check` 是 release / merge 前的單一 preflight 入口；它重用同一份 self-check、routing、planner 證據，但把 operator-facing 輸出壓成 merge/release verdict
 - `npm run release-check:ci` 是 CI / pipeline 專用入口；它重用同一份 report，只保留最小 JSON，並以 exit `0/1` 嚴格對應 pass/fail
+- `npm run daily-status` 也額外暴露 read-only compare：
+  - `--compare-previous`
+  - `--compare-snapshot <run-id|path>`
+- daily-status compare 不新增自己的 archive；只重用同一份 `release-check` history 當 compare target
 - `planner:diagnostics` 與 `planner:contract-check` 每次執行都會額外把當次 JSON report 歸檔到 `.tmp/planner-diagnostics-history/`
 - `self-check` 每次執行也會額外把 unified JSON report 歸檔到 `.tmp/system-self-check-history/`
 - `release-check` / `release-check:ci` 每次執行也都會額外把當次 report 歸檔到 `.tmp/release-check-history/`
@@ -346,6 +350,14 @@ npm run release-check:ci -- --compare-snapshot <run-id|path>
   - `release` 狀態變好 / 變差 / 無變化
   - `blocking_checks` 是否改變
   - `suggested_next_step` 是否改變
+- daily-status compare 固定只在原本 daily answer 上補最小 regression signal：
+  - `changed_line`
+  - `change_reason_hint`
+  - human-readable 只多一行 `為什麼變差`
+- `change_reason_hint` 來源固定重用：
+  - routing -> routing diagnostics/history compare 的 `doc` / `meeting` / `runtime` / `mixed`
+  - planner -> planner diagnostics/current gate 的 `contract` / `selector`
+  - release -> `blocking_checks[0]`
 - fail 條件僅限：
   - `undefined actions > 0`
   - `undefined presets > 0`

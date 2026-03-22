@@ -261,6 +261,26 @@ Thread 56 daily status entry checkpoint:
   - `今天能不能安心合併`
   - `今天能不能安心發布`
   - `若不能，先看哪一條線`
+
+Thread 57 daily compare checkpoint:
+
+- adds read-only daily compare mode:
+  - `npm run daily-status -- --compare-previous`
+  - `npm run daily-status -- --compare-snapshot <run-id|path>`
+  - human-readable compare keeps the same four daily lines and only adds one extra line:
+    - `為什麼變差`
+  - compare JSON reuses the same four daily fields and only adds:
+    - `changed_line`
+    - `change_reason_hint`
+  - `changed_line` only uses:
+    - `routing`
+    - `planner`
+    - `release`
+    - `none`
+  - `change_reason_hint` stays minimal and only reuses existing sources:
+    - routing -> `doc` / `meeting` / `runtime` / `mixed` from routing diagnostics/history compare + drilldown
+    - planner -> `contract` / `selector` from planner diagnostics/current gate findings
+    - release -> current first `blocking_checks` type from release compare
 - keeps `--json` output bounded to:
   - `routing_status`
   - `planner_status`
@@ -275,6 +295,8 @@ Thread 56 daily status entry checkpoint:
 Current daily-entry CLI:
 
 - `npm run daily-status`
+- `npm run daily-status -- --compare-previous`
+- `npm run daily-status -- --compare-snapshot <run-id|path>`
 - `npm run planner:diagnostics`
 - `npm run planner:diagnostics -- --compare-previous`
 - `npm run planner:diagnostics -- --compare-snapshot <run-id|path>`

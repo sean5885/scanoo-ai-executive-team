@@ -44,6 +44,8 @@ Thread 54 release drilldown checkpoint 把這個 fail drilldown 正式固定成 
 
 Thread 56 daily status entry checkpoint 把既有 routing/self-check/release 判讀再壓成 daily operator 入口 `npm run daily-status`；routing 線在這個入口下仍只重用 latest routing diagnostics snapshot 與既有 unified self-check/release triage，不重跑 eval、不改 routing，也不新增 fallback。這個入口只額外回答今天是否能安心開發 / 合併 / 發布，以及若不能要先看 `routing` / `planner` / `release` 哪一條線。
 
+Thread 57 daily compare checkpoint 在既有 `daily-status` daily operator 入口上補上 read-only compare：`--compare-previous` / `--compare-snapshot <run-id|path>`、最小 `changed_line` / `change_reason_hint`，以及 human-readable 單行 `為什麼變差`；它只重用 routing diagnostics/history compare、planner diagnostics/current gate、release-check history compare，不新增 gate、不新增 fallback，也不做 auto-fix。
+
 目前這條路徑已再收斂成 `diagnostics_summary` 單一決策視圖，讓 operator 只看一個 summary 就能決定要補 fixture、檢查 routing rule，或保持不動；不新增 routing 邏輯、不新增 fallback，也不改 baseline/tag。
 
 固定操作 runbook 見：

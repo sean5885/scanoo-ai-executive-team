@@ -485,16 +485,28 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
     - `今天能不能安心合併`
     - `今天能不能安心發布`
     - `若不能，先看哪一條線`
+  - expose read-only `daily-status` compare through `--compare-previous` and `--compare-snapshot <run-id|path>`
+  - keep `daily-status` compare human output bounded to the same four daily lines plus one extra line only:
+    - `為什麼變差`
   - keep `daily-status -- --json` bounded to:
     - `routing_status`
     - `planner_status`
     - `release_status`
     - `overall_recommendation`
+  - keep `daily-status` compare JSON bounded to the same four fields plus:
+    - `changed_line`
+    - `change_reason_hint`
   - keep `daily-status` recommendation read-only and line-first:
     - `safe_to_develop_merge_release`
     - `check_routing_first`
     - `check_planner_first`
     - `check_release_first`
+  - keep `daily-status` compare reason minimal and source-bound:
+    - `changed_line` only uses `routing` / `planner` / `release` / `none`
+    - `change_reason_hint` only uses:
+      - routing -> `doc` / `meeting` / `runtime` / `mixed`
+      - planner -> `contract` / `selector`
+      - release -> first `blocking_checks` type
   - expose `release-check` as the single merge/release preflight entry over the same self-check, routing, and planner evidence
   - archive every `release-check` / `release-check:ci` execution into snapshot-only release-check history
   - keep `release-check` human output bounded to three lines only:
