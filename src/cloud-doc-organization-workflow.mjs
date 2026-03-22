@@ -79,6 +79,25 @@ const cloudOrganizationReReviewSignals = [
   "再審核",
   "再审核",
 ];
+const cloudOrganizationScopedExclusionSignals = [
+  "摘出去",
+  "摘出",
+  "移出去",
+  "移出",
+  "剔出去",
+  "剔出",
+  "排除",
+  "排出去",
+];
+const cloudOrganizationExclusionQualifierSignals = [
+  "不是",
+  "非 ",
+  "非scanoo",
+  "以外",
+  "之外",
+  "無關",
+  "无关",
+];
 const cloudOrganizationPlainLanguageSignals = [
   "看不懂",
   "沒在講人話",
@@ -144,7 +163,14 @@ export function looksLikeCloudOrganizationWhyRequest(text = "") {
 
 export function looksLikeCloudOrganizationReReviewRequest(text = "") {
   const normalized = normalizedText(text);
-  return Boolean(normalized) && hasAny(normalized, cloudOrganizationReReviewSignals);
+  const scopedExclusionRequest = Boolean(normalized)
+    && hasAny(normalized, cloudOrganizationScopeSignals)
+    && hasAny(normalized, cloudOrganizationScopedExclusionSignals)
+    && hasAny(normalized, cloudOrganizationExclusionQualifierSignals);
+  return Boolean(normalized) && (
+    hasAny(normalized, cloudOrganizationReReviewSignals)
+    || scopedExclusionRequest
+  );
 }
 
 export function looksLikeCloudOrganizationPlainLanguageRequest(text = "") {
@@ -218,7 +244,7 @@ export function resolveCloudOrganizationAction({ text = "", activeWorkflowMode =
   if (wantsExitCloudOrganization && inMode) {
     return "exit";
   }
-  if (!(wantsCloudOrganization || wantsCloudOrganizationReview || wantsCloudOrganizationWhy || wantsCloudOrganizationPlainLanguage || inMode)) {
+  if (!(wantsCloudOrganization || wantsCloudOrganizationReview || wantsCloudOrganizationWhy || wantsCloudOrganizationReReview || wantsCloudOrganizationPlainLanguage || inMode)) {
     return "none";
   }
   if (wantsCloudOrganizationWhy) {

@@ -232,3 +232,21 @@ test("lane execution plan reports structured semantic mismatch instead of generi
   assert.equal(plan.chosen_action, null);
   assert.equal(plan.fallback_reason, "semantic_mismatch_document_request_in_personal_lane");
 });
+
+test("lane execution plan keeps scoped cloud-doc exclusion requests out of personal fallback", () => {
+  const plan = resolveLaneExecutionPlan({
+    scope: {
+      capability_lane: "personal-assistant",
+    },
+    event: {
+      message: {
+        content: JSON.stringify({
+          text: "把非 scanoo 的文檔摘出去",
+        }),
+      },
+    },
+  });
+
+  assert.equal(plan.chosen_action, null);
+  assert.equal(plan.fallback_reason, "semantic_mismatch_document_request_in_personal_lane");
+});

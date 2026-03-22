@@ -165,6 +165,11 @@ const docCases = [
       active_workflow_mode: "cloud_doc_organization",
     },
   }),
+  createCase("doc", "023a", "把非 scanoo 的文檔摘出去", {
+    lane: "cloud_doc_workflow",
+    planner_action: "rereview",
+    agent_or_tool: "workflow:cloud_doc_organization",
+  }),
   createCase("doc", "024", "根據文件這份文件寫了什麼", {
     lane: "knowledge_assistant",
     planner_action: "get_company_brain_doc_detail",

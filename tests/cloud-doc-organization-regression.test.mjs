@@ -44,6 +44,17 @@ test("cloud doc workflow routes explicit reassignment follow-up into rereview br
   assert.equal(action, "rereview");
 });
 
+test("cloud doc workflow routes scoped exclusion follow-up into rereview branch before mode stickiness", () => {
+  const text = "把非 scanoo 的文檔摘出去";
+  const action = resolveCloudOrganizationAction({
+    text,
+    activeWorkflowMode: null,
+  });
+
+  assert.equal(looksLikeCloudOrganizationReReviewRequest(text), true);
+  assert.equal(action, "rereview");
+});
+
 test("cloud doc workflow exposes rereview signal helper", () => {
   assert.equal(looksLikeCloudOrganizationReReviewRequest("我們再重新分配"), true);
   assert.equal(looksLikeCloudOrganizationReReviewRequest("好的，還有什麼要我二次確認"), false);

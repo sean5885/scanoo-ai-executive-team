@@ -177,6 +177,29 @@ const documentSummarySignals = [
   "总结文件",
 ];
 
+const companyBrainDocumentSignals = [
+  "company brain",
+  "company_brain",
+  "知識庫",
+  "知识库",
+  "已驗證文件",
+  "已验证文件",
+];
+
+function looksLikeExplicitDocOrKnowledgeRoutingRequest(text = "") {
+  const normalized = cleanText(text);
+  if (!normalized) {
+    return false;
+  }
+
+  const mentionsCompanyBrainDocs =
+    hasAny(normalized, companyBrainDocumentSignals)
+    && hasAny(normalized, ["文件", "文檔", "文档", "doc"]);
+  const cloudDocAction = resolveCloudOrganizationAction({ text: normalized });
+
+  return mentionsCompanyBrainDocs || cloudDocAction !== "none";
+}
+
 function buildLaneTrace({
   scope,
   chosenAction = null,
@@ -301,7 +324,11 @@ export function resolveLaneExecutionPlan({ event, scope } = {}) {
     });
   }
 
-  if (hasAny(text, documentSummarySignals) || (text.includes("文件") && hasAny(text, ["整理", "總結", "总结", "摘要", "重點", "重点"]))) {
+  if (
+    looksLikeExplicitDocOrKnowledgeRoutingRequest(text)
+    || hasAny(text, documentSummarySignals)
+    || (text.includes("文件") && hasAny(text, ["整理", "總結", "总结", "摘要", "重點", "重点"]))
+  ) {
     return buildLaneTrace({
       scope,
       chosenAction: null,

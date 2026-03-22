@@ -657,6 +657,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - keep cloud-doc organization follow-ups in the same workflow mode, including a plain-language re-explanation path, a dedicated "why can't this be directly assigned?" explainer path, and second-pass review continuation for generic confirmation follow-ups
   - generic second-confirmation follow-ups now prefer a session-scoped cached review summary, so "還有什麼需要我二次確認" returns quickly instead of rerunning a full semantic re-review on every turn
   - explicit reassignment / relearning requests such as "重新分配" or "各個角色去學習" still trigger the slower second-pass semantic re-review branch
+  - scoped exclusion phrasing such as "把非 scanoo 的文檔摘出去" is now treated as a cloud-doc re-review / reassignment intent instead of falling through to generic personal-assistant `ROUTING_NO_MATCH`
   - avoid hard-failing mixed image+text turns when the image provider is unavailable; image tasks can fall back to the text lane when the user message still has actionable text
   - if image download or image analysis throws for a mixed image+text turn, lane execution now degrades to the text lane instead of emitting a generic failure reply
   - resolve one lane from message intent and peer scope
@@ -665,6 +666,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - detect image-bearing requests and route them through the image-understanding adapter before plain text fallback
   - execute lane-specific reply and tool strategy for DM, group, doc, and knowledge requests
   - detect DM requests for cloud-document classification / role assignment and persist a chat-scoped workflow mode so follow-up phrases about learning, unrelated docs, reassignment, and explicit exit stay in the same organization flow instead of generic personal-assistant fallback
+  - personal-lane execution now emits the existing `semantic_mismatch_document_request_in_personal_lane` guard for clear cloud-doc/company-brain document intents instead of treating them as generic no-match chat turns
   - run a second-pass role-review branch inside that workflow, using local classification plus a small MiniMax semantic re-review set for ambiguous documents, so follow-up turns can return reassignment candidates instead of only category totals
   - intercept `/meeting` plus explicit preview-then-confirm meeting requests as a command-style workflow that runs before lane-specific fallback replies
   - suppress normal lane replies while a chat-scoped meeting capture session is actively recording plain-text notes
