@@ -283,10 +283,17 @@ This is now a capability-lane event path with a closed-loop executive planner la
    - latest routing diagnostics snapshot from `.tmp/routing-diagnostics-history/`, plus compare against the previous routing snapshot when available
    - current planner contract gate from `scripts/planner-contract-check.mjs`, using the same blocking criteria for undefined actions, undefined presets, and selector/contract mismatches
    - planner compare against the latest archived planner diagnostics snapshot in `.tmp/planner-diagnostics-history/`, when one exists
+   - archive the unified self-check result itself into `.tmp/system-self-check-history/manifest.json` and `.tmp/system-self-check-history/snapshots/<run-id>.json`
    - unified summary fields:
      - `system_summary`
      - `routing_summary`
      - `planner_summary`
+   - self-check archive manifest fields:
+     - `run_id`
+     - `timestamp`
+     - `system_status`
+     - `routing_status`
+     - `planner_status`
    - one short human-readable answer:
      - `現在系統能不能放心改：可以 / 先不要`
 5. fail handling order for the unified self-check:
@@ -297,6 +304,14 @@ This is now a capability-lane event path with a closed-loop executive planner la
    - routing line = archived behavior regression evidence from latest snapshot / compare (`accuracy_ratio`, `trend_report`, `decision_advice`, error drift)
    - planner line = current runtime / contract drift evidence (`gate`, `undefined_actions`, `undefined_presets`, `selector_contract_mismatches`, `deprecated_reachable_targets`)
 7. default CLI output is now the short human-readable verdict; `npm run self-check -- --json` emits the full JSON report for CI or follow-up tooling
+8. compare mode is also available on the same read-only path:
+   - `npm run self-check -- --compare-previous`
+   - `npm run self-check -- --compare-snapshot <run-id|path>`
+   - compare output stays minimal and only answers:
+     - whether `system` became better / worse / unchanged
+     - whether `routing` regressed
+     - whether `planner` regressed
+   - compare does not modify routing, add fallback, change planner gate rules, or auto-fix anything
 
 ## Improvement Approval Flow
 

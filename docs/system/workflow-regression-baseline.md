@@ -235,6 +235,8 @@ Thread 47 planner diagnostics history-snapshot checkpoint 在既有 daily-entry 
 
 Thread 49 unified-self-check checkpoint 在既有 routing diagnostics 與 planner diagnostics 基礎上，把兩條線收斂成單一 `self-check` verdict、統一 JSON summary、demo-release 對接、相關測試與文件同步；不新增邏輯、不改 routing、不新增 fallback，也不改 planner gate。
 
+Thread 50 self-check history checkpoint 在既有 unified `self-check` 基礎上，補上 self-check 自身 snapshot 歷史、最小 manifest、`--compare-previous` / `--compare-snapshot <run-id|path>`、相關測試與文件同步；不改 routing、不新增 fallback、不改 planner gate，也不做 auto-fix。
+
 用途：
 
 - 固定阻擋 planner contract drift，不更動 routing 決策
@@ -247,6 +249,8 @@ npm run planner:diagnostics
 node scripts/planner-contract-check.mjs
 npm run planner:contract-check
 npm run self-check
+npm run self-check -- --compare-previous
+npm run self-check -- --compare-snapshot <run-id|path>
 ```
 
 說明：
@@ -255,9 +259,19 @@ npm run self-check
 - `planner-contract-check` 本身是 read-only gate，不做 auto-fix
 - `npm run self-check` 已固定包含同一個 planner contract gate，並會把 current planner 結果對最新 archived planner snapshot 做 compare（若存在）
 - `planner:diagnostics` 與 `planner:contract-check` 每次執行都會額外把當次 JSON report 歸檔到 `.tmp/planner-diagnostics-history/`
+- `self-check` 每次執行也會額外把 unified JSON report 歸檔到 `.tmp/system-self-check-history/`
 - archive 是 snapshot-only：
   - manifest: `.tmp/planner-diagnostics-history/manifest.json`
   - snapshots: `.tmp/planner-diagnostics-history/snapshots/<run-id>.json`
+- unified self-check archive 也是 snapshot-only：
+  - manifest: `.tmp/system-self-check-history/manifest.json`
+  - snapshots: `.tmp/system-self-check-history/snapshots/<run-id>.json`
+- unified self-check manifest per-run entry 固定最小欄位為：
+  - `run_id`
+  - `timestamp`
+  - `system_status`
+  - `routing_status`
+  - `planner_status`
 - manifest per-run entry 固定最小欄位為：
   - `run_id`
   - `timestamp`
@@ -267,7 +281,13 @@ npm run self-check
   - `selector_contract_mismatches`
   - `deprecated_reachable_targets`
 - snapshot 檔內容為該次 CLI 對應的完整 JSON diagnostics report
-- `self-check` 本身不額外暴露 planner compare CLI 參數，但會把 compare 結論收斂到 unified `planner_summary`
+- `self-check` 現在也額外暴露 unified compare CLI：
+  - `--compare-previous`
+  - `--compare-snapshot <run-id|path>`
+- unified compare human output 固定只回答：
+  - `system` 變好 / 變差 / 無變化
+  - `routing` 有無 regression
+  - `planner` 有無 regression
 - fail 條件僅限：
   - `undefined actions > 0`
   - `undefined presets > 0`

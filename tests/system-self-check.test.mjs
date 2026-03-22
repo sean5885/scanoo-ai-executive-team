@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { mkdtemp } from "node:fs/promises";
@@ -16,6 +17,7 @@ async function seedSelfCheckArchives() {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "system-self-check-"));
   const routingArchiveDir = path.join(baseDir, "routing");
   const plannerArchiveDir = path.join(baseDir, "planner");
+  const selfCheckArchiveDir = path.join(baseDir, "self-check");
 
   const routingRun = await runRoutingEval();
   const firstRoutingDiagnostics = buildRoutingDiagnosticsSummary({
@@ -60,7 +62,16 @@ async function seedSelfCheckArchives() {
   return {
     plannerArchiveDir,
     routingArchiveDir,
+    selfCheckArchiveDir,
   };
+}
+
+function readJson(filePath) {
+  return JSON.parse(readFileSync(filePath, "utf8"));
+}
+
+function writeJson(filePath, payload) {
+  writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
 test("system self-check returns unified routing and planner summaries", async () => {
@@ -68,6 +79,7 @@ test("system self-check returns unified routing and planner summaries", async ()
   const result = await runSystemSelfCheck(archives);
 
   assert.equal(result.ok, true);
+  assert.equal(result.system_summary.status, "pass");
   assert.equal(result.system_summary.safe_to_change, true);
   assert.equal(result.system_summary.core_checks, "pass");
   assert.equal(result.system_summary.routing_status, "pass");
@@ -87,6 +99,26 @@ test("system self-check returns unified routing and planner summaries", async ()
   assert.equal(result.planner_contract.gate_ok, true);
   assert.equal(result.planner_contract.consistency_ok, true);
   assert.deepEqual(result.planner_contract.failing_categories, []);
+  assert.match(result.self_check_archive.run_id, /^self-check-/);
+
+  const manifest = readJson(path.join(archives.selfCheckArchiveDir, "manifest.json"));
+  const snapshot = readJson(path.join(
+    archives.selfCheckArchiveDir,
+    "snapshots",
+    `${result.self_check_archive.run_id}.json`,
+  ));
+
+  assert.deepEqual(manifest.snapshots[0], {
+    run_id: result.self_check_archive.run_id,
+    timestamp: result.self_check_archive.timestamp,
+    system_status: "pass",
+    routing_status: "pass",
+    planner_status: "pass",
+  });
+  assert.equal(snapshot.run_id, result.self_check_archive.run_id);
+  assert.equal(snapshot.system_summary.status, "pass");
+  assert.equal(snapshot.routing_summary.status, "pass");
+  assert.equal(snapshot.planner_summary.gate, "pass");
 });
 
 test("self-check CLI renders concise guidance by default", async () => {
@@ -98,6 +130,7 @@ test("self-check CLI renders concise guidance by default", async () => {
       ...process.env,
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
+      SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
     },
   });
 
@@ -117,12 +150,14 @@ test("self-check CLI emits unified JSON report with --json", async () => {
       ...process.env,
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
+      SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
     },
   });
   const parsed = JSON.parse(raw);
 
   assert.equal(parsed.ok, true);
   assert.deepEqual(parsed.system_summary, {
+    status: "pass",
     safe_to_change: true,
     answer: "可以",
     core_checks: "pass",
@@ -136,4 +171,93 @@ test("self-check CLI emits unified JSON report with --json", async () => {
   assert.equal(parsed.planner_summary.gate, "pass");
   assert.equal(parsed.routing_summary.latest_snapshot.run_id, "routing-2");
   assert.match(parsed.planner_summary.latest_snapshot.run_id, /^planner-diagnostics-/);
+  assert.match(parsed.self_check_archive.run_id, /^self-check-/);
+});
+
+test("self-check CLI compare-previous prints the minimal compare view", async () => {
+  const archives = await seedSelfCheckArchives();
+  execFileSync("node", ["scripts/self-check.mjs", "--json"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
+      PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
+      SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+    },
+  });
+
+  const output = execFileSync("node", ["scripts/self-check.mjs", "--compare-previous"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
+      PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
+      SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+    },
+  });
+
+  assert.equal(output.trim(), [
+    "system: 無變化",
+    "routing regression: 無",
+    "planner regression: 無",
+  ].join("\n"));
+});
+
+test("self-check CLI json compare_summary stays minimal", async () => {
+  const archives = await seedSelfCheckArchives();
+  const firstRaw = execFileSync("node", ["scripts/self-check.mjs", "--json"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
+      PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
+      SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+    },
+  });
+  const firstParsed = JSON.parse(firstRaw);
+  const firstSnapshotPath = path.join(
+    archives.selfCheckArchiveDir,
+    "snapshots",
+    `${firstParsed.self_check_archive.run_id}.json`,
+  );
+  const firstSnapshot = readJson(firstSnapshotPath);
+  firstSnapshot.system_summary.status = "degrade";
+  firstSnapshot.system_summary.safe_to_change = false;
+  firstSnapshot.system_summary.answer = "先不要";
+  firstSnapshot.system_summary.has_obvious_regression = true;
+  firstSnapshot.system_summary.review_priority = "routing";
+  firstSnapshot.routing_summary.status = "degrade";
+  writeJson(firstSnapshotPath, firstSnapshot);
+
+  const manifestPath = path.join(archives.selfCheckArchiveDir, "manifest.json");
+  const manifest = readJson(manifestPath);
+  manifest.snapshots[0].system_status = "degrade";
+  manifest.snapshots[0].routing_status = "degrade";
+  writeJson(manifestPath, manifest);
+
+  const raw = execFileSync("node", [
+    "scripts/self-check.mjs",
+    "--json",
+    "--compare-snapshot",
+    firstParsed.self_check_archive.run_id,
+  ], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
+      PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
+      SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+    },
+  });
+  const parsed = JSON.parse(raw);
+
+  assert.deepEqual(parsed.compare_summary, {
+    system_status: "better",
+    routing_regression: false,
+    planner_regression: false,
+  });
 });

@@ -221,6 +221,13 @@ Thread 49 unified-self-check checkpoint:
 - exposes planner-side unified fields through `planner_summary`
 - does not change planner routing, add fallback, or auto-fix drift
 
+Thread 50 self-check history checkpoint:
+
+- keeps the same planner gate and compare semantics
+- adds snapshot-only unified self-check archival to `.tmp/system-self-check-history/`
+- adds `self-check -- --compare-previous` and `self-check -- --compare-snapshot <run-id|path>`
+- keeps compare read-only and minimal; no routing change, no fallback, no planner gate mutation, no auto-fix
+
 Current daily-entry CLI:
 
 - `npm run planner:diagnostics`
@@ -256,6 +263,22 @@ Current daily-entry CLI:
   - self-check 直接重跑 current planner contract consistency check
   - 若 `.tmp/planner-diagnostics-history/` 有最新 snapshot，會把 current report 對那一筆做 compare
   - self-check 不會改 planner gate 規則，也不會 auto-fix drift
+- every `self-check` run now also writes a snapshot-only unified archive to:
+  - `.tmp/system-self-check-history/manifest.json`
+  - `.tmp/system-self-check-history/snapshots/<run-id>.json`
+- unified self-check `manifest.json` keeps the minimal per-run fields:
+  - `run_id`
+  - `timestamp`
+  - `system_status`
+  - `routing_status`
+  - `planner_status`
+- unified self-check compare mode supports:
+  - `npm run self-check -- --compare-previous`
+  - `npm run self-check -- --compare-snapshot <run-id|path>`
+- unified self-check compare human output only covers:
+  - `system` better / worse / unchanged
+  - whether `routing` regressed
+  - whether `planner` regressed
 - if `gate = fail`, the decision guidance is:
   - default: fix planner implementation first
   - alternative: update the contract only for an intentional stable target, and state the reason explicitly

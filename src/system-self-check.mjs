@@ -1,5 +1,6 @@
 import { listRegisteredAgents, knowledgeAgentSubcommands } from "./agent-registry.mjs";
 import { getAllowedMethodsForPath } from "./http-route-contracts.mjs";
+import { cleanText } from "./message-intent-utils.mjs";
 import {
   buildPlannerDiagnosticsCompareSummary,
   runPlannerContractConsistencyCheck,
@@ -12,6 +13,9 @@ import {
   resolvePreviousRoutingDiagnosticsSnapshot,
   resolveRoutingDiagnosticsSnapshot,
 } from "./routing-diagnostics-history.mjs";
+import {
+  archiveSystemSelfCheckSnapshot,
+} from "./system-self-check-history.mjs";
 
 const REQUIRED_AGENT_IDS = [
   "generalist",
@@ -69,6 +73,15 @@ const REQUIRED_SERVICE_MODULES = [
 ];
 
 const ROUTING_EVAL_MIN_ACCURACY_RATIO = 0.9;
+const SYSTEM_STATUS_ORDER = {
+  fail: 0,
+  degrade: 1,
+  pass: 2,
+};
+const PLANNER_STATUS_ORDER = {
+  fail: 0,
+  pass: 1,
+};
 
 function validateAgentContract(agent) {
   const contract = agent?.contract || {};
@@ -325,6 +338,11 @@ function buildSystemSummary({
     routingSummary?.compare?.has_obvious_regression
     || plannerSummary?.compare?.has_obvious_regression
   );
+  const status = !baseOk || routingStatus === "fail" || plannerGate === "fail"
+    ? "fail"
+    : routingStatus === "degrade" || hasObviousRegression
+      ? "degrade"
+      : "pass";
   const safeToChange = baseOk
     && routingStatus === "pass"
     && plannerGate === "pass"
@@ -345,6 +363,7 @@ function buildSystemSummary({
         : "可以開始改；改 routing 後回看 routing:diagnostics，改 planner 後回看 planner:diagnostics 與 self-check。";
 
   return {
+    status,
     safe_to_change: safeToChange,
     answer: safeToChange ? "可以" : "先不要",
     core_checks: baseOk ? "pass" : "fail",
@@ -353,6 +372,79 @@ function buildSystemSummary({
     has_obvious_regression: hasObviousRegression,
     review_priority: reviewPriority,
     guidance,
+  };
+}
+
+function normalizeRoutingStatus(status = "") {
+  const normalized = cleanText(status);
+  if (normalized === "pass" || normalized === "degrade") {
+    return normalized;
+  }
+  return "fail";
+}
+
+function normalizePlannerStatus(status = "") {
+  return cleanText(status) === "pass" ? "pass" : "fail";
+}
+
+export function normalizeSystemSelfCheckStatus(report = {}) {
+  const existingStatus = cleanText(report?.system_summary?.status);
+  if (existingStatus === "pass" || existingStatus === "degrade" || existingStatus === "fail") {
+    return existingStatus;
+  }
+
+  const baseOk = cleanText(report?.system_summary?.core_checks) === "pass";
+  const routingStatus = normalizeRoutingStatus(report?.system_summary?.routing_status || report?.routing_summary?.status);
+  const plannerStatus = normalizePlannerStatus(report?.system_summary?.planner_gate || report?.planner_summary?.gate);
+  const hasObviousRegression = Boolean(report?.system_summary?.has_obvious_regression);
+
+  if (!baseOk || routingStatus === "fail" || plannerStatus === "fail") {
+    return "fail";
+  }
+  if (routingStatus === "degrade" || hasObviousRegression) {
+    return "degrade";
+  }
+  return "pass";
+}
+
+function compareStatusDirection(currentStatus = "", previousStatus = "") {
+  const currentRank = Number(SYSTEM_STATUS_ORDER[currentStatus] ?? SYSTEM_STATUS_ORDER.fail);
+  const previousRank = Number(SYSTEM_STATUS_ORDER[previousStatus] ?? SYSTEM_STATUS_ORDER.fail);
+
+  if (currentRank > previousRank) {
+    return "better";
+  }
+  if (currentRank < previousRank) {
+    return "worse";
+  }
+  return "unchanged";
+}
+
+export function buildSystemSelfCheckCompareSummary({
+  currentReport = {},
+  previousReport = {},
+} = {}) {
+  const currentSystemStatus = normalizeSystemSelfCheckStatus(currentReport);
+  const previousSystemStatus = normalizeSystemSelfCheckStatus(previousReport);
+  const currentRoutingStatus = normalizeRoutingStatus(
+    currentReport?.routing_summary?.status || currentReport?.system_summary?.routing_status,
+  );
+  const previousRoutingStatus = normalizeRoutingStatus(
+    previousReport?.routing_summary?.status || previousReport?.system_summary?.routing_status,
+  );
+  const currentPlannerStatus = normalizePlannerStatus(
+    currentReport?.planner_summary?.gate || currentReport?.system_summary?.planner_gate,
+  );
+  const previousPlannerStatus = normalizePlannerStatus(
+    previousReport?.planner_summary?.gate || previousReport?.system_summary?.planner_gate,
+  );
+
+  return {
+    system_status: compareStatusDirection(currentSystemStatus, previousSystemStatus),
+    routing_regression: Number(SYSTEM_STATUS_ORDER[currentRoutingStatus] ?? SYSTEM_STATUS_ORDER.fail)
+      < Number(SYSTEM_STATUS_ORDER[previousRoutingStatus] ?? SYSTEM_STATUS_ORDER.fail),
+    planner_regression: Number(PLANNER_STATUS_ORDER[currentPlannerStatus] ?? PLANNER_STATUS_ORDER.fail)
+      < Number(PLANNER_STATUS_ORDER[previousPlannerStatus] ?? PLANNER_STATUS_ORDER.fail),
   };
 }
 
@@ -368,7 +460,7 @@ export function renderSystemSelfCheckReport(result = {}) {
   ].join("\n");
 }
 
-export async function runSystemSelfCheck({ routingArchiveDir, plannerArchiveDir } = {}) {
+export async function runSystemSelfCheck({ routingArchiveDir, plannerArchiveDir, selfCheckArchiveDir } = {}) {
   const agents = listRegisteredAgents();
   const agentMap = new Map(agents.map((agent) => [agent.id, agent]));
 
@@ -429,7 +521,7 @@ export async function runSystemSelfCheck({ routingArchiveDir, plannerArchiveDir 
   });
   const ok = systemSummary.safe_to_change === true;
 
-  return {
+  const result = {
     ok,
     system_summary: systemSummary,
     routing_summary: routingSummary,
@@ -460,5 +552,15 @@ export async function runSystemSelfCheck({ routingArchiveDir, plannerArchiveDir 
         : [],
       summary: plannerSummary?.report?.summary || null,
     },
+  };
+
+  const selfCheckArchive = await archiveSystemSelfCheckSnapshot({
+    ...(selfCheckArchiveDir ? { baseDir: selfCheckArchiveDir } : {}),
+    report: result,
+  });
+
+  return {
+    ...result,
+    self_check_archive: selfCheckArchive,
   };
 }

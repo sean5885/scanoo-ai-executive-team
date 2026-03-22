@@ -244,6 +244,7 @@ node scripts/routing-eval-fixture-candidates.mjs --input /tmp/routing-eval.json 
 
 - routing 部分只讀 `.tmp/routing-diagnostics-history/` 的最新 snapshot
 - 若 manifest 內有上一筆 snapshot，會再做 latest vs previous compare
+- self-check 每次執行也會把 unified result 歸檔到 `.tmp/system-self-check-history/`
 - unified `routing_summary.status` 只分成：
   - `pass`
   - `degrade`
@@ -253,6 +254,13 @@ node scripts/routing-eval-fixture-candidates.mjs --input /tmp/routing-eval.json 
 - `fail` 代表 latest snapshot 缺失、accuracy 低於原本 eval gate，或 diagnostics 已出現高風險訊號
 
 這裡的 self-check 整合只做彙總，不改 routing 邏輯、不改 fallback，也不改原本 `routing-eval` 的 gate。
+
+若要最小回答 unified 狀態是否比上一筆更差，也可以直接用：
+
+- `npm run self-check -- --compare-previous`
+- `npm run self-check -- --compare-snapshot <run-id|path>`
+
+這兩條 compare path 只回答 unified `system` 變化、`routing` 是否 regression、以及 `planner` 是否 regression；不改 routing 邏輯、不改 fallback，也不做 auto-fix。
 
 CLI 會以 overall accuracy ratio 當作強制 regression gate；目前這份 checked-in baseline 為 regression gate baseline v2（`routing-eval-baseline-v2`），門檻是 `0.9`。
 
