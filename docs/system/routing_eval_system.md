@@ -34,6 +34,8 @@ Thread 41 routing diagnostics history checkpoint 在既有 deterministic eval / 
 
 Thread 42 routing diagnostics daily-entry checkpoint 在既有 diagnostics history 基礎上補上固定 read-only `routing:diagnostics` 檢視入口、上一筆 history lookup、日常查看口徑與測試；不新增邏輯、不改 routing 決策，也不新增 fallback。
 
+Thread 49 unified-self-check checkpoint 把既有 routing diagnostics latest snapshot / previous compare 整合進 `self-check` 的 unified summary，提供 `routing_summary.status`、明顯 regression 判讀與短 human-readable verdict；不新增 routing 邏輯、不改 fallback，也不改原本 eval gate。
+
 目前這條路徑已再收斂成 `diagnostics_summary` 單一決策視圖，讓 operator 只看一個 summary 就能決定要補 fixture、檢查 routing rule，或保持不動；不新增 routing 邏輯、不新增 fallback，也不改 baseline/tag。
 
 固定操作 runbook 見：
@@ -237,6 +239,20 @@ node scripts/routing-eval-fixture-candidates.mjs --input /tmp/routing-eval.json 
 1. `npm run routing:diagnostics`
 2. 若剛改過 routing 相關程式或 fixture，再看 `npm run routing:diagnostics -- --compare-previous`
 3. 若要回答是否偏離已接受 checkpoint，再看 `npm run routing:diagnostics -- --compare-tag routing-eval-baseline-v2`
+
+`npm run self-check` 現在會直接整合這條線的 read-only 結論，但仍不重跑 eval：
+
+- routing 部分只讀 `.tmp/routing-diagnostics-history/` 的最新 snapshot
+- 若 manifest 內有上一筆 snapshot，會再做 latest vs previous compare
+- unified `routing_summary.status` 只分成：
+  - `pass`
+  - `degrade`
+  - `fail`
+- `pass` 代表 latest snapshot 本身穩定，且 compare 沒有明顯 regression
+- `degrade` 代表 latest snapshot 仍通過，但 compare 已出現明顯 drift / regression，應先看 routing
+- `fail` 代表 latest snapshot 缺失、accuracy 低於原本 eval gate，或 diagnostics 已出現高風險訊號
+
+這裡的 self-check 整合只做彙總，不改 routing 邏輯、不改 fallback，也不改原本 `routing-eval` 的 gate。
 
 CLI 會以 overall accuracy ratio 當作強制 regression gate；目前這份 checked-in baseline 為 regression gate baseline v2（`routing-eval-baseline-v2`），門檻是 `0.9`。
 

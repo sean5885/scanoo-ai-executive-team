@@ -233,6 +233,8 @@ Thread 46 planner diagnostics daily-entry checkpoint 在既有 planner contract 
 
 Thread 47 planner diagnostics history-snapshot checkpoint 在既有 daily-entry CLI 與 regression gate 之上補上 snapshot-only 歷史歸檔、manifest、相關測試與文件同步，但不新增 compare、不改 routing，也不新增 fallback 或 gate 變更。
 
+Thread 49 unified-self-check checkpoint 在既有 routing diagnostics 與 planner diagnostics 基礎上，把兩條線收斂成單一 `self-check` verdict、統一 JSON summary、demo-release 對接、相關測試與文件同步；不新增邏輯、不改 routing、不新增 fallback，也不改 planner gate。
+
 用途：
 
 - 固定阻擋 planner contract drift，不更動 routing 決策
@@ -251,7 +253,7 @@ npm run self-check
 
 - `planner:diagnostics` 是固定日常入口，直接根據目前 checked-in runtime / contract 狀態輸出單一 diagnostics summary，不會重跑 planner
 - `planner-contract-check` 本身是 read-only gate，不做 auto-fix
-- `npm run self-check` 已固定包含同一個 planner contract gate
+- `npm run self-check` 已固定包含同一個 planner contract gate，並會把 current planner 結果對最新 archived planner snapshot 做 compare（若存在）
 - `planner:diagnostics` 與 `planner:contract-check` 每次執行都會額外把當次 JSON report 歸檔到 `.tmp/planner-diagnostics-history/`
 - archive 是 snapshot-only：
   - manifest: `.tmp/planner-diagnostics-history/manifest.json`
@@ -265,7 +267,7 @@ npm run self-check
   - `selector_contract_mismatches`
   - `deprecated_reachable_targets`
 - snapshot 檔內容為該次 CLI 對應的完整 JSON diagnostics report
-- 不提供 compare、也不新增 CLI 參數
+- `self-check` 本身不額外暴露 planner compare CLI 參數，但會把 compare 結論收斂到 unified `planner_summary`
 - fail 條件僅限：
   - `undefined actions > 0`
   - `undefined presets > 0`

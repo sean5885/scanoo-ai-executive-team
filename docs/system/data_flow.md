@@ -280,10 +280,23 @@ This is now a capability-lane event path with a closed-loop executive planner la
    - knowledge subcommand coverage
    - key HTTP route-contract coverage, including high-risk write/apply paths
    - core service-module initialization
-   - planner contract gate status from `scripts/planner-contract-check.mjs`, using the same blocking criteria for undefined actions, undefined presets, and selector/contract mismatches
-   - planner daily-entry diagnostics from `scripts/planner-diagnostics.mjs`, which reads current runtime/contract state directly and emits the fixed summary fields `gate`, `undefined_actions`, `undefined_presets`, `selector_contract_mismatches`, and `deprecated_reachable_targets`
-   - each `planner:diagnostics` / `planner:contract-check` run also snapshots the full JSON diagnostics report into `.tmp/planner-diagnostics-history/snapshots/<run-id>.json`, while `.tmp/planner-diagnostics-history/manifest.json` keeps the minimal run counters for later lookup
-4. result is emitted as JSON so CI or operators can quickly detect obvious chain breaks before runtime debugging
+   - latest routing diagnostics snapshot from `.tmp/routing-diagnostics-history/`, plus compare against the previous routing snapshot when available
+   - current planner contract gate from `scripts/planner-contract-check.mjs`, using the same blocking criteria for undefined actions, undefined presets, and selector/contract mismatches
+   - planner compare against the latest archived planner diagnostics snapshot in `.tmp/planner-diagnostics-history/`, when one exists
+   - unified summary fields:
+     - `system_summary`
+     - `routing_summary`
+     - `planner_summary`
+   - one short human-readable answer:
+     - `現在系統能不能放心改：可以 / 先不要`
+5. fail handling order for the unified self-check:
+   - if base registry / route / service checks fail, fix those first
+   - else if `routing_summary.status != pass` or routing compare shows obvious regression, inspect routing first
+   - else if `planner_summary.gate = fail` or planner compare shows obvious regression, inspect planner first
+6. line separation rule:
+   - routing line = archived behavior regression evidence from latest snapshot / compare (`accuracy_ratio`, `trend_report`, `decision_advice`, error drift)
+   - planner line = current runtime / contract drift evidence (`gate`, `undefined_actions`, `undefined_presets`, `selector_contract_mismatches`, `deprecated_reachable_targets`)
+7. default CLI output is now the short human-readable verdict; `npm run self-check -- --json` emits the full JSON report for CI or follow-up tooling
 
 ## Improvement Approval Flow
 

@@ -214,6 +214,13 @@ Thread 48 planner diagnostics minimal-compare checkpoint:
   - `=` = unchanged
 - JSON compare adds `compare_summary`, and that object only contains changed fields
 
+Thread 49 unified-self-check checkpoint:
+
+- keeps the same planner gate and compare semantics
+- folds current planner gate + latest archived compare into `self-check`
+- exposes planner-side unified fields through `planner_summary`
+- does not change planner routing, add fallback, or auto-fix drift
+
 Current daily-entry CLI:
 
 - `npm run planner:diagnostics`
@@ -245,6 +252,10 @@ Current daily-entry CLI:
   - compare target = previous archived snapshot or specified snapshot path/run-id
 - `--json` keeps the full current report and adds `compare_summary` only when compare mode is used
 - `compare_summary` only includes fields whose value changed versus the compare target
+- `npm run self-check` 也會整合這條線，但 planner 部分仍以 current runtime/contract state 為準：
+  - self-check 直接重跑 current planner contract consistency check
+  - 若 `.tmp/planner-diagnostics-history/` 有最新 snapshot，會把 current report 對那一筆做 compare
+  - self-check 不會改 planner gate 規則，也不會 auto-fix drift
 - if `gate = fail`, the decision guidance is:
   - default: fix planner implementation first
   - alternative: update the contract only for an intentional stable target, and state the reason explicitly
@@ -306,6 +317,12 @@ Fail handling order:
 5. only if the reachable target is intentional and stable, update `planner_contract.json` and record the reason in the same change
 6. if only `deprecated_reachable_targets > 0`, treat it as warning-only and clean it up without blocking the gate
 7. before merge/release, rerun `npm run planner:contract-check` or `npm run self-check`
+
+Unified self-check reading order:
+
+1. if `self-check` says look at `routing`, inspect routing first; planner may still be clean while the archived routing behavior already regressed
+2. once `self-check` points to `planner`, stay inside the planner order above
+3. planner line means contract/runtime drift; routing line means archived behavior regression
 
 Current operating rule:
 

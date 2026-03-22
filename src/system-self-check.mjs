@@ -1,6 +1,17 @@
 import { listRegisteredAgents, knowledgeAgentSubcommands } from "./agent-registry.mjs";
 import { getAllowedMethodsForPath } from "./http-route-contracts.mjs";
-import { runPlannerContractConsistencyCheck } from "./planner-contract-consistency.mjs";
+import {
+  buildPlannerDiagnosticsCompareSummary,
+  runPlannerContractConsistencyCheck,
+} from "./planner-contract-consistency.mjs";
+import { buildRoutingDiagnosticsSummary } from "./routing-eval-diagnostics.mjs";
+import {
+  resolvePlannerDiagnosticsSnapshot,
+} from "./planner-diagnostics-history.mjs";
+import {
+  resolvePreviousRoutingDiagnosticsSnapshot,
+  resolveRoutingDiagnosticsSnapshot,
+} from "./routing-diagnostics-history.mjs";
 
 const REQUIRED_AGENT_IDS = [
   "generalist",
@@ -57,6 +68,8 @@ const REQUIRED_SERVICE_MODULES = [
   "./executive-orchestrator.mjs",
 ];
 
+const ROUTING_EVAL_MIN_ACCURACY_RATIO = 0.9;
+
 function validateAgentContract(agent) {
   const contract = agent?.contract || {};
   const issues = [];
@@ -87,7 +100,275 @@ function validateAgentContract(agent) {
   return issues;
 }
 
-export async function runSystemSelfCheck() {
+function hasBlockingBaseFailures({
+  missingAgents = [],
+  invalidContracts = [],
+  missingKnowledgeSubcommands = [],
+  missingRoutes = [],
+  serviceInitialization = [],
+} = {}) {
+  return (
+    missingAgents.length > 0
+    || invalidContracts.length > 0
+    || missingKnowledgeSubcommands.length > 0
+    || missingRoutes.length > 0
+    || serviceInitialization.some((item) => item?.ok !== true)
+  );
+}
+
+function hasRoutingErrorRegression(delta = {}) {
+  return Object.values(delta || {}).some((metric) => (
+    Number(metric?.actual?.delta || 0) > 0
+    || Number(metric?.misses?.delta || 0) > 0
+  ));
+}
+
+function hasRoutingBucketRegression(delta = {}) {
+  return Object.values(delta || {}).some((metric) => metric?.status === "worse");
+}
+
+function buildRoutingStatus({
+  accuracyRatio = 0,
+  threshold = ROUTING_EVAL_MIN_ACCURACY_RATIO,
+  decisionSeverity = "info",
+  hasObviousRegression = false,
+  snapshotAvailable = false,
+} = {}) {
+  if (!snapshotAvailable) {
+    return "fail";
+  }
+  if (Number(accuracyRatio) < Number(threshold) || decisionSeverity === "high") {
+    return "fail";
+  }
+  if (hasObviousRegression || decisionSeverity === "warning") {
+    return "degrade";
+  }
+  return "pass";
+}
+
+async function buildRoutingSummary({ routingArchiveDir } = {}) {
+  let latestSnapshot = null;
+  let compareSnapshot = null;
+
+  try {
+    latestSnapshot = await resolveRoutingDiagnosticsSnapshot({
+      reference: "latest",
+      ...(routingArchiveDir ? { baseDir: routingArchiveDir } : {}),
+    });
+  } catch (error) {
+    return {
+      status: "fail",
+      summary: "routing latest snapshot unavailable",
+      guidance: "先跑 npm run routing:closed-loop 或 node scripts/routing-eval.mjs --json 產生最新 routing snapshot。",
+      latest_snapshot: null,
+      compare: {
+        available: false,
+        target: null,
+        has_obvious_regression: false,
+        summary: "routing compare unavailable",
+      },
+      diagnostics_summary: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  try {
+    compareSnapshot = await resolvePreviousRoutingDiagnosticsSnapshot({
+      reference: latestSnapshot?.snapshot?.run_id || "latest",
+      ...(routingArchiveDir ? { baseDir: routingArchiveDir } : {}),
+    });
+  } catch {
+    compareSnapshot = null;
+  }
+
+  const diagnosticsSummary = compareSnapshot
+    ? buildRoutingDiagnosticsSummary({
+        run: latestSnapshot.run,
+        previousRun: compareSnapshot.run,
+        currentLabel: `snapshot:${latestSnapshot.snapshot?.run_id || "latest"}`,
+        previousLabel: `snapshot:${compareSnapshot.snapshot?.run_id || "previous"}`,
+      })
+    : latestSnapshot?.snapshot?.diagnostics_summary || buildRoutingDiagnosticsSummary({
+        run: latestSnapshot.run,
+        previousRun: null,
+        currentLabel: `snapshot:${latestSnapshot.snapshot?.run_id || "latest"}`,
+      });
+  const trendDelta = diagnosticsSummary?.trend_report?.delta || null;
+  const decision = diagnosticsSummary?.decision_advice?.minimal_decision || {};
+  const threshold = Number(latestSnapshot?.run?.threshold?.min_accuracy_ratio || ROUTING_EVAL_MIN_ACCURACY_RATIO);
+  const hasObviousRegression = Boolean(
+    compareSnapshot
+    && (
+      Number(trendDelta?.accuracy_ratio?.delta || 0) < 0
+      || Number(trendDelta?.miss_count?.delta || 0) > 0
+      || hasRoutingBucketRegression(trendDelta?.by_lane_accuracy)
+      || hasRoutingBucketRegression(trendDelta?.by_action_accuracy)
+      || hasRoutingErrorRegression(trendDelta?.error_breakdown)
+    )
+  );
+  const status = buildRoutingStatus({
+    accuracyRatio: diagnosticsSummary?.accuracy_ratio || 0,
+    threshold,
+    decisionSeverity: decision?.severity || "info",
+    hasObviousRegression,
+    snapshotAvailable: true,
+  });
+
+  const summary = status === "pass"
+    ? "routing snapshot stable"
+    : status === "degrade"
+      ? "routing snapshot passes, but compare shows drift"
+      : "routing snapshot is not safe";
+  const guidance = status === "pass"
+    ? "routing 線目前穩定；若接下來改 routing，再看 npm run routing:diagnostics。"
+    : status === "degrade"
+      ? "先看 routing latest snapshot 與 compare；若只是 coverage 問題先 review fixture，不要改 fallback。"
+      : "先看 routing latest snapshot 與 compare；確認 regression 來源後再動 routing，先不要碰 fallback。";
+
+  return {
+    status,
+    summary,
+    guidance,
+    latest_snapshot: {
+      run_id: latestSnapshot?.snapshot?.run_id || null,
+      timestamp: latestSnapshot?.snapshot?.timestamp || null,
+      accuracy_ratio: Number(diagnosticsSummary?.accuracy_ratio || 0),
+      threshold,
+    },
+    compare: {
+      available: Boolean(compareSnapshot),
+      target: compareSnapshot
+        ? {
+            run_id: compareSnapshot?.snapshot?.run_id || null,
+            timestamp: compareSnapshot?.snapshot?.timestamp || null,
+          }
+        : null,
+      has_obvious_regression: hasObviousRegression,
+      summary: compareSnapshot
+        ? (hasObviousRegression ? "obvious regression detected from compare" : "no obvious regression from compare")
+        : "routing compare unavailable",
+    },
+    diagnostics_summary: diagnosticsSummary,
+  };
+}
+
+async function buildPlannerSummary({ plannerArchiveDir } = {}) {
+  const report = runPlannerContractConsistencyCheck();
+  let latestSnapshot = null;
+
+  try {
+    latestSnapshot = await resolvePlannerDiagnosticsSnapshot({
+      reference: "latest",
+      ...(plannerArchiveDir ? { baseDir: plannerArchiveDir } : {}),
+    });
+  } catch {
+    latestSnapshot = null;
+  }
+
+  const diagnosticsSummary = report?.diagnostics_summary || {};
+  const compareSummary = latestSnapshot
+    ? buildPlannerDiagnosticsCompareSummary({
+        currentSummary: diagnosticsSummary,
+        previousSummary: latestSnapshot?.report?.diagnostics_summary || {},
+      })
+    : {};
+  const hasObviousRegression = Object.values(compareSummary).some((item) => item?.status === "worse");
+  const gate = diagnosticsSummary?.gate === "pass" ? "pass" : "fail";
+  const latestSnapshotRunId = latestSnapshot?.snapshot?.run_id || latestSnapshot?.ref || null;
+  const summary = gate === "pass"
+    ? "planner gate passes"
+    : "planner gate fails";
+  const guidance = gate === "fail"
+    ? "先看 planner gate；依序看 undefined_actions、undefined_presets、selector_contract_mismatches。"
+    : hasObviousRegression
+      ? "planner gate 雖然 pass，但 compare 變差；先看 planner diagnostics compare。"
+      : "planner 線目前穩定；若接下來改 planner，再跑 npm run planner:diagnostics。";
+
+  return {
+    gate,
+    summary,
+    guidance,
+    latest_snapshot: latestSnapshot
+      ? {
+          run_id: latestSnapshotRunId,
+          timestamp: latestSnapshot?.snapshot?.timestamp || null,
+        }
+      : null,
+    compare: {
+      available: Boolean(latestSnapshot),
+      target: latestSnapshot
+        ? {
+            run_id: latestSnapshotRunId,
+            timestamp: latestSnapshot?.snapshot?.timestamp || null,
+          }
+        : null,
+      has_obvious_regression: hasObviousRegression,
+      summary: latestSnapshot
+        ? (hasObviousRegression ? "obvious regression detected from compare" : "no obvious regression from compare")
+        : "planner compare unavailable",
+      compare_summary: compareSummary,
+    },
+    diagnostics_summary: diagnosticsSummary,
+    decision: report?.decision || null,
+    report,
+  };
+}
+
+function buildSystemSummary({
+  baseOk = false,
+  routingSummary = {},
+  plannerSummary = {},
+} = {}) {
+  const routingStatus = routingSummary?.status || "fail";
+  const plannerGate = plannerSummary?.gate || "fail";
+  const hasObviousRegression = Boolean(
+    routingSummary?.compare?.has_obvious_regression
+    || plannerSummary?.compare?.has_obvious_regression
+  );
+  const safeToChange = baseOk
+    && routingStatus === "pass"
+    && plannerGate === "pass"
+    && hasObviousRegression === false;
+  const reviewPriority = !baseOk
+    ? "base"
+    : routingStatus !== "pass" || routingSummary?.compare?.has_obvious_regression
+      ? "routing"
+      : plannerGate !== "pass" || plannerSummary?.compare?.has_obvious_regression
+        ? "planner"
+        : "none";
+  const guidance = reviewPriority === "base"
+    ? "先修 self-check 基礎項目，再看 routing / planner。"
+    : reviewPriority === "routing"
+      ? "先看 routing：latest snapshot 與 compare 決定是不是 regression；routing 穩定後再看 planner。"
+      : reviewPriority === "planner"
+        ? "先看 planner：gate fail 先修 implementation / contract drift；routing 只在 planner pass 後再看。"
+        : "可以開始改；改 routing 後回看 routing:diagnostics，改 planner 後回看 planner:diagnostics 與 self-check。";
+
+  return {
+    safe_to_change: safeToChange,
+    answer: safeToChange ? "可以" : "先不要",
+    core_checks: baseOk ? "pass" : "fail",
+    routing_status: routingStatus,
+    planner_gate: plannerGate,
+    has_obvious_regression: hasObviousRegression,
+    review_priority: reviewPriority,
+    guidance,
+  };
+}
+
+export function renderSystemSelfCheckReport(result = {}) {
+  const systemSummary = result?.system_summary || {};
+
+  return [
+    "System Self-Check",
+    `現在系統能不能放心改：${systemSummary?.answer || "先不要"}`,
+    `結論：core ${systemSummary?.core_checks || "fail"} | routing ${systemSummary?.routing_status || "fail"} | planner ${systemSummary?.planner_gate || "fail"} | regression ${systemSummary?.has_obvious_regression ? "yes" : "no"}`,
+    `先看：${systemSummary?.review_priority || "base"}`,
+    `指引：${systemSummary?.guidance || "先看 self-check 失敗項目。"}`
+  ].join("\n");
+}
+
+export async function runSystemSelfCheck({ routingArchiveDir, plannerArchiveDir } = {}) {
   const agents = listRegisteredAgents();
   const agentMap = new Map(agents.map((agent) => [agent.id, agent]));
 
@@ -132,18 +413,34 @@ export async function runSystemSelfCheck() {
     }
   }
 
-  const plannerContract = runPlannerContractConsistencyCheck();
-
-  const ok =
-    missingAgents.length === 0 &&
-    invalidContracts.length === 0 &&
-    missingKnowledgeSubcommands.length === 0 &&
-    missingRoutes.length === 0 &&
-    serviceInitialization.every((item) => item.ok) &&
-    plannerContract?.gate?.ok === true;
+  const plannerSummary = await buildPlannerSummary({ plannerArchiveDir });
+  const routingSummary = await buildRoutingSummary({ routingArchiveDir });
+  const baseOk = !hasBlockingBaseFailures({
+    missingAgents,
+    invalidContracts,
+    missingKnowledgeSubcommands,
+    missingRoutes,
+    serviceInitialization,
+  });
+  const systemSummary = buildSystemSummary({
+    baseOk,
+    routingSummary,
+    plannerSummary,
+  });
+  const ok = systemSummary.safe_to_change === true;
 
   return {
     ok,
+    system_summary: systemSummary,
+    routing_summary: routingSummary,
+    planner_summary: {
+      gate: plannerSummary.gate,
+      summary: plannerSummary.summary,
+      guidance: plannerSummary.guidance,
+      latest_snapshot: plannerSummary.latest_snapshot,
+      compare: plannerSummary.compare,
+      diagnostics_summary: plannerSummary.diagnostics_summary,
+    },
     agents: {
       total: agents.length,
       missing: missingAgents,
@@ -156,12 +453,12 @@ export async function runSystemSelfCheck() {
     },
     services: serviceInitialization,
     planner_contract: {
-      gate_ok: plannerContract?.gate?.ok === true,
-      consistency_ok: plannerContract?.ok === true,
-      failing_categories: Array.isArray(plannerContract?.gate?.failing_categories)
-        ? plannerContract.gate.failing_categories
+      gate_ok: plannerSummary?.report?.gate?.ok === true,
+      consistency_ok: plannerSummary?.report?.ok === true,
+      failing_categories: Array.isArray(plannerSummary?.report?.gate?.failing_categories)
+        ? plannerSummary.report.gate.failing_categories
         : [],
-      summary: plannerContract?.summary || null,
+      summary: plannerSummary?.report?.summary || null,
     },
   };
 }

@@ -12,7 +12,7 @@ const DEMOS = {
       {
         title: "Self-check",
         command: process.execPath,
-        args: ["scripts/self-check.mjs"],
+        args: ["scripts/self-check.mjs", "--json"],
         summary_kind: "self_check",
       },
       {
@@ -254,7 +254,7 @@ function printDemoScript() {
       "   - Confirm required env vars for Lark are loaded if live auth demo is needed.",
       "",
       "2. Stability Gate",
-      "   - node scripts/self-check.mjs",
+      "   - node scripts/self-check.mjs --json",
       "   - node scripts/run-workflow-baseline.mjs smoke",
       "",
       "3. Core Capability Demo",

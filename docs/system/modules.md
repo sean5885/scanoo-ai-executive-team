@@ -466,10 +466,14 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - validate that core service modules still initialize
   - validate planner tool/preset registries and selector/flow targets against `docs/system/planner_contract.json`
   - classify planner contract drift into undefined action, undefined preset, deprecated reachable target, and selector-contract mismatch
+  - read latest archived routing diagnostics snapshot and compare it with the previous routing snapshot when available
+  - compare current planner diagnostics against the latest archived planner diagnostics snapshot when available
   - expose a fixed planner contract gate through `planner-contract-check` and `self-check`
+  - expose a unified self-check summary through `system_summary`, `routing_summary`, and `planner_summary`
+  - answer the operator-facing question `現在系統能不能放心改`
   - expose a fixed human-readable daily-entry view through `planner:diagnostics`
   - fail the planner contract gate only on undefined action, undefined preset, and selector-contract mismatch
-  - emit a fixed diagnostics summary plus JSON report without changing routing logic
+  - emit a concise default human-readable verdict plus a JSON report via `self-check -- --json` without changing routing logic
   - archive each `planner:diagnostics` / `planner:contract-check` execution into snapshot-only planner diagnostics history without adding compare mode or changing the gate
   - keep a human-readable capability matrix and chain checklist in sync with code
 - Core path:
