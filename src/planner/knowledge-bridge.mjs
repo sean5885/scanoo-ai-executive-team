@@ -1,13 +1,25 @@
 import { queryKnowledgeWithContext } from "../knowledge/knowledge-service.mjs";
 import { buildAnswer } from "./answer-builder.mjs";
 import { parseIntent } from "./intent-parser.mjs";
+import { rewriteQuery } from "./query-rewrite.mjs";
 import { summarizeWithMinimax } from "./llm-summary.mjs";
+
+function dedupeKnowledgeResults(results = []) {
+  return Array.from(
+    new Map(
+      (Array.isArray(results) ? results : [])
+        .filter((item) => item && typeof item === "object")
+        .map((item) => [item.id, item]),
+    ).values(),
+  );
+}
 
 export async function plannerAnswer(
   input,
   {
     summarize = summarizeWithMinimax,
     parse = parseIntent,
+    rewrite = rewriteQuery,
   } = {},
 ) {
   const keyword = typeof input?.keyword === "string" ? input.keyword.trim() : "";
@@ -29,7 +41,20 @@ export async function plannerAnswer(
     };
   }
 
-  const results = queryKnowledgeWithContext(finalKeyword);
+  let keys = [];
+  try {
+    const rewrittenKeys = rewrite(finalKeyword, question);
+    keys = Array.isArray(rewrittenKeys) ? rewrittenKeys : [];
+  } catch {
+    keys = [];
+  }
+  if (keys.length === 0) {
+    keys = [finalKeyword];
+  }
+
+  const results = dedupeKnowledgeResults(
+    keys.flatMap((key) => queryKnowledgeWithContext(key)),
+  );
   let answer = buildAnswer(finalKeyword, results);
 
   try {

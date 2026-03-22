@@ -857,11 +857,18 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - lowercases the question, scans the shared `TECH_TERMS` registry longest-term-first so a broader substring such as `entry` does not outrank `entry os`, and returns the first matching term
   - not wired into `executive-planner.mjs`, planner contract routing, SQLite persistence, or company-brain approval/governance paths
 
+- `/Users/seanhan/Documents/Playground/src/planner/query-rewrite.mjs`
+  - deterministic planner-side query-expansion helper
+  - exposes `rewriteQuery(keyword, question) -> string[]`
+  - expands checked-in aliases for `routing`, `planner`, `sop`, and `okr`; otherwise reuses `pickTechTerm(question)` to detect one mapped technical term before fail-soft returning `[keyword]` or `[]`
+  - not wired into `executive-planner.mjs`, planner contract routing, SQLite persistence, or company-brain approval/governance paths
+
 - `/Users/seanhan/Documents/Playground/src/planner/knowledge-bridge.mjs`
   - local planner-side bridge over `queryKnowledgeWithContext(keyword)`
   - exposes async `plannerAnswer({ keyword, question }) -> { answer, count }`
   - prefers an explicit `keyword`; otherwise uses `parseIntent(question)` to derive one fail-soft before querying local planner-side knowledge previews
-  - reads the same local `{ id, snippet }` preview rows, summarizes them through `summarizeWithMinimax({ keyword, results })`, and fail-soft falls back to `{ answer: "請提供查詢關鍵字", count: 0 }` when neither the keyword nor parsed question yields a usable search term
+  - expands that final keyword through `rewriteQuery(keyword, question)`, queries local knowledge previews once per expanded key, merges all preview rows, and deduplicates them by `id` before summarization
+  - summarizes merged rows through `summarizeWithMinimax({ keyword, results })` and still fail-soft falls back to `buildAnswer(keyword, results)` when summarization fails; when neither the keyword nor parsed question yields a usable search term it returns `{ answer: "請提供查詢關鍵字", count: 0 }`
   - not wired into `executive-planner.mjs`, planner contract routing, SQLite persistence, or company-brain approval/governance paths
 
 - `/Users/seanhan/Documents/Playground/src/planner/llm-summary.mjs`
