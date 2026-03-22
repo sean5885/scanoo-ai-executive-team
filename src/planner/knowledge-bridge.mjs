@@ -1,4 +1,5 @@
 import { queryKnowledgeWithContext } from "../knowledge/knowledge-service.mjs";
+import { cleanSnippet } from "../knowledge/snippet-cleaner.mjs";
 import { buildAnswer } from "./answer-builder.mjs";
 import { parseIntent } from "./intent-parser.mjs";
 import { rewriteQuery } from "./query-rewrite.mjs";
@@ -73,7 +74,7 @@ export async function plannerAnswer(
     sources: results.map((item, index) => ({
       id: item.id,
       index: index + 1,
-      snippet: item.snippet,
+      snippet: cleanSnippet(item.snippet, finalKeyword),
     })),
   };
 }
