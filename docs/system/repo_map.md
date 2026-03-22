@@ -87,6 +87,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - Local knowledge helpers
   - `/Users/seanhan/Documents/Playground/src/knowledge/doc-index.mjs`
   - `/Users/seanhan/Documents/Playground/src/knowledge/doc-loader.mjs`
+  - `/Users/seanhan/Documents/Playground/src/knowledge/rank-results.mjs`
   - `/Users/seanhan/Documents/Playground/src/knowledge/knowledge-service.mjs`
 
 - OpenClaw tool layer

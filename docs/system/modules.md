@@ -833,11 +833,17 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - scans one directory for `.md` files and inserts them into `doc-index`
   - not connected to sync ingestion, SQLite persistence, planner routes, or company-brain approval/governance paths
 
+- `/Users/seanhan/Documents/Playground/src/knowledge/rank-results.mjs`
+  - local in-memory knowledge result ranking helper
+  - exposes `scoreDoc(doc, keyword)` and `rankResults(docs, keyword)`
+  - scores documents by keyword presence, first-hit position, repeated exact-hit count, and a small boundary-like boost when the keyword appears adjacent to spaces
+  - not connected to sync ingestion, SQLite persistence, planner routes, or company-brain approval/governance paths
+
 - `/Users/seanhan/Documents/Playground/src/knowledge/knowledge-service.mjs`
   - local cached knowledge query helper
-  - lazily loads `./docs/system` into memory once per process and exposes keyword lookup over the cached index
-  - also exposes `queryKnowledgeWithSnippet(keyword)` for a bounded top-3 `{ id, snippet }` preview over the same cached results, expanding around the keyword, snapping to nearby line/sentence-style breaks when available, removing leading path-only lines, and stripping leading heading/metadata labels from the extracted snippet when they are detected
-  - also exposes `queryKnowledgeWithContext(keyword)` as a filtered contextual preview helper that removes very short fragments, table-row-like snippets, bare path/path-like labels, empty metadata labels, short heading-like labels, and simple slash-separated metadata labels before returning rows to planner-side callers
+  - lazily loads `./docs/system` into memory once per process, performs case-insensitive keyword lookup over the cached index, and then reorders the matching docs through `rankResults(docs, keyword)`
+  - also exposes `queryKnowledgeWithSnippet(keyword)` for a bounded top-3 `{ id, snippet }` preview over the ranked results, expanding around the keyword, snapping to nearby line/sentence-style breaks when available, stripping leading absolute `/Users/...` path lines, and removing leading heading/metadata labels from the extracted snippet when they are detected
+  - also exposes `queryKnowledgeWithContext(keyword)` as a filtered contextual preview helper that first keeps only snippets that still contain the keyword and excludes `oauth` snippets unless the keyword itself is `oauth`, then removes very short fragments, table-row-like snippets, bare path/path-like labels, and empty metadata labels before returning rows to planner-side callers
   - not connected to sync ingestion, SQLite persistence, planner routes, or company-brain approval/governance paths
 
 - `/Users/seanhan/Documents/Playground/src/config/tech-terms.mjs`
