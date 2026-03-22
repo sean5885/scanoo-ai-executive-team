@@ -1,35 +1,5 @@
 import { generateText as defaultGenerateText } from "../llm/generate-text.mjs";
-
-const TECH_TERMS = [
-  "routing",
-  "planner",
-  "lane",
-  "agent",
-  "verification",
-  "runtime",
-  "module",
-  "api",
-  "workflow",
-  "knowledge",
-  "context",
-  "snippet",
-  "delivery",
-  "sop",
-  "okr",
-  "scanoo entry os",
-];
-
-function pickTechTerm(question) {
-  const normalizedQuestion = String(question || "").toLowerCase();
-
-  for (const term of TECH_TERMS) {
-    if (normalizedQuestion.includes(term)) {
-      return term;
-    }
-  }
-
-  return null;
-}
+import { pickTechTerm } from "../utils/pick-tech-term.mjs";
 
 function normalizeParsedKeyword(text) {
   const firstToken = String(text || "").split(/[,\n，]/)[0] || "";

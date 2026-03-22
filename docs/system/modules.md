@@ -840,6 +840,17 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - also exposes `queryKnowledgeWithContext(keyword)` as a filtered contextual preview helper that removes very short fragments, table-row-like snippets, bare path/path-like labels, empty metadata labels, short heading-like labels, and simple slash-separated metadata labels before returning rows to planner-side callers
   - not connected to sync ingestion, SQLite persistence, planner routes, or company-brain approval/governance paths
 
+- `/Users/seanhan/Documents/Playground/src/config/tech-terms.mjs`
+  - shared planner-side technical-term registry
+  - exports `TECH_TERMS`, the checked-in deterministic allowlist used before LLM keyword extraction for local documentation lookup helpers
+  - currently includes system/process/module terms plus entry-platform variants such as `entry`, `entry os`, and `scanoo entry os`
+
+- `/Users/seanhan/Documents/Playground/src/utils/pick-tech-term.mjs`
+  - deterministic planner-side technical-term matcher
+  - exposes `pickTechTerm(question) -> term | null`
+  - lowercases the question, scans the shared `TECH_TERMS` registry longest-term-first so a broader substring such as `entry` does not outrank `entry os`, and returns the first matching term
+  - not wired into `executive-planner.mjs`, planner contract routing, SQLite persistence, or company-brain approval/governance paths
+
 - `/Users/seanhan/Documents/Playground/src/planner/knowledge-bridge.mjs`
   - local planner-side bridge over `queryKnowledgeWithContext(keyword)`
   - exposes async `plannerAnswer({ keyword, question }) -> { answer, count }`
@@ -856,7 +867,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 - `/Users/seanhan/Documents/Playground/src/planner/intent-parser.mjs`
   - planner-side fail-soft intent helper for local knowledge lookups
   - exposes `parseIntent(question) -> keyword | null`
-  - first prefers a small built-in allowlist of technical terms when the user question already contains one, so brand/company wording does not outrank system/process/module terms
+  - first prefers the shared `TECH_TERMS` registry through `pickTechTerm(question)` when the user question already contains a checked-in technical term, so brand/company wording does not outrank system/process/module terms
   - otherwise uses `/Users/seanhan/Documents/Playground/src/llm/generate-text.mjs` to extract one document-search keyword, normalizes the reply down to the first keyword, and returns `null` when the question is empty or generation fails
   - not wired into `executive-planner.mjs`, planner contract routing, SQLite persistence, or company-brain approval/governance paths
 

@@ -5,6 +5,7 @@ import { filterKnowledgeContextResults } from "../src/knowledge/knowledge-servic
 import { plannerAnswer } from "../src/planner/knowledge-bridge.mjs";
 import { parseIntent } from "../src/planner/intent-parser.mjs";
 import { summarizeWithMinimax } from "../src/planner/llm-summary.mjs";
+import { pickTechTerm } from "../src/utils/pick-tech-term.mjs";
 
 test("filterKnowledgeContextResults drops label-like and metadata-like snippets", () => {
   const results = [
@@ -93,6 +94,17 @@ test("parseIntent prefers known technical terms before calling generator", async
 
   assert.equal(result, "routing");
   assert.equal(called, false);
+});
+
+test("pickTechTerm prefers the longest matching registry term", () => {
+  assert.equal(
+    pickTechTerm("請問 Scanoo Entry OS 的 onboarding workflow 在哪裡？"),
+    "scanoo entry os",
+  );
+  assert.equal(
+    pickTechTerm("entry os 的 routing 在哪裡？"),
+    "entry os",
+  );
 });
 
 test("plannerAnswer parses question when keyword is missing", async () => {
