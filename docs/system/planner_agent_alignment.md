@@ -252,11 +252,39 @@ Thread 54 release drilldown checkpoint:
 - keeps the drilldown source bounded to existing release triage plus routing/planner diagnostics evidence only
 - does not add fallback, auto-fix, or a new diagnostics subsystem
 
+Thread 56 daily status entry checkpoint:
+
+- keeps the same routing/planner/release gate semantics and reuses the current `runReleaseCheck(...)` path
+- adds `daily-status` as the single daily operator entry for `開發 / 合併 / 發布` answers
+- keeps human-readable output bounded to four lines only:
+  - `今天能不能安心開發`
+  - `今天能不能安心合併`
+  - `今天能不能安心發布`
+  - `若不能，先看哪一條線`
+- keeps `--json` output bounded to:
+  - `routing_status`
+  - `planner_status`
+  - `release_status`
+  - `overall_recommendation`
+- keeps recommendation line-first and read-only:
+  - `routing` = check the archived routing regression line first
+  - `planner` = check the current planner contract/runtime line first
+  - `release` = check the existing release line first, including base/self-check failures already compressed there
+- does not add a new gate, compare mode, fallback path, or auto-fix behavior
+
 Current daily-entry CLI:
 
+- `npm run daily-status`
 - `npm run planner:diagnostics`
 - `npm run planner:diagnostics -- --compare-previous`
 - `npm run planner:diagnostics -- --compare-snapshot <run-id|path>`
+- `daily-status` is the first daily glance:
+  - it reuses current `release-check` + unified `self-check` evidence
+  - it answers whether today is safe to develop / merge / release
+  - it only tells you which existing line to inspect first
+- `planner:diagnostics` remains the planner-specific daily-entry:
+  - it reads the current checked-in runtime selector / registry / flow-route state directly
+  - it is still the right entry once daily-status tells you to look at planner
 - it reads the current checked-in runtime selector / registry / flow-route state directly
 - it does not rerun planner execution, mutate routing, or auto-fix drift
 - every `planner:diagnostics` and `planner:contract-check` run now writes a snapshot-only archive to:
@@ -370,6 +398,14 @@ Unified self-check reading order:
 1. if `self-check` says look at `routing`, inspect routing first; planner may still be clean while the archived routing behavior already regressed
 2. once `self-check` points to `planner`, stay inside the planner order above
 3. planner line means contract/runtime drift; routing line means archived behavior regression
+
+Daily-status reading order:
+
+1. run `npm run daily-status` first when you need the bounded daily answer
+2. if it says `routing`, move to `npm run routing:diagnostics`
+3. if it says `planner`, move to `npm run planner:diagnostics`
+4. if it says `release`, move to `npm run release-check` or `npm run self-check` depending on whether you need the minimal preflight or the fuller base/routing/planner breakdown
+5. `daily-status` does not replace the existing planner gate; it only points you at the first existing line to read
 
 Release-check fail -> drilldown order:
 

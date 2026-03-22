@@ -451,12 +451,14 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 ### 8E. Health Governance
 
 - Location:
+  - `/Users/seanhan/Documents/Playground/src/daily-status.mjs`
   - `/Users/seanhan/Documents/Playground/src/system-self-check.mjs`
   - `/Users/seanhan/Documents/Playground/src/release-check.mjs`
   - `/Users/seanhan/Documents/Playground/src/release-check-history.mjs`
   - `/Users/seanhan/Documents/Playground/src/system-self-check-history.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner-contract-consistency.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner-diagnostics-history.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/daily-status.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/self-check.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/release-check.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/release-check-ci.mjs`
@@ -477,6 +479,22 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - expose a fixed planner contract gate through `planner-contract-check` and `self-check`
   - expose a unified self-check summary through `system_summary`, `routing_summary`, and `planner_summary`
   - answer the operator-facing question `現在系統能不能放心改`
+  - expose `daily-status` as the single daily operator entry over the same release/self-check evidence
+  - keep `daily-status` human output bounded to four lines only:
+    - `今天能不能安心開發`
+    - `今天能不能安心合併`
+    - `今天能不能安心發布`
+    - `若不能，先看哪一條線`
+  - keep `daily-status -- --json` bounded to:
+    - `routing_status`
+    - `planner_status`
+    - `release_status`
+    - `overall_recommendation`
+  - keep `daily-status` recommendation read-only and line-first:
+    - `safe_to_develop_merge_release`
+    - `check_routing_first`
+    - `check_planner_first`
+    - `check_release_first`
   - expose `release-check` as the single merge/release preflight entry over the same self-check, routing, and planner evidence
   - archive every `release-check` / `release-check:ci` execution into snapshot-only release-check history
   - keep `release-check` human output bounded to three lines only:

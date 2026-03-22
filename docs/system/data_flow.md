@@ -272,10 +272,39 @@ This is now a capability-lane event path with a closed-loop executive planner la
 
 ## Governance / Health Flow
 
-1. `npm run release-check`
-2. local operator entry = `scripts/release-check.mjs`; CI/pipeline entry = `scripts/release-check-ci.mjs`
-3. release-check internally reuses `runSystemSelfCheck(...)` from `src/system-self-check.mjs`
-4. self-check validates:
+1. `npm run daily-status`
+2. local daily-entry = `scripts/daily-status.mjs`
+3. `daily-status` internally reuses the current `runReleaseCheck(...)` path from `src/release-check.mjs`; it does not introduce a new gate, new fallback, or auto-fix path
+4. `daily-status` compresses the same checked-in evidence into one daily operator answer:
+   - human-readable output only answers:
+     - `今天能不能安心開發：可以 / 先不要`
+     - `今天能不能安心合併：可以 / 先不要`
+     - `今天能不能安心發布：可以 / 先不要`
+     - `若不能，先看哪一條線：routing / planner / release / 無`
+   - `--json` output stays minimal:
+     - `routing_status`
+     - `planner_status`
+     - `release_status`
+     - `overall_recommendation`
+   - status source is fixed:
+     - `routing_status` = the same routing line already exposed through unified `self-check`
+     - `planner_status` = the same planner gate already exposed through unified `self-check`
+     - `release_status` = the same merge/release verdict already exposed through `release-check`
+   - `overall_recommendation` only answers which existing line to inspect first:
+     - `safe_to_develop_merge_release`
+     - `check_routing_first`
+     - `check_planner_first`
+     - `check_release_first`
+   - `daily-status` is read-only in the same sense as `release-check`:
+     - it does not rerun routing eval
+     - it does not change routing
+     - it does not change planner gate rules
+     - it does not add fallback
+     - it does not auto-fix anything
+5. `npm run release-check`
+6. local operator entry = `scripts/release-check.mjs`; CI/pipeline entry = `scripts/release-check-ci.mjs`
+7. release-check internally reuses `runSystemSelfCheck(...)` from `src/system-self-check.mjs`
+8. self-check validates:
    - registered agent completeness
    - minimum agent contract fields
    - knowledge subcommand coverage
@@ -295,7 +324,7 @@ This is now a capability-lane event path with a closed-loop executive planner la
      - `system_status`
      - `routing_status`
      - `planner_status`
-5. `release-check` then compresses the same evidence into one merge/release preflight answer:
+9. `release-check` then compresses the same evidence into one merge/release preflight answer:
    - human-readable output only answers:
      - `能否放心合併/發布：可以 / 先不要`
      - `若不能，先修哪一條線：system regression / routing regression / planner contract failure / 無`
@@ -338,23 +367,25 @@ This is now a capability-lane event path with a closed-loop executive planner la
      - it does not add fallback
      - it does not change planner gate rules
      - it does not auto-fix anything
-6. fail handling order for the unified self-check and release-check:
+10. fail handling order for the unified self-check and release-check:
    - if base registry / route / service checks fail, fix those first
    - else if `routing_summary.status != pass` or routing compare shows obvious regression, inspect routing first
    - else if `planner_summary.gate = fail` or planner compare shows obvious regression, inspect planner first
-7. line separation rule:
+11. line separation rule:
    - routing line = archived behavior regression evidence from latest snapshot / compare (`accuracy_ratio`, `trend_report`, `decision_advice`, error drift)
    - planner line = current runtime / contract drift evidence (`gate`, `undefined_actions`, `undefined_presets`, `selector_contract_mismatches`, `deprecated_reachable_targets`)
-8. when to run each entry:
-   - local/manual use: run `npm run release-check` when a developer wants the bounded two-line merge/release verdict
+12. when to run each entry:
+   - first daily glance: run `npm run daily-status` when you want one bounded answer for today whether the repo is safe to develop / merge / release, plus the first line to inspect
+   - fuller local diagnosis: run `npm run self-check` when you need the base/routing/planner breakdown and guidance text
+   - merge/release preflight: run `npm run release-check` when a developer wants the bounded merge/release verdict plus the existing fail drilldown
    - CI/pipeline use: run `npm run release-check:ci` when a job needs machine-readable JSON plus strict exit code
    - PR validation: if the PR changes planner contract, selector/route wiring, release gate scripts, or `docs/system` governance/runtime docs tied to those checks, `release-check:ci` must run in the PR pipeline
    - merge gate: run `npm run release-check:ci` before allowing merge to the protected branch
    - release gate: rerun `npm run release-check:ci` in the release/deploy pipeline before deployment
-   - run `npm run self-check` during normal development when you still need the fuller base/routing/planner summary
+   - run `npm run self-check` during normal development when `daily-status` already says not safe and you need the fuller base/routing/planner summary
    - `release-check` does not replace `npm test` or other release verification commands; it only compresses the governance/readiness lines above into one preflight verdict
-9. default `self-check` CLI output is still the short human-readable verdict; `npm run self-check -- --json` emits the full JSON report for CI or follow-up tooling
-10. compare mode is also available on the same read-only path:
+13. default `self-check` CLI output is still the short human-readable verdict; `npm run self-check -- --json` emits the full JSON report for CI or follow-up tooling
+14. compare mode is also available on the same read-only path:
    - `npm run self-check -- --compare-previous`
    - `npm run self-check -- --compare-snapshot <run-id|path>`
    - compare output stays minimal and only answers:

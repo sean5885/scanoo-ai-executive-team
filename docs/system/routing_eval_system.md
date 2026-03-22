@@ -42,6 +42,8 @@ Thread 51 release-check preflight checkpoint 把既有 unified `self-check` 的 
 
 Thread 54 release drilldown checkpoint 把這個 fail drilldown 正式固定成 release-check checkpoint：release-check fail 時只額外指出先看哪類 case，並在 JSON 內保留最小 `failing_area` / `representative_fail_case` / `drilldown_source`；它仍只重用 latest routing diagnostics/history、planner diagnostics/history 與 release-check triage，不新增 gate、fallback、auto-fix 或新的 diagnostics path。
 
+Thread 56 daily status entry checkpoint 把既有 routing/self-check/release 判讀再壓成 daily operator 入口 `npm run daily-status`；routing 線在這個入口下仍只重用 latest routing diagnostics snapshot 與既有 unified self-check/release triage，不重跑 eval、不改 routing，也不新增 fallback。這個入口只額外回答今天是否能安心開發 / 合併 / 發布，以及若不能要先看 `routing` / `planner` / `release` 哪一條線。
+
 目前這條路徑已再收斂成 `diagnostics_summary` 單一決策視圖，讓 operator 只看一個 summary 就能決定要補 fixture、檢查 routing rule，或保持不動；不新增 routing 邏輯、不新增 fallback，也不改 baseline/tag。
 
 固定操作 runbook 見：
@@ -242,9 +244,10 @@ node scripts/routing-eval-fixture-candidates.mjs --input /tmp/routing-eval.json 
 
 日常查看這份 archive 時，固定先看：
 
-1. `npm run routing:diagnostics`
-2. 若剛改過 routing 相關程式或 fixture，再看 `npm run routing:diagnostics -- --compare-previous`
-3. 若要回答是否偏離已接受 checkpoint，再看 `npm run routing:diagnostics -- --compare-tag routing-eval-baseline-v2`
+1. `npm run daily-status`
+2. 若 `daily-status` 指向 `routing`，先看 `npm run routing:diagnostics`
+3. 若剛改過 routing 相關程式或 fixture，再看 `npm run routing:diagnostics -- --compare-previous`
+4. 若要回答是否偏離已接受 checkpoint，再看 `npm run routing:diagnostics -- --compare-tag routing-eval-baseline-v2`
 
 若 `npm run release-check` fail 且 `drilldown_source` 含 `routing-eval diagnostics/history`，固定順序是：
 
@@ -274,6 +277,12 @@ node scripts/routing-eval-fixture-candidates.mjs --input /tmp/routing-eval.json 
 - `npm run self-check -- --compare-snapshot <run-id|path>`
 
 這兩條 compare path 只回答 unified `system` 變化、`routing` 是否 regression、以及 `planner` 是否 regression；不改 routing 邏輯、不改 fallback，也不做 auto-fix。
+
+`npm run daily-status` 會再把這條 routing line 壓成 daily answer 的一部分，但不改 routing 判讀來源：
+
+- 若 daily answer 說先看 `routing`，代表 unified self-check / release triage 仍判定 routing 是第一條 blocking line
+- `daily-status` 不會重跑 routing eval，也不會替代 `routing:diagnostics`
+- 一旦 daily answer 指到 routing，後續仍回到 `routing:diagnostics` / compare / closed-loop 既有路徑
 
 CLI 會以 overall accuracy ratio 當作強制 regression gate；目前這份 checked-in baseline 為 regression gate baseline v2（`routing-eval-baseline-v2`），門檻是 `0.9`。
 
