@@ -138,6 +138,7 @@ Checkpoint status:
 - `Thread 45 planner contract regression-gate checkpoint`
 - `Thread 46 planner diagnostics daily-entry checkpoint`
 - `Thread 47 planner diagnostics history-snapshot checkpoint`
+- `Thread 48 planner diagnostics minimal-compare checkpoint`
 
 Current checked-in consistency checker:
 
@@ -192,11 +193,32 @@ Thread 47 planner diagnostics history-snapshot checkpoint:
 - keeps the same read-only daily-entry and regression-gate behavior
 - adds snapshot-only planner diagnostics archival for `planner:diagnostics` and `planner:contract-check`
 - stores the full JSON diagnostics report per run plus a minimal manifest index
-- does not add compare mode, new CLI parameters, routing changes, fallback behavior, or gate changes
+
+Thread 48 planner diagnostics minimal-compare checkpoint:
+
+- keeps the same read-only daily-entry and regression-gate behavior
+- adds minimal compare mode only to `planner:diagnostics`
+- supports:
+  - `npm run planner:diagnostics -- --compare-previous`
+  - `npm run planner:diagnostics -- --compare-snapshot <run-id|path>`
+- compare stays read-only: no auto-fix, no routing change, no fallback, no gate-rule change
+- compare output only covers:
+  - `gate`
+  - `undefined_actions`
+  - `undefined_presets`
+  - `selector_contract_mismatches`
+  - `deprecated_reachable_targets`
+- human-readable compare uses fixed direction markers:
+  - `↑` = worse
+  - `↓` = better
+  - `=` = unchanged
+- JSON compare adds `compare_summary`, and that object only contains changed fields
 
 Current daily-entry CLI:
 
 - `npm run planner:diagnostics`
+- `npm run planner:diagnostics -- --compare-previous`
+- `npm run planner:diagnostics -- --compare-snapshot <run-id|path>`
 - it reads the current checked-in runtime selector / registry / flow-route state directly
 - it does not rerun planner execution, mutate routing, or auto-fix drift
 - every `planner:diagnostics` and `planner:contract-check` run now writes a snapshot-only archive to:
@@ -211,17 +233,26 @@ Current daily-entry CLI:
   - `selector_contract_mismatches`
   - `deprecated_reachable_targets`
 - each snapshot stores the full JSON diagnostics report emitted by the same CLI path
-- this history path does not add compare mode, new CLI flags, routing changes, fallback behavior, or gate changes
 - it renders one fixed summary line with:
   - `gate`
   - `undefined_actions`
   - `undefined_presets`
   - `selector_contract_mismatches`
   - `deprecated_reachable_targets`
+- compare mode renders one fixed minimal compare view with the same five fields only
+- compare mode defaults to:
+  - current = this run's freshly generated diagnostics report
+  - compare target = previous archived snapshot or specified snapshot path/run-id
+- `--json` keeps the full current report and adds `compare_summary` only when compare mode is used
+- `compare_summary` only includes fields whose value changed versus the compare target
 - if `gate = fail`, the decision guidance is:
   - default: fix planner implementation first
   - alternative: update the contract only for an intentional stable target, and state the reason explicitly
   - deprecated reachable targets remain warning-only and do not block the gate
+- when compare is used:
+  - `↑ gate` means `pass -> fail`
+  - `↓ gate` means `fail -> pass`
+  - for the count fields, larger count = worse, smaller count = better
 
 When to add/update contract:
 
@@ -241,6 +272,8 @@ When contract update is allowed:
 When contract check must run:
 
 - first command after planner / contract changes: `npm run planner:diagnostics`
+- when a change should be judged as regression/non-regression against the immediately previous snapshot, run `npm run planner:diagnostics -- --compare-previous`
+- when a change should be judged against a known checkpoint file or archived run, run `npm run planner:diagnostics -- --compare-snapshot <run-id|path>`
 - any change to `/Users/seanhan/Documents/Playground/docs/system/planner_contract.json`
 - any change to `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` that adds/removes/renames planner actions or presets
 - any change to planner-side selector / hard-route / flow-route emitters, including:
@@ -263,10 +296,16 @@ When to change planner implementation instead:
 Fail handling order:
 
 1. run `npm run planner:diagnostics`
-2. if `gate = fail`, fix planner implementation first by default
-3. only if the reachable target is intentional and stable, update `planner_contract.json` and record the reason in the same change
-4. if only `deprecated_reachable_targets > 0`, treat it as warning-only and clean it up without blocking the gate
-5. before merge/release, rerun `npm run planner:contract-check` or `npm run self-check`
+2. if you just changed planner / selector / preset code and need a quick regression read, run `npm run planner:diagnostics -- --compare-previous`
+3. if `gate = fail`, inspect fields in this order:
+   - `undefined_actions`
+   - `undefined_presets`
+   - `selector_contract_mismatches`
+   - `deprecated_reachable_targets`
+4. fix planner implementation first by default
+5. only if the reachable target is intentional and stable, update `planner_contract.json` and record the reason in the same change
+6. if only `deprecated_reachable_targets > 0`, treat it as warning-only and clean it up without blocking the gate
+7. before merge/release, rerun `npm run planner:contract-check` or `npm run self-check`
 
 Current operating rule:
 

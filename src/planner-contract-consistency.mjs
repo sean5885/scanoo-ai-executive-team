@@ -43,6 +43,13 @@ const FINDING_CATEGORY_ORDER = [
   "selector_contract_mismatches",
   "deprecated_reachable_targets",
 ];
+export const PLANNER_DIAGNOSTICS_COMPARE_FIELDS = [
+  "gate",
+  "undefined_actions",
+  "undefined_presets",
+  "selector_contract_mismatches",
+  "deprecated_reachable_targets",
+];
 
 function loadPlannerContract() {
   return JSON.parse(readFileSync(CONTRACT_FILE, "utf8"));
@@ -545,6 +552,49 @@ export function buildPlannerDiagnosticsDecision(summary = {}) {
     blocking_categories: [],
     summary: "Gate passes. No planner implementation or contract change is required.",
   };
+}
+
+function normalizePlannerDiagnosticsSummary(summary = {}) {
+  return {
+    gate: cleanText(summary?.gate) === "pass" ? "pass" : "fail",
+    undefined_actions: Number(summary?.undefined_actions || 0),
+    undefined_presets: Number(summary?.undefined_presets || 0),
+    selector_contract_mismatches: Number(summary?.selector_contract_mismatches || 0),
+    deprecated_reachable_targets: Number(summary?.deprecated_reachable_targets || 0),
+  };
+}
+
+export function buildPlannerDiagnosticsCompareSummary({
+  currentSummary = {},
+  previousSummary = {},
+} = {}) {
+  const current = normalizePlannerDiagnosticsSummary(currentSummary);
+  const previous = normalizePlannerDiagnosticsSummary(previousSummary);
+  const compareSummary = {};
+
+  if (current.gate !== previous.gate) {
+    compareSummary.gate = {
+      previous: previous.gate,
+      current: current.gate,
+      status: current.gate === "fail" ? "worse" : "better",
+    };
+  }
+
+  for (const field of PLANNER_DIAGNOSTICS_COMPARE_FIELDS.filter((name) => name !== "gate")) {
+    const delta = current[field] - previous[field];
+    if (delta === 0) {
+      continue;
+    }
+
+    compareSummary[field] = {
+      previous: previous[field],
+      current: current[field],
+      delta,
+      status: delta > 0 ? "worse" : "better",
+    };
+  }
+
+  return compareSummary;
 }
 
 export function runPlannerContractConsistencyCheck() {

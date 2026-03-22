@@ -67,6 +67,30 @@ async function loadManifest(baseDir = DEFAULT_PLANNER_DIAGNOSTICS_ARCHIVE_DIR) {
   }
 }
 
+function buildPathLabel(filePath = "", cwd = process.cwd()) {
+  const relative = path.relative(cwd, filePath);
+  return relative || filePath;
+}
+
+async function resolveSnapshotPayloadByPath(filePath = "", fallbackRunId = "") {
+  const resolvedPath = path.resolve(process.cwd(), filePath);
+  const payload = await readJson(resolvedPath);
+  const runId = cleanText(payload?.run_id)
+    || cleanText(fallbackRunId)
+    || cleanText(path.basename(resolvedPath, path.extname(resolvedPath)));
+
+  return {
+    type: "snapshot",
+    label: runId
+      ? `snapshot:${runId}`
+      : buildPathLabel(resolvedPath),
+    ref: runId || resolvedPath,
+    path: resolvedPath,
+    report: payload,
+    snapshot: payload,
+  };
+}
+
 function buildManifestEntry({
   runId = "",
   timestamp = null,
@@ -122,4 +146,77 @@ export async function archivePlannerDiagnosticsSnapshot({
     snapshot_path: snapshotPath,
     manifest_path,
   };
+}
+
+export async function readPlannerDiagnosticsManifest(baseDir = DEFAULT_PLANNER_DIAGNOSTICS_ARCHIVE_DIR) {
+  const { manifest_path, payload } = await loadManifest(baseDir);
+  return {
+    manifest_path,
+    ...payload,
+  };
+}
+
+export async function resolvePlannerDiagnosticsSnapshot({
+  reference = "",
+  baseDir = DEFAULT_PLANNER_DIAGNOSTICS_ARCHIVE_DIR,
+} = {}) {
+  const normalizedReference = cleanText(reference);
+  if (!normalizedReference) {
+    throw new Error("snapshot reference is required");
+  }
+
+  if (normalizedReference === "latest") {
+    const manifest = await readPlannerDiagnosticsManifest(baseDir);
+    if (!cleanText(manifest?.latest_run_id)) {
+      throw new Error(`No planner diagnostics snapshot found in ${manifest.manifest_path}`);
+    }
+    return resolvePlannerDiagnosticsSnapshot({
+      reference: manifest.latest_run_id,
+      baseDir,
+    });
+  }
+
+  if (normalizedReference.includes(path.sep) || normalizedReference.endsWith(".json")) {
+    return resolveSnapshotPayloadByPath(normalizedReference);
+  }
+
+  const manifest = await readPlannerDiagnosticsManifest(baseDir);
+  const matched = (manifest?.snapshots || []).find((entry) => cleanText(entry?.run_id) === normalizedReference);
+  if (!matched) {
+    throw new Error(`Planner diagnostics snapshot not found for run_id: ${normalizedReference}`);
+  }
+  const snapshotPath = cleanText(matched?.snapshot_path)
+    || path.join(baseDir, SNAPSHOT_DIR, `${normalizedReference}.json`);
+
+  return resolveSnapshotPayloadByPath(snapshotPath, normalizedReference);
+}
+
+export async function resolvePreviousPlannerDiagnosticsSnapshot({
+  reference = "latest",
+  baseDir = DEFAULT_PLANNER_DIAGNOSTICS_ARCHIVE_DIR,
+} = {}) {
+  const manifest = await readPlannerDiagnosticsManifest(baseDir);
+  const snapshots = Array.isArray(manifest?.snapshots) ? manifest.snapshots : [];
+  if (snapshots.length < 2) {
+    throw new Error(`Previous planner diagnostics snapshot not found in ${manifest.manifest_path}`);
+  }
+
+  const normalizedReference = cleanText(reference) || "latest";
+  const targetRunId = normalizedReference === "latest"
+    ? cleanText(manifest?.latest_run_id)
+    : normalizedReference;
+  const currentIndex = snapshots.findIndex((entry) => cleanText(entry?.run_id) === targetRunId);
+
+  if (currentIndex === -1) {
+    throw new Error(`Planner diagnostics snapshot not found for run_id: ${targetRunId}`);
+  }
+  if (currentIndex + 1 >= snapshots.length) {
+    throw new Error(`Previous planner diagnostics snapshot not found for run_id: ${targetRunId}`);
+  }
+
+  const previousEntry = snapshots[currentIndex + 1];
+  const snapshotPath = cleanText(previousEntry?.snapshot_path)
+    || path.join(baseDir, SNAPSHOT_DIR, `${cleanText(previousEntry?.run_id)}.json`);
+
+  return resolveSnapshotPayloadByPath(snapshotPath, cleanText(previousEntry?.run_id));
 }
