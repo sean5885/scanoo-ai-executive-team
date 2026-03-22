@@ -19,6 +19,9 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - Thread 42 routing diagnostics daily-entry checkpoint
 - Thread 51 release-check preflight checkpoint
 - Thread 54 release drilldown checkpoint
+- Thread 61 cloud-doc personal-lane misroute hotfix checkpoint
+- Thread 62 personal-lane misroute regression pack checkpoint
+- Thread 63 doc-boundary hardening checkpoint
 
 Thread 35 closed-loop checkpoint 針對 `top_miss_cases` / `error_breakdown` -> candidate fixture -> dataset review -> rerun eval -> baseline gate 的閉環流程補上最小工具與文件，且不改 routing 決策、fallback 行為或 baseline fixture。
 
@@ -47,6 +50,10 @@ Thread 56 daily status entry checkpoint 把既有 routing/self-check/release 判
 Thread 57 daily compare checkpoint 在既有 `daily-status` daily operator 入口上補上 read-only compare：`--compare-previous` / `--compare-snapshot <run-id|path>`、最小 `changed_line` / `change_reason_hint`，以及 human-readable 單行 `為什麼變差`；它只重用 routing diagnostics/history compare、planner diagnostics/current gate、release-check history compare，不新增 gate、不新增 fallback，也不做 auto-fix。
 
 Thread 61 cloud-doc personal-lane misroute hotfix checkpoint 針對 `把非 scanoo 的文檔摘出去` 這類 cloud-doc exclusion phrasing 補上最小 deterministic route guard：新增 checked-in repro fixture、讓這類語句不再誤落 personal lane `ROUTING_NO_MATCH`，並固定成 `cloud_doc_workflow -> rereview`；它只修 routing rule / personal-lane guard 與對應測試、文件，不改 release-check、daily-status、history/compare，也不做 auto-fix。
+
+Thread 62 personal-lane misroute regression pack checkpoint 只擴充 Thread 61 的同 family wording coverage：補進「排除某類文檔 / 摘出無關文檔 / 只保留某主題文檔 / 去掉非某範圍文件 / 重審哪些文件不屬於集合」等 doc intent regression pack，固定這批 phrasing 都命中 `cloud_doc_workflow -> rereview`，且不新增 routing 邏輯、不改核心判斷，也不新增 fallback。
+
+Thread 63 doc-boundary hardening checkpoint 在既有 Thread 61/62 的 personal-lane 誤路由修補上，再補一層共用 doc/company-brain intent boundary guard：把文檔整理、文檔分類、`排除 / 摘出 / 保留`、以及 `company_brain / 知識庫` 這組高置信語意收斂成共用 intent 判斷，固定不得走 generic personal lane；本 checkpoint 包含 Thread 62 regression pack，且只更新 intent guard、相關測試與文件，不擴大到其他 lane，不新增 fallback，也不改 release-check、daily-status、history/compare。
 
 目前這條路徑已再收斂成 `diagnostics_summary` 單一決策視圖，讓 operator 只看一個 summary 就能決定要補 fixture、檢查 routing rule，或保持不動；不新增 routing 邏輯、不新增 fallback，也不改 baseline/tag。
 
@@ -147,7 +154,7 @@ Thread 61 cloud-doc personal-lane misroute hotfix checkpoint 針對 `把非 scan
 
 ## Eval Set
 
-目前 eval set 共有 88 筆，覆蓋：
+目前 eval set 共有 99 筆，覆蓋：
 
 - `doc`
 - `meeting`
@@ -185,7 +192,7 @@ Thread 61 cloud-doc personal-lane misroute hotfix checkpoint 針對 `把非 scan
 - 搜尋後直接打開內容的多種中文表述
 - `doc` / `runtime` 邊界語句，包含同時帶有 `文件` / `摘要` / `db path` / `runtime` 等信號時，實際仍被 runtime flow 優先接走的 case
 - doc editor 類的自然中文改稿請求
-- cloud-doc re-review 的自然中文排除語句，包含 `把非 scanoo 的文檔摘出去` 這類未顯式提到「重新分配」但語義上屬於第二輪篩除/重分配的 case
+- cloud-doc re-review 的自然中文排除語句，包含 `把非 scanoo 的文檔摘出去`、`摘出無關文檔`、`只保留某主題文檔，把非該主題文檔排出去`、`重新審核哪些文件不屬於某集合` 等同 family case；這批 wording 都固定不得誤落 `personal_assistant`
 
 ## Execution
 

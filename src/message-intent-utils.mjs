@@ -37,6 +37,98 @@ export function cleanText(value) {
   return text || "";
 }
 
+function hasAnyNormalized(text, keywords) {
+  return keywords.some((keyword) => text.includes(cleanText(keyword).toLowerCase()));
+}
+
+const DOC_BOUNDARY_SCOPE_SIGNALS = [
+  "文件",
+  "文檔",
+  "文档",
+  "doc",
+  "wiki",
+  "雲文檔",
+  "云文档",
+  "雲文件",
+  "云文件",
+];
+
+const DOC_BOUNDARY_COMPANY_BRAIN_SIGNALS = [
+  "company brain",
+  "company_brain",
+  "公司知識庫",
+  "公司知识库",
+  "知識庫",
+  "知识库",
+];
+
+const DOC_BOUNDARY_SUMMARY_SIGNALS = [
+  "整理",
+  "總結",
+  "总结",
+  "摘要",
+  "重點",
+  "重点",
+];
+
+const DOC_BOUNDARY_CLASSIFICATION_SIGNALS = [
+  "分類",
+  "分类",
+  "歸類",
+  "归类",
+  "指派",
+  "分配",
+  "分派",
+];
+
+const DOC_BOUNDARY_SELECTION_SIGNALS = [
+  "排除",
+  "摘出",
+  "摘出去",
+  "移出",
+  "移出去",
+  "剔出",
+  "剔出去",
+  "保留",
+];
+
+export function detectDocBoundaryIntent(text = "") {
+  const normalized = cleanText(String(text || "").toLowerCase());
+  if (!normalized) {
+    return {
+      mentions_document_scope: false,
+      mentions_company_brain: false,
+      wants_document_summary: false,
+      wants_document_classification: false,
+      wants_document_boundary_selection: false,
+      is_high_confidence_doc_boundary: false,
+    };
+  }
+
+  const mentionsCompanyBrain = hasAnyNormalized(normalized, DOC_BOUNDARY_COMPANY_BRAIN_SIGNALS);
+  const mentionsDocumentScope =
+    mentionsCompanyBrain || hasAnyNormalized(normalized, DOC_BOUNDARY_SCOPE_SIGNALS);
+  const wantsDocumentSummary =
+    mentionsDocumentScope && hasAnyNormalized(normalized, DOC_BOUNDARY_SUMMARY_SIGNALS);
+  const wantsDocumentClassification =
+    mentionsDocumentScope && hasAnyNormalized(normalized, DOC_BOUNDARY_CLASSIFICATION_SIGNALS);
+  const wantsDocumentBoundarySelection =
+    mentionsDocumentScope && hasAnyNormalized(normalized, DOC_BOUNDARY_SELECTION_SIGNALS);
+
+  return {
+    mentions_document_scope: mentionsDocumentScope,
+    mentions_company_brain: mentionsCompanyBrain,
+    wants_document_summary: wantsDocumentSummary,
+    wants_document_classification: wantsDocumentClassification,
+    wants_document_boundary_selection: wantsDocumentBoundarySelection,
+    is_high_confidence_doc_boundary:
+      mentionsCompanyBrain
+      || wantsDocumentSummary
+      || wantsDocumentClassification
+      || wantsDocumentBoundarySelection,
+  };
+}
+
 export function safeParseJson(value) {
   if (!value || typeof value !== "string") {
     return null;

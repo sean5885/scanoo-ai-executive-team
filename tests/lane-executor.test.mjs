@@ -250,3 +250,21 @@ test("lane execution plan keeps scoped cloud-doc exclusion requests out of perso
   assert.equal(plan.chosen_action, null);
   assert.equal(plan.fallback_reason, "semantic_mismatch_document_request_in_personal_lane");
 });
+
+test("lane execution plan keeps doc-boundary keep requests out of personal lane", () => {
+  const plan = resolveLaneExecutionPlan({
+    scope: {
+      capability_lane: "personal-assistant",
+    },
+    event: {
+      message: {
+        content: JSON.stringify({
+          text: "把公司知識庫裡要保留的文件整理一下",
+        }),
+      },
+    },
+  });
+
+  assert.equal(plan.chosen_action, null);
+  assert.equal(plan.fallback_reason, "semantic_mismatch_document_request_in_personal_lane");
+});

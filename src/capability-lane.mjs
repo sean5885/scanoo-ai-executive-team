@@ -1,4 +1,9 @@
-import { collectRelatedMessageIds, extractDocumentId, normalizeMessageText } from "./message-intent-utils.mjs";
+import {
+  collectRelatedMessageIds,
+  detectDocBoundaryIntent,
+  extractDocumentId,
+  normalizeMessageText,
+} from "./message-intent-utils.mjs";
 
 function hasAny(text, keywords) {
   return keywords.some((keyword) => text.includes(keyword));
@@ -19,21 +24,9 @@ const conversationSummaryKeywords = [
   "整理聊天",
 ];
 
-const documentSummaryKeywords = [
-  "整理文件",
-  "整理文檔",
-  "整理文档",
-  "文件摘要",
-  "文檔摘要",
-  "文档摘要",
-  "文件重點",
-  "文件重点",
-  "總結文件",
-  "总结文件",
-];
-
 export function resolveCapabilityLane(scope, input = {}) {
   const text = normalizeMessageText(input);
+  const docBoundaryIntent = detectDocBoundaryIntent(text);
   const hasDirectDocumentReference = Boolean(extractDocumentId(input));
   const hasReplyChain = collectRelatedMessageIds(input).length > 0;
 
@@ -106,9 +99,7 @@ export function resolveCapabilityLane(scope, input = {}) {
     (hasReplyChain && hasAny(text, docFollowUpKeywords));
 
   const wantsConversationSummary = hasAny(text, conversationSummaryKeywords);
-  const wantsDocumentSummary =
-    hasAny(text, documentSummaryKeywords)
-    || (hasAny(text, ["整理", "總結", "总结", "摘要", "重點", "重点"]) && hasAny(text, docReferenceKeywords));
+  const wantsDocumentSummary = docBoundaryIntent.wants_document_summary;
 
   if (wantsDocEdit) {
     return {
@@ -143,6 +134,22 @@ export function resolveCapabilityLane(scope, input = {}) {
       capability_lane: "knowledge-assistant",
       lane_label: "知識助手",
       lane_reason: "message_mentions_document_summary_or_lookup",
+      recommended_tools: [
+        "lark_kb_search",
+        "lark_kb_answer",
+        "lark_doc_read",
+        "lark_drive_list",
+        "lark_wiki_spaces",
+        "lark_wiki_nodes",
+      ],
+    };
+  }
+
+  if (docBoundaryIntent.mentions_company_brain) {
+    return {
+      capability_lane: "knowledge-assistant",
+      lane_label: "知識助手",
+      lane_reason: "message_mentions_company_brain_doc_boundary",
       recommended_tools: [
         "lark_kb_search",
         "lark_kb_answer",

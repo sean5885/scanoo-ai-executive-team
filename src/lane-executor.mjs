@@ -28,6 +28,7 @@ import {
   buildVisibleMessageText,
   cleanText,
   collectRelatedMessageIds,
+  detectDocBoundaryIntent,
   extractDocumentId,
   normalizeMessageText,
 } from "./message-intent-utils.mjs";
@@ -164,40 +165,16 @@ const recentConversationSummarySignals = [
   "整理聊天",
 ];
 
-const documentSummarySignals = [
-  "整理文件",
-  "整理文檔",
-  "整理文档",
-  "文件摘要",
-  "文檔摘要",
-  "文档摘要",
-  "文件重點",
-  "文件重点",
-  "總結文件",
-  "总结文件",
-];
-
-const companyBrainDocumentSignals = [
-  "company brain",
-  "company_brain",
-  "知識庫",
-  "知识库",
-  "已驗證文件",
-  "已验证文件",
-];
-
 function looksLikeExplicitDocOrKnowledgeRoutingRequest(text = "") {
   const normalized = cleanText(text);
   if (!normalized) {
     return false;
   }
 
-  const mentionsCompanyBrainDocs =
-    hasAny(normalized, companyBrainDocumentSignals)
-    && hasAny(normalized, ["文件", "文檔", "文档", "doc"]);
   const cloudDocAction = resolveCloudOrganizationAction({ text: normalized });
+  const docBoundaryIntent = detectDocBoundaryIntent(normalized);
 
-  return mentionsCompanyBrainDocs || cloudDocAction !== "none";
+  return docBoundaryIntent.is_high_confidence_doc_boundary || cloudDocAction !== "none";
 }
 
 function buildLaneTrace({
@@ -326,8 +303,6 @@ export function resolveLaneExecutionPlan({ event, scope } = {}) {
 
   if (
     looksLikeExplicitDocOrKnowledgeRoutingRequest(text)
-    || hasAny(text, documentSummarySignals)
-    || (text.includes("文件") && hasAny(text, ["整理", "總結", "总结", "摘要", "重點", "重点"]))
   ) {
     return buildLaneTrace({
       scope,

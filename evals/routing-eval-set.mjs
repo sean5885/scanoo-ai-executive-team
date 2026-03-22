@@ -170,6 +170,56 @@ const docCases = [
     planner_action: "rereview",
     agent_or_tool: "workflow:cloud_doc_organization",
   }),
+  createCase("doc", "023b", "把跟 scanoo 無關的文檔排除", {
+    lane: "cloud_doc_workflow",
+    planner_action: "rereview",
+    agent_or_tool: "workflow:cloud_doc_organization",
+  }),
+  createCase("doc", "023c", "摘出無關文檔", {
+    lane: "cloud_doc_workflow",
+    planner_action: "rereview",
+    agent_or_tool: "workflow:cloud_doc_organization",
+  }),
+  createCase("doc", "023d", "只保留 AI agent 主題的文檔，把非 AI agent 的文檔排出去", {
+    lane: "cloud_doc_workflow",
+    planner_action: "rereview",
+    agent_or_tool: "workflow:cloud_doc_organization",
+  }),
+  createCase("doc", "023e", "只保留 onboarding 主題文件，把非 onboarding 的文件摘出去", {
+    lane: "cloud_doc_workflow",
+    planner_action: "rereview",
+    agent_or_tool: "workflow:cloud_doc_organization",
+  }),
+  createCase("doc", "023f", "把不是產品需求範圍的文件移出去", {
+    lane: "cloud_doc_workflow",
+    planner_action: "rereview",
+    agent_or_tool: "workflow:cloud_doc_organization",
+  }),
+  createCase("doc", "023g", "把 HR 之外的文檔剔出去", {
+    lane: "cloud_doc_workflow",
+    planner_action: "rereview",
+    agent_or_tool: "workflow:cloud_doc_organization",
+  }),
+  createCase("doc", "023h", "把非交付集合的文件排出去", {
+    lane: "cloud_doc_workflow",
+    planner_action: "rereview",
+    agent_or_tool: "workflow:cloud_doc_organization",
+  }),
+  createCase("doc", "023i", "重新審核哪些文件不屬於 scanoo 集合", {
+    lane: "cloud_doc_workflow",
+    planner_action: "rereview",
+    agent_or_tool: "workflow:cloud_doc_organization",
+  }),
+  createCase("doc", "023j", "再審核哪些文檔不屬於產品文檔集合", {
+    lane: "cloud_doc_workflow",
+    planner_action: "rereview",
+    agent_or_tool: "workflow:cloud_doc_organization",
+  }),
+  createCase("doc", "023k", "把非客服知識庫範圍的文件排除", {
+    lane: "cloud_doc_workflow",
+    planner_action: "rereview",
+    agent_or_tool: "workflow:cloud_doc_organization",
+  }),
   createCase("doc", "024", "根據文件這份文件寫了什麼", {
     lane: "knowledge_assistant",
     planner_action: "get_company_brain_doc_detail",

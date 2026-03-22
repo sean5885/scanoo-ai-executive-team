@@ -60,6 +60,26 @@ test("cloud doc workflow exposes rereview signal helper", () => {
   assert.equal(looksLikeCloudOrganizationReReviewRequest("好的，還有什麼要我二次確認"), false);
 });
 
+test("cloud doc workflow keeps doc-intent exclusion family on rereview signals", () => {
+  const rereviewQueries = [
+    "把跟 scanoo 無關的文檔排除",
+    "摘出無關文檔",
+    "只保留 AI agent 主題的文檔，把非 AI agent 的文檔排出去",
+    "只保留 onboarding 主題文件，把非 onboarding 的文件摘出去",
+    "把不是產品需求範圍的文件移出去",
+    "把 HR 之外的文檔剔出去",
+    "把非交付集合的文件排出去",
+    "重新審核哪些文件不屬於 scanoo 集合",
+    "再審核哪些文檔不屬於產品文檔集合",
+    "把非客服知識庫範圍的文件排除",
+  ];
+
+  for (const text of rereviewQueries) {
+    assert.equal(looksLikeCloudOrganizationReReviewRequest(text), true, text);
+    assert.equal(resolveCloudOrganizationAction({ text, activeWorkflowMode: null }), "rereview", text);
+  }
+});
+
 test("cloud doc workflow keeps plain-language follow-up in review branch", () => {
   const action = resolveCloudOrganizationAction({
     text: "圖二我看不懂，請講人話",

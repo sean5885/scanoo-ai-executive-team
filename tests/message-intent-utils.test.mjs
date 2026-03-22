@@ -5,6 +5,7 @@ import { buildLaneFailureReply, resolveCapabilityLane } from "../src/capability-
 import {
   extractBitableReference,
   collectRelatedMessageIds,
+  detectDocBoundaryIntent,
   extractDocumentId,
   normalizeMessageText,
 } from "../src/message-intent-utils.mjs";
@@ -110,6 +111,21 @@ test("文件整理需求會進 knowledge-assistant 而不是沿用最近對話 l
   assert.equal(lane.capability_lane, "knowledge-assistant");
 });
 
+test("company_brain 語意會直接進 knowledge-assistant", () => {
+  const lane = resolveCapabilityLane(
+    { chat_type: "p2p" },
+    {
+      message: {
+        content: JSON.stringify({
+          text: "請幫我看 company_brain 裡有哪些文件",
+        }),
+      },
+    },
+  );
+
+  assert.equal(lane.capability_lane, "knowledge-assistant");
+});
+
 test("最近對話總結需求不會被誤導到 knowledge-assistant", () => {
   const lane = resolveCapabilityLane(
     { chat_type: "p2p" },
@@ -123,6 +139,15 @@ test("最近對話總結需求不會被誤導到 knowledge-assistant", () => {
   );
 
   assert.equal(lane.capability_lane, "personal-assistant");
+});
+
+test("detectDocBoundaryIntent 會把分類與保留視為高置信 doc-boundary", () => {
+  const intent = detectDocBoundaryIntent("把知識庫文件分類後保留產品相關的");
+
+  assert.equal(intent.mentions_company_brain, true);
+  assert.equal(intent.wants_document_classification, true);
+  assert.equal(intent.wants_document_boundary_selection, true);
+  assert.equal(intent.is_high_confidence_doc_boundary, true);
 });
 
 test("normalizeMessageText 會保留結構化欄位供 lane 判斷", () => {

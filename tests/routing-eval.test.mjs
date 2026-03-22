@@ -12,6 +12,7 @@ import {
   formatRoutingEvalReport,
   ROUTING_EVAL_MIN_ACCURACY_RATIO,
   loadRoutingEvalSet,
+  resolveRoutingEvalCase,
   runRoutingEval,
   summarizeRoutingEval,
   validateRoutingEvalSet,
@@ -44,6 +45,35 @@ test("routing eval baseline currently has zero mismatches", async () => {
   assert.equal(run.summary.miss_count, 0);
   assert.equal(run.summary.overall.hits, run.summary.total_cases);
   assert.equal(run.summary.overall.accuracy_ratio, 1);
+});
+
+test("routing eval keeps personal-lane doc-intent exclusion pack in cloud-doc rereview", async () => {
+  const packIds = new Set([
+    "doc-023a",
+    "doc-023b",
+    "doc-023c",
+    "doc-023d",
+    "doc-023e",
+    "doc-023f",
+    "doc-023g",
+    "doc-023h",
+    "doc-023i",
+    "doc-023j",
+    "doc-023k",
+  ]);
+  const packCases = (await loadRoutingEvalSet()).filter((testCase) => packIds.has(testCase.id));
+
+  assert.equal(packCases.length, packIds.size);
+
+  for (const testCase of packCases) {
+    const actual = resolveRoutingEvalCase(testCase);
+
+    assert.equal(testCase.expected.lane, "cloud_doc_workflow", testCase.id);
+    assert.equal(testCase.expected.planner_action, "rereview", testCase.id);
+    assert.equal(actual.lane, "cloud_doc_workflow", testCase.id);
+    assert.equal(actual.planner_action, "rereview", testCase.id);
+    assert.notEqual(actual.lane, "personal_assistant", testCase.id);
+  }
 });
 
 test("routing eval CLI supports json output", () => {

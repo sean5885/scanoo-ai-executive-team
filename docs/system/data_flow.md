@@ -242,6 +242,7 @@ This request-flow mirror now reflects the current fail-closed routing baseline.
    - follow-up questions like `這些待人工確認的文件，為什麼不能直接分配？` now force the cloud-doc organization workflow back into a reason-explainer branch, even if the earlier workflow mode was not successfully resumed
    - once the cloud-doc organization workflow mode is active, generic follow-ups like `還有什麼內容需要我二次確認` now stay in second-pass review instead of dropping back to the first-pass category overview
    - the cloud-doc organization follow-up logic is now isolated in `src/cloud-doc-organization-workflow.mjs`, so these follow-ups can be regression-tested without reloading the full lane executor
+   - high-confidence doc/company-brain turns including document organization, classification, `排除 / 摘出 / 保留`, and explicit `company_brain` / knowledge-base mentions are guarded out of generic personal-lane handling; they must stay on a bounded doc/company-brain path so the runtime does not collapse them into private-chat no-match behavior
    - users can exit that mode explicitly with phrases such as `退出分類模式`
    - image-only tasks now call the Nano Banana-oriented image adapter first and can return directly without sending long image descriptions into the text model
    - mixed image+text tasks now call the image adapter first, then only pass compact structured image fields into the downstream text synthesis step; if image analysis is unavailable, the text lane can still continue instead of failing the whole turn on image-config errors
