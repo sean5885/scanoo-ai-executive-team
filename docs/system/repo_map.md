@@ -26,11 +26,11 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 - `/Users/seanhan/Documents/Playground/scripts`
   - Small utility scripts.
-  - Includes workflow baseline, monitoring, trace debug, and routing eval entrypoints.
+  - Includes workflow baseline, monitoring, trace debug, routing eval entrypoints, and local retrieval eval runners.
 
 - `/Users/seanhan/Documents/Playground/evals`
   - Checked-in deterministic eval fixtures.
-  - Currently stores the routing regression baseline set.
+  - Currently stores the routing regression baseline set plus a small real-world retrieval query set.
 
 - `/Users/seanhan/Documents/Playground/.data`
   - Local runtime data.
@@ -69,6 +69,11 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `/Users/seanhan/Documents/Playground/scripts/routing-eval-fixture-candidates.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/routing-eval-closed-loop.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/routing-diagnostics.mjs`
+
+- Local retrieval eval helpers
+  - `/Users/seanhan/Documents/Playground/evals/retrieval-realworld-set.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/retrieval-eval.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/retrieval-realworld-eval.mjs`
 
 - Planner diagnostics governance
   - `/Users/seanhan/Documents/Playground/src/planner-contract-consistency.mjs`
