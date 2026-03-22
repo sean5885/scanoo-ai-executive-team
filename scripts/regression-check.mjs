@@ -22,6 +22,9 @@ ok = run("node tests/routing-eval-lite.mjs") && ok;
 // 3. real-world retrieval
 ok = run("node scripts/retrieval-realworld-eval.mjs") && ok;
 
+// 4. doc workflow
+ok = run("node scripts/doc-workflow-eval.mjs") && ok;
+
 // summary
 console.log("\nREGRESSION RESULT:", ok ? "PASS" : "FAIL");
 

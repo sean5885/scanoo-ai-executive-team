@@ -13,6 +13,13 @@ const QUERY_NORMALIZATION_MAP = {
   '穩不穩': 'stability health runtime status',
   '運行情況': 'runtime status health',
 };
+const QUERY_ALIAS_MAP = {
+  okr: ['okr', '目標', 'goal', 'tracking'],
+  bd: ['bd', '商機', 'business'],
+  sop: ['sop', '交付', '流程', 'delivery', 'process'],
+  delivery: ['delivery', '交付', '流程', 'process'],
+  onboarding: ['onboarding', '導入', '交付', '流程'],
+};
 
 export function getIndex() {
   if (!cachedIndex) cachedIndex = loadDocsFromDir('./docs/system');
@@ -113,15 +120,21 @@ function normalizeKnowledgeQueries(keyword) {
   const raw = typeof keyword === 'string' ? keyword.trim() : '';
   if (!raw) return [];
 
-  const variants = [raw];
+  const variants = [];
   const latinTokens = raw.match(/[A-Za-z0-9][A-Za-z0-9_-]*/g) || [];
-  variants.push(...latinTokens);
+  const aliasVariants = latinTokens.flatMap(
+    (token) => QUERY_ALIAS_MAP[token.toLowerCase()] || [],
+  );
+
+  variants.push(...aliasVariants);
 
   Object.entries(QUERY_NORMALIZATION_MAP).forEach(([source, target]) => {
     if (raw.includes(source)) {
       variants.push(source, target);
     }
   });
+
+  variants.push(...latinTokens, raw);
 
   return Array.from(
     new Set(
@@ -136,22 +149,32 @@ export function queryKnowledgeWithContext(keyword) {
   const queries = normalizeKnowledgeQueries(keyword);
   const merged = [];
   const seen = new Set();
-
-  queries.forEach((query) => {
-    if (merged.length >= 3) return;
-
-    const results = filterKnowledgeContextResults(
-      queryKnowledgeWithSnippet(query),
+  const buckets = queries
+    .map((query) => ({
       query,
-    );
+      results: filterKnowledgeContextResults(
+        queryKnowledgeWithSnippet(query),
+        query,
+      ),
+    }))
+    .filter((bucket) => bucket.results.length > 0);
 
-    results.forEach((result) => {
+  while (merged.length < 3) {
+    let progressed = false;
+
+    buckets.forEach((bucket) => {
       if (merged.length >= 3) return;
-      if (!result?.id || seen.has(result.id)) return;
-      seen.add(result.id);
-      merged.push(result);
+
+      const next = bucket.results.find((result) => result?.id && !seen.has(result.id));
+      if (!next) return;
+
+      seen.add(next.id);
+      merged.push(next);
+      progressed = true;
     });
-  });
+
+    if (!progressed) break;
+  }
 
   return merged;
 }

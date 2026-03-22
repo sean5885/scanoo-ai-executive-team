@@ -162,6 +162,25 @@ node scripts/monitoring-cli.mjs learning 1 1
 
 ## Deterministic Fixture Evals
 
+### Document Workflow Fixture Smoke
+
+用途：
+
+- 用最小 deterministic fixture 快速檢查本地 `docs/system` read-side query 對常見文件流程問法沒有明顯退化
+- 適合在補 retrieval fixture、整理 knowledge-service query 行為或做最小 smoke 驗證時使用
+- 這不是正式 workflow completion verifier，也不替代 integration / route / planner 驗證
+
+命令：
+
+```bash
+node scripts/doc-workflow-eval.mjs
+```
+
+覆蓋：
+
+- checked-in document workflow fixture dataset：`evals/doc-workflow-set.mjs`
+- synchronous `queryKnowledgeWithContext(...)` read-side smoke output：PASS / FAIL 與命中筆數
+
 ### Meeting Workflow Fixture Smoke
 
 用途：
@@ -233,7 +252,7 @@ node --test tests/routing-eval-decision-advice.test.mjs tests/routing-eval-close
 
 用途：
 
-- `node scripts/regression-check.mjs` 提供最小的 read-side regression quick check，固定串接 `scripts/retrieval-eval.mjs`、`tests/routing-eval-lite.mjs` 與 `scripts/retrieval-realworld-eval.mjs`
+- `node scripts/regression-check.mjs` 提供最小的 read-side regression quick check，固定串接 `scripts/retrieval-eval.mjs`、`tests/routing-eval-lite.mjs`、`scripts/retrieval-realworld-eval.mjs` 與 `scripts/doc-workflow-eval.mjs`
 - `node scripts/retrieval-realworld-eval.mjs` 提供額外的 read-side retrieval smoke check，使用 checked-in 的真實問法風格 query set 量測 HIT / MISS 與命中率
 - 驗證 checked-in deterministic routing baseline 是否仍與 eval set 一致
 - 這份 checked-in 結果即為 routing eval regression gate baseline v2（`routing-eval-baseline-v2`）

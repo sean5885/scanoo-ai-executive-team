@@ -2,7 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { cleanSnippet as cleanKnowledgeSnippet } from "../src/knowledge/snippet-cleaner.mjs";
-import { filterKnowledgeContextResults } from "../src/knowledge/knowledge-service.mjs";
+import {
+  filterKnowledgeContextResults,
+  queryKnowledgeWithContext,
+} from "../src/knowledge/knowledge-service.mjs";
 import { plannerAnswer } from "../src/planner/knowledge-bridge.mjs";
 import { parseIntent } from "../src/planner/intent-parser.mjs";
 import { buildSummaryPrompt, summarizeWithMinimax } from "../src/planner/llm-summary.mjs";
@@ -51,6 +54,24 @@ test("filterKnowledgeContextResults keeps at most three non-label snippets", () 
     { id: "c", snippet: "This second preview also contains a complete sentence with enough detail to survive filtering." },
     { id: "d", snippet: "This third preview stays because it is descriptive and not just a short metadata label." },
   ]);
+});
+
+test("queryKnowledgeWithContext prioritizes normalized delivery terms ahead of brand-like tokens", () => {
+  const results = queryKnowledgeWithContext("Scanoo 交付流程是什麼？");
+  const text = results.map((item) => item.snippet || "").join(" ").toLowerCase();
+
+  assert.ok(results.length > 0);
+  assert.match(text, /交付|delivery/);
+  assert.match(text, /流程|process/);
+});
+
+test("queryKnowledgeWithContext expands OKR aliases into goal-like snippets", () => {
+  const results = queryKnowledgeWithContext("OKR 要怎麼設計？");
+  const text = results.map((item) => item.snippet || "").join(" ").toLowerCase();
+
+  assert.ok(results.length > 0);
+  assert.match(text, /okr/);
+  assert.match(text, /目標|goal/);
 });
 
 test("cleanSnippet strips navigation artifacts at the start of previews", () => {

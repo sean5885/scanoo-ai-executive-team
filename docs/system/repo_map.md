@@ -75,6 +75,10 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `/Users/seanhan/Documents/Playground/scripts/retrieval-eval.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/retrieval-realworld-eval.mjs`
 
+- Document workflow eval helpers
+  - `/Users/seanhan/Documents/Playground/evals/doc-workflow-set.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/doc-workflow-eval.mjs`
+
 - Meeting workflow eval helpers
   - `/Users/seanhan/Documents/Playground/evals/meeting-workflow-set.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/meeting-workflow-eval.mjs`
