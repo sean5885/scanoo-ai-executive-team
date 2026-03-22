@@ -231,6 +231,8 @@ Thread 45 planner contract regression-gate checkpoint 將這條檢查固定成 r
 
 Thread 46 planner diagnostics daily-entry checkpoint 在既有 planner contract consistency gate 基礎上補上固定 `planner:diagnostics` 日常入口、單一 diagnostics summary、fail 處理順序與測試，但不新增邏輯、不改 routing，也不新增 fallback。
 
+Thread 47 planner diagnostics history-snapshot checkpoint 在既有 daily-entry CLI 與 regression gate 之上補上 snapshot-only 歷史歸檔、manifest、相關測試與文件同步，但不新增 compare、不改 routing，也不新增 fallback 或 gate 變更。
+
 用途：
 
 - 固定阻擋 planner contract drift，不更動 routing 決策
@@ -250,6 +252,20 @@ npm run self-check
 - `planner:diagnostics` 是固定日常入口，直接根據目前 checked-in runtime / contract 狀態輸出單一 diagnostics summary，不會重跑 planner
 - `planner-contract-check` 本身是 read-only gate，不做 auto-fix
 - `npm run self-check` 已固定包含同一個 planner contract gate
+- `planner:diagnostics` 與 `planner:contract-check` 每次執行都會額外把當次 JSON report 歸檔到 `.tmp/planner-diagnostics-history/`
+- archive 是 snapshot-only：
+  - manifest: `.tmp/planner-diagnostics-history/manifest.json`
+  - snapshots: `.tmp/planner-diagnostics-history/snapshots/<run-id>.json`
+- manifest per-run entry 固定最小欄位為：
+  - `run_id`
+  - `timestamp`
+  - `gate`
+  - `undefined_actions`
+  - `undefined_presets`
+  - `selector_contract_mismatches`
+  - `deprecated_reachable_targets`
+- snapshot 檔內容為該次 CLI 對應的完整 JSON diagnostics report
+- 不提供 compare、也不新增 CLI 參數
 - fail 條件僅限：
   - `undefined actions > 0`
   - `undefined presets > 0`

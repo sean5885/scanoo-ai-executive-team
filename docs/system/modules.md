@@ -453,6 +453,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 - Location:
   - `/Users/seanhan/Documents/Playground/src/system-self-check.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner-contract-consistency.mjs`
+  - `/Users/seanhan/Documents/Playground/src/planner-diagnostics-history.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/self-check.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/planner-contract-check.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/planner-diagnostics.mjs`
@@ -469,6 +470,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - expose a fixed human-readable daily-entry view through `planner:diagnostics`
   - fail the planner contract gate only on undefined action, undefined preset, and selector-contract mismatch
   - emit a fixed diagnostics summary plus JSON report without changing routing logic
+  - archive each `planner:diagnostics` / `planner:contract-check` execution into snapshot-only planner diagnostics history without adding compare mode or changing the gate
   - keep a human-readable capability matrix and chain checklist in sync with code
 - Core path:
   - important for regression prevention and operator debugging

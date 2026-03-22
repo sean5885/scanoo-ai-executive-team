@@ -137,10 +137,12 @@ Checkpoint status:
 - `contract-alignment checkpoint`
 - `Thread 45 planner contract regression-gate checkpoint`
 - `Thread 46 planner diagnostics daily-entry checkpoint`
+- `Thread 47 planner diagnostics history-snapshot checkpoint`
 
 Current checked-in consistency checker:
 
 - `/Users/seanhan/Documents/Playground/src/planner-contract-consistency.mjs`
+- `/Users/seanhan/Documents/Playground/src/planner-diagnostics-history.mjs`
 - `/Users/seanhan/Documents/Playground/scripts/planner-contract-check.mjs`
 - `/Users/seanhan/Documents/Playground/scripts/planner-diagnostics.mjs`
 
@@ -185,11 +187,31 @@ Thread 46 planner diagnostics daily-entry checkpoint:
 - keeps the path read-only: no new logic, no routing change, no fallback, no auto-fix
 - makes operators check planner/contract drift from one human-readable summary before `planner:contract-check` or `self-check`
 
+Thread 47 planner diagnostics history-snapshot checkpoint:
+
+- keeps the same read-only daily-entry and regression-gate behavior
+- adds snapshot-only planner diagnostics archival for `planner:diagnostics` and `planner:contract-check`
+- stores the full JSON diagnostics report per run plus a minimal manifest index
+- does not add compare mode, new CLI parameters, routing changes, fallback behavior, or gate changes
+
 Current daily-entry CLI:
 
 - `npm run planner:diagnostics`
 - it reads the current checked-in runtime selector / registry / flow-route state directly
 - it does not rerun planner execution, mutate routing, or auto-fix drift
+- every `planner:diagnostics` and `planner:contract-check` run now writes a snapshot-only archive to:
+  - `.tmp/planner-diagnostics-history/manifest.json`
+  - `.tmp/planner-diagnostics-history/snapshots/<run-id>.json`
+- `manifest.json` keeps the minimal per-run fields:
+  - `run_id`
+  - `timestamp`
+  - `gate`
+  - `undefined_actions`
+  - `undefined_presets`
+  - `selector_contract_mismatches`
+  - `deprecated_reachable_targets`
+- each snapshot stores the full JSON diagnostics report emitted by the same CLI path
+- this history path does not add compare mode, new CLI flags, routing changes, fallback behavior, or gate changes
 - it renders one fixed summary line with:
   - `gate`
   - `undefined_actions`

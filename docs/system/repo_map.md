@@ -66,6 +66,12 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `/Users/seanhan/Documents/Playground/scripts/routing-eval-closed-loop.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/routing-diagnostics.mjs`
 
+- Planner diagnostics governance
+  - `/Users/seanhan/Documents/Playground/src/planner-contract-consistency.mjs`
+  - `/Users/seanhan/Documents/Playground/src/planner-diagnostics-history.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/planner-contract-check.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/planner-diagnostics.mjs`
+
 - Document organization
   - `/Users/seanhan/Documents/Playground/src/lark-drive-organizer.mjs`
   - `/Users/seanhan/Documents/Playground/src/lark-wiki-organizer.mjs`
