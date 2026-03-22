@@ -826,6 +826,11 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - local in-memory document index helper
   - not connected to sync ingestion, SQLite persistence, planner routes, or company-brain approval/governance paths
 
+- `/Users/seanhan/Documents/Playground/src/knowledge/doc-loader.mjs`
+  - local Markdown-to-in-memory-index loader helper
+  - scans one directory for `.md` files and inserts them into `doc-index`
+  - not connected to sync ingestion, SQLite persistence, planner routes, or company-brain approval/governance paths
+
 - `/Users/seanhan/Documents/Playground/src/runtime-contract.mjs`
   - Node/Python runtime compatibility check
 
