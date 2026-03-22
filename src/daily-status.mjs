@@ -1,10 +1,22 @@
 import { cleanText } from "./message-intent-utils.mjs";
 import { buildReleaseCheckCompareSummary } from "./release-check.mjs";
+import {
+  readReleaseCheckManifest,
+  resolveReleaseCheckSnapshot,
+} from "./release-check-history.mjs";
+import {
+  readSystemSelfCheckManifest,
+  resolveSystemSelfCheckSnapshot,
+} from "./system-self-check-history.mjs";
 
 const ROUTING_LINE = "routing";
 const PLANNER_LINE = "planner";
 const RELEASE_LINE = "release";
 const NO_BLOCKING_LINE = "none";
+const TREND_STABLE = "stable";
+const TREND_IMPROVING = "improving";
+const TREND_WORSENING = "worsening";
+const DEFAULT_TREND_COUNT = 5;
 const PLANNER_SELECTOR_CATEGORY = "selector_contract_mismatches";
 const ROUTING_REASON_HINTS = new Set(["doc", "meeting", "runtime", "mixed"]);
 const RELEASE_REASON_HINTS = new Set([
@@ -27,6 +39,44 @@ function normalizePlannerStatus(status = "") {
 
 function normalizeReleaseStatus(status = "") {
   return cleanText(status) === "pass" ? "pass" : "fail";
+}
+
+function normalizeTrend(trend = "") {
+  const normalized = cleanText(trend);
+  if (normalized === TREND_IMPROVING || normalized === TREND_WORSENING) {
+    return normalized;
+  }
+  return TREND_STABLE;
+}
+
+function normalizeTrendLine(line = "") {
+  const normalized = cleanText(line);
+  if (normalized === ROUTING_LINE || normalized === PLANNER_LINE || normalized === RELEASE_LINE) {
+    return normalized;
+  }
+  return NO_BLOCKING_LINE;
+}
+
+function parseTimestampMs(timestamp = null) {
+  const parsed = Date.parse(timestamp || "");
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeTrendCount(value = DEFAULT_TREND_COUNT) {
+  const parsed = Number.parseInt(String(value), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_TREND_COUNT;
+}
+
+function buildDailyTrendScore(run = {}) {
+  const routingScore = normalizeRoutingStatus(run?.routing_status) === "pass"
+    ? 2
+    : normalizeRoutingStatus(run?.routing_status) === "degrade"
+      ? 1
+      : 0;
+  const plannerScore = normalizePlannerStatus(run?.planner_status) === "pass" ? 1 : 0;
+  const releaseScore = normalizeReleaseStatus(run?.release_status) === "pass" ? 1 : 0;
+
+  return routingScore + plannerScore + releaseScore;
 }
 
 function resolveFirstLineToCheck(releaseCheckResult = {}) {
@@ -193,6 +243,219 @@ export function buildDailyStatusHumanSummary(releaseCheckResult = {}) {
     release: safeToMergeOrRelease ? "可以" : "先不要",
     first_line_to_check: resolveFirstLineToCheck(releaseCheckResult),
   };
+}
+
+function buildDailyStatusTrendEntry({
+  releaseReport = {},
+  selfCheckReport = {},
+} = {}) {
+  return {
+    run_id: cleanText(releaseReport?.run_id) || null,
+    timestamp: releaseReport?.timestamp || selfCheckReport?.timestamp || null,
+    ...buildDailyStatusReport({
+      report: releaseReport,
+      self_check_result: selfCheckReport,
+    }),
+  };
+}
+
+function buildMostChangedLine(recentRuns = []) {
+  const chronologicalRuns = [...recentRuns].reverse();
+  const changes = {
+    [ROUTING_LINE]: { count: 0, last_changed_at: -1 },
+    [PLANNER_LINE]: { count: 0, last_changed_at: -1 },
+    [RELEASE_LINE]: { count: 0, last_changed_at: -1 },
+  };
+
+  for (let index = 1; index < chronologicalRuns.length; index += 1) {
+    const previousRun = chronologicalRuns[index - 1];
+    const currentRun = chronologicalRuns[index];
+
+    if (normalizeRoutingStatus(previousRun?.routing_status) !== normalizeRoutingStatus(currentRun?.routing_status)) {
+      changes[ROUTING_LINE] = {
+        count: changes[ROUTING_LINE].count + 1,
+        last_changed_at: index,
+      };
+    }
+    if (normalizePlannerStatus(previousRun?.planner_status) !== normalizePlannerStatus(currentRun?.planner_status)) {
+      changes[PLANNER_LINE] = {
+        count: changes[PLANNER_LINE].count + 1,
+        last_changed_at: index,
+      };
+    }
+    if (normalizeReleaseStatus(previousRun?.release_status) !== normalizeReleaseStatus(currentRun?.release_status)) {
+      changes[RELEASE_LINE] = {
+        count: changes[RELEASE_LINE].count + 1,
+        last_changed_at: index,
+      };
+    }
+  }
+
+  const mostChangedLine = [ROUTING_LINE, PLANNER_LINE, RELEASE_LINE].reduce((best, line) => {
+    const current = changes[line];
+    if (!best) {
+      return { line, ...current };
+    }
+    if (current.count > best.count) {
+      return { line, ...current };
+    }
+    if (current.count === best.count && current.last_changed_at > best.last_changed_at) {
+      return { line, ...current };
+    }
+    return best;
+  }, null);
+
+  if (!mostChangedLine || mostChangedLine.count === 0) {
+    return NO_BLOCKING_LINE;
+  }
+  return mostChangedLine.line;
+}
+
+export function buildDailyStatusTrendSummary({
+  recent_runs: recentRuns = [],
+} = {}) {
+  const normalizedRuns = Array.isArray(recentRuns)
+    ? recentRuns.map((run) => ({
+        run_id: cleanText(run?.run_id) || null,
+        timestamp: run?.timestamp || null,
+        routing_status: normalizeRoutingStatus(run?.routing_status),
+        planner_status: normalizePlannerStatus(run?.planner_status),
+        release_status: normalizeReleaseStatus(run?.release_status),
+        overall_recommendation: cleanText(run?.overall_recommendation) || "check_release_first",
+      }))
+    : [];
+  const chronologicalRuns = [...normalizedRuns].reverse();
+  let improvingTransitions = 0;
+  let worseningTransitions = 0;
+
+  for (let index = 1; index < chronologicalRuns.length; index += 1) {
+    const previousScore = buildDailyTrendScore(chronologicalRuns[index - 1]);
+    const currentScore = buildDailyTrendScore(chronologicalRuns[index]);
+
+    if (currentScore > previousScore) {
+      improvingTransitions += 1;
+    } else if (currentScore < previousScore) {
+      worseningTransitions += 1;
+    }
+  }
+
+  let trend = TREND_STABLE;
+  if (improvingTransitions > worseningTransitions) {
+    trend = TREND_IMPROVING;
+  } else if (worseningTransitions > improvingTransitions) {
+    trend = TREND_WORSENING;
+  } else if (normalizedRuns.length >= 2) {
+    const newestScore = buildDailyTrendScore(normalizedRuns[0]);
+    const oldestScore = buildDailyTrendScore(normalizedRuns[normalizedRuns.length - 1]);
+    if (newestScore > oldestScore) {
+      trend = TREND_IMPROVING;
+    } else if (newestScore < oldestScore) {
+      trend = TREND_WORSENING;
+    }
+  }
+
+  return {
+    sample_count: normalizedRuns.length,
+    trend,
+    most_changed_line: buildMostChangedLine(normalizedRuns),
+    recent_runs: normalizedRuns,
+  };
+}
+
+function findMatchingSelfCheckEntry(releaseSnapshot = {}, selfCheckEntries = []) {
+  const releaseTimestampMs = parseTimestampMs(releaseSnapshot?.timestamp);
+  if (releaseTimestampMs === null) {
+    return selfCheckEntries[0] || null;
+  }
+
+  const candidates = selfCheckEntries
+    .map((entry, index) => ({
+      entry,
+      index,
+      timestamp_ms: parseTimestampMs(entry?.timestamp),
+    }))
+    .filter((item) => item.timestamp_ms !== null && item.timestamp_ms <= releaseTimestampMs);
+
+  if (candidates.length > 0) {
+    return candidates
+      .sort((left, right) => right.timestamp_ms - left.timestamp_ms)[0]
+      ?.entry || null;
+  }
+
+  return selfCheckEntries[0] || null;
+}
+
+export async function readDailyStatusTrendSummary({
+  count = DEFAULT_TREND_COUNT,
+  releaseCheckArchiveDir,
+  selfCheckArchiveDir,
+} = {}) {
+  const sampleCount = normalizeTrendCount(count);
+  const releaseManifest = await readReleaseCheckManifest(releaseCheckArchiveDir);
+  const selfCheckManifest = await readSystemSelfCheckManifest(selfCheckArchiveDir);
+  const releaseEntries = Array.isArray(releaseManifest?.snapshots)
+    ? releaseManifest.snapshots.slice(0, sampleCount)
+    : [];
+  const selfCheckEntries = Array.isArray(selfCheckManifest?.snapshots)
+    ? selfCheckManifest.snapshots
+    : [];
+
+  if (releaseEntries.length === 0) {
+    throw new Error(`No release-check snapshot found in ${releaseManifest?.manifest_path}`);
+  }
+  if (selfCheckEntries.length === 0) {
+    throw new Error(`No system self-check snapshot found in ${selfCheckManifest?.manifest_path}`);
+  }
+
+  const recentRuns = [];
+  for (const releaseEntry of releaseEntries) {
+    const releaseRunId = cleanText(releaseEntry?.run_id);
+    if (!releaseRunId) {
+      continue;
+    }
+
+    const releaseSnapshot = await resolveReleaseCheckSnapshot({
+      reference: releaseRunId,
+      ...(releaseCheckArchiveDir ? { baseDir: releaseCheckArchiveDir } : {}),
+    });
+    const matchedSelfCheckEntry = findMatchingSelfCheckEntry(releaseSnapshot?.snapshot || releaseEntry, selfCheckEntries);
+
+    if (!cleanText(matchedSelfCheckEntry?.run_id)) {
+      throw new Error(`No matching system self-check snapshot found for release-check run_id: ${releaseRunId}`);
+    }
+
+    const selfCheckSnapshot = await resolveSystemSelfCheckSnapshot({
+      reference: matchedSelfCheckEntry.run_id,
+      ...(selfCheckArchiveDir ? { baseDir: selfCheckArchiveDir } : {}),
+    });
+
+    recentRuns.push(buildDailyStatusTrendEntry({
+      releaseReport: releaseSnapshot?.report || {},
+      selfCheckReport: selfCheckSnapshot?.report || {},
+    }));
+  }
+
+  return buildDailyStatusTrendSummary({
+    recent_runs: recentRuns,
+  });
+}
+
+function renderTrendLabel(trend = "") {
+  const normalized = normalizeTrend(trend);
+  if (normalized === TREND_IMPROVING) {
+    return "改善";
+  }
+  if (normalized === TREND_WORSENING) {
+    return "惡化";
+  }
+  return "穩定";
+}
+
+export function renderDailyStatusTrendReport(trendSummary = {}) {
+  return [
+    `最近趨勢：${renderTrendLabel(trendSummary?.trend)}`,
+    `最常變動：${renderLineLabel(normalizeTrendLine(trendSummary?.most_changed_line))}`,
+  ].join("\n");
 }
 
 export function renderDailyStatusReport(releaseCheckResult = {}) {

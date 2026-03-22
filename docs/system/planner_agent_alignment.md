@@ -292,9 +292,37 @@ Thread 57 daily compare checkpoint:
   - `release` = check the existing release line first, including base/self-check failures already compressed there
 - does not add a new gate, compare mode, fallback path, or auto-fix behavior
 
+Thread 58 daily trend checkpoint:
+
+- adds read-only daily trend mode:
+  - `npm run daily-status -- --trend`
+  - `npm run daily-status -- --trend --trend-count <n>`
+  - human-readable trend output only answers:
+    - `最近趨勢`
+    - `最常變動`
+  - trend JSON only returns `trend_summary` with:
+    - `sample_count`
+    - `trend`
+    - `most_changed_line`
+    - `recent_runs`
+  - each `recent_runs` item only uses:
+    - `run_id`
+    - `timestamp`
+    - `routing_status`
+    - `planner_status`
+    - `release_status`
+    - `overall_recommendation`
+- keeps trend source bounded to existing archives only:
+  - release line from `release-check-history`
+  - routing/planner lines from `system-self-check-history`
+  - no new daily-status history archive
+- does not add a new gate, fallback path, or auto-fix behavior
+
 Current daily-entry CLI:
 
 - `npm run daily-status`
+- `npm run daily-status -- --trend`
+- `npm run daily-status -- --trend --trend-count <n>`
 - `npm run daily-status -- --compare-previous`
 - `npm run daily-status -- --compare-snapshot <run-id|path>`
 - `npm run planner:diagnostics`

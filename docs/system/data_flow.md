@@ -281,6 +281,28 @@ This is now a capability-lane event path with a closed-loop executive planner la
      - `今天能不能安心合併：可以 / 先不要`
      - `今天能不能安心發布：可以 / 先不要`
      - `若不能，先看哪一條線：routing / planner / release / 無`
+   - trend mode reuses existing release/self-check history only:
+     - `npm run daily-status -- --trend`
+     - `npm run daily-status -- --trend --trend-count <n>`
+     - human-readable trend output only answers:
+       - `最近趨勢：穩定 / 改善 / 惡化`
+       - `最常變動：routing / planner / release / 無`
+     - trend JSON only returns `trend_summary`:
+       - `sample_count`
+       - `trend`
+       - `most_changed_line`
+       - `recent_runs`
+     - each `recent_runs` item only keeps:
+       - `run_id`
+       - `timestamp`
+       - `routing_status`
+       - `planner_status`
+       - `release_status`
+       - `overall_recommendation`
+     - trend data source stays bounded:
+       - release line comes from `.tmp/release-check-history/`
+       - routing/planner lines come from `.tmp/system-self-check-history/`
+       - release snapshots pair to the nearest archived self-check snapshot at or before the same release timestamp
    - compare mode reuses release-check history only:
      - `npm run daily-status -- --compare-previous`
      - `npm run daily-status -- --compare-snapshot <run-id|path>`

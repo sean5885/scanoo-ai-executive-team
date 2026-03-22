@@ -10,6 +10,8 @@ import {
   buildDailyStatusCompareSummary,
   buildDailyStatusHumanSummary,
   buildDailyStatusReport,
+  buildDailyStatusTrendSummary,
+  renderDailyStatusTrendReport,
   renderDailyStatusCompareReport,
   renderDailyStatusReport,
 } from "../src/daily-status.mjs";
@@ -17,7 +19,9 @@ import { runPlannerContractConsistencyCheck } from "../src/planner-contract-cons
 import { archivePlannerDiagnosticsSnapshot } from "../src/planner-diagnostics-history.mjs";
 import { buildRoutingDiagnosticsSummary } from "../src/routing-eval-diagnostics.mjs";
 import { archiveRoutingDiagnosticsSnapshot } from "../src/routing-diagnostics-history.mjs";
+import { archiveReleaseCheckSnapshot } from "../src/release-check-history.mjs";
 import { runRoutingEval } from "../src/routing-eval.mjs";
+import { archiveSystemSelfCheckSnapshot } from "../src/system-self-check-history.mjs";
 
 async function readJson(filePath) {
   return JSON.parse(await readFile(filePath, "utf8"));
@@ -78,6 +82,119 @@ async function seedDailyStatusArchives() {
     plannerArchiveDir,
     releaseCheckArchiveDir,
     routingArchiveDir,
+    selfCheckArchiveDir,
+  };
+}
+
+function buildTrendSelfCheckReport({
+  routingStatus = "pass",
+  plannerStatus = "pass",
+  safeToChange = true,
+} = {}) {
+  return {
+    ok: safeToChange,
+    system_summary: {
+      status: safeToChange ? "pass" : "fail",
+      safe_to_change: safeToChange,
+      core_checks: "pass",
+      routing_status: routingStatus,
+      planner_gate: plannerStatus,
+      has_obvious_regression: routingStatus === "degrade",
+    },
+    routing_summary: {
+      status: routingStatus,
+    },
+    planner_summary: {
+      gate: plannerStatus,
+    },
+  };
+}
+
+function buildTrendReleaseReport({
+  releaseStatus = "pass",
+  blockingChecks = [],
+} = {}) {
+  return {
+    overall_status: releaseStatus,
+    blocking_checks: blockingChecks,
+    suggested_next_step: blockingChecks.length > 0 ? `check ${blockingChecks[0]}` : null,
+  };
+}
+
+async function seedDailyStatusTrendArchives() {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "daily-status-trend-"));
+  const selfCheckArchiveDir = path.join(baseDir, "self-check");
+  const releaseCheckArchiveDir = path.join(baseDir, "release-check");
+  const entries = [
+    {
+      selfCheckTimestamp: "2026-03-18T00:00:00.000Z",
+      releaseTimestamp: "2026-03-18T00:00:01.000Z",
+      routingStatus: "pass",
+      plannerStatus: "pass",
+      releaseStatus: "pass",
+      safeToChange: true,
+      blockingChecks: [],
+    },
+    {
+      selfCheckTimestamp: "2026-03-19T00:00:00.000Z",
+      releaseTimestamp: "2026-03-19T00:00:01.000Z",
+      routingStatus: "degrade",
+      plannerStatus: "pass",
+      releaseStatus: "fail",
+      safeToChange: false,
+      blockingChecks: ["routing_regression"],
+    },
+    {
+      selfCheckTimestamp: "2026-03-20T00:00:00.000Z",
+      releaseTimestamp: "2026-03-20T00:00:01.000Z",
+      routingStatus: "pass",
+      plannerStatus: "pass",
+      releaseStatus: "pass",
+      safeToChange: true,
+      blockingChecks: [],
+    },
+    {
+      selfCheckTimestamp: "2026-03-21T00:00:00.000Z",
+      releaseTimestamp: "2026-03-21T00:00:01.000Z",
+      routingStatus: "degrade",
+      plannerStatus: "pass",
+      releaseStatus: "fail",
+      safeToChange: false,
+      blockingChecks: ["routing_regression"],
+    },
+    {
+      selfCheckTimestamp: "2026-03-22T00:00:00.000Z",
+      releaseTimestamp: "2026-03-22T00:00:01.000Z",
+      routingStatus: "pass",
+      plannerStatus: "fail",
+      releaseStatus: "fail",
+      safeToChange: false,
+      blockingChecks: ["planner_contract_failure"],
+    },
+  ];
+
+  for (const entry of entries) {
+    await archiveSystemSelfCheckSnapshot({
+      baseDir: selfCheckArchiveDir,
+      timestamp: entry.selfCheckTimestamp,
+      report: buildTrendSelfCheckReport({
+        routingStatus: entry.routingStatus,
+        plannerStatus: entry.plannerStatus,
+        safeToChange: entry.safeToChange,
+      }),
+    });
+    await archiveReleaseCheckSnapshot({
+      baseDir: releaseCheckArchiveDir,
+      timestamp: entry.releaseTimestamp,
+      report: buildTrendReleaseReport({
+        releaseStatus: entry.releaseStatus,
+        blockingChecks: entry.blockingChecks,
+      }),
+    });
+  }
+
+  return {
+    releaseCheckArchiveDir,
     selfCheckArchiveDir,
   };
 }
@@ -276,6 +393,105 @@ test("daily-status compare report keeps the daily summary and adds one reason li
   ].join("\n"));
 });
 
+test("daily-status trend summary reports worsening trend and the most changed line", () => {
+  const trendSummary = buildDailyStatusTrendSummary({
+    recent_runs: [
+      {
+        run_id: "release-check-5",
+        timestamp: "2026-03-22T00:00:01.000Z",
+        routing_status: "pass",
+        planner_status: "fail",
+        release_status: "fail",
+        overall_recommendation: "check_planner_first",
+      },
+      {
+        run_id: "release-check-4",
+        timestamp: "2026-03-21T00:00:01.000Z",
+        routing_status: "degrade",
+        planner_status: "pass",
+        release_status: "fail",
+        overall_recommendation: "check_routing_first",
+      },
+      {
+        run_id: "release-check-3",
+        timestamp: "2026-03-20T00:00:01.000Z",
+        routing_status: "pass",
+        planner_status: "pass",
+        release_status: "pass",
+        overall_recommendation: "safe_to_develop_merge_release",
+      },
+      {
+        run_id: "release-check-2",
+        timestamp: "2026-03-19T00:00:01.000Z",
+        routing_status: "degrade",
+        planner_status: "pass",
+        release_status: "fail",
+        overall_recommendation: "check_routing_first",
+      },
+      {
+        run_id: "release-check-1",
+        timestamp: "2026-03-18T00:00:01.000Z",
+        routing_status: "pass",
+        planner_status: "pass",
+        release_status: "pass",
+        overall_recommendation: "safe_to_develop_merge_release",
+      },
+    ],
+  });
+
+  assert.deepEqual(trendSummary, {
+    sample_count: 5,
+    trend: "worsening",
+    most_changed_line: "routing",
+    recent_runs: [
+      {
+        run_id: "release-check-5",
+        timestamp: "2026-03-22T00:00:01.000Z",
+        routing_status: "pass",
+        planner_status: "fail",
+        release_status: "fail",
+        overall_recommendation: "check_planner_first",
+      },
+      {
+        run_id: "release-check-4",
+        timestamp: "2026-03-21T00:00:01.000Z",
+        routing_status: "degrade",
+        planner_status: "pass",
+        release_status: "fail",
+        overall_recommendation: "check_routing_first",
+      },
+      {
+        run_id: "release-check-3",
+        timestamp: "2026-03-20T00:00:01.000Z",
+        routing_status: "pass",
+        planner_status: "pass",
+        release_status: "pass",
+        overall_recommendation: "safe_to_develop_merge_release",
+      },
+      {
+        run_id: "release-check-2",
+        timestamp: "2026-03-19T00:00:01.000Z",
+        routing_status: "degrade",
+        planner_status: "pass",
+        release_status: "fail",
+        overall_recommendation: "check_routing_first",
+      },
+      {
+        run_id: "release-check-1",
+        timestamp: "2026-03-18T00:00:01.000Z",
+        routing_status: "pass",
+        planner_status: "pass",
+        release_status: "pass",
+        overall_recommendation: "safe_to_develop_merge_release",
+      },
+    ],
+  });
+  assert.equal(renderDailyStatusTrendReport(trendSummary), [
+    "最近趨勢：惡化",
+    "最常變動：routing",
+  ].join("\n"));
+});
+
 test("daily-status CLI renders the bounded human summary", async () => {
   const archives = await seedDailyStatusArchives();
   const output = execFileSync("node", ["scripts/daily-status.mjs"], {
@@ -317,6 +533,63 @@ test("daily-status CLI emits the minimal json report with --json", async () => {
     planner_status: "pass",
     release_status: "pass",
     overall_recommendation: "safe_to_develop_merge_release",
+  });
+});
+
+test("daily-status CLI trend renders only the trend verdict and most changed line", async () => {
+  const archives = await seedDailyStatusTrendArchives();
+  const output = execFileSync("node", ["scripts/daily-status.mjs", "--trend"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+      RELEASE_CHECK_ARCHIVE_DIR: archives.releaseCheckArchiveDir,
+    },
+  });
+
+  assert.equal(output.trim(), [
+    "最近趨勢：惡化",
+    "最常變動：routing",
+  ].join("\n"));
+});
+
+test("daily-status CLI trend json returns the minimal trend_summary", async () => {
+  const archives = await seedDailyStatusTrendArchives();
+  const raw = execFileSync("node", ["scripts/daily-status.mjs", "--trend", "--trend-count", "2", "--json"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+      RELEASE_CHECK_ARCHIVE_DIR: archives.releaseCheckArchiveDir,
+    },
+  });
+
+  assert.deepEqual(JSON.parse(raw), {
+    trend_summary: {
+      sample_count: 2,
+      trend: "stable",
+      most_changed_line: "routing",
+      recent_runs: [
+        {
+          run_id: "release-check-20260322T000001000Z",
+          timestamp: "2026-03-22T00:00:01.000Z",
+          routing_status: "pass",
+          planner_status: "fail",
+          release_status: "fail",
+          overall_recommendation: "check_planner_first",
+        },
+        {
+          run_id: "release-check-20260321T000001000Z",
+          timestamp: "2026-03-21T00:00:01.000Z",
+          routing_status: "degrade",
+          planner_status: "pass",
+          release_status: "fail",
+          overall_recommendation: "check_routing_first",
+        },
+      ],
+    },
   });
 });
 

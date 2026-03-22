@@ -486,6 +486,26 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
     - `今天能不能安心發布`
     - `若不能，先看哪一條線`
   - expose read-only `daily-status` compare through `--compare-previous` and `--compare-snapshot <run-id|path>`
+  - expose read-only `daily-status` trend through `--trend` and `--trend --trend-count <n>`
+  - keep `daily-status` trend human output bounded to two lines only:
+    - `最近趨勢`
+    - `最常變動`
+  - keep `daily-status -- --trend --json` bounded to:
+    - `trend_summary.sample_count`
+    - `trend_summary.trend`
+    - `trend_summary.most_changed_line`
+    - `trend_summary.recent_runs`
+  - keep each `trend_summary.recent_runs` item bounded to:
+    - `run_id`
+    - `timestamp`
+    - `routing_status`
+    - `planner_status`
+    - `release_status`
+    - `overall_recommendation`
+  - keep `daily-status` trend source read-only and bounded:
+    - release status/history comes from `release-check-history`
+    - routing/planner status/history comes from `system-self-check-history`
+    - trend does not create a new daily-status archive
   - keep `daily-status` compare human output bounded to the same four daily lines plus one extra line only:
     - `為什麼變差`
   - keep `daily-status -- --json` bounded to:
