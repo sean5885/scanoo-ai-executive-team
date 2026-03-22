@@ -839,6 +839,12 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - scores documents by keyword presence, first-hit position, repeated exact-hit count, and a small boundary-like boost when the keyword appears adjacent to spaces
   - not connected to sync ingestion, SQLite persistence, planner routes, or company-brain approval/governance paths
 
+- `/Users/seanhan/Documents/Playground/src/knowledge/snippet-cleaner.mjs`
+  - local snippet cleanup helper for knowledge previews
+  - exposes `cleanSnippet(text, keyword) -> string`
+  - trims the input, removes Markdown heading markers and Markdown link wrappers while keeping link text, strips list-marker fragments and stray backticks, removes macOS/Unix-style absolute path fragments, removes simple heading-like prefixes plus common title-style prefixes such as `Purpose` / `Overview` / `Summary`, collapses whitespace, optionally narrows the preview to roughly ±60 characters around the first case-insensitive keyword hit, trims leading punctuation/noise, and caps the final preview at 120 characters plus `...`
+  - currently wired into `/Users/seanhan/Documents/Playground/src/planner/knowledge-bridge.mjs` for returned source previews, but not wired into `knowledge-service.mjs`, SQLite persistence, or company-brain approval/governance paths
+
 - `/Users/seanhan/Documents/Playground/src/knowledge/knowledge-service.mjs`
   - local cached knowledge query helper
   - lazily loads `./docs/system` into memory once per process, performs case-insensitive keyword lookup over the cached index, and then reorders the matching docs through `rankResults(docs, keyword)`
@@ -868,7 +874,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - exposes async `plannerAnswer({ keyword, question }) -> { answer, count, sources }`
   - prefers an explicit `keyword`; otherwise uses `parseIntent(question)` to derive one fail-soft before querying local planner-side knowledge previews
   - expands that final keyword through `rewriteQuery(keyword, question)`, queries local knowledge previews once per expanded key, merges all preview rows, and deduplicates them by `id` before summarization
-  - summarizes merged rows through `summarizeWithMinimax({ keyword, results })` and still fail-soft falls back to `buildAnswer(keyword, results)` when summarization fails; also returns `sources` as the deduplicated preview rows in summary order with 1-based indices; when neither the keyword nor parsed question yields a usable search term it returns `{ answer: "請提供查詢關鍵字", count: 0, sources: [] }`
+  - summarizes merged rows through `summarizeWithMinimax({ keyword, results })` and still fail-soft falls back to `buildAnswer(keyword, results)` when summarization fails; also returns `sources` as the deduplicated preview rows in summary order with 1-based indices, but each exposed `snippet` is now normalized through `/Users/seanhan/Documents/Playground/src/knowledge/snippet-cleaner.mjs` using the final keyword before it is returned; when neither the keyword nor parsed question yields a usable search term it returns `{ answer: "請提供查詢關鍵字", count: 0, sources: [] }`
   - not wired into `executive-planner.mjs`, planner contract routing, SQLite persistence, or company-brain approval/governance paths
 
 - `/Users/seanhan/Documents/Playground/src/planner/llm-summary.mjs`
