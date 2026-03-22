@@ -3,6 +3,13 @@ import { searchDocsByKeyword } from './doc-index.mjs';
 import { rankResults } from './rank-results.mjs';
 
 let cachedIndex = null;
+const QUERY_NORMALIZATION_MAP = {
+  '交付': 'delivery',
+  '流程': 'process',
+  '設計': 'design',
+  '商機': 'business',
+  '管理': 'management',
+};
 
 export function getIndex() {
   if (!cachedIndex) cachedIndex = loadDocsFromDir('./docs/system');
@@ -99,6 +106,49 @@ export function filterKnowledgeContextResults(results = [], keyword = "") {
     .slice(0, 3);
 }
 
+function normalizeKnowledgeQueries(keyword) {
+  const raw = typeof keyword === 'string' ? keyword.trim() : '';
+  if (!raw) return [];
+
+  const variants = [raw];
+  const latinTokens = raw.match(/[A-Za-z0-9][A-Za-z0-9_-]*/g) || [];
+  variants.push(...latinTokens);
+
+  Object.entries(QUERY_NORMALIZATION_MAP).forEach(([source, target]) => {
+    if (raw.includes(source)) {
+      variants.push(source, target);
+    }
+  });
+
+  return Array.from(
+    new Set(
+      variants
+        .map(value => value.trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
 export function queryKnowledgeWithContext(keyword) {
-  return filterKnowledgeContextResults(queryKnowledgeWithSnippet(keyword), keyword);
+  const queries = normalizeKnowledgeQueries(keyword);
+  const merged = [];
+  const seen = new Set();
+
+  queries.forEach((query) => {
+    if (merged.length >= 3) return;
+
+    const results = filterKnowledgeContextResults(
+      queryKnowledgeWithSnippet(query),
+      query,
+    );
+
+    results.forEach((result) => {
+      if (merged.length >= 3) return;
+      if (!result?.id || seen.has(result.id)) return;
+      seen.add(result.id);
+      merged.push(result);
+    });
+  });
+
+  return merged;
 }
