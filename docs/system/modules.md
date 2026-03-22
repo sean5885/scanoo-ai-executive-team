@@ -841,7 +841,14 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 
 - `/Users/seanhan/Documents/Playground/src/planner/knowledge-bridge.mjs`
   - local planner-side bridge over `queryKnowledgeWithContext(keyword)`
-  - exposes `plannerQueryKnowledge({ keyword }) -> { count, results }`
+  - exposes `plannerAnswer({ keyword }) -> { answer, count }`
+  - reads the same local `{ id, snippet }` preview rows and formats them through `buildAnswer(keyword, results)`
+  - not wired into `executive-planner.mjs`, planner contract routing, SQLite persistence, or company-brain approval/governance paths
+
+- `/Users/seanhan/Documents/Playground/src/planner/answer-builder.mjs`
+  - local planner-side formatter for knowledge preview results
+  - exposes `buildAnswer(keyword, results) -> string`
+  - returns a fixed Chinese no-result message when `results` is empty and otherwise renders each `{ id, snippet }` row as a bullet list
   - not wired into `executive-planner.mjs`, planner contract routing, SQLite persistence, or company-brain approval/governance paths
 
 - `/Users/seanhan/Documents/Playground/src/runtime-contract.mjs`
