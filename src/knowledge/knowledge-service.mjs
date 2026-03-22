@@ -9,6 +9,9 @@ const QUERY_NORMALIZATION_MAP = {
   '設計': 'design',
   '商機': 'business',
   '管理': 'management',
+  '系統': 'runtime system status',
+  '穩不穩': 'stability health runtime status',
+  '運行情況': 'runtime status health',
 };
 
 export function getIndex() {

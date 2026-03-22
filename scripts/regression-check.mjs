@@ -19,6 +19,9 @@ ok = run("node scripts/retrieval-eval.mjs") && ok;
 // 2. routing
 ok = run("node tests/routing-eval-lite.mjs") && ok;
 
+// 3. real-world retrieval
+ok = run("node scripts/retrieval-realworld-eval.mjs") && ok;
+
 // summary
 console.log("\nREGRESSION RESULT:", ok ? "PASS" : "FAIL");
 

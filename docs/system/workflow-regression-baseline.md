@@ -196,6 +196,7 @@ Thread 42 daily-entry checkpoint 補上固定 `routing:diagnostics` 日常入口
 
 ```bash
 node scripts/regression-check.mjs
+node scripts/retrieval-realworld-eval.mjs
 npm run routing:closed-loop
 npm run routing:closed-loop -- rerun
 npm run routing:diagnostics
@@ -211,7 +212,8 @@ node --test tests/routing-eval-decision-advice.test.mjs tests/routing-eval-close
 
 用途：
 
-- `node scripts/regression-check.mjs` 提供最小的 read-side regression quick check，固定串接 `scripts/retrieval-eval.mjs` 與 `tests/routing-eval-lite.mjs`
+- `node scripts/regression-check.mjs` 提供最小的 read-side regression quick check，固定串接 `scripts/retrieval-eval.mjs`、`tests/routing-eval-lite.mjs` 與 `scripts/retrieval-realworld-eval.mjs`
+- `node scripts/retrieval-realworld-eval.mjs` 提供額外的 read-side retrieval smoke check，使用 checked-in 的真實問法風格 query set 量測 HIT / MISS 與命中率
 - 驗證 checked-in deterministic routing baseline 是否仍與 eval set 一致
 - 這份 checked-in 結果即為 routing eval regression gate baseline v2（`routing-eval-baseline-v2`）
 - 提供 `lane / planner_action / agent_or_tool / latency` 的固定 regression 量測
