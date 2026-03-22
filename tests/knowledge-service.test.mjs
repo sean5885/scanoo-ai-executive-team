@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { cleanSnippet as cleanKnowledgeSnippet } from "../src/knowledge/snippet-cleaner.mjs";
 import { filterKnowledgeContextResults } from "../src/knowledge/knowledge-service.mjs";
 import { plannerAnswer } from "../src/planner/knowledge-bridge.mjs";
 import { parseIntent } from "../src/planner/intent-parser.mjs";
@@ -50,6 +51,17 @@ test("filterKnowledgeContextResults keeps at most three non-label snippets", () 
     { id: "c", snippet: "This second preview also contains a complete sentence with enough detail to survive filtering." },
     { id: "d", snippet: "This third preview stays because it is descriptive and not just a short metadata label." },
   ]);
+});
+
+test("cleanSnippet strips navigation artifacts at the start of previews", () => {
+  assert.equal(
+    cleanKnowledgeSnippet("Back to README.md\nLoop Runbook: planner verification keeps evidence requirements explicit.", "verification"),
+    "planner verification keeps evidence requirements explicit.",
+  );
+  assert.equal(
+    cleanKnowledgeSnippet("Delivery Guide - owner and deadline are required for action items.", "deadline"),
+    "owner and deadline are required for action items.",
+  );
 });
 
 test("plannerAnswer uses injected summarizer and passes filtered live previews", async () => {

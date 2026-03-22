@@ -92,9 +92,13 @@ export function queryKnowledgeWithSnippet(keyword) {
   }));
 }
 
-export function queryKnowledgeWithContext(keyword) {
-  return queryKnowledgeWithSnippet(keyword)
-    .filter(r => isRelevantSnippet(r.snippet, keyword))
-    .filter(r => !isLowValueSnippet(r.snippet))
+export function filterKnowledgeContextResults(results = [], keyword = "") {
+  return (Array.isArray(results) ? results : [])
+    .filter(r => !keyword || isRelevantSnippet(r?.snippet, keyword))
+    .filter(r => !isLowValueSnippet(r?.snippet))
     .slice(0, 3);
+}
+
+export function queryKnowledgeWithContext(keyword) {
+  return filterKnowledgeContextResults(queryKnowledgeWithSnippet(keyword), keyword);
 }

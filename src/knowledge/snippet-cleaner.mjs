@@ -24,6 +24,11 @@ export function cleanSnippet(text, keyword) {
   t = t.replace(/^[A-Za-z\s\/]+-\s*/, '');
   if (/^[A-Za-z\s]+\/[A-Za-z\s]+$/.test(t)) return '';
 
+  // 去掉導覽殘片，例如 "Back to README.md" 或頁首的 Runbook/Guide 標題
+  t = t.replace(/(^|\n)\s*Back to\s+[^\n]+(?=\n|$)/gi, '$1');
+  t = t.replace(/^\s*[A-Za-z0-9][A-Za-z0-9\s/_-]*\s+(Runbook|Guide|README)\b[:\-]?\s*/i, '');
+  t = t.replace(/^\s*(Runbook|Guide|README)\b[:\-]?\s*/i, '');
+
   // 空白正規化
   t = t.replace(/\s+/g, ' ').trim();
 
