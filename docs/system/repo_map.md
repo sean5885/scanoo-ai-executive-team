@@ -6,7 +6,11 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 - `/Users/seanhan/Documents/Playground/src`
   - Main Node service code.
-  - Contains OAuth, HTTP API, sync, indexing, Lark content operations, search/answer, organization flows, semantic classification, and security bridge.
+  - Contains OAuth, HTTP API, sync, indexing, Lark content operations, search/answer, organization flows, semantic classification, security bridge, and small local knowledge helpers.
+
+- `/Users/seanhan/Documents/Playground/src/knowledge`
+  - Local knowledge helper directory.
+  - Currently contains only an in-memory document index helper and is not wired into the main runtime, retrieval index, or company-brain approval path.
 
 - `/Users/seanhan/Documents/Playground/openclaw-plugin/lark-kb`
   - OpenClaw plugin package.
@@ -79,6 +83,9 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 - Comment-driven doc rewrite
   - `/Users/seanhan/Documents/Playground/src/doc-comment-rewrite.mjs`
+
+- Local knowledge helpers
+  - `/Users/seanhan/Documents/Playground/src/knowledge/doc-index.mjs`
 
 - OpenClaw tool layer
   - `/Users/seanhan/Documents/Playground/openclaw-plugin/lark-kb/index.ts`

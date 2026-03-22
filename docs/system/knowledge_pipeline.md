@@ -28,9 +28,13 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `/Users/seanhan/Documents/Playground/src/db.mjs`
 - repository:
   - `/Users/seanhan/Documents/Playground/src/rag-repository.mjs`
+- local helper:
+  - `/Users/seanhan/Documents/Playground/src/knowledge/doc-index.mjs`
 - document metadata is stored in:
   - `lark_sources`
   - `lark_documents`
+- `/Users/seanhan/Documents/Playground/src/knowledge/doc-index.mjs` now provides a small in-memory helper with `{ version, docs[] }`, `addDoc`, `findDocById`, and substring `searchDocs`
+- this helper is not connected to SQLite, sync ingestion, planner/company-brain routes, or approved-knowledge governance; it is only a local utility module at this time
 - API-created docx files can also be inserted into the same temporary index directly from `/api/doc/create`, using normalized metadata `{ doc_id, source, created_at, creator: { account_id, open_id }, title, folder_token }`
 - API-created docx files can also carry a minimal lifecycle in `lark_documents`: `status`, `indexed_at`, `verified_at`, `failure_reason`
 - lifecycle rows can be queried from `/api/doc/lifecycle?status=...`, and only `index_failed` / `verify_failed` may be retried through `/api/doc/lifecycle/retry`
