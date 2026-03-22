@@ -54,6 +54,22 @@ npm run routing:diagnostics -- --compare-tag routing-eval-baseline-v2
 
 - [/Users/seanhan/Documents/Playground/docs/system/routing_eval_closed_loop_runbook.md](/Users/seanhan/Documents/Playground/docs/system/routing_eval_closed_loop_runbook.md)
 
+## 每天怎麼用
+
+這組快捷入口目前已固定為 Thread 60 CLI shortcuts checkpoint。
+
+最短命令表：
+
+| 目的 | 最短命令 | 對應既有 CLI |
+| --- | --- | --- |
+| 今日總覽 | `npm run check:daily` | `npm run daily-status` |
+| 完整自檢 | `npm run check:self` | `npm run self-check` |
+| 合併 / 發布前檢查 | `npm run check:release` | `npm run release-check` |
+| 看 routing 線 | `npm run check:routing` | `npm run routing:diagnostics` |
+| 看 planner 線 | `npm run check:planner` | `npm run planner:diagnostics` |
+
+這些 `check:*` 只是 wrapper，僅轉呼叫既有 CLI，不改輸出格式、不加判斷、不做 auto-fix。
+
 ## 架構說明
 
 ### OAuth

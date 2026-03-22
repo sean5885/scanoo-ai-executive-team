@@ -272,7 +272,12 @@ This is now a capability-lane event path with a closed-loop executive planner la
 
 ## Governance / Health Flow
 
+Thread 60 CLI shortcuts checkpoint:
+
+5 個 `check:*` script 現在作為既有 health / diagnostics CLI 的 wrapper-only shortcuts 保留在 `package.json`，只做轉呼叫，不新增邏輯、不改 gate、不新增 fallback，也不改輸出格式。
+
 1. `npm run daily-status`
+   - shortcut wrapper: `npm run check:daily`
 2. local daily-entry = `scripts/daily-status.mjs`
 3. `daily-status` internally reuses the current `runReleaseCheck(...)` path from `src/release-check.mjs`; it does not introduce a new gate, new fallback, or auto-fix path
 4. `daily-status` compresses the same checked-in evidence into one daily operator answer:
@@ -338,6 +343,7 @@ This is now a capability-lane event path with a closed-loop executive planner la
      - it does not add fallback
      - it does not auto-fix anything
 5. `npm run release-check`
+   - shortcut wrapper: `npm run check:release`
 6. local operator entry = `scripts/release-check.mjs`; CI/pipeline entry = `scripts/release-check-ci.mjs`
 7. release-check internally reuses `runSystemSelfCheck(...)` from `src/system-self-check.mjs`
 8. self-check validates:
@@ -411,17 +417,24 @@ This is now a capability-lane event path with a closed-loop executive planner la
    - routing line = archived behavior regression evidence from latest snapshot / compare (`accuracy_ratio`, `trend_report`, `decision_advice`, error drift)
    - planner line = current runtime / contract drift evidence (`gate`, `undefined_actions`, `undefined_presets`, `selector_contract_mismatches`, `deprecated_reachable_targets`)
 12. when to run each entry:
-   - first daily glance: run `npm run daily-status` when you want one bounded answer for today whether the repo is safe to develop / merge / release, plus the first line to inspect
-   - fuller local diagnosis: run `npm run self-check` when you need the base/routing/planner breakdown and guidance text
-   - merge/release preflight: run `npm run release-check` when a developer wants the bounded merge/release verdict plus the existing fail drilldown
+   - first daily glance: run `npm run daily-status` or `npm run check:daily` when you want one bounded answer for today whether the repo is safe to develop / merge / release, plus the first line to inspect
+   - fuller local diagnosis: run `npm run self-check` or `npm run check:self` when you need the base/routing/planner breakdown and guidance text
+   - merge/release preflight: run `npm run release-check` or `npm run check:release` when a developer wants the bounded merge/release verdict plus the existing fail drilldown
    - CI/pipeline use: run `npm run release-check:ci` when a job needs machine-readable JSON plus strict exit code
    - PR validation: if the PR changes planner contract, selector/route wiring, release gate scripts, or `docs/system` governance/runtime docs tied to those checks, `release-check:ci` must run in the PR pipeline
    - merge gate: run `npm run release-check:ci` before allowing merge to the protected branch
    - release gate: rerun `npm run release-check:ci` in the release/deploy pipeline before deployment
-   - run `npm run self-check` during normal development when `daily-status` already says not safe and you need the fuller base/routing/planner summary
+   - run `npm run self-check` or `npm run check:self` during normal development when `daily-status` already says not safe and you need the fuller base/routing/planner summary
    - `release-check` does not replace `npm test` or other release verification commands; it only compresses the governance/readiness lines above into one preflight verdict
-13. default `self-check` CLI output is still the short human-readable verdict; `npm run self-check -- --json` emits the full JSON report for CI or follow-up tooling
-14. compare mode is also available on the same read-only path:
+13. shortcut wrappers are wrapper-only aliases over the same checked-in CLIs:
+   - `npm run check:daily` -> `npm run daily-status`
+   - `npm run check:self` -> `npm run self-check`
+   - `npm run check:release` -> `npm run release-check`
+   - `npm run check:routing` -> `npm run routing:diagnostics`
+   - `npm run check:planner` -> `npm run planner:diagnostics`
+   - wrappers do not change routing, planner gate rules, release gate rules, output shape, fallback behavior, or auto-fix behavior
+14. default `self-check` CLI output is still the short human-readable verdict; `npm run self-check -- --json` emits the full JSON report for CI or follow-up tooling
+15. compare mode is also available on the same read-only path:
    - `npm run self-check -- --compare-previous`
    - `npm run self-check -- --compare-snapshot <run-id|path>`
    - compare output stays minimal and only answers:
@@ -429,7 +442,7 @@ This is now a capability-lane event path with a closed-loop executive planner la
      - whether `routing` regressed
      - whether `planner` regressed
    - compare does not modify routing, add fallback, change planner gate rules, or auto-fix anything
-11. release-check compare is also available on the same read-only archive path:
+16. release-check compare is also available on the same read-only archive path:
    - `npm run release-check -- --compare-previous`
    - `npm run release-check -- --compare-snapshot <run-id|path>`
    - `npm run release-check:ci -- --compare-previous`
