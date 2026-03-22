@@ -36,6 +36,24 @@ function normalizePlannerPayload(payload = {}) {
   return payload && typeof payload === "object" && !Array.isArray(payload) ? { ...payload } : {};
 }
 
+function normalizePlannerRouteDecision(route = null) {
+  if (!route || typeof route !== "object" || Array.isArray(route)) {
+    return {
+      action: "",
+      preset: "",
+      target: "",
+    };
+  }
+
+  const action = cleanText(route.action);
+  const preset = cleanText(route.preset);
+  return {
+    action,
+    preset,
+    target: action || preset,
+  };
+}
+
 function countPlannerFlowKeywordHits(userIntent = "", keywords = []) {
   const normalizedIntent = cleanText(String(userIntent || "").toLowerCase());
   if (!normalizedIntent || !Array.isArray(keywords) || keywords.length === 0) {
@@ -91,10 +109,12 @@ export function resolvePlannerFlowRoute({
       context,
       logger,
     });
-    if (route?.action) {
+    const routeDecision = normalizePlannerRouteDecision(route);
+    if (routeDecision.target) {
       bestCandidate = comparePlannerFlowCandidates(bestCandidate, {
         flow,
-        action: cleanText(route.action),
+        action: routeDecision.action || routeDecision.target,
+        preset: routeDecision.preset || "",
         payload: normalizePlannerPayload(route.payload),
         context,
         priority: normalizePlannerFlowPriority(flow),
@@ -108,6 +128,7 @@ export function resolvePlannerFlowRoute({
     return {
       flow: bestCandidate.flow,
       action: bestCandidate.action,
+      ...(bestCandidate.preset ? { preset: bestCandidate.preset } : {}),
       payload: bestCandidate.payload,
       context: bestCandidate.context,
     };

@@ -100,6 +100,25 @@ function supportsBdAction(action = "") {
   ].includes(cleanText(action));
 }
 
+function buildBdRouteResult(action = "", payload = {}) {
+  const normalizedAction = cleanText(action);
+  if (!normalizedAction) {
+    return {
+      payload,
+    };
+  }
+  if (normalizedAction === "search_and_detail_doc") {
+    return {
+      preset: normalizedAction,
+      payload,
+    };
+  }
+  return {
+    action: normalizedAction,
+    payload,
+  };
+}
+
 export function resolveBdFlowRoute({
   userIntent = "",
   payload = {},
@@ -127,8 +146,7 @@ export function resolveBdFlowRoute({
   }));
 
   return {
-    action,
-    payload: normalizedPayload,
+    ...buildBdRouteResult(action, normalizedPayload),
   };
 }
 

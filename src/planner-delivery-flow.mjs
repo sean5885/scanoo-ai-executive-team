@@ -98,6 +98,25 @@ function supportsDeliveryAction(action = "") {
   ].includes(cleanText(action));
 }
 
+function buildDeliveryRouteResult(action = "", payload = {}) {
+  const normalizedAction = cleanText(action);
+  if (!normalizedAction) {
+    return {
+      payload,
+    };
+  }
+  if (normalizedAction === "search_and_detail_doc") {
+    return {
+      preset: normalizedAction,
+      payload,
+    };
+  }
+  return {
+    action: normalizedAction,
+    payload,
+  };
+}
+
 export function resolveDeliveryFlowRoute({
   userIntent = "",
   payload = {},
@@ -125,8 +144,7 @@ export function resolveDeliveryFlowRoute({
   }));
 
   return {
-    action,
-    payload: normalizedPayload,
+    ...buildDeliveryRouteResult(action, normalizedPayload),
   };
 }
 

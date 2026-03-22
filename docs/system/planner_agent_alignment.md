@@ -134,6 +134,7 @@ This path is bounded by the checked-in planner contract:
 Checkpoint status:
 
 - `consistency-check checkpoint`
+- `contract-alignment checkpoint`
 
 Current checked-in consistency checker:
 
@@ -165,7 +166,8 @@ Current checked-in code truth from this checker:
 - no undefined planner actions were found in the current tool registry, preset steps, or sampled route outputs
 - no undefined planner presets were found in the current preset registry
 - no deprecated reachable targets were found because the current planner contract does not yet mark any target as deprecated
-- the current drift comes from `search_and_detail_doc`: it exists in the contract as a `preset`, but multiple hard-route / flow-route paths still emit it through an `action` slot
+- no selector/contract mismatches were found in the current checked-in router and flow-route outputs
+- `search_and_detail_doc` is now emitted from the doc-query router and themed flow routes through the preset slot rather than an action slot
 
 When to add/update contract:
 

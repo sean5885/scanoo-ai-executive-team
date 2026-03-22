@@ -2104,11 +2104,11 @@ test("router prefers search over detail when query contains both 搜尋 and 內�
 });
 
 test("router uses active doc for pronoun detail query and falls back when missing", () => {
-  assert.equal(
+  assert.deepEqual(
     route("這份文件裡面寫了什麼", { activeDoc: { doc_id: "doc_123", title: "Demo" } }),
-    "get_company_brain_doc_detail",
+    { action: "get_company_brain_doc_detail" },
   );
-  assert.equal(route("這份文件裡面寫了什麼"), "search_and_detail_doc");
+  assert.deepEqual(route("這份文件裡面寫了什麼"), { preset: "search_and_detail_doc" });
 });
 
 test("router uses active candidates for ordinal follow-up selection", () => {

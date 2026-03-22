@@ -2,7 +2,7 @@ import { oauthBaseUrl } from "./config.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import { ROUTING_NO_MATCH, isRoutingNoMatch } from "./planner-error-codes.mjs";
 import { createPlannerFlow } from "./planner-flow-runtime.mjs";
-import { route as routeDocQuery } from "./router.js";
+import { getRouteTarget, route as routeDocQuery } from "./router.js";
 
 const plannerDocQueryRuntimeContext = {
   active_doc: null,
@@ -317,10 +317,10 @@ export function selectDocQueryAction(userIntent = "", {
   activeDoc = null,
   activeCandidates = [],
 } = {}) {
-  return routeDocQuery(userIntent, {
+  return getRouteTarget(routeDocQuery(userIntent, {
     activeDoc,
     activeCandidates,
-  });
+  }));
 }
 
 export function resolveDocQueryRoute({
@@ -330,11 +330,12 @@ export function resolveDocQueryRoute({
   activeCandidates = [],
   logger = console,
 } = {}) {
-  const selectedAction = selectDocQueryAction(userIntent, {
+  const routeDecision = routeDocQuery(userIntent, {
     activeDoc,
     activeCandidates,
   });
-  const action = isRoutingNoMatch(selectedAction) ? null : selectedAction;
+  const selectedTarget = getRouteTarget(routeDecision);
+  const action = isRoutingNoMatch(selectedTarget) ? null : selectedTarget;
   const routedPayload = buildDocQueryPayload({
     action,
     userIntent,
@@ -351,7 +352,8 @@ export function resolveDocQueryRoute({
     activeCandidates,
   }));
   return {
-    action,
+    ...(cleanText(routeDecision?.action) ? { action: cleanText(routeDecision.action) } : {}),
+    ...(cleanText(routeDecision?.preset) ? { preset: cleanText(routeDecision.preset) } : {}),
     payload: routedPayload,
     error: action ? null : ROUTING_NO_MATCH,
   };

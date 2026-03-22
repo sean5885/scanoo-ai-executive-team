@@ -104,6 +104,25 @@ function supportsOkrAction(action = "") {
   ].includes(cleanText(action));
 }
 
+function buildOkrRouteResult(action = "", payload = {}) {
+  const normalizedAction = cleanText(action);
+  if (!normalizedAction) {
+    return {
+      payload,
+    };
+  }
+  if (normalizedAction === "search_and_detail_doc") {
+    return {
+      preset: normalizedAction,
+      payload,
+    };
+  }
+  return {
+    action: normalizedAction,
+    payload,
+  };
+}
+
 export function resolveOkrFlowRoute({
   userIntent = "",
   payload = {},
@@ -130,8 +149,7 @@ export function resolveOkrFlowRoute({
   }));
 
   return {
-    action,
-    payload: normalizedPayload,
+    ...buildOkrRouteResult(action, normalizedPayload),
   };
 }
 

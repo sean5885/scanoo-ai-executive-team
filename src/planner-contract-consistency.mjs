@@ -102,6 +102,41 @@ function buildObservedSource({
   };
 }
 
+function buildObservedDecisionSources({
+  sourceId = "",
+  file = "",
+  kind = "",
+  decisions = [],
+} = {}) {
+  const actionTargets = uniqTargets(
+    decisions.map((decision) => cleanText(decision?.action)),
+  );
+  const presetTargets = uniqTargets(
+    decisions.map((decision) => cleanText(decision?.preset)),
+  );
+
+  return [
+    actionTargets.length > 0
+      ? buildObservedSource({
+          sourceId: `${sourceId}:action`,
+          file,
+          kind,
+          allowedKinds: ["action"],
+          targets: actionTargets,
+        })
+      : null,
+    presetTargets.length > 0
+      ? buildObservedSource({
+          sourceId: `${sourceId}:preset`,
+          file,
+          kind,
+          allowedKinds: ["preset"],
+          targets: presetTargets,
+        })
+      : null,
+  ].filter(Boolean);
+}
+
 function observePlannerSelectorTargets() {
   const selectorSamples = [
     { userIntent: "建立文件並查詢", taskType: "" },
@@ -123,7 +158,7 @@ function observePlannerSelectorTargets() {
 }
 
 function observeDocQueryRouterTargets() {
-  return uniqTargets([
+  return [
     routeDocQuery("找 OKR 文件"),
     routeDocQuery("整理這份文件"),
     routeDocQuery("這份文件寫了什麼", {
@@ -132,25 +167,25 @@ function observeDocQueryRouterTargets() {
         title: "Active doc",
       },
     }),
-  ]);
+  ];
 }
 
 function observeDocQueryFlowTargets() {
-  return uniqTargets([
+  return [
     resolveDocQueryRoute({
       userIntent: "找 OKR 文件",
       payload: {},
       activeDoc: null,
       activeCandidates: [],
       logger: null,
-    })?.action,
+    }),
     resolveDocQueryRoute({
       userIntent: "整理這份文件",
       payload: {},
       activeDoc: null,
       activeCandidates: [],
       logger: null,
-    })?.action,
+    }),
     resolveDocQueryRoute({
       userIntent: "這份文件寫了什麼",
       payload: {},
@@ -160,8 +195,8 @@ function observeDocQueryFlowTargets() {
       },
       activeCandidates: [],
       logger: null,
-    })?.action,
-  ]);
+    }),
+  ];
 }
 
 function observeRuntimeInfoFlowTargets() {
@@ -175,19 +210,19 @@ function observeRuntimeInfoFlowTargets() {
 }
 
 function observeOkrFlowTargets() {
-  return uniqTargets([
+  return [
     resolveOkrFlowRoute({
       userIntent: "OKR 本週重點",
       payload: {},
       context: {},
       logger: null,
-    })?.action,
+    }),
     resolveOkrFlowRoute({
       userIntent: "整理 OKR 進度",
       payload: {},
       context: {},
       logger: null,
-    })?.action,
+    }),
     resolveOkrFlowRoute({
       userIntent: "這份文件寫了什麼",
       payload: {},
@@ -200,24 +235,24 @@ function observeOkrFlowTargets() {
         activeCandidates: [],
       },
       logger: null,
-    })?.action,
-  ]);
+    }),
+  ];
 }
 
 function observeBdFlowTargets() {
-  return uniqTargets([
+  return [
     resolveBdFlowRoute({
       userIntent: "BD 提案",
       payload: {},
       context: {},
       logger: null,
-    })?.action,
+    }),
     resolveBdFlowRoute({
       userIntent: "整理 BD 跟進",
       payload: {},
       context: {},
       logger: null,
-    })?.action,
+    }),
     resolveBdFlowRoute({
       userIntent: "這份文件寫了什麼",
       payload: {},
@@ -230,24 +265,24 @@ function observeBdFlowTargets() {
         activeCandidates: [],
       },
       logger: null,
-    })?.action,
-  ]);
+    }),
+  ];
 }
 
 function observeDeliveryFlowTargets() {
-  return uniqTargets([
+  return [
     resolveDeliveryFlowRoute({
       userIntent: "交付 SOP",
       payload: {},
       context: {},
       logger: null,
-    })?.action,
+    }),
     resolveDeliveryFlowRoute({
       userIntent: "整理交付驗收流程",
       payload: {},
       context: {},
       logger: null,
-    })?.action,
+    }),
     resolveDeliveryFlowRoute({
       userIntent: "這份文件寫了什麼",
       payload: {},
@@ -260,8 +295,8 @@ function observeDeliveryFlowTargets() {
         activeCandidates: [],
       },
       logger: null,
-    })?.action,
-  ]);
+    }),
+  ];
 }
 
 function dedupeFindings(findings = []) {
@@ -388,19 +423,17 @@ function collectObservedSources() {
       allowedKinds: ["action", "preset"],
       targets: observePlannerSelectorTargets(),
     }),
-    buildObservedSource({
+    ...buildObservedDecisionSources({
       sourceId: "doc_query_router",
       file: ROUTER_FILE,
       kind: "selector_route",
-      allowedKinds: ["action"],
-      targets: observeDocQueryRouterTargets(),
+      decisions: observeDocQueryRouterTargets(),
     }),
-    buildObservedSource({
+    ...buildObservedDecisionSources({
       sourceId: "planner_doc_query_flow.route",
       file: DOC_QUERY_FLOW_FILE,
       kind: "flow_route",
-      allowedKinds: ["action"],
-      targets: observeDocQueryFlowTargets(),
+      decisions: observeDocQueryFlowTargets(),
     }),
     buildObservedSource({
       sourceId: "planner_runtime_info_flow.route",
@@ -409,26 +442,23 @@ function collectObservedSources() {
       allowedKinds: ["action"],
       targets: observeRuntimeInfoFlowTargets(),
     }),
-    buildObservedSource({
+    ...buildObservedDecisionSources({
       sourceId: "planner_okr_flow.route",
       file: OKR_FLOW_FILE,
       kind: "flow_route",
-      allowedKinds: ["action"],
-      targets: observeOkrFlowTargets(),
+      decisions: observeOkrFlowTargets(),
     }),
-    buildObservedSource({
+    ...buildObservedDecisionSources({
       sourceId: "planner_bd_flow.route",
       file: BD_FLOW_FILE,
       kind: "flow_route",
-      allowedKinds: ["action"],
-      targets: observeBdFlowTargets(),
+      decisions: observeBdFlowTargets(),
     }),
-    buildObservedSource({
+    ...buildObservedDecisionSources({
       sourceId: "planner_delivery_flow.route",
       file: DELIVERY_FLOW_FILE,
       kind: "flow_route",
-      allowedKinds: ["action"],
-      targets: observeDeliveryFlowTargets(),
+      decisions: observeDeliveryFlowTargets(),
     }),
   ];
 }
