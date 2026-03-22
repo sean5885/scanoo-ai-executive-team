@@ -6,6 +6,7 @@ import path from "node:path";
 import { mkdtemp, mkdir } from "node:fs/promises";
 
 import {
+  buildReleaseCheckDrilldown,
   buildReleaseCheckReport,
   getReleaseCheckExitCode,
   renderReleaseCheckReport,
@@ -78,6 +79,9 @@ test("release-check report passes when self-check, routing, and planner are stab
     overall_status: "pass",
     blocking_checks: [],
     suggested_next_step: "目前這個入口沒有 blocking check；若要正式 release，仍需跑既有測試與發布驗證流程。",
+    failing_area: null,
+    representative_fail_case: [],
+    drilldown_source: [],
   });
 });
 
@@ -111,12 +115,20 @@ test("release-check report prioritizes routing before planner when both block", 
         failing_categories: ["undefined_actions"],
       },
     },
+    drilldown: {
+      failing_area: "doc",
+      representative_fail_case: ["doc-001 [doc] planner_action via planner_flow"],
+      drilldown_source: ["release-check triage", "routing-eval diagnostics/history"],
+    },
   });
 
   assert.deepEqual(report, {
     overall_status: "fail",
     blocking_checks: ["routing_regression", "planner_contract_failure"],
     suggested_next_step: "先看 routing regression 的 rule 模組：src/router.js 與 src/planner-*-flow.mjs。",
+    failing_area: "doc",
+    representative_fail_case: ["doc-001 [doc] planner_action via planner_flow"],
+    drilldown_source: ["release-check triage", "routing-eval diagnostics/history"],
   });
 });
 
@@ -149,12 +161,20 @@ test("release-check report classifies system regression and points to base modul
       },
       services: [],
     },
+    drilldown: {
+      failing_area: "mixed",
+      representative_fail_case: ["agent_missing:cmo"],
+      drilldown_source: ["release-check triage"],
+    },
   });
 
   assert.deepEqual(report, {
     overall_status: "fail",
     blocking_checks: ["system_regression"],
     suggested_next_step: "先看 system regression 的 agent registry / contract：src/agent-registry.mjs。",
+    failing_area: "mixed",
+    representative_fail_case: ["agent_missing:cmo"],
+    drilldown_source: ["release-check triage"],
   });
 });
 
@@ -181,25 +201,180 @@ test("release-check report points planner contract failure to planner registry f
         failing_categories: ["undefined_actions", "undefined_presets"],
       },
     },
+    drilldown: {
+      failing_area: "doc",
+      representative_fail_case: ["undefined_actions:search_and_detail_doc via planner_tool_registry"],
+      drilldown_source: ["release-check triage", "planner diagnostics/history"],
+    },
   });
 
   assert.deepEqual(report, {
     overall_status: "fail",
     blocking_checks: ["planner_contract_failure"],
     suggested_next_step: "先看 planner contract failure 的 registry 模組：src/executive-planner.mjs；只有 intentional stable target 才改 docs/system/planner_contract.json。",
+    failing_area: "doc",
+    representative_fail_case: ["undefined_actions:search_and_detail_doc via planner_tool_registry"],
+    drilldown_source: ["release-check triage", "planner diagnostics/history"],
   });
 });
 
-test("release-check human output stays limited to two answers", () => {
+test("release-check drilldown derives routing representative miss cases from history", () => {
+  const drilldown = buildReleaseCheckDrilldown({
+    selfCheckResult: {
+      routing_summary: {
+        status: "degrade",
+        compare: {
+          has_obvious_regression: true,
+        },
+      },
+      planner_summary: {
+        gate: "pass",
+        compare: {
+          has_obvious_regression: false,
+        },
+      },
+      system_summary: {
+        core_checks: "pass",
+      },
+    },
+    latestRoutingSnapshot: {
+      run: {
+        summary: {
+          top_miss_cases: [
+            {
+              id: "doc-001",
+              category: "doc",
+              miss_dimensions: ["planner_action"],
+              actual: {
+                route_source: "planner_flow",
+              },
+            },
+            {
+              id: "doc-002",
+              category: "doc",
+              miss_dimensions: ["agent_or_tool"],
+              actual: {
+                route_source: "planner_flow",
+              },
+            },
+          ],
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(drilldown, {
+    failing_area: "doc",
+    representative_fail_case: [
+      "doc-001 [doc] planner_action via planner_flow",
+      "doc-002 [doc] agent_or_tool via planner_flow",
+    ],
+    drilldown_source: ["release-check triage", "routing-eval diagnostics/history"],
+  });
+});
+
+test("release-check drilldown derives planner representative findings from diagnostics", () => {
+  const drilldown = buildReleaseCheckDrilldown({
+    selfCheckResult: {
+      routing_summary: {
+        status: "pass",
+        compare: {
+          has_obvious_regression: false,
+        },
+      },
+      planner_summary: {
+        gate: "fail",
+        compare: {
+          has_obvious_regression: false,
+        },
+      },
+      system_summary: {
+        core_checks: "pass",
+      },
+    },
+    plannerReport: {
+      findings: {
+        undefined_actions: [
+          {
+            category: "undefined_actions",
+            target: "search_and_detail_doc",
+            source_id: "planner_tool_registry",
+            file: "/Users/seanhan/Documents/Playground/src/executive-planner.mjs",
+          },
+        ],
+        undefined_presets: [
+          {
+            category: "undefined_presets",
+            target: "create_and_list_doc",
+            source_id: "planner_preset_registry",
+            file: "/Users/seanhan/Documents/Playground/src/executive-planner.mjs",
+          },
+        ],
+        selector_contract_mismatches: [],
+        deprecated_reachable_targets: [],
+      },
+    },
+  });
+
+  assert.deepEqual(drilldown, {
+    failing_area: "mixed",
+    representative_fail_case: [
+      "undefined_actions:search_and_detail_doc via planner_tool_registry",
+      "undefined_presets:create_and_list_doc via planner_preset_registry",
+    ],
+    drilldown_source: ["release-check triage", "planner diagnostics/history"],
+  });
+});
+
+test("release-check drilldown derives system representative cases from triage", () => {
+  const drilldown = buildReleaseCheckDrilldown({
+    selfCheckResult: {
+      system_summary: {
+        core_checks: "fail",
+      },
+      routing_summary: {
+        status: "pass",
+        compare: {
+          has_obvious_regression: false,
+        },
+      },
+      planner_summary: {
+        gate: "pass",
+        compare: {
+          has_obvious_regression: false,
+        },
+      },
+      services: [],
+      routes: {
+        missing: ["/api/meeting/process"],
+      },
+      agents: {
+        missing: [],
+        invalid_contracts: [],
+        knowledge_subcommands_missing: [],
+      },
+    },
+  });
+
+  assert.deepEqual(drilldown, {
+    failing_area: "meeting",
+    representative_fail_case: ["route_missing:/api/meeting/process"],
+    drilldown_source: ["release-check triage"],
+  });
+});
+
+test("release-check human output stays minimal with drilldown line", () => {
   assert.equal(
     renderReleaseCheckReport({
       overall_status: "fail",
       blocking_checks: ["system_regression", "routing_regression"],
       suggested_next_step: "unused",
+      failing_area: "meeting",
     }),
     [
       "能否放心合併/發布：先不要",
       "若不能，先修哪一條線：system regression",
+      "先看哪類 case：meeting",
     ].join("\n"),
   );
 });
@@ -222,10 +397,13 @@ test("release-check CLI emits only the minimal JSON structure", async () => {
     overall_status: "pass",
     blocking_checks: [],
     suggested_next_step: "目前這個入口沒有 blocking check；若要正式 release，仍需跑既有測試與發布驗證流程。",
+    failing_area: null,
+    representative_fail_case: [],
+    drilldown_source: [],
   });
 });
 
-test("release-check CLI default output stays limited to two lines", async () => {
+test("release-check CLI default output stays limited to three lines", async () => {
   const archives = await seedReleaseCheckArchives();
   const output = execFileSync("node", ["scripts/release-check.mjs"], {
     cwd: process.cwd(),
@@ -241,6 +419,7 @@ test("release-check CLI default output stays limited to two lines", async () => 
   assert.equal(output.trim(), [
     "能否放心合併/發布：可以",
     "若不能，先修哪一條線：無",
+    "先看哪類 case：無",
   ].join("\n"));
 });
 
@@ -268,6 +447,9 @@ test("release-check CI entry emits minimal JSON and exits 0 on pass", async () =
     overall_status: "pass",
     blocking_checks: [],
     suggested_next_step: "目前這個入口沒有 blocking check；若要正式 release，仍需跑既有測試與發布驗證流程。",
+    failing_area: null,
+    representative_fail_case: [],
+    drilldown_source: [],
   });
 });
 
@@ -296,5 +478,8 @@ test("release-check CI entry exits 1 on fail", async () => {
     overall_status: "fail",
     blocking_checks: ["routing_regression"],
     suggested_next_step: "先看 routing regression：diagnostics 在 src/routing-eval-diagnostics.mjs；rule 看 src/router.js / src/planner-*-flow.mjs；fixture 看 evals/routing-eval-set.mjs。",
+    failing_area: "mixed",
+    representative_fail_case: ["routing latest snapshot unavailable or has no miss case"],
+    drilldown_source: ["release-check triage", "routing-eval diagnostics/history"],
   });
 });

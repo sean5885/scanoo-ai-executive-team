@@ -232,10 +232,25 @@ Thread 51 release-check preflight checkpoint:
 
 - keeps the same planner gate and compare semantics
 - adds `release-check` as the single merge/release preflight entry over the existing self-check, routing, and planner evidence
-- keeps human output bounded to merge/release verdict plus first repair line
+- keeps human output bounded to merge/release verdict, first repair line, plus one minimal `先看哪類 case`
 - classifies planner-side blocking output under the minimal `planner_contract_failure` triage line
 - keeps planner next-step guidance module-first: inspect planner registry / flow-route files before considering `docs/system/planner_contract.json`
+- adds read-only fail drilldown from existing evidence only:
+  - `failing_area`
+  - `representative_fail_case`
+  - `drilldown_source`
 - keeps JSON output minimal and read-only; no routing change, no fallback, no planner gate mutation, no auto-fix
+
+Thread 54 release drilldown checkpoint:
+
+- keeps the same release-check gate ordering and next-step guidance
+- persists the minimal fail drilldown as the checked-in checkpoint:
+  - `failing_area`
+  - `representative_fail_case`
+  - `drilldown_source`
+- keeps human-readable output bounded to one extra line `先看哪類 case`
+- keeps the drilldown source bounded to existing release triage plus routing/planner diagnostics evidence only
+- does not add fallback, auto-fix, or a new diagnostics subsystem
 
 Current daily-entry CLI:
 
@@ -355,6 +370,21 @@ Unified self-check reading order:
 1. if `self-check` says look at `routing`, inspect routing first; planner may still be clean while the archived routing behavior already regressed
 2. once `self-check` points to `planner`, stay inside the planner order above
 3. planner line means contract/runtime drift; routing line means archived behavior regression
+
+Release-check fail -> drilldown order:
+
+1. run `npm run release-check`
+2. if output says `先看哪類 case：doc|meeting|runtime|mixed`, use that only as the first slice, not as a new gate
+3. read `report.representative_fail_case` from `npm run release-check -- --json`
+4. if `drilldown_source` contains `routing-eval diagnostics/history`:
+   - start from the listed routing eval case ids
+   - if the representative case is a coverage gap and `diagnostics_summary.decision_advice.minimal_decision.action = review_fixture_coverage`, add/update fixture first
+   - if the representative case points to `INVALID_ACTION`, wrong lane/action bucket, or rule precedence drift, inspect routing rule before touching fixture
+5. if `drilldown_source` contains `planner diagnostics/history`:
+   - start from the listed finding `category:target via source_id`
+   - inspect planner rule / route first when the finding is `selector_contract_mismatches` or the emitting source is `router.js` / `src/planner-*-flow.mjs`
+   - inspect planner contract only when the runtime target is intentional, reachable, and stable
+6. `release-check` drilldown is read-only; it must not auto-fix, add fallback, or mutate gate behavior
 
 Current operating rule:
 

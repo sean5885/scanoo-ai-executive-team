@@ -477,10 +477,23 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - expose a unified self-check summary through `system_summary`, `routing_summary`, and `planner_summary`
   - answer the operator-facing question `現在系統能不能放心改`
   - expose `release-check` as the single merge/release preflight entry over the same self-check, routing, and planner evidence
-  - keep `release-check` human output bounded to `能否放心合併/發布` and `若不能，先修哪一條線`
-  - keep `release-check -- --json` bounded to `overall_status`, `blocking_checks`, and `suggested_next_step`
+  - keep `release-check` human output bounded to three lines only:
+    - `能否放心合併/發布`
+    - `若不能，先修哪一條線`
+    - `先看哪類 case`
+  - keep `release-check -- --json` bounded to:
+    - `overall_status`
+    - `blocking_checks`
+    - `suggested_next_step`
+    - `failing_area`
+    - `representative_fail_case`
+    - `drilldown_source`
   - classify `blocking_checks` only as `system_regression`, `routing_regression`, or `planner_contract_failure`
   - keep `suggested_next_step` single-line but module-specific: base modules for system regression, routing rule/fixture files for routing regression, planner registry/flow modules before `planner_contract.json` for planner contract failure
+  - keep drilldown read-only and minimal:
+    - `failing_area` only uses `doc` / `meeting` / `runtime` / `mixed`
+    - `representative_fail_case` only carries 1~2 representative case strings
+    - `drilldown_source` only reuses `release-check triage`, `routing-eval diagnostics/history`, and `planner diagnostics/history`
   - expose `release-check:ci` as the CI/pipeline entry with the same minimal JSON report and strict `0/1` exit contract
   - define `pass` as merge/deploy may proceed and `fail` as merge/deploy must stop on this preflight line
   - expose a fixed human-readable daily-entry view through `planner:diagnostics`
