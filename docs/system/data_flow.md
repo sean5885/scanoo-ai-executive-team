@@ -272,9 +272,10 @@ This is now a capability-lane event path with a closed-loop executive planner la
 
 ## Governance / Health Flow
 
-1. `npm run self-check`
-2. `scripts/self-check.mjs` imports `src/system-self-check.mjs`
-3. self-check validates:
+1. `npm run release-check`
+2. `scripts/release-check.mjs` imports `src/release-check.mjs`
+3. release-check internally reuses `runSystemSelfCheck(...)` from `src/system-self-check.mjs`
+4. self-check validates:
    - registered agent completeness
    - minimum agent contract fields
    - knowledge subcommand coverage
@@ -294,17 +295,33 @@ This is now a capability-lane event path with a closed-loop executive planner la
      - `system_status`
      - `routing_status`
      - `planner_status`
-   - one short human-readable answer:
-     - `現在系統能不能放心改：可以 / 先不要`
-5. fail handling order for the unified self-check:
+5. `release-check` then compresses the same evidence into one merge/release preflight answer:
+   - human-readable output only answers:
+     - `能否放心合併/發布：可以 / 先不要`
+     - `若不能，先修哪一條線：self-check 基礎項目 / routing / planner / 無`
+   - `--json` output stays minimal:
+     - `overall_status`
+     - `blocking_checks`
+     - `suggested_next_step`
+   - `release-check` is read-only:
+     - it does not rerun routing eval
+     - it does not change routing
+     - it does not add fallback
+     - it does not change planner gate rules
+     - it does not auto-fix anything
+6. fail handling order for the unified self-check and release-check:
    - if base registry / route / service checks fail, fix those first
    - else if `routing_summary.status != pass` or routing compare shows obvious regression, inspect routing first
    - else if `planner_summary.gate = fail` or planner compare shows obvious regression, inspect planner first
-6. line separation rule:
+7. line separation rule:
    - routing line = archived behavior regression evidence from latest snapshot / compare (`accuracy_ratio`, `trend_report`, `decision_advice`, error drift)
    - planner line = current runtime / contract drift evidence (`gate`, `undefined_actions`, `undefined_presets`, `selector_contract_mismatches`, `deprecated_reachable_targets`)
-7. default CLI output is now the short human-readable verdict; `npm run self-check -- --json` emits the full JSON report for CI or follow-up tooling
-8. compare mode is also available on the same read-only path:
+8. when to run each entry:
+   - run `npm run release-check` right before merge or release as the single operator-facing preflight entry
+   - run `npm run self-check` during normal development when you still need the fuller base/routing/planner summary
+   - `release-check` does not replace `npm test` or other release verification commands; it only compresses the governance/readiness lines above into one preflight verdict
+9. default `self-check` CLI output is still the short human-readable verdict; `npm run self-check -- --json` emits the full JSON report for CI or follow-up tooling
+10. compare mode is also available on the same read-only path:
    - `npm run self-check -- --compare-previous`
    - `npm run self-check -- --compare-snapshot <run-id|path>`
    - compare output stays minimal and only answers:

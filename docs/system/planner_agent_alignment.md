@@ -228,6 +228,13 @@ Thread 50 self-check history checkpoint:
 - adds `self-check -- --compare-previous` and `self-check -- --compare-snapshot <run-id|path>`
 - keeps compare read-only and minimal; no routing change, no fallback, no planner gate mutation, no auto-fix
 
+Thread 51 release-check preflight checkpoint:
+
+- keeps the same planner gate and compare semantics
+- adds `release-check` as the single merge/release preflight entry over the existing self-check, routing, and planner evidence
+- keeps human output bounded to merge/release verdict plus first repair line
+- keeps JSON output minimal and read-only; no routing change, no fallback, no planner gate mutation, no auto-fix
+
 Current daily-entry CLI:
 
 - `npm run planner:diagnostics`
@@ -317,7 +324,7 @@ When contract check must run:
   - `/Users/seanhan/Documents/Playground/src/planner-okr-flow.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner-bd-flow.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner-delivery-flow.mjs`
-- before merging/releasing planner contract, selector, or preset changes through the fixed `self-check` gate
+- before merging/releasing planner contract, selector, or preset changes through the fixed `release-check` entry or the fuller `self-check` gate
 
 When to change planner implementation instead:
 
@@ -339,7 +346,7 @@ Fail handling order:
 4. fix planner implementation first by default
 5. only if the reachable target is intentional and stable, update `planner_contract.json` and record the reason in the same change
 6. if only `deprecated_reachable_targets > 0`, treat it as warning-only and clean it up without blocking the gate
-7. before merge/release, rerun `npm run planner:contract-check` or `npm run self-check`
+7. before merge/release, rerun `npm run planner:contract-check`, `npm run self-check`, or the single-entry `npm run release-check`
 
 Unified self-check reading order:
 

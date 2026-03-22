@@ -18,6 +18,7 @@
     "routing:closed-loop": "node scripts/routing-eval-closed-loop.mjs",
     "routing:diagnostics": "node scripts/routing-diagnostics.mjs",
     "self-check": "node scripts/self-check.mjs",
+    "release-check": "node scripts/release-check.mjs",
     "planner:contract-check": "node scripts/planner-contract-check.mjs",
     "planner:diagnostics": "node scripts/planner-diagnostics.mjs",
     "monitor": "node scripts/monitoring-cli.mjs",

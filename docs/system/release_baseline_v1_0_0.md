@@ -4,6 +4,8 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 Prepared on 2026-03-21.
 
+Release / preflight checkpoint: Thread 51 (`release-check-v1`).
+
 ## Release Identity
 
 - release tag: `v1.0.0`
@@ -57,6 +59,7 @@ The `v1.0.0` baseline is intended to demonstrate and publish these repo-grounded
 Minimum baseline verification:
 
 ```bash
+npm run release-check
 npm test
 node scripts/self-check.mjs
 node scripts/run-workflow-baseline.mjs smoke
@@ -89,6 +92,7 @@ node scripts/check-auth.mjs
 
 Notes:
 
+- `npm run release-check` is the single operator-facing preflight for merge/release and only compresses self-check + routing status + planner gate into one verdict
 - `npm test` is the release gate for the checked-in code baseline
 - `check-auth.mjs` only validates app credentials and tenant-token issuance, not every user OAuth path
 - real post-restart live OAuth/Lark smoke validation remains an operator step outside repo-only evidence

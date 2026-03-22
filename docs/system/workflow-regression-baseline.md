@@ -237,10 +237,13 @@ Thread 49 unified-self-check checkpoint 在既有 routing diagnostics 與 planne
 
 Thread 50 self-check history checkpoint 在既有 unified `self-check` 基礎上，補上 self-check 自身 snapshot 歷史、最小 manifest、`--compare-previous` / `--compare-snapshot <run-id|path>`、相關測試與文件同步；不改 routing、不新增 fallback、不改 planner gate，也不做 auto-fix。
 
+Thread 51 release-check preflight checkpoint 在既有 `self-check`、routing diagnostics 與 planner gate 基礎上，補上單一 `release-check` merge/release preflight 入口、最小 human-readable / JSON 輸出、相關測試與文件同步；不改 routing、不新增 fallback、不改 planner gate，也不做 auto-fix。
+
 用途：
 
 - 固定阻擋 planner contract drift，不更動 routing 決策
 - 在 planner selector / preset / flow-route 相關變更後，第一時間確認 contract mirror 仍與 runtime 對齊
+- 在 merge / release 前，用單一 preflight 入口壓縮 self-check、routing、planner 三條線的 operator 判斷
 
 命令：
 
@@ -251,6 +254,7 @@ npm run planner:contract-check
 npm run self-check
 npm run self-check -- --compare-previous
 npm run self-check -- --compare-snapshot <run-id|path>
+npm run release-check
 ```
 
 說明：
@@ -258,6 +262,7 @@ npm run self-check -- --compare-snapshot <run-id|path>
 - `planner:diagnostics` 是固定日常入口，直接根據目前 checked-in runtime / contract 狀態輸出單一 diagnostics summary，不會重跑 planner
 - `planner-contract-check` 本身是 read-only gate，不做 auto-fix
 - `npm run self-check` 已固定包含同一個 planner contract gate，並會把 current planner 結果對最新 archived planner snapshot 做 compare（若存在）
+- `npm run release-check` 是 release / merge 前的單一 preflight 入口；它重用同一份 self-check、routing、planner 證據，但把 operator-facing 輸出壓成 merge/release verdict
 - `planner:diagnostics` 與 `planner:contract-check` 每次執行都會額外把當次 JSON report 歸檔到 `.tmp/planner-diagnostics-history/`
 - `self-check` 每次執行也會額外把 unified JSON report 歸檔到 `.tmp/system-self-check-history/`
 - archive 是 snapshot-only：
@@ -288,6 +293,13 @@ npm run self-check -- --compare-snapshot <run-id|path>
   - `system` 變好 / 變差 / 無變化
   - `routing` 有無 regression
   - `planner` 有無 regression
+- `release-check` human output 固定只回答：
+  - `能否放心合併/發布`
+  - `若不能，先修哪一條線`
+- `release-check -- --json` 固定只保留：
+  - `overall_status`
+  - `blocking_checks`
+  - `suggested_next_step`
 - fail 條件僅限：
   - `undefined actions > 0`
   - `undefined presets > 0`

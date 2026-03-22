@@ -17,6 +17,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - Thread 40 routing diagnostics single-view checkpoint
 - Thread 41 routing diagnostics history checkpoint
 - Thread 42 routing diagnostics daily-entry checkpoint
+- Thread 51 release-check preflight checkpoint
 
 Thread 35 closed-loop checkpoint 針對 `top_miss_cases` / `error_breakdown` -> candidate fixture -> dataset review -> rerun eval -> baseline gate 的閉環流程補上最小工具與文件，且不改 routing 決策、fallback 行為或 baseline fixture。
 
@@ -35,6 +36,8 @@ Thread 41 routing diagnostics history checkpoint 在既有 deterministic eval / 
 Thread 42 routing diagnostics daily-entry checkpoint 在既有 diagnostics history 基礎上補上固定 read-only `routing:diagnostics` 檢視入口、上一筆 history lookup、日常查看口徑與測試；不新增邏輯、不改 routing 決策，也不新增 fallback。
 
 Thread 49 unified-self-check checkpoint 把既有 routing diagnostics latest snapshot / previous compare 整合進 `self-check` 的 unified summary，提供 `routing_summary.status`、明顯 regression 判讀與短 human-readable verdict；不新增 routing 邏輯、不改 fallback，也不改原本 eval gate。
+
+Thread 51 release-check preflight checkpoint 把既有 unified `self-check` 的 routing line再壓成 merge/release 單一 preflight 入口的一部分；它只讀最新 routing snapshot 與 compare 判讀，不重跑 eval、不改 routing，也不新增 fallback。
 
 目前這條路徑已再收斂成 `diagnostics_summary` 單一決策視圖，讓 operator 只看一個 summary 就能決定要補 fixture、檢查 routing rule，或保持不動；不新增 routing 邏輯、不新增 fallback，也不改 baseline/tag。
 

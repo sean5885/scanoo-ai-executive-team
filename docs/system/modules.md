@@ -452,10 +452,12 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 
 - Location:
   - `/Users/seanhan/Documents/Playground/src/system-self-check.mjs`
+  - `/Users/seanhan/Documents/Playground/src/release-check.mjs`
   - `/Users/seanhan/Documents/Playground/src/system-self-check-history.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner-contract-consistency.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner-diagnostics-history.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/self-check.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/release-check.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/planner-contract-check.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/planner-diagnostics.mjs`
   - `/Users/seanhan/Documents/Playground/docs/system/agent_capability_matrix.md`
@@ -473,6 +475,9 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - expose a fixed planner contract gate through `planner-contract-check` and `self-check`
   - expose a unified self-check summary through `system_summary`, `routing_summary`, and `planner_summary`
   - answer the operator-facing question `現在系統能不能放心改`
+  - expose `release-check` as the single merge/release preflight entry over the same self-check, routing, and planner evidence
+  - keep `release-check` human output bounded to `能否放心合併/發布` and `若不能，先修哪一條線`
+  - keep `release-check -- --json` bounded to `overall_status`, `blocking_checks`, and `suggested_next_step`
   - expose a fixed human-readable daily-entry view through `planner:diagnostics`
   - expose a minimal self-check compare view through `--compare-previous` and `--compare-snapshot <run-id|path>`
   - fail the planner contract gate only on undefined action, undefined preset, and selector-contract mismatch
