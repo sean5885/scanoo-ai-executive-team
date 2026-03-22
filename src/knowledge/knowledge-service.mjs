@@ -14,3 +14,10 @@ export function queryKnowledge(keyword) {
   const index = getIndex();
   return searchDocsByKeyword(index, keyword);
 }
+
+export function queryKnowledgeWithSnippet(keyword) {
+  return queryKnowledge(keyword).slice(0, 3).map((doc) => ({
+    id: doc.id,
+    snippet: doc.content.slice(0, 120),
+  }));
+}
