@@ -400,6 +400,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - slash-command execution before generic lane fallback
   - optional compact image-context handoff into slash agents
   - when direct `LLM_API_KEY` is absent, registered agents now reuse the local OpenClaw MiniMax text path through the dedicated `lobster-backend` agent before falling back to extractive retrieval-only replies
+  - `openclaw-text-service.mjs` now normalizes optional abort signals before passing them into Node child-process/fetch-style options, so local callers can omit a signal without tripping `options.signal must be an instance of AbortSignal`
 - Main entry:
   - `parseRegisteredAgentCommand()`
   - `dispatchRegisteredAgentCommand()`
@@ -841,13 +842,19 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 
 - `/Users/seanhan/Documents/Playground/src/planner/knowledge-bridge.mjs`
   - local planner-side bridge over `queryKnowledgeWithContext(keyword)`
-  - exposes `plannerAnswer({ keyword }) -> { answer, count }`
-  - reads the same local `{ id, snippet }` preview rows and formats them through `buildAnswer(keyword, results)`
+  - exposes async `plannerAnswer({ keyword }) -> { answer, count }`
+  - reads the same local `{ id, snippet }` preview rows, summarizes them through `summarizeWithMinimax({ keyword, results })`, and fail-soft falls back to `{ answer: "請提供查詢關鍵字", count: 0 }` when the keyword is missing
+  - not wired into `executive-planner.mjs`, planner contract routing, SQLite persistence, or company-brain approval/governance paths
+
+- `/Users/seanhan/Documents/Playground/src/planner/llm-summary.mjs`
+  - planner-side LLM summary helper for local knowledge previews
+  - exposes `summarizeWithMinimax({ keyword, results }) -> string`
+  - uses the repo-wide text-model path (`MINIMAX_TEXT_MODEL` first, legacy `LLM_MODEL` fallback) through direct LLM or OpenClaw text generation, and fail-soft falls back to `buildAnswer(keyword, results)` when generation fails or returns empty text
   - not wired into `executive-planner.mjs`, planner contract routing, SQLite persistence, or company-brain approval/governance paths
 
 - `/Users/seanhan/Documents/Playground/src/planner/answer-builder.mjs`
-  - local planner-side formatter for knowledge preview results
-  - exposes `buildAnswer(keyword, results) -> string`
+  - local deterministic planner-side formatter for knowledge preview results
+  - exposes `buildAnswer(keyword, results) -> string`, `buildNoResultAnswer(keyword) -> string`, and `cleanSnippet(text) -> string`
   - returns a fixed Chinese no-result message when `results` is empty and otherwise renders a count-based intro plus a cleaned numbered list over each `{ id, snippet }` row
   - snippet cleanup strips inline code spans, local absolute-path fragments, excess whitespace, leading punctuation noise, trailing separator noise, stray spaces before punctuation, repeated commas, and dangling trailing conjunction/placeholder tails before rendering
   - not wired into `executive-planner.mjs`, planner contract routing, SQLite persistence, or company-brain approval/governance paths

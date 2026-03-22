@@ -1,4 +1,4 @@
-function cleanSnippet(text) {
+export function cleanSnippet(text) {
   let snippet = (text || "")
     .replace(/`[^`]*`/g, "")
     .replace(/\/Users\/[^\s]+/g, "")
@@ -16,12 +16,21 @@ function cleanSnippet(text) {
   return snippet;
 }
 
+export function buildNoResultAnswer(keyword) {
+  const normalizedKeyword = typeof keyword === "string" ? keyword.trim() : "";
+  return normalizedKeyword
+    ? `目前沒有找到與「${normalizedKeyword}」直接相關的資料。`
+    : "目前沒有找到直接相關的資料。";
+}
+
 export function buildAnswer(keyword, results) {
+  const normalizedKeyword = typeof keyword === "string" ? keyword.trim() : "";
+
   if (!results || results.length === 0) {
-    return `目前沒有找到與「${keyword}」直接相關的資料。`;
+    return buildNoResultAnswer(normalizedKeyword);
   }
 
-  const intro = `我查到 ${results.length} 份與「${keyword}」相關的內容，重點如下：`;
+  const intro = `我查到 ${results.length} 份與「${normalizedKeyword}」相關的內容，重點如下：`;
   const bullets = results.map((result, index) => {
     const text = cleanSnippet(result.snippet);
     return `${index + 1}. ${result.id}：${text}`;

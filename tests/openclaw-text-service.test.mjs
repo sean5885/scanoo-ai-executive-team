@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { parseOpenClawJson } from "../src/openclaw-text-service.mjs";
+import { normalizeAbortSignal, parseOpenClawJson } from "../src/openclaw-text-service.mjs";
 
 test("parseOpenClawJson accepts plugin noise before trailing JSON", () => {
   const parsed = parseOpenClawJson([
@@ -11,4 +11,13 @@ test("parseOpenClawJson accepts plugin noise before trailing JSON", () => {
   ].join("\n"));
 
   assert.equal(parsed.payloads[0].text, "ok");
+});
+
+test("normalizeAbortSignal drops nullish and keeps real AbortSignal", () => {
+  const controller = new AbortController();
+
+  assert.equal(normalizeAbortSignal(null), undefined);
+  assert.equal(normalizeAbortSignal(undefined), undefined);
+  assert.equal(normalizeAbortSignal({ aborted: false }), undefined);
+  assert.equal(normalizeAbortSignal(controller.signal), controller.signal);
 });

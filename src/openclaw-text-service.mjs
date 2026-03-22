@@ -29,6 +29,13 @@ function safeSessionIdSuffix(value = "") {
   return normalized || "default";
 }
 
+export function normalizeAbortSignal(signal) {
+  if (typeof AbortSignal !== "undefined" && signal instanceof AbortSignal) {
+    return signal;
+  }
+  return undefined;
+}
+
 function throwIfAborted(signal) {
   if (!signal?.aborted) {
     return;
@@ -86,7 +93,9 @@ export async function callOpenClawTextGeneration({
   timeoutMs = llmOpenClawTimeoutMs,
   signal = null,
 } = {}) {
-  throwIfAborted(signal);
+  const abortSignal = normalizeAbortSignal(signal);
+
+  throwIfAborted(abortSignal);
   const args = [
     "agent",
     "--agent",
@@ -104,14 +113,19 @@ export async function callOpenClawTextGeneration({
 
   let lastError = null;
   for (let attempt = 0; attempt <= OPENCLAW_LOCK_RETRY_MAX; attempt += 1) {
-    throwIfAborted(signal);
+    throwIfAborted(abortSignal);
     try {
-      const { stdout } = await execFile("openclaw", args, {
+      const execOptions = {
         cwd: process.cwd(),
         timeout: timeoutMs + 3000,
         maxBuffer: 1024 * 1024 * 8,
-        signal,
-      });
+      };
+
+      if (abortSignal) {
+        execOptions.signal = abortSignal;
+      }
+
+      const { stdout } = await execFile("openclaw", args, execOptions);
       const outer = parseOpenClawJson(stdout);
       const payloadText = outer?.payloads?.[0]?.text || outer?.result?.payloads?.[0]?.text || "";
       if (!payloadText) {
@@ -124,7 +138,7 @@ export async function callOpenClawTextGeneration({
       if (attempt >= OPENCLAW_LOCK_RETRY_MAX || !stderr.includes("session file locked")) {
         break;
       }
-      await waitWithSignal(OPENCLAW_LOCK_RETRY_DELAY_MS, signal);
+      await waitWithSignal(OPENCLAW_LOCK_RETRY_DELAY_MS, abortSignal);
     }
   }
   throw lastError || new Error("openclaw_text_generation_failed");

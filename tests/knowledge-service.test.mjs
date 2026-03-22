@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { filterKnowledgeContextResults } from "../src/knowledge/knowledge-service.mjs";
 import { plannerAnswer } from "../src/planner/knowledge-bridge.mjs";
+import { summarizeWithMinimax } from "../src/planner/llm-summary.mjs";
 
 test("filterKnowledgeContextResults drops label-like and metadata-like snippets", () => {
   const results = [
@@ -49,10 +50,77 @@ test("filterKnowledgeContextResults keeps at most three non-label snippets", () 
   ]);
 });
 
-test("plannerAnswer strips routing label and metadata prefixes from live docs previews", () => {
-  const result = plannerAnswer({ keyword: "routing" });
+test("plannerAnswer uses injected summarizer and passes filtered live previews", async () => {
+  const result = await plannerAnswer(
+    { keyword: "routing" },
+    {
+      summarize: async ({ keyword, results }) => {
+        assert.equal(keyword, "routing");
+        assert.ok(results.length > 0);
+        assert.ok(results.every((item) => !/Routing \/ Execution/.test(item.snippet)));
+        assert.ok(results.every((item) => !/runtime \/ monitoring\s*-\s*Purpose:/i.test(item.snippet)));
+        return "這是整理後的摘要。";
+      },
+    },
+  );
+
+  assert.equal(result.answer, "這是整理後的摘要。");
+  assert.ok(result.count > 0);
+});
+
+test("plannerAnswer falls back to deterministic summary when summarizer fails", async () => {
+  const result = await plannerAnswer(
+    { keyword: "routing" },
+    {
+      summarize: async () => {
+        throw new Error("summary_failed");
+      },
+    },
+  );
 
   assert.match(result.answer, /我查到 \d+ 份與「routing」相關的內容/);
   assert.doesNotMatch(result.answer, /Routing \/ Execution/);
   assert.doesNotMatch(result.answer, /runtime \/ monitoring\s*-\s*Purpose:/i);
+});
+
+test("plannerAnswer returns fail-soft prompt when keyword is missing", async () => {
+  const result = await plannerAnswer({});
+
+  assert.deepEqual(result, {
+    answer: "請提供查詢關鍵字",
+    count: 0,
+  });
+});
+
+test("summarizeWithMinimax returns deterministic fallback when generator fails", async () => {
+  const result = await summarizeWithMinimax({
+    keyword: "驗證",
+    results: [
+      {
+        id: "docs/system/planner_agent_alignment.md",
+        snippet: "Planner lifecycle requires verification evidence and a bounded retry policy before completion.",
+      },
+    ],
+    generateText: async () => {
+      throw new Error("llm_unavailable");
+    },
+  });
+
+  assert.match(result, /我查到 1 份與「驗證」相關的內容/);
+  assert.match(result, /verification evidence and a bounded retry policy/i);
+});
+
+test("summarizeWithMinimax returns no-result message without calling generator", async () => {
+  let called = false;
+  const result = await summarizeWithMinimax({
+    keyword: "不存在",
+    results: [],
+    generateText: async () => {
+      called = true;
+      return "should not run";
+    },
+  });
+
+  assert.equal(result, "目前沒有找到與「不存在」直接相關的資料。");
+  assert.equal(called, false);
 });
