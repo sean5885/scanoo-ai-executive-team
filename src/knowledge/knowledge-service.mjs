@@ -16,6 +16,33 @@ function safeSlice(content, start, end) {
   return content.slice(s, e);
 }
 
+function isLocalPathLine(line) {
+  const t = (line || "").trim();
+  return /^[-*]?\s*`?\/Users\/[^\n`]+`?$/.test(t) || /^[-*]?\s*\.\/[^\s]+$/.test(t);
+}
+
+function stripLeadingLabel(text) {
+  let t = (text || "").trim();
+
+  t = t.replace(/^[-*]\s+/, "");
+
+  if (/^[A-Za-z\s]+\/[A-Za-z\s]+$/.test(t)) return "";
+
+  t = t.replace(/^[A-Za-z\s/]+-\s*(Purpose|用途|說明)\s*:\s*/i, "");
+  t = t.replace(/^[A-Za-z\s/]+\s*-\s*/, "");
+
+  return t.trim();
+}
+
+function normalizeSnippet(text) {
+  const lines = (text || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !isLocalPathLine(line));
+
+  return stripLeadingLabel(lines.join("\n"));
+}
+
 function extractSnippet(content, keyword) {
   const lower = content.toLowerCase();
   const k = keyword.toLowerCase();
@@ -46,7 +73,8 @@ function extractSnippet(content, keyword) {
   if (prevBreak !== -1) start = prevBreak + 1;
   if (nextCandidates.length > 0) end = Math.min(...nextCandidates) + 1;
 
-  return safeSlice(content, start, end).trim();
+  const snippet = safeSlice(content, start, end).trim();
+  return normalizeSnippet(snippet);
 }
 
 function isLowValueSnippet(text) {
@@ -61,6 +89,25 @@ function isLowValueSnippet(text) {
   if (/^(module|path|file|api|runtime)\s*[:/-]\s*$/i.test(t)) return true;
 
   return false;
+}
+
+function isLabelLike(text) {
+  if (!text) return false;
+
+  const t = text.trim();
+
+  if (t.length < 40 && /^[A-Z][A-Za-z]*(?:[ /][A-Z][A-Za-z]*)+$/.test(t)) return true;
+  if (/^(routing|execution|runtime|api|module|metadata)$/i.test(t)) return true;
+  if (/^[A-Za-z\s]+\/[A-Za-z\s]+$/.test(t)) return true;
+
+  return false;
+}
+
+export function filterKnowledgeContextResults(results) {
+  return results
+    .filter((result) => !isLowValueSnippet(result.snippet))
+    .filter((result) => !isLabelLike(result.snippet))
+    .slice(0, 3);
 }
 
 export function queryKnowledge(keyword) {
@@ -78,5 +125,5 @@ export function queryKnowledgeWithSnippet(keyword) {
 
 export function queryKnowledgeWithContext(keyword) {
   const results = queryKnowledgeWithSnippet(keyword);
-  return results.filter(r => !isLowValueSnippet(r.snippet)).slice(0, 3);
+  return filterKnowledgeContextResults(results);
 }

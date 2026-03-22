@@ -835,8 +835,8 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 - `/Users/seanhan/Documents/Playground/src/knowledge/knowledge-service.mjs`
   - local cached knowledge query helper
   - lazily loads `./docs/system` into memory once per process and exposes keyword lookup over the cached index
-  - also exposes `queryKnowledgeWithSnippet(keyword)` for a bounded top-3 `{ id, snippet }` preview over the same cached results, expanding around the keyword and snapping to nearby line/sentence-style breaks when available
-  - also exposes `queryKnowledgeWithContext(keyword)` as a filtered contextual preview helper that removes very short fragments, table-row-like snippets, bare path/path-like labels, and empty metadata labels before returning rows to planner-side callers
+  - also exposes `queryKnowledgeWithSnippet(keyword)` for a bounded top-3 `{ id, snippet }` preview over the same cached results, expanding around the keyword, snapping to nearby line/sentence-style breaks when available, removing leading path-only lines, and stripping leading heading/metadata labels from the extracted snippet when they are detected
+  - also exposes `queryKnowledgeWithContext(keyword)` as a filtered contextual preview helper that removes very short fragments, table-row-like snippets, bare path/path-like labels, empty metadata labels, short heading-like labels, and simple slash-separated metadata labels before returning rows to planner-side callers
   - not connected to sync ingestion, SQLite persistence, planner routes, or company-brain approval/governance paths
 
 - `/Users/seanhan/Documents/Playground/src/planner/knowledge-bridge.mjs`
