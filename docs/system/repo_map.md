@@ -30,7 +30,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 - `/Users/seanhan/Documents/Playground/evals`
   - Checked-in deterministic eval fixtures.
-  - Currently stores the routing regression baseline set plus a small real-world retrieval query set.
+  - Currently stores the routing regression baseline set, a small real-world retrieval query set, and a meeting workflow smoke fixture set.
 
 - `/Users/seanhan/Documents/Playground/.data`
   - Local runtime data.
@@ -74,6 +74,10 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `/Users/seanhan/Documents/Playground/evals/retrieval-realworld-set.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/retrieval-eval.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/retrieval-realworld-eval.mjs`
+
+- Meeting workflow eval helpers
+  - `/Users/seanhan/Documents/Playground/evals/meeting-workflow-set.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/meeting-workflow-eval.mjs`
 
 - Planner diagnostics governance
   - `/Users/seanhan/Documents/Playground/src/planner-contract-consistency.mjs`

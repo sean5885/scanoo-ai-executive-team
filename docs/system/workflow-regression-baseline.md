@@ -160,6 +160,27 @@ node scripts/monitoring-cli.mjs learning 1 1
 
 這些測試已可正常退出，但不適合當作每次小改動都必跑的最小 smoke。
 
+## Deterministic Fixture Evals
+
+### Meeting Workflow Fixture Smoke
+
+用途：
+
+- 用最小 deterministic fixture 快速檢查 meeting summary / decisions / action items / blockers 的抽取腳本沒有明顯退化
+- 適合在補 fixture、整理 meeting eval 腳本或做最小 smoke 驗證時使用
+- 這不是正式 workflow completion verifier，也不替代 `tests/meeting-agent.test.mjs` 或 preview / confirm 路徑測試
+
+命令：
+
+```bash
+node scripts/meeting-workflow-eval.mjs
+```
+
+覆蓋：
+
+- checked-in meeting fixture dataset：`evals/meeting-workflow-set.mjs`
+- deterministic smoke extractor output：`summary`、`decisions`、`action_items`、`blockers`
+
 ## Test Harness Note
 
 目前 workflow baseline 依賴以下 test harness / cleanup hooks：
