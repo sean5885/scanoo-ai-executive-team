@@ -1,5 +1,6 @@
 import { listRegisteredAgents, knowledgeAgentSubcommands } from "./agent-registry.mjs";
 import { getAllowedMethodsForPath } from "./http-route-contracts.mjs";
+import { runPlannerContractConsistencyCheck } from "./planner-contract-consistency.mjs";
 
 const REQUIRED_AGENT_IDS = [
   "generalist",
@@ -131,12 +132,15 @@ export async function runSystemSelfCheck() {
     }
   }
 
+  const plannerContract = runPlannerContractConsistencyCheck();
+
   const ok =
     missingAgents.length === 0 &&
     invalidContracts.length === 0 &&
     missingKnowledgeSubcommands.length === 0 &&
     missingRoutes.length === 0 &&
-    serviceInitialization.every((item) => item.ok);
+    serviceInitialization.every((item) => item.ok) &&
+    plannerContract?.gate?.ok === true;
 
   return {
     ok,
@@ -151,5 +155,13 @@ export async function runSystemSelfCheck() {
       missing: missingRoutes,
     },
     services: serviceInitialization,
+    planner_contract: {
+      gate_ok: plannerContract?.gate?.ok === true,
+      consistency_ok: plannerContract?.ok === true,
+      failing_categories: Array.isArray(plannerContract?.gate?.failing_categories)
+        ? plannerContract.gate.failing_categories
+        : [],
+      summary: plannerContract?.summary || null,
+    },
   };
 }

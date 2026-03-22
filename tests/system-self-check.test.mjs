@@ -12,4 +12,7 @@ test("system self-check validates agent registry, routes, and service imports", 
   assert.equal(result.agents.knowledge_subcommands_missing.length, 0);
   assert.equal(result.routes.missing.length, 0);
   assert.equal(result.services.every((item) => item.ok), true);
+  assert.equal(result.planner_contract.gate_ok, true);
+  assert.equal(result.planner_contract.consistency_ok, true);
+  assert.deepEqual(result.planner_contract.failing_categories, []);
 });

@@ -135,6 +135,7 @@ Checkpoint status:
 
 - `consistency-check checkpoint`
 - `contract-alignment checkpoint`
+- `Thread 45 planner contract regression-gate checkpoint`
 
 Current checked-in consistency checker:
 
@@ -146,7 +147,7 @@ Current purpose:
 - compare checked-in planner contract targets against the runtime tool registry
 - compare checked-in planner contract targets against the runtime preset registry and preset step actions
 - compare selector / hard-route / flow-route outputs against the same contract target catalog
-- emit a minimal CLI report and a machine-readable JSON report
+- emit a minimal CLI fail summary and a machine-readable JSON report
 - detect drift without changing routing or applying auto-fixes
 
 Current drift judgment rules:
@@ -169,12 +170,39 @@ Current checked-in code truth from this checker:
 - no selector/contract mismatches were found in the current checked-in router and flow-route outputs
 - `search_and_detail_doc` is now emitted from the doc-query router and themed flow routes through the preset slot rather than an action slot
 
+Thread 45 planner contract regression-gate checkpoint:
+
+- fixes planner contract drift checking as a blocking regression gate without changing routing decisions
+- makes `planner-contract-check` and `self-check` share the same blocking criteria
+- keeps the path read-only: no fallback, no auto-fix, no routing mutation
+
 When to add/update contract:
 
 - the runtime target is intentional, reachable, and stable
 - the target kind is clear (`action` vs `preset`)
 - the target has a bounded input/output contract that can be validated without changing routing semantics
 - the same target is already used by runtime and the checker is only failing because the contract mirror is missing or stale
+- the change is expanding or narrowing an already-intended stable planner surface, not preserving accidental selector/flow output
+
+When contract update is allowed:
+
+- after the runtime target name/kind has already been intentionally introduced in checked-in code
+- after the target contract can be reviewed as a stable public planner boundary
+- when the checker failure is caused by mirror drift between runtime registry/route outputs and `planner_contract.json`
+- in the same change that updates the relevant `docs/system` mirror
+
+When contract check must run:
+
+- any change to `/Users/seanhan/Documents/Playground/docs/system/planner_contract.json`
+- any change to `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` that adds/removes/renames planner actions or presets
+- any change to planner-side selector / hard-route / flow-route emitters, including:
+  - `/Users/seanhan/Documents/Playground/src/router.js`
+  - `/Users/seanhan/Documents/Playground/src/planner-doc-query-flow.mjs`
+  - `/Users/seanhan/Documents/Playground/src/planner-runtime-info-flow.mjs`
+  - `/Users/seanhan/Documents/Playground/src/planner-okr-flow.mjs`
+  - `/Users/seanhan/Documents/Playground/src/planner-bd-flow.mjs`
+  - `/Users/seanhan/Documents/Playground/src/planner-delivery-flow.mjs`
+- before merging/releasing planner contract, selector, or preset changes through the fixed `self-check` gate
 
 When to change planner implementation instead:
 
@@ -182,13 +210,20 @@ When to change planner implementation instead:
 - a route/selector emits a target through the wrong slot kind, for example `action` carrying a contract `preset`
 - the target is legacy/deprecated and should no longer be reachable
 - the change would otherwise require the contract to encode accidental runtime behavior rather than an intended stable interface
+- the only way to make the checker pass is to bless an accidental selector/route emission that has not been accepted as stable planner surface
 
 Current operating rule:
 
-- this checker is report-only
+- this checker is read-only
 - it must not modify routing precedence
 - it must not add fallback behavior
-- contract drift is first surfaced as evidence; any later fix must decide explicitly between contract update and planner/runtime update
+- it must not auto-fix contract or runtime drift
+- it now acts as a fixed regression gate through both `node scripts/planner-contract-check.mjs` and `node scripts/self-check.mjs`
+- non-zero exit is limited to:
+  - `undefined_actions > 0`
+  - `undefined_presets > 0`
+  - `selector_contract_mismatches > 0`
+- `deprecated_reachable_targets` remains visible as drift evidence, but is not currently a blocking gate condition
 
 ## Output Shape
 

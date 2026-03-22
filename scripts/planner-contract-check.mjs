@@ -12,6 +12,6 @@ if (wantsJson) {
   console.log(renderPlannerContractConsistencyReport(report));
 }
 
-if (!report.ok) {
+if (report?.gate?.ok === false) {
   process.exitCode = 1;
 }

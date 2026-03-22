@@ -224,3 +224,52 @@ node --test tests/routing-eval-decision-advice.test.mjs tests/routing-eval-close
 - `tests/routing-eval-decision-advice.test.mjs`、`tests/routing-eval-closed-loop.test.mjs`、`tests/routing-diagnostics-cli.test.mjs` 會覆蓋 diagnostics summary 的 JSON / CLI 輸出
 
 目前 monitoring learning baseline 尚未納入 `scripts/run-workflow-baseline.mjs` 的 workflow-only runner；需要驗證這條路徑時，直接使用上面的 `node --test ...` 與 CLI 命令。
+
+## Planner Contract Gate
+
+Thread 45 planner contract regression-gate checkpoint 將這條檢查固定成 repo-level regression gate，但不新增邏輯、不改 routing 決策，也不新增 fallback。
+
+用途：
+
+- 固定阻擋 planner contract drift，不更動 routing 決策
+- 在 planner selector / preset / flow-route 相關變更後，第一時間確認 contract mirror 仍與 runtime 對齊
+
+命令：
+
+```bash
+node scripts/planner-contract-check.mjs
+npm run planner:contract-check
+npm run self-check
+```
+
+說明：
+
+- `planner-contract-check` 本身是 read-only gate，不做 auto-fix
+- `npm run self-check` 已固定包含同一個 planner contract gate
+- fail 條件僅限：
+  - `undefined actions > 0`
+  - `undefined presets > 0`
+  - `selector/contract mismatches > 0`
+
+### Run Planner Contract Check When
+
+- 修改 `docs/system/planner_contract.json`
+- 修改 `src/executive-planner.mjs` 中的 planner tool registry / preset registry / selector 輸出
+- 修改 `src/router.js` 的 planner hard-route target
+- 修改任何 planner flow route target：
+  - `src/planner-doc-query-flow.mjs`
+  - `src/planner-runtime-info-flow.mjs`
+  - `src/planner-okr-flow.mjs`
+  - `src/planner-bd-flow.mjs`
+  - `src/planner-delivery-flow.mjs`
+- 修改會改變 planner action/preset target name 或 target kind 的 contract-adjacent code
+
+### Update Contract Vs Fix Planner
+
+- 允許更新 contract：
+  - runtime 已經有意圖地引入穩定 target，只是 checked-in contract mirror 尚未同步
+  - target kind 與 target name 已確定，而且要反映的是預期介面，不是 accidental behavior
+- 應修 planner 實作而不是改 contract：
+  - selector/flow route 發出了不該存在的 target
+  - `action` / `preset` slot 用錯
+  - 想靠擴充 contract 來容納 legacy / deprecated / accidental route output

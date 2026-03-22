@@ -18,6 +18,7 @@
     "routing:closed-loop": "node scripts/routing-eval-closed-loop.mjs",
     "routing:diagnostics": "node scripts/routing-diagnostics.mjs",
     "self-check": "node scripts/self-check.mjs",
+    "planner:contract-check": "node scripts/planner-contract-check.mjs",
     "monitor": "node scripts/monitoring-cli.mjs",
     "auth:check": "node scripts/check-auth.mjs",
     "sync:full": "curl -X POST http://localhost:3333/sync/full",

@@ -32,6 +32,11 @@ const RUNTIME_INFO_FLOW_FILE = fileURLToPath(new URL("./planner-runtime-info-flo
 const OKR_FLOW_FILE = fileURLToPath(new URL("./planner-okr-flow.mjs", import.meta.url));
 const BD_FLOW_FILE = fileURLToPath(new URL("./planner-bd-flow.mjs", import.meta.url));
 const DELIVERY_FLOW_FILE = fileURLToPath(new URL("./planner-delivery-flow.mjs", import.meta.url));
+const GATE_FAILURE_CATEGORIES = [
+  "undefined_actions",
+  "undefined_presets",
+  "selector_contract_mismatches",
+];
 
 function loadPlannerContract() {
   return JSON.parse(readFileSync(CONTRACT_FILE, "utf8"));
@@ -463,6 +468,26 @@ function collectObservedSources() {
   ];
 }
 
+export function buildPlannerContractGate(findings = {}) {
+  const counts = Object.fromEntries(
+    GATE_FAILURE_CATEGORIES.map((category) => [
+      category,
+      Array.isArray(findings?.[category]) ? findings[category].length : 0,
+    ]),
+  );
+  const failingCategories = GATE_FAILURE_CATEGORIES
+    .filter((category) => counts[category] > 0);
+
+  return {
+    ok: failingCategories.length === 0,
+    failing_categories: failingCategories,
+    fail_summary: failingCategories.map((category) => ({
+      category,
+      count: counts[category],
+    })),
+  };
+}
+
 export function runPlannerContractConsistencyCheck() {
   const contract = loadPlannerContract();
   const contractCatalog = buildContractCatalog(contract);
@@ -477,11 +502,13 @@ export function runPlannerContractConsistencyCheck() {
     deprecated_reachable_targets: findings.filter((finding) => finding.category === "deprecated_reachable_targets"),
     selector_contract_mismatches: findings.filter((finding) => finding.category === "selector_contract_mismatches"),
   };
+  const gate = buildPlannerContractGate(groupedFindings);
 
   const ok = Object.values(groupedFindings).every((items) => items.length === 0);
 
   return {
     ok,
+    gate,
     contract: {
       version: cleanText(contract?.version) || null,
       actions: contractCatalog.actions,
@@ -501,6 +528,7 @@ export function runPlannerContractConsistencyCheck() {
 
 export function renderPlannerContractConsistencyReport(report = {}) {
   const lines = [
+    `planner contract gate: ${report?.gate?.ok ? "pass" : "fail"}`,
     `planner contract consistency: ${report?.ok ? "ok" : "drift_detected"}`,
     `contract version: ${cleanText(report?.contract?.version) || "unknown"}`,
     `undefined actions: ${Number.isFinite(report?.summary?.undefined_actions) ? report.summary.undefined_actions : 0}`,
@@ -508,6 +536,13 @@ export function renderPlannerContractConsistencyReport(report = {}) {
     `deprecated reachable targets: ${Number.isFinite(report?.summary?.deprecated_reachable_targets) ? report.summary.deprecated_reachable_targets : 0}`,
     `selector/contract mismatches: ${Number.isFinite(report?.summary?.selector_contract_mismatches) ? report.summary.selector_contract_mismatches : 0}`,
   ];
+
+  if (report?.gate?.ok === false) {
+    lines.push("fail summary:");
+    for (const item of Array.isArray(report?.gate?.fail_summary) ? report.gate.fail_summary : []) {
+      lines.push(`- ${item.category}: ${item.count}`);
+    }
+  }
 
   const orderedFindings = [
     ...(report?.findings?.undefined_actions || []),

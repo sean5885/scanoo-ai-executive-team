@@ -464,7 +464,9 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - validate that core service modules still initialize
   - validate planner tool/preset registries and selector/flow targets against `docs/system/planner_contract.json`
   - classify planner contract drift into undefined action, undefined preset, deprecated reachable target, and selector-contract mismatch
-  - emit a minimal CLI report plus JSON report without changing routing logic
+  - expose a fixed planner contract gate through `planner-contract-check` and `self-check`
+  - fail the planner contract gate only on undefined action, undefined preset, and selector-contract mismatch
+  - emit a minimal CLI fail summary plus JSON report without changing routing logic
   - keep a human-readable capability matrix and chain checklist in sync with code
 - Core path:
   - important for regression prevention and operator debugging
