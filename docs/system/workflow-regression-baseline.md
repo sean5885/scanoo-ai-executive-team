@@ -245,6 +245,8 @@ Thread 53 release decision layer checkpoint 在既有 `release-check` / `release
 
 Thread 55 release history checkpoint 在既有 `release-check` / `release-check:ci` 基礎上，補上 release-check 自身 snapshot 歷史、最小 manifest、`--compare-previous` / `--compare-snapshot <run-id|path>`、相關測試與文件同步；不改 gate 規則、不新增 fallback、不做 auto-fix，也不重做新的 decision 系統。
 
+Thread 59 action hint checkpoint 在既有 `release-check` / `daily-status` 提示層基礎上，補上固定格式 `action_hint`、對應 human-readable 下一步提示、相關測試與文件同步；不改 gate、不新增 fallback、不做 auto-fix，也不新增新的 decision / diagnostics 系統。
+
 用途：
 
 - 固定阻擋 planner contract drift，不更動 routing 決策
@@ -318,11 +320,12 @@ npm run release-check:ci -- --compare-snapshot <run-id|path>
 - `release-check` human output 固定只回答：
   - `能否放心合併/發布`
   - `若不能，先修哪一條線`
-  - `先看哪類 case`
+  - `下一步`
 - `release-check -- --json` 固定只保留：
   - `overall_status`
   - `blocking_checks`
   - `suggested_next_step`
+  - `action_hint`
   - `failing_area`
   - `representative_fail_case`
   - `drilldown_source`
@@ -334,6 +337,10 @@ npm run release-check:ci -- --compare-snapshot <run-id|path>
   - system regression -> agent registry / route contract / service modules
   - routing regression -> routing rule modules 或 eval fixture files
   - planner contract failure -> planner registry / flow-route modules，`planner_contract.json` 只在 intentional stable target 時才看
+- `action_hint` 固定只重用既有 `suggested_next_step` / drilldown：
+  - routing -> `run routing-eval and inspect <area> fixtures`
+  - planner -> `run planner-contract-check and fix <type> mismatch`
+  - release -> `inspect blocking_checks and representative_fail_case`
 - `release-check:ci` exit contract 固定為：
   - exit `0` = `pass` = 可放行到下一個 merge/deploy stage
   - exit `1` = `fail` = 阻擋 merge/deploy，先修 `blocking_checks[0]`
@@ -353,11 +360,16 @@ npm run release-check:ci -- --compare-snapshot <run-id|path>
 - daily-status compare 固定只在原本 daily answer 上補最小 regression signal：
   - `changed_line`
   - `change_reason_hint`
-  - human-readable 只多一行 `為什麼變差`
+  - `action_hint`
+  - human-readable 只多一行 `下一步`
 - `change_reason_hint` 來源固定重用：
   - routing -> routing diagnostics/history compare 的 `doc` / `meeting` / `runtime` / `mixed`
   - planner -> planner diagnostics/current gate 的 `contract` / `selector`
   - release -> `blocking_checks[0]`
+- `action_hint` 固定只重用既有 compare signal：
+  - routing -> `run routing-eval and inspect <area> fixtures`
+  - planner -> `run planner-contract-check and fix <type> mismatch`
+  - release -> `inspect blocking_checks and representative_fail_case`
 - fail 條件僅限：
   - `undefined actions > 0`
   - `undefined presets > 0`

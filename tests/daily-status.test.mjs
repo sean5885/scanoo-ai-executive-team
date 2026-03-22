@@ -302,6 +302,7 @@ test("daily-status compare summary adds routing line and eval hint on regression
     overall_recommendation: "check_routing_first",
     changed_line: "routing",
     change_reason_hint: "doc",
+    action_hint: "run routing-eval and inspect doc fixtures",
   });
 });
 
@@ -349,6 +350,7 @@ test("daily-status compare summary maps planner drift to selector hint", () => {
 
   assert.equal(compare.changed_line, "planner");
   assert.equal(compare.change_reason_hint, "selector");
+  assert.equal(compare.action_hint, "run planner-contract-check and fix selector mismatch");
 });
 
 test("daily-status compare report keeps the daily summary and adds one reason line", () => {
@@ -389,7 +391,7 @@ test("daily-status compare report keeps the daily summary and adds one reason li
     "今天能不能安心合併：先不要",
     "今天能不能安心發布：先不要",
     "若不能，先看哪一條線：release",
-    "為什麼變差：system_regression",
+    "下一步：inspect blocking_checks and representative_fail_case",
   ].join("\n"));
 });
 
@@ -690,7 +692,7 @@ test("daily-status CLI compare-previous adds only the short why-worse line", asy
     "今天能不能安心合併：先不要",
     "今天能不能安心發布：先不要",
     "若不能，先看哪一條線：routing",
-    "為什麼變差：doc",
+    "下一步：run routing-eval and inspect doc fixtures",
   ].join("\n"));
 });
 
@@ -810,5 +812,6 @@ test("daily-status CLI json compare-snapshot adds changed_line and reason hint",
     overall_recommendation: "check_routing_first",
     changed_line: "routing",
     change_reason_hint: "doc",
+    action_hint: "run routing-eval and inspect doc fixtures",
   });
 });

@@ -232,14 +232,14 @@ Thread 51 release-check preflight checkpoint:
 
 - keeps the same planner gate and compare semantics
 - adds `release-check` as the single merge/release preflight entry over the existing self-check, routing, and planner evidence
-- keeps human output bounded to merge/release verdict, first repair line, plus one minimal `先看哪類 case`
+- keeps human output bounded to merge/release verdict, first repair line, plus one minimal `下一步`
 - classifies planner-side blocking output under the minimal `planner_contract_failure` triage line
 - keeps planner next-step guidance module-first: inspect planner registry / flow-route files before considering `docs/system/planner_contract.json`
 - adds read-only fail drilldown from existing evidence only:
   - `failing_area`
   - `representative_fail_case`
   - `drilldown_source`
-- keeps JSON output minimal and read-only; no routing change, no fallback, no planner gate mutation, no auto-fix
+- keeps JSON output minimal and read-only, with one extra `action_hint` derived from existing `suggested_next_step` + drilldown evidence only; no routing change, no fallback, no planner gate mutation, no auto-fix
 
 Thread 54 release drilldown checkpoint:
 
@@ -248,7 +248,7 @@ Thread 54 release drilldown checkpoint:
   - `failing_area`
   - `representative_fail_case`
   - `drilldown_source`
-- keeps human-readable output bounded to one extra line `先看哪類 case`
+- keeps human-readable output bounded to one extra line `下一步`
 - keeps the drilldown source bounded to existing release triage plus routing/planner diagnostics evidence only
 - does not add fallback, auto-fix, or a new diagnostics subsystem
 
@@ -268,10 +268,11 @@ Thread 57 daily compare checkpoint:
   - `npm run daily-status -- --compare-previous`
   - `npm run daily-status -- --compare-snapshot <run-id|path>`
   - human-readable compare keeps the same four daily lines and only adds one extra line:
-    - `為什麼變差`
+    - `下一步`
   - compare JSON reuses the same four daily fields and only adds:
     - `changed_line`
     - `change_reason_hint`
+    - `action_hint`
   - `changed_line` only uses:
     - `routing`
     - `planner`
@@ -281,6 +282,10 @@ Thread 57 daily compare checkpoint:
     - routing -> `doc` / `meeting` / `runtime` / `mixed` from routing diagnostics/history compare + drilldown
     - planner -> `contract` / `selector` from planner diagnostics/current gate findings
     - release -> current first `blocking_checks` type from release compare
+  - `action_hint` stays fixed-format and only reuses the existing compare hint:
+    - routing -> `run routing-eval and inspect <area> fixtures`
+    - planner -> `run planner-contract-check and fix <type> mismatch`
+    - release -> `inspect blocking_checks and representative_fail_case`
 - keeps `--json` output bounded to:
   - `routing_status`
   - `planner_status`
@@ -318,16 +323,38 @@ Thread 58 daily trend checkpoint:
   - no new daily-status history archive
 - does not add a new gate, fallback path, or auto-fix behavior
 
+Thread 59 action hint checkpoint:
+
+- keeps the same release-check and daily-status gate semantics
+- adds fixed-format `action_hint` to `release-check` and daily-status compare JSON only
+- keeps `action_hint` source bounded to existing evidence only:
+  - release-check -> existing `suggested_next_step` + drilldown
+  - daily-status compare -> existing `change_reason_hint`
+- keeps human-readable output line count unchanged and only rewrites the last hint line into `下一步`
+- does not add fallback, auto-fix, new routing logic, or a new diagnostics subsystem
+
 Current daily-entry CLI:
 
 - `npm run daily-status`
+- `npm run check:daily`
 - `npm run daily-status -- --trend`
 - `npm run daily-status -- --trend --trend-count <n>`
 - `npm run daily-status -- --compare-previous`
 - `npm run daily-status -- --compare-snapshot <run-id|path>`
+- `npm run check:self`
+- `npm run check:release`
+- `npm run check:routing`
 - `npm run planner:diagnostics`
+- `npm run check:planner`
 - `npm run planner:diagnostics -- --compare-previous`
 - `npm run planner:diagnostics -- --compare-snapshot <run-id|path>`
+- `check:*` scripts are wrapper-only aliases over the same existing CLIs:
+  - `check:daily` -> `daily-status`
+  - `check:self` -> `self-check`
+  - `check:release` -> `release-check`
+  - `check:routing` -> `routing:diagnostics`
+  - `check:planner` -> `planner:diagnostics`
+  - they do not change output shape, gate semantics, fallback behavior, or auto-fix behavior
 - `daily-status` is the first daily glance:
   - it reuses current `release-check` + unified `self-check` evidence
   - it answers whether today is safe to develop / merge / release
@@ -451,10 +478,10 @@ Unified self-check reading order:
 
 Daily-status reading order:
 
-1. run `npm run daily-status` first when you need the bounded daily answer
-2. if it says `routing`, move to `npm run routing:diagnostics`
-3. if it says `planner`, move to `npm run planner:diagnostics`
-4. if it says `release`, move to `npm run release-check` or `npm run self-check` depending on whether you need the minimal preflight or the fuller base/routing/planner breakdown
+1. run `npm run daily-status` or `npm run check:daily` first when you need the bounded daily answer
+2. if it says `routing`, move to `npm run routing:diagnostics` or `npm run check:routing`
+3. if it says `planner`, move to `npm run planner:diagnostics` or `npm run check:planner`
+4. if it says `release`, move to `npm run release-check` / `npm run check:release` or `npm run self-check` / `npm run check:self` depending on whether you need the minimal preflight or the fuller base/routing/planner breakdown
 5. `daily-status` does not replace the existing planner gate; it only points you at the first existing line to read
 
 Release-check fail -> drilldown order:

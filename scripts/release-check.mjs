@@ -69,6 +69,7 @@ try {
     overall_status: "fail",
     blocking_checks: ["system_regression"],
     suggested_next_step: "release-check 執行失敗，先看 system regression 的基礎模組：src/agent-registry.mjs、src/http-route-contracts.mjs、src/*-service.mjs。",
+    action_hint: "inspect blocking_checks and representative_fail_case",
     failing_area: "mixed",
     representative_fail_case: ["release-check execution failed"],
     drilldown_source: ["release-check triage"],

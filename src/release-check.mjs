@@ -103,6 +103,64 @@ function buildPlannerContractFailureNextStep(selfCheckResult = {}) {
   return "先看 planner contract failure：src/executive-planner.mjs 與 src/planner-*-flow.mjs；只有 intentional stable target 才改 docs/system/planner_contract.json。";
 }
 
+function buildRoutingActionHint(drilldown = {}) {
+  const area = normalizeFailingArea(drilldown?.failing_area) || FAILING_AREA_MIXED;
+  return `run routing-eval and inspect ${area} fixtures`;
+}
+
+function inferPlannerActionHintType({ suggestedNextStep = "", drilldown = {} } = {}) {
+  const normalizedNextStep = cleanText(suggestedNextStep);
+  const representativeCases = normalizeRepresentativeFailCases(drilldown?.representative_fail_case);
+
+  if (
+    representativeCases.some((item) => item.startsWith("selector_contract_mismatches:"))
+    || normalizedNextStep.includes("route 模組")
+    || normalizedNextStep.includes("src/router.js")
+    || normalizedNextStep.includes("src/planner-*-flow.mjs")
+  ) {
+    return "selector";
+  }
+
+  return "contract";
+}
+
+function buildPlannerActionHint({ suggestedNextStep = "", drilldown = {} } = {}) {
+  return `run planner-contract-check and fix ${inferPlannerActionHintType({
+    suggestedNextStep,
+    drilldown,
+  })} mismatch`;
+}
+
+function buildReleaseActionHint({ blockingChecks = [], drilldown = {} } = {}) {
+  const normalizedBlockingChecks = normalizeBlockingChecks(blockingChecks);
+  const representativeFailCase = normalizeRepresentativeFailCases(drilldown?.representative_fail_case);
+
+  if (normalizedBlockingChecks.length === 0 && representativeFailCase.length === 0) {
+    return null;
+  }
+
+  return "inspect blocking_checks and representative_fail_case";
+}
+
+function buildReleaseCheckActionHint({
+  blockingChecks = [],
+  suggestedNextStep = "",
+  drilldown = {},
+} = {}) {
+  const firstBlockingCheck = normalizeBlockingChecks(blockingChecks)[0] || null;
+
+  if (firstBlockingCheck === BLOCKING_ROUTING_REGRESSION) {
+    return buildRoutingActionHint(drilldown);
+  }
+  if (firstBlockingCheck === BLOCKING_PLANNER_CONTRACT_FAILURE) {
+    return buildPlannerActionHint({ suggestedNextStep, drilldown });
+  }
+  if (firstBlockingCheck === BLOCKING_SYSTEM_REGRESSION) {
+    return buildReleaseActionHint({ blockingChecks, drilldown });
+  }
+  return null;
+}
+
 function hasBlockingRoutingIssue(selfCheckResult = {}) {
   return (
     cleanText(selfCheckResult?.routing_summary?.status) !== "pass"
@@ -417,11 +475,17 @@ export function buildReleaseCheckReport({ selfCheckResult = {}, drilldown = null
     representative_fail_case: normalizeRepresentativeFailCases(drilldown?.representative_fail_case),
     drilldown_source: normalizeDrilldownSource(drilldown?.drilldown_source),
   };
+  const actionHint = buildReleaseCheckActionHint({
+    blockingChecks,
+    suggestedNextStep,
+    drilldown: normalizedDrilldown,
+  });
 
   return {
     overall_status: blockingChecks.length === 0 && selfCheckResult?.ok === true ? "pass" : "fail",
     blocking_checks: blockingChecks,
     suggested_next_step: suggestedNextStep,
+    action_hint: actionHint,
     failing_area: normalizedDrilldown.failing_area,
     representative_fail_case: normalizedDrilldown.representative_fail_case,
     drilldown_source: normalizedDrilldown.drilldown_source,
@@ -444,12 +508,12 @@ function renderBlockingLineLabel(blockingCheck = "") {
 export function renderReleaseCheckReport(report = {}) {
   const canMergeOrRelease = cleanText(report?.overall_status) === "pass" ? "可以" : "先不要";
   const firstBlockingLine = Array.isArray(report?.blocking_checks) ? report.blocking_checks[0] : null;
-  const failingArea = normalizeFailingArea(report?.failing_area) || "無";
+  const actionHint = cleanText(report?.action_hint) || "無";
 
   return [
     `能否放心合併/發布：${canMergeOrRelease}`,
     `若不能，先修哪一條線：${renderBlockingLineLabel(firstBlockingLine)}`,
-    `先看哪類 case：${failingArea}`,
+    `下一步：${actionHint}`,
   ].join("\n");
 }
 

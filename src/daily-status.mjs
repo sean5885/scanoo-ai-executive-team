@@ -116,6 +116,29 @@ function renderReasonHintLabel(reasonHint = "") {
   return cleanText(reasonHint) || "無";
 }
 
+function buildRoutingActionHint(reasonHint = "") {
+  const area = ROUTING_REASON_HINTS.has(cleanText(reasonHint)) ? cleanText(reasonHint) : "mixed";
+  return `run routing-eval and inspect ${area} fixtures`;
+}
+
+function buildPlannerActionHint(reasonHint = "") {
+  const type = cleanText(reasonHint) === "selector" ? "selector" : "contract";
+  return `run planner-contract-check and fix ${type} mismatch`;
+}
+
+function buildActionHint(changedLine = "", reasonHint = "") {
+  if (changedLine === ROUTING_LINE) {
+    return buildRoutingActionHint(reasonHint);
+  }
+  if (changedLine === PLANNER_LINE) {
+    return buildPlannerActionHint(reasonHint);
+  }
+  if (changedLine === RELEASE_LINE) {
+    return "inspect blocking_checks and representative_fail_case";
+  }
+  return null;
+}
+
 function buildOverallRecommendation(releaseCheckResult = {}) {
   const releaseStatus = normalizeReleaseStatus(releaseCheckResult?.report?.overall_status);
   const safeToDevelop = releaseCheckResult?.self_check_result?.system_summary?.safe_to_change === true;
@@ -225,11 +248,13 @@ export function buildDailyStatusCompareSummary({
     previousReport: previousReleaseReport,
   });
   const changedLine = resolveChangedLine(releaseCheckResult, releaseCompareSummary);
+  const changeReasonHint = buildChangeReasonHint(changedLine, releaseCheckResult);
 
   return {
     ...report,
     changed_line: changedLine,
-    change_reason_hint: buildChangeReasonHint(changedLine, releaseCheckResult),
+    change_reason_hint: changeReasonHint,
+    action_hint: buildActionHint(changedLine, changeReasonHint),
   };
 }
 
@@ -480,7 +505,7 @@ export function renderDailyStatusCompareReport({
 
   return [
     renderDailyStatusReport(releaseCheckResult),
-    `為什麼變差：${renderReasonHintLabel(compareSummary.change_reason_hint)}`,
+    `下一步：${renderReasonHintLabel(compareSummary.action_hint)}`,
   ].join("\n");
 }
 
