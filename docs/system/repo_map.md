@@ -10,7 +10,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 - `/Users/seanhan/Documents/Playground/src/knowledge`
   - Local knowledge helper directory.
-  - Currently contains only local in-memory doc helpers and is not wired into the main runtime, retrieval index, or company-brain approval path.
+  - Currently contains only local in-memory doc helpers and a cached local query helper; these are not wired into the main runtime, retrieval index, or company-brain approval path.
 
 - `/Users/seanhan/Documents/Playground/openclaw-plugin/lark-kb`
   - OpenClaw plugin package.
@@ -87,6 +87,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - Local knowledge helpers
   - `/Users/seanhan/Documents/Playground/src/knowledge/doc-index.mjs`
   - `/Users/seanhan/Documents/Playground/src/knowledge/doc-loader.mjs`
+  - `/Users/seanhan/Documents/Playground/src/knowledge/knowledge-service.mjs`
 
 - OpenClaw tool layer
   - `/Users/seanhan/Documents/Playground/openclaw-plugin/lark-kb/index.ts`

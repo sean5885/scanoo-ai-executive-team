@@ -832,6 +832,11 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - scans one directory for `.md` files and inserts them into `doc-index`
   - not connected to sync ingestion, SQLite persistence, planner routes, or company-brain approval/governance paths
 
+- `/Users/seanhan/Documents/Playground/src/knowledge/knowledge-service.mjs`
+  - local cached knowledge query helper
+  - lazily loads `./docs/system` into memory once per process and exposes keyword lookup over the cached index
+  - not connected to sync ingestion, SQLite persistence, planner routes, or company-brain approval/governance paths
+
 - `/Users/seanhan/Documents/Playground/src/runtime-contract.mjs`
   - Node/Python runtime compatibility check
 

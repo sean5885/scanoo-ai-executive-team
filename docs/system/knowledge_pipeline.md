@@ -31,11 +31,13 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - local helper:
   - `/Users/seanhan/Documents/Playground/src/knowledge/doc-index.mjs`
   - `/Users/seanhan/Documents/Playground/src/knowledge/doc-loader.mjs`
+  - `/Users/seanhan/Documents/Playground/src/knowledge/knowledge-service.mjs`
 - document metadata is stored in:
   - `lark_sources`
   - `lark_documents`
 - `/Users/seanhan/Documents/Playground/src/knowledge/doc-index.mjs` now provides a small in-memory helper with `{ version, docs[] }`, `addDoc`, `findDocById`, case-sensitive `searchDocs`, and case-insensitive `searchDocsByKeyword`
 - `/Users/seanhan/Documents/Playground/src/knowledge/doc-loader.mjs` now provides `loadDocsFromDir(dir)`, which scans one local directory, reads `.md` files, and loads them into that in-memory index as `company_brain` doc types
+- `/Users/seanhan/Documents/Playground/src/knowledge/knowledge-service.mjs` now provides a tiny cached query wrapper: `getIndex()` lazily loads `./docs/system` once per process, and `queryKnowledge(keyword)` runs case-insensitive keyword search over that cached in-memory index
 - this helper is not connected to SQLite, sync ingestion, planner/company-brain routes, or approved-knowledge governance; it is only a local utility module at this time
 - API-created docx files can also be inserted into the same temporary index directly from `/api/doc/create`, using normalized metadata `{ doc_id, source, created_at, creator: { account_id, open_id }, title, folder_token }`
 - API-created docx files can also carry a minimal lifecycle in `lark_documents`: `status`, `indexed_at`, `verified_at`, `failure_reason`
