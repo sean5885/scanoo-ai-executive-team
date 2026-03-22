@@ -115,7 +115,7 @@ export async function summarizeWithMinimax({
   const prompt = buildSummaryPrompt({ keyword: normalizedKeyword, results: rows });
 
   try {
-    console.log("[LLM] start summarize");
+    // debug removed for production
     const request = {
       systemPrompt: SUMMARY_SYSTEM_PROMPT,
       prompt,
@@ -129,23 +129,16 @@ export async function summarizeWithMinimax({
     }
 
     const text = await generateText(request);
-    console.log("[LLM] raw result:", text);
+    // debug removed
     const normalizedText = normalizeSummaryText(text);
     if (!normalizedText) {
-      console.log("[LLM] empty result -> fallback");
+      // debug removed
       return fallbackAnswer;
     }
-    console.log("[LLM] success");
+    // debug removed
     return normalizedText;
-  } catch (error) {
-    console.log("[LLM] error during summarize:", error?.message || error);
-    console.log("[LLM] provider/model debug:", {
-      LLM_PROVIDER: process.env.LLM_PROVIDER,
-      LLM_MODEL: process.env.LLM_MODEL,
-      MINIMAX_TEXT_MODEL: process.env.MINIMAX_TEXT_MODEL,
-      has_LLM_API_KEY: Boolean(process.env.LLM_API_KEY),
-      has_MINIMAX_API_KEY: Boolean(process.env.MINIMAX_API_KEY),
-    });
+  } catch {
+    // keep fail-soft, no debug noise in production
     return fallbackAnswer;
   }
 }
