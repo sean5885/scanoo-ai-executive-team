@@ -240,6 +240,7 @@ Thread 51 release-check preflight checkpoint:
   - `representative_fail_case`
   - `drilldown_source`
 - keeps JSON output minimal and read-only, with one extra `action_hint` derived from existing `suggested_next_step` + drilldown evidence only; no routing change, no fallback, no planner gate mutation, no auto-fix
+- when the blocking routing line belongs to the checked-in doc/company-brain family, the same read-only report may also mark `doc_boundary_regression = true` and point the operator at the existing doc-boundary pack plus intent guards; this does not change gate order
 
 Thread 54 release drilldown checkpoint:
 
@@ -404,6 +405,7 @@ Current daily-entry CLI:
 - unified self-check compare mode supports:
   - `npm run self-check -- --compare-previous`
   - `npm run self-check -- --compare-snapshot <run-id|path>`
+- unified self-check result may now also carry top-level `doc_boundary_regression`, and `routing_summary.doc_boundary_regression` mirrors the same routing-only signal
 - unified self-check compare human output only covers:
   - `system` better / worse / unchanged
   - whether `routing` regressed
@@ -473,8 +475,9 @@ Fail handling order:
 Unified self-check reading order:
 
 1. if `self-check` says look at `routing`, inspect routing first; planner may still be clean while the archived routing behavior already regressed
-2. once `self-check` points to `planner`, stay inside the planner order above
-3. planner line means contract/runtime drift; routing line means archived behavior regression
+2. if the same report also marks `doc_boundary_regression = true`, treat it as a doc/company-brain boundary issue and inspect `message-intent-utils.mjs` / `lane-executor.mjs` before revalidating the doc-boundary pack
+3. once `self-check` points to `planner`, stay inside the planner order above
+4. planner line means contract/runtime drift; routing line means archived behavior regression
 
 Daily-status reading order:
 

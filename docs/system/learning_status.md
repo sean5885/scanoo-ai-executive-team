@@ -40,6 +40,7 @@ What does exist:
 - semantic classification is on-demand
 - answer generation is still retrieval-time first
 - learning ingest/update is request-triggered, not background worker automation
+- the current primary system is Playground's request-triggered flow, not ai-server background automation
 
 ## Pollution Risk
 

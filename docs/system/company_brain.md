@@ -114,3 +114,5 @@ Observed sources:
 ## Conclusion
 
 At scan time, this repo still does not have a full company_brain governance system. It now has a small `company_brain_docs` mirror for verified API-created docs, a separate simplified `company_brain_learning_state` sidecar for planner-facing learning metadata, and a minimal agent-facing `review -> conflict -> approval-transition -> apply` runtime backed by `company_brain_review_state` plus `company_brain_approved_knowledge`. Retrieval knowledge and lifecycle/indexing remain the primary implemented layers, and company-brain governance is still bounded rather than full-fidelity.
+
+The current primary system is Playground's request-triggered flow, not ai-server background automation.

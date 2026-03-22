@@ -1,4 +1,4 @@
-import { cleanText } from "./message-intent-utils.mjs";
+import { cleanText, detectDocBoundaryIntent } from "./message-intent-utils.mjs";
 import {
   buildComparableRoutingSummary,
   buildRoutingTrendReport,
@@ -13,6 +13,32 @@ const ROUTING_ERROR_CODES = [
   ROUTING_NO_MATCH,
   INVALID_ACTION,
   FALLBACK_DISABLED,
+];
+const DOC_BOUNDARY_PACK_CASE_IDS = new Set([
+  "doc-023a",
+  "doc-023b",
+  "doc-023c",
+  "doc-023d",
+  "doc-023e",
+  "doc-023f",
+  "doc-023g",
+  "doc-023h",
+  "doc-023i",
+  "doc-023j",
+  "doc-023k",
+]);
+const DOC_BOUNDARY_ROUTE_SIGNAL_PATTERNS = [
+  "company_brain",
+  "company brain",
+  "cloud_doc_workflow",
+  "workflow:cloud_doc_organization",
+  "search_and_detail_doc",
+  "search_company_brain_docs",
+  "list_company_brain_docs",
+  "get_company_brain_doc_detail",
+  "ingest_learning_doc",
+  "update_learning_state",
+  "rereview",
 ];
 
 function normalizeErrorMetric(metric = {}) {
@@ -132,6 +158,49 @@ function buildMinimalDecision(recommendations = [], trend = {}) {
 
 function collectChangedEntries(record = {}, predicate = () => false) {
   return Object.entries(record || {}).filter(([, value]) => predicate(value));
+}
+
+function hasDocBoundaryRouteSignals(value = "") {
+  const normalized = cleanText(value).toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return DOC_BOUNDARY_ROUTE_SIGNAL_PATTERNS.some((pattern) => normalized.includes(pattern));
+}
+
+export function isDocBoundaryRoutingMissCase(miss = {}) {
+  const missId = cleanText(miss?.id);
+  const docBoundaryIntent = detectDocBoundaryIntent(miss?.text || "");
+  const expectedLane = cleanText(miss?.expected?.lane);
+  const actualLane = cleanText(miss?.actual?.lane);
+  const expectedAction = cleanText(miss?.expected?.planner_action);
+  const actualAction = cleanText(miss?.actual?.planner_action);
+  const expectedAgentOrTool = cleanText(miss?.expected?.agent_or_tool);
+  const actualAgentOrTool = cleanText(miss?.actual?.agent_or_tool);
+
+  return (
+    DOC_BOUNDARY_PACK_CASE_IDS.has(missId)
+    || docBoundaryIntent.is_high_confidence_doc_boundary === true
+    || expectedLane === "cloud_doc_workflow"
+    || actualLane === "cloud_doc_workflow"
+    || expectedAction === "rereview"
+    || actualAction === "rereview"
+    || hasDocBoundaryRouteSignals(expectedAction)
+    || hasDocBoundaryRouteSignals(actualAction)
+    || hasDocBoundaryRouteSignals(expectedAgentOrTool)
+    || hasDocBoundaryRouteSignals(actualAgentOrTool)
+  );
+}
+
+export function detectDocBoundaryRoutingRegression({ run = {} } = {}) {
+  const missCases = Array.isArray(run?.results)
+    ? run.results.filter((item) => item?.matches?.overall === false)
+    : Array.isArray(run?.summary?.top_miss_cases)
+      ? run.summary.top_miss_cases
+      : [];
+
+  return missCases.some((miss) => isDocBoundaryRoutingMissCase(miss));
 }
 
 export function buildRoutingEvalDecisionAdvice({ run = {}, previousRun = null } = {}) {
@@ -271,6 +340,7 @@ export function buildRoutingDiagnosticsSummary({
     error_breakdown: comparableSummary?.error_breakdown || {},
     trend_report: trendReport,
     decision_advice: decisionAdvice,
+    doc_boundary_regression: detectDocBoundaryRoutingRegression({ run }),
   };
 }
 

@@ -478,6 +478,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - archive every self-check run into snapshot-only unified self-check history
   - expose a fixed planner contract gate through `planner-contract-check` and `self-check`
   - expose a unified self-check summary through `system_summary`, `routing_summary`, and `planner_summary`
+  - mirror doc/company-brain routing severity into read-only `doc_boundary_regression` when the current routing regression belongs to the checked-in doc-boundary family
   - answer the operator-facing question `現在系統能不能放心改`
   - expose `daily-status` as the single daily operator entry over the same release/self-check evidence
   - keep `daily-status` human output bounded to four lines only:
@@ -532,16 +533,19 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - keep `release-check` human output bounded to three lines only:
     - `能否放心合併/發布`
     - `若不能，先修哪一條線`
-    - `先看哪類 case`
+    - `下一步`
   - keep `release-check -- --json` bounded to:
     - `overall_status`
     - `blocking_checks`
+    - `doc_boundary_regression`
     - `suggested_next_step`
+    - `action_hint`
     - `failing_area`
     - `representative_fail_case`
     - `drilldown_source`
   - classify `blocking_checks` only as `system_regression`, `routing_regression`, or `planner_contract_failure`
   - keep `suggested_next_step` single-line but module-specific: base modules for system regression, routing rule/fixture files for routing regression, planner registry/flow modules before `planner_contract.json` for planner contract failure
+  - when `doc_boundary_regression = true` and routing is the first blocking line, route the operator hint to the existing doc-boundary pack first, then `message-intent-utils.mjs`, then `lane-executor.mjs`; this is a hint-only overlay and does not change gate order
   - keep drilldown read-only and minimal:
     - `failing_area` only uses `doc` / `meeting` / `runtime` / `mixed`
     - `representative_fail_case` only carries 1~2 representative case strings

@@ -5,7 +5,10 @@ import {
   buildPlannerDiagnosticsCompareSummary,
   runPlannerContractConsistencyCheck,
 } from "./planner-contract-consistency.mjs";
-import { buildRoutingDiagnosticsSummary } from "./routing-eval-diagnostics.mjs";
+import {
+  buildRoutingDiagnosticsSummary,
+  detectDocBoundaryRoutingRegression,
+} from "./routing-eval-diagnostics.mjs";
 import {
   resolvePlannerDiagnosticsSnapshot,
 } from "./planner-diagnostics-history.mjs";
@@ -173,6 +176,7 @@ async function buildRoutingSummary({ routingArchiveDir } = {}) {
       status: "fail",
       summary: "routing latest snapshot unavailable",
       guidance: "先跑 npm run routing:closed-loop 或 node scripts/routing-eval.mjs --json 產生最新 routing snapshot。",
+      doc_boundary_regression: false,
       latest_snapshot: null,
       compare: {
         available: false,
@@ -209,6 +213,9 @@ async function buildRoutingSummary({ routingArchiveDir } = {}) {
   const trendDelta = diagnosticsSummary?.trend_report?.delta || null;
   const decision = diagnosticsSummary?.decision_advice?.minimal_decision || {};
   const threshold = Number(latestSnapshot?.run?.threshold?.min_accuracy_ratio || ROUTING_EVAL_MIN_ACCURACY_RATIO);
+  const docBoundaryRegression = detectDocBoundaryRoutingRegression({
+    run: latestSnapshot?.run,
+  });
   const hasObviousRegression = Boolean(
     compareSnapshot
     && (
@@ -235,13 +242,18 @@ async function buildRoutingSummary({ routingArchiveDir } = {}) {
   const guidance = status === "pass"
     ? "routing 線目前穩定；若接下來改 routing，再看 npm run routing:diagnostics。"
     : status === "degrade"
-      ? "先看 routing latest snapshot 與 compare；若只是 coverage 問題先 review fixture，不要改 fallback。"
-      : "先看 routing latest snapshot 與 compare；確認 regression 來源後再動 routing，先不要碰 fallback。";
+      ? docBoundaryRegression
+        ? "這是 doc-boundary 類問題，優先檢查 intent guard；先看 src/message-intent-utils.mjs、src/lane-executor.mjs，再用 routing-eval doc-boundary pack 驗證。"
+        : "先看 routing latest snapshot 與 compare；若只是 coverage 問題先 review fixture，不要改 fallback。"
+      : docBoundaryRegression
+        ? "這是 doc-boundary 類問題，優先檢查 intent guard；先看 src/message-intent-utils.mjs、src/lane-executor.mjs，再用 routing-eval doc-boundary pack 驗證。"
+        : "先看 routing latest snapshot 與 compare；確認 regression 來源後再動 routing，先不要碰 fallback。";
 
   return {
     status,
     summary,
     guidance,
+    doc_boundary_regression: docBoundaryRegression,
     latest_snapshot: {
       run_id: latestSnapshot?.snapshot?.run_id || null,
       timestamp: latestSnapshot?.snapshot?.timestamp || null,
@@ -357,7 +369,9 @@ function buildSystemSummary({
   const guidance = reviewPriority === "base"
     ? "先修 self-check 基礎項目，再看 routing / planner。"
     : reviewPriority === "routing"
-      ? "先看 routing：latest snapshot 與 compare 決定是不是 regression；routing 穩定後再看 planner。"
+      ? routingSummary?.doc_boundary_regression === true
+        ? "這是 doc-boundary 類問題，優先檢查 intent guard；先看 src/message-intent-utils.mjs、src/lane-executor.mjs，再用 routing-eval doc-boundary pack 驗證。"
+        : "先看 routing：latest snapshot 與 compare 決定是不是 regression；routing 穩定後再看 planner。"
       : reviewPriority === "planner"
         ? "先看 planner：gate fail 先修 implementation / contract drift；routing 只在 planner pass 後再看。"
         : "可以開始改；改 routing 後回看 routing:diagnostics，改 planner 後回看 planner:diagnostics 與 self-check。";
@@ -523,6 +537,7 @@ export async function runSystemSelfCheck({ routingArchiveDir, plannerArchiveDir,
 
   const result = {
     ok,
+    doc_boundary_regression: routingSummary?.doc_boundary_regression === true,
     system_summary: systemSummary,
     routing_summary: routingSummary,
     planner_summary: {

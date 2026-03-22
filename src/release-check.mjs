@@ -2,6 +2,7 @@ import { cleanText } from "./message-intent-utils.mjs";
 import { runPlannerContractConsistencyCheck } from "./planner-contract-consistency.mjs";
 import { archiveReleaseCheckSnapshot } from "./release-check-history.mjs";
 import { resolveRoutingDiagnosticsSnapshot } from "./routing-diagnostics-history.mjs";
+import { detectDocBoundaryRoutingRegression } from "./routing-eval-diagnostics.mjs";
 import { runSystemSelfCheck } from "./system-self-check.mjs";
 
 const BLOCKING_SYSTEM_REGRESSION = "system_regression";
@@ -14,6 +15,7 @@ const FAILING_AREA_MIXED = "mixed";
 const RELEASE_CHECK_TRIAGE_SOURCE = "release-check triage";
 const ROUTING_DRILLDOWN_SOURCE = "routing-eval diagnostics/history";
 const PLANNER_DRILLDOWN_SOURCE = "planner diagnostics/history";
+const DOC_BOUNDARY_ACTION_HINT = "run routing-eval doc-boundary pack and inspect message-intent-utils / lane-executor guard";
 const PLANNER_FINDING_ORDER = [
   "undefined_actions",
   "undefined_presets",
@@ -66,6 +68,10 @@ function buildSystemRegressionNextStep(selfCheckResult = {}) {
 }
 
 function buildRoutingRegressionNextStep(selfCheckResult = {}) {
+  if (selfCheckResult?.routing_summary?.doc_boundary_regression === true) {
+    return "先看 routing regression 的 doc-boundary pack：evals/routing-eval-set.mjs 的 doc-023a~023k；再看 src/message-intent-utils.mjs 與 src/lane-executor.mjs 的 intent guard。";
+  }
+
   const minimalDecision = cleanText(
     selfCheckResult?.routing_summary?.diagnostics_summary?.decision_advice?.minimal_decision?.action,
   );
@@ -103,7 +109,11 @@ function buildPlannerContractFailureNextStep(selfCheckResult = {}) {
   return "先看 planner contract failure：src/executive-planner.mjs 與 src/planner-*-flow.mjs；只有 intentional stable target 才改 docs/system/planner_contract.json。";
 }
 
-function buildRoutingActionHint(drilldown = {}) {
+function buildRoutingActionHint(drilldown = {}, { docBoundaryRegression = false } = {}) {
+  if (docBoundaryRegression) {
+    return DOC_BOUNDARY_ACTION_HINT;
+  }
+
   const area = normalizeFailingArea(drilldown?.failing_area) || FAILING_AREA_MIXED;
   return `run routing-eval and inspect ${area} fixtures`;
 }
@@ -146,11 +156,12 @@ function buildReleaseCheckActionHint({
   blockingChecks = [],
   suggestedNextStep = "",
   drilldown = {},
+  docBoundaryRegression = false,
 } = {}) {
   const firstBlockingCheck = normalizeBlockingChecks(blockingChecks)[0] || null;
 
   if (firstBlockingCheck === BLOCKING_ROUTING_REGRESSION) {
-    return buildRoutingActionHint(drilldown);
+    return buildRoutingActionHint(drilldown, { docBoundaryRegression });
   }
   if (firstBlockingCheck === BLOCKING_PLANNER_CONTRACT_FAILURE) {
     return buildPlannerActionHint({ suggestedNextStep, drilldown });
@@ -462,6 +473,11 @@ export function buildReleaseCheckReport({ selfCheckResult = {}, drilldown = null
     blockingChecks.push(BLOCKING_PLANNER_CONTRACT_FAILURE);
   }
 
+  const docBoundaryRegression = hasBlockingRoutingIssue(selfCheckResult)
+    && (
+      selfCheckResult?.doc_boundary_regression === true
+      || selfCheckResult?.routing_summary?.doc_boundary_regression === true
+    );
   const firstBlockingCheck = blockingChecks[0] || null;
   const suggestedNextStep = firstBlockingCheck === BLOCKING_SYSTEM_REGRESSION
     ? buildSystemRegressionNextStep(selfCheckResult)
@@ -479,11 +495,13 @@ export function buildReleaseCheckReport({ selfCheckResult = {}, drilldown = null
     blockingChecks,
     suggestedNextStep,
     drilldown: normalizedDrilldown,
+    docBoundaryRegression,
   });
 
   return {
     overall_status: blockingChecks.length === 0 && selfCheckResult?.ok === true ? "pass" : "fail",
     blocking_checks: blockingChecks,
+    doc_boundary_regression: docBoundaryRegression,
     suggested_next_step: suggestedNextStep,
     action_hint: actionHint,
     failing_area: normalizedDrilldown.failing_area,
@@ -509,11 +527,14 @@ export function renderReleaseCheckReport(report = {}) {
   const canMergeOrRelease = cleanText(report?.overall_status) === "pass" ? "可以" : "先不要";
   const firstBlockingLine = Array.isArray(report?.blocking_checks) ? report.blocking_checks[0] : null;
   const actionHint = cleanText(report?.action_hint) || "無";
+  const docBoundaryNote = report?.doc_boundary_regression === true && firstBlockingLine === BLOCKING_ROUTING_REGRESSION
+    ? "這是 doc-boundary 類問題，優先檢查 intent guard；"
+    : "";
 
   return [
     `能否放心合併/發布：${canMergeOrRelease}`,
     `若不能，先修哪一條線：${renderBlockingLineLabel(firstBlockingLine)}`,
-    `下一步：${actionHint}`,
+    `下一步：${docBoundaryNote}${actionHint}`,
   ].join("\n");
 }
 
@@ -576,6 +597,17 @@ export async function runReleaseCheck(options = {}) {
     });
   } catch {
     latestRoutingSnapshot = null;
+  }
+
+  if (
+    selfCheckResult?.routing_summary
+    && selfCheckResult.routing_summary.doc_boundary_regression !== true
+    && latestRoutingSnapshot?.run
+  ) {
+    selfCheckResult.routing_summary.doc_boundary_regression = detectDocBoundaryRoutingRegression({
+      run: latestRoutingSnapshot.run,
+    });
+    selfCheckResult.doc_boundary_regression = selfCheckResult.routing_summary.doc_boundary_regression === true;
   }
 
   try {

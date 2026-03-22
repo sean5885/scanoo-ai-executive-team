@@ -55,6 +55,15 @@ Thread 62 personal-lane misroute regression pack checkpoint 只擴充 Thread 61 
 
 Thread 63 doc-boundary hardening checkpoint 在既有 Thread 61/62 的 personal-lane 誤路由修補上，再補一層共用 doc/company-brain intent boundary guard：把文檔整理、文檔分類、`排除 / 摘出 / 保留`、以及 `company_brain / 知識庫` 這組高置信語意收斂成共用 intent 判斷，固定不得走 generic personal lane；本 checkpoint 包含 Thread 62 regression pack，且只更新 intent guard、相關測試與文件，不擴大到其他 lane，不新增 fallback，也不改 release-check、daily-status、history/compare。
 
+目前 `self-check` / `release-check` 也會把這組 regression family 接進 decision signal，但仍是 read-only 判讀：
+
+- 只要 routing line 本身已經是 `degrade` / `fail` 或 compare 已判成 obvious regression，才會進一步判斷是否屬於 doc-boundary family
+- `doc_boundary_regression = true` 的判斷標準只重用既有 routing miss evidence，不新增新 gate：
+  - miss case 命中 checked-in doc-boundary regression pack（目前是 `evals/routing-eval-set.mjs` 的 `doc-023a` ~ `doc-023k`）
+  - miss case 的 user text 命中 `message-intent-utils.mjs` 既有高置信 doc-boundary intent guard
+  - miss case 的 expected / actual route surface 已明確落在 `company_brain` 或 `cloud_doc_workflow -> rereview` family
+- 這個 signal 只提高 operator 對 doc/company-brain boundary 問題的可見度；不改 routing gate、不新增 fallback，也不做 auto-fix
+
 目前這條路徑已再收斂成 `diagnostics_summary` 單一決策視圖，讓 operator 只看一個 summary 就能決定要補 fixture、檢查 routing rule，或保持不動；不新增 routing 邏輯、不新增 fallback，也不改 baseline/tag。
 
 固定操作 runbook 見：
@@ -267,6 +276,14 @@ node scripts/routing-eval-fixture-candidates.mjs --input /tmp/routing-eval.json 
 2. 再看 `npm run release-check -- --json` 的 `representative_fail_case`
 3. 用 case id 回到 latest routing snapshot 的 `top_miss_cases`
 4. 只在確認是 coverage 缺口時補 fixture；不要因為 release-check fail 就直接改 fallback 或重做 diagnostics
+
+若同時命中 `doc_boundary_regression = true`，release/self-check 的 operator hint 會先把人帶到 doc-boundary pack 與 intent guard；但實際排查順序固定是：
+
+1. 先看 `src/message-intent-utils.mjs` 的 doc/company-brain intent guard 是否還正確命中高置信邊界
+2. 再看 `src/lane-executor.mjs` 是否仍把這類語句擋在 generic personal lane 外
+3. 最後回到 `evals/routing-eval-set.mjs` 的 doc-boundary pack 驗證修正是否真的收斂
+
+也就是說，operator hint 可以 pack-first 幫你快速定位；真正修 root cause 時仍是 `guard -> pack`
 
 `npm run self-check` 現在會直接整合這條線的 read-only 結論，但仍不重跑 eval：
 

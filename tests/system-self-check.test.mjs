@@ -10,7 +10,7 @@ import { runPlannerContractConsistencyCheck } from "../src/planner-contract-cons
 import { archivePlannerDiagnosticsSnapshot } from "../src/planner-diagnostics-history.mjs";
 import { buildRoutingDiagnosticsSummary } from "../src/routing-eval-diagnostics.mjs";
 import { archiveRoutingDiagnosticsSnapshot } from "../src/routing-diagnostics-history.mjs";
-import { runRoutingEval } from "../src/routing-eval.mjs";
+import { runRoutingEval, summarizeRoutingEval } from "../src/routing-eval.mjs";
 import { runSystemSelfCheck } from "../src/system-self-check.mjs";
 
 async function seedSelfCheckArchives() {
@@ -79,6 +79,7 @@ test("system self-check returns unified routing and planner summaries", async ()
   const result = await runSystemSelfCheck(archives);
 
   assert.equal(result.ok, true);
+  assert.equal(result.doc_boundary_regression, false);
   assert.equal(result.system_summary.status, "pass");
   assert.equal(result.system_summary.safe_to_change, true);
   assert.equal(result.system_summary.core_checks, "pass");
@@ -86,6 +87,7 @@ test("system self-check returns unified routing and planner summaries", async ()
   assert.equal(result.system_summary.planner_gate, "pass");
   assert.equal(result.system_summary.has_obvious_regression, false);
   assert.equal(result.routing_summary.status, "pass");
+  assert.equal(result.routing_summary.doc_boundary_regression, false);
   assert.equal(result.routing_summary.compare.available, true);
   assert.equal(result.routing_summary.compare.has_obvious_regression, false);
   assert.equal(result.planner_summary.gate, "pass");
@@ -117,8 +119,95 @@ test("system self-check returns unified routing and planner summaries", async ()
   });
   assert.equal(snapshot.run_id, result.self_check_archive.run_id);
   assert.equal(snapshot.system_summary.status, "pass");
+  assert.equal(snapshot.doc_boundary_regression, false);
   assert.equal(snapshot.routing_summary.status, "pass");
+  assert.equal(snapshot.routing_summary.doc_boundary_regression, false);
   assert.equal(snapshot.planner_summary.gate, "pass");
+});
+
+test("system self-check marks doc-boundary routing regressions and points to intent guards", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "system-self-check-doc-boundary-"));
+  const routingArchiveDir = path.join(baseDir, "routing");
+  const plannerArchiveDir = path.join(baseDir, "planner");
+  const selfCheckArchiveDir = path.join(baseDir, "self-check");
+  const stableRoutingRun = await runRoutingEval();
+
+  await archiveRoutingDiagnosticsSnapshot({
+    baseDir: routingArchiveDir,
+    runId: "routing-1",
+    timestamp: "2026-03-22T00:00:00.000Z",
+    scope: "routing-eval",
+    stage: "standalone",
+    run: stableRoutingRun,
+    diagnosticsSummary: buildRoutingDiagnosticsSummary({
+      run: stableRoutingRun,
+      previousRun: null,
+      currentLabel: "snapshot:routing-1",
+    }),
+  });
+
+  const docBoundaryRun = {
+    ...stableRoutingRun,
+    results: stableRoutingRun.results.map((item) => (
+      item.id === "doc-023a"
+        ? {
+            ...item,
+            actual: {
+              ...item.actual,
+              lane: "personal_assistant",
+              planner_action: "ROUTING_NO_MATCH",
+              agent_or_tool: "error:ROUTING_NO_MATCH",
+              route_source: "lane_executor",
+            },
+            matches: {
+              lane: false,
+              planner_action: false,
+              agent_or_tool: false,
+              overall: false,
+            },
+            miss_dimensions: ["lane", "planner_action", "agent_or_tool"],
+          }
+        : item
+    )),
+  };
+  docBoundaryRun.summary = summarizeRoutingEval(docBoundaryRun.results);
+
+  await archiveRoutingDiagnosticsSnapshot({
+    baseDir: routingArchiveDir,
+    runId: "routing-2",
+    timestamp: "2026-03-22T00:00:01.000Z",
+    scope: "routing-eval",
+    stage: "standalone",
+    run: docBoundaryRun,
+    diagnosticsSummary: buildRoutingDiagnosticsSummary({
+      run: docBoundaryRun,
+      previousRun: stableRoutingRun,
+      currentLabel: "snapshot:routing-2",
+      previousLabel: "snapshot:routing-1",
+    }),
+  });
+
+  const plannerReport = runPlannerContractConsistencyCheck();
+  await archivePlannerDiagnosticsSnapshot({
+    baseDir: plannerArchiveDir,
+    commandName: "planner-diagnostics",
+    report: plannerReport,
+    timestamp: "2026-03-22T00:00:02.000Z",
+  });
+
+  const result = await runSystemSelfCheck({
+    routingArchiveDir,
+    plannerArchiveDir,
+    selfCheckArchiveDir,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.doc_boundary_regression, true);
+  assert.equal(result.routing_summary.status, "degrade");
+  assert.equal(result.routing_summary.doc_boundary_regression, true);
+  assert.match(result.routing_summary.guidance, /doc-boundary 類問題/);
+  assert.equal(result.system_summary.review_priority, "routing");
+  assert.match(result.system_summary.guidance, /優先檢查 intent guard/);
 });
 
 test("self-check CLI renders concise guidance by default", async () => {
@@ -156,6 +245,7 @@ test("self-check CLI emits unified JSON report with --json", async () => {
   const parsed = JSON.parse(raw);
 
   assert.equal(parsed.ok, true);
+  assert.equal(parsed.doc_boundary_regression, false);
   assert.deepEqual(parsed.system_summary, {
     status: "pass",
     safe_to_change: true,
@@ -168,6 +258,7 @@ test("self-check CLI emits unified JSON report with --json", async () => {
     guidance: "可以開始改；改 routing 後回看 routing:diagnostics，改 planner 後回看 planner:diagnostics 與 self-check。",
   });
   assert.equal(parsed.routing_summary.status, "pass");
+  assert.equal(parsed.routing_summary.doc_boundary_regression, false);
   assert.equal(parsed.planner_summary.gate, "pass");
   assert.equal(parsed.routing_summary.latest_snapshot.run_id, "routing-2");
   assert.match(parsed.planner_summary.latest_snapshot.run_id, /^planner-diagnostics-/);

@@ -89,6 +89,7 @@ test("release-check report passes when self-check, routing, and planner are stab
   assert.deepEqual(result.report, {
     overall_status: "pass",
     blocking_checks: [],
+    doc_boundary_regression: false,
     suggested_next_step: "目前這個入口沒有 blocking check；若要正式 release，仍需跑既有測試與發布驗證流程。",
     action_hint: null,
     failing_area: null,
@@ -125,6 +126,7 @@ test("release-check report prioritizes routing before planner when both block", 
       },
       routing_summary: {
         status: "degrade",
+        doc_boundary_regression: true,
         diagnostics_summary: {
           decision_advice: {
             minimal_decision: {
@@ -156,8 +158,9 @@ test("release-check report prioritizes routing before planner when both block", 
   assert.deepEqual(report, {
     overall_status: "fail",
     blocking_checks: ["routing_regression", "planner_contract_failure"],
-    suggested_next_step: "先看 routing regression 的 rule 模組：src/router.js 與 src/planner-*-flow.mjs。",
-    action_hint: "run routing-eval and inspect doc fixtures",
+    doc_boundary_regression: true,
+    suggested_next_step: "先看 routing regression 的 doc-boundary pack：evals/routing-eval-set.mjs 的 doc-023a~023k；再看 src/message-intent-utils.mjs 與 src/lane-executor.mjs 的 intent guard。",
+    action_hint: "run routing-eval doc-boundary pack and inspect message-intent-utils / lane-executor guard",
     failing_area: "doc",
     representative_fail_case: ["doc-001 [doc] planner_action via planner_flow"],
     drilldown_source: ["release-check triage", "routing-eval diagnostics/history"],
@@ -203,6 +206,7 @@ test("release-check report classifies system regression and points to base modul
   assert.deepEqual(report, {
     overall_status: "fail",
     blocking_checks: ["system_regression"],
+    doc_boundary_regression: false,
     suggested_next_step: "先看 system regression 的 agent registry / contract：src/agent-registry.mjs。",
     action_hint: "inspect blocking_checks and representative_fail_case",
     failing_area: "mixed",
@@ -244,6 +248,7 @@ test("release-check report points planner contract failure to planner registry f
   assert.deepEqual(report, {
     overall_status: "fail",
     blocking_checks: ["planner_contract_failure"],
+    doc_boundary_regression: false,
     suggested_next_step: "先看 planner contract failure 的 registry 模組：src/executive-planner.mjs；只有 intentional stable target 才改 docs/system/planner_contract.json。",
     action_hint: "run planner-contract-check and fix contract mismatch",
     failing_area: "doc",
@@ -402,6 +407,7 @@ test("release-check human output stays minimal with drilldown line", () => {
     renderReleaseCheckReport({
       overall_status: "fail",
       blocking_checks: ["system_regression", "routing_regression"],
+      doc_boundary_regression: false,
       suggested_next_step: "unused",
       action_hint: "inspect blocking_checks and representative_fail_case",
     }),
@@ -409,6 +415,23 @@ test("release-check human output stays minimal with drilldown line", () => {
       "能否放心合併/發布：先不要",
       "若不能，先修哪一條線：system regression",
       "下一步：inspect blocking_checks and representative_fail_case",
+    ].join("\n"),
+  );
+});
+
+test("release-check human output flags doc-boundary routing regressions", () => {
+  assert.equal(
+    renderReleaseCheckReport({
+      overall_status: "fail",
+      blocking_checks: ["routing_regression"],
+      doc_boundary_regression: true,
+      suggested_next_step: "unused",
+      action_hint: "run routing-eval doc-boundary pack and inspect message-intent-utils / lane-executor guard",
+    }),
+    [
+      "能否放心合併/發布：先不要",
+      "若不能，先修哪一條線：routing regression",
+      "下一步：這是 doc-boundary 類問題，優先檢查 intent guard；run routing-eval doc-boundary pack and inspect message-intent-utils / lane-executor guard",
     ].join("\n"),
   );
 });
@@ -431,6 +454,7 @@ test("release-check CLI emits only the minimal JSON structure", async () => {
   assert.deepEqual(parsed, {
     overall_status: "pass",
     blocking_checks: [],
+    doc_boundary_regression: false,
     suggested_next_step: "目前這個入口沒有 blocking check；若要正式 release，仍需跑既有測試與發布驗證流程。",
     action_hint: null,
     failing_area: null,
@@ -459,6 +483,7 @@ test("release-check CLI emits only the minimal JSON structure", async () => {
     timestamp: latestEntry.timestamp,
     overall_status: "pass",
     blocking_checks: [],
+    doc_boundary_regression: false,
     suggested_next_step: "目前這個入口沒有 blocking check；若要正式 release，仍需跑既有測試與發布驗證流程。",
     action_hint: null,
     failing_area: null,
@@ -542,6 +567,7 @@ test("release-check CLI compare-previous prints only the minimal compare view", 
   assert.deepEqual(firstReport, {
     overall_status: "pass",
     blocking_checks: [],
+    doc_boundary_regression: false,
     suggested_next_step: "目前這個入口沒有 blocking check；若要正式 release，仍需跑既有測試與發布驗證流程。",
     action_hint: null,
     failing_area: null,
@@ -628,6 +654,7 @@ test("release-check CI entry emits minimal JSON and exits 0 on pass", async () =
   assert.deepEqual(JSON.parse(result.stdout), {
     overall_status: "pass",
     blocking_checks: [],
+    doc_boundary_regression: false,
     suggested_next_step: "目前這個入口沒有 blocking check；若要正式 release，仍需跑既有測試與發布驗證流程。",
     action_hint: null,
     failing_area: null,
@@ -719,6 +746,7 @@ test("release-check CI entry exits 1 on fail", async () => {
   assert.deepEqual(JSON.parse(result.stdout), {
     overall_status: "fail",
     blocking_checks: ["routing_regression"],
+    doc_boundary_regression: false,
     suggested_next_step: "先看 routing regression：diagnostics 在 src/routing-eval-diagnostics.mjs；rule 看 src/router.js / src/planner-*-flow.mjs；fixture 看 evals/routing-eval-set.mjs。",
     action_hint: "run routing-eval and inspect mixed fixtures",
     failing_area: "mixed",
