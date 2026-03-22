@@ -824,6 +824,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 
 - `/Users/seanhan/Documents/Playground/src/knowledge/doc-index.mjs`
   - local in-memory document index helper
+  - provides exact-id lookup plus case-sensitive and case-insensitive content search helpers
   - not connected to sync ingestion, SQLite persistence, planner routes, or company-brain approval/governance paths
 
 - `/Users/seanhan/Documents/Playground/src/knowledge/doc-loader.mjs`

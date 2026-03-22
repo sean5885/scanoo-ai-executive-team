@@ -31,3 +31,9 @@ export function findDocById(index, id) {
 export function searchDocs(index, keyword) {
   return index.docs.filter((d) => d.content.includes(keyword));
 }
+
+export function searchDocsByKeyword(index, keyword) {
+  return index.docs.filter((d) =>
+    d.content.toLowerCase().includes(keyword.toLowerCase()),
+  );
+}
