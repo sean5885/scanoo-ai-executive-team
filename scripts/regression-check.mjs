@@ -25,6 +25,9 @@ ok = run("node scripts/retrieval-realworld-eval.mjs") && ok;
 // 4. doc workflow
 ok = run("node scripts/doc-workflow-eval.mjs") && ok;
 
+// 5. runtime workflow
+ok = run("node scripts/runtime-workflow-eval.mjs") && ok;
+
 // summary
 console.log("\nREGRESSION RESULT:", ok ? "PASS" : "FAIL");
 

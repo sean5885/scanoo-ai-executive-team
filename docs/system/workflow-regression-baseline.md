@@ -200,6 +200,25 @@ node scripts/meeting-workflow-eval.mjs
 - checked-in meeting fixture dataset：`evals/meeting-workflow-set.mjs`
 - deterministic smoke extractor output：`summary`、`decisions`、`action_items`、`blockers`
 
+### Runtime Workflow Fixture Smoke
+
+用途：
+
+- 用最小 deterministic fixture 快速檢查 runtime health / status 類問法的 smoke runner 沒有明顯退化
+- 適合在補 runtime fixture、整理 runtime read-side smoke 腳本或做最小驗證時使用
+- 這不是正式 workflow completion verifier，也不替代 routing / planner / tool dispatch 的整合測試
+
+命令：
+
+```bash
+node scripts/runtime-workflow-eval.mjs
+```
+
+覆蓋：
+
+- checked-in runtime workflow fixture dataset：`evals/runtime-workflow-set.mjs`
+- deterministic smoke runner output：PASS / FAIL 與固定 runtime mock answer 命中結果
+
 ## Test Harness Note
 
 目前 workflow baseline 依賴以下 test harness / cleanup hooks：
@@ -252,7 +271,7 @@ node --test tests/routing-eval-decision-advice.test.mjs tests/routing-eval-close
 
 用途：
 
-- `node scripts/regression-check.mjs` 提供最小的 read-side regression quick check，固定串接 `scripts/retrieval-eval.mjs`、`tests/routing-eval-lite.mjs`、`scripts/retrieval-realworld-eval.mjs` 與 `scripts/doc-workflow-eval.mjs`
+- `node scripts/regression-check.mjs` 提供最小的 read-side regression quick check，固定串接 `scripts/retrieval-eval.mjs`、`tests/routing-eval-lite.mjs`、`scripts/retrieval-realworld-eval.mjs`、`scripts/doc-workflow-eval.mjs` 與 `scripts/runtime-workflow-eval.mjs`
 - `node scripts/retrieval-realworld-eval.mjs` 提供額外的 read-side retrieval smoke check，使用 checked-in 的真實問法風格 query set 量測 HIT / MISS 與命中率
 - 驗證 checked-in deterministic routing baseline 是否仍與 eval set 一致
 - 這份 checked-in 結果即為 routing eval regression gate baseline v2（`routing-eval-baseline-v2`）
