@@ -455,6 +455,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - `/Users/seanhan/Documents/Playground/src/planner-contract-consistency.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/self-check.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/planner-contract-check.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/planner-diagnostics.mjs`
   - `/Users/seanhan/Documents/Playground/docs/system/agent_capability_matrix.md`
   - `/Users/seanhan/Documents/Playground/docs/system/chain_health_checklist.md`
 - Responsibility:
@@ -465,8 +466,9 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - validate planner tool/preset registries and selector/flow targets against `docs/system/planner_contract.json`
   - classify planner contract drift into undefined action, undefined preset, deprecated reachable target, and selector-contract mismatch
   - expose a fixed planner contract gate through `planner-contract-check` and `self-check`
+  - expose a fixed human-readable daily-entry view through `planner:diagnostics`
   - fail the planner contract gate only on undefined action, undefined preset, and selector-contract mismatch
-  - emit a minimal CLI fail summary plus JSON report without changing routing logic
+  - emit a fixed diagnostics summary plus JSON report without changing routing logic
   - keep a human-readable capability matrix and chain checklist in sync with code
 - Core path:
   - important for regression prevention and operator debugging

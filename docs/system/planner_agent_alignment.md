@@ -136,18 +136,20 @@ Checkpoint status:
 - `consistency-check checkpoint`
 - `contract-alignment checkpoint`
 - `Thread 45 planner contract regression-gate checkpoint`
+- `Thread 46 planner diagnostics daily-entry checkpoint`
 
 Current checked-in consistency checker:
 
 - `/Users/seanhan/Documents/Playground/src/planner-contract-consistency.mjs`
 - `/Users/seanhan/Documents/Playground/scripts/planner-contract-check.mjs`
+- `/Users/seanhan/Documents/Playground/scripts/planner-diagnostics.mjs`
 
 Current purpose:
 
 - compare checked-in planner contract targets against the runtime tool registry
 - compare checked-in planner contract targets against the runtime preset registry and preset step actions
 - compare selector / hard-route / flow-route outputs against the same contract target catalog
-- emit a minimal CLI fail summary and a machine-readable JSON report
+- emit a fixed human-readable diagnostics summary plus a machine-readable JSON report
 - detect drift without changing routing or applying auto-fixes
 
 Current drift judgment rules:
@@ -175,6 +177,29 @@ Thread 45 planner contract regression-gate checkpoint:
 - fixes planner contract drift checking as a blocking regression gate without changing routing decisions
 - makes `planner-contract-check` and `self-check` share the same blocking criteria
 - keeps the path read-only: no fallback, no auto-fix, no routing mutation
+- adds `planner:diagnostics` as the daily-entry CLI that reads current runtime/contract state directly and does not rerun planner execution
+
+Thread 46 planner diagnostics daily-entry checkpoint:
+
+- fixes the planner contract view into a single daily-entry CLI summary
+- keeps the path read-only: no new logic, no routing change, no fallback, no auto-fix
+- makes operators check planner/contract drift from one human-readable summary before `planner:contract-check` or `self-check`
+
+Current daily-entry CLI:
+
+- `npm run planner:diagnostics`
+- it reads the current checked-in runtime selector / registry / flow-route state directly
+- it does not rerun planner execution, mutate routing, or auto-fix drift
+- it renders one fixed summary line with:
+  - `gate`
+  - `undefined_actions`
+  - `undefined_presets`
+  - `selector_contract_mismatches`
+  - `deprecated_reachable_targets`
+- if `gate = fail`, the decision guidance is:
+  - default: fix planner implementation first
+  - alternative: update the contract only for an intentional stable target, and state the reason explicitly
+  - deprecated reachable targets remain warning-only and do not block the gate
 
 When to add/update contract:
 
@@ -193,6 +218,7 @@ When contract update is allowed:
 
 When contract check must run:
 
+- first command after planner / contract changes: `npm run planner:diagnostics`
 - any change to `/Users/seanhan/Documents/Playground/docs/system/planner_contract.json`
 - any change to `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` that adds/removes/renames planner actions or presets
 - any change to planner-side selector / hard-route / flow-route emitters, including:
@@ -211,6 +237,14 @@ When to change planner implementation instead:
 - the target is legacy/deprecated and should no longer be reachable
 - the change would otherwise require the contract to encode accidental runtime behavior rather than an intended stable interface
 - the only way to make the checker pass is to bless an accidental selector/route emission that has not been accepted as stable planner surface
+
+Fail handling order:
+
+1. run `npm run planner:diagnostics`
+2. if `gate = fail`, fix planner implementation first by default
+3. only if the reachable target is intentional and stable, update `planner_contract.json` and record the reason in the same change
+4. if only `deprecated_reachable_targets > 0`, treat it as warning-only and clean it up without blocking the gate
+5. before merge/release, rerun `npm run planner:contract-check` or `npm run self-check`
 
 Current operating rule:
 

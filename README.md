@@ -35,12 +35,16 @@
 固定操作入口：
 
 ```bash
+npm run planner:diagnostics
 npm run routing:closed-loop
 npm run routing:closed-loop -- rerun
 npm run routing:diagnostics
 npm run routing:diagnostics -- --compare-previous
 npm run routing:diagnostics -- --compare-tag routing-eval-baseline-v2
 ```
+
+`planner:diagnostics` 是 planner / contract 變更後的固定日常入口；它直接讀目前 checked-in planner runtime / contract 狀態，輸出單一 human-readable diagnostics summary，不會重跑 planner，也不會 auto-fix。若 `gate = fail`，預設先修 planner 實作；只有 target 明確是 intentional / stable surface 時才補 contract，而且要明確說明原因。`deprecated_reachable_targets` 只提示，不阻擋 gate。
+這組 planner 入口目前已固定為 Thread 46 daily-entry checkpoint。
 
 這條路徑會把 routing regression 操作固定成 `eval -> candidates -> review -> dataset -> eval`，artifact 會寫到 `.tmp/routing-eval-closed-loop/<session-id>/`。
 目前 `routing-eval`、prepare、rerun 都以 `diagnostics_summary` 作為單一決策視圖。

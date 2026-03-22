@@ -19,6 +19,7 @@
     "routing:diagnostics": "node scripts/routing-diagnostics.mjs",
     "self-check": "node scripts/self-check.mjs",
     "planner:contract-check": "node scripts/planner-contract-check.mjs",
+    "planner:diagnostics": "node scripts/planner-diagnostics.mjs",
     "monitor": "node scripts/monitoring-cli.mjs",
     "auth:check": "node scripts/check-auth.mjs",
     "sync:full": "curl -X POST http://localhost:3333/sync/full",

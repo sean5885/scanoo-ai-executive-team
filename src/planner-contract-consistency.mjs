@@ -37,6 +37,12 @@ const GATE_FAILURE_CATEGORIES = [
   "undefined_presets",
   "selector_contract_mismatches",
 ];
+const FINDING_CATEGORY_ORDER = [
+  "undefined_actions",
+  "undefined_presets",
+  "selector_contract_mismatches",
+  "deprecated_reachable_targets",
+];
 
 function loadPlannerContract() {
   return JSON.parse(readFileSync(CONTRACT_FILE, "utf8"));
@@ -488,6 +494,59 @@ export function buildPlannerContractGate(findings = {}) {
   };
 }
 
+export function buildPlannerDiagnosticsSummary(report = {}) {
+  return {
+    gate: report?.gate?.ok ? "pass" : "fail",
+    undefined_actions: Number.isFinite(report?.summary?.undefined_actions)
+      ? report.summary.undefined_actions
+      : 0,
+    undefined_presets: Number.isFinite(report?.summary?.undefined_presets)
+      ? report.summary.undefined_presets
+      : 0,
+    selector_contract_mismatches: Number.isFinite(report?.summary?.selector_contract_mismatches)
+      ? report.summary.selector_contract_mismatches
+      : 0,
+    deprecated_reachable_targets: Number.isFinite(report?.summary?.deprecated_reachable_targets)
+      ? report.summary.deprecated_reachable_targets
+      : 0,
+  };
+}
+
+export function buildPlannerDiagnosticsDecision(summary = {}) {
+  const gate = cleanText(summary?.gate) || "fail";
+  const blockingCategories = GATE_FAILURE_CATEGORIES
+    .filter((category) => Number(summary?.[category] || 0) > 0);
+  const hasDeprecatedReachableTargets = Number(summary?.deprecated_reachable_targets || 0) > 0;
+
+  if (gate === "fail") {
+    return {
+      action: "fix_planner_implementation",
+      blocking_categories: blockingCategories,
+      summary: [
+        "Default: fix planner implementation first.",
+        "Alternative: update the contract only for an intentional stable target, and state the reason explicitly.",
+        hasDeprecatedReachableTargets
+          ? "Deprecated reachable targets warn only and do not block this gate."
+          : null,
+      ].filter(Boolean).join(" "),
+    };
+  }
+
+  if (hasDeprecatedReachableTargets) {
+    return {
+      action: "warn_deprecated_only",
+      blocking_categories: [],
+      summary: "Gate passes. Deprecated reachable targets are warnings only and do not block this gate.",
+    };
+  }
+
+  return {
+    action: "observe_only",
+    blocking_categories: [],
+    summary: "Gate passes. No planner implementation or contract change is required.",
+  };
+}
+
 export function runPlannerContractConsistencyCheck() {
   const contract = loadPlannerContract();
   const contractCatalog = buildContractCatalog(contract);
@@ -505,10 +564,22 @@ export function runPlannerContractConsistencyCheck() {
   const gate = buildPlannerContractGate(groupedFindings);
 
   const ok = Object.values(groupedFindings).every((items) => items.length === 0);
+  const diagnosticsSummary = buildPlannerDiagnosticsSummary({
+    gate,
+    summary: {
+      undefined_actions: groupedFindings.undefined_actions.length,
+      undefined_presets: groupedFindings.undefined_presets.length,
+      deprecated_reachable_targets: groupedFindings.deprecated_reachable_targets.length,
+      selector_contract_mismatches: groupedFindings.selector_contract_mismatches.length,
+    },
+  });
+  const decision = buildPlannerDiagnosticsDecision(diagnosticsSummary);
 
   return {
     ok,
     gate,
+    diagnostics_summary: diagnosticsSummary,
+    decision,
     contract: {
       version: cleanText(contract?.version) || null,
       actions: contractCatalog.actions,
@@ -527,34 +598,33 @@ export function runPlannerContractConsistencyCheck() {
 }
 
 export function renderPlannerContractConsistencyReport(report = {}) {
+  const diagnosticsSummary = report?.diagnostics_summary || buildPlannerDiagnosticsSummary(report);
+  const decision = report?.decision || buildPlannerDiagnosticsDecision(diagnosticsSummary);
   const lines = [
+    "Planner Diagnostics",
     `planner contract gate: ${report?.gate?.ok ? "pass" : "fail"}`,
     `planner contract consistency: ${report?.ok ? "ok" : "drift_detected"}`,
     `contract version: ${cleanText(report?.contract?.version) || "unknown"}`,
-    `undefined actions: ${Number.isFinite(report?.summary?.undefined_actions) ? report.summary.undefined_actions : 0}`,
-    `undefined presets: ${Number.isFinite(report?.summary?.undefined_presets) ? report.summary.undefined_presets : 0}`,
-    `deprecated reachable targets: ${Number.isFinite(report?.summary?.deprecated_reachable_targets) ? report.summary.deprecated_reachable_targets : 0}`,
-    `selector/contract mismatches: ${Number.isFinite(report?.summary?.selector_contract_mismatches) ? report.summary.selector_contract_mismatches : 0}`,
+    `summary: gate=${diagnosticsSummary.gate} | undefined_actions=${diagnosticsSummary.undefined_actions} | undefined_presets=${diagnosticsSummary.undefined_presets} | selector_contract_mismatches=${diagnosticsSummary.selector_contract_mismatches} | deprecated_reachable_targets=${diagnosticsSummary.deprecated_reachable_targets}`,
+    `decision: ${decision.summary}`,
   ];
 
   if (report?.gate?.ok === false) {
-    lines.push("fail summary:");
-    for (const item of Array.isArray(report?.gate?.fail_summary) ? report.gate.fail_summary : []) {
-      lines.push(`- ${item.category}: ${item.count}`);
-    }
+    const failSummary = Array.isArray(report?.gate?.fail_summary)
+      ? report.gate.fail_summary.map((item) => `${item.category}=${item.count}`).join(" ; ")
+      : "";
+    lines.push(`blocking: ${failSummary || "unknown"}`);
   }
 
-  const orderedFindings = [
-    ...(report?.findings?.undefined_actions || []),
-    ...(report?.findings?.undefined_presets || []),
-    ...(report?.findings?.deprecated_reachable_targets || []),
-    ...(report?.findings?.selector_contract_mismatches || []),
-  ];
+  const orderedFindings = FINDING_CATEGORY_ORDER.flatMap((category) => report?.findings?.[category] || []);
 
-  for (const finding of orderedFindings) {
-    lines.push(
-      `- ${finding.category}: ${finding.target} via ${finding.source_id} (${finding.reason}; contract_kind=${finding.contract_kind || "missing"})`,
-    );
+  if (orderedFindings.length > 0) {
+    lines.push("findings:");
+    for (const finding of orderedFindings) {
+      lines.push(
+        `- ${finding.category}: ${finding.target} via ${finding.source_id} (${finding.reason}; contract_kind=${finding.contract_kind || "missing"})`,
+      );
+    }
   }
 
   return lines.join("\n");

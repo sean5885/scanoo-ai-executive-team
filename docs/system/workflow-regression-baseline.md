@@ -229,6 +229,8 @@ node --test tests/routing-eval-decision-advice.test.mjs tests/routing-eval-close
 
 Thread 45 planner contract regression-gate checkpoint 將這條檢查固定成 repo-level regression gate，但不新增邏輯、不改 routing 決策，也不新增 fallback。
 
+Thread 46 planner diagnostics daily-entry checkpoint 在既有 planner contract consistency gate 基礎上補上固定 `planner:diagnostics` 日常入口、單一 diagnostics summary、fail 處理順序與測試，但不新增邏輯、不改 routing，也不新增 fallback。
+
 用途：
 
 - 固定阻擋 planner contract drift，不更動 routing 決策
@@ -237,6 +239,7 @@ Thread 45 planner contract regression-gate checkpoint 將這條檢查固定成 r
 命令：
 
 ```bash
+npm run planner:diagnostics
 node scripts/planner-contract-check.mjs
 npm run planner:contract-check
 npm run self-check
@@ -244,15 +247,27 @@ npm run self-check
 
 說明：
 
+- `planner:diagnostics` 是固定日常入口，直接根據目前 checked-in runtime / contract 狀態輸出單一 diagnostics summary，不會重跑 planner
 - `planner-contract-check` 本身是 read-only gate，不做 auto-fix
 - `npm run self-check` 已固定包含同一個 planner contract gate
 - fail 條件僅限：
   - `undefined actions > 0`
   - `undefined presets > 0`
   - `selector/contract mismatches > 0`
+- 固定 diagnostics summary 欄位為：
+  - `gate`
+  - `undefined_actions`
+  - `undefined_presets`
+  - `selector_contract_mismatches`
+  - `deprecated_reachable_targets`
+- 若 `gate = fail`，decision 提示固定為：
+  - 預設先修 planner 實作
+  - 只有在 target 確實是 intentional / stable planner surface 時，才補 contract，且必須明確說明原因
+  - `deprecated_reachable_targets` 只提示，不阻擋 gate
 
 ### Run Planner Contract Check When
 
+- 每次改 planner / contract 後先跑 `npm run planner:diagnostics`
 - 修改 `docs/system/planner_contract.json`
 - 修改 `src/executive-planner.mjs` 中的 planner tool registry / preset registry / selector 輸出
 - 修改 `src/router.js` 的 planner hard-route target
@@ -273,3 +288,11 @@ npm run self-check
   - selector/flow route 發出了不該存在的 target
   - `action` / `preset` slot 用錯
   - 想靠擴充 contract 來容納 legacy / deprecated / accidental route output
+
+### Fail Handling Order
+
+1. 先跑 `npm run planner:diagnostics`
+2. 若 `gate = fail`，先修 planner 實作，再重跑同一個 diagnostics summary
+3. 只有確認 target 是 intentional / stable contract surface 時，才更新 `docs/system/planner_contract.json`，並在同一個變更說清楚原因
+4. 若只剩 `deprecated_reachable_targets`，視為 warning；不阻擋 gate，但應列入後續清理
+5. 準備 merge / release 前再跑 `npm run planner:contract-check` 或 `npm run self-check`

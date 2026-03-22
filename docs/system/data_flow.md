@@ -281,6 +281,7 @@ This is now a capability-lane event path with a closed-loop executive planner la
    - key HTTP route-contract coverage, including high-risk write/apply paths
    - core service-module initialization
    - planner contract gate status from `scripts/planner-contract-check.mjs`, using the same blocking criteria for undefined actions, undefined presets, and selector/contract mismatches
+   - planner daily-entry diagnostics from `scripts/planner-diagnostics.mjs`, which reads current runtime/contract state directly and emits the fixed summary fields `gate`, `undefined_actions`, `undefined_presets`, `selector_contract_mismatches`, and `deprecated_reachable_targets`
 4. result is emitted as JSON so CI or operators can quickly detect obvious chain breaks before runtime debugging
 
 ## Improvement Approval Flow
