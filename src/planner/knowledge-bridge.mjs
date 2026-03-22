@@ -38,6 +38,7 @@ export async function plannerAnswer(
     return {
       answer: "請提供查詢關鍵字",
       count: 0,
+      sources: [],
     };
   }
 
@@ -69,5 +70,10 @@ export async function plannerAnswer(
   return {
     answer,
     count: results.length,
+    sources: results.map((item, index) => ({
+      id: item.id,
+      index: index + 1,
+      snippet: item.snippet,
+    })),
   };
 }

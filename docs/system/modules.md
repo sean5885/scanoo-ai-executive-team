@@ -865,16 +865,16 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 
 - `/Users/seanhan/Documents/Playground/src/planner/knowledge-bridge.mjs`
   - local planner-side bridge over `queryKnowledgeWithContext(keyword)`
-  - exposes async `plannerAnswer({ keyword, question }) -> { answer, count }`
+  - exposes async `plannerAnswer({ keyword, question }) -> { answer, count, sources }`
   - prefers an explicit `keyword`; otherwise uses `parseIntent(question)` to derive one fail-soft before querying local planner-side knowledge previews
   - expands that final keyword through `rewriteQuery(keyword, question)`, queries local knowledge previews once per expanded key, merges all preview rows, and deduplicates them by `id` before summarization
-  - summarizes merged rows through `summarizeWithMinimax({ keyword, results })` and still fail-soft falls back to `buildAnswer(keyword, results)` when summarization fails; when neither the keyword nor parsed question yields a usable search term it returns `{ answer: "請提供查詢關鍵字", count: 0 }`
+  - summarizes merged rows through `summarizeWithMinimax({ keyword, results })` and still fail-soft falls back to `buildAnswer(keyword, results)` when summarization fails; also returns `sources` as the deduplicated preview rows in summary order with 1-based indices; when neither the keyword nor parsed question yields a usable search term it returns `{ answer: "請提供查詢關鍵字", count: 0, sources: [] }`
   - not wired into `executive-planner.mjs`, planner contract routing, SQLite persistence, or company-brain approval/governance paths
 
 - `/Users/seanhan/Documents/Playground/src/planner/llm-summary.mjs`
   - planner-side LLM summary helper for local knowledge previews
   - exposes `summarizeWithMinimax({ keyword, results }) -> string`
-  - uses `/Users/seanhan/Documents/Playground/src/llm/generate-text.mjs` for the repo-wide text-model path (`MINIMAX_TEXT_MODEL` first, legacy `LLM_MODEL` fallback), and fail-soft falls back to `buildAnswer(keyword, results)` when generation fails or returns empty text
+  - uses `/Users/seanhan/Documents/Playground/src/llm/generate-text.mjs` for the repo-wide text-model path (`MINIMAX_TEXT_MODEL` first, legacy `LLM_MODEL` fallback), prompts for a concise answer with bracketed source indices such as `[1][2]`, sends that summary request with `temperature: 0`, and fail-soft falls back to `buildAnswer(keyword, results)` when generation fails or returns empty text
   - not wired into `executive-planner.mjs`, planner contract routing, SQLite persistence, or company-brain approval/governance paths
 
 - `/Users/seanhan/Documents/Playground/src/planner/intent-parser.mjs`

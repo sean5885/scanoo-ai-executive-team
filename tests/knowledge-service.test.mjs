@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { filterKnowledgeContextResults } from "../src/knowledge/knowledge-service.mjs";
 import { plannerAnswer } from "../src/planner/knowledge-bridge.mjs";
 import { parseIntent } from "../src/planner/intent-parser.mjs";
-import { summarizeWithMinimax } from "../src/planner/llm-summary.mjs";
+import { buildSummaryPrompt, summarizeWithMinimax } from "../src/planner/llm-summary.mjs";
 import { pickTechTerm } from "../src/utils/pick-tech-term.mjs";
 
 test("filterKnowledgeContextResults drops label-like and metadata-like snippets", () => {
@@ -68,6 +68,12 @@ test("plannerAnswer uses injected summarizer and passes filtered live previews",
 
   assert.equal(result.answer, "這是整理後的摘要。");
   assert.ok(result.count > 0);
+  assert.equal(result.sources.length, result.count);
+  assert.deepEqual(result.sources[0], {
+    id: result.sources[0].id,
+    index: 1,
+    snippet: result.sources[0].snippet,
+  });
 });
 
 test("parseIntent returns the first normalized keyword from generator output when no allowlisted term matches", async () => {
@@ -125,6 +131,7 @@ test("plannerAnswer parses question when keyword is missing", async () => {
 
   assert.equal(result.answer, "這是從問題解析後整理的摘要。");
   assert.ok(result.count > 0);
+  assert.equal(result.sources.length, result.count);
 });
 
 test("plannerAnswer prefers technical term parsing over brand-like question terms", async () => {
@@ -140,6 +147,7 @@ test("plannerAnswer prefers technical term parsing over brand-like question term
 
   assert.equal(result.answer, "routing 摘要");
   assert.ok(result.count > 0);
+  assert.equal(result.sources.length, result.count);
 });
 
 test("plannerAnswer falls back to deterministic summary when summarizer fails", async () => {
@@ -155,6 +163,7 @@ test("plannerAnswer falls back to deterministic summary when summarizer fails", 
   assert.match(result.answer, /我查到 \d+ 份與「routing」相關的內容/);
   assert.doesNotMatch(result.answer, /Routing \/ Execution/);
   assert.doesNotMatch(result.answer, /runtime \/ monitoring\s*-\s*Purpose:/i);
+  assert.equal(result.sources.length, result.count);
 });
 
 test("plannerAnswer returns fail-soft prompt when keyword is missing", async () => {
@@ -163,6 +172,7 @@ test("plannerAnswer returns fail-soft prompt when keyword is missing", async () 
   assert.deepEqual(result, {
     answer: "請提供查詢關鍵字",
     count: 0,
+    sources: [],
   });
 });
 
@@ -177,7 +187,28 @@ test("plannerAnswer keeps fail-soft prompt when question parsing returns nothing
   assert.deepEqual(result, {
     answer: "請提供查詢關鍵字",
     count: 0,
+    sources: [],
   });
+});
+
+test("plannerAnswer returns deduped numbered sources", async () => {
+  const result = await plannerAnswer(
+    { keyword: "planner" },
+    {
+      rewrite: () => ["planner", "routing"],
+      summarize: async () => "整理後摘要 [1][2]",
+    },
+  );
+
+  assert.equal(result.answer, "整理後摘要 [1][2]");
+  assert.equal(result.sources.length, result.count);
+  assert.ok(result.sources.length > 0);
+  assert.equal(result.sources[0].index, 1);
+  assert.equal(result.sources[result.sources.length - 1].index, result.sources.length);
+  assert.equal(
+    new Set(result.sources.map((item) => item.id)).size,
+    result.sources.length,
+  );
 });
 
 test("summarizeWithMinimax returns deterministic fallback when generator fails", async () => {
@@ -198,6 +229,35 @@ test("summarizeWithMinimax returns deterministic fallback when generator fails",
   assert.match(result, /verification evidence and a bounded retry policy/i);
 });
 
+test("summarizeWithMinimax requests citation-style summary with zero temperature", async () => {
+  let capturedRequest = null;
+
+  const result = await summarizeWithMinimax({
+    keyword: "routing",
+    results: [
+      {
+        id: "docs/system/planner_agent_alignment.md",
+        snippet: "Routing decisions are validated before the planner can complete a task.",
+      },
+      {
+        id: "docs/system/knowledge_pipeline.md",
+        snippet: "Planner-side helpers reuse shared text generation and fail-soft fallback behavior.",
+      },
+    ],
+    generateText: async (request) => {
+      capturedRequest = request;
+      return "Planner 會先驗證 routing 決策，再進入後續處理 [1][2]";
+    },
+  });
+
+  assert.equal(result, "Planner 會先驗證 routing 決策，再進入後續處理 [1][2]");
+  assert.equal(capturedRequest.temperature, 0);
+  assert.match(capturedRequest.systemPrompt, /句尾都要標註來源編號/);
+  assert.match(capturedRequest.prompt, /句尾標註來源編號/);
+  assert.match(capturedRequest.prompt, /\[1\] Routing decisions are validated before the planner can complete a task\./);
+  assert.match(capturedRequest.prompt, /\[2\] Planner-side helpers reuse shared text generation and fail-soft fallback behavior\./);
+});
+
 test("summarizeWithMinimax returns no-result message without calling generator", async () => {
   let called = false;
   const result = await summarizeWithMinimax({
@@ -211,4 +271,21 @@ test("summarizeWithMinimax returns no-result message without calling generator",
 
   assert.equal(result, "目前沒有找到與「不存在」直接相關的資料。");
   assert.equal(called, false);
+});
+
+test("buildSummaryPrompt asks for concise cited answer", () => {
+  const prompt = buildSummaryPrompt({
+    keyword: "planner",
+    results: [
+      {
+        id: "docs/system/planner_agent_alignment.md",
+        snippet: "Planner lifecycle requires verification evidence before completion.",
+      },
+    ],
+  });
+
+  assert.match(prompt, /查詢主題：planner/);
+  assert.match(prompt, /簡潔回答/);
+  assert.match(prompt, /每個重點句後加 \[編號\]/);
+  assert.match(prompt, /\[1\] Planner lifecycle requires verification evidence before completion\./);
 });

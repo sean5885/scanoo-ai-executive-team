@@ -3,14 +3,15 @@ import { buildAnswer, buildNoResultAnswer, cleanSnippet } from "./answer-builder
 
 const SUMMARY_SYSTEM_PROMPT = [
   "你是企業知識助理。",
-  "請根據提供的檢索片段整理 2 到 3 句自然語言摘要。",
+  "請根據提供的檢索片段，輸出簡潔且可驗證的回答。",
   "可以合併重點，但不可捏造來源未提供的事實。",
+  "每個重點句句尾都要標註來源編號，如 [1] 或 [1][2]。",
   "不要輸出條列、不要逐條抄寫、不要加上前言或結語。",
 ].join("\n");
 
 function buildSummaryContext(results = []) {
   return results.map((result, index) => (
-    `${index + 1}. ${result.id}：${cleanSnippet(result.snippet)}`
+    `[${index + 1}] ${cleanSnippet(result.snippet)}`
   )).join("\n");
 }
 
@@ -21,13 +22,14 @@ export function buildSummaryPrompt({ keyword, results } = {}) {
   return [
     `查詢主題：${normalizedKeyword || "未提供"}`,
     "",
-    "請根據以下檢索結果整理重點摘要。",
+    "請根據以下資料回答問題，並在句尾標註來源編號（如 [1][2]）。",
     "",
     "要求：",
-    "- 用自然語言，像人講話。",
+    "- 簡潔回答。",
     "- 可以合併重點，但不要照抄每一條。",
     "- 只根據提供內容回答，不要補未出現的事實。",
-    "- 輸出 2 到 3 句，不要條列。",
+    "- 每個重點句後加 [編號]。",
+    "- 不要條列。",
     "",
     "資料：",
     context,
@@ -59,6 +61,7 @@ export async function summarizeWithMinimax({
       systemPrompt: SUMMARY_SYSTEM_PROMPT,
       prompt,
       sessionIdSuffix: `planner-summary-${normalizedKeyword || "default"}`,
+      temperature: 0,
       signal,
     };
 
