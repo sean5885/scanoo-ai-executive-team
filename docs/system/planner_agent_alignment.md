@@ -123,10 +123,10 @@ Boundary:
 
 Current checked-in behavior:
 
-- `meeting_agent / meeting_summary -> { "summary": "meeting workflow placeholder result", "status": "ok" }`
-- `doc_agent / doc_answer -> { "answer": "doc workflow placeholder result", "status": "ok" }`
-- `runtime_agent / runtime_check -> { "runtime_status": "healthy", "status": "ok" }`
-- `mixed_agent / mixed_lane -> { "message": "mixed workflow placeholder result", "status": "ok" }`
+- `meeting_agent / meeting_summary -> { "kind": "meeting", "status": "ok", "summary": "meeting workflow placeholder result", "actionable_items": [], "confidence": 0.85, "data": { ... } }`
+- `doc_agent / doc_answer -> { "kind": "doc", "status": "ok", "summary": "doc workflow placeholder result", "actionable_items": [], "confidence": 0.8, "data": { ... } }`
+- `runtime_agent / runtime_check -> { "kind": "runtime", "status": "ok", "summary": "runtime status: healthy", "actionable_items": [], "confidence": 0.9, "data": { ... } }`
+- `mixed_agent / mixed_lane -> { "kind": "mixed", "status": "ok", "summary": "mixed workflow placeholder result", "actionable_items": [], "confidence": 0.75, "data": { ... } }`
 - unknown input -> `{ "status": "fallback" }`
 
 Boundary:
@@ -134,6 +134,18 @@ Boundary:
 - this wrapper is still deterministic and local-only
 - it does not invoke live tools, agents, or workflow ownership transfer
 - it exists as a thin checked-in placeholder runtime, not a generic specialist-agent executor
+
+`/Users/seanhan/Documents/Playground/src/planner/result-schema.mjs` and `/Users/seanhan/Documents/Playground/src/planner/result-formatters.mjs` now also exist as small planner-side normalization helpers for those same placeholder result families:
+
+- `buildResultEnvelope(kind, payload)` returns a stable local envelope:
+  - `{ "kind": "string", "status": "ok|...", "summary": "string", "actionable_items": [], "confidence": "number", "data": {} }`
+- `formatMeetingResult(...)`, `formatDocResult(...)`, `formatRuntimeResult(...)`, and `formatMixedResult(...)` each map the corresponding placeholder runtime payload into that shared envelope shape
+- `runAgentExecution(...)` now uses those formatters for the checked-in placeholder lane/agent pairs before returning `result`
+
+Boundary:
+
+- these helpers are local-only normalization utilities
+- they do not change `planner_contract.json` or the public planner response contract
 
 `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` now consumes that helper in a bounded way:
 

@@ -1,3 +1,9 @@
+import {
+  formatDocResult,
+  formatMeetingResult,
+  formatMixedResult,
+  formatRuntimeResult,
+} from "./result-formatters.mjs";
 import { executeAgent } from "./agent-executor.mjs";
 
 const AGENT_RUNTIME_RESULTS = Object.freeze({
@@ -52,14 +58,24 @@ export function runAgentExecution(exec, ctx = {}) {
   const normalizedExec = normalizeAgentExecution(exec);
   const agent = normalizedExec.agent;
   const action = normalizedExec.action;
-  const result = AGENT_RUNTIME_RESULTS[agent]?.[action];
+  const rawResult = AGENT_RUNTIME_RESULTS[agent]?.[action];
 
-  if (result) {
+  if (rawResult) {
+    let result = rawResult;
+
+    if (agent === "meeting_agent" && action === "meeting_summary") {
+      result = formatMeetingResult(rawResult);
+    } else if (agent === "doc_agent" && action === "doc_answer") {
+      result = formatDocResult(rawResult);
+    } else if (agent === "runtime_agent" && action === "runtime_check") {
+      result = formatRuntimeResult(rawResult);
+    } else if (agent === "mixed_agent" && action === "mixed_lane") {
+      result = formatMixedResult(rawResult);
+    }
+
     return {
       ...normalizedExec,
-      result: {
-        ...result,
-      },
+      result,
     };
   }
 
