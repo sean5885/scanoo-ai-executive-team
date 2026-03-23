@@ -158,6 +158,14 @@ function buildCollaborativeWorkItems({ primaryAgentId = "", supportingAgentIds =
   return result;
 }
 
+function normalizePublicPlannerErrorCode(error = "") {
+  const normalizedError = cleanText(error);
+  if (normalizedError === INVALID_ACTION) {
+    return "invalid_action";
+  }
+  return normalizedError;
+}
+
 function agentCatalogText() {
   return listRegisteredAgents()
     .map((agent) => `${agent.id}: ${agent.label}`)
@@ -1735,7 +1743,7 @@ export function validatePlannerUserInputDecision(decision = {}) {
       if (!contract) {
         return {
           ok: false,
-          error: INVALID_ACTION,
+          error: normalizePublicPlannerErrorCode(INVALID_ACTION),
           action,
           params,
           steps,
@@ -1785,7 +1793,7 @@ export function validatePlannerUserInputDecision(decision = {}) {
   if (!contractTarget) {
     return {
       ok: false,
-      error: INVALID_ACTION,
+      error: normalizePublicPlannerErrorCode(INVALID_ACTION),
       action,
       params,
     };
@@ -2123,7 +2131,8 @@ export function shouldPreferSelectorAction({
 
   return normalizedHardRoutedAction === "search_company_brain_docs"
     && Boolean(normalizedSelectorAction)
-    && normalizedSelectorAction !== normalizedHardRoutedAction;
+    && normalizedSelectorAction !== normalizedHardRoutedAction
+    && normalizedSelectorAction !== "search_and_detail_doc";
 }
 
 // ---------------------------------------------------------------------------
@@ -2581,11 +2590,13 @@ export async function runPlannerToolFlow({
     });
     executionResult = buildPlannerStoppedResult({
       action: null,
-      error: ROUTING_NO_MATCH,
+      error: "business_error",
       data: {
-        reason: cleanText(selection?.reason || "") || ROUTING_NO_MATCH,
+        reason: "未命中受控工具規則，保持空選擇。",
+        routing_reason: cleanText(selection?.reason || "") || ROUTING_NO_MATCH,
       },
       traceId: null,
+      stopReason: "business_error",
     });
   } else if (!taskLifecycleFollowUp?.execution_result && !getPlannerActionContract(selectionAction) && !getPlannerPreset(selectionAction)) {
     executionResult = buildPlannerStoppedResult({
@@ -5043,10 +5054,11 @@ function buildExecutiveDecisionWhy({
 function normalizePlannerDecision(decision = {}, fallbackText = "", activeTask = null) {
   const primaryAgentId = cleanText(decision.primary_agent_id || decision.primary_agent || "");
   const nextAgentId = cleanText(decision.next_agent_id || decision.next_agent || primaryAgentId);
+  const normalizedPrimaryAgentId = getRegisteredAgent(primaryAgentId) ? primaryAgentId : "generalist";
   const normalized = {
     action: cleanText(decision.action || "continue") || "continue",
     objective: cleanText(decision.objective || fallbackText),
-    primary_agent_id: getRegisteredAgent(primaryAgentId) ? primaryAgentId : "generalist",
+    primary_agent_id: normalizedPrimaryAgentId,
     next_agent_id: getRegisteredAgent(nextAgentId) ? nextAgentId : getRegisteredAgent(primaryAgentId) ? primaryAgentId : "generalist",
     supporting_agent_ids: (Array.isArray(decision.supporting_agent_ids) ? decision.supporting_agent_ids : [])
       .map((item) => cleanText(item))
@@ -5057,12 +5069,14 @@ function normalizePlannerDecision(decision = {}, fallbackText = "", activeTask =
       : [],
     work_items: (Array.isArray(decision.work_items) ? decision.work_items : [])
       .map((item) => ({
-        agent_id: cleanText(item?.agent_id || item?.agent || ""),
+        agent_id: getRegisteredAgent(cleanText(item?.agent_id || item?.agent || ""))
+          ? cleanText(item?.agent_id || item?.agent || "")
+          : normalizedPrimaryAgentId,
         task: cleanText(item?.task || ""),
         role: cleanText(item?.role || ""),
         status: "pending",
       }))
-      .filter((item) => getRegisteredAgent(item.agent_id) && item.task)
+      .filter((item) => item.task)
       .slice(0, 8),
   };
 
@@ -5215,22 +5229,27 @@ export async function planExecutiveTurn({
     }
   }
 
+  const heuristicDecision = normalizePlannerDecision(
+    heuristicPlanExecutiveTurn(text, activeTask),
+    text,
+    activeTask,
+  );
   const blockedDecision = {
     error: FALLBACK_DISABLED,
     action: null,
-    objective: activeTask?.objective || text,
-    primary_agent_id: cleanText(activeTask?.primary_agent_id || "") || null,
-    next_agent_id: cleanText(activeTask?.current_agent_id || "") || null,
-    supporting_agent_ids: Array.isArray(activeTask?.supporting_agent_ids) ? activeTask.supporting_agent_ids : [],
+    objective: heuristicDecision.objective || activeTask?.objective || text,
+    primary_agent_id: heuristicDecision.primary_agent_id || "generalist",
+    next_agent_id: heuristicDecision.next_agent_id || heuristicDecision.primary_agent_id || "generalist",
+    supporting_agent_ids: Array.isArray(heuristicDecision.supporting_agent_ids) ? heuristicDecision.supporting_agent_ids : [],
     reason: "executive_planner_fallback_disabled",
     why: "LLM planner 沒有產出可用 JSON，而且 heuristic fallback 已被停用。",
     alternative: normalizeDecisionAlternative({
       action: "clarify",
-      agent_id: cleanText(activeTask?.current_agent_id || "") || null,
+      agent_id: heuristicDecision.next_agent_id || heuristicDecision.primary_agent_id || "generalist",
       summary: "如需繼續，必須先提供更明確的 agent 指令或讓 planner 重新產生合法 JSON。",
     }),
     pending_questions: [],
-    work_items: [],
+    work_items: Array.isArray(heuristicDecision.work_items) ? heuristicDecision.work_items : [],
   };
   logPlannerTrace(logger, "warn", buildPlannerTraceEvent({
     eventType: "executive_decision_failed",

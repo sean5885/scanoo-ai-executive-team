@@ -2,10 +2,16 @@
 
 Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
+## Stability Baselines
+
+- thread98: planner contract stabilization baseline
+
 ## Core Capabilities
 
 - system audit report for external architecture review:
   - [Lobster AI Executive System Audit Report v1](/Users/seanhan/Documents/Playground/docs/system/Lobster%20AI%20Executive%20System%20Audit%20Report%20v1.md)
+- capability gap analysis:
+  - [capability_gap_map.md](/Users/seanhan/Documents/Playground/docs/system/capability_gap_map.md)
 - skill governance mirrors:
   - [Skill Routing Map](/Users/seanhan/Documents/Playground/docs/system/skill_routing_map.md)
   - [Skill Audit Summary](/Users/seanhan/Documents/Playground/docs/system/skill_audit_summary.md)
@@ -30,6 +36,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - capability-lane routing for DM / group / doc / knowledge requests
 - closed-loop executive planner with shared multi-turn task state, evidence-based verification, reflection, and agent-to-agent handoff across registered agents
 - bounded planner-side task driving v1 for unfinished / blocked / in-progress tasks, using local JSON task snapshots to suggest next steps, unblock actions, and minimal action-layer reminders without changing public planner contracts
+- planner-side placeholder result envelope/formatter helpers for deterministic `meeting|doc|runtime|mixed` local result normalization
 - lane-specific execution strategies for DM / group / doc / knowledge requests
 - structured runtime logging for long-connection event handling and doc resolution debugging
 - immediate console alerts for `oauth_reauth_required` and `planner_failed`, with in-memory rate limiting to reduce log bursts

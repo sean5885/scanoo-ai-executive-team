@@ -199,7 +199,7 @@ This path is bounded by the checked-in planner contract:
 
 - `action` must exist in `planner_contract.json` (`actions` or `presets`)
 - wrapped / non-JSON model output is rejected as `{ "error": "planner_failed" }`
-- unmatched routing now fails closed as `ROUTING_NO_MATCH` instead of silently falling through selector/default-reply paths
+- unmatched routing still fails closed internally as `ROUTING_NO_MATCH` instead of silently falling through selector/default-reply paths; the public `runPlannerToolFlow(...)` fallback surface normalizes that no-match case to `business_error` while preserving the internal routing reason in structured detail
 - no heuristic or free-text fallback is used on this strict user-input planning path
 
 ## Contract Consistency Check

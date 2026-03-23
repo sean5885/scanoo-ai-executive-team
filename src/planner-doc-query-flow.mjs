@@ -351,8 +351,11 @@ export function resolveDocQueryRoute({
     activeDoc,
     activeCandidates,
   }));
+  const directAction = typeof routeDecision === "string" ? cleanText(routeDecision) : "";
   return {
-    ...(cleanText(routeDecision?.action) ? { action: cleanText(routeDecision.action) } : {}),
+    ...(directAction || cleanText(routeDecision?.action)
+      ? { action: directAction || cleanText(routeDecision.action) }
+      : {}),
     ...(cleanText(routeDecision?.preset) ? { preset: cleanText(routeDecision.preset) } : {}),
     payload: routedPayload,
     error: action ? null : ROUTING_NO_MATCH,

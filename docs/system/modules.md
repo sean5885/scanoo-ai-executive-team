@@ -507,7 +507,8 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - keep `daily-status` trend source read-only and bounded:
     - release status/history comes from `release-check-history`
     - routing/planner status/history comes from `system-self-check-history`
-    - trend does not create a new daily-status archive
+  - trend does not create a new daily-status archive
+
   - keep `daily-status` compare human output bounded to the same four daily lines plus one extra line only:
     - `為什麼變差`
   - keep `daily-status -- --json` bounded to:
@@ -568,6 +569,33 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 - Core path:
   - important for regression prevention and operator debugging
 
+### 8E1. Capability Audit Utility
+
+- Location:
+  - `/Users/seanhan/Documents/Playground/scripts/system-capability-audit.mjs`
+- Responsibility:
+  - walk selected repo roots under `src/planner`, `src/knowledge`, `src/agents`, `src/tools`, `src/skills`, `scripts`, `tests`, `evals`, and `docs/system`
+  - apply a lightweight keyword scan for planner, agent, skill, tool, knowledge, workflow, and eval terms
+  - classify scanned files into `CODE`, `EVAL`, and `DOCS` partitions using path prefixes
+  - print one summary block per partition with total file count and per-category hit counts
+  - print a `SUSPICIOUS OVERLAP: CODE ONLY` block for files matching at least three of `planner` / `agent` / `skill` / `tool` / `knowledge`
+  - stay read-only and avoid claiming runtime capability ownership; output is a heuristic inventory helper, not a verifier or architecture source of truth
+- Core path:
+  - no
+
+### 8E2. Capability Inventory Utility
+
+- Location:
+  - `/Users/seanhan/Documents/Playground/scripts/capability-inventory.mjs`
+- Responsibility:
+  - walk selected capability roots under `src/planner`, `src/agents`, `src/skills`, `src/tools`, and `src/knowledge`
+  - include only `.mjs`, `.js`, and `.ts` files in the inventory
+  - classify each discovered file into `planner`, `agent`, `skill`, `tool`, `knowledge`, or fallback `other` by path prefix
+  - print one tab-separated `CAPABILITY INVENTORY` list and one `COUNTS` block grouped by capability kind
+  - stay read-only and provide structural inventory only; it does not infer runtime ownership, evidence quality, or verification status
+- Core path:
+  - no
+
 ### 8F. Executive Orchestration
 
 - Location:
@@ -597,9 +625,9 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - cloud-doc organization now reuses the same task-state store through scope-keyed preview/apply helpers and verifier gate integration
   - cloud-doc apply now hard-requires `awaiting_review -> applying -> verifying`; preview routes are explicitly non-terminal and cannot self-declare success
   - `executive-planner.mjs` now also contains a minimal planner tool registry and `dispatchPlannerTool(...)` helper for `create_doc`, `list_company_brain_docs`, `search_company_brain_docs`, `get_company_brain_doc_detail`, and `get_runtime_info`, using the existing document/runtime HTTP surfaces and logging `stage=planner_tool_dispatch`
-  - the same module now also exposes a strict user-input planning surface: `planUserInputAction(...)` only accepts a single JSON object shaped as either legacy `{ action, params }` or bounded `{ steps: [{ action, params }] }`, returns `{ error: "planner_failed" }` when planner output is not strict JSON, rejects contract-external actions with structured `INVALID_ACTION`, validates each `steps[i].params` against the same checked-in action contract, and `executePlannedUserInput(...)` keeps legacy single-step action/preset execution while routing multi-step plans through the existing sequential planner tool runtime without reopening selector/free-text fallback paths
+  - the same module now also exposes a strict user-input planning surface: `planUserInputAction(...)` only accepts a single JSON object shaped as either legacy `{ action, params }` or bounded `{ steps: [{ action, params }] }`, returns `{ error: "planner_failed" }` when planner output is not strict JSON, rejects contract-external actions with structured public code `invalid_action` (internal diagnostics may still retain `INVALID_ACTION`), validates each `steps[i].params` against the same checked-in action contract, and `executePlannedUserInput(...)` keeps legacy single-step action/preset execution while routing multi-step plans through the existing sequential planner tool runtime without reopening selector/free-text fallback paths
   - the same module now includes a minimal tool-selection policy helper that takes `user intent / task type` and returns `selected_action + reason`; it still prefers bounded presets for explicit create-then-list / create-then-search intents, logs `stage=planner_tool_select`, and now returns `reason = "ROUTING_NO_MATCH"` when unmatched instead of silently continuing into default fallback wording
-  - contract-alignment checkpoint: `src/router.js` now provides a minimal hard pre-route for company-brain document intents before the planner selector, using priority `mixed -> search -> detail`: `整理|解釋 -> preset:search_and_detail_doc`, `找|搜尋|查 -> action:search_company_brain_docs`, `這份|內容 -> action:get_company_brain_doc_detail`; ordinal follow-ups like `第一份 / 第二份 / 打開第一個` can also route to detail when the planner has active candidates, and `runPlannerToolFlow(...)` still feeds the routed target into the existing preset/dispatch path without changing its external response shape
+  - contract-alignment checkpoint: `src/router.js` now provides a minimal hard pre-route for company-brain document intents before the planner selector. Explicit search wording (`找|搜尋|搜索|查|search`) now keeps priority over generic detail cues such as `內容`, so mixed phrasing like `搜尋有提到 OKR 的內容` still hard-routes to `search_company_brain_docs`; `整理|解釋` still routes to `preset:search_and_detail_doc`; pronoun/detail follow-ups such as `這份文件裡面寫了什麼` still route to detail/preset depending on whether `activeDoc` exists; ordinal follow-ups like `第一份 / 第二份 / 打開第一個` can also route to detail when the planner has active candidates. Direct action routes expose the action string outward, while preset/error routes keep the object envelope used by the flow runtime.
   - the same planner runtime now also keeps a minimal in-memory read context: after a successful `search_and_detail_doc` or `get_company_brain_doc_detail`, the planner can remember `active_doc = { doc_id, title }`; after an ambiguous successful search it can also remember a bounded `active_candidates` list; themed knowledge flows can also remember `active_theme = okr|bd|delivery`; follow-up pronoun/detail questions like `這份文件裡面寫了什麼` route directly to `get_company_brain_doc_detail`, ordinal follow-ups can resolve through those candidates, and compacted planner memory can restore that doc-query context after runtime reset/restart
   - the same module now includes a minimal end-to-end helper that runs `selectPlannerTool(...)` and, when matched, executes either the preset runner or `dispatchPlannerTool(...)`, returning `{ selected_action, execution_result, agent_execution, trace_id }` and logging `stage=planner_end_to_end`
   - that `agent_execution` field now stays bounded and deterministic: `src/planner/agent-executor.mjs` derives the checked-in lane-to-agent/action mapping, and `src/planner/agent-runtime.mjs` wraps it with local formatted placeholder `result` envelopes instead of invoking live agent handoff/runtime ownership
