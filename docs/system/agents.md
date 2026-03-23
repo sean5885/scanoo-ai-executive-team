@@ -209,8 +209,9 @@ What now exists in current code:
   - maintain one active executive task per session
   - let registered slash agents continue across multiple turns
   - allow planner-selected handoff between registered agents
-  - let the planner attach a small work plan with primary and supporting agents
-  - run supporting-agent passes, then feed their compact outputs back into the primary agent for synthesis
+  - let the planner attach a bounded work plan with at most three roles total (`1 primary + up to 2 supporting`)
+  - default simple single-intent requests to `/generalist`; only expand to multi-agent when one compound request needs distinct specialist roles
+  - run supporting-agent passes sequentially, then feed their compact outputs back into the primary agent for synthesis
   - support explicit exit from executive mode
   - derive task rules, success criteria, and lifecycle state on task initialization
   - collect evidence from execution, run verifier checks, and append reflection/improvement records
@@ -227,7 +228,7 @@ What now exists in current code:
   - route those tool calls through the existing `/agent/*` HTTP bridges instead of duplicating document/runtime logic
 - Boundaries:
   - does not run an async worker queue
-  - supporting agents now run as in-process parallel async calls, not as background workers
+  - supporting agents run as in-process sequential passes, not as background workers
   - does not maintain a tenant-wide memory graph
   - does not yet auto-apply high-risk prompt/governance proposals without review
 

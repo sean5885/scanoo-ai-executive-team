@@ -35,6 +35,8 @@ const noopLogger = {
   },
 };
 
+const EXECUTIVE_MAX_ROLES = 3;
+
 function sessionKeyFromScope(scope = {}, accountId = "") {
   return cleanText(scope?.session_key || scope?.chat_id || accountId);
 }
@@ -84,7 +86,7 @@ export function normalizeWorkPlan(task = null, decision = null, requestText = ""
       role: cleanText(item?.role || ""),
       status: cleanText(item?.status || "pending") || "pending",
     });
-    if (unique.length >= 8) {
+    if (unique.length >= EXECUTIVE_MAX_ROLES) {
       break;
     }
   }
@@ -788,7 +790,7 @@ export async function executeExecutiveTurn({ accountId, event, scope, logger = n
       pending_questions: [],
     };
   } else {
-    decision = await planExecutiveTurn({ text, activeTask, logger });
+    decision = await planExecutiveTurn({ text, activeTask, logger, sessionKey });
     if (decision?.error === FALLBACK_DISABLED) {
       return {
         text: JSON.stringify({

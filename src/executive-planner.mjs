@@ -93,6 +93,91 @@ const PLANNER_CONTEXT_WINDOW_SUMMARY_MAX_CHARS = 640;
 const PLANNER_RECENT_STEP_LIMIT = 6;
 const PLANNER_HIGH_WEIGHT_DOC_LIMIT = 3;
 const PLANNER_FAILED_ALERT_KEY = "planner_failed:user_input_planner";
+const EXECUTIVE_MAX_ROLES = 3;
+const EXECUTIVE_MAX_SUPPORTING_AGENTS = EXECUTIVE_MAX_ROLES - 1;
+
+const executiveCollaborationSignals = [
+  "各個 agent",
+  "各个 agent",
+  "多 agent",
+  "多個 agent",
+  "多个 agent",
+  "multi-agent",
+  "協作",
+  "协作",
+  "一起看",
+  "一起評估",
+  "一起评估",
+  "一起拆解",
+  "分別看",
+  "分别看",
+  "統一收斂",
+  "统一收敛",
+];
+
+const executiveCompoundSignals = [
+  "同時",
+  "同时",
+  "以及",
+  "並且",
+  "并且",
+  "還有",
+  "还有",
+  "最後",
+  "最后",
+];
+
+const executiveDeterministicRoleSignals = [
+  {
+    agentId: "consult",
+    keywords: ["拆解", "比較", "比较", "診斷", "诊断", "方案"],
+  },
+  {
+    agentId: "product",
+    keywords: ["產品", "产品", "需求", "使用者", "用户", "功能", "價值", "价值"],
+  },
+  {
+    agentId: "tech",
+    keywords: ["技術", "技术", "工程", "架構", "架构", "系統設計", "系统设计", "程式", "代码", "api"],
+  },
+  {
+    agentId: "cmo",
+    keywords: ["市場", "市场", "定位", "訊息", "信息", "行銷", "营销", "growth", "gtm"],
+  },
+  {
+    agentId: "ops",
+    keywords: ["營運", "运营", "流程", "落地", "執行", "执行", "sop"],
+  },
+  {
+    agentId: "cdo",
+    keywords: ["數據", "数据", "治理", "指標", "指标", "分配", "分類", "分类"],
+  },
+  {
+    agentId: "delivery",
+    keywords: ["交付", "驗收", "验收", "導入", "导入", "里程碑"],
+  },
+  {
+    agentId: "prd",
+    keywords: ["prd", "規格", "规格", "spec"],
+  },
+  {
+    agentId: "ceo",
+    keywords: ["決策", "决策", "拍板", "取捨", "取舍", "資源", "资源"],
+  },
+];
+
+const executiveSelectableAgentIds = [
+  "generalist",
+  "ceo",
+  "product",
+  "prd",
+  "cmo",
+  "consult",
+  "cdo",
+  "delivery",
+  "ops",
+  "tech",
+];
 
 function emitPlannerFailedAlert({ text = "", reason = "", source = "planner" } = {}) {
   const textHint = cleanText(text);
@@ -116,6 +201,251 @@ function hasAny(text, keywords) {
   return keywords.some((keyword) => text.includes(keyword));
 }
 
+function uniqueRegisteredAgentIds(agentIds = [], maxItems = EXECUTIVE_MAX_ROLES) {
+  const result = [];
+  const seen = new Set();
+  for (const item of Array.isArray(agentIds) ? agentIds : []) {
+    const agentId = cleanText(item);
+    if (!agentId || !getRegisteredAgent(agentId) || seen.has(agentId)) {
+      continue;
+    }
+    seen.add(agentId);
+    result.push(agentId);
+    if (result.length >= maxItems) {
+      break;
+    }
+  }
+  return result;
+}
+
+function findFirstKeywordIndex(text = "", keywords = []) {
+  let matchIndex = Number.POSITIVE_INFINITY;
+  for (const keyword of Array.isArray(keywords) ? keywords : []) {
+    const index = text.indexOf(keyword);
+    if (index >= 0 && index < matchIndex) {
+      matchIndex = index;
+    }
+  }
+  return Number.isFinite(matchIndex) ? matchIndex : -1;
+}
+
+function findExplicitAgentMentionIndex(text = "", agentId = "") {
+  const normalizedAgentId = cleanText(agentId);
+  if (!text || !normalizedAgentId) {
+    return -1;
+  }
+  const slashIndex = text.indexOf(`/${normalizedAgentId}`);
+  if (slashIndex >= 0) {
+    return slashIndex;
+  }
+  if (/^[a-z_]+$/.test(normalizedAgentId)) {
+    const pattern = new RegExp(`(^|[^a-z0-9_])${normalizedAgentId}(?=$|[^a-z0-9_])`, "i");
+    const match = pattern.exec(text);
+    return match ? Number(match.index || 0) + match[1].length : -1;
+  }
+  return text.indexOf(normalizedAgentId);
+}
+
+function collectExplicitExecutiveAgentIds(text = "") {
+  const matches = executiveSelectableAgentIds
+    .map((agentId, order) => ({
+      agentId,
+      order,
+      index: findExplicitAgentMentionIndex(text, agentId),
+    }))
+    .filter((item) => item.index >= 0)
+    .sort((left, right) => left.index - right.index || left.order - right.order)
+    .map((item) => item.agentId);
+  return uniqueRegisteredAgentIds(matches, EXECUTIVE_MAX_ROLES);
+}
+
+function detectDeterministicSpecialistAgentIds(text = "") {
+  const matches = executiveDeterministicRoleSignals
+    .map((rule, order) => ({
+      agentId: rule.agentId,
+      order,
+      index: findFirstKeywordIndex(text, rule.keywords),
+    }))
+    .filter((item) => item.index >= 0)
+    .sort((left, right) => left.index - right.index || left.order - right.order)
+    .map((item) => item.agentId);
+  return uniqueRegisteredAgentIds(matches, EXECUTIVE_MAX_ROLES);
+}
+
+function hasExecutiveCompoundIntent(text = "") {
+  return hasAny(text, executiveCollaborationSignals) || hasAny(text, executiveCompoundSignals);
+}
+
+function limitExecutiveWorkItems(workItems = [], {
+  allowedAgentIds = [],
+  maxItems = EXECUTIVE_MAX_ROLES,
+} = {}) {
+  const allowed = new Set(uniqueRegisteredAgentIds(allowedAgentIds, EXECUTIVE_MAX_ROLES));
+  const result = [];
+  const seen = new Set();
+
+  for (const item of Array.isArray(workItems) ? workItems : []) {
+    const agentId = cleanText(item?.agent_id || item?.agent || "");
+    const task = cleanText(item?.task || "");
+    if (!agentId || !task || seen.has(agentId) || (allowed.size > 0 && !allowed.has(agentId))) {
+      continue;
+    }
+    seen.add(agentId);
+    result.push({
+      agent_id: agentId,
+      task,
+      role: cleanText(item?.role || ""),
+      status: "pending",
+    });
+    if (result.length >= maxItems) {
+      break;
+    }
+  }
+
+  return result;
+}
+
+function buildSingleAgentWorkItems({
+  primaryAgentId = "",
+  objective = "",
+  existingWorkItems = [],
+} = {}) {
+  const normalizedPrimaryAgentId = cleanText(primaryAgentId) || "generalist";
+  const keptItems = limitExecutiveWorkItems(existingWorkItems, {
+    allowedAgentIds: [normalizedPrimaryAgentId],
+    maxItems: 1,
+  }).map((item) => ({
+    ...item,
+    role: "primary",
+    status: "pending",
+  }));
+
+  if (keptItems.length > 0) {
+    return keptItems;
+  }
+
+  const task = normalizedPrimaryAgentId === "generalist"
+    ? `主責收斂這個任務：${cleanText(objective)}`
+    : `從 /${normalizedPrimaryAgentId} 的專責角度處理：${cleanText(objective)}`;
+
+  return task
+    ? [{
+        agent_id: normalizedPrimaryAgentId,
+        task,
+        role: "primary",
+        status: "pending",
+      }]
+    : [];
+}
+
+function trimExecutiveDecisionRoleCounts(decision = {}) {
+  const primaryAgentId = getRegisteredAgent(cleanText(decision.primary_agent_id || ""))
+    ? cleanText(decision.primary_agent_id)
+    : "generalist";
+  const supportingAgentIds = uniqueRegisteredAgentIds(
+    (Array.isArray(decision.supporting_agent_ids) ? decision.supporting_agent_ids : [])
+      .map((item) => cleanText(item))
+      .filter((item) => item && item !== primaryAgentId),
+    EXECUTIVE_MAX_SUPPORTING_AGENTS,
+  );
+  const allowedAgentIds = [primaryAgentId, ...supportingAgentIds];
+
+  return {
+    ...decision,
+    primary_agent_id: primaryAgentId,
+    next_agent_id: getRegisteredAgent(cleanText(decision.next_agent_id || ""))
+      ? cleanText(decision.next_agent_id)
+      : primaryAgentId,
+    supporting_agent_ids: supportingAgentIds,
+    work_items: limitExecutiveWorkItems(decision.work_items, {
+      allowedAgentIds,
+      maxItems: EXECUTIVE_MAX_ROLES,
+    }),
+  };
+}
+
+function applyDeterministicExecutiveAgentSelection(decision = {}, fallbackText = "", activeTask = null) {
+  const normalizedText = cleanText(String(fallbackText || "").toLowerCase());
+  const normalizedDecision = trimExecutiveDecisionRoleCounts(decision);
+  if (!normalizedText) {
+    return normalizedDecision;
+  }
+
+  const explicitAgentIds = collectExplicitExecutiveAgentIds(normalizedText)
+    .filter((agentId) => agentId !== "generalist");
+  const hasSelectionOverride = explicitAgentIds.length > 0 || hasExecutiveCompoundIntent(normalizedText);
+
+  if (activeTask?.id && !hasSelectionOverride) {
+    return normalizedDecision;
+  }
+
+  const detectedAgentIds = uniqueRegisteredAgentIds([
+    ...explicitAgentIds,
+    ...detectDeterministicSpecialistAgentIds(normalizedText),
+  ], EXECUTIVE_MAX_ROLES);
+  const objective = cleanText(normalizedDecision.objective || fallbackText);
+  const shouldSeedSingleRoleWorkItems = normalizedDecision.work_items.length > 0
+    || normalizedDecision.action === "start"
+    || normalizedDecision.action === "handoff";
+  const singleRoleFallbackReason = normalizedDecision.action === "start" || normalizedDecision.action === "handoff";
+
+  if (hasExecutiveCompoundIntent(normalizedText) && detectedAgentIds.length >= 2) {
+    const primaryAgentId = explicitAgentIds[0] || "generalist";
+    const supportingAgentIds = uniqueRegisteredAgentIds(
+      detectedAgentIds.filter((agentId) => agentId !== primaryAgentId),
+      EXECUTIVE_MAX_SUPPORTING_AGENTS,
+    );
+    return trimExecutiveDecisionRoleCounts({
+      ...normalizedDecision,
+      primary_agent_id: primaryAgentId,
+      next_agent_id: primaryAgentId,
+      supporting_agent_ids: supportingAgentIds,
+      reason: cleanText(normalizedDecision.reason)
+        || "複合請求命中多個 distinct specialist 需求，使用最小 multi-agent 分工。",
+      work_items: buildCollaborativeWorkItems({
+        primaryAgentId,
+        supportingAgentIds,
+        objective,
+      }),
+    });
+  }
+
+  if (explicitAgentIds.length > 0) {
+    const primaryAgentId = explicitAgentIds[0];
+    return trimExecutiveDecisionRoleCounts({
+      ...normalizedDecision,
+      primary_agent_id: primaryAgentId,
+      next_agent_id: primaryAgentId,
+      supporting_agent_ids: [],
+      reason: cleanText(normalizedDecision.reason)
+        || (singleRoleFallbackReason ? `使用者明確指定 /${primaryAgentId}，不擴張額外 specialist。` : ""),
+      work_items: shouldSeedSingleRoleWorkItems
+        ? buildSingleAgentWorkItems({
+            primaryAgentId,
+            objective,
+            existingWorkItems: normalizedDecision.work_items,
+          })
+        : [],
+    });
+  }
+
+  return trimExecutiveDecisionRoleCounts({
+    ...normalizedDecision,
+    primary_agent_id: "generalist",
+    next_agent_id: "generalist",
+    supporting_agent_ids: [],
+    reason: cleanText(normalizedDecision.reason)
+      || (singleRoleFallbackReason ? "簡單單一意圖請求，預設由 generalist 處理。" : ""),
+    work_items: shouldSeedSingleRoleWorkItems
+      ? buildSingleAgentWorkItems({
+          primaryAgentId: "generalist",
+          objective,
+          existingWorkItems: normalizedDecision.work_items,
+        })
+      : [],
+  });
+}
+
 function buildCollaborativeWorkItems({ primaryAgentId = "", supportingAgentIds = [], objective = "" } = {}) {
   const objectiveText = cleanText(objective);
   const result = [];
@@ -125,6 +455,9 @@ function buildCollaborativeWorkItems({ primaryAgentId = "", supportingAgentIds =
     const normalizedAgentId = cleanText(agentId);
     const normalizedTask = cleanText(task);
     if (!normalizedAgentId || !normalizedTask || seen.has(normalizedAgentId)) {
+      return;
+    }
+    if (result.length >= EXECUTIVE_MAX_ROLES) {
       return;
     }
     seen.add(normalizedAgentId);
@@ -248,12 +581,12 @@ const plannerFlows = [
   },
 ].filter(Boolean);
 
-function buildPlannerFlowSnapshots(flows = plannerFlows) {
+function buildPlannerFlowSnapshots(flows = plannerFlows, { sessionKey = "" } = {}) {
   return Array.isArray(flows)
     ? flows.map((flow) => ({
         id: cleanText(flow?.id || "") || null,
         priority: Number.isFinite(flow?.priority) ? Number(flow.priority) : 0,
-        context: flow?.readContext?.() || {},
+        context: flow?.readContext?.({ sessionKey }) || {},
       }))
     : [];
 }
@@ -484,6 +817,7 @@ function mergePlannerUnfinishedItems(...groups) {
 function recordPlannerConversationExchange({
   userQuery = "",
   plannerReply = "",
+  sessionKey = "",
 } = {}) {
   recordPlannerConversationMessages([
     {
@@ -496,7 +830,7 @@ function recordPlannerConversationExchange({
       content: plannerReply,
       timestamp: new Date().toISOString(),
     },
-  ]);
+  ], { sessionKey });
 }
 
 function hasPlannerDocQueryRuntimeContext(context = {}) {
@@ -507,13 +841,13 @@ function hasPlannerDocQueryRuntimeContext(context = {}) {
   );
 }
 
-function restorePlannerRuntimeContextFromSummary() {
-  const currentDocQueryContext = getPlannerDocQueryContext();
+function restorePlannerRuntimeContextFromSummary({ sessionKey = "" } = {}) {
+  const currentDocQueryContext = getPlannerDocQueryContext({ sessionKey });
   if (hasPlannerDocQueryRuntimeContext(currentDocQueryContext)) {
     return currentDocQueryContext;
   }
 
-  const latestSummary = getPlannerConversationMemoryLayer()?.latest_summary;
+  const latestSummary = getPlannerConversationMemoryLayer({ sessionKey })?.latest_summary;
   if (!latestSummary || typeof latestSummary !== "object") {
     return currentDocQueryContext;
   }
@@ -522,13 +856,14 @@ function restorePlannerRuntimeContextFromSummary() {
     activeDoc: latestSummary.active_doc,
     activeCandidates: latestSummary.active_candidates,
     activeTheme: latestSummary.active_theme,
+    sessionKey,
   });
 }
 
 restorePlannerRuntimeContextFromSummary();
 
-export function getPlannerConversationMemory() {
-  return getPlannerConversationMemoryLayer();
+export function getPlannerConversationMemory({ sessionKey = "" } = {}) {
+  return getPlannerConversationMemoryLayer({ sessionKey });
 }
 
 export function compactPlannerConversationMemory({
@@ -537,15 +872,17 @@ export function compactPlannerConversationMemory({
   unfinishedItems = [],
   latestSelectedAction = "",
   latestTraceId = null,
+  sessionKey = "",
 } = {}) {
-  restorePlannerRuntimeContextFromSummary();
+  restorePlannerRuntimeContextFromSummary({ sessionKey });
   return compactPlannerConversationMemoryLayer({
-    flows: buildPlannerFlowSnapshots(plannerFlows),
+    flows: buildPlannerFlowSnapshots(plannerFlows, { sessionKey }),
     unfinishedItems,
     latestSelectedAction,
     latestTraceId,
     logger,
     reason,
+    sessionKey,
   });
 }
 
@@ -1230,9 +1567,9 @@ function buildPlannerPresetOutput({
   };
 }
 
-export function resetPlannerRuntimeContext() {
-  resetPlannerFlowContexts(plannerFlows);
-  resetPlannerConversationMemory();
+export function resetPlannerRuntimeContext({ sessionKey = "" } = {}) {
+  resetPlannerFlowContexts(plannerFlows, { sessionKey });
+  resetPlannerConversationMemory({ sessionKey });
   resetPlannerTaskLifecycleStore().catch(() => {});
 }
 
@@ -2633,6 +2970,7 @@ export async function runPlannerToolFlow({
   forcedSelection = null,
   disableAutoRouting = false,
   signal = null,
+  sessionKey = "",
 } = {}) {
   const preAbortResult = buildPlannerAbortResult({
     action: cleanText(forcedSelection?.selected_action || forcedSelection?.action || "") || null,
@@ -2648,11 +2986,12 @@ export async function runPlannerToolFlow({
       payload,
     });
   }
-  restorePlannerRuntimeContextFromSummary();
+  restorePlannerRuntimeContextFromSummary({ sessionKey });
   maybeCompactPlannerConversationMemory({
-    flows: buildPlannerFlowSnapshots(plannerFlows),
+    flows: buildPlannerFlowSnapshots(plannerFlows, { sessionKey }),
     logger,
     reason: "pre_run_planner_tool_flow",
+    sessionKey,
   });
   const agentInput = buildPlannerAgentInput({
     userIntent,
@@ -2667,7 +3006,7 @@ export async function runPlannerToolFlow({
         routing_reason: cleanText(forcedSelection.routing_reason || forcedSelection.reason || "") || "forced_selection",
       }
     : null;
-  const plannerDocQueryContext = getPlannerDocQueryContext();
+  const plannerDocQueryContext = getPlannerDocQueryContext({ sessionKey });
   const taskLifecycleFollowUp = (!disableAutoRouting && !normalizedForcedSelection)
     ? await maybeRunPlannerTaskLifecycleFollowUp({
         userIntent: agentInput.user_intent,
@@ -2703,6 +3042,7 @@ export async function runPlannerToolFlow({
             userIntent: agentInput.user_intent,
             payload: agentInput.payload,
             logger,
+            sessionKey,
           });
   const hardRoutedAction = taskLifecycleFollowUp?.selected_action || (!disableAutoRouting ? routedFlow.action : null);
   const routedPayload = taskLifecycleFollowUp?.execution_result?.data || routedFlow.payload;
@@ -2795,6 +3135,7 @@ export async function runPlannerToolFlow({
           userIntent: agentInput.user_intent,
           payload: agentInput.payload,
           logger,
+          sessionKey,
         }),
         logger,
         signal,
@@ -2823,6 +3164,7 @@ export async function runPlannerToolFlow({
           userIntent: agentInput.user_intent,
           payload: agentInput.payload,
           logger,
+          sessionKey,
         }),
         logger,
         signal,
@@ -2847,10 +3189,12 @@ export async function runPlannerToolFlow({
             userIntent: agentInput.user_intent,
             payload: agentInput.payload,
             logger,
+            sessionKey,
           }),
       baseUrl,
       contentReader,
       logger,
+      sessionKey,
     });
   }
   throwIfPlannerSignalAborted(signal);
@@ -2882,13 +3226,14 @@ export async function runPlannerToolFlow({
       selectedAction: selection.selected_action,
       executionResult,
       logger,
+      sessionKey,
     });
   }
 
   if (!taskLifecycleFollowUp?.execution_result) {
     lifecycleSnapshot = await syncPlannerActionLayerTaskLifecycle({
       flow: selectedFlow,
-      context: selectedFlow?.readContext?.() || {},
+      context: selectedFlow?.readContext?.({ sessionKey }) || {},
       selectedAction: selection.selected_action,
       userIntent: agentInput.user_intent,
       executionResult,
@@ -2899,9 +3244,10 @@ export async function runPlannerToolFlow({
   recordPlannerConversationExchange({
     userQuery: agentInput.user_intent,
     plannerReply: describePlannerExecutionResult(executionResult),
+    sessionKey,
   });
   maybeCompactPlannerConversationMemory({
-    flows: buildPlannerFlowSnapshots(plannerFlows),
+    flows: buildPlannerFlowSnapshots(plannerFlows, { sessionKey }),
     unfinishedItems: mergePlannerUnfinishedItems(
       derivePlannerUnfinishedItems({
         selection,
@@ -2913,6 +3259,7 @@ export async function runPlannerToolFlow({
     latestTraceId: traceId,
     logger,
     reason: "post_run_planner_tool_flow",
+    sessionKey,
   });
 
   return buildPlannerAgentOutput({
@@ -3994,11 +4341,11 @@ function buildPlannerContextWindow({
   ]);
 }
 
-async function buildPlannerPrompt({ text, activeTask = null } = {}) {
-  const memorySnapshot = getPlannerConversationMemoryLayer();
+async function buildPlannerPrompt({ text, activeTask = null, sessionKey = "" } = {}) {
+  const memorySnapshot = getPlannerConversationMemoryLayer({ sessionKey });
   const latestSummary = memorySnapshot?.latest_summary || null;
   const recentMessages = Array.isArray(memorySnapshot?.recent_messages) ? memorySnapshot.recent_messages : [];
-  const plannerDocQueryContext = getPlannerDocQueryContext();
+  const plannerDocQueryContext = getPlannerDocQueryContext({ sessionKey });
   const taskDecisionContext = await getPlannerTaskDecisionContext({
     activeDoc: plannerDocQueryContext?.activeDoc || null,
     activeTheme: plannerDocQueryContext?.activeTheme || "",
@@ -4070,7 +4417,7 @@ async function buildPlannerPrompt({ text, activeTask = null } = {}) {
           'shape: {"action":"start|continue|handoff|clarify","objective":"...","primary_agent_id":"...","next_agent_id":"...","supporting_agent_ids":["..."],"reason":"...","pending_questions":[],"work_items":[]}',
           "優先沿用 focused task、unfinished、blocked、in_progress 提示。",
           "list/search/detail 必須分清楚；找資料前先嘗試對應 tool。",
-          "pending_questions 最多 4 條；work_items 最多 8 條。",
+          `pending_questions 最多 4 條；work_items 最多 ${EXECUTIVE_MAX_ROLES} 條。`,
         ].join("\n"),
         required: true,
         maxTokens: 200,
@@ -4224,11 +4571,11 @@ export async function requestPlannerJson({
   return data.choices?.[0]?.message?.content || "";
 }
 
-async function buildPlannerUserInputPrompt({ text = "" } = {}) {
-  restorePlannerRuntimeContextFromSummary();
-  const latestSummary = getPlannerConversationMemoryLayer()?.latest_summary || null;
-  const recentMessages = (getPlannerConversationMemoryLayer()?.recent_messages || []).slice(-4);
-  const docQueryContext = getPlannerDocQueryContext();
+async function buildPlannerUserInputPrompt({ text = "", sessionKey = "" } = {}) {
+  restorePlannerRuntimeContextFromSummary({ sessionKey });
+  const latestSummary = getPlannerConversationMemoryLayer({ sessionKey })?.latest_summary || null;
+  const recentMessages = (getPlannerConversationMemoryLayer({ sessionKey })?.recent_messages || []).slice(-4);
+  const docQueryContext = getPlannerDocQueryContext({ sessionKey });
   const systemPrompt = buildCompactSystemPrompt("你是 Lobster user-input planner。", [
     "所有 user input 必須先被規劃成受控 planner action/preset，禁止直接回答問題。",
     "只輸出單一合法 JSON object，不要 Markdown、不要 code fence、不要前後文、不要多餘欄位。",
@@ -4541,9 +4888,9 @@ function parsePlannerConversationDecision(value = "") {
   }
 }
 
-function getLatestPlannerDecisionContext() {
-  const recentMessages = Array.isArray(getPlannerConversationMemoryLayer()?.recent_messages)
-    ? getPlannerConversationMemoryLayer().recent_messages
+function getLatestPlannerDecisionContext({ sessionKey = "" } = {}) {
+  const recentMessages = Array.isArray(getPlannerConversationMemoryLayer({ sessionKey })?.recent_messages)
+    ? getPlannerConversationMemoryLayer({ sessionKey }).recent_messages
     : [];
   let plannerMessage = null;
   let userMessage = null;
@@ -4593,8 +4940,9 @@ function canonicalizePlannerDecision(decision = {}) {
 function validatePlannerDecisionFreshness({
   text = "",
   decision = {},
+  sessionKey = "",
 } = {}) {
-  const latestContext = getLatestPlannerDecisionContext();
+  const latestContext = getLatestPlannerDecisionContext({ sessionKey });
   if (!latestContext?.previous_decision) {
     return { ok: true };
   }
@@ -4760,7 +5108,12 @@ function withUserInputDecisionExplanation(result = {}, {
   };
 }
 
-export async function planUserInputAction({ text = "", requester = requestPlannerJson, signal = null } = {}) {
+export async function planUserInputAction({
+  text = "",
+  requester = requestPlannerJson,
+  signal = null,
+  sessionKey = "",
+} = {}) {
   const preAbortInfo = derivePlannerAbortInfo({ signal });
   if (preAbortInfo) {
     return withUserInputDecisionExplanation({
@@ -4768,12 +5121,13 @@ export async function planUserInputAction({ text = "", requester = requestPlanne
       reason: preAbortInfo.code,
     }, { text });
   }
-  restorePlannerRuntimeContextFromSummary();
+  restorePlannerRuntimeContextFromSummary({ sessionKey });
   maybeCompactPlannerConversationMemory({
-    flows: buildPlannerFlowSnapshots(plannerFlows),
+    flows: buildPlannerFlowSnapshots(plannerFlows, { sessionKey }),
     reason: "pre_plan_user_input_action",
+    sessionKey,
   });
-  let promptInput = await buildPlannerUserInputPrompt({ text });
+  let promptInput = await buildPlannerUserInputPrompt({ text, sessionKey });
   let prompt = promptInput.prompt;
   let lastInvalidDecision = null;
 
@@ -4810,6 +5164,7 @@ export async function planUserInputAction({ text = "", requester = requestPlanne
           const freshnessValidation = validatePlannerDecisionFreshness({
             text,
             decision,
+            sessionKey,
           });
           if (!freshnessValidation.ok) {
             lastInvalidDecision = freshnessValidation;
@@ -4817,11 +5172,13 @@ export async function planUserInputAction({ text = "", requester = requestPlanne
             recordPlannerConversationExchange({
               userQuery: text,
               plannerReply: JSON.stringify(decision),
+              sessionKey,
             });
             maybeCompactPlannerConversationMemory({
-              flows: buildPlannerFlowSnapshots(plannerFlows),
+              flows: buildPlannerFlowSnapshots(plannerFlows, { sessionKey }),
               latestSelectedAction: decision.action || decision.steps?.[0]?.action || "",
               reason: "post_plan_user_input_action",
+              sessionKey,
             });
             return decision;
           }
@@ -4848,10 +5205,12 @@ export async function planUserInputAction({ text = "", requester = requestPlanne
         recordPlannerConversationExchange({
           userQuery: text,
           plannerReply: JSON.stringify(abortedResult),
+          sessionKey,
         });
         maybeCompactPlannerConversationMemory({
-          flows: buildPlannerFlowSnapshots(plannerFlows),
+          flows: buildPlannerFlowSnapshots(plannerFlows, { sessionKey }),
           reason: "post_plan_user_input_action_aborted",
+          sessionKey,
         });
         return abortedResult;
       }
@@ -4863,6 +5222,7 @@ export async function planUserInputAction({ text = "", requester = requestPlanne
     }
     promptInput = await buildPlannerUserInputPrompt({
       text: `${text}\n請只輸出合法 JSON，且僅能使用 target_catalog 的 action；不可沿用上一輪 decision，必須依這一輪 user_request 重新決策。`,
+      sessionKey,
     });
     prompt = promptInput.prompt;
   }
@@ -4895,10 +5255,12 @@ export async function planUserInputAction({ text = "", requester = requestPlanne
   recordPlannerConversationExchange({
     userQuery: text,
     plannerReply: JSON.stringify(errorResult),
+    sessionKey,
   });
   maybeCompactPlannerConversationMemory({
-    flows: buildPlannerFlowSnapshots(plannerFlows),
+    flows: buildPlannerFlowSnapshots(plannerFlows, { sessionKey }),
     reason: "post_plan_user_input_action_failed",
+    sessionKey,
   });
   return errorResult;
 }
@@ -4918,6 +5280,7 @@ export async function executePlannedUserInput({
   max_retries = 0,
   retryable_error_types = ["tool_error", "runtime_exception"],
   signal = null,
+  sessionKey = "",
 } = {}) {
   const preAbortInfo = derivePlannerAbortInfo({ signal });
   if (preAbortInfo) {
@@ -4946,7 +5309,7 @@ export async function executePlannedUserInput({
           { text },
         );
       })()
-    : await planUserInputAction({ text, requester, signal });
+    : await planUserInputAction({ text, requester, signal, sessionKey });
   if (decision?.error) {
     if (decision.error === "semantic_mismatch") {
       let reroutedResult = null;
@@ -4958,6 +5321,7 @@ export async function executePlannedUserInput({
           contentReader,
           baseUrl,
           signal,
+          sessionKey,
         });
       } catch (error) {
         const abortedResult = buildPlannerAbortResult({
@@ -5080,6 +5444,7 @@ export async function executePlannedUserInput({
       },
       disableAutoRouting: true,
       signal,
+      sessionKey,
     });
   } catch (error) {
     const abortedResult = buildPlannerAbortResult({
@@ -5288,7 +5653,8 @@ function normalizePlannerDecision(decision = {}, fallbackText = "", activeTask =
     next_agent_id: getRegisteredAgent(nextAgentId) ? nextAgentId : getRegisteredAgent(primaryAgentId) ? primaryAgentId : "generalist",
     supporting_agent_ids: (Array.isArray(decision.supporting_agent_ids) ? decision.supporting_agent_ids : [])
       .map((item) => cleanText(item))
-      .filter((item) => getRegisteredAgent(item)),
+      .filter((item) => getRegisteredAgent(item))
+      .slice(0, EXECUTIVE_MAX_SUPPORTING_AGENTS),
     reason: cleanText(decision.reason || ""),
     pending_questions: Array.isArray(decision.pending_questions)
       ? decision.pending_questions.map((item) => cleanText(item)).filter(Boolean).slice(0, 4)
@@ -5303,23 +5669,25 @@ function normalizePlannerDecision(decision = {}, fallbackText = "", activeTask =
         status: "pending",
       }))
       .filter((item) => item.task)
-      .slice(0, 8),
+      .slice(0, EXECUTIVE_MAX_ROLES),
   };
 
+  const hardened = applyDeterministicExecutiveAgentSelection(normalized, fallbackText, activeTask);
+
   return {
-    ...normalized,
+    ...hardened,
     why: cleanText(decision?.why || "") || buildExecutiveDecisionWhy({
-      action: normalized.action,
-      reason: normalized.reason,
-      nextAgentId: normalized.next_agent_id,
+      action: hardened.action,
+      reason: hardened.reason,
+      nextAgentId: hardened.next_agent_id,
     }),
     alternative: normalizeDecisionAlternative(
       decision?.alternative,
       buildExecutiveDecisionAlternative({
-        action: normalized.action,
+        action: hardened.action,
         activeTask,
-        primaryAgentId: normalized.primary_agent_id,
-        nextAgentId: normalized.next_agent_id,
+        primaryAgentId: hardened.primary_agent_id,
+        nextAgentId: hardened.next_agent_id,
       }),
     ),
   };
@@ -5392,14 +5760,16 @@ export async function planExecutiveTurn({
   activeTask = null,
   requester = requestPlannerJson,
   logger = console,
+  sessionKey = "",
 } = {}) {
-  restorePlannerRuntimeContextFromSummary();
+  restorePlannerRuntimeContextFromSummary({ sessionKey });
   maybeCompactPlannerConversationMemory({
-    flows: buildPlannerFlowSnapshots(plannerFlows),
+    flows: buildPlannerFlowSnapshots(plannerFlows, { sessionKey }),
     logger,
     reason: "pre_plan_executive_turn",
+    sessionKey,
   });
-  const promptInput = await buildPlannerPrompt({ text, activeTask });
+  const promptInput = await buildPlannerPrompt({ text, activeTask, sessionKey });
   let prompt = promptInput.prompt;
 
   for (let attempt = 0; attempt <= llmJsonRetryMax; attempt += 1) {
@@ -5435,9 +5805,10 @@ export async function planExecutiveTurn({
       recordPlannerConversationExchange({
         userQuery: text,
         plannerReply: JSON.stringify(normalizedDecision),
+        sessionKey,
       });
       maybeCompactPlannerConversationMemory({
-        flows: buildPlannerFlowSnapshots(plannerFlows),
+        flows: buildPlannerFlowSnapshots(plannerFlows, { sessionKey }),
         logger,
         unfinishedItems: normalizedDecision.pending_questions.map((question) => ({
           type: "pending_question",
@@ -5445,13 +5816,18 @@ export async function planExecutiveTurn({
         })),
         latestSelectedAction: normalizedDecision.action,
         reason: "post_plan_executive_turn",
+        sessionKey,
       });
       return normalizedDecision;
     } catch {
       if (attempt >= llmJsonRetryMax) {
         break;
       }
-      prompt = (await buildPlannerPrompt({ text: `${text}\n請只輸出合法 JSON。`, activeTask })).prompt;
+      prompt = (await buildPlannerPrompt({
+        text: `${text}\n請只輸出合法 JSON。`,
+        activeTask,
+        sessionKey,
+      })).prompt;
     }
   }
 
@@ -5493,9 +5869,10 @@ export async function planExecutiveTurn({
   recordPlannerConversationExchange({
     userQuery: text,
     plannerReply: JSON.stringify(blockedDecision),
+    sessionKey,
   });
   maybeCompactPlannerConversationMemory({
-    flows: buildPlannerFlowSnapshots(plannerFlows),
+    flows: buildPlannerFlowSnapshots(plannerFlows, { sessionKey }),
     logger,
     unfinishedItems: blockedDecision.pending_questions.map((question) => ({
       type: "pending_question",
@@ -5503,6 +5880,7 @@ export async function planExecutiveTurn({
     })),
     latestSelectedAction: "",
     reason: "post_plan_executive_turn_failed",
+    sessionKey,
   });
   return blockedDecision;
 }

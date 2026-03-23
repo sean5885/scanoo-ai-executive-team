@@ -748,6 +748,14 @@ The normalized executive decision shape in that same module now also carries det
 
 `why` and simplified `alternative` are normalized by runtime rather than trusted as free-form model output, so executive routing stays explainable without loosening the existing JSON decision boundary.
 
+That same normalization path now also hardens agent selection deterministically after planner JSON parsing and before follow-up task-driving fill:
+
+- simple single-intent requests default back to `/generalist`
+- multi-agent is used only when the user request is compound and the checked-in keyword rules detect at least two distinct specialist roles
+- explicit slash-agent requests keep the named primary agent but do not auto-expand extra specialists unless the same request also qualifies for compound multi-agent collaboration
+- `supporting_agent_ids` is capped at two and `work_items` is capped at three total roles, matching the existing sequential in-process execution path
+- repeated identical requests therefore resolve to the same role set even if raw planner JSON proposes a different specialist mix
+
 That same decision-side task context now also includes a bounded `focus task` layer on top of `task driving v1`. It remains deterministic and local-only:
 
 - scope resolution prefers `active_doc`, then matching `source_title` mentioned in the current user text, then matching task titles, then `active_theme`, then latest scope
