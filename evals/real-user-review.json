@@ -1,0 +1,16 @@
+[
+  {
+    "task": "幫我整理今天會議重點並列出待辦",
+    "lane": "meeting",
+    "action": "meeting_summary",
+    "result_quality": "good",
+    "issue": ""
+  },
+  {
+    "task": "幫我整理今天會議重點並列出待辦",
+    "lane": "meeting",
+    "action": "meeting_summary",
+    "result_quality": "good",
+    "issue": ""
+  }
+]

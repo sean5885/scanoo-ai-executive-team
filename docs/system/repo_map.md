@@ -26,11 +26,11 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 - `/Users/seanhan/Documents/Playground/scripts`
   - Small utility scripts.
-  - Includes workflow baseline, monitoring, trace debug, routing eval entrypoints, and local retrieval eval runners.
+  - Includes workflow baseline, monitoring, trace debug, routing eval entrypoints, local retrieval eval runners, a manual real-user prompt smoke loop, and a small manual review logger.
 
 - `/Users/seanhan/Documents/Playground/evals`
   - Checked-in deterministic eval fixtures.
-  - Currently stores the routing regression baseline set, a small real-world retrieval query set, and a meeting workflow smoke fixture set.
+  - Currently stores the routing regression baseline set, a small real-world retrieval query set, workflow smoke fixture sets, and a small manual real-user prompt set.
 
 - `/Users/seanhan/Documents/Playground/.data`
   - Local runtime data.
@@ -74,6 +74,11 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `/Users/seanhan/Documents/Playground/evals/retrieval-realworld-set.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/retrieval-eval.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/retrieval-realworld-eval.mjs`
+
+- Manual real-user prompt smoke loop
+  - `/Users/seanhan/Documents/Playground/evals/real-user-tasks.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/real-user-loop.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/real-user-review-log.mjs`
 
 - Document workflow eval helpers
   - `/Users/seanhan/Documents/Playground/evals/doc-workflow-set.mjs`

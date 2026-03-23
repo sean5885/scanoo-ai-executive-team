@@ -219,6 +219,28 @@ node scripts/runtime-workflow-eval.mjs
 - checked-in runtime workflow fixture dataset：`evals/runtime-workflow-set.mjs`
 - deterministic smoke runner output：PASS / FAIL 與固定 runtime mock answer 命中結果
 
+### Real-user Prompt Loop Smoke
+
+用途：
+
+- 用少量 checked-in 真實使用者問法做最小人工檢視 loop，確認腳本可穩定列出任務並保留後續人工判讀入口
+- 適合在整理 eval fixture、補真實問法樣本或建立手動 review 節奏時使用
+- 這不是正式 verifier，也不會宣稱 task 已完成；目前只輸出 `TASK` 與 `RESULT: (manual check required)` 供人工續查
+- 若需要把人工判讀結果落成 checked-in review artifact，可再執行 `node scripts/real-user-review-log.mjs "<task>" "<lane>" "<action>" "<result_quality>" "<issue>"` 追加一筆 JSON review record
+
+命令：
+
+```bash
+node scripts/real-user-loop.mjs
+node scripts/real-user-review-log.mjs "幫我整理今天會議重點並列出待辦" "meeting" "meeting_summary" "good" ""
+```
+
+覆蓋：
+
+- checked-in real-user prompt dataset：`evals/real-user-tasks.mjs`
+- deterministic console loop output：逐筆列出 task 與固定 manual-check marker
+- manual review log append output：把單筆人工判讀結果寫到 `evals/real-user-review.json`
+
 ## Test Harness Note
 
 目前 workflow baseline 依賴以下 test harness / cleanup hooks：
