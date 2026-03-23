@@ -141,7 +141,8 @@ Boundary:
   - `{ "selected_action": "string|null", "execution_result": "object|null", "agent_execution": "object", "trace_id": "string|null" }`
 - `agent_execution` prefers explicit `payload.lane` or `taskType`
 - otherwise it only infers a small checked-in mapping from known planner actions/presets
-- when no bounded mapping exists, output falls back to `fallback_agent`
+- the derived execution is then wrapped through `runAgentExecution(...)`, so current planner output can also carry deterministic placeholder `result` payloads for the checked-in lane/agent pairs
+- when no bounded mapping exists, output falls back to `fallback_agent` with `result.status = "fallback"`
 
 ## Input Shape
 

@@ -47,6 +47,7 @@ import {
   syncPlannerFlowContext,
 } from "./planner-flow-runtime.mjs";
 import { executeAgent } from "./planner/agent-executor.mjs";
+import { runAgentExecution } from "./planner/agent-runtime.mjs";
 import {
   buildPlannerLifecycleUnfinishedItems,
   getPlannerTaskDecisionContext,
@@ -980,7 +981,7 @@ export function resolvePlannerAgentExecution({
     selectedAction,
   });
 
-  return executeAgent({ lane });
+  return runAgentExecution(executeAgent({ lane }));
 }
 
 function buildPlannerAgentOutput({
