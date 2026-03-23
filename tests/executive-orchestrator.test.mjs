@@ -105,6 +105,20 @@ test("buildExecutiveBrief combines header, task list, support summaries, and syn
   assert.doesNotMatch(text, /\/consult/);
 });
 
+test("buildExecutiveBrief drops JSON-like primary reply and leaked supporting summaries", () => {
+  const text = buildExecutiveBrief({
+    supportingOutputs: [
+      { agent_id: "consult", task: "做方案比較", summary: "{\"answer\":\"這段不該直接出現\"}" },
+      { agent_id: "product", task: "整理產品角度", summary: "先確認 owner 與 review 邊界。" },
+    ],
+    primaryReplyText: "```json\n{\"ok\":false,\"error\":\"tool_error\",\"details\":{\"message\":\"boom\"}}\n```",
+  });
+
+  assert.match(text, /^結論：/);
+  assert.match(text, /先確認 owner 與 review 邊界/);
+  assert.doesNotMatch(text, /```json|\"ok\"|\"error\"|tool_error|\{\"answer\"/);
+});
+
 test("executeWorkItemsSequentially runs specialists in order and merges into one final response", async () => {
   const calls = [];
   const result = await executeWorkItemsSequentially({
@@ -155,6 +169,86 @@ test("executeWorkItemsSequentially preserves generalist fallback when a speciali
   assert.equal(result.reply?.text, "generalist:統一收斂");
   assert.equal(result.finalWorkPlan[0].status, "failed");
   assert.equal(result.finalWorkPlan[1].agent_id, "generalist");
+});
+
+test("executeWorkItemsSequentially rejects raw and fenced JSON-like specialist replies", async () => {
+  const result = await executeWorkItemsSequentially({
+    accountId: "acct-1",
+    requestText: "請收斂結果",
+    workPlan: [
+      { agent_id: "consult", task: "拆解問題", role: "supporting" },
+      { agent_id: "product", task: "整理產品角度", role: "supporting" },
+      { agent_id: "generalist", task: "統一收斂", role: "primary" },
+    ],
+    async executeAgentFn({ agent }) {
+      if (agent.id === "consult") {
+        return { text: "{\"answer\":\"這是一個 raw JSON object\"}" };
+      }
+      if (agent.id === "product") {
+        return { text: "```json\n{\"answer\":\"這是一個 fenced JSON object\"}\n```" };
+      }
+      return { text: "結論：改由 /generalist 直接收斂。" };
+    },
+  });
+
+  assert.equal(result.supportingOutputs.length, 0);
+  assert.deepEqual(
+    result.failedAgents.map((item) => item.error),
+    ["rejected_json_object", "rejected_json_object_fenced"],
+  );
+  assert.equal(result.reply?.text, "結論：改由 /generalist 直接收斂。");
+  assert.equal(result.finalWorkPlan[0].status, "failed");
+  assert.equal(result.finalWorkPlan[1].status, "failed");
+  assert.equal(result.finalWorkPlan[2].status, "completed");
+});
+
+test("executeWorkItemsSequentially rejects structured envelope merge reply and falls back to generalist", async () => {
+  const calls = [];
+  const result = await executeWorkItemsSequentially({
+    accountId: "acct-1",
+    requestText: "請收斂結果",
+    mergeAgentId: "ceo",
+    workPlan: [
+      { agent_id: "consult", task: "拆解問題", role: "supporting" },
+      { agent_id: "ceo", task: "統一收斂", role: "primary" },
+    ],
+    async executeAgentFn({ agent }) {
+      calls.push(agent.id);
+      if (agent.id === "consult") {
+        return { text: "問題邊界已整理。" };
+      }
+      if (agent.id === "ceo") {
+        return { text: "```json\n{\"ok\":false,\"error\":\"runtime_exception\",\"details\":{\"message\":\"bad merge\"}}\n```" };
+      }
+      return { text: "結論：改由 /generalist fail-soft 收斂。" };
+    },
+  });
+
+  assert.deepEqual(calls, ["consult", "ceo", "generalist"]);
+  assert.equal(result.reply?.text, "結論：改由 /generalist fail-soft 收斂。");
+  assert.equal(result.mergeAgent?.id, "generalist");
+});
+
+test("executeWorkItemsSequentially keeps ordinary JSON string literal on the normal success path", async () => {
+  const result = await executeWorkItemsSequentially({
+    accountId: "acct-1",
+    requestText: "請收斂結果",
+    workPlan: [
+      { agent_id: "consult", task: "拆解問題", role: "supporting" },
+      { agent_id: "generalist", task: "統一收斂", role: "primary" },
+    ],
+    async executeAgentFn({ agent }) {
+      if (agent.id === "consult") {
+        return { text: "\"這是一段一般 JSON string literal 回答\"" };
+      }
+      return { text: "結論：已整合支援輸出。" };
+    },
+  });
+
+  assert.equal(result.supportingOutputs.length, 1);
+  assert.equal(result.supportingOutputs[0].summary, "\"這是一段一般 JSON string literal 回答\"");
+  assert.equal(result.failedAgents.length, 0);
+  assert.equal(result.reply?.text, "結論：已整合支援輸出。");
 });
 
 test("executeExecutiveTurn slash-command no-match reply is natural language instead of raw JSON", async () => {

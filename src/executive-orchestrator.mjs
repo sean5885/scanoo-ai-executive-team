@@ -237,6 +237,16 @@ function classifyExecutiveSection(heading = "") {
 }
 
 function parseExecutiveReplySections(text = "") {
+  if (classifyExecutiveReplyBoundary(text).rejected) {
+    return {
+      conclusion: [],
+      key_points: [],
+      next_step: [],
+      sources: [],
+      body: [],
+    };
+  }
+
   const lines = String(text || "").split(/\r?\n/);
   const sections = {
     conclusion: [],
@@ -250,7 +260,7 @@ function parseExecutiveReplySections(text = "") {
 
   for (const rawLine of lines) {
     const line = cleanText(rawLine);
-    if (!line) {
+    if (!line || !isSafeExecutiveBriefLine(line)) {
       continue;
     }
 
@@ -298,7 +308,9 @@ function deriveExecutiveSections({
   const seen = new Set();
   let conclusionItems = dedupeTextItems(parsed.conclusion, seen);
   const supportingSummaries = dedupeTextItems(
-    (Array.isArray(supportingOutputs) ? supportingOutputs : []).map((item) => item?.summary || ""),
+    (Array.isArray(supportingOutputs) ? supportingOutputs : [])
+      .map((item) => item?.summary || "")
+      .filter(isSafeExecutiveBriefLine),
     new Set(),
   );
 
@@ -355,6 +367,116 @@ function looksLikeAgentFailureText(text = "") {
   } catch {
     return false;
   }
+}
+
+function looksLikeNestedExecutiveBoundaryJson(text = "") {
+  return /^(?:\{|```)/.test(cleanText(text));
+}
+
+function parseExecutiveBoundaryJson(rawAnswer = "") {
+  if (rawAnswer && typeof rawAnswer === "object") {
+    if (Array.isArray(rawAnswer)) {
+      return null;
+    }
+    return {
+      kind: "json_object",
+      payload: rawAnswer,
+    };
+  }
+
+  let candidate = String(rawAnswer || "").trim();
+  if (!candidate) {
+    return null;
+  }
+
+  for (let depth = 0; depth < 2; depth += 1) {
+    const fencedMatch = candidate.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+    const parseTarget = fencedMatch ? fencedMatch[1].trim() : candidate;
+    let parsed = null;
+    try {
+      parsed = JSON.parse(parseTarget);
+    } catch {
+      return null;
+    }
+
+    if (typeof parsed === "string") {
+      const normalized = cleanText(parsed);
+      if (!normalized || normalized === candidate || !looksLikeNestedExecutiveBoundaryJson(normalized)) {
+        return null;
+      }
+      candidate = normalized;
+      continue;
+    }
+
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return {
+        kind: fencedMatch ? "json_object_fenced" : "json_object",
+        payload: parsed,
+      };
+    }
+
+    return null;
+  }
+
+  return null;
+}
+
+function looksLikeExecutiveEnvelopePayload(payload = null) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return false;
+  }
+
+  const status = cleanText(payload.status || "").toLowerCase();
+  return Boolean(
+    typeof payload.ok === "boolean"
+    || cleanText(payload.error || "")
+    || payload.details
+    || payload.context
+    || payload.trace
+    || payload.execution_result
+    || payload.action_layer
+    || status === "error"
+    || status === "failed"
+    || status === "blocked"
+    || status === "stopped"
+    || status === "escalated"
+    || status === "pending_review"
+    || status === "awaiting_review"
+  );
+}
+
+function classifyExecutiveReplyBoundary(rawAnswer = "") {
+  const parsed = parseExecutiveBoundaryJson(rawAnswer);
+  if (parsed) {
+    return {
+      rejected: true,
+      reason: looksLikeExecutiveEnvelopePayload(parsed.payload) ? "structured_envelope" : parsed.kind,
+    };
+  }
+
+  const normalized = cleanText(rawAnswer);
+  if (!normalized) {
+    return {
+      rejected: false,
+      reason: "",
+    };
+  }
+
+  if (/^```(?:json)?$/i.test(normalized) || normalized === "```") {
+    return {
+      rejected: true,
+      reason: "json_fence",
+    };
+  }
+
+  return {
+    rejected: false,
+    reason: "",
+  };
+}
+
+function isSafeExecutiveBriefLine(text = "") {
+  return !classifyExecutiveReplyBoundary(text).rejected;
 }
 
 export function normalizeWorkPlan(task = null, decision = null, requestText = "") {
@@ -1051,11 +1173,16 @@ export async function executeWorkItemsSequentially({
         logger,
       });
       const summary = cleanText(reply?.text || "");
-      if (!summary || looksLikeAgentFailureText(summary)) {
+      const boundary = classifyExecutiveReplyBoundary(reply?.text || "");
+      if (!summary || looksLikeAgentFailureText(summary) || boundary.rejected) {
+        logger.warn("executive_specialist_output_rejected", {
+          agent_id: agent.id,
+          reason: boundary.reason || "empty_or_failed_reply",
+        });
         failedAgents.push({
           agent_id: agent.id,
           task: item.task,
-          error: "empty_or_failed_reply",
+          error: boundary.reason ? `rejected_${boundary.reason}` : "empty_or_failed_reply",
         });
         executedSpecialists.push({
           ...item,
@@ -1116,7 +1243,8 @@ export async function executeWorkItemsSequentially({
         supportingContext: buildSupportingContext(outputs),
         logger,
       });
-      if (!cleanText(candidateReply?.text || "") || looksLikeAgentFailureText(candidateReply?.text || "")) {
+      const boundary = classifyExecutiveReplyBoundary(candidateReply?.text || "");
+      if (!cleanText(candidateReply?.text || "") || looksLikeAgentFailureText(candidateReply?.text || "") || boundary.rejected) {
         throw new Error("merge_agent_failed");
       }
       mergeAgent = agent;
