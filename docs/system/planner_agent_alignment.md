@@ -27,6 +27,7 @@ Current runtime anchor:
 - `/Users/seanhan/Documents/Playground/src/planner-doc-query-flow.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-action-layer.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner/agent-executor.mjs`
+- `/Users/seanhan/Documents/Playground/src/planner/agent-runtime.mjs`
 
 Current minimum runtime responsibilities already implemented there:
 
@@ -109,6 +110,30 @@ Boundary:
 - it does not perform tool calls
 - it does not transfer workflow ownership
 - it does not claim a generic multi-agent runtime or full handoff engine
+
+## Placeholder Agent Runtime
+
+`/Users/seanhan/Documents/Playground/src/planner/agent-runtime.mjs` now provides a matching placeholder execution wrapper for the same checked-in agent/action pairs:
+
+- input:
+  - `{ "agent": "string", "action": "string" }`
+  - or `{ "lane": "meeting|doc|runtime|mixed|..." }`, which is normalized through `agent-executor.mjs`
+- output:
+  - `{ "agent": "string", "action": "string", "result": "object" }`
+
+Current checked-in behavior:
+
+- `meeting_agent / meeting_summary -> { "summary": "meeting workflow placeholder result", "status": "ok" }`
+- `doc_agent / doc_answer -> { "answer": "doc workflow placeholder result", "status": "ok" }`
+- `runtime_agent / runtime_check -> { "runtime_status": "healthy", "status": "ok" }`
+- `mixed_agent / mixed_lane -> { "message": "mixed workflow placeholder result", "status": "ok" }`
+- unknown input -> `{ "status": "fallback" }`
+
+Boundary:
+
+- this wrapper is still deterministic and local-only
+- it does not invoke live tools, agents, or workflow ownership transfer
+- it exists as a thin checked-in placeholder runtime, not a generic specialist-agent executor
 
 `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` now consumes that helper in a bounded way:
 
