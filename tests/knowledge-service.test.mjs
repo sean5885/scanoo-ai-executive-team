@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { cleanSnippet as cleanKnowledgeSnippet } from "../src/knowledge/snippet-cleaner.mjs";
 import {
   filterKnowledgeContextResults,
+  queryKnowledgeWithSnippet,
   queryKnowledgeWithContext,
 } from "../src/knowledge/knowledge-service.mjs";
 import { plannerAnswer } from "../src/planner/knowledge-bridge.mjs";
@@ -83,6 +84,49 @@ test("cleanSnippet strips navigation artifacts at the start of previews", () => 
     cleanKnowledgeSnippet("Delivery Guide - owner and deadline are required for action items.", "deadline"),
     "owner and deadline are required for action items.",
   );
+});
+
+test("cleanSnippet strips markdown link shells, list fragments, and path-only lines", () => {
+  const cleaned = cleanKnowledgeSnippet(
+    "# Knowledge Pipeline\n\nBack to [README.md](/Users/seanhan/Documents/Playground/README.md)\n\n## Intake\n- entry:\n  - `/Users/seanhan/Documents/Playground/src/lark-sync-service.mjs`\n- source discovery:\n  - Drive tree scanning\n  - Wiki spaces and nodes",
+    "knowledge",
+  );
+
+  assert.equal(cleaned, "Knowledge Pipeline Drive tree scanning Wiki spaces and nodes");
+});
+
+test("cleanSnippet removes broken fragments and module-style label prefixes", () => {
+  assert.equal(cleanKnowledgeSnippet("- `", "verification"), "");
+  assert.equal(
+    cleanKnowledgeSnippet("runtime / monitoring - Purpose: verification keeps evidence explicit.", "verification"),
+    "verification keeps evidence explicit.",
+  );
+});
+
+test("queryKnowledgeWithContext returns cleaned source snippets without markdown shell noise", () => {
+  const results = queryKnowledgeWithContext("knowledge pipeline");
+
+  assert.ok(results.length > 0);
+  assert.ok(results.every((item) => !/Back to \[?README/i.test(item.snippet)));
+  assert.ok(results.every((item) => !/\/Users\//.test(item.snippet)));
+  assert.ok(results.some((item) => /knowledge pipeline|learning pipeline/i.test(item.snippet)));
+});
+
+test("queryKnowledgeWithContext drops checkpoint-like metadata fragments from routing previews", () => {
+  const results = queryKnowledgeWithContext("routing");
+  const text = results.map((item) => item.snippet || "").join(" ");
+
+  assert.ok(results.length > 0);
+  assert.doesNotMatch(text, /\bcheckpoint:\s*Thread\s+\d+/i);
+});
+
+test("queryKnowledgeWithSnippet keeps verification snippets scoped to the matching bullet without oauth tail", () => {
+  const results = queryKnowledgeWithSnippet("verification");
+  const releaseBaseline = results.find((item) => item.id === "release_baseline_v1_0_0.md");
+
+  assert.ok(releaseBaseline);
+  assert.match(releaseBaseline.snippet, /verification/i);
+  assert.doesNotMatch(releaseBaseline.snippet, /oauth|sqlite/i);
 });
 
 test("plannerAnswer uses injected summarizer and passes filtered live previews", async () => {

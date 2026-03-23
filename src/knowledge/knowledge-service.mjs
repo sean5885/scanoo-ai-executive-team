@@ -1,6 +1,7 @@
 import { loadDocsFromDir } from './doc-loader.mjs';
 import { searchDocsByKeyword } from './doc-index.mjs';
 import { rankResults } from './rank-results.mjs';
+import { cleanSnippet } from './snippet-cleaner.mjs';
 
 let cachedIndex = null;
 const QUERY_NORMALIZATION_MAP = {
@@ -32,45 +33,119 @@ function safeSlice(content, start, end) {
   return content.slice(s, e);
 }
 
-function stripLeadingLabel(text) {
-  let t = (text || '').trim();
-  t = t.replace(/^\/Users\/[^\n]+\n?/gm, '');
-  if (/^[A-Za-z\s]+\/[A-Za-z\s]+$/.test(t)) return '';
-  t = t.replace(/^[A-Za-z\s\/]+-\s*(Purpose|用途|說明)\s*:\s*/i, '');
-  t = t.replace(/^[A-Za-z\s\/]+\s*-\s*/, '');
-  return t.trim();
+function splitIntoBlocks(content = '') {
+  return String(content)
+    .split(/\n\s*\n+/)
+    .map((block) => block.trim())
+    .filter(Boolean);
 }
 
-function extractSnippet(content, keyword) {
-  const lower = content.toLowerCase();
-  const k = keyword.toLowerCase();
-  const i = lower.indexOf(k);
+function getMatchedBlockIndex(blocks = [], keyword = '') {
+  const normalizedKeyword = String(keyword || '').trim().toLowerCase();
+  if (!normalizedKeyword) return -1;
+  return blocks.findIndex((block) => block.toLowerCase().includes(normalizedKeyword));
+}
 
-  if (i === -1) return content.slice(0, 120);
+function collectKeywordLineWindow(block = '', keyword = '') {
+  const normalizedKeyword = String(keyword || '').trim().toLowerCase();
+  if (!normalizedKeyword) return '';
 
-  let start = Math.max(0, i - 80);
-  let end = Math.min(content.length, i + 140);
+  const lines = String(block)
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter(Boolean);
+  const matchIndex = lines.findIndex((line) => line.toLowerCase().includes(normalizedKeyword));
+
+  if (matchIndex === -1) return '';
+
+  let start = matchIndex;
+  let end = matchIndex;
+
+  if (matchIndex > 0 && /[:：]$/.test(lines[matchIndex - 1].trim())) {
+    start = matchIndex - 1;
+  }
+
+  while (end + 1 < lines.length) {
+    const nextLine = lines[end + 1].trim();
+    if (!nextLine) break;
+    if (/^\s*#{1,6}\s+/.test(nextLine)) break;
+    if (/^\s*(?:[-*+]|\d+\.)\s+/.test(nextLine)) break;
+    if (/^[A-Za-z][A-Za-z\s/_-]*[:：]\s*$/.test(nextLine)) break;
+    end += 1;
+    if (/[.。!?！？]$/.test(lines[end].trim())) break;
+  }
+
+  return lines.slice(start, end + 1).join('\n').trim();
+}
+
+function collectSnippetCandidates(content, keyword) {
+  const blocks = splitIntoBlocks(content);
+  const matchIndex = getMatchedBlockIndex(blocks, keyword);
+  const candidates = [];
+
+  if (matchIndex !== -1) {
+    const block = blocks[matchIndex];
+    const focusedWindow = collectKeywordLineWindow(block, keyword);
+    if (focusedWindow) {
+      candidates.push(focusedWindow);
+    }
+    if (block) {
+      candidates.push(block);
+    }
+  }
+
+  return candidates;
+}
+
+function extractSentenceWindow(content, keyword) {
+  const normalizedContent = String(content || '');
+  const normalizedKeyword = String(keyword || '').trim().toLowerCase();
+  const lower = normalizedContent.toLowerCase();
+  const index = normalizedKeyword ? lower.indexOf(normalizedKeyword) : -1;
+
+  if (index === -1) {
+    return normalizedContent.slice(0, 260);
+  }
+
+  let start = Math.max(0, index - 120);
+  let end = Math.min(normalizedContent.length, index + Math.max(normalizedKeyword.length + 180, 220));
 
   const prevBreak = Math.max(
-    content.lastIndexOf('\n', start),
-    content.lastIndexOf('. ', start),
-    content.lastIndexOf('。', start),
-    content.lastIndexOf(': ', start),
-    content.lastIndexOf('：', start)
+    normalizedContent.lastIndexOf('\n', start),
+    normalizedContent.lastIndexOf('. ', start),
+    normalizedContent.lastIndexOf('。', start),
+    normalizedContent.lastIndexOf(': ', start),
+    normalizedContent.lastIndexOf('：', start),
   );
-
   const nextCandidates = [
-    content.indexOf('\n', end),
-    content.indexOf('. ', end),
-    content.indexOf('。', end),
-    content.indexOf(': ', end),
-    content.indexOf('：', end)
-  ].filter(x => x !== -1);
+    normalizedContent.indexOf('\n', end),
+    normalizedContent.indexOf('. ', end),
+    normalizedContent.indexOf('。', end),
+    normalizedContent.indexOf(': ', end),
+    normalizedContent.indexOf('：', end),
+  ].filter((candidate) => candidate !== -1);
 
   if (prevBreak !== -1) start = prevBreak + 1;
   if (nextCandidates.length > 0) end = Math.min(...nextCandidates) + 1;
 
-  return stripLeadingLabel(safeSlice(content, start, end).trim());
+  return safeSlice(normalizedContent, start, end).trim();
+}
+
+function extractSnippet(content, keyword) {
+  const candidates = [
+    ...collectSnippetCandidates(content, keyword),
+    extractSentenceWindow(content, keyword),
+    safeSlice(String(content || ''), 0, 260),
+  ];
+
+  for (const candidate of candidates) {
+    const cleaned = cleanSnippet(candidate, keyword);
+    if (!isLowValueSnippet(cleaned)) {
+      return cleaned;
+    }
+  }
+
+  return cleanSnippet(content, keyword);
 }
 
 function isLowValueSnippet(text) {
@@ -81,6 +156,10 @@ function isLowValueSnippet(text) {
   if (/^\/|^\.\/|^[A-Za-z]:\\/.test(t)) return true;
   if (/^[A-Za-z0-9_./-]+$/.test(t)) return true;
   if (/^(module|path|file|api|runtime)\s*[:/-]\s*$/i.test(t)) return true;
+  if (/^[A-Za-z0-9_./-]+\s*:\s*$/.test(t)) return true;
+  if (/[([<{/:;-]\s*$/.test(t) && !/[.。!?！？]$/.test(t)) return true;
+  if (!/[.。!?！？:：]/.test(t) && /\b(runbook|guide|readme)\b/i.test(t)) return true;
+  if (!/[.。!?！？:：]/.test(t) && (t.match(/[A-Za-z0-9]+/g) || []).length <= 3 && !/[\u4e00-\u9fff]/.test(t)) return true;
   return false;
 }
 
