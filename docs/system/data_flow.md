@@ -529,6 +529,12 @@ Actual AI-like execution paths:
   - knowledge-assistant chat lane -> `lane-executor.mjs` -> `executive-planner.mjs` -> shared `normalizeUserResponse()` boundary -> evidence-first chat reply text (`結論 / 標記文件 / 下一步`)
   - direct user-input answer fallback is disabled; `answer-service.mjs` is no longer the first responder for `/answer` or the knowledge-assistant lane
 
+- internal document review / triage workflow
+  - reusable internal call -> `document-review-triage-workflow.mjs` -> `executive-orchestrator.mjs` verifier gate
+  - input is bounded to `user request + document set`
+  - output stays aligned with the shared evidence-first reply family (`結論 / 標記文件 / 下一步`) while preserving workflow-local structured fields (`conclusion`, `referenced_documents`, `reasons`, `next_actions`)
+  - this path is read-only and currently not wired into planner, lane routing, or HTTP route surfaces
+
 - comment-driven rewrite
   - rewrite route -> `doc-comment-rewrite.mjs` -> external checkpoint + governed XML prompt -> optional LLM
   - comment images are reduced to compact attachment counts instead of long raw image payload text

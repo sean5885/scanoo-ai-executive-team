@@ -687,7 +687,21 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 - Core path:
   - important recent capability
 
-### 10A. Lane Execution
+### 10A. Document Review / Triage Workflow
+
+- Location:
+  - `/Users/seanhan/Documents/Playground/src/document-review-triage-workflow.mjs`
+  - `/Users/seanhan/Documents/Playground/src/executive-orchestrator.mjs`
+- Responsibility:
+  - take `user request + document set` as a reusable internal workflow input
+  - score and triage the provided document set into `primary` / `needs_confirmation` / `supporting` / `out_of_scope`
+  - emit a stable structured result with `conclusion`, `referenced_documents`, `reasons`, `next_actions`, and `document_count`
+  - reuse the shared evidence-first reply shape by mapping the workflow result into `結論 -> 標記文件 -> 下一步`
+  - run through the existing executive task lifecycle and verifier gate as a read-only workflow, without adding planner/lane/http routing
+- Core path:
+  - internal reusable workflow baseline; not yet a public route or planner-wired runtime
+
+### 10B. Lane Execution
 
 - Location:
   - `/Users/seanhan/Documents/Playground/src/capability-lane.mjs`
@@ -736,7 +750,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 - Core path:
   - yes for long-connection assistant behavior
 
-### 10B. Meeting Workflow
+### 10C. Meeting Workflow
 
 - Location:
   - `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`

@@ -86,6 +86,16 @@ const TASK_RULE_TEMPLATES = Object.freeze({
     escalation_policy: "高風險或 evidence 不足時標示待確認。",
     risk_level: "high",
   },
+  document_review: {
+    goal: "根據使用者需求，對一組文件做可重用的 review/triage。",
+    success_criteria: ["有可讀結論", "有 referenced documents", "有理由", "有下一步"],
+    failure_criteria: ["沒有文件集合", "只有文件清單沒有判斷", "沒有 evidence 就宣稱完成"],
+    evidence_requirements: ["tool_output", "summary_generated", "structured_output"],
+    validation_method: "checklist:document_review",
+    retry_policy: "命中不足時保留待確認並建議補更精準的文件範圍或關鍵詞。",
+    escalation_policy: "缺文件集合或 evidence 不足時進 blocked/retry，不包裝成完成。",
+    risk_level: "medium",
+  },
   knowledge_write: {
     goal: "把穩定知識寫入正確 memory 層。",
     success_criteria: ["符合 write policy", "有 proposal 或 approved write evidence", "有 conflict 判斷"],
@@ -144,6 +154,9 @@ export function inferTaskType({ agentId = "", requestText = "", workflow = "" } 
   const text = cleanText(String(requestText || "").toLowerCase());
   if (workflow === "meeting" || text.includes("會議") || text.includes("meeting")) {
     return "meeting_processing";
+  }
+  if (workflow === "document_review" || text.includes("triage") || (text.includes("review") && text.includes("文件"))) {
+    return "document_review";
   }
   if (agentId === "prd" || text.includes("prd") || text.includes("驗收")) {
     return "prd_generation";
