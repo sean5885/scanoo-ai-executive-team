@@ -40,7 +40,7 @@ test("chat reply for the exact scanooo rereview query renders natural language w
   assert.equal(userResponse.ok, true);
   assert.match(userResponse.answer || "", /scanooo|標出/);
   assert.match(text, /^結論/m);
-  assert.match(text, /^標記文件/m);
+  assert.match(text, /^重點/m);
   assert.match(text, /^下一步/m);
   assert.match(text, /scanooo onboarding notes/);
   assert.match(text, /https:\/\/larksuite\.com\/docx\/doc-scanooo/);
@@ -117,6 +117,36 @@ test("chat reply explains why no document was found instead of returning a gener
 
   assert.equal(userResponse.ok, true);
   assert.match(text, /沒有找到標題、文件代號、摘要或已學習標籤/);
-  assert.match(text, /^標記文件\n- 目前沒有可標記的相關文件。/m);
+  assert.match(text, /^重點\n- 目前沒有足夠已驗證來源可補更多重點。/m);
   assert.match(text, /^下一步/m);
+});
+
+test("chat reply states source gap instead of inventing detail summary when doc detail evidence is thin", () => {
+  const userResponse = normalizeUserResponse({
+    plannerEnvelope: {
+      ok: true,
+      action: "get_company_brain_doc_detail",
+      execution_result: {
+        ok: true,
+        kind: "detail",
+        title: "Scanoo SOP",
+        doc_id: "doc_scanoo_sop",
+        items: [
+          {
+            title: "Scanoo SOP",
+            doc_id: "doc_scanoo_sop",
+            reason: "文件標題直接命中「scanoo」。",
+          },
+        ],
+        content_summary: "",
+      },
+    },
+  });
+  const text = renderUserResponseText(userResponse);
+
+  assert.equal(userResponse.ok, true);
+  assert.match(userResponse.answer || "", /來源不足|不補更多內容細節/);
+  assert.match(text, /^重點/m);
+  assert.match(text, /Scanoo SOP：文件標題直接命中/);
+  assert.doesNotMatch(text, /流程|owner|deadline|驗收/);
 });

@@ -53,11 +53,22 @@ function normalizePlannerDocumentItems(items = []) {
 
 function buildPlannerDocumentSourceLine(item = {}) {
   const label = item.title || item.doc_id || "未命名文件";
-  const reason = item.reason || "目前已列為這輪查詢最相關的文件。";
+  const reason = item.reason || "這份文件出現在這輪檢索結果中。";
   if (item.url) {
     return `${label}：${reason} 連結：${item.url}`;
   }
   return `${label}：${reason}`;
+}
+
+function buildPlannerEvidenceGapAnswer({
+  title = "",
+  docId = "",
+} = {}) {
+  const label = normalizeText(title || docId || "");
+  if (label) {
+    return `我先定位到「${label}」，但目前可用來源不足，所以先不補更多內容細節。`;
+  }
+  return "我先定位到對應文件，但目前可用來源不足，所以先不補更多內容細節。";
 }
 
 function buildPlannerNextSteps(execution = {}, fallbacks = []) {
@@ -118,22 +129,34 @@ export function buildPlannerSuccessUserResponse(envelope = {}) {
 
   if (kind === "detail" || kind === "search_and_detail") {
     const title = normalizeText(execution.title || "");
+    const docId = normalizeText(execution.doc_id || "");
     const summary = normalizeText(execution.content_summary || "");
     const effectiveSources = documentItems.length > 0
       ? documentItems
       : normalizePlannerDocumentItems([{
           title,
-          doc_id: execution.doc_id,
+          doc_id: docId,
           reason: execution.match_reason || "這份文件直接命中這輪需求。",
         }]);
     return {
       ok: true,
-      answer: [title ? `我先以「${title}」作為這輪最直接的對應文件。` : null, summary || "我已經找到對應文件，但目前可用摘要有限。"]
-        .filter(Boolean)
-        .join(" "),
+      answer: summary
+        ? [
+            title
+              ? `我先以「${title}」作為這輪最直接的對應文件。`
+              : docId
+                ? `我先以文件 ${docId} 作為這輪最直接的對應文件。`
+                : null,
+            summary,
+          ]
+            .filter(Boolean)
+            .join(" ")
+        : buildPlannerEvidenceGapAnswer({ title, docId }),
       sources: normalizeUserResponseList(effectiveSources.map(buildPlannerDocumentSourceLine)),
       limitations: buildPlannerNextSteps(execution, [
-        execution.match_reason ? `如果你要，我可以繼續沿著「${execution.match_reason}」把這份文件整理成更短的摘要或 checklist。` : "如果你要，我可以把這份文件再整理成更短的摘要或 checklist。",
+        execution.match_reason
+          ? `如果你要，我可以繼續沿著「${execution.match_reason}」補抓更多原文依據，再整理成更短的摘要或 checklist。`
+          : "如果你要，我可以先補抓更多原文依據，再把這份文件整理成更短的摘要或 checklist。",
       ]),
     };
   }
@@ -167,7 +190,7 @@ export function buildPlannerSuccessUserResponse(envelope = {}) {
   return {
     ok: envelope?.ok === true,
     answer: envelope?.ok === true
-      ? "我已經完成這次查詢。"
+      ? "這次查詢已有工具回應，但目前沒有足夠已驗證內容可整理成更多重點。"
       : "這次沒有拿到可以直接交付的結果。",
     sources: [],
     limitations: [],
