@@ -75,6 +75,20 @@ test("queryKnowledgeWithContext expands OKR aliases into goal-like snippets", ()
   assert.match(text, /目標|goal/);
 });
 
+test("queryKnowledgeWithContext keeps BD flow docs ahead of generic normalization docs", () => {
+  const results = queryKnowledgeWithContext("BD 商機管理");
+  const ids = results.map((item) => item.id);
+  const closedLoopIndex = ids.indexOf("closed_loop.md");
+  const knowledgePipelineIndex = ids.indexOf("knowledge_pipeline.md");
+
+  assert.ok(results.length > 0);
+  assert.ok(closedLoopIndex !== -1);
+  assert.notEqual(ids[0], "knowledge_pipeline.md");
+  if (knowledgePipelineIndex !== -1) {
+    assert.ok(closedLoopIndex < knowledgePipelineIndex);
+  }
+});
+
 test("cleanSnippet strips navigation artifacts at the start of previews", () => {
   assert.equal(
     cleanKnowledgeSnippet("Back to README.md\nLoop Runbook: planner verification keeps evidence requirements explicit.", "verification"),
