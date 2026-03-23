@@ -215,11 +215,11 @@ export async function formatDeliveryExecutionResult({
 const plannerDeliveryFlow = createPlannerFlow({
   id: "delivery",
   supportsAction: supportsDeliveryAction,
-  readContext() {
-    return getPlannerDocQueryContext();
+  readContext({ sessionKey = "" } = {}) {
+    return getPlannerDocQueryContext({ sessionKey });
   },
-  resetContext() {
-    return resetPlannerDocQueryRuntimeContext();
+  resetContext({ sessionKey = "" } = {}) {
+    return resetPlannerDocQueryRuntimeContext({ sessionKey });
   },
   route({
     userIntent,
@@ -269,11 +269,13 @@ const plannerDeliveryFlow = createPlannerFlow({
   writeContext({
     selectedAction,
     executionResult,
+    sessionKey = "",
   }) {
     return syncPlannerDocQueryContext({
       selectedAction,
       executionResult,
       activeTheme: executionResult?.ok === true ? "delivery" : undefined,
+      sessionKey,
     });
   },
 });

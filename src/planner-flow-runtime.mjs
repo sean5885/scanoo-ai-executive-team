@@ -108,11 +108,12 @@ export function resolvePlannerFlowRoute({
   userIntent = "",
   payload = {},
   logger = console,
+  sessionKey = "",
 } = {}) {
   let bestCandidate = null;
 
   for (const [index, flow] of normalizePlannerFlows(flows).entries()) {
-    const context = flow.readContext?.() || {};
+    const context = flow.readContext?.({ sessionKey }) || {};
     const route = flow.route?.({
       userIntent,
       payload: normalizePlannerPayload(payload),
@@ -167,6 +168,7 @@ export function buildPlannerFlowPayload({
   userIntent = "",
   payload = {},
   logger = console,
+  sessionKey = "",
 } = {}) {
   if (!flow?.shapePayload) {
     return normalizePlannerPayload(payload);
@@ -176,7 +178,7 @@ export function buildPlannerFlowPayload({
     action,
     userIntent,
     payload: normalizePlannerPayload(payload),
-    context: flow.readContext?.() || {},
+    context: flow.readContext?.({ sessionKey }) || {},
     logger,
   }));
 }
@@ -188,6 +190,7 @@ export async function formatPlannerFlowResult({
   userIntent = "",
   payload = {},
   logger = console,
+  sessionKey = "",
   ...rest
 } = {}) {
   if (!flow?.formatResult) {
@@ -199,8 +202,9 @@ export async function formatPlannerFlowResult({
     executionResult,
     userIntent,
     payload: normalizePlannerPayload(payload),
-    context: flow.readContext?.() || {},
+    context: flow.readContext?.({ sessionKey }) || {},
     logger,
+    sessionKey,
     ...rest,
   });
 }
@@ -210,6 +214,7 @@ export function syncPlannerFlowContext({
   selectedAction = "",
   executionResult = null,
   logger = console,
+  sessionKey = "",
 } = {}) {
   if (!flow?.writeContext) {
     return null;
@@ -218,11 +223,12 @@ export function syncPlannerFlowContext({
     selectedAction,
     executionResult,
     logger,
+    sessionKey,
   });
 }
 
-export function resetPlannerFlowContexts(flows = []) {
+export function resetPlannerFlowContexts(flows = [], { sessionKey = "" } = {}) {
   for (const flow of normalizePlannerFlows(flows)) {
-    flow.resetContext?.();
+    flow.resetContext?.({ sessionKey });
   }
 }

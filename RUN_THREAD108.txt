@@ -1,0 +1,12 @@
+Context and memory:
+- persist previous user intent within session
+- persist previous candidate documents within session
+- allow follow-up queries to reuse previous document context
+- support ordinal follow-up based on prior candidate set
+- no change to planner selection logic
+- no change to output format
+- no change to auth/runtime
+- add focused regression for:
+  1) multi-turn doc query context reuse
+  2) ordinal follow-up uses previous candidates
+  3) context clears safely when session changes

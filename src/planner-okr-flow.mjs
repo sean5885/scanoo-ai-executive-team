@@ -220,11 +220,11 @@ export async function formatOkrExecutionResult({
 const plannerOkrFlow = createPlannerFlow({
   id: "okr",
   supportsAction: supportsOkrAction,
-  readContext() {
-    return getPlannerDocQueryContext();
+  readContext({ sessionKey = "" } = {}) {
+    return getPlannerDocQueryContext({ sessionKey });
   },
-  resetContext() {
-    return resetPlannerDocQueryRuntimeContext();
+  resetContext({ sessionKey = "" } = {}) {
+    return resetPlannerDocQueryRuntimeContext({ sessionKey });
   },
   route({
     userIntent,
@@ -274,11 +274,13 @@ const plannerOkrFlow = createPlannerFlow({
   writeContext({
     selectedAction,
     executionResult,
+    sessionKey = "",
   }) {
     return syncPlannerDocQueryContext({
       selectedAction,
       executionResult,
       activeTheme: executionResult?.ok === true ? "okr" : undefined,
+      sessionKey,
     });
   },
 });

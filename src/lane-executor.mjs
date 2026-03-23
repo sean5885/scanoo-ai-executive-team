@@ -638,6 +638,7 @@ async function executeKnowledgeAssistant({ event, scope, logger = noopLogger, tr
     text,
     logger,
     authContext: explicitAuth,
+    sessionKey: cleanText(scope?.session_key || scope?.chat_id || event?.message?.chat_id || ""),
   });
   const plannerEnvelope = attachLaneTrace(
     buildPlannedUserInputEnvelope(plannedResult),

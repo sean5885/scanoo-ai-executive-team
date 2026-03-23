@@ -5,11 +5,28 @@ import { ROUTING_NO_MATCH, isRoutingNoMatch } from "./planner-error-codes.mjs";
 import { createPlannerFlow } from "./planner-flow-runtime.mjs";
 import { getRouteTarget, route as routeDocQuery } from "./router.js";
 
-const plannerDocQueryRuntimeContext = {
-  active_doc: null,
-  active_candidates: [],
-  active_theme: null,
-};
+const DEFAULT_PLANNER_DOC_QUERY_SESSION_KEY = "default";
+const plannerDocQueryRuntimeContexts = new Map();
+
+function normalizePlannerDocQuerySessionKey(sessionKey = "") {
+  return cleanText(sessionKey) || DEFAULT_PLANNER_DOC_QUERY_SESSION_KEY;
+}
+
+function buildEmptyPlannerDocQueryRuntimeContext() {
+  return {
+    active_doc: null,
+    active_candidates: [],
+    active_theme: null,
+  };
+}
+
+function getPlannerDocQueryRuntimeContext(sessionKey = "", { createIfMissing = true } = {}) {
+  const normalizedSessionKey = normalizePlannerDocQuerySessionKey(sessionKey);
+  if (!plannerDocQueryRuntimeContexts.has(normalizedSessionKey) && createIfMissing) {
+    plannerDocQueryRuntimeContexts.set(normalizedSessionKey, buildEmptyPlannerDocQueryRuntimeContext());
+  }
+  return plannerDocQueryRuntimeContexts.get(normalizedSessionKey) || null;
+}
 
 function buildDocQueryTraceEvent({
   eventType = "",
@@ -351,30 +368,36 @@ function extractActiveDocFromPlannerResult(selectedAction = "", executionResult 
   return null;
 }
 
-export function resetPlannerDocQueryRuntimeContext() {
-  plannerDocQueryRuntimeContext.active_doc = null;
-  plannerDocQueryRuntimeContext.active_candidates = [];
-  plannerDocQueryRuntimeContext.active_theme = null;
+export function resetPlannerDocQueryRuntimeContext({ sessionKey = "" } = {}) {
+  const normalizedSessionKey = cleanText(sessionKey);
+  if (!normalizedSessionKey) {
+    plannerDocQueryRuntimeContexts.clear();
+    return;
+  }
+  plannerDocQueryRuntimeContexts.delete(normalizePlannerDocQuerySessionKey(normalizedSessionKey));
 }
 
 export function hydratePlannerDocQueryRuntimeContext({
   activeDoc = null,
   activeCandidates = [],
   activeTheme = null,
+  sessionKey = "",
 } = {}) {
-  plannerDocQueryRuntimeContext.active_doc = normalizeActiveDoc(activeDoc);
-  plannerDocQueryRuntimeContext.active_candidates = normalizePlannerCandidates(activeCandidates);
-  plannerDocQueryRuntimeContext.active_theme = cleanText(activeTheme) || null;
-  return getPlannerDocQueryContext();
+  const context = getPlannerDocQueryRuntimeContext(sessionKey);
+  context.active_doc = normalizeActiveDoc(activeDoc);
+  context.active_candidates = normalizePlannerCandidates(activeCandidates);
+  context.active_theme = cleanText(activeTheme) || null;
+  return getPlannerDocQueryContext({ sessionKey });
 }
 
-export function getPlannerDocQueryContext() {
+export function getPlannerDocQueryContext({ sessionKey = "" } = {}) {
+  const context = getPlannerDocQueryRuntimeContext(sessionKey);
   return {
-    activeDoc: plannerDocQueryRuntimeContext.active_doc,
-    activeCandidates: Array.isArray(plannerDocQueryRuntimeContext.active_candidates)
-      ? plannerDocQueryRuntimeContext.active_candidates
+    activeDoc: context.active_doc,
+    activeCandidates: Array.isArray(context.active_candidates)
+      ? context.active_candidates
       : [],
-    activeTheme: cleanText(plannerDocQueryRuntimeContext.active_theme) || null,
+    activeTheme: cleanText(context.active_theme) || null,
   };
 }
 
@@ -487,11 +510,13 @@ export async function formatDocQueryExecutionResult({
   baseUrl = oauthBaseUrl,
   contentReader = readPlannerDocumentContent,
   logger = console,
+  sessionKey = "",
 } = {}) {
   if (!executionResult || typeof executionResult !== "object" || executionResult.ok !== true) {
     return executionResult;
   }
 
+  const runtimeContext = getPlannerDocQueryRuntimeContext(sessionKey);
   const normalizedAction = cleanText(selectedAction);
   const normalizedPayload = payload && typeof payload === "object" && !Array.isArray(payload) ? { ...payload } : {};
   const normalizedIntent = cleanText(userIntent);
@@ -517,8 +542,8 @@ export async function formatDocQueryExecutionResult({
       routedIntent: "search",
       tool: selectedAction,
       hitCount: items.length,
-      activeDoc: plannerDocQueryRuntimeContext.active_doc,
-      activeCandidates: plannerDocQueryRuntimeContext.active_candidates,
+      activeDoc: runtimeContext.active_doc,
+      activeCandidates: runtimeContext.active_candidates,
       formatterKind: result?.formatted_output?.kind,
       traceId: result?.trace_id || null,
     }));
@@ -562,8 +587,8 @@ export async function formatDocQueryExecutionResult({
       routedIntent: "detail",
       tool: selectedAction,
       hitCount: docId ? 1 : 0,
-      activeDoc: plannerDocQueryRuntimeContext.active_doc,
-      activeCandidates: plannerDocQueryRuntimeContext.active_candidates,
+      activeDoc: runtimeContext.active_doc,
+      activeCandidates: runtimeContext.active_candidates,
       formatterKind: result?.formatted_output?.kind,
       traceId: result?.trace_id || null,
     }));
@@ -601,8 +626,8 @@ export async function formatDocQueryExecutionResult({
         routedIntent: "search_and_detail",
         tool: selectedAction,
         hitCount: 0,
-        activeDoc: plannerDocQueryRuntimeContext.active_doc,
-        activeCandidates: plannerDocQueryRuntimeContext.active_candidates,
+        activeDoc: runtimeContext.active_doc,
+        activeCandidates: runtimeContext.active_candidates,
         formatterKind: result?.formatted_output?.kind,
         traceId: result?.trace_id || null,
       }));
@@ -628,8 +653,8 @@ export async function formatDocQueryExecutionResult({
         routedIntent: "search_and_detail",
         tool: selectedAction,
         hitCount: searchItems.length,
-        activeDoc: plannerDocQueryRuntimeContext.active_doc,
-        activeCandidates: plannerDocQueryRuntimeContext.active_candidates,
+        activeDoc: runtimeContext.active_doc,
+        activeCandidates: runtimeContext.active_candidates,
         formatterKind: result?.formatted_output?.kind,
         traceId: result?.trace_id || null,
       }));
@@ -670,8 +695,8 @@ export async function formatDocQueryExecutionResult({
       routedIntent: "search_and_detail",
       tool: selectedAction,
       hitCount: searchItems.length,
-      activeDoc: plannerDocQueryRuntimeContext.active_doc,
-      activeCandidates: plannerDocQueryRuntimeContext.active_candidates,
+      activeDoc: runtimeContext.active_doc,
+      activeCandidates: runtimeContext.active_candidates,
       formatterKind: result?.formatted_output?.kind,
       traceId: result?.trace_id || null,
     }));
@@ -685,30 +710,32 @@ export function syncPlannerDocQueryContext({
   selectedAction = "",
   executionResult = null,
   activeTheme,
+  sessionKey = "",
 } = {}) {
+  const context = getPlannerDocQueryRuntimeContext(sessionKey);
   if (activeTheme !== undefined) {
-    plannerDocQueryRuntimeContext.active_theme = cleanText(activeTheme) || null;
+    context.active_theme = cleanText(activeTheme) || null;
   }
 
   const nextActiveDoc = extractActiveDocFromPlannerResult(selectedAction, executionResult);
   if (nextActiveDoc) {
-    plannerDocQueryRuntimeContext.active_doc = nextActiveDoc;
-    plannerDocQueryRuntimeContext.active_candidates = [];
+    context.active_doc = nextActiveDoc;
+    context.active_candidates = [];
     return {
-      activeDoc: plannerDocQueryRuntimeContext.active_doc,
-      activeCandidates: plannerDocQueryRuntimeContext.active_candidates,
-      activeTheme: plannerDocQueryRuntimeContext.active_theme,
+      activeDoc: context.active_doc,
+      activeCandidates: context.active_candidates,
+      activeTheme: context.active_theme,
     };
   }
 
-  plannerDocQueryRuntimeContext.active_candidates = extractPlannerCandidatesFromResult(
+  context.active_candidates = extractPlannerCandidatesFromResult(
     selectedAction,
     executionResult,
   );
   return {
-    activeDoc: plannerDocQueryRuntimeContext.active_doc,
-    activeCandidates: plannerDocQueryRuntimeContext.active_candidates,
-    activeTheme: plannerDocQueryRuntimeContext.active_theme,
+    activeDoc: context.active_doc,
+    activeCandidates: context.active_candidates,
+    activeTheme: context.active_theme,
   };
 }
 
@@ -723,11 +750,11 @@ function supportsDocQueryAction(action = "") {
 const plannerDocQueryFlow = createPlannerFlow({
   id: "doc_query",
   supportsAction: supportsDocQueryAction,
-  readContext() {
-    return getPlannerDocQueryContext();
+  readContext({ sessionKey = "" } = {}) {
+    return getPlannerDocQueryContext({ sessionKey });
   },
-  resetContext() {
-    resetPlannerDocQueryRuntimeContext();
+  resetContext({ sessionKey = "" } = {}) {
+    resetPlannerDocQueryRuntimeContext({ sessionKey });
   },
   route({ userIntent = "", payload = {}, context = {}, logger = console } = {}) {
     return resolveDocQueryRoute({
@@ -755,6 +782,7 @@ const plannerDocQueryFlow = createPlannerFlow({
     baseUrl = oauthBaseUrl,
     contentReader,
     logger = console,
+    sessionKey = "",
   } = {}) {
     return formatDocQueryExecutionResult({
       selectedAction,
@@ -764,13 +792,15 @@ const plannerDocQueryFlow = createPlannerFlow({
       baseUrl,
       contentReader,
       logger,
+      sessionKey,
     });
   },
-  writeContext({ selectedAction = "", executionResult = null } = {}) {
+  writeContext({ selectedAction = "", executionResult = null, sessionKey = "" } = {}) {
     return syncPlannerDocQueryContext({
       selectedAction,
       executionResult,
       activeTheme: null,
+      sessionKey,
     });
   },
 });

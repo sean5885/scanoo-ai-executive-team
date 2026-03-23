@@ -56,6 +56,7 @@ This request-flow mirror now reflects the current fail-closed routing baseline.
    - runtime observability now also emits an immediate console alert for `planner_failed`, rate-limited in-memory to avoid repeated bursts from malformed planner output
    - actions outside `planner_contract.json` are rejected before execution
    - valid single-step decisions run the corresponding contract-bound action/preset; valid multi-step decisions run ordered contract-bound tool actions through the existing planner dispatcher and return a structured planner envelope
+   - planner conversation summary and doc-query follow-up context are now read/written per `sessionKey`, so previous user intent, `active_doc`, and `active_candidates` can be reused only inside the same chat/session and do not bleed into other sessions
 6. the legacy/internal `answer-service.mjs` prompt path still prefers:
    - current question
    - compact workflow checkpoint

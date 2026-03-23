@@ -217,11 +217,11 @@ export async function formatBdExecutionResult({
 const plannerBdFlow = createPlannerFlow({
   id: "bd",
   supportsAction: supportsBdAction,
-  readContext() {
-    return getPlannerDocQueryContext();
+  readContext({ sessionKey = "" } = {}) {
+    return getPlannerDocQueryContext({ sessionKey });
   },
-  resetContext() {
-    return resetPlannerDocQueryRuntimeContext();
+  resetContext({ sessionKey = "" } = {}) {
+    return resetPlannerDocQueryRuntimeContext({ sessionKey });
   },
   route({
     userIntent,
@@ -271,11 +271,13 @@ const plannerBdFlow = createPlannerFlow({
   writeContext({
     selectedAction,
     executionResult,
+    sessionKey = "",
   }) {
     return syncPlannerDocQueryContext({
       selectedAction,
       executionResult,
       activeTheme: executionResult?.ok === true ? "bd" : undefined,
+      sessionKey,
     });
   },
 });
