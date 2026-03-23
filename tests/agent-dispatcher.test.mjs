@@ -91,6 +91,78 @@ test("executeRegisteredAgent can use injected text generator without direct LLM 
   assert.equal(result.metadata.fallback_used, false);
 });
 
+test("executeRegisteredAgent intercepts raw JSON string payload before it reaches user-facing text", async () => {
+  const agent = getRegisteredAgent("cmo");
+  const result = await executeRegisteredAgent({
+    accountId: "acct-1",
+    agent,
+    requestText: "請整理這批 OKR 文檔缺什麼",
+    scope: { session_key: "session-json-string" },
+    searchFn() {
+      return {
+        items: [
+          {
+            title: "公司 OKR 運作方式說明",
+            url: "https://example.com/okr",
+            content: "說明公司 OKR 範圍與跨角色週會。",
+          },
+        ],
+      };
+    },
+    async textGenerator() {
+      return JSON.stringify({
+        ok: true,
+        answer: "目前最缺 owner、deadline，還有跨部門依賴欄位。",
+        sources: ["OKR 運作方式說明：目前流程只描述週會，沒有 owner/deadline 欄位要求。"],
+        limitations: ["如果你要，我可以直接整理成缺欄 checklist。"],
+      });
+    },
+  });
+
+  assert.match(result.text, /^結論/m);
+  assert.match(result.text, /最缺 owner、deadline/);
+  assert.doesNotMatch(result.text, /^{|```json|\"ok\"|\"answer\"|\"sources\"|\"limitations\"/);
+});
+
+test("executeRegisteredAgent intercepts raw JSON object payload and keeps machine-readable fields", async () => {
+  const agent = getRegisteredAgent("cmo");
+  const result = await executeRegisteredAgent({
+    accountId: "acct-1",
+    agent,
+    requestText: "請整理這批 OKR 文檔缺什麼",
+    scope: { session_key: "session-json-object" },
+    searchFn() {
+      return {
+        items: [
+          {
+            title: "公司 OKR 運作方式說明",
+            url: "https://example.com/okr",
+            content: "說明公司 OKR 範圍與跨角色週會。",
+          },
+        ],
+      };
+    },
+    async textGenerator() {
+      return {
+        answer: "這輪先補 owner 與驗收條件，否則 OKR 追蹤會持續鬆散。",
+        details: { missing_fields: ["owner", "acceptance_criteria"] },
+        context: { source: "mock-structured-object" },
+      };
+    },
+  });
+
+  assert.match(result.text, /^結論/m);
+  assert.match(result.text, /先補 owner 與驗收條件/);
+  assert.doesNotMatch(result.text, /missing_fields|mock-structured-object|^{|\"details\"|\"context\"/);
+  assert.deepEqual(result.details, {
+    missing_fields: ["owner", "acceptance_criteria"],
+  });
+  assert.deepEqual(result.context, {
+    source: "mock-structured-object",
+  });
+  assert.equal("error" in result, false);
+});
+
 test("executeRegisteredAgent fallback reply no longer exposes extractive wording", async () => {
   const agent = getRegisteredAgent("cmo");
   const result = await executeRegisteredAgent({
@@ -123,6 +195,73 @@ test("executeRegisteredAgent fallback reply no longer exposes extractive wording
     assert.match(result.text, /先按目前找到的資料替你整理/);
     assert.equal(result.metadata.fallback_used, true);
   }
+});
+
+test("executeRegisteredAgent intercepts fenced JSON error blob and preserves program-facing error details", async () => {
+  const agent = getRegisteredAgent("cmo");
+  const result = await executeRegisteredAgent({
+    accountId: "acct-1",
+    agent,
+    requestText: "請整理這批 OKR 文檔缺什麼",
+    scope: { session_key: "session-fenced-json-error" },
+    searchFn() {
+      return {
+        items: [
+          {
+            title: "公司 OKR 運作方式說明",
+            url: "https://example.com/okr",
+            content: "說明公司 OKR 範圍與跨角色週會。",
+          },
+        ],
+      };
+    },
+    async textGenerator() {
+      return `\`\`\`json
+{"ok":false,"error":"registered_agent_generation_failed","details":{"message":"schema_invalid"},"context":{"provider":"mock"}}
+\`\`\``;
+    },
+  });
+
+  assert.match(result.text, /^結論/m);
+  assert.match(result.text, /結構化錯誤結果|自然語言摘要/);
+  assert.doesNotMatch(result.text, /```json|registered_agent_generation_failed|schema_invalid|\"error\"|\"details\"|\"context\"/);
+  assert.equal(result.error, "registered_agent_generation_failed");
+  assert.deepEqual(result.details, {
+    message: "schema_invalid",
+  });
+  assert.deepEqual(result.context, {
+    provider: "mock",
+  });
+});
+
+test("executeRegisteredAgent leaves ordinary JSON string output on the normal success path", async () => {
+  const agent = getRegisteredAgent("cmo");
+  const result = await executeRegisteredAgent({
+    accountId: "acct-1",
+    agent,
+    requestText: "請整理這批 OKR 文檔缺什麼",
+    scope: { session_key: "session-plain-json-string" },
+    searchFn() {
+      return {
+        items: [
+          {
+            title: "公司 OKR 運作方式說明",
+            url: "https://example.com/okr",
+            content: "說明公司 OKR 範圍與跨角色週會。",
+          },
+        ],
+      };
+    },
+    async textGenerator() {
+      return "\"這是一段直接可讀的回答\"";
+    },
+  });
+
+  assert.doesNotMatch(result.text, /^結論/m);
+  assert.match(result.text, /這是一段直接可讀的回答/);
+  assert.equal("error" in result, false);
+  assert.equal("details" in result, false);
+  assert.equal("context" in result, false);
 });
 
 test("dispatchRegisteredAgentCommand no-match reply is natural language instead of raw JSON", async () => {

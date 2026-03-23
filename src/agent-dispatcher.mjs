@@ -213,6 +213,131 @@ function buildRegisteredAgentUserFacingErrorText({
   return renderPlannerUserFacingReplyText(normalized);
 }
 
+function looksLikeNestedRegisteredAgentJson(text = "") {
+  return /^(?:\{|\[|```)/.test(cleanText(text));
+}
+
+function parseRegisteredAgentBoundaryJson(rawAnswer = "") {
+  if (rawAnswer && typeof rawAnswer === "object") {
+    if (Array.isArray(rawAnswer)) {
+      return null;
+    }
+    return {
+      kind: "json_object",
+      payload: rawAnswer,
+    };
+  }
+
+  let candidate = String(rawAnswer || "").trim();
+  if (!candidate) {
+    return null;
+  }
+
+  for (let depth = 0; depth < 2; depth += 1) {
+    const fencedMatch = candidate.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+    const parseTarget = fencedMatch ? fencedMatch[1].trim() : candidate;
+    let parsed = null;
+    try {
+      parsed = JSON.parse(parseTarget);
+    } catch {
+      return null;
+    }
+
+    if (typeof parsed === "string") {
+      const normalized = cleanText(parsed);
+      if (!normalized || normalized === candidate || !looksLikeNestedRegisteredAgentJson(normalized)) {
+        return null;
+      }
+      candidate = normalized;
+      continue;
+    }
+
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return {
+        kind: fencedMatch ? "json_object_fenced" : "json_object",
+        payload: parsed,
+      };
+    }
+
+    return null;
+  }
+
+  return null;
+}
+
+function buildRegisteredAgentStructuredBoundaryResult({
+  rawAnswer = "",
+  agent,
+  logger = noopLogger,
+} = {}) {
+  const parsed = parseRegisteredAgentBoundaryJson(rawAnswer);
+  if (!parsed) {
+    return null;
+  }
+
+  logger.warn("registered_agent_output_boundary_intercepted", {
+    agent_id: agent?.id || null,
+    output_kind: parsed.kind,
+  });
+
+  const payload = parsed.payload;
+  const objectPayload = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? payload
+    : null;
+  const hasErrorEnvelope = Boolean(
+    objectPayload
+    && (
+      objectPayload.ok === false
+      || cleanText(objectPayload.error || "")
+      || objectPayload.details
+      || objectPayload.context
+      || objectPayload.trace
+      || cleanText(objectPayload.status || "").toLowerCase() === "error"
+      || cleanText(objectPayload.status || "").toLowerCase() === "failed"
+    ),
+  );
+
+  const normalized = normalizeUserResponse({
+    payload: {
+      ok: objectPayload?.ok !== false,
+      answer: cleanText(
+        objectPayload?.answer
+        || objectPayload?.message
+        || objectPayload?.text
+        || objectPayload?.summary
+        || objectPayload?.content_summary
+        || "",
+      ) || (
+        hasErrorEnvelope
+          ? `${agent?.label || "這個 agent"} 這輪拿到的是結構化錯誤結果，我先不把 raw JSON 或 error blob 直接顯示給你。`
+          : `${agent?.label || "這個 agent"} 這輪拿到的是結構化結果，我先不把 raw JSON 直接顯示給你。`
+      ),
+      sources: objectPayload?.sources,
+      limitations: [
+        ...(Array.isArray(objectPayload?.limitations) ? objectPayload.limitations : []),
+        ...(hasErrorEnvelope
+          ? ["machine-readable error/details/context 已保留給程式層，這裡只顯示自然語言摘要。"]
+          : []),
+      ],
+    },
+    logger: noopLogger,
+    handlerName: "registeredAgentDispatcherSuccessBoundary",
+  });
+
+  return {
+    text: renderPlannerUserFacingReplyText(normalized),
+    ...(objectPayload && Object.prototype.hasOwnProperty.call(objectPayload, "error")
+      ? { error: cleanText(objectPayload.error || "") || null }
+      : {}),
+    ...(objectPayload && Object.prototype.hasOwnProperty.call(objectPayload, "details")
+      ? { details: objectPayload.details ?? null }
+      : {}),
+    ...(objectPayload && Object.prototype.hasOwnProperty.call(objectPayload, "context")
+      ? { context: objectPayload.context ?? null }
+      : {}),
+  };
+}
+
 export async function executeRegisteredAgent({
   accountId,
   agent,
@@ -360,6 +485,35 @@ export async function executeRegisteredAgent({
       last_governance_stage: promptInput.governance?.stage || "normal",
     },
   });
+
+  const boundaryResult = buildRegisteredAgentStructuredBoundaryResult({
+    rawAnswer: answer,
+    agent,
+    logger,
+  });
+  if (boundaryResult) {
+    return {
+      text: boundaryResult.text,
+      agentId: agent.id,
+      context_governance: promptInput.governance,
+      ...(Object.prototype.hasOwnProperty.call(boundaryResult, "error")
+        ? { error: boundaryResult.error }
+        : {}),
+      ...(Object.prototype.hasOwnProperty.call(boundaryResult, "details")
+        ? { details: boundaryResult.details }
+        : {}),
+      ...(Object.prototype.hasOwnProperty.call(boundaryResult, "context")
+        ? { context: boundaryResult.context }
+        : {}),
+      metadata: {
+        retrieval_count: items.length,
+        fallback_used: false,
+        image_context_used: Boolean(imageContext),
+        supporting_context_used: Boolean(supportingContext),
+        source_titles: items.slice(0, 4).map((item) => item.title),
+      },
+    };
+  }
 
   return {
     text: `${answer}${buildSourceFooter(items)}`,
