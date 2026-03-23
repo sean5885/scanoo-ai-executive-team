@@ -26,6 +26,7 @@ Current runtime anchor:
 - `/Users/seanhan/Documents/Playground/src/planner-delivery-flow.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-doc-query-flow.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-action-layer.mjs`
+- `/Users/seanhan/Documents/Playground/src/planner/agent-executor.mjs`
 
 Current minimum runtime responsibilities already implemented there:
 
@@ -69,6 +70,7 @@ Already in scope today:
 - `validatePresetOutput(...)`
 - minimal error taxonomy normalize
 - minimal retry/self-heal/stop boundary
+- bounded lane-to-agent selection helper via `executeAgent(...)`
 
 ## Out of Scope
 
@@ -82,6 +84,30 @@ Still out of scope for current runtime:
 - full handoff engine
 - preset step-level validation
 - externalized policy/config system
+
+## Bounded Lane-to-Agent Helper
+
+`/Users/seanhan/Documents/Playground/src/planner/agent-executor.mjs` now provides a very small planner-side helper:
+
+- input:
+  - `{ "lane": "meeting|doc|runtime|mixed|..." }`
+- output:
+  - `{ "agent": "string", "action": "string", "status": "ok|fallback" }`
+
+Current checked-in behavior:
+
+- `meeting -> meeting_agent / meeting_summary`
+- `doc -> doc_agent / doc_answer`
+- `runtime -> runtime_agent / runtime_check`
+- `mixed -> mixed_agent / mixed_lane`
+- unknown lane -> `fallback_agent / unknown / fallback`
+
+Boundary:
+
+- this helper is deterministic mapping only
+- it does not perform tool calls
+- it does not transfer workflow ownership
+- it does not claim a generic multi-agent runtime or full handoff engine
 
 ## Input Shape
 
