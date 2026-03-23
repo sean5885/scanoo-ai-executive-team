@@ -1,0 +1,10 @@
+Workflow productization:
+- define one end-to-end reusable workflow for document review / triage
+- input: user request + document set
+- output: structured review result (conclusion / referenced documents / reasons / next actions)
+- ensure output is consistent with existing evidence-first format
+- make workflow reusable (not one-off prompt)
+- no change to agent-dispatcher / agent-registry / learning loop / monitoring
+- no change to auth / routing / planner core
+- add focused regression for one complete workflow execution
+- report changed files + example run + test result
