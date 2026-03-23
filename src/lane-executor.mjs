@@ -594,6 +594,7 @@ async function executeKnowledgeAssistant({ event, scope, logger = noopLogger }) 
   const plannedResult = await executePlannedUserInput({
     text,
     logger,
+    sessionKey: cleanText(scope?.session_key || scope?.chat_id || event?.message?.chat_id || ""),
   });
   const userFacingReply = buildPlannedUserInputUserFacingReply(plannedResult);
   if (userFacingReply) {

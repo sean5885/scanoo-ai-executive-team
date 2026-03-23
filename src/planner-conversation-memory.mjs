@@ -6,14 +6,11 @@ import { cleanText } from "./message-intent-utils.mjs";
 const PLANNER_SUMMARY_TRIGGER_TURNS = 6;
 const PLANNER_SUMMARY_TRIGGER_CHARS = 2400;
 const PLANNER_RECENT_MESSAGE_LIMIT = 4;
+const DEFAULT_PLANNER_SESSION_KEY = "default";
 
 const plannerConversationMemoryState = {
-  recent_messages: [],
-  latest_summary: null,
-  turns_since_summary: 0,
-  chars_since_summary: 0,
-  total_turns: 0,
-  last_compacted_at: null,
+  latest_session_key: DEFAULT_PLANNER_SESSION_KEY,
+  sessions: {},
 };
 let plannerConversationMemoryLoaded = false;
 
@@ -24,6 +21,21 @@ function cloneJsonSafe(value) {
 function resolvePlannerConversationMemoryStorePath() {
   return cleanText(process.env.PLANNER_CONVERSATION_MEMORY_PATH)
     || fileURLToPath(new URL("../.data/planner-conversation-memory.json", import.meta.url));
+}
+
+function normalizePlannerConversationSessionKey(sessionKey = "") {
+  return cleanText(sessionKey) || DEFAULT_PLANNER_SESSION_KEY;
+}
+
+function buildEmptyPlannerConversationSession() {
+  return {
+    recent_messages: [],
+    latest_summary: null,
+    turns_since_summary: 0,
+    chars_since_summary: 0,
+    total_turns: 0,
+    last_compacted_at: null,
+  };
 }
 
 function normalizePlannerConversationMemorySnapshot(snapshot = {}) {
@@ -50,26 +62,47 @@ function normalizePlannerConversationMemorySnapshot(snapshot = {}) {
   };
 }
 
+function normalizePlannerConversationMemoryStore(snapshot = {}) {
+  if (snapshot?.sessions && typeof snapshot.sessions === "object" && !Array.isArray(snapshot.sessions)) {
+    const sessions = {};
+    for (const [sessionKey, value] of Object.entries(snapshot.sessions)) {
+      const normalizedKey = normalizePlannerConversationSessionKey(sessionKey);
+      sessions[normalizedKey] = normalizePlannerConversationMemorySnapshot(value);
+    }
+    return {
+      latest_session_key: normalizePlannerConversationSessionKey(snapshot?.latest_session_key),
+      sessions,
+    };
+  }
+
+  return {
+    latest_session_key: DEFAULT_PLANNER_SESSION_KEY,
+    sessions: {
+      [DEFAULT_PLANNER_SESSION_KEY]: normalizePlannerConversationMemorySnapshot(snapshot),
+    },
+  };
+}
+
 function applyPlannerConversationMemorySnapshot(snapshot = {}) {
-  const normalized = normalizePlannerConversationMemorySnapshot(snapshot);
-  plannerConversationMemoryState.latest_summary = normalized.latest_summary;
-  plannerConversationMemoryState.recent_messages = normalized.recent_messages;
-  plannerConversationMemoryState.turns_since_summary = normalized.turns_since_summary;
-  plannerConversationMemoryState.chars_since_summary = normalized.chars_since_summary;
-  plannerConversationMemoryState.total_turns = normalized.total_turns;
-  plannerConversationMemoryState.last_compacted_at = normalized.last_compacted_at;
+  const normalized = normalizePlannerConversationMemoryStore(snapshot);
+  plannerConversationMemoryState.latest_session_key = normalized.latest_session_key;
+  plannerConversationMemoryState.sessions = normalized.sessions;
+}
+
+function getPlannerConversationSessionState(sessionKey = "", { createIfMissing = true } = {}) {
+  const normalizedSessionKey = normalizePlannerConversationSessionKey(sessionKey);
+  if (!plannerConversationMemoryState.sessions[normalizedSessionKey] && createIfMissing) {
+    plannerConversationMemoryState.sessions[normalizedSessionKey] = buildEmptyPlannerConversationSession();
+  }
+  return plannerConversationMemoryState.sessions[normalizedSessionKey] || null;
 }
 
 function persistPlannerConversationMemory() {
   const storePath = resolvePlannerConversationMemoryStorePath();
   mkdirSync(dirname(storePath), { recursive: true });
   writeFileSync(storePath, JSON.stringify({
-    latest_summary: plannerConversationMemoryState.latest_summary,
-    recent_messages: plannerConversationMemoryState.recent_messages,
-    turns_since_summary: plannerConversationMemoryState.turns_since_summary,
-    chars_since_summary: plannerConversationMemoryState.chars_since_summary,
-    total_turns: plannerConversationMemoryState.total_turns,
-    last_compacted_at: plannerConversationMemoryState.last_compacted_at,
+    latest_session_key: plannerConversationMemoryState.latest_session_key,
+    sessions: plannerConversationMemoryState.sessions,
   }, null, 2));
 }
 
@@ -109,8 +142,9 @@ function pushPlannerRecentMessage(message = null) {
   if (!normalized) {
     return 0;
   }
-  plannerConversationMemoryState.recent_messages.push(normalized);
-  plannerConversationMemoryState.recent_messages = plannerConversationMemoryState.recent_messages
+  const sessionState = getPlannerConversationSessionState();
+  sessionState.recent_messages.push(normalized);
+  sessionState.recent_messages = sessionState.recent_messages
     .slice(-PLANNER_RECENT_MESSAGE_LIMIT);
   return normalized.content.length;
 }
@@ -180,27 +214,37 @@ function summarizeSystemArchitectureStatus() {
   };
 }
 
-export function shouldCompactPlannerConversationMemory() {
+export function shouldCompactPlannerConversationMemory({ sessionKey = "" } = {}) {
   ensurePlannerConversationMemoryLoaded();
+  const sessionState = getPlannerConversationSessionState(sessionKey);
   return (
-    plannerConversationMemoryState.turns_since_summary >= PLANNER_SUMMARY_TRIGGER_TURNS
-    || plannerConversationMemoryState.chars_since_summary >= PLANNER_SUMMARY_TRIGGER_CHARS
+    sessionState.turns_since_summary >= PLANNER_SUMMARY_TRIGGER_TURNS
+    || sessionState.chars_since_summary >= PLANNER_SUMMARY_TRIGGER_CHARS
   );
 }
 
-export function recordPlannerConversationMessages(messages = []) {
+export function recordPlannerConversationMessages(messages = [], { sessionKey = "" } = {}) {
   ensurePlannerConversationMemoryLoaded();
   if (!Array.isArray(messages)) {
     return;
   }
+  const normalizedSessionKey = normalizePlannerConversationSessionKey(sessionKey);
+  plannerConversationMemoryState.latest_session_key = normalizedSessionKey;
+  const sessionState = getPlannerConversationSessionState(normalizedSessionKey);
   let totalChars = 0;
   for (const message of messages) {
-    totalChars += pushPlannerRecentMessage(message);
+    const normalized = normalizePlannerConversationMessage(message);
+    if (!normalized) {
+      continue;
+    }
+    sessionState.recent_messages.push(normalized);
+    sessionState.recent_messages = sessionState.recent_messages.slice(-PLANNER_RECENT_MESSAGE_LIMIT);
+    totalChars += normalized.content.length;
   }
   if (totalChars > 0) {
-    plannerConversationMemoryState.turns_since_summary += 1;
-    plannerConversationMemoryState.chars_since_summary += totalChars;
-    plannerConversationMemoryState.total_turns += 1;
+    sessionState.turns_since_summary += 1;
+    sessionState.chars_since_summary += totalChars;
+    sessionState.total_turns += 1;
     persistPlannerConversationMemory();
   }
 }
@@ -257,25 +301,30 @@ export function compactPlannerConversationMemory({
   latestTraceId = null,
   logger = console,
   reason = "manual",
+  sessionKey = "",
 } = {}) {
   ensurePlannerConversationMemoryLoaded();
+  const normalizedSessionKey = normalizePlannerConversationSessionKey(sessionKey);
+  plannerConversationMemoryState.latest_session_key = normalizedSessionKey;
+  const sessionState = getPlannerConversationSessionState(normalizedSessionKey);
   const summary = buildPlannerConversationSummary({
     flows,
     unfinishedItems,
     latestSelectedAction,
     latestTraceId,
   });
-  plannerConversationMemoryState.latest_summary = summary;
-  plannerConversationMemoryState.turns_since_summary = 0;
-  plannerConversationMemoryState.chars_since_summary = 0;
-  plannerConversationMemoryState.last_compacted_at = summary.generated_at;
+  sessionState.latest_summary = summary;
+  sessionState.turns_since_summary = 0;
+  sessionState.chars_since_summary = 0;
+  sessionState.last_compacted_at = summary.generated_at;
   persistPlannerConversationMemory();
   logger?.debug?.("planner_conversation_memory", {
     stage: "planner_conversation_memory",
     event_type: "conversation_compacted",
     reason: cleanText(reason) || "manual",
     latest_trace_id: latestTraceId || null,
-    recent_message_count: plannerConversationMemoryState.recent_messages.length,
+    session_key: normalizedSessionKey,
+    recent_message_count: sessionState.recent_messages.length,
   });
   return cloneJsonSafe(summary);
 }
@@ -288,11 +337,13 @@ export function maybeCompactPlannerConversationMemory({
   logger = console,
   force = false,
   reason = "auto",
+  sessionKey = "",
 } = {}) {
   ensurePlannerConversationMemoryLoaded();
-  if (!force && !shouldCompactPlannerConversationMemory()) {
-    return plannerConversationMemoryState.latest_summary
-      ? cloneJsonSafe(plannerConversationMemoryState.latest_summary)
+  const sessionState = getPlannerConversationSessionState(sessionKey);
+  if (!force && !shouldCompactPlannerConversationMemory({ sessionKey })) {
+    return sessionState.latest_summary
+      ? cloneJsonSafe(sessionState.latest_summary)
       : null;
   }
   return compactPlannerConversationMemory({
@@ -302,30 +353,39 @@ export function maybeCompactPlannerConversationMemory({
     latestTraceId,
     logger,
     reason,
+    sessionKey,
   });
 }
 
-export function getPlannerConversationMemory() {
+export function getPlannerConversationMemory({ sessionKey = "" } = {}) {
   ensurePlannerConversationMemoryLoaded();
+  const normalizedSessionKey = normalizePlannerConversationSessionKey(sessionKey);
+  plannerConversationMemoryState.latest_session_key = normalizedSessionKey;
+  const sessionState = getPlannerConversationSessionState(normalizedSessionKey);
   return cloneJsonSafe({
-    latest_summary: plannerConversationMemoryState.latest_summary,
-    recent_messages: plannerConversationMemoryState.recent_messages,
-    turns_since_summary: plannerConversationMemoryState.turns_since_summary,
-    chars_since_summary: plannerConversationMemoryState.chars_since_summary,
-    total_turns: plannerConversationMemoryState.total_turns,
-    last_compacted_at: plannerConversationMemoryState.last_compacted_at,
+    latest_summary: sessionState.latest_summary,
+    recent_messages: sessionState.recent_messages,
+    turns_since_summary: sessionState.turns_since_summary,
+    chars_since_summary: sessionState.chars_since_summary,
+    total_turns: sessionState.total_turns,
+    last_compacted_at: sessionState.last_compacted_at,
   });
 }
 
-export function resetPlannerConversationMemory() {
+export function resetPlannerConversationMemory({ sessionKey = "" } = {}) {
   ensurePlannerConversationMemoryLoaded();
-  plannerConversationMemoryState.recent_messages = [];
-  plannerConversationMemoryState.latest_summary = null;
-  plannerConversationMemoryState.turns_since_summary = 0;
-  plannerConversationMemoryState.chars_since_summary = 0;
-  plannerConversationMemoryState.total_turns = 0;
-  plannerConversationMemoryState.last_compacted_at = null;
-  rmSync(resolvePlannerConversationMemoryStorePath(), { force: true });
+  const normalizedSessionKey = cleanText(sessionKey);
+  if (!normalizedSessionKey) {
+    plannerConversationMemoryState.latest_session_key = DEFAULT_PLANNER_SESSION_KEY;
+    plannerConversationMemoryState.sessions = {};
+    rmSync(resolvePlannerConversationMemoryStorePath(), { force: true });
+    return;
+  }
+  delete plannerConversationMemoryState.sessions[normalizePlannerConversationSessionKey(normalizedSessionKey)];
+  if (plannerConversationMemoryState.latest_session_key === normalizePlannerConversationSessionKey(normalizedSessionKey)) {
+    plannerConversationMemoryState.latest_session_key = DEFAULT_PLANNER_SESSION_KEY;
+  }
+  persistPlannerConversationMemory();
 }
 
 export function reloadPlannerConversationMemory() {
