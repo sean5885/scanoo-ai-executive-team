@@ -266,7 +266,7 @@ This request-flow mirror now reflects the current fail-closed routing baseline.
    - event-level failures
 10. duplicate long-connection message re-deliveries with the same `message_id` are skipped before lane execution
 11. while meeting capture is active, normal note text is suppressed into the transcript but explicit status checks can still return a short reply
-12. if lane execution fails after the event is accepted, the bot now returns a user-visible structured error envelope (for example `ROUTING_NO_MATCH`, `INVALID_ACTION`, or `FALLBACK_DISABLED`) instead of silently failing or emitting a canned default reply
+12. if lane / registered-agent / executive execution fails after the event is accepted, the bot now returns a user-visible natural-language reply through the shared normalization boundary instead of exposing raw `{ ok, error, details }` envelopes; internal `ROUTING_NO_MATCH`, `INVALID_ACTION`, and `FALLBACK_DISABLED` remain in logs/trace only
 
 This is now a capability-lane event path with a closed-loop executive planner layered inside it. It is still not an async job-queue planner system.
 
@@ -520,6 +520,8 @@ Actual AI-like execution paths:
 
 - planner-gated retrieval / tool execution
   - answer route -> `executive-planner.mjs` strict single-step `{ action, params }` or bounded `{ steps: [{ action, params }] }` decision -> contract-bound planner action/preset execution or sequential planner tool execution
+  - if `/answer` receives an unsupported slash command such as `/executive ...` or a "不存在的 agent" request and the planner still proposes `get_runtime_info`, semantic validation now rejects that plan and reroutes into the deterministic tool-flow/no-match path instead of returning runtime info
+  - scoped cloud-doc exclusion requests such as `你把我的雲端文件再看一遍，把不屬於scanoo的內容摘出去讓我確認` now stay on the document-search path: `router.js` resolves them to `search_company_brain_docs`, and `planner-doc-query-flow.mjs` compresses the search query down to the extracted scope subject (for example `scanoo`) before dispatch
   - knowledge-assistant chat lane -> `lane-executor.mjs` -> `executive-planner.mjs` -> shared `normalizeUserResponse()` boundary -> fixed natural-language chat reply text
   - direct user-input answer fallback is disabled; `answer-service.mjs` is no longer the first responder for `/answer` or the knowledge-assistant lane
 

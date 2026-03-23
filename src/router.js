@@ -1,3 +1,7 @@
+import {
+  extractCloudOrganizationScopedSubject,
+  looksLikeCloudOrganizationReReviewRequest,
+} from "./cloud-doc-organization-workflow.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import { ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
 
@@ -62,6 +66,13 @@ function hasDocPronounFollowUpIntent(text = "") {
 
 function hasDocOrdinalFollowUpIntent(text = "") {
   return DOC_ORDINAL_FOLLOW_UP_INTENT_RE.test(String(text || ""));
+}
+
+function hasScopedDocExclusionSearchIntent(text = "") {
+  const normalized = cleanText(String(text || ""));
+  return Boolean(normalized)
+    && looksLikeCloudOrganizationReReviewRequest(normalized)
+    && Boolean(extractCloudOrganizationScopedSubject(normalized));
 }
 
 function selectUniqueRouteCandidate(candidates = []) {
@@ -146,12 +157,20 @@ function resolveDocRouteCandidate(text = "", {
 function route(q = "", { activeDoc = null, activeCandidates = [] } = {}) {
   const text = String(q || "");
   const wantsSearch = hasDocSearchIntent(text);
+  const wantsScopedExclusionSearch = hasScopedDocExclusionSearchIntent(text);
   const followUpRoute = resolveFollowUpRouteCandidate(text, {
     activeDoc,
     activeCandidates,
   });
   if (followUpRoute) {
     return buildRouteDecision(followUpRoute);
+  }
+
+  if (wantsScopedExclusionSearch) {
+    return buildRouteDecision({
+      action: "search_company_brain_docs",
+      routingReason: "doc_query_scoped_exclusion_search",
+    });
   }
 
   const docRoute = resolveDocRouteCandidate(text, {
@@ -179,6 +198,7 @@ export { hasDocDetailContentIntent };
 export { hasDocPronounFollowUpIntent };
 export { hasDocSearchIntent };
 export { hasDocSummaryIntent };
+export { hasScopedDocExclusionSearchIntent };
 export { getRouteTarget };
 export { route };
 export default { route };

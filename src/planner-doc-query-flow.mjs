@@ -1,3 +1,4 @@
+import { extractCloudOrganizationScopedSubject } from "./cloud-doc-organization-workflow.mjs";
 import { oauthBaseUrl } from "./config.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import { ROUTING_NO_MATCH, isRoutingNoMatch } from "./planner-error-codes.mjs";
@@ -378,22 +379,24 @@ export function buildDocQueryPayload({
     ? { ...payload }
     : {};
   const normalizedIntent = cleanText(String(userIntent || ""));
+  const scopedCloudSubject = extractCloudOrganizationScopedSubject(normalizedIntent);
+  const effectiveSearchQuery = scopedCloudSubject || normalizedIntent;
   const candidateIndex = resolvePlannerCandidateIndex(normalizedIntent);
   const isOrdinalFollowUp = Number.isInteger(candidateIndex);
   const selectedCandidate = Number.isInteger(candidateIndex) ? activeCandidates[candidateIndex] : null;
 
   if (action === "search_company_brain_docs") {
-    if (!cleanText(effectivePayload.q) && normalizedIntent) {
-      effectivePayload.q = normalizedIntent;
+    if (!cleanText(effectivePayload.q) && effectiveSearchQuery) {
+      effectivePayload.q = effectiveSearchQuery;
     }
-    if (!cleanText(effectivePayload.query) && normalizedIntent) {
-      effectivePayload.query = normalizedIntent;
+    if (!cleanText(effectivePayload.query) && effectiveSearchQuery) {
+      effectivePayload.query = effectiveSearchQuery;
     }
   }
 
   if (action === "search_and_detail_doc") {
-    if (!cleanText(effectivePayload.q) && normalizedIntent) {
-      effectivePayload.q = normalizedIntent;
+    if (!cleanText(effectivePayload.q) && effectiveSearchQuery) {
+      effectivePayload.q = effectiveSearchQuery;
     }
   }
 

@@ -5,6 +5,7 @@ import {
   buildCloudOrganizationWhyReply,
   buildCloudOrganizationReviewReplyCached,
   CLOUD_DOC_ORGANIZATION_MODE,
+  extractCloudOrganizationScopedSubject,
   looksLikeCloudOrganizationReReviewRequest,
   resolveCloudOrganizationAction,
   readSessionWorkflowMode,
@@ -78,6 +79,13 @@ test("cloud doc workflow keeps doc-intent exclusion family on rereview signals",
     assert.equal(looksLikeCloudOrganizationReReviewRequest(text), true, text);
     assert.equal(resolveCloudOrganizationAction({ text, activeWorkflowMode: null }), "rereview", text);
   }
+});
+
+test("cloud doc workflow extracts the scoped subject from the exact scanoo exclusion live query", () => {
+  assert.equal(
+    extractCloudOrganizationScopedSubject("你把我的雲端文件再看一遍，把不屬於scanoo的內容摘出去讓我確認"),
+    "scanoo",
+  );
 });
 
 test("cloud doc workflow keeps plain-language follow-up in review branch", () => {

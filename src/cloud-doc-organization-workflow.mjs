@@ -91,6 +91,8 @@ const cloudOrganizationScopedExclusionSignals = [
 ];
 const cloudOrganizationExclusionQualifierSignals = [
   "不是",
+  "不屬於",
+  "不属于",
   "非 ",
   "非scanoo",
   "以外",
@@ -111,7 +113,21 @@ const cloudOrganizationPlainLanguageSignals = [
   "說清楚",
   "说清楚",
 ];
-const cloudOrganizationScopeSignals = ["雲文檔", "云文档", "雲文件", "云文件", "文檔", "文档", "文件", "drive", "wiki"];
+const cloudOrganizationScopeSignals = [
+  "雲端文檔",
+  "云端文档",
+  "雲端文件",
+  "云端文件",
+  "雲文檔",
+  "云文档",
+  "雲文件",
+  "云文件",
+  "文檔",
+  "文档",
+  "文件",
+  "drive",
+  "wiki",
+];
 
 const categoryRoleMap = {
   工程技術: "工程/技術負責人",
@@ -132,6 +148,13 @@ const categoryRoleMap = {
 };
 
 const cloudOrganizationReviewCategories = new Set(["其他", "文檔", "表格", "附件", "快捷方式", "腦圖"]);
+const cloudOrganizationScopedSubjectPatterns = [
+  /不屬於\s*([^，。,.、；;：:\n]+?)(?:的(?:內容|内容|文檔|文档|文件|集合|範圍|范围|主題|主题)|\s|$)/iu,
+  /不是\s*([^，。,.、；;：:\n]+?)(?:的(?:內容|内容|文檔|文档|文件|集合|範圍|范围|主題|主题)|\s|$)/iu,
+  /非\s*([^，。,.、；;：:\n]+?)(?:的(?:內容|内容|文檔|文档|文件|集合|範圍|范围|主題|主题)|\s*(?:內容|内容|文檔|文档|文件|集合|範圍|范围|主題|主题)|\s|$)/iu,
+  /跟\s*([^，。,.、；;：:\n]+?)\s*(?:無關|无关)/iu,
+  /([^，。,.、；;：:\n]+?)\s*(?:之外|以外)/iu,
+];
 
 function hasAny(text, keywords) {
   return keywords.some((keyword) => text.includes(cleanText(keyword).toLowerCase()));
@@ -139,6 +162,14 @@ function hasAny(text, keywords) {
 
 function normalizedText(text = "") {
   return cleanText(String(text || "").toLowerCase());
+}
+
+function normalizeCloudOrganizationScopedSubject(value = "") {
+  return cleanText(String(value || ""))
+    .replace(/^(?:跟|与|與|和)\s*/u, "")
+    .replace(/\s*(?:的)?(?:內容|内容|文檔|文档|文件|集合|範圍|范围|主題|主题)\s*$/iu, "")
+    .replace(/[，。,.、；;：:]+$/u, "")
+    .trim();
 }
 
 export function looksLikeCloudOrganizationRequest(text = "") {
@@ -171,6 +202,23 @@ export function looksLikeCloudOrganizationReReviewRequest(text = "") {
     hasAny(normalized, cloudOrganizationReReviewSignals)
     || scopedExclusionRequest
   );
+}
+
+export function extractCloudOrganizationScopedSubject(text = "") {
+  const rawText = cleanText(String(text || ""));
+  if (!rawText || !looksLikeCloudOrganizationReReviewRequest(rawText)) {
+    return "";
+  }
+
+  for (const pattern of cloudOrganizationScopedSubjectPatterns) {
+    const match = rawText.match(pattern);
+    const subject = normalizeCloudOrganizationScopedSubject(match?.[1] || "");
+    if (subject) {
+      return subject;
+    }
+  }
+
+  return "";
 }
 
 export function looksLikeCloudOrganizationPlainLanguageRequest(text = "") {

@@ -127,6 +127,40 @@ test("planUserInputAction returns structured semantic_mismatch when action does 
   assert.equal(result.reason, "conversation_summary_not_supported_by_planner_contract");
 });
 
+test("planUserInputAction rejects runtime-info misroute for the exact /executive live query", async () => {
+  resetPlannerRuntimeContext();
+  const result = await planUserInputAction({
+    text: "/executive do something invalid",
+    async requester() {
+      return JSON.stringify({
+        action: "get_runtime_info",
+        params: {},
+      });
+    },
+  });
+
+  assert.equal(result.error, "semantic_mismatch");
+  assert.equal(result.action, "get_runtime_info");
+  assert.equal(result.reason, "slash_command_not_supported_by_planner_tool_flow");
+});
+
+test("planUserInputAction rejects runtime-info misroute for the exact missing-agent live query", async () => {
+  resetPlannerRuntimeContext();
+  const result = await planUserInputAction({
+    text: "調用一個不存在的agent幫我處理",
+    async requester() {
+      return JSON.stringify({
+        action: "get_runtime_info",
+        params: {},
+      });
+    },
+  });
+
+  assert.equal(result.error, "semantic_mismatch");
+  assert.equal(result.action, "get_runtime_info");
+  assert.equal(result.reason, "missing_agent_request_not_supported_by_planner_tool_flow");
+});
+
 test("planUserInputAction rejects stale decision reuse across different inputs", async () => {
   resetPlannerRuntimeContext();
 
@@ -2566,6 +2600,46 @@ test("runPlannerToolFlow uses runtime-info flow for runtime query without affect
   assert.deepEqual(calls, [{
     action: "get_runtime_info",
     payload: {},
+  }]);
+});
+
+test("runPlannerToolFlow routes the exact scanoo exclusion live query into document search with a scoped subject", async () => {
+  resetPlannerRuntimeContext();
+  const calls = [];
+  const result = await runPlannerToolFlow({
+    userIntent: "你把我的雲端文件再看一遍，把不屬於scanoo的內容摘出去讓我確認",
+    logger: console,
+    async dispatcher({ action, payload }) {
+      calls.push({ action, payload });
+      return {
+        ok: true,
+        action,
+        data: {
+          items: [
+            {
+              title: "Scanoo PRD｜後台核心系統迭代",
+              doc_id: "doc_scanoo_prd",
+            },
+          ],
+        },
+        trace_id: "trace_scanoo_search",
+      };
+    },
+  });
+
+  assert.equal(result.selected_action, "search_company_brain_docs");
+  assert.equal(result.routing_reason, "doc_query_scoped_exclusion_search");
+  assert.deepEqual(calls, [{
+    action: "search_company_brain_docs",
+    payload: {
+      q: "scanoo",
+      query: "scanoo",
+    },
+  }]);
+  assert.equal(result.execution_result?.formatted_output?.kind, "search");
+  assert.deepEqual(result.execution_result?.formatted_output?.items, [{
+    title: "Scanoo PRD｜後台核心系統迭代",
+    doc_id: "doc_scanoo_prd",
   }]);
 });
 

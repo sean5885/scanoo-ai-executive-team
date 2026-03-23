@@ -400,6 +400,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - slash-command execution before generic lane fallback
   - optional compact image-context handoff into slash agents
   - when direct `LLM_API_KEY` is absent, registered agents now reuse the local OpenClaw MiniMax text path through the dedicated `lobster-backend` agent before falling back to extractive retrieval-only replies
+  - registered-agent fallback/no-match chat replies now pass through the shared `normalizeUserResponse()` boundary before rendering `答案 -> 來源 -> 待確認/限制`, so chat output no longer exposes raw `{ ok, error, details }` envelopes for `FALLBACK_DISABLED` or slash-command `ROUTING_NO_MATCH`
   - `openclaw-text-service.mjs` now normalizes optional abort signals before passing them into Node child-process/fetch-style options, so local callers can omit a signal without tripping `options.signal must be an instance of AbortSignal`
 - Main entry:
   - `parseRegisteredAgentCommand()`
@@ -622,6 +623,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - normalize multi-agent work into at most three roles
   - execute specialist work items sequentially, then synthesize one final response through the merge agent
   - when any specialist fails, preserve fail-soft behavior by switching final synthesis to `/generalist`
+  - executive slash-command / planner-fallback chat errors now pass through the shared `normalizeUserResponse()` boundary before rendering `答案 -> 來源 -> 待確認/限制`, so chat output no longer exposes raw `{ ok, error, details }` envelopes for `ROUTING_NO_MATCH` or `FALLBACK_DISABLED`
   - finalize each executive turn with evidence collection, verifier pass/fail, reflection, and improvement proposal generation
   - direct task completion is now blocked at orchestrator level; completion must pass the verifier gate in `executive-closed-loop.mjs`
   - meeting workflow now reuses the same task-state store through exported helpers, instead of inventing a separate control registry
@@ -694,10 +696,12 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - isolate the cloud-document classification / reassignment follow-up workflow into a testable submodule instead of keeping all branch logic inside `lane-executor.mjs`
   - knowledge-assistant lane turns no longer call `answer-service.mjs` directly; they now execute through `executePlannedUserInput(...)`, keep the strict planner envelope as internal runtime state, and pass both success and controlled failure through the shared `normalizeUserResponse()` boundary before rendering the fixed natural-language `答案 -> 來源 -> 待確認/限制` reply, so chat output does not serialize raw planner JSON or trace fields to the user
   - strict planner envelopes still reject semantically mismatched actions and stale previous-turn decision reuse as structured internal errors, but `executePlannedUserInput(...)` now gives `semantic_mismatch` one reroute attempt before surfacing a user-facing fallback
+  - the same planner boundary now also fail-closes unsupported slash commands and "不存在的 agent" style requests inside `/answer`: if the LLM tries to map those turns to `get_runtime_info` or any other planner tool action, semantic validation converts them into `semantic_mismatch`, then reroutes to the deterministic tool-flow path instead of returning runtime info
   - keep cloud-doc organization follow-ups in the same workflow mode, including a plain-language re-explanation path, a dedicated "why can't this be directly assigned?" explainer path, and second-pass review continuation for generic confirmation follow-ups
   - generic second-confirmation follow-ups now prefer a session-scoped cached review summary, so "還有什麼需要我二次確認" returns quickly instead of rerunning a full semantic re-review on every turn
   - explicit reassignment / relearning requests such as "重新分配" or "各個角色去學習" still trigger the slower second-pass semantic re-review branch
   - scoped exclusion / rereview phrasing family such as "把非 scanoo 的文檔摘出去", "摘出無關文檔", "只保留某主題文檔，把非該主題文檔排出去", and "重新審核哪些文件不屬於某集合" is treated as cloud-doc re-review / reassignment intent instead of falling through to generic personal-assistant `ROUTING_NO_MATCH`
+  - planner-side doc query routing now also recognizes that same scoped-exclusion family as a search-first document lookup intent for `/answer`: `router.js` hard-routes it to `search_company_brain_docs`, and `planner-doc-query-flow.mjs` rewrites the search payload from the full sentence down to the extracted scope term (for example `scanoo`) so the live read-side search can return candidate documents instead of a generic no-result
   - avoid hard-failing mixed image+text turns when the image provider is unavailable; image tasks can fall back to the text lane when the user message still has actionable text
   - if image download or image analysis throws for a mixed image+text turn, lane execution now degrades to the text lane instead of emitting a generic failure reply
   - resolve one lane from message intent and peer scope

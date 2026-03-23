@@ -21,7 +21,7 @@ import { getRegisteredAgent, listRegisteredAgents, parseRegisteredAgentCommand }
 import { cleanText } from "./message-intent-utils.mjs";
 import { callOpenClawTextGeneration } from "./openclaw-text-service.mjs";
 import { FALLBACK_DISABLED, INVALID_ACTION, ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
-import { hasDocSearchIntent } from "./router.js";
+import { hasDocSearchIntent, hasScopedDocExclusionSearchIntent } from "./router.js";
 import { createRequestId, emitRateLimitedAlert, emitToolExecutionLog } from "./runtime-observability.mjs";
 import {
   compactPlannerConversationMemory as compactPlannerConversationMemoryLayer,
@@ -116,6 +116,22 @@ function emitPlannerFailedAlert({ text = "", reason = "", source = "planner" } =
 
 function hasAny(text, keywords) {
   return keywords.some((keyword) => text.includes(keyword));
+}
+
+function looksLikeUnsupportedSlashPlannerRequest(text = "") {
+  const normalized = cleanText(String(text || "").toLowerCase());
+  if (!normalized || !normalized.startsWith("/")) {
+    return false;
+  }
+  return !parseRegisteredAgentCommand(normalized);
+}
+
+function looksLikeMissingAgentPlannerRequest(text = "") {
+  const normalized = cleanText(String(text || "").toLowerCase());
+  if (!normalized || !normalized.includes("agent")) {
+    return false;
+  }
+  return /(不存在|不存在的|沒有這個|没有这个|unknown|invalid|not exist)/i.test(normalized);
 }
 
 function buildCollaborativeWorkItems({ primaryAgentId = "", supportingAgentIds = [], objective = "" } = {}) {
@@ -2167,6 +2183,7 @@ export function selectPlannerTool({
 } = {}) {
   const normalizedIntent = cleanText(String(userIntent || "").toLowerCase());
   const normalizedTaskType = cleanText(String(taskType || "").toLowerCase());
+  const wantsScopedDocExclusionSearch = hasScopedDocExclusionSearchIntent(userIntent);
 
   let selectedAction = "";
   let reason = "";
@@ -2210,6 +2227,10 @@ export function selectPlannerTool({
     selectedAction = "list_company_brain_docs";
     reason = "使用者意圖是查詢已驗證文件鏡像，對應 company_brain list bridge。";
     routingReason = "selector_list_company_brain_docs";
+  } else if (wantsScopedDocExclusionSearch) {
+    selectedAction = "search_company_brain_docs";
+    reason = "這輪是在文件範圍內重新盤點某個主題集合，所以先 search 候選文件。";
+    routingReason = "selector_search_company_brain_docs_scoped_exclusion";
   } else if (
     normalizedTaskType === "knowledge_learning"
     || normalizedIntent.includes("學習這份文件")
@@ -4396,6 +4417,8 @@ function derivePlannerUserInputSemantics(text = "") {
     "運行資訊",
     "运行信息",
   ]);
+  const wantsUnsupportedSlashCommand = looksLikeUnsupportedSlashPlannerRequest(normalizedText);
+  const wantsMissingAgentRequest = looksLikeMissingAgentPlannerRequest(normalizedText);
   const wantsCreateDoc = plannerTextHasAny(normalizedText, [
     "建立文件",
     "创建文档",
@@ -4420,6 +4443,8 @@ function derivePlannerUserInputSemantics(text = "") {
     wants_document_summary: wantsDocumentSummary,
     wants_document_lookup: wantsDocumentLookup,
     wants_runtime_info: wantsRuntimeInfo,
+    wants_unsupported_slash_command: wantsUnsupportedSlashCommand,
+    wants_missing_agent_request: wantsMissingAgentRequest,
     wants_create_doc: wantsCreateDoc,
     explicit_same_task: plannerTextHasAny(normalizedText, sameTaskSignals),
   };
@@ -4482,6 +4507,28 @@ function validatePlannerDecisionSemantics({
       ...buildPlannerSemanticMismatch({
         decision,
         reason: "conversation_summary_not_supported_by_planner_contract",
+        semantics,
+      }),
+    };
+  }
+
+  if (semantics.wants_unsupported_slash_command && actionNames.length > 0) {
+    return {
+      ok: false,
+      ...buildPlannerSemanticMismatch({
+        decision,
+        reason: "slash_command_not_supported_by_planner_tool_flow",
+        semantics,
+      }),
+    };
+  }
+
+  if (semantics.wants_missing_agent_request && actionNames.length > 0) {
+    return {
+      ok: false,
+      ...buildPlannerSemanticMismatch({
+        decision,
+        reason: "missing_agent_request_not_supported_by_planner_tool_flow",
         semantics,
       }),
     };
@@ -4723,6 +4770,12 @@ function buildUserInputDecisionWhy({
 
   if (semantics?.wants_runtime_info) {
     return "需求明確在查 runtime / db path / pid 等執行環境資訊。";
+  }
+  if (semantics?.wants_unsupported_slash_command) {
+    return "這輪輸入是未支援的 slash 指令，不應被 planner 工具路徑當成一般查詢執行。";
+  }
+  if (semantics?.wants_missing_agent_request) {
+    return "這輪是在描述不存在的 agent/調用需求，不應被 planner 工具路徑改寫成其他查詢。";
   }
   if (semantics?.wants_create_doc) {
     return "需求核心是建立文件，所以先走受控文件建立路徑。";
