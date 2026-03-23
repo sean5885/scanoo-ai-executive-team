@@ -21,10 +21,10 @@ test("parseRegisteredAgentCommand resolves knowledge subcommands", () => {
   assert.equal(parsed?.body, "幫我找衝突");
 });
 
-test("parseRegisteredAgentCommand falls back knowledge without subcommand to brain", () => {
+test("parseRegisteredAgentCommand fail-closes knowledge without subcommand", () => {
   const parsed = parseRegisteredAgentCommand("/knowledge 請整理這批知識");
 
-  assert.equal(parsed?.agent?.id, "knowledge-brain");
+  assert.equal(parsed?.error, "ROUTING_NO_MATCH");
   assert.equal(parsed?.body, "請整理這批知識");
 });
 
@@ -46,5 +46,5 @@ test("registered agents expose minimum capability contract", () => {
 
   assert.equal(knowledge?.command, "/knowledge conflicts");
   assert.ok(Array.isArray(knowledge?.allowed_tools));
-  assert.equal(knowledge?.fallback_behavior, "fallback_to_grounded_retrieval_summary");
+  assert.equal(knowledge?.fallback_behavior, "fail_closed");
 });

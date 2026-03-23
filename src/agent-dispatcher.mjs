@@ -19,6 +19,7 @@ import {
   governPromptSections,
   trimTextForBudget,
 } from "./agent-token-governance.mjs";
+import { renderPlannerUserFacingReplyText } from "./executive-planner.mjs";
 import { getWorkflowCheckpoint, updateWorkflowCheckpoint } from "./agent-workflow-state.mjs";
 import { searchKnowledgeBase } from "./answer-service.mjs";
 import { parseRegisteredAgentCommand } from "./agent-registry.mjs";
@@ -27,6 +28,7 @@ import { classifyInputModality } from "./modality-router.mjs";
 import { buildVisibleMessageText, cleanText } from "./message-intent-utils.mjs";
 import { callOpenClawTextGeneration } from "./openclaw-text-service.mjs";
 import { FALLBACK_DISABLED, ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
+import { normalizeUserResponse } from "./user-response-normalizer.mjs";
 
 const noopLogger = {
   info() {},
@@ -194,6 +196,23 @@ function buildSourceFooter(items = []) {
   ].join("\n");
 }
 
+function buildRegisteredAgentUserFacingErrorText({
+  answer = "",
+  limitations = [],
+} = {}) {
+  const normalized = normalizeUserResponse({
+    payload: {
+      ok: false,
+      answer,
+      sources: [],
+      limitations,
+    },
+    logger: noopLogger,
+    handlerName: "registeredAgentDispatcher",
+  });
+  return renderPlannerUserFacingReplyText(normalized);
+}
+
 export async function executeRegisteredAgent({
   accountId,
   agent,
@@ -303,8 +322,16 @@ export async function executeRegisteredAgent({
         },
       };
       return {
-        text: JSON.stringify(failureEnvelope, null, 2),
+        text: buildRegisteredAgentUserFacingErrorText({
+          answer: `${agent.label} 這輪暫時沒有可用的生成路徑，所以我先不直接輸出未整理的系統錯誤。`,
+          limitations: [
+            "內部錯誤已保留在 runtime / log，這裡先不直接暴露 raw JSON 或 trace。",
+            "如果你要，我可以先按目前找到的資料替你整理重點，再補上需要確認的缺口。",
+          ],
+        }),
         agentId: agent.id,
+        error: failureEnvelope.error,
+        details: failureEnvelope.details,
         metadata: {
           retrieval_count: items.length,
           fallback_used: false,
@@ -352,14 +379,22 @@ export async function dispatchRegisteredAgentCommand({ accountId, event, scope }
   const rawText = buildVisibleMessageText(event);
   const command = parseRegisteredAgentCommand(rawText);
   if (command?.error === ROUTING_NO_MATCH) {
+    const noMatchEnvelope = {
+      ok: false,
+      error: ROUTING_NO_MATCH,
+      details: {
+        message: "registered_agent_command_no_match",
+      },
+    };
     return {
-      text: JSON.stringify({
-        ok: false,
-        error: ROUTING_NO_MATCH,
-        details: {
-          message: "registered_agent_command_no_match",
-        },
-      }, null, 2),
+      text: buildRegisteredAgentUserFacingErrorText({
+        answer: "這個 slash 指令目前沒有命中任何已註冊的 registered agent。",
+        limitations: [
+          "請改用已存在的 `/generalist`、`/ceo`、`/product`、`/prd`、`/cmo`、`/consult`、`/cdo`、`/delivery`、`/ops`、`/tech`，或既有 `/knowledge *` 子指令。",
+        ],
+      }),
+      error: noMatchEnvelope.error,
+      details: noMatchEnvelope.details,
     };
   }
   if (!command?.agent) {
