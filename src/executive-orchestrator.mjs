@@ -1169,13 +1169,13 @@ export async function executeExecutiveTurn({ accountId, event, scope, logger = n
   const slashCommand = parseRegisteredAgentCommand(text);
   if (slashCommand?.error === ROUTING_NO_MATCH) {
     return {
-      text: JSON.stringify({
-        ok: false,
-        error: ROUTING_NO_MATCH,
-        details: {
-          message: "registered_agent_command_no_match",
-        },
-      }, null, 2),
+      text: [
+        "結論",
+        "這個 slash 指令沒有命中任何已註冊的 registered agent。",
+        "",
+        "重點",
+        "請改用已存在的 `/generalist`、`/ceo`、`/product`、`/prd`、`/cmo`、`/consult`、`/cdo`、`/delivery`、`/ops`、`/tech` 或既有 `/knowledge *` 子指令。",
+      ].join("\n"),
     };
   }
   if (!slashCommand && !activeTask && !looksLikeExecutiveStart(text)) {
@@ -1208,7 +1208,7 @@ export async function executeExecutiveTurn({ accountId, event, scope, logger = n
       pending_questions: [],
     };
   } else {
-    decision = await planExecutiveTurn({ text, activeTask, logger });
+    decision = await planExecutiveTurn({ text, activeTask, logger, sessionKey });
     if (decision?.error === FALLBACK_DISABLED) {
       return {
         text: JSON.stringify({

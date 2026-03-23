@@ -59,22 +59,120 @@ test("looksLikeExecutiveExit recognizes explicit exit phrases", () => {
   assert.equal(looksLikeExecutiveExit("幫我看今天日程"), false);
 });
 
-test("planExecutiveTurn builds collaborative work items for multi-agent requests", async () => {
+test("planExecutiveTurn defaults simple single-intent requests to generalist", async () => {
   resetPlannerRuntimeContext();
   const decision = await planExecutiveTurn({
-    text: "先請各個 agent 一起看這批文檔，最後再統一收斂建議",
+    text: "幫我整理這份需求重點",
     activeTask: null,
     async requester() {
-      throw new Error("planner_unavailable");
+      return JSON.stringify({
+        action: "start",
+        objective: "整理需求重點",
+        primary_agent_id: "product",
+        next_agent_id: "product",
+        supporting_agent_ids: ["consult", "tech"],
+        reason: "刻意注入多餘 specialist",
+        pending_questions: [],
+        work_items: [
+          { agent_id: "product", task: "整理需求", role: "primary" },
+          { agent_id: "consult", task: "做方案比較", role: "supporting" },
+          { agent_id: "tech", task: "檢查技術風險", role: "supporting" },
+        ],
+      });
     },
   });
 
   assert.equal(decision.primary_agent_id, "generalist");
-  assert.equal(decision.supporting_agent_ids.length > 0, true);
-  assert.equal(decision.supporting_agent_ids.length <= 2, true);
-  assert.equal(Array.isArray(decision.work_items), true);
-  assert.equal(decision.work_items.length >= 2, true);
-  assert.equal(decision.work_items.length <= 3, true);
+  assert.equal(decision.next_agent_id, "generalist");
+  assert.deepEqual(decision.supporting_agent_ids, []);
+  assert.deepEqual(decision.work_items, [
+    {
+      agent_id: "generalist",
+      task: "主責收斂這個任務：整理需求重點",
+      role: "primary",
+      status: "pending",
+    },
+  ]);
+});
+
+test("planExecutiveTurn uses minimal multi-agent roles for compound distinct-specialist requests", async () => {
+  resetPlannerRuntimeContext();
+  const decision = await planExecutiveTurn({
+    text: "請同時從市場定位與技術風險評估這個功能，最後統一收斂建議",
+    activeTask: null,
+    async requester() {
+      return JSON.stringify({
+        action: "start",
+        objective: "評估新功能",
+        primary_agent_id: "generalist",
+        next_agent_id: "generalist",
+        supporting_agent_ids: [],
+        reason: "",
+        pending_questions: [],
+        work_items: [],
+      });
+    },
+  });
+
+  assert.equal(decision.primary_agent_id, "generalist");
+  assert.equal(decision.next_agent_id, "generalist");
+  assert.deepEqual(decision.supporting_agent_ids, ["cmo", "tech"]);
+  assert.deepEqual(decision.work_items.map((item) => item.agent_id), ["generalist", "cmo", "tech"]);
+  assert.equal(decision.work_items.length, 3);
+});
+
+test("planExecutiveTurn keeps the same role set for repeated identical compound requests", async () => {
+  resetPlannerRuntimeContext();
+  const text = "請同時從市場定位與技術風險評估這個功能，最後統一收斂建議";
+
+  const first = await planExecutiveTurn({
+    text,
+    activeTask: null,
+    async requester() {
+      return JSON.stringify({
+        action: "start",
+        objective: "第一次回覆",
+        primary_agent_id: "consult",
+        next_agent_id: "consult",
+        supporting_agent_ids: ["product", "ops"],
+        reason: "故意給不同角色組合",
+        pending_questions: [],
+        work_items: [
+          { agent_id: "consult", task: "拆解", role: "primary" },
+          { agent_id: "product", task: "產品觀點", role: "supporting" },
+          { agent_id: "ops", task: "執行觀點", role: "supporting" },
+        ],
+      });
+    },
+  });
+
+  const second = await planExecutiveTurn({
+    text,
+    activeTask: null,
+    async requester() {
+      return JSON.stringify({
+        action: "start",
+        objective: "第二次回覆",
+        primary_agent_id: "cdo",
+        next_agent_id: "cdo",
+        supporting_agent_ids: ["delivery", "tech"],
+        reason: "再給另一組角色",
+        pending_questions: [],
+        work_items: [
+          { agent_id: "cdo", task: "治理角度", role: "primary" },
+          { agent_id: "delivery", task: "交付角度", role: "supporting" },
+          { agent_id: "tech", task: "技術角度", role: "supporting" },
+        ],
+      });
+    },
+  });
+
+  assert.deepEqual(first.supporting_agent_ids, ["cmo", "tech"]);
+  assert.deepEqual(second.supporting_agent_ids, ["cmo", "tech"]);
+  assert.deepEqual(
+    first.work_items.map((item) => item.agent_id),
+    second.work_items.map((item) => item.agent_id),
+  );
 });
 
 test("planUserInputAction rejects wrapped non-JSON output", async () => {
@@ -515,8 +613,9 @@ test("planExecutiveTurn accepts injected planner requester", async () => {
 
   assert.equal(decision.primary_agent_id, "cmo");
   assert.equal(decision.next_agent_id, "cmo");
-  assert.equal(decision.supporting_agent_ids.includes("consult"), true);
-  assert.equal(decision.work_items.length, 2);
+  assert.deepEqual(decision.supporting_agent_ids, []);
+  assert.equal(decision.work_items.length, 1);
+  assert.equal(decision.work_items[0].agent_id, "cmo");
   assert.match(decision.why || "", /\/cmo/);
   assert.equal(typeof decision.alternative?.summary, "string");
 });

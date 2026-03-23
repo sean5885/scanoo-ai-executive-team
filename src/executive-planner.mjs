@@ -105,6 +105,89 @@ const PLANNER_EXPLICIT_AUTH_ACTIONS = new Set([
   "get_company_brain_doc_detail",
 ]);
 
+const executiveCollaborationSignals = [
+  "各個 agent",
+  "各个 agent",
+  "多 agent",
+  "多個 agent",
+  "多个 agent",
+  "multi-agent",
+  "協作",
+  "协作",
+  "一起看",
+  "一起評估",
+  "一起评估",
+  "一起拆解",
+  "分別看",
+  "分别看",
+  "統一收斂",
+  "统一收敛",
+];
+
+const executiveCompoundSignals = [
+  "同時",
+  "同时",
+  "以及",
+  "並且",
+  "并且",
+  "還有",
+  "还有",
+  "最後",
+  "最后",
+];
+
+const executiveDeterministicRoleSignals = [
+  {
+    agentId: "consult",
+    keywords: ["拆解", "比較", "比较", "診斷", "诊断", "方案"],
+  },
+  {
+    agentId: "product",
+    keywords: ["產品", "产品", "需求", "使用者", "用户", "功能", "價值", "价值"],
+  },
+  {
+    agentId: "tech",
+    keywords: ["技術", "技术", "工程", "架構", "架构", "系統設計", "系统设计", "程式", "代码", "api"],
+  },
+  {
+    agentId: "cmo",
+    keywords: ["市場", "市场", "定位", "訊息", "信息", "行銷", "营销", "growth", "gtm"],
+  },
+  {
+    agentId: "ops",
+    keywords: ["營運", "运营", "流程", "落地", "執行", "执行", "sop"],
+  },
+  {
+    agentId: "cdo",
+    keywords: ["數據", "数据", "治理", "指標", "指标", "分配", "分類", "分类"],
+  },
+  {
+    agentId: "delivery",
+    keywords: ["交付", "驗收", "验收", "導入", "导入", "里程碑"],
+  },
+  {
+    agentId: "prd",
+    keywords: ["prd", "規格", "规格", "spec"],
+  },
+  {
+    agentId: "ceo",
+    keywords: ["決策", "决策", "拍板", "取捨", "取舍", "資源", "资源"],
+  },
+];
+
+const executiveSelectableAgentIds = [
+  "generalist",
+  "ceo",
+  "product",
+  "prd",
+  "cmo",
+  "consult",
+  "cdo",
+  "delivery",
+  "ops",
+  "tech",
+];
+
 function emitPlannerFailedAlert({ text = "", reason = "", source = "planner" } = {}) {
   const textHint = cleanText(text);
   emitRateLimitedAlert({
@@ -151,6 +234,251 @@ function looksLikeMissingAgentPlannerRequest(text = "") {
   return /(不存在|不存在的|沒有這個|没有这个|unknown|invalid|not exist)/i.test(normalized);
 }
 
+function uniqueRegisteredAgentIds(agentIds = [], maxItems = EXECUTIVE_MAX_ROLES) {
+  const result = [];
+  const seen = new Set();
+  for (const item of Array.isArray(agentIds) ? agentIds : []) {
+    const agentId = cleanText(item);
+    if (!agentId || !getRegisteredAgent(agentId) || seen.has(agentId)) {
+      continue;
+    }
+    seen.add(agentId);
+    result.push(agentId);
+    if (result.length >= maxItems) {
+      break;
+    }
+  }
+  return result;
+}
+
+function findFirstKeywordIndex(text = "", keywords = []) {
+  let matchIndex = Number.POSITIVE_INFINITY;
+  for (const keyword of Array.isArray(keywords) ? keywords : []) {
+    const index = text.indexOf(keyword);
+    if (index >= 0 && index < matchIndex) {
+      matchIndex = index;
+    }
+  }
+  return Number.isFinite(matchIndex) ? matchIndex : -1;
+}
+
+function findExplicitAgentMentionIndex(text = "", agentId = "") {
+  const normalizedAgentId = cleanText(agentId);
+  if (!text || !normalizedAgentId) {
+    return -1;
+  }
+  const slashIndex = text.indexOf(`/${normalizedAgentId}`);
+  if (slashIndex >= 0) {
+    return slashIndex;
+  }
+  if (/^[a-z_]+$/.test(normalizedAgentId)) {
+    const pattern = new RegExp(`(^|[^a-z0-9_])${normalizedAgentId}(?=$|[^a-z0-9_])`, "i");
+    const match = pattern.exec(text);
+    return match ? Number(match.index || 0) + match[1].length : -1;
+  }
+  return text.indexOf(normalizedAgentId);
+}
+
+function collectExplicitExecutiveAgentIds(text = "") {
+  const matches = executiveSelectableAgentIds
+    .map((agentId, order) => ({
+      agentId,
+      order,
+      index: findExplicitAgentMentionIndex(text, agentId),
+    }))
+    .filter((item) => item.index >= 0)
+    .sort((left, right) => left.index - right.index || left.order - right.order)
+    .map((item) => item.agentId);
+  return uniqueRegisteredAgentIds(matches, EXECUTIVE_MAX_ROLES);
+}
+
+function detectDeterministicSpecialistAgentIds(text = "") {
+  const matches = executiveDeterministicRoleSignals
+    .map((rule, order) => ({
+      agentId: rule.agentId,
+      order,
+      index: findFirstKeywordIndex(text, rule.keywords),
+    }))
+    .filter((item) => item.index >= 0)
+    .sort((left, right) => left.index - right.index || left.order - right.order)
+    .map((item) => item.agentId);
+  return uniqueRegisteredAgentIds(matches, EXECUTIVE_MAX_ROLES);
+}
+
+function hasExecutiveCompoundIntent(text = "") {
+  return hasAny(text, executiveCollaborationSignals) || hasAny(text, executiveCompoundSignals);
+}
+
+function limitExecutiveWorkItems(workItems = [], {
+  allowedAgentIds = [],
+  maxItems = EXECUTIVE_MAX_ROLES,
+} = {}) {
+  const allowed = new Set(uniqueRegisteredAgentIds(allowedAgentIds, EXECUTIVE_MAX_ROLES));
+  const result = [];
+  const seen = new Set();
+
+  for (const item of Array.isArray(workItems) ? workItems : []) {
+    const agentId = cleanText(item?.agent_id || item?.agent || "");
+    const task = cleanText(item?.task || "");
+    if (!agentId || !task || seen.has(agentId) || (allowed.size > 0 && !allowed.has(agentId))) {
+      continue;
+    }
+    seen.add(agentId);
+    result.push({
+      agent_id: agentId,
+      task,
+      role: cleanText(item?.role || ""),
+      status: "pending",
+    });
+    if (result.length >= maxItems) {
+      break;
+    }
+  }
+
+  return result;
+}
+
+function buildSingleAgentWorkItems({
+  primaryAgentId = "",
+  objective = "",
+  existingWorkItems = [],
+} = {}) {
+  const normalizedPrimaryAgentId = cleanText(primaryAgentId) || "generalist";
+  const keptItems = limitExecutiveWorkItems(existingWorkItems, {
+    allowedAgentIds: [normalizedPrimaryAgentId],
+    maxItems: 1,
+  }).map((item) => ({
+    ...item,
+    role: "primary",
+    status: "pending",
+  }));
+
+  if (keptItems.length > 0) {
+    return keptItems;
+  }
+
+  const task = normalizedPrimaryAgentId === "generalist"
+    ? `主責收斂這個任務：${cleanText(objective)}`
+    : `從 /${normalizedPrimaryAgentId} 的專責角度處理：${cleanText(objective)}`;
+
+  return task
+    ? [{
+        agent_id: normalizedPrimaryAgentId,
+        task,
+        role: "primary",
+        status: "pending",
+      }]
+    : [];
+}
+
+function trimExecutiveDecisionRoleCounts(decision = {}) {
+  const primaryAgentId = getRegisteredAgent(cleanText(decision.primary_agent_id || ""))
+    ? cleanText(decision.primary_agent_id)
+    : "generalist";
+  const supportingAgentIds = uniqueRegisteredAgentIds(
+    (Array.isArray(decision.supporting_agent_ids) ? decision.supporting_agent_ids : [])
+      .map((item) => cleanText(item))
+      .filter((item) => item && item !== primaryAgentId),
+    EXECUTIVE_MAX_SUPPORTING_ROLES,
+  );
+  const allowedAgentIds = [primaryAgentId, ...supportingAgentIds];
+
+  return {
+    ...decision,
+    primary_agent_id: primaryAgentId,
+    next_agent_id: getRegisteredAgent(cleanText(decision.next_agent_id || ""))
+      ? cleanText(decision.next_agent_id)
+      : primaryAgentId,
+    supporting_agent_ids: supportingAgentIds,
+    work_items: limitExecutiveWorkItems(decision.work_items, {
+      allowedAgentIds,
+      maxItems: EXECUTIVE_MAX_ROLES,
+    }),
+  };
+}
+
+function applyDeterministicExecutiveAgentSelection(decision = {}, fallbackText = "", activeTask = null) {
+  const normalizedText = cleanText(String(fallbackText || "").toLowerCase());
+  const normalizedDecision = trimExecutiveDecisionRoleCounts(decision);
+  if (!normalizedText) {
+    return normalizedDecision;
+  }
+
+  const explicitAgentIds = collectExplicitExecutiveAgentIds(normalizedText)
+    .filter((agentId) => agentId !== "generalist");
+  const hasSelectionOverride = explicitAgentIds.length > 0 || hasExecutiveCompoundIntent(normalizedText);
+
+  if (activeTask?.id && !hasSelectionOverride) {
+    return normalizedDecision;
+  }
+
+  const detectedAgentIds = uniqueRegisteredAgentIds([
+    ...explicitAgentIds,
+    ...detectDeterministicSpecialistAgentIds(normalizedText),
+  ], EXECUTIVE_MAX_ROLES);
+  const objective = cleanText(normalizedDecision.objective || fallbackText);
+  const shouldSeedSingleRoleWorkItems = normalizedDecision.work_items.length > 0
+    || normalizedDecision.action === "start"
+    || normalizedDecision.action === "handoff";
+  const singleRoleFallbackReason = normalizedDecision.action === "start" || normalizedDecision.action === "handoff";
+
+  if (hasExecutiveCompoundIntent(normalizedText) && detectedAgentIds.length >= 2) {
+    const primaryAgentId = explicitAgentIds[0] || "generalist";
+    const supportingAgentIds = uniqueRegisteredAgentIds(
+      detectedAgentIds.filter((agentId) => agentId !== primaryAgentId),
+      EXECUTIVE_MAX_SUPPORTING_ROLES,
+    );
+    return trimExecutiveDecisionRoleCounts({
+      ...normalizedDecision,
+      primary_agent_id: primaryAgentId,
+      next_agent_id: primaryAgentId,
+      supporting_agent_ids: supportingAgentIds,
+      reason: cleanText(normalizedDecision.reason)
+        || "複合請求命中多個 distinct specialist 需求，使用最小 multi-agent 分工。",
+      work_items: buildCollaborativeWorkItems({
+        primaryAgentId,
+        supportingAgentIds,
+        objective,
+      }),
+    });
+  }
+
+  if (explicitAgentIds.length > 0) {
+    const primaryAgentId = explicitAgentIds[0];
+    return trimExecutiveDecisionRoleCounts({
+      ...normalizedDecision,
+      primary_agent_id: primaryAgentId,
+      next_agent_id: primaryAgentId,
+      supporting_agent_ids: [],
+      reason: cleanText(normalizedDecision.reason)
+        || (singleRoleFallbackReason ? `使用者明確指定 /${primaryAgentId}，不擴張額外 specialist。` : ""),
+      work_items: shouldSeedSingleRoleWorkItems
+        ? buildSingleAgentWorkItems({
+            primaryAgentId,
+            objective,
+            existingWorkItems: normalizedDecision.work_items,
+          })
+        : [],
+    });
+  }
+
+  return trimExecutiveDecisionRoleCounts({
+    ...normalizedDecision,
+    primary_agent_id: "generalist",
+    next_agent_id: "generalist",
+    supporting_agent_ids: [],
+    reason: cleanText(normalizedDecision.reason)
+      || (singleRoleFallbackReason ? "簡單單一意圖請求，預設由 generalist 處理。" : ""),
+    work_items: shouldSeedSingleRoleWorkItems
+      ? buildSingleAgentWorkItems({
+          primaryAgentId: "generalist",
+          objective,
+          existingWorkItems: normalizedDecision.work_items,
+        })
+      : [],
+  });
+}
+
 function buildCollaborativeWorkItems({ primaryAgentId = "", supportingAgentIds = [], objective = "" } = {}) {
   const objectiveText = cleanText(objective);
   const result = [];
@@ -160,6 +488,9 @@ function buildCollaborativeWorkItems({ primaryAgentId = "", supportingAgentIds =
     const normalizedAgentId = cleanText(agentId);
     const normalizedTask = cleanText(task);
     if (!normalizedAgentId || !normalizedTask || seen.has(normalizedAgentId)) {
+      return;
+    }
+    if (result.length >= EXECUTIVE_MAX_ROLES) {
       return;
     }
     seen.add(normalizedAgentId);
@@ -5437,20 +5768,22 @@ function normalizePlannerDecision(decision = {}, fallbackText = "", activeTask =
     work_items: workItems,
   };
 
+  const hardened = applyDeterministicExecutiveAgentSelection(normalized, fallbackText, activeTask);
+
   return {
-    ...normalized,
+    ...hardened,
     why: cleanText(decision?.why || "") || buildExecutiveDecisionWhy({
-      action: normalized.action,
-      reason: normalized.reason,
-      nextAgentId: normalized.next_agent_id,
+      action: hardened.action,
+      reason: hardened.reason,
+      nextAgentId: hardened.next_agent_id,
     }),
     alternative: normalizeDecisionAlternative(
       decision?.alternative,
       buildExecutiveDecisionAlternative({
-        action: normalized.action,
+        action: hardened.action,
         activeTask,
-        primaryAgentId: normalized.primary_agent_id,
-        nextAgentId: normalized.next_agent_id,
+        primaryAgentId: hardened.primary_agent_id,
+        nextAgentId: hardened.next_agent_id,
       }),
     ),
   };
