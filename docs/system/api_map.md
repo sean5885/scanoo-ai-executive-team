@@ -436,8 +436,9 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Handler: `handleAnswer`
   - Purpose: force user text through planner decision before any execution
   - Response note: planner must first emit strict legacy `{ action, params }` or bounded multi-step `{ steps: [{ action, params }] }`; wrapped/non-JSON output is rejected as `error=planner_failed`
-  - Response note: successful calls still return the structured planner envelope
-  - Response note: controlled planner failures are converted into a natural-language JSON body (`ok`, `answer`, `sources`, `limitations`) and do not expose planner `error`, `execution_result`, or `trace_id` in the response body; request trace remains available through the HTTP trace header / monitoring path
+  - Response note: both success and controlled failure now pass through a final `normalizeUserResponse()` boundary
+  - Response note: the outward body is always natural-language JSON shaped as `{ ok, answer, sources, limitations }`
+  - Response note: planner/executor internals such as `action`, `params`, `error`, `details`, `execution_result`, `trace`, and `trace_id` do not appear in the response body; request trace remains available through the HTTP trace header / monitoring path
 
 - `GET /agent/security/status`
   - Handler: `handleSecurityStatus`

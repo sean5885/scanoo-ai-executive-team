@@ -128,6 +128,27 @@ test("http server records timed out requests in monitoring store", async (t) => 
   assert.equal(item.ok, false);
 });
 
+test("answer route normalizes the exact leaking runtime query into natural-language output", async (t) => {
+  const server = await startTestServer(t);
+  const { port } = server.address();
+
+  const response = await fetch(`http://127.0.0.1:${port}/answer?q=${encodeURIComponent("查 runtime info")}`);
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.ok, true);
+  assert.match(payload.answer || "", /runtime|PID|工作目錄|資料庫路徑/);
+  assert.equal(Array.isArray(payload.sources), true);
+  assert.equal(Array.isArray(payload.limitations), true);
+  assert.equal("action" in payload, false);
+  assert.equal("params" in payload, false);
+  assert.equal("error" in payload, false);
+  assert.equal("trace" in payload, false);
+  assert.equal("trace_id" in payload, false);
+  assert.equal("details" in payload, false);
+  assert.equal("execution_result" in payload, false);
+});
+
 test("answer route converts planner errors into natural-language fallback without internal JSON exposure", async (t) => {
   const server = startHttpServer({
     listen: false,
@@ -162,6 +183,7 @@ test("answer route converts planner errors into natural-language fallback withou
   assert.match(payload.answer || "", /自然語言|安全完成|安全執行/);
   assert.equal("error" in payload, false);
   assert.equal("trace_id" in payload, false);
+  assert.equal("details" in payload, false);
   assert.equal("execution_result" in payload, false);
   assert.doesNotMatch(JSON.stringify(payload), /routing_no_match|business_error|trace_internal_hidden/);
 });
