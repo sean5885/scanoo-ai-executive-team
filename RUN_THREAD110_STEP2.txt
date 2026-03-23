@@ -1,0 +1,15 @@
+Thread110 next step:
+- investigate and stabilize only:
+  1) tests/agent-dispatcher.test.mjs
+  2) tests/agent-registry.test.mjs
+  3) tests/executive-orchestrator.test.mjs
+- classify each failure as:
+  a) code bug
+  b) outdated test expectation
+- fix only agent internal behavior or test mismatch
+- do NOT change workflow/product output
+- do NOT change planner contract / evidence-first format
+- report:
+  changed files
+  fixed tests
+  remaining deferred failures
