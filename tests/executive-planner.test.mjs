@@ -70,8 +70,10 @@ test("planExecutiveTurn builds collaborative work items for multi-agent requests
 
   assert.equal(decision.primary_agent_id, "generalist");
   assert.equal(decision.supporting_agent_ids.length > 0, true);
+  assert.equal(decision.supporting_agent_ids.length <= 2, true);
   assert.equal(Array.isArray(decision.work_items), true);
   assert.equal(decision.work_items.length >= 2, true);
+  assert.equal(decision.work_items.length <= 3, true);
 });
 
 test("planUserInputAction rejects wrapped non-JSON output", async () => {

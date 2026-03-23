@@ -35,8 +35,30 @@ const noopLogger = {
   },
 };
 
+const EXECUTIVE_MAX_ROLES = 3;
+const EXECUTIVE_MAX_SUPPORTING_ROLES = EXECUTIVE_MAX_ROLES - 1;
+
 function sessionKeyFromScope(scope = {}, accountId = "") {
   return cleanText(scope?.session_key || scope?.chat_id || accountId);
+}
+
+function resolveWorkPlanPrimaryAgentId(task = null, decision = null) {
+  const decisionPrimary = cleanText(decision?.next_agent_id || decision?.primary_agent_id || "");
+  if (decisionPrimary && getRegisteredAgent(decisionPrimary)) {
+    return decisionPrimary;
+  }
+  const taskPrimary = cleanText(task?.current_agent_id || task?.primary_agent_id || "");
+  if (taskPrimary && getRegisteredAgent(taskPrimary)) {
+    return taskPrimary;
+  }
+  return "generalist";
+}
+
+function deriveSupportingAgentIds(workPlan = [], primaryAgentId = "") {
+  return (Array.isArray(workPlan) ? workPlan : [])
+    .map((item) => cleanText(item?.agent_id || ""))
+    .filter((agentId) => agentId && agentId !== primaryAgentId)
+    .slice(0, EXECUTIVE_MAX_SUPPORTING_ROLES);
 }
 
 function buildOrchestrationHeader({ action = "", task = null, nextAgent = null, reason = "" } = {}) {
@@ -63,32 +85,65 @@ function summarizeAgentText(text = "", maxChars = 220) {
   return cleanText(String(text || "")).slice(0, maxChars);
 }
 
+function looksLikeAgentFailureText(text = "") {
+  const normalized = cleanText(text);
+  if (!normalized || !normalized.startsWith("{")) {
+    return false;
+  }
+  try {
+    const parsed = JSON.parse(normalized);
+    return parsed?.ok === false;
+  } catch {
+    return false;
+  }
+}
+
 export function normalizeWorkPlan(task = null, decision = null, requestText = "") {
+  const primaryAgentId = resolveWorkPlanPrimaryAgentId(task, decision);
   const plan = Array.isArray(decision?.work_items) && decision.work_items.length
     ? decision.work_items
     : Array.isArray(task?.work_plan)
       ? task.work_plan
       : [];
-  const unique = [];
+  const specialists = [];
+  let mergeItem = null;
   const seen = new Set();
   for (const item of plan) {
-    const agentId = cleanText(item?.agent_id);
+    const requestedAgentId = cleanText(item?.agent_id || item?.agent || "");
+    const agentId = requestedAgentId && getRegisteredAgent(requestedAgentId)
+      ? requestedAgentId
+      : primaryAgentId;
     const work = cleanText(item?.task || requestText);
     if (!agentId || !work || seen.has(agentId)) {
       continue;
     }
     seen.add(agentId);
-    unique.push({
+    const normalizedItem = {
       agent_id: agentId,
       task: work,
-      role: cleanText(item?.role || ""),
+      role: cleanText(item?.role || (agentId === primaryAgentId ? "primary" : "supporting")),
       status: cleanText(item?.status || "pending") || "pending",
-    });
-    if (unique.length >= 8) {
+    };
+    if (agentId === primaryAgentId) {
+      mergeItem = normalizedItem;
+      continue;
+    }
+    specialists.push(normalizedItem);
+    if (specialists.length >= EXECUTIVE_MAX_SUPPORTING_ROLES) {
       break;
     }
   }
-  return unique;
+
+  if (!mergeItem) {
+    mergeItem = {
+      agent_id: primaryAgentId,
+      task: cleanText(requestText || decision?.objective || task?.objective || "主責收斂這個任務"),
+      role: "primary",
+      status: "pending",
+    };
+  }
+
+  return [...specialists.slice(0, EXECUTIVE_MAX_SUPPORTING_ROLES), mergeItem].slice(0, EXECUTIVE_MAX_ROLES);
 }
 
 export function buildVisibleWorkPlan(workPlan = [], { primaryAgentId = "" } = {}) {
@@ -100,7 +155,13 @@ export function buildVisibleWorkPlan(workPlan = [], { primaryAgentId = "" } = {}
     "這輪分工",
     ...items.map((item, index) => {
       const prefix = item.agent_id === primaryAgentId || item.role === "primary" ? "主責" : "支援";
-      const status = item.status === "completed" ? "已完成" : "待處理";
+      const status = item.status === "completed"
+        ? "已完成"
+        : item.status === "failed"
+          ? "失敗"
+          : item.status === "fallback"
+            ? "改走 fallback"
+            : "待處理";
       return `${index + 1}. ${prefix} /${item.agent_id}｜${status}｜${item.task}`;
     }),
   ].join("\n");
@@ -108,7 +169,7 @@ export function buildVisibleWorkPlan(workPlan = [], { primaryAgentId = "" } = {}
 
 export function buildSupportingContext(outputs = []) {
   const lines = [];
-  for (const item of outputs.slice(0, 6)) {
+  for (const item of outputs.slice(0, EXECUTIVE_MAX_SUPPORTING_ROLES)) {
     lines.push(`/${item.agent_id}`);
     lines.push(`- 子任務：${item.task}`);
     lines.push(`- 輸出：${item.summary}`);
@@ -123,7 +184,7 @@ export function buildVisibleSupportingOutputs(outputs = []) {
   }
   return [
     "我另外參考了",
-    ...items.slice(0, 6).map((item, index) =>
+    ...items.slice(0, EXECUTIVE_MAX_SUPPORTING_ROLES).map((item, index) =>
       `${index + 1}. /${item.agent_id}｜子任務：${item.task}｜摘要：${summarizeAgentText(item.summary)}`,
     ),
   ].join("\n");
@@ -664,27 +725,55 @@ export async function finalizeCloudDocWorkflowTask({
   };
 }
 
-async function runSupportingAgents({
+export async function executeWorkItemsSequentially({
   accountId,
   scope,
   event,
-  task,
-  nextAgent,
+  task = null,
   workPlan = [],
+  requestText = "",
+  mergeAgentId = "",
   logger = noopLogger,
+  executeAgentFn = executeRegisteredAgent,
 }) {
-  const supportingItems = workPlan.filter((item) => item.agent_id && item.agent_id !== nextAgent.id);
-  if (!supportingItems.length) {
-    return [];
-  }
+  const designatedMergeAgentId = cleanText(mergeAgentId || task?.current_agent_id || task?.primary_agent_id || "")
+    || "generalist";
+  const normalizedPlan = normalizeWorkPlan(
+    task,
+    {
+      primary_agent_id: designatedMergeAgentId,
+      next_agent_id: designatedMergeAgentId,
+      work_items: workPlan,
+    },
+    requestText,
+  );
+  const specialistItems = normalizedPlan.slice(0, -1);
+  const mergeItem = normalizedPlan.at(-1) || {
+    agent_id: designatedMergeAgentId,
+    task: cleanText(requestText) || "主責收斂這個任務",
+    role: "primary",
+    status: "pending",
+  };
+  const outputs = [];
+  const failedAgents = [];
+  const executedSpecialists = [];
 
-  const settled = await Promise.allSettled(
-    supportingItems.map(async (item) => {
-      const agent = getRegisteredAgent(item.agent_id);
-      if (!agent) {
-        return null;
-      }
-      const reply = await executeRegisteredAgent({
+  for (const item of specialistItems) {
+    const agent = getRegisteredAgent(item.agent_id);
+    if (!agent) {
+      failedAgents.push({
+        agent_id: item.agent_id,
+        task: item.task,
+        error: "agent_not_found",
+      });
+      executedSpecialists.push({
+        ...item,
+        status: "failed",
+      });
+      continue;
+    }
+    try {
+      const reply = await executeAgentFn({
         accountId,
         agent,
         requestText: item.task,
@@ -693,26 +782,111 @@ async function runSupportingAgents({
         logger,
       });
       const summary = cleanText(reply?.text || "");
-      if (!summary) {
-        return null;
+      if (!summary || looksLikeAgentFailureText(summary)) {
+        failedAgents.push({
+          agent_id: agent.id,
+          task: item.task,
+          error: "empty_or_failed_reply",
+        });
+        executedSpecialists.push({
+          ...item,
+          status: "failed",
+        });
+        continue;
       }
-      return {
+      const output = {
         agent_id: agent.id,
         task: item.task,
         summary: summarizeAgentText(summary, 520),
         status: "completed",
       };
-    }),
-  );
-
-  const outputs = settled
-    .map((item) => (item.status === "fulfilled" ? item.value : null))
-    .filter(Boolean);
-
-  for (const item of outputs) {
-    await appendExecutiveAgentOutput(task.id, item);
+      outputs.push(output);
+      executedSpecialists.push({
+        ...item,
+        status: "completed",
+      });
+      if (task?.id) {
+        await appendExecutiveAgentOutput(task.id, output);
+      }
+    } catch (error) {
+      logger.warn("executive_specialist_failed", {
+        agent_id: agent.id,
+        error: logger.compactError(error),
+      });
+      failedAgents.push({
+        agent_id: agent.id,
+        task: item.task,
+        error: cleanText(error?.message || "") || "specialist_failed",
+      });
+      executedSpecialists.push({
+        ...item,
+        status: "failed",
+      });
+    }
   }
-  return outputs;
+
+  const fallbackUsed = failedAgents.length > 0;
+  const mergeCandidates = fallbackUsed
+    ? ["generalist"]
+    : [mergeItem.agent_id, "generalist"].filter((agentId, index, list) => agentId && list.indexOf(agentId) === index);
+
+  let mergeAgent = null;
+  let reply = null;
+  for (const candidateId of mergeCandidates) {
+    const agent = getRegisteredAgent(candidateId);
+    if (!agent) {
+      continue;
+    }
+    try {
+      const candidateReply = await executeAgentFn({
+        accountId,
+        agent,
+        requestText: mergeItem.task || requestText,
+        scope,
+        event,
+        supportingContext: buildSupportingContext(outputs),
+        logger,
+      });
+      if (!cleanText(candidateReply?.text || "") || looksLikeAgentFailureText(candidateReply?.text || "")) {
+        throw new Error("merge_agent_failed");
+      }
+      mergeAgent = agent;
+      reply = candidateReply;
+      break;
+    } catch (error) {
+      logger.warn("executive_merge_agent_failed", {
+        agent_id: agent.id,
+        error: logger.compactError(error),
+      });
+    }
+  }
+
+  const finalWorkPlan = [];
+  const finalSeen = new Set();
+  for (const item of [...executedSpecialists, {
+    agent_id: cleanText(mergeAgent?.id || mergeItem.agent_id || "generalist") || "generalist",
+    task: mergeItem.task || requestText,
+    role: "primary",
+    status: reply?.text ? "completed" : "failed",
+  }]) {
+    if (!item?.agent_id || finalSeen.has(item.agent_id)) {
+      continue;
+    }
+    finalSeen.add(item.agent_id);
+    finalWorkPlan.push(item);
+    if (finalWorkPlan.length >= EXECUTIVE_MAX_ROLES) {
+      break;
+    }
+  }
+
+  return {
+    reply,
+    mergeAgent: mergeAgent || getRegisteredAgent("generalist"),
+    supportingOutputs: outputs,
+    finalWorkPlan,
+    failedAgents,
+    fallbackUsed,
+  };
 }
 
 export async function executeExecutiveTurn({ accountId, event, scope, logger = noopLogger }) {
@@ -815,10 +989,14 @@ export async function executeExecutiveTurn({ accountId, event, scope, logger = n
     },
   });
 
+  const primaryAgentId = resolveWorkPlanPrimaryAgentId(task, decision);
+  const plannedWorkPlan = normalizeWorkPlan(task, decision, requestText);
+  const plannedSupportingAgentIds = deriveSupportingAgentIds(plannedWorkPlan, primaryAgentId);
+
   if (!task) {
     const initialization = buildTaskInitialization({
       objective: decision.objective || requestText,
-      agentId: decision.primary_agent_id || nextAgent.id,
+      agentId: primaryAgentId,
       requestText,
       workflow: slashCommand ? "slash_agent" : "executive_planner",
     });
@@ -831,9 +1009,9 @@ export async function executeExecutiveTurn({ accountId, event, scope, logger = n
       routingHint: "same_session_follow_up",
       traceId: cleanText(scope?.trace_id || event?.trace_id || ""),
       objective: decision.objective || requestText,
-      primaryAgentId: decision.primary_agent_id || nextAgent.id,
-      currentAgentId: nextAgent.id,
-      supportingAgentIds: decision.supporting_agent_ids || [],
+      primaryAgentId,
+      currentAgentId: primaryAgentId,
+      supportingAgentIds: plannedSupportingAgentIds,
       pendingQuestions: decision.pending_questions || [],
       constraints: ["多輪 follow-up 應延續同一個 executive task，除非使用者明確切換或退出"],
       taskType: initialization.task_type,
@@ -846,7 +1024,7 @@ export async function executeExecutiveTurn({ accountId, event, scope, logger = n
       retryPolicy: initialization.retry_policy,
       escalationPolicy: initialization.escalation_policy,
       riskLevel: initialization.risk_level,
-      workPlan: normalizeWorkPlan(null, decision, requestText),
+      workPlan: plannedWorkPlan,
       meta: {
         source: slashCommand ? "slash_agent" : "executive_planner",
         lane: cleanText(scope?.capability_lane || ""),
@@ -859,22 +1037,22 @@ export async function executeExecutiveTurn({ accountId, event, scope, logger = n
     task = await transitionTaskLifecycle(task, "clarified", "task_initialized");
     task = await transitionTaskLifecycle(task, "planned", "planner_selected_agent");
   } else {
-    if (decision.action === "handoff" && activeTask?.current_agent_id !== nextAgent.id) {
+    if (decision.action === "handoff" && activeTask?.current_agent_id !== primaryAgentId) {
       await appendExecutiveTaskHandoff(task.id, {
         from_agent_id: activeTask?.current_agent_id,
-        to_agent_id: nextAgent.id,
+        to_agent_id: primaryAgentId,
         reason: decision.reason,
       });
     }
     task = await updateExecutiveTask(task.id, {
       objective: decision.objective || task.objective,
-      primary_agent_id: task.primary_agent_id || decision.primary_agent_id || nextAgent.id,
-      current_agent_id: nextAgent.id,
+      primary_agent_id: task.primary_agent_id || primaryAgentId,
+      current_agent_id: primaryAgentId,
       workflow_state: "active",
       routing_hint: "same_session_follow_up",
-      supporting_agent_ids: decision.supporting_agent_ids?.length ? decision.supporting_agent_ids : task.supporting_agent_ids,
+      supporting_agent_ids: plannedSupportingAgentIds.length ? plannedSupportingAgentIds : task.supporting_agent_ids,
       pending_questions: decision.pending_questions || [],
-      work_plan: normalizeWorkPlan(task, decision, requestText),
+      work_plan: plannedWorkPlan,
       meta: {
         last_reason: decision.reason || "",
         last_why: decision.why || "",
@@ -888,54 +1066,45 @@ export async function executeExecutiveTurn({ accountId, event, scope, logger = n
   await appendExecutiveTaskTurn(task.id, {
     role: "user",
     text: requestText,
-    agent_id: nextAgent.id,
+    agent_id: primaryAgentId,
   });
 
-  const workPlan = normalizeWorkPlan(task, decision, requestText);
-  const supportingOutputs = await runSupportingAgents({
+  const execution = await executeWorkItemsSequentially({
     accountId,
     scope,
     event,
     task,
-    nextAgent,
-    workPlan,
-    logger,
-  });
-  if (supportingOutputs.length) {
-    task = await updateExecutiveTask(task.id, {
-      work_plan: workPlan.map((item) => ({
-        ...item,
-        status: item.agent_id === nextAgent.id ? item.status : "completed",
-      })),
-    });
-  }
-
-  const reply = await executeRegisteredAgent({
-    accountId,
-    agent: nextAgent,
+    workPlan: plannedWorkPlan,
     requestText,
-    scope,
-    event,
-    supportingContext: buildSupportingContext(
-      supportingOutputs.length ? supportingOutputs : task.agent_outputs || [],
-    ),
+    mergeAgentId: primaryAgentId,
     logger,
   });
+  const reply = execution.reply;
   if (!reply?.text) {
     return reply;
   }
 
+  const effectiveMergeAgent = execution.mergeAgent || getRegisteredAgent(primaryAgentId) || getRegisteredAgent("generalist");
+  const supportingOutputs = execution.supportingOutputs.length ? execution.supportingOutputs : task.agent_outputs || [];
+  task = await updateExecutiveTask(task.id, {
+    current_agent_id: effectiveMergeAgent.id,
+    supporting_agent_ids: deriveSupportingAgentIds(execution.finalWorkPlan, effectiveMergeAgent.id),
+    work_plan: execution.finalWorkPlan,
+  });
+
   await appendExecutiveTaskTurn(task.id, {
     role: "assistant",
     text: reply.text,
-    agent_id: nextAgent.id,
+    agent_id: effectiveMergeAgent.id,
   });
 
   const header = buildOrchestrationHeader({
     action: decision.action,
     task,
-    nextAgent,
-    reason: decision.reason,
+    nextAgent: effectiveMergeAgent,
+    reason: execution.fallbackUsed
+      ? `${cleanText(decision.reason || "") || "specialist failed"}，所以改由 /generalist fail-soft 收斂`
+      : decision.reason,
   });
 
   const finalized = await finalizeExecutiveTaskTurn({
@@ -946,7 +1115,7 @@ export async function executeExecutiveTurn({ accountId, event, scope, logger = n
     reply,
     supportingOutputs: supportingOutputs.length ? supportingOutputs : task.agent_outputs || [],
     routing: {
-      current_agent_id: nextAgent.id,
+      current_agent_id: effectiveMergeAgent.id,
       primary_agent_id: task.primary_agent_id,
       action: decision.action,
       reason: decision.reason,
@@ -959,8 +1128,8 @@ export async function executeExecutiveTurn({ accountId, event, scope, logger = n
     verification: finalized?.verification || null,
     text: buildExecutiveBrief({
       header,
-      workPlan,
-      primaryAgentId: nextAgent.id,
+      workPlan: execution.finalWorkPlan,
+      primaryAgentId: effectiveMergeAgent.id,
       supportingOutputs: supportingOutputs.length ? supportingOutputs : task.agent_outputs || [],
       primaryReplyText: reply.text,
     }),

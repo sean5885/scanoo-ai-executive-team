@@ -88,6 +88,8 @@ const executiveExitSignals = [
   "換下一個任務",
 ];
 
+const EXECUTIVE_MAX_ROLES = 3;
+const EXECUTIVE_MAX_SUPPORTING_ROLES = EXECUTIVE_MAX_ROLES - 1;
 const PLANNER_CONTEXT_WINDOW_MAX_CHARS = 2400;
 const PLANNER_CONTEXT_WINDOW_SUMMARY_MAX_CHARS = 640;
 const PLANNER_RECENT_STEP_LIMIT = 6;
@@ -138,7 +140,7 @@ function buildCollaborativeWorkItems({ primaryAgentId = "", supportingAgentIds =
 
   push(primaryAgentId, `主責收斂這個任務：${objectiveText}`, "primary");
 
-  for (const agentId of supportingAgentIds) {
+  for (const agentId of supportingAgentIds.slice(0, EXECUTIVE_MAX_SUPPORTING_ROLES)) {
     if (agentId === "consult") {
       push(agentId, `從問題拆解與方案比較角度補充：${objectiveText}`, "supporting");
     } else if (agentId === "product") {
@@ -4029,7 +4031,7 @@ async function buildPlannerPrompt({ text, activeTask = null } = {}) {
     "若使用者是在找資料、搜尋內容、查某個文檔，必須先嘗試對應 tool；不要未調 tool 就直接 fail-soft。",
     "若需要判斷找不到，前提必須是已經嘗試過對應 tool；禁止用純文字直接回答找不到。",
     "pending_questions 僅保留必要問題，使用短句，最多 4 條。",
-    "work_items 僅保留必要工作項，每項必須有 agent_id、task、role，最多 8 條。",
+    "work_items 僅保留必要工作項，每項必須有 agent_id、task、role，最多 3 條。",
   ]);
 
   const governed = governPromptSections({
@@ -4051,9 +4053,11 @@ async function buildPlannerPrompt({ text, activeTask = null } = {}) {
           "action 只能是 start、continue、handoff、clarify。",
           "objective 必須是當前回合的單一句任務目標，避免空泛描述。",
           "primary_agent_id、next_agent_id 必須來自 registry。",
+          "最多 3 個角色，包含主責在內。",
+          "若有 supporting agent，supporting_agent_ids 最多 2 個，且不要重複 primary_agent_id。",
           "若不需要 supporting agent，supporting_agent_ids 回傳空陣列。",
           "若不需要問題，pending_questions 回傳空陣列。",
-          "若不需要工作項，work_items 回傳空陣列。",
+          "若不需要工作項，work_items 回傳空陣列；若需要，最多 3 項且每個 agent 只出現一次。",
           "若資訊不足但仍可繼續，不要選 clarify；優先 start 或 continue。",
           "若 planner_task_context 有 focus_hint，決策時先沿用該 task 與其文件/主題上下文。",
           "若 planner_task_context 有 unfinished_hint，決策時優先引用既有 task。",
@@ -4070,7 +4074,7 @@ async function buildPlannerPrompt({ text, activeTask = null } = {}) {
           'shape: {"action":"start|continue|handoff|clarify","objective":"...","primary_agent_id":"...","next_agent_id":"...","supporting_agent_ids":["..."],"reason":"...","pending_questions":[],"work_items":[]}',
           "優先沿用 focused task、unfinished、blocked、in_progress 提示。",
           "list/search/detail 必須分清楚；找資料前先嘗試對應 tool。",
-          "pending_questions 最多 4 條；work_items 最多 8 條。",
+          "pending_questions 最多 4 條；work_items 最多 3 條；supporting_agent_ids 最多 2 個。",
         ].join("\n"),
         required: true,
         maxTokens: 200,
@@ -5281,29 +5285,50 @@ function normalizePlannerDecision(decision = {}, fallbackText = "", activeTask =
   const primaryAgentId = cleanText(decision.primary_agent_id || decision.primary_agent || "");
   const nextAgentId = cleanText(decision.next_agent_id || decision.next_agent || primaryAgentId);
   const normalizedPrimaryAgentId = getRegisteredAgent(primaryAgentId) ? primaryAgentId : "generalist";
+  const supportingAgentIds = [];
+  const supportingSeen = new Set([normalizedPrimaryAgentId]);
+  for (const item of Array.isArray(decision.supporting_agent_ids) ? decision.supporting_agent_ids : []) {
+    const agentId = cleanText(item);
+    if (!agentId || supportingSeen.has(agentId) || !getRegisteredAgent(agentId)) {
+      continue;
+    }
+    supportingSeen.add(agentId);
+    supportingAgentIds.push(agentId);
+    if (supportingAgentIds.length >= EXECUTIVE_MAX_SUPPORTING_ROLES) {
+      break;
+    }
+  }
+  const workItems = [];
+  const workItemSeen = new Set();
+  for (const item of Array.isArray(decision.work_items) ? decision.work_items : []) {
+    const requestedAgentId = cleanText(item?.agent_id || item?.agent || "");
+    const normalizedAgentId = getRegisteredAgent(requestedAgentId) ? requestedAgentId : normalizedPrimaryAgentId;
+    const task = cleanText(item?.task || "");
+    if (!task || workItemSeen.has(normalizedAgentId)) {
+      continue;
+    }
+    workItemSeen.add(normalizedAgentId);
+    workItems.push({
+      agent_id: normalizedAgentId,
+      task,
+      role: cleanText(item?.role || ""),
+      status: "pending",
+    });
+    if (workItems.length >= EXECUTIVE_MAX_ROLES) {
+      break;
+    }
+  }
   const normalized = {
     action: cleanText(decision.action || "continue") || "continue",
     objective: cleanText(decision.objective || fallbackText),
     primary_agent_id: normalizedPrimaryAgentId,
     next_agent_id: getRegisteredAgent(nextAgentId) ? nextAgentId : getRegisteredAgent(primaryAgentId) ? primaryAgentId : "generalist",
-    supporting_agent_ids: (Array.isArray(decision.supporting_agent_ids) ? decision.supporting_agent_ids : [])
-      .map((item) => cleanText(item))
-      .filter((item) => getRegisteredAgent(item)),
+    supporting_agent_ids: supportingAgentIds,
     reason: cleanText(decision.reason || ""),
     pending_questions: Array.isArray(decision.pending_questions)
       ? decision.pending_questions.map((item) => cleanText(item)).filter(Boolean).slice(0, 4)
       : [],
-    work_items: (Array.isArray(decision.work_items) ? decision.work_items : [])
-      .map((item) => ({
-        agent_id: getRegisteredAgent(cleanText(item?.agent_id || item?.agent || ""))
-          ? cleanText(item?.agent_id || item?.agent || "")
-          : normalizedPrimaryAgentId,
-        task: cleanText(item?.task || ""),
-        role: cleanText(item?.role || ""),
-        status: "pending",
-      }))
-      .filter((item) => item.task)
-      .slice(0, 8),
+    work_items: workItems,
   };
 
   return {

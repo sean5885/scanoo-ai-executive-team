@@ -748,6 +748,8 @@ The normalized executive decision shape in that same module now also carries det
 
 `why` and simplified `alternative` are normalized by runtime rather than trusted as free-form model output, so executive routing stays explainable without loosening the existing JSON decision boundary.
 
+For the current Thread103 baseline, runtime normalization also caps executive collaboration to at most three unique roles per turn, with at most two `supporting_agent_ids`. Downstream execution in `/Users/seanhan/Documents/Playground/src/executive-orchestrator.mjs` then runs those work items sequentially instead of in parallel.
+
 That same decision-side task context now also includes a bounded `focus task` layer on top of `task driving v1`. It remains deterministic and local-only:
 
 - scope resolution prefers `active_doc`, then matching `source_title` mentioned in the current user text, then matching task titles, then `active_theme`, then latest scope

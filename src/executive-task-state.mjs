@@ -58,7 +58,7 @@ function normalizeTask(task = {}) {
     goal: normalizeText(task.goal || task.objective),
     primary_agent_id: normalizeText(task.primary_agent_id),
     current_agent_id: normalizeText(task.current_agent_id || task.primary_agent_id),
-    supporting_agent_ids: normalizeList(task.supporting_agent_ids, 6),
+    supporting_agent_ids: normalizeList(task.supporting_agent_ids, 2),
     pending_questions: normalizeList(task.pending_questions, 8),
     constraints: normalizeList(task.constraints, 8),
     success_criteria: normalizeList(task.success_criteria, 10),
@@ -77,7 +77,7 @@ function normalizeTask(task = {}) {
             status: normalizeText(item?.status || "pending") || "pending",
           }))
           .filter((item) => item.agent_id && item.task)
-          .slice(0, 8)
+          .slice(0, 3)
       : [],
     evidence: Array.isArray(task.evidence)
       ? task.evidence

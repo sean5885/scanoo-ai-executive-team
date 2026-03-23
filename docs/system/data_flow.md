@@ -215,9 +215,9 @@ This request-flow mirror now reflects the current fail-closed routing baseline.
      - start a new task
      - continue the current task
      - hand off to another registered agent
-     - attach a compact work plan with primary and supporting agents
-     - run supporting-agent passes in parallel async calls
-     - feed those supporting outputs back into the primary agent for synthesis
+     - attach a compact normalized work plan with at most three roles
+     - run those work items sequentially
+     - if any specialist fails, fall back to `/generalist` for final synthesis
      - render the final visible reply as:
        - direct answer first
        - orchestration context only when useful
