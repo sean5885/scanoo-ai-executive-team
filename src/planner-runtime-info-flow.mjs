@@ -36,11 +36,16 @@ function looksLikeRuntimeInfoQuery(userIntent = "") {
 
   return (
     normalizedIntent.includes("runtime")
+    || normalizedIntent.includes("runtime status")
     || normalizedIntent.includes("db path")
     || normalizedIntent.includes("pid")
     || normalizedIntent.includes("cwd")
     || normalizedIntent.includes("service start")
     || normalizedIntent.includes("service_start")
+    || normalizedIntent.includes("穩不穩")
+    || normalizedIntent.includes("風險")
+    || normalizedIntent.includes("運行情況")
+    || normalizedIntent.includes("系統狀態")
     || normalizedIntent.includes("運行資訊")
     || normalizedIntent.includes("运行信息")
   );
