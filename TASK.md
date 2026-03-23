@@ -1,6 +1,7 @@
-Thread99:
-- 定義 planner_contract.json（actions/errors/routing_reason）
-- 建 planner-contract-regression.test.mjs（覆蓋 search/invalid/no-match/fallback/ordinal）
-- 對齊 executive-planner/router/doc-query（符合 contract）
-- 不新增功能、不碰 cleaner/UI
-- 跑：node --test && node scripts/regression-check.mjs
+Thread100:
+- 實作 routing precedence（follow_up > doc > search > fallback）
+- 禁止 ambiguous routing（必須唯一 action）
+- search+content 強制 search
+- 對齊 router/planner/doc-query
+- 補 routing regression
+- 跑 regression-check

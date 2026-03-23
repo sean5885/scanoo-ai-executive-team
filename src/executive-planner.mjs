@@ -21,6 +21,7 @@ import { getRegisteredAgent, listRegisteredAgents, parseRegisteredAgentCommand }
 import { cleanText } from "./message-intent-utils.mjs";
 import { callOpenClawTextGeneration } from "./openclaw-text-service.mjs";
 import { FALLBACK_DISABLED, INVALID_ACTION, ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
+import { hasDocSearchIntent } from "./router.js";
 import { createRequestId, emitRateLimitedAlert, emitToolExecutionLog } from "./runtime-observability.mjs";
 import {
   compactPlannerConversationMemory as compactPlannerConversationMemoryLayer,
@@ -2046,13 +2047,6 @@ export function selectPlannerTool({
     reason = "命中複合任務，優先使用 preset。";
     routingReason = "selector_create_and_list_doc";
   } else if (
-    (normalizedIntent.includes("搜尋") || normalizedIntent.includes("搜索") || normalizedIntent.includes("search") || normalizedIntent.includes("查詢") || normalizedIntent.includes("查询") || normalizedIntent.includes("找"))
-    && (normalizedIntent.includes("打開") || normalizedIntent.includes("打开") || normalizedIntent.includes("讀") || normalizedIntent.includes("读") || normalizedIntent.includes("內容") || normalizedIntent.includes("内容"))
-  ) {
-    selectedAction = "search_and_detail_doc";
-    reason = "使用者同時要求搜尋與打開內容，優先走 search-and-detail。";
-    routingReason = "selector_search_and_detail_doc";
-  } else if (
     normalizedTaskType === "doc_write"
     || normalizedIntent.includes("建立文件")
     || normalizedIntent.includes("创建文档")
@@ -2103,6 +2097,16 @@ export function selectPlannerTool({
     selectedAction = "get_runtime_info";
     reason = "使用者意圖是查詢當前執行環境資訊，對應 runtime info bridge。";
     routingReason = "selector_get_runtime_info";
+  } else if (hasDocSearchIntent(normalizedIntent)) {
+    selectedAction = "search_company_brain_docs";
+    reason = "使用者意圖是搜尋文件，固定走唯一 search action。";
+    routingReason = "selector_search_company_brain_docs";
+  } else if (
+    /整理|解釋|解释|說明|说明|重點|重点|打開|打开|讀|读|內容|内容|寫了什麼|写了什么|這份文件|那份文件|這個文件|這份|那份|這個/.test(normalizedIntent)
+  ) {
+    selectedAction = "search_and_detail_doc";
+    reason = "使用者意圖是整理或閱讀文件內容，對應 search-and-detail。";
+    routingReason = "selector_search_and_detail_doc";
   }
 
   if (!selectedAction) {

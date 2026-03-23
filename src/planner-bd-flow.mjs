@@ -1,6 +1,7 @@
 import { cleanText } from "./message-intent-utils.mjs";
 import { createPlannerFlow } from "./planner-flow-runtime.mjs";
 import { attachPlannerActionLayer } from "./planner-action-layer.mjs";
+import { hasDocSearchIntent } from "./router.js";
 import {
   buildDocQueryPayload,
   formatDocQueryExecutionResult,
@@ -79,7 +80,7 @@ function selectBdAction(userIntent = "", {
     return followupAction;
   }
 
-  if (/整理|進度|进度|跟進|跟进|分析/.test(normalizedIntent)) {
+  if (!hasDocSearchIntent(normalizedIntent) && /整理|進度|进度|跟進|跟进|分析/.test(normalizedIntent)) {
     return "search_and_detail_doc";
   }
 

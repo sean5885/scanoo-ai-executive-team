@@ -55,6 +55,8 @@ Thread 62 personal-lane misroute regression pack checkpoint 只擴充 Thread 61 
 
 Thread 63 doc-boundary hardening checkpoint 在既有 Thread 61/62 的 personal-lane 誤路由修補上，再補一層共用 doc/company-brain intent boundary guard：把文檔整理、文檔分類、`排除 / 摘出 / 保留`、以及 `company_brain / 知識庫` 這組高置信語意收斂成共用 intent 判斷，固定不得走 generic personal lane；本 checkpoint 包含 Thread 62 regression pack，且只更新 intent guard、相關測試與文件，不擴大到其他 lane，不新增 fallback，也不改 release-check、daily-status、history/compare。
 
+Thread 100 routing deterministic checkpoint 在既有 planner/doc-query/router 基礎上把 doc routing precedence 收斂成 `follow_up -> doc -> search -> fallback`，要求單一 unique action，並把 `搜尋/查詢 + 內容/打開/流程` 這類複合 phrasing 固定成 generic `search_company_brain_docs`，除非 active doc/candidate follow-up 已能唯一解析成 detail；同一個 checkpoint 也同步對齊 planner selector、doc-query themed flows 與 checked-in regression fixture，不新增 fallback，也不改 release-check、daily-status、history/compare。
+
 目前 `self-check` / `release-check` 也會把這組 regression family 接進 decision signal，但仍是 read-only 判讀：
 
 - 只要 routing line 本身已經是 `degrade` / `fail` 或 compare 已判成 obvious regression，才會進一步判斷是否屬於 doc-boundary family
@@ -198,7 +200,8 @@ Thread 63 doc-boundary hardening checkpoint 在既有 Thread 61/62 的 personal-
 新增的 checked-in coverage 重點：
 
 - 中文自然語句的模糊文件跟進，包含會落到 `ROUTING_NO_MATCH` 的 fail-closed 邊界
-- 搜尋後直接打開內容的多種中文表述
+- 搜尋/查詢 + 內容/打開/流程 的多種中文表述，現在在沒有 active follow-up context 時固定命中 generic search
+- active doc / active candidate 存在時，帶有 `這份 / 第一份 / 第N份` 的 follow-up phrasing 仍優先命中 detail
 - `doc` / `runtime` 邊界語句，包含同時帶有 `文件` / `摘要` / `db path` / `runtime` 等信號時，實際仍被 runtime flow 優先接走的 case
 - doc editor 類的自然中文改稿請求
 - cloud-doc re-review 的自然中文排除語句，包含 `把非 scanoo 的文檔摘出去`、`摘出無關文檔`、`只保留某主題文檔，把非該主題文檔排出去`、`重新審核哪些文件不屬於某集合` 等同 family case；這批 wording 都固定不得誤落 `personal_assistant`

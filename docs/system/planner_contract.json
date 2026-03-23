@@ -100,6 +100,9 @@
     "selector_search_and_detail_doc": {
       "surface": ["planner"]
     },
+    "selector_search_company_brain_docs": {
+      "surface": ["planner"]
+    },
     "selector_create_doc": {
       "surface": ["planner"]
     },

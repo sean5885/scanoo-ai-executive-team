@@ -28,8 +28,8 @@ const docCases = [
   }),
   createCase("doc", "003", "請搜尋 onboarding 文件流程並解釋", {
     lane: "knowledge_assistant",
-    planner_action: "search_and_detail_doc",
-    agent_or_tool: "tool:search_and_detail_doc",
+    planner_action: "search_company_brain_docs",
+    agent_or_tool: "tool:search_company_brain_docs",
   }),
   createCase("doc", "004", "幫我搜尋 onboarding SOP 文件", {
     lane: "knowledge_assistant",
@@ -255,7 +255,7 @@ const docCases = [
     planner_action: "search_company_brain_docs",
     agent_or_tool: "tool:search_company_brain_docs",
   }),
-  createCase("doc", "027", "根據文件幫我看這份", {
+  createCase("doc", "027", "根據文件查一下這份內容", {
     lane: "knowledge_assistant",
     planner_action: "get_company_brain_doc_detail",
     agent_or_tool: "tool:get_company_brain_doc_detail",
@@ -286,28 +286,28 @@ const docCases = [
   }),
   createCase("doc", "029", "搜尋 onboarding SOP 然後打開內容", {
     lane: "knowledge_assistant",
-    planner_action: "search_and_detail_doc",
-    agent_or_tool: "tool:search_and_detail_doc",
+    planner_action: "search_company_brain_docs",
+    agent_or_tool: "tool:search_company_brain_docs",
   }),
   createCase("doc", "030", "搜索交付驗收文件並讀內容", {
     lane: "knowledge_assistant",
-    planner_action: "search_and_detail_doc",
-    agent_or_tool: "tool:search_and_detail_doc",
+    planner_action: "search_company_brain_docs",
+    agent_or_tool: "tool:search_company_brain_docs",
   }),
   createCase("doc", "031", "查詢客戶提案文件內容", {
     lane: "knowledge_assistant",
-    planner_action: "search_and_detail_doc",
-    agent_or_tool: "tool:search_and_detail_doc",
+    planner_action: "search_company_brain_docs",
+    agent_or_tool: "tool:search_company_brain_docs",
   }),
   createCase("doc", "032", "幫我搜尋客戶跟進文件並打開內容", {
     lane: "knowledge_assistant",
-    planner_action: "search_and_detail_doc",
-    agent_or_tool: "tool:search_and_detail_doc",
+    planner_action: "search_company_brain_docs",
+    agent_or_tool: "tool:search_company_brain_docs",
   }),
   createCase("doc", "033", "查一下 onboarding 文件內容", {
     lane: "knowledge_assistant",
-    planner_action: "search_and_detail_doc",
-    agent_or_tool: "tool:search_and_detail_doc",
+    planner_action: "search_company_brain_docs",
+    agent_or_tool: "tool:search_company_brain_docs",
   }),
   createCase("doc", "034", "搜尋 onboarding 文件", {
     lane: "knowledge_assistant",
@@ -601,8 +601,8 @@ const mixedCases = [
   }),
   createCase("mixed", "011", "幫我搜尋 onboarding 文件並直接打開內容", {
     lane: "knowledge_assistant",
-    planner_action: "search_and_detail_doc",
-    agent_or_tool: "tool:search_and_detail_doc",
+    planner_action: "search_company_brain_docs",
+    agent_or_tool: "tool:search_company_brain_docs",
   }),
   createCase("mixed", "012", "幫我列出知識庫文件", {
     lane: "knowledge_assistant",

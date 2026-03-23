@@ -1,6 +1,7 @@
 import { cleanText } from "./message-intent-utils.mjs";
 import { createPlannerFlow } from "./planner-flow-runtime.mjs";
 import { attachPlannerActionLayer } from "./planner-action-layer.mjs";
+import { hasDocSearchIntent } from "./router.js";
 import {
   buildDocQueryPayload,
   formatDocQueryExecutionResult,
@@ -82,7 +83,8 @@ function selectOkrAction(userIntent = "", {
   }
 
   if (
-    /整理|解釋|说明|說明|重點|重点|進度|进度|todo|待辦|待办/.test(normalizedIntent)
+    !hasDocSearchIntent(normalizedIntent)
+    && /整理|解釋|说明|說明|重點|重点|進度|进度|todo|待辦|待办/.test(normalizedIntent)
   ) {
     return "search_and_detail_doc";
   }

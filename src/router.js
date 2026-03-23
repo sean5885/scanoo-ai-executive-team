@@ -1,6 +1,12 @@
 import { cleanText } from "./message-intent-utils.mjs";
 import { ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
 
+const DOC_SEARCH_INTENT_RE = /找|搜尋|搜索|查|search/i;
+const DOC_SUMMARY_INTENT_RE = /整理|解釋|解释/;
+const DOC_DETAIL_CONTENT_INTENT_RE = /打開|打开|讀|读|內容|内容|寫了什麼|写了什么/;
+const DOC_PRONOUN_FOLLOW_UP_INTENT_RE = /這份文件|那份文件|這個文件|這份|那份|這個/;
+const DOC_ORDINAL_FOLLOW_UP_INTENT_RE = /第(?:1|一|2|二|3|三|4|四|5|五)份|第(?:1|一|2|二|3|三|4|四|5|五)個|打開第(?:1|一|2|二|3|三|4|四|5|五)/;
+
 function buildRouteDecision({
   action = "",
   preset = "",
@@ -38,61 +44,139 @@ function getRouteTarget(routeDecision = null) {
   return cleanText(routeDecision.selected_target || routeDecision.action || routeDecision.preset || "");
 }
 
-function route(q = "", { activeDoc = null, activeCandidates = [] } = {}) {
-  const text = String(q || "");
-  const wantsSearch = /找|搜尋|搜索|查|search/.test(text);
-  const wantsOpenDetail = /打開|打开|讀|读|內容|内容|寫了什麼|写了什么/.test(text);
+function hasDocSearchIntent(text = "") {
+  return DOC_SEARCH_INTENT_RE.test(String(text || ""));
+}
 
-  if (/整理|解釋/.test(text)) {
-    return buildRouteDecision({
+function hasDocSummaryIntent(text = "") {
+  return DOC_SUMMARY_INTENT_RE.test(String(text || ""));
+}
+
+function hasDocDetailContentIntent(text = "") {
+  return DOC_DETAIL_CONTENT_INTENT_RE.test(String(text || ""));
+}
+
+function hasDocPronounFollowUpIntent(text = "") {
+  return DOC_PRONOUN_FOLLOW_UP_INTENT_RE.test(String(text || ""));
+}
+
+function hasDocOrdinalFollowUpIntent(text = "") {
+  return DOC_ORDINAL_FOLLOW_UP_INTENT_RE.test(String(text || ""));
+}
+
+function selectUniqueRouteCandidate(candidates = []) {
+  const normalizedCandidates = Array.isArray(candidates)
+    ? candidates.filter((candidate) => candidate && typeof candidate === "object")
+    : [];
+  if (normalizedCandidates.length === 0) {
+    return null;
+  }
+
+  const uniqueTargets = new Set(
+    normalizedCandidates
+      .map((candidate) => cleanText(candidate.action) || `preset:${cleanText(candidate.preset)}`)
+      .filter(Boolean),
+  );
+
+  return uniqueTargets.size === 1 ? normalizedCandidates[0] : null;
+}
+
+function resolveFollowUpRouteCandidate(text = "", {
+  activeDoc = null,
+  activeCandidates = [],
+} = {}) {
+  const candidates = [];
+
+  if (
+    Array.isArray(activeCandidates)
+    && activeCandidates.length > 0
+    && hasDocOrdinalFollowUpIntent(text)
+  ) {
+    candidates.push({
+      action: "get_company_brain_doc_detail",
+      routingReason: "doc_query_active_candidate_detail",
+    });
+  }
+
+  if (
+    cleanText(activeDoc?.doc_id)
+    && (hasDocPronounFollowUpIntent(text) || hasDocDetailContentIntent(text))
+  ) {
+    candidates.push({
+      action: "get_company_brain_doc_detail",
+      routingReason: "doc_query_active_doc_detail",
+    });
+  }
+
+  return selectUniqueRouteCandidate(candidates);
+}
+
+function resolveDocRouteCandidate(text = "", {
+  searchIntent = false,
+  activeDoc = null,
+} = {}) {
+  if (searchIntent) {
+    return null;
+  }
+
+  const candidates = [];
+
+  if (hasDocSummaryIntent(text)) {
+    candidates.push({
       preset: "search_and_detail_doc",
       routingReason: "doc_query_search_and_detail",
     });
   }
+
+  if (
+    !cleanText(activeDoc?.doc_id)
+    && (hasDocPronounFollowUpIntent(text) || hasDocDetailContentIntent(text))
+  ) {
+    candidates.push({
+      preset: "search_and_detail_doc",
+      routingReason: "doc_query_search_and_detail",
+    });
+  }
+
+  return selectUniqueRouteCandidate(candidates);
+}
+
+function route(q = "", { activeDoc = null, activeCandidates = [] } = {}) {
+  const text = String(q || "");
+  const wantsSearch = hasDocSearchIntent(text);
+  const followUpRoute = resolveFollowUpRouteCandidate(text, {
+    activeDoc,
+    activeCandidates,
+  });
+  if (followUpRoute) {
+    return buildRouteDecision(followUpRoute);
+  }
+
+  const docRoute = resolveDocRouteCandidate(text, {
+    searchIntent: wantsSearch,
+    activeDoc,
+  });
+  if (docRoute) {
+    return buildRouteDecision(docRoute);
+  }
+
   if (wantsSearch) {
     return buildRouteDecision({
       action: "search_company_brain_docs",
       routingReason: "doc_query_search",
     });
   }
-  if (
-    Array.isArray(activeCandidates)
-    && activeCandidates.length > 0
-    && /第(?:1|一|2|二|3|三|4|四|5|五)份|第(?:1|一|2|二|3|三|4|四|5|五)個|打開第(?:1|一|2|二|3|三|4|四|5|五)/.test(text)
-  ) {
-    return buildRouteDecision({
-      action: "get_company_brain_doc_detail",
-      routingReason: "doc_query_active_candidate_detail",
-    });
-  }
-  if (/這份文件|那份文件|這個文件|這份|那份|這個/.test(text)) {
-    return activeDoc?.doc_id
-      ? buildRouteDecision({
-          action: "get_company_brain_doc_detail",
-          routingReason: "doc_query_active_doc_detail",
-        })
-      : buildRouteDecision({
-          preset: "search_and_detail_doc",
-          routingReason: "doc_query_search_and_detail",
-        });
-  }
-  if (/打開|讀|內容|寫了什麼/.test(text)) {
-    return activeDoc?.doc_id
-      ? buildRouteDecision({
-          action: "get_company_brain_doc_detail",
-          routingReason: "doc_query_active_doc_detail",
-        })
-      : buildRouteDecision({
-          preset: "search_and_detail_doc",
-          routingReason: "doc_query_search_and_detail",
-        });
-  }
+
   return buildRouteDecision({
     error: ROUTING_NO_MATCH,
     routingReason: "routing_no_match",
   });
 }
 
+export { hasDocDetailContentIntent };
+export { hasDocPronounFollowUpIntent };
+export { hasDocSearchIntent };
+export { hasDocSummaryIntent };
 export { getRouteTarget };
 export { route };
 export default { route };
