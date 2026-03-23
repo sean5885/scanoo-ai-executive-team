@@ -89,6 +89,7 @@ Every agent should define at least:
     {
       "selected_action": "string|null",
       "execution_result": "object|null",
+      "agent_execution": "object",
       "trace_id": "string|null"
     }
     ```

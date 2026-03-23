@@ -46,6 +46,7 @@ import {
   resetPlannerFlowContexts,
   syncPlannerFlowContext,
 } from "./planner-flow-runtime.mjs";
+import { executeAgent } from "./planner/agent-executor.mjs";
 import {
   buildPlannerLifecycleUnfinishedItems,
   getPlannerTaskDecisionContext,
@@ -897,14 +898,106 @@ function buildPlannerPresetRuntimeInput({
   };
 }
 
+function normalizePlannerAgentLane(value = "") {
+  const normalized = cleanText(String(value || "").toLowerCase()).replace(/[\s-]+/g, "_");
+  if (!normalized) {
+    return null;
+  }
+  if (["meeting", "meeting_processing"].includes(normalized)) {
+    return "meeting";
+  }
+  if (["runtime", "runtime_info"].includes(normalized)) {
+    return "runtime";
+  }
+  if (["mixed", "multi_step", "cross_lane"].includes(normalized)) {
+    return "mixed";
+  }
+  if ([
+    "doc",
+    "doc_query",
+    "doc_write",
+    "doc_rewrite",
+    "cloud_doc",
+    "search",
+    "detail",
+    "knowledge",
+    "list_docs",
+  ].includes(normalized)) {
+    return "doc";
+  }
+  return null;
+}
+
+function derivePlannerAgentLane({
+  taskType = "",
+  payload = {},
+  selectedAction = "",
+} = {}) {
+  const payloadLane = normalizePlannerAgentLane(
+    payload?.lane || payload?.agent_lane || payload?.capability_lane || "",
+  );
+  if (payloadLane) {
+    return payloadLane;
+  }
+
+  const taskLane = normalizePlannerAgentLane(taskType);
+  if (taskLane) {
+    return taskLane;
+  }
+
+  const action = cleanText(selectedAction || "");
+  if (action === "get_runtime_info") {
+    return "runtime";
+  }
+  if (action === "runtime_and_list_docs") {
+    return "mixed";
+  }
+  if ([
+    "create_doc",
+    "list_company_brain_docs",
+    "search_company_brain_docs",
+    "get_company_brain_doc_detail",
+    "search_and_detail_doc",
+    "create_and_list_doc",
+    "create_search_detail_list_doc",
+    "update_company_brain_learning_state",
+    "ingest_company_brain_learning",
+  ].includes(action)) {
+    return "doc";
+  }
+
+  return null;
+}
+
+export function resolvePlannerAgentExecution({
+  taskType = "",
+  payload = {},
+  selectedAction = "",
+} = {}) {
+  const lane = derivePlannerAgentLane({
+    taskType,
+    payload,
+    selectedAction,
+  });
+
+  return executeAgent({ lane });
+}
+
 function buildPlannerAgentOutput({
   selectedAction = null,
   executionResult = null,
   traceId = null,
+  taskType = "",
+  payload = {},
 } = {}) {
   return {
     selected_action: selectedAction,
     execution_result: executionResult,
+    agent_execution: resolvePlannerAgentExecution({
+      taskType,
+      payload,
+      selectedAction,
+    }),
     trace_id: traceId,
   };
 }
@@ -2376,6 +2469,8 @@ export async function runPlannerToolFlow({
       selectedAction: cleanText(forcedSelection?.selected_action || forcedSelection?.action || "") || null,
       executionResult: preAbortResult,
       traceId: preAbortResult.trace_id || null,
+      taskType,
+      payload,
     });
   }
   restorePlannerRuntimeContextFromSummary();
@@ -2634,6 +2729,8 @@ export async function runPlannerToolFlow({
     selectedAction: selection.selected_action,
     executionResult,
     traceId,
+    taskType,
+    payload: agentInput.payload,
   });
 }
 
@@ -4753,6 +4850,7 @@ export async function executePlannedUserInput({
         selectedAction: decision.action,
         executionResult: abortedResult,
         traceId: abortedResult.trace_id || null,
+        payload: decision.params,
       });
     } else {
       throw error;
@@ -4765,6 +4863,7 @@ export async function executePlannedUserInput({
     params: decision.params,
     error: cleanText(runtimeResult?.execution_result?.error || "") || null,
     execution_result: runtimeResult?.execution_result || null,
+    agent_execution: runtimeResult?.agent_execution || null,
     trace_id: runtimeResult?.trace_id || null,
     why: cleanText(decision?.why || "") || null,
     alternative: normalizeDecisionAlternative(decision?.alternative),

@@ -43,6 +43,7 @@ Current minimum runtime responsibilities already implemented there:
 - minimal retry policy
 - minimal input self-healing
 - planner stop boundary
+- bounded planner-side `agent_execution` derivation on planner output
 
 This means `planner_agent` currently maps to a runtime module, not just a pure spec.
 
@@ -108,6 +109,14 @@ Boundary:
 - it does not perform tool calls
 - it does not transfer workflow ownership
 - it does not claim a generic multi-agent runtime or full handoff engine
+
+`/Users/seanhan/Documents/Playground/src/executive-planner.mjs` now consumes that helper in a bounded way:
+
+- `runPlannerToolFlow(...)` returns:
+  - `{ "selected_action": "string|null", "execution_result": "object|null", "agent_execution": "object", "trace_id": "string|null" }`
+- `agent_execution` prefers explicit `payload.lane` or `taskType`
+- otherwise it only infers a small checked-in mapping from known planner actions/presets
+- when no bounded mapping exists, output falls back to `fallback_agent`
 
 ## Input Shape
 
