@@ -110,7 +110,11 @@ import {
 } from "./company-brain-review.mjs";
 import { resolveCompanyBrainWriteIntake } from "./company-brain-write-intake.mjs";
 import { applyRewrittenDocument, rewriteDocumentFromComments } from "./doc-comment-rewrite.mjs";
-import { buildPlannedUserInputEnvelope, executePlannedUserInput } from "./executive-planner.mjs";
+import {
+  buildPlannedUserInputEnvelope,
+  buildPlannedUserInputUserFacingReply,
+  executePlannedUserInput,
+} from "./executive-planner.mjs";
 import { applyHeadingTargetedInsert, DocumentTargetingError } from "./doc-targeting.mjs";
 import { listUnseenDocumentComments, markDocumentCommentsSeen } from "./comment-watch-store.mjs";
 import { generateDocumentCommentSuggestionCard } from "./comment-suggestion-workflow.mjs";
@@ -223,13 +227,16 @@ function withTracePayload(res, payload) {
   if (!payload || Array.isArray(payload) || typeof payload !== "object") {
     return payload;
   }
-  if (res?.__trace_id && payload.trace_id == null) {
+  const normalizedPayload = payload.__hide_trace_id === true
+    ? Object.fromEntries(Object.entries(payload).filter(([key]) => key !== "__hide_trace_id"))
+    : payload;
+  if (res?.__trace_id && normalizedPayload.trace_id == null && payload.__hide_trace_id !== true) {
     return {
-      ...payload,
+      ...normalizedPayload,
       trace_id: res.__trace_id,
     };
   }
-  return payload;
+  return normalizedPayload;
 }
 
 function captureResponsePayload(res, payload) {
@@ -5472,6 +5479,7 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger) {
       signal: logger?.__abort_signal || res?.__abort_signal || null,
     });
     const envelope = buildPlannedUserInputEnvelope(result);
+    const userFacingReply = buildPlannedUserInputUserFacingReply(result);
     logger.info("knowledge_answer_completed", {
       selected_action: envelope.action || null,
       ok: envelope.ok,
@@ -5483,7 +5491,7 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger) {
       : envelope.error && !envelope.execution_result
         ? 422
         : 200;
-    jsonResponse(res, statusCode, envelope);
+    jsonResponse(res, statusCode, userFacingReply ? { ...userFacingReply, __hide_trace_id: true } : envelope);
   } catch (error) {
     const abortInfo = resolveRequestAbortInfo({
       signal: logger?.__abort_signal || res?.__abort_signal || null,
@@ -5496,11 +5504,21 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger) {
         error_message: abortInfo.message,
         timeout_ms: abortInfo.timeout_ms,
       });
-      jsonResponse(res, abortInfo.code === "request_timeout" ? 504 : REQUEST_CANCELLED_STATUS_CODE, {
+      const userFacingReply = buildPlannedUserInputUserFacingReply({
         ok: false,
         error: abortInfo.code,
-        message: abortInfo.message,
-        ...(abortInfo.timeout_ms != null ? { timeout_ms: abortInfo.timeout_ms } : {}),
+        reason: abortInfo.code,
+        why: abortInfo.message,
+      }) || {
+        ok: false,
+        answer: abortInfo.message,
+        sources: [],
+        limitations: [],
+      };
+      jsonResponse(res, abortInfo.code === "request_timeout" ? 504 : REQUEST_CANCELLED_STATUS_CODE, {
+        ...userFacingReply,
+        message: userFacingReply.answer,
+        __hide_trace_id: true,
       });
       return;
     }
@@ -5510,8 +5528,13 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger) {
     });
     jsonResponse(res, 500, {
       ok: false,
-      error: "internal_error",
-      message: error.message,
+      answer: "系統內部處理失敗了，所以這次先不回傳不完整結果。",
+      sources: [],
+      limitations: [
+        "詳細 internal error 與 trace 已保留在 runtime/log，不直接暴露給使用者。",
+      ],
+      message: "系統內部處理失敗了，所以這次先不回傳不完整結果。",
+      __hide_trace_id: true,
     });
   }
 }
@@ -5705,9 +5728,14 @@ export function startHttpServer({
           });
           jsonResponse(res, 504, {
             ok: false,
-            error: "request_timeout",
-            message: abortReason.message,
-            timeout_ms: effectiveRequestTimeoutMs,
+            answer: "這次處理逾時了，我還沒有拿到可以安全交付的結果。",
+            sources: [],
+            limitations: [
+              "詳細 internal error 與 trace 已保留在 runtime/log，不直接暴露給使用者。",
+              "可以稍後再試一次，或把需求縮小一點。",
+            ],
+            message: "這次處理逾時了，我還沒有拿到可以安全交付的結果。",
+            __hide_trace_id: true,
           });
         }, effectiveRequestTimeoutMs);
     const persistRequestRecord = () => {
@@ -6726,9 +6754,14 @@ export function startHttpServer({
           if (!timeoutTriggered) {
             jsonResponse(res, 504, {
               ok: false,
-              error: "request_timeout",
-              message: abortInfo.message,
-              ...(abortInfo.timeout_ms != null ? { timeout_ms: abortInfo.timeout_ms } : {}),
+              answer: "這次處理逾時了，我還沒有拿到可以安全交付的結果。",
+              sources: [],
+              limitations: [
+                "詳細 internal error 與 trace 已保留在 runtime/log，不直接暴露給使用者。",
+                "可以稍後再試一次，或把需求縮小一點。",
+              ],
+              message: "這次處理逾時了，我還沒有拿到可以安全交付的結果。",
+              __hide_trace_id: true,
             });
           }
           return;

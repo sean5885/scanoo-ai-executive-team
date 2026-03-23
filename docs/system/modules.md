@@ -688,8 +688,8 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - `/Users/seanhan/Documents/Playground/src/message-intent-utils.mjs`
 - Responsibility:
   - isolate the cloud-document classification / reassignment follow-up workflow into a testable submodule instead of keeping all branch logic inside `lane-executor.mjs`
-  - knowledge-assistant lane turns no longer call `answer-service.mjs` directly; they now serialize the strict planner envelope returned by `executePlannedUserInput(...)`
-  - strict planner envelopes now reject semantically mismatched actions and stale previous-turn decision reuse with structured errors instead of generic fallback text
+  - knowledge-assistant lane turns no longer call `answer-service.mjs` directly; they now execute through `executePlannedUserInput(...)`, keep the strict planner envelope as internal runtime state, and convert planner failures into a fixed natural-language `答案 -> 來源 -> 待確認/限制` reply instead of serializing raw internal JSON to the user
+  - strict planner envelopes still reject semantically mismatched actions and stale previous-turn decision reuse as structured internal errors, but `executePlannedUserInput(...)` now gives `semantic_mismatch` one reroute attempt before surfacing a user-facing fallback
   - keep cloud-doc organization follow-ups in the same workflow mode, including a plain-language re-explanation path, a dedicated "why can't this be directly assigned?" explainer path, and second-pass review continuation for generic confirmation follow-ups
   - generic second-confirmation follow-ups now prefer a session-scoped cached review summary, so "還有什麼需要我二次確認" returns quickly instead of rerunning a full semantic re-review on every turn
   - explicit reassignment / relearning requests such as "重新分配" or "各個角色去學習" still trigger the slower second-pass semantic re-review branch
@@ -702,7 +702,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - detect image-bearing requests and route them through the image-understanding adapter before plain text fallback
   - execute lane-specific reply and tool strategy for DM, group, doc, and knowledge requests
   - detect DM requests for cloud-document classification / role assignment and persist a chat-scoped workflow mode so follow-up phrases about learning, unrelated docs, reassignment, and explicit exit stay in the same organization flow instead of generic personal-assistant fallback
-  - personal-lane execution now emits the existing `semantic_mismatch_document_request_in_personal_lane` guard for clear cloud-doc/company-brain document intents instead of treating them as generic no-match chat turns
+  - personal-lane execution now emits the existing `semantic_mismatch_document_request_in_personal_lane` guard for clear cloud-doc/company-brain document intents instead of treating them as generic no-match chat turns, and the outward reply for that guard is now natural language rather than a raw structured error blob
   - the current checked-in high-confidence doc-boundary set is:
     - document summary / organization phrasing such as `整理文件`, `文件摘要`, `文件重點`
     - document classification phrasing such as `分類文件`, `歸類文檔`, `指派文件`

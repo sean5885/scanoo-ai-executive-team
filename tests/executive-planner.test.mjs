@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 
 import {
   buildPlannedUserInputEnvelope,
+  buildPlannedUserInputUserFacingReply,
   compactPlannerConversationMemory,
   dispatchPlannerTool,
   executePlannedUserInput,
@@ -178,6 +179,69 @@ test("buildPlannedUserInputEnvelope exposes chosen_action and fallback_reason fo
   assert.equal(envelope.trace?.fallback_reason, "conversation_summary_not_supported_by_planner_contract");
   assert.equal(envelope.trace?.reasoning?.why, "這個 decision 和使用者意圖不一致，所以被 runtime 拒絕。");
   assert.equal(envelope.trace?.reasoning?.alternative?.summary, "改用與使用者意圖一致的合法 action 後重新規劃。");
+});
+
+test("buildPlannedUserInputUserFacingReply hides internal planner codes and trace fields", () => {
+  const reply = buildPlannedUserInputUserFacingReply({
+    ok: false,
+    error: "business_error",
+    execution_result: {
+      ok: false,
+      error: "business_error",
+      data: {
+        reason: "routing_no_match",
+        routing_reason: "routing_no_match",
+        stop_reason: "business_error",
+      },
+      trace_id: "trace_hidden_value",
+    },
+    trace_id: "trace_hidden_value",
+  });
+
+  assert.equal(reply?.ok, false);
+  assert.equal("error" in reply, false);
+  assert.equal("trace_id" in reply, false);
+  assert.match(reply?.answer || "", /安全執行|自然語言/);
+  assert.doesNotMatch(reply?.answer || "", /business_error|routing_no_match|trace_hidden_value/);
+  assert.equal(Array.isArray(reply?.limitations), true);
+});
+
+test("executePlannedUserInput reroutes semantic mismatch before surfacing failure", async () => {
+  let rerouteCalled = false;
+  const result = await executePlannedUserInput({
+    text: "查 runtime 狀態",
+    async requester() {
+      return JSON.stringify({
+        action: "search_company_brain_docs",
+        params: {
+          q: "OKR",
+        },
+      });
+    },
+    async toolFlowRunner(args) {
+      rerouteCalled = true;
+      assert.equal(args.forcedSelection, undefined);
+      assert.equal(args.userIntent, "查 runtime 狀態");
+      return {
+        selected_action: "get_runtime_info",
+        trace_id: "trace_rerouted_runtime",
+        execution_result: {
+          ok: true,
+          action: "get_runtime_info",
+          trace_id: "trace_rerouted_runtime",
+          data: {
+            db_path: "/tmp/runtime.sqlite",
+          },
+        },
+      };
+    },
+  });
+
+  assert.equal(rerouteCalled, true);
+  assert.equal(result.ok, true);
+  assert.equal(result.action, "get_runtime_info");
+  assert.equal(result.trace_id, "trace_rerouted_runtime");
+  assert.equal(result.error, null);
 });
 
 test("executePlannedUserInput forwards abort signal and completes normally", async () => {

@@ -200,6 +200,7 @@ This path is bounded by the checked-in planner contract:
 - `action` must exist in `planner_contract.json` (`actions` or `presets`)
 - wrapped / non-JSON model output is rejected as `{ "error": "planner_failed" }`
 - unmatched routing still fails closed internally as `ROUTING_NO_MATCH` instead of silently falling through selector/default-reply paths; the public `runPlannerToolFlow(...)` fallback surface normalizes that no-match case to `business_error` while preserving the internal routing reason in structured detail
+- `semantic_mismatch` on strict user-input planning now attempts one bounded reroute through `runPlannerToolFlow(...)` before surfacing a user-facing fallback
 - no heuristic or free-text fallback is used on this strict user-input planning path
 
 ## Contract Consistency Check
@@ -683,7 +684,7 @@ The planner envelope built for lane execution now also exposes a minimal trace s
 
 `execution_result` may now also carry an additional `formatted_output` field for successful company-brain read flows; this is a presentation-layer enrichment on top of the raw tool result, not a replacement for the bounded route output.
 
-When `runPlannerToolFlow(...)` cannot resolve either a hard route or a selector target, it now stops with `error = "ROUTING_NO_MATCH"` and does not emit a business-error fallback reply.
+When `runPlannerToolFlow(...)` cannot resolve either a hard route or a selector target, it now keeps `routing_reason = "routing_no_match"` internally and returns a stopped `execution_result.error = "business_error"` with that routing reason preserved in structured detail. User-facing callers such as the knowledge lane and `/answer` are expected to convert that controlled failure into natural language and keep `trace_id` in headers/runtime only.
 
 Successful company-brain detail-like flows may now also expose `learning_status`, `learning_concepts`, and `learning_tags` inside that formatted layer when the underlying doc has learning state.
 

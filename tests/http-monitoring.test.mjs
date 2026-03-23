@@ -111,18 +111,59 @@ test("http server records timed out requests in monitoring store", async (t) => 
   const { port } = server.address();
   const response = await fetch(`http://127.0.0.1:${port}/answer?q=${encodeURIComponent("查 runtime info")}`);
   const payload = await response.json();
+  const traceId = response.headers.get("x-trace-id");
 
   assert.equal(response.status, 504);
-  assert.equal(payload.error, "request_timeout");
-  assert.match(payload.trace_id, /^http_/);
+  assert.match(payload.answer || "", /逾時|安全交付/);
+  assert.equal("error" in payload, false);
+  assert.equal("trace_id" in payload, false);
+  assert.match(traceId || "", /^http_/);
 
   const recentRequests = listRecentRequests({ limit: 200 });
-  const item = recentRequests.find((entry) => entry.trace_id === payload.trace_id);
+  const item = recentRequests.find((entry) => entry.trace_id === traceId);
 
   assert.ok(item);
   assert.equal(item.status_code, 504);
-  assert.equal(item.error_code, "request_timeout");
+  assert.equal(item.error_code, "http_504");
   assert.equal(item.ok, false);
+});
+
+test("answer route converts planner errors into natural-language fallback without internal JSON exposure", async (t) => {
+  const server = startHttpServer({
+    listen: false,
+    logger: createLogger(),
+    serviceOverrides: {
+      executePlannedUserInput: async () => ({
+        ok: false,
+        error: "business_error",
+        execution_result: {
+          ok: false,
+          error: "business_error",
+          data: {
+            reason: "routing_no_match",
+            routing_reason: "routing_no_match",
+            stop_reason: "business_error",
+          },
+          trace_id: "trace_internal_hidden",
+        },
+        trace_id: "trace_internal_hidden",
+      }),
+    },
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/answer?q=${encodeURIComponent("幫我看看")}`);
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.ok, false);
+  assert.match(payload.answer || "", /自然語言|安全完成|安全執行/);
+  assert.equal("error" in payload, false);
+  assert.equal("trace_id" in payload, false);
+  assert.equal("execution_result" in payload, false);
+  assert.doesNotMatch(JSON.stringify(payload), /routing_no_match|business_error|trace_internal_hidden/);
 });
 
 test("monitoring CLI reports recent requests and metrics", async () => {

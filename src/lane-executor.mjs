@@ -1,5 +1,10 @@
 import { generateDocumentCommentSuggestionCard } from "./comment-suggestion-workflow.mjs";
-import { buildPlannedUserInputEnvelope, executePlannedUserInput } from "./executive-planner.mjs";
+import {
+  buildPlannedUserInputEnvelope,
+  buildPlannedUserInputUserFacingReply,
+  executePlannedUserInput,
+  renderPlannerUserFacingReplyText,
+} from "./executive-planner.mjs";
 import {
   ensureMeetingWorkflowTask,
   executeExecutiveTurn,
@@ -226,17 +231,50 @@ function buildLaneStructuredErrorEnvelope({
 }
 
 function buildLaneRoutingNoMatchReply({ scope, lanePlan, message = "no_supported_lane_action" } = {}) {
-  const errorEnvelope = buildLaneStructuredErrorEnvelope({
-    scope,
-    error: ROUTING_NO_MATCH,
-    chosenAction: lanePlan?.chosen_action,
-    fallbackReason: lanePlan?.fallback_reason || ROUTING_NO_MATCH,
-    details: {
-      message,
-    },
-  });
   return {
-    text: JSON.stringify(errorEnvelope, null, 2),
+    text: [
+      "答案",
+      "我這次沒有找到可以安全執行的對應操作，所以先不回 internal routing 錯誤。",
+      "",
+      "來源",
+      "- 這次沒有對外提供可引用來源。",
+      "",
+      "待確認/限制",
+      `- 目前 lane=${cleanText(scope?.capability_lane || "personal-assistant") || "personal-assistant"} 需要更明確的指令才能接續處理。`,
+      "- 詳細 routing reason 與 trace 已保留在 runtime/log，不直接暴露給使用者。",
+    ].join("\n"),
+  };
+}
+
+function buildLaneSemanticMismatchReply() {
+  return {
+    text: [
+      "答案",
+      "這則訊息比較像文件或知識庫請求，所以我先不在 personal lane 亂回。",
+      "",
+      "來源",
+      "- 這次沒有對外提供可引用來源。",
+      "",
+      "待確認/限制",
+      "- 請直接說要我找文件、打開某份文件，或整理某份文件重點，我會改走對應的知識/文件路徑。",
+      "- internal semantic trace 仍保留在 runtime/log，不會直接暴露在回覆裡。",
+    ].join("\n"),
+  };
+}
+
+function buildLanePermissionDeniedReply() {
+  return {
+    text: [
+      "答案",
+      "要整理最近對話，我現在還需要你的 user OAuth 才能安全讀取個人對話內容。",
+      "",
+      "來源",
+      "- 這次沒有對外提供可引用來源。",
+      "",
+      "待確認/限制",
+      "- 目前不會把 internal permission error 或 trace 直接回給你。",
+      "- 等 user OAuth 恢復後，我就能繼續整理最近對話。",
+    ].join("\n"),
   };
 }
 
@@ -553,13 +591,23 @@ async function executeKnowledgeAssistant({ event, scope, logger = noopLogger }) 
     return { text: buildLaneIntroReply(scope, scope) };
   }
 
+  const plannedResult = await executePlannedUserInput({
+    text,
+    logger,
+  });
+  const userFacingReply = buildPlannedUserInputUserFacingReply(plannedResult);
+  if (userFacingReply) {
+    logger.info("lane_execution_user_fallback", {
+      chosen_action: cleanText(plannedResult?.action || plannedResult?.steps?.[0]?.action || "") || null,
+      planner_error: cleanText(plannedResult?.error || plannedResult?.execution_result?.error || "") || null,
+    });
+    return {
+      text: renderPlannerUserFacingReplyText(userFacingReply),
+    };
+  }
+
   const plannerEnvelope = attachLaneTrace(
-    buildPlannedUserInputEnvelope(
-      await executePlannedUserInput({
-        text,
-        logger,
-      }),
-    ),
+    buildPlannedUserInputEnvelope(plannedResult),
     {
       scope,
     },
@@ -1897,18 +1945,7 @@ async function executePersonalAssistant({ event, scope, logger = noopLogger }) {
 
   if (context.tokenKind === "tenant") {
     if (lanePlan.chosen_action === "summarize_recent_dialogue") {
-      const errorEnvelope = buildLaneStructuredErrorEnvelope({
-        scope,
-        error: "permission_denied",
-        chosenAction: lanePlan.chosen_action,
-        fallbackReason: "missing_user_oauth_for_recent_dialogue_summary",
-        details: {
-          message: "recent_dialogue_summary_requires_user_oauth",
-        },
-      });
-      return {
-        text: JSON.stringify(errorEnvelope, null, 2),
-      };
+      return buildLanePermissionDeniedReply();
     }
     return {
       text: [
@@ -1926,18 +1963,7 @@ async function executePersonalAssistant({ event, scope, logger = noopLogger }) {
   }
 
   if (lanePlan.fallback_reason === "semantic_mismatch_document_request_in_personal_lane") {
-    const errorEnvelope = buildLaneStructuredErrorEnvelope({
-      scope,
-      error: "semantic_mismatch",
-      fallbackReason: lanePlan.fallback_reason,
-      details: {
-        message: "document_summary_request_should_route_to_knowledge_lane",
-        suggested_lane: "knowledge-assistant",
-      },
-    });
-    return {
-      text: JSON.stringify(errorEnvelope, null, 2),
-    };
+    return buildLaneSemanticMismatchReply();
   }
 
   if (lanePlan.fallback_reason === ROUTING_NO_MATCH) {

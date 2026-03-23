@@ -274,6 +274,147 @@ function describePlannerExecutionResult(executionResult = null) {
   return "planner execution succeeded";
 }
 
+function normalizePlannerUserFacingList(items = []) {
+  return [...new Set(
+    (Array.isArray(items) ? items : [])
+      .map((item) => cleanText(item))
+      .filter(Boolean),
+  )];
+}
+
+function buildPlannerUserFacingAnswer({
+  error = "",
+  fallbackReason = "",
+} = {}) {
+  const normalizedError = cleanText(error);
+  const normalizedFallbackReason = cleanText(fallbackReason);
+
+  if (normalizedError === "semantic_mismatch") {
+    return "我先沒有直接執行原本那個內部動作，因為它和你這輪的需求不一致。";
+  }
+  if (
+    normalizedError === "routing_error"
+    || normalizedFallbackReason === "routing_error"
+    || normalizedFallbackReason === "routing_no_match"
+    || normalizedFallbackReason === ROUTING_NO_MATCH
+  ) {
+    return "我這次沒有找到可以安全執行的受控操作，所以先用自然語言接住這個請求。";
+  }
+  if (normalizedError === "invalid_action" || normalizedError === INVALID_ACTION) {
+    return "我這次沒有採用那個內部動作，因為它不在目前允許直接執行的受控範圍內。";
+  }
+  if (normalizedError === "request_timeout") {
+    return "這次處理逾時了，我還沒有拿到可以安全交付的結果。";
+  }
+  if (normalizedError === "request_cancelled") {
+    return "這次處理被中斷了，所以我先不回傳不完整結果。";
+  }
+  if (normalizedError === "business_error") {
+    return "這次操作沒有安全完成，所以我先用人話說明目前狀態。";
+  }
+  return "這次沒有拿到可以直接交付的安全結果，所以我先用自然語言說明目前狀態。";
+}
+
+function buildPlannerUserFacingLimitations({
+  error = "",
+  fallbackReason = "",
+  action = "",
+} = {}) {
+  const normalizedError = cleanText(error);
+  const normalizedFallbackReason = cleanText(fallbackReason);
+  const normalizedAction = cleanText(action);
+
+  if (normalizedError === "semantic_mismatch") {
+    return normalizePlannerUserFacingList([
+      "系統已先嘗試改走較合理的 reroute；如果仍然沒命中，就不會把內部錯誤直接丟給你。",
+      "如果你是要找文件、看文件內容、查 runtime 或建立文件，可以直接把目標說得更明確一點。",
+    ]);
+  }
+  if (
+    normalizedError === "routing_error"
+    || normalizedFallbackReason === "routing_error"
+    || normalizedFallbackReason === "routing_no_match"
+    || normalizedFallbackReason === ROUTING_NO_MATCH
+  ) {
+    return normalizePlannerUserFacingList([
+      "目前這條受控路徑主要支援文件查找、文件閱讀、runtime 查詢與部分文件建立流程。",
+      "這次沒有把 internal routing reason、error code 或 trace 直接暴露到對外回覆。",
+    ]);
+  }
+  if (normalizedError === "invalid_action" || normalizedError === INVALID_ACTION) {
+    return normalizePlannerUserFacingList([
+      normalizedAction ? `內部動作 ${normalizedAction} 不會直接暴露給使用者。` : "這類 internal action 不會直接暴露給使用者。",
+      "請直接描述你要完成的事，系統會再走受控 action 選擇。",
+    ]);
+  }
+  if (normalizedError === "request_timeout") {
+    return normalizePlannerUserFacingList([
+      "詳細 trace 仍保留在 runtime 與 logs，但不會直接出現在對外回覆。",
+      "可以稍後重試，或把需求再縮小一點。",
+    ]);
+  }
+  if (normalizedError === "request_cancelled") {
+    return normalizePlannerUserFacingList([
+      "這次請求在完成前被取消，所以沒有可安全交付的最終結果。",
+    ]);
+  }
+  return normalizePlannerUserFacingList([
+    "詳細 internal trace 仍保留在 runtime 與 logs，但不會直接出現在對外回覆。",
+  ]);
+}
+
+export function renderPlannerUserFacingReplyText({
+  answer = "",
+  sources = [],
+  limitations = [],
+} = {}) {
+  const normalizedSources = normalizePlannerUserFacingList(sources);
+  const normalizedLimitations = normalizePlannerUserFacingList(limitations);
+
+  return [
+    "答案",
+    cleanText(answer) || "目前沒有可直接交付的結果。",
+    "",
+    "來源",
+    ...(normalizedSources.length > 0 ? normalizedSources.map((item) => `- ${item}`) : ["- 這次沒有對外提供可引用來源。"]),
+    "",
+    "待確認/限制",
+    ...(normalizedLimitations.length > 0 ? normalizedLimitations.map((item) => `- ${item}`) : ["- 目前沒有補充限制。"]),
+  ].join("\n");
+}
+
+export function buildPlannedUserInputUserFacingReply(result = {}) {
+  const envelope = buildPlannedUserInputEnvelope(result);
+  const executionError = cleanText(envelope?.execution_result?.error || "");
+  const topLevelError = cleanText(envelope?.error || "");
+  const errorCode = executionError || topLevelError;
+
+  if (!errorCode) {
+    return null;
+  }
+
+  const fallbackReason = cleanText(
+    envelope?.trace?.fallback_reason
+    || envelope?.execution_result?.data?.reason
+    || envelope?.execution_result?.data?.routing_reason
+    || errorCode,
+  ) || errorCode;
+
+  return {
+    ok: false,
+    answer: buildPlannerUserFacingAnswer({
+      error: errorCode,
+      fallbackReason,
+    }),
+    sources: [],
+    limitations: buildPlannerUserFacingLimitations({
+      error: errorCode,
+      fallbackReason,
+      action: envelope?.action || envelope?.trace?.chosen_action || "",
+    }),
+  };
+}
+
 function derivePlannerUnfinishedItems({
   selection = {},
   executionResult = null,
@@ -4807,6 +4948,57 @@ export async function executePlannedUserInput({
       })()
     : await planUserInputAction({ text, requester, signal });
   if (decision?.error) {
+    if (decision.error === "semantic_mismatch") {
+      let reroutedResult = null;
+      try {
+        reroutedResult = await toolFlowRunner({
+          userIntent: text,
+          payload: {},
+          logger,
+          contentReader,
+          baseUrl,
+          signal,
+        });
+      } catch (error) {
+        const abortedResult = buildPlannerAbortResult({
+          signal,
+          error,
+        });
+        if (abortedResult) {
+          reroutedResult = buildPlannerAgentOutput({
+            selectedAction: null,
+            executionResult: abortedResult,
+            traceId: abortedResult.trace_id || null,
+            routingReason: "semantic_mismatch_reroute_aborted",
+          });
+        } else {
+          throw error;
+        }
+      }
+
+      if (reroutedResult?.execution_result) {
+        logger?.info?.("planner_semantic_mismatch_reroute", {
+          original_action: cleanText(decision?.action || decision?.steps?.[0]?.action || "") || null,
+          rerouted_action: cleanText(reroutedResult?.selected_action || "") || null,
+          reroute_ok: reroutedResult?.execution_result?.ok === true,
+          reroute_error: cleanText(reroutedResult?.execution_result?.error || "") || null,
+          reroute_reason: cleanText(reroutedResult?.routing_reason || "") || null,
+          trace_id: reroutedResult?.trace_id || null,
+        });
+        return {
+          ok: reroutedResult?.execution_result?.ok === true,
+          action: cleanText(reroutedResult?.selected_action || "") || null,
+          params: null,
+          error: cleanText(reroutedResult?.execution_result?.error || "") || null,
+          execution_result: reroutedResult?.execution_result || null,
+          agent_execution: reroutedResult?.agent_execution || null,
+          trace_id: reroutedResult?.trace_id || null,
+          why: "原始 decision 與這輪需求不一致，所以先改走 reroute。",
+          alternative: normalizeDecisionAlternative(decision?.alternative),
+        };
+      }
+    }
+
     if (decision.error === "planner_failed") {
       emitPlannerFailedAlert({
         text,
