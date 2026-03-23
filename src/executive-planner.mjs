@@ -18,6 +18,10 @@ import {
   trimTextForBudget,
 } from "./agent-token-governance.mjs";
 import { getRegisteredAgent, listRegisteredAgents, parseRegisteredAgentCommand } from "./agent-registry.mjs";
+import {
+  buildExplicitUserAuthHeaders,
+  normalizeExplicitUserAuthContext,
+} from "./explicit-user-auth.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import { callOpenClawTextGeneration } from "./openclaw-text-service.mjs";
 import { FALLBACK_DISABLED, INVALID_ACTION, ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
@@ -95,6 +99,11 @@ const PLANNER_CONTEXT_WINDOW_SUMMARY_MAX_CHARS = 640;
 const PLANNER_RECENT_STEP_LIMIT = 6;
 const PLANNER_HIGH_WEIGHT_DOC_LIMIT = 3;
 const PLANNER_FAILED_ALERT_KEY = "planner_failed:user_input_planner";
+const PLANNER_EXPLICIT_AUTH_ACTIONS = new Set([
+  "list_company_brain_docs",
+  "search_company_brain_docs",
+  "get_company_brain_doc_detail",
+]);
 
 function emitPlannerFailedAlert({ text = "", reason = "", source = "planner" } = {}) {
   const textHint = cleanText(text);
@@ -108,6 +117,14 @@ function emitPlannerFailedAlert({ text = "", reason = "", source = "planner" } =
       text_hint: textHint ? textHint.slice(0, 160) : null,
     },
   });
+}
+
+function actionRequiresExplicitUserAuth(action = "") {
+  return PLANNER_EXPLICIT_AUTH_ACTIONS.has(cleanText(action));
+}
+
+function normalizePlannerAuthContext(authContext = null) {
+  return normalizeExplicitUserAuthContext(authContext);
 }
 
 // ---------------------------------------------------------------------------
@@ -307,6 +324,12 @@ function buildPlannerUserFacingAnswer({
   const normalizedError = cleanText(error);
   const normalizedFallbackReason = cleanText(fallbackReason);
 
+  if (normalizedError === "missing_user_access_token") {
+    return "這次我先不直接查文件，因為這輪請求沒有帶到可驗證的 Lark 使用者授權。";
+  }
+  if (normalizedError === "oauth_reauth_required") {
+    return "這次我先不直接查文件，因為目前的 Lark 使用者授權已失效，需要重新登入授權。";
+  }
   if (normalizedError === "semantic_mismatch") {
     return "我先沒有直接執行原本那個內部動作，因為它和你這輪的需求不一致。";
   }
@@ -342,6 +365,18 @@ function buildPlannerUserFacingLimitations({
   const normalizedFallbackReason = cleanText(fallbackReason);
   const normalizedAction = cleanText(action);
 
+  if (normalizedError === "missing_user_access_token") {
+    return normalizePlannerUserFacingList([
+      "目前文件搜尋/閱讀路徑必須帶明確的使用者 token，不能再默默改用本地 stored token 或空結果。",
+      "請從有帶授權的 Lark 對話重新送出這輪需求，或先完成登入授權。",
+    ]);
+  }
+  if (normalizedError === "oauth_reauth_required") {
+    return normalizePlannerUserFacingList([
+      "目前文件搜尋/閱讀路徑不會在授權失效時偷偷退回其他 token 或空結果。",
+      `請先重新登入授權：${oauthBaseUrl}/oauth/lark/login`,
+    ]);
+  }
   if (normalizedError === "semantic_mismatch") {
     return normalizePlannerUserFacingList([
       "系統已先嘗試改走較合理的 reroute；如果仍然沒命中，就不會把內部錯誤直接丟給你。",
@@ -2327,6 +2362,7 @@ export async function dispatchPlannerTool({
   logger = console,
   baseUrl = oauthBaseUrl,
   maxRetry = 1,
+  authContext = null,
   signal = null,
 } = {}) {
   const runtimeInput = buildPlannerActionRuntimeInput({
@@ -2338,6 +2374,7 @@ export async function dispatchPlannerTool({
   const requestId = createRequestId("planner_tool");
   const hooks = createPlannerRuntimeHooks();
   const tool = getPlannerTool(runtimeInput.action);
+  const normalizedAuthContext = normalizePlannerAuthContext(authContext);
   const preAbortResult = buildPlannerAbortResult({
     action: runtimeInput.action,
     signal,
@@ -2462,6 +2499,9 @@ export async function dispatchPlannerTool({
       headers: {
         ...(tool.method === "POST" ? { "Content-Type": "application/json" } : {}),
         "X-Request-Id": requestId,
+        ...buildExplicitUserAuthHeaders(normalizedAuthContext, {
+          required: actionRequiresExplicitUserAuth(tool.action),
+        }),
       },
       signal,
       body: tool.method === "POST"
@@ -2655,6 +2695,7 @@ export async function runPlannerToolFlow({
   baseUrl = oauthBaseUrl,
   forcedSelection = null,
   disableAutoRouting = false,
+  authContext = null,
   signal = null,
 } = {}) {
   const preAbortResult = buildPlannerAbortResult({
@@ -2820,6 +2861,7 @@ export async function runPlannerToolFlow({
           logger,
         }),
         logger,
+        authContext,
         signal,
       });
       traceId = executionResult?.trace_id || null;
@@ -2848,6 +2890,7 @@ export async function runPlannerToolFlow({
           logger,
         }),
         logger,
+        authContext,
         signal,
       });
       traceId = executionResult?.trace_id || null;
@@ -2961,6 +3004,7 @@ export async function runPlannerMultiStep({
   previous_results = [],
   max_retries = 0,
   retryable_error_types = ["tool_error", "runtime_exception"],
+  authContext = null,
   signal = null,
 } = {}) {
   const preAbortResult = buildPlannerAbortResult({ signal });
@@ -3023,6 +3067,7 @@ export async function runPlannerMultiStep({
         action: step.action,
         payload: step.payload,
         logger,
+        authContext,
         signal,
       });
       results.push(result);
@@ -3125,6 +3170,7 @@ export async function runPlannerPreset({
   previous_results = [],
   max_retries = 0,
   retryable_error_types = ["tool_error", "runtime_exception"],
+  authContext = null,
   signal = null,
 } = {}) {
   const preAbortResult = buildPlannerAbortResult({
@@ -3232,6 +3278,7 @@ export async function runPlannerPreset({
           logger,
           max_retries,
           retryable_error_types,
+          authContext,
           signal,
         });
         const singleResult = result?.results?.[0] ?? null;
@@ -3274,6 +3321,7 @@ export async function runPlannerPreset({
         previous_results,
         max_retries,
         retryable_error_types,
+        authContext,
         signal,
       });
       execution = {
@@ -4974,6 +5022,7 @@ export async function executePlannedUserInput({
   previous_results = [],
   max_retries = 0,
   retryable_error_types = ["tool_error", "runtime_exception"],
+  authContext = null,
   signal = null,
 } = {}) {
   const preAbortInfo = derivePlannerAbortInfo({ signal });
@@ -5014,6 +5063,7 @@ export async function executePlannedUserInput({
           logger,
           contentReader,
           baseUrl,
+          authContext,
           signal,
         });
       } catch (error) {
@@ -5081,6 +5131,7 @@ export async function executePlannedUserInput({
         previous_results,
         max_retries,
         retryable_error_types,
+        authContext,
         signal,
         async dispatcher({ action, payload }) {
           return dispatcher({
@@ -5088,6 +5139,7 @@ export async function executePlannedUserInput({
             payload,
             logger,
             baseUrl,
+            authContext,
             signal,
           });
         },
@@ -5131,6 +5183,7 @@ export async function executePlannedUserInput({
       logger,
       contentReader,
       baseUrl,
+      authContext,
       forcedSelection: {
         selected_action: decision.action,
         reason: "strict_user_input_planner",

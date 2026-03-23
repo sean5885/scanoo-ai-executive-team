@@ -114,6 +114,11 @@ import {
   buildPlannedUserInputEnvelope,
   executePlannedUserInput,
 } from "./executive-planner.mjs";
+import {
+  normalizeExplicitUserAuthContext,
+  readExplicitUserAuthContextFromRequest,
+  requestRequiresExplicitUserAuth,
+} from "./explicit-user-auth.mjs";
 import { applyHeadingTargetedInsert, DocumentTargetingError } from "./doc-targeting.mjs";
 import { listUnseenDocumentComments, markDocumentCommentsSeen } from "./comment-watch-store.mjs";
 import { generateDocumentCommentSuggestionCard } from "./comment-suggestion-workflow.mjs";
@@ -741,7 +746,49 @@ function logCompanyBrainDetailRead(logger, { accountId, docId, found }) {
   });
 }
 
+function resolveExplicitPlannerAuthContext(res, requestUrl, body) {
+  const headerAuth = readExplicitUserAuthContextFromRequest(res?.__request_headers || null);
+  return normalizeExplicitUserAuthContext({
+    ...(headerAuth || {}),
+    account_id: headerAuth?.account_id || getAccountId(requestUrl, body) || null,
+  });
+}
+
+function companyBrainReadRequiresExplicitAuth(res, requestUrl) {
+  return requestRequiresExplicitUserAuth(res?.__request_headers || null)
+    || Boolean(String(requestUrl?.pathname || "").startsWith("/agent/company-brain/"));
+}
+
+function buildMissingExplicitUserAuthPayload() {
+  return {
+    ok: false,
+    error: "missing_user_access_token",
+    login_url: `${oauthBaseUrl}/oauth/lark/login`,
+    message: "This document-search path now requires an explicit user_access_token on the current request.",
+  };
+}
+
 function resolveCompanyBrainReadContext(res, requestUrl, body, logger = noopHttpLogger) {
+  if (companyBrainReadRequiresExplicitAuth(res, requestUrl)) {
+    const explicitAuth = resolveExplicitPlannerAuthContext(res, requestUrl, body);
+    if (!explicitAuth?.account_id || !explicitAuth?.access_token) {
+      logger.warn("company_brain_explicit_auth_missing", {
+        account_id: getAccountId(requestUrl, body) || null,
+        pathname: requestUrl?.pathname || null,
+      });
+      jsonResponse(res, 401, buildMissingExplicitUserAuthPayload());
+      return null;
+    }
+    return {
+      account: { id: explicitAuth.account_id },
+      token: {
+        access_token: explicitAuth.access_token,
+        account_id: explicitAuth.account_id,
+      },
+      tokenKind: "user",
+      explicit_auth: true,
+    };
+  }
   return requireUserContext(res, getAccountId(requestUrl, body), logger);
 }
 
@@ -5476,22 +5523,28 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger) {
       text: q,
       logger,
       baseUrl: oauthBaseUrl,
+      authContext: resolveExplicitPlannerAuthContext(res, requestUrl, body),
       signal: logger?.__abort_signal || res?.__abort_signal || null,
     });
     const envelope = buildPlannedUserInputEnvelope(result);
     const userResponse = normalizeUserResponse({
       plannerResult: result,
       plannerEnvelope: envelope,
+      logger,
+      traceId: res?.__trace_id || null,
+      handlerName: "handleAnswer",
     });
     logger.info("knowledge_answer_completed", {
       selected_action: envelope.action || null,
       ok: envelope.ok,
       planner_error: envelope.error || null,
     });
-    const statusCode = envelope.error === "request_timeout"
-      || envelope.execution_result?.error === "request_timeout"
+    const responseError = envelope.error || envelope.execution_result?.error || null;
+    const statusCode = responseError === "request_timeout"
       ? 504
-      : envelope.error && !envelope.execution_result
+      : responseError === "missing_user_access_token" || responseError === "oauth_reauth_required"
+        ? 401
+        : envelope.error && !envelope.execution_result
         ? 422
         : 200;
     jsonResponse(res, statusCode, {
@@ -5521,6 +5574,9 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger) {
             "詳細 internal error 與 trace 已保留在 runtime/log，不直接暴露給使用者。",
           ],
         },
+        logger,
+        traceId: res?.__trace_id || null,
+        handlerName: "handleAnswer",
       });
       jsonResponse(res, abortInfo.code === "request_timeout" ? 504 : REQUEST_CANCELLED_STATUS_CODE, {
         ...userResponse,
@@ -5541,6 +5597,9 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger) {
           "詳細 internal error 與 trace 已保留在 runtime/log，不直接暴露給使用者。",
         ],
       },
+      logger,
+      traceId: res?.__trace_id || null,
+      handlerName: "handleAnswer",
     });
     jsonResponse(res, 500, {
       ...userResponse,
@@ -5703,6 +5762,7 @@ export function startHttpServer({
     res.__trace_id = traceId;
     res.__request_id = requestId;
     res.__pathname = requestUrl.pathname;
+    res.__request_headers = req.headers;
     res.__monitor_payload = null;
     res.__abort_signal = abortController.signal;
     requestLogger.__abort_signal = abortController.signal;

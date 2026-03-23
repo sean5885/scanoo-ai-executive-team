@@ -16,6 +16,7 @@
   - includes planner-input failures (`planner_failed`, `invalid_action`, `semantic_mismatch`)
   - includes planner-runtime failures (`contract_violation`, `tool_error`, `runtime_exception`, `business_error`, abort errors)
   - includes bridge action errors already exposed by agent routes (`missing_user_access_token`, `invalid_query`, `internal_error`)
+  - current company-brain document read routes treat `missing_user_access_token` as an explicit fail-closed auth boundary: planner/doc search must carry request-scoped user auth and cannot silently fall back to stored OAuth
 - `routing_reason`
   - checked-in enum for stable route-selection reason codes
   - replaces public reliance on free-text reason strings for router / doc-query / planner surfaces

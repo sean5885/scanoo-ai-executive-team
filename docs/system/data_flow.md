@@ -201,6 +201,7 @@ This request-flow mirror now reflects the current fail-closed routing baseline.
    - message parsing also reads pasted Bitable `base/...` URLs from text or structured link payloads
    - reply-chain follow-up text like "幫我看一下" can route into the doc lane when it is replying to a shared doc context
 5. session scope is persisted locally
+   - when `im.message.receive_v1` carries `user_access_token`, the runtime also snapshots that explicit token per session so the same session can continue planner/doc work after async hops or service restart
 6. lane executor chooses one lane strategy:
   - `group-shared-assistant`
   - `personal-assistant`
@@ -233,6 +234,8 @@ This request-flow mirror now reflects the current fail-closed routing baseline.
      - end the active executive task when the user explicitly exits
      - when direct `LLM_API_KEY` is unavailable, registered slash agents and the executive planner now try the local OpenClaw MiniMax text channel through the dedicated `lobster-backend` agent before any extractive-only fallback
    - slash-agent messages are parsed first; knowledge subcommands and persona agents reuse retrieval grounding plus compact role prompts instead of falling back to generic private-chat replies
+   - knowledge-assistant turns now carry explicit user auth through `lane-executor.mjs` -> `executePlannedUserInput(...)` -> planner dispatch headers -> `/agent/company-brain/*`
+   - company-brain document read routes no longer silently fall back to stored OAuth when planner/doc search is missing explicit auth; they fail soft as `missing_user_access_token`, and the chat boundary converts that into natural-language auth guidance instead of empty results
    - slash-agent messages that include images first call the Nano Banana-oriented image adapter, then only pass compact structured image fields into the text model
    - DM requests like "把我的雲文檔做分類 指派給對應的角色" now enter a chat-scoped cloud-doc organization workflow mode inside the personal lane
    - while that mode is active, follow-up turns about learning, unrelated docs, and reassignment stay on the same organization preview path instead of falling back to meeting/private-chat boilerplate

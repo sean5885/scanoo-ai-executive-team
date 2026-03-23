@@ -94,6 +94,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 - Responsibility:
   - resolve Lark peer identity into binding/session/workspace/sandbox keys
   - persist latest peer-scoped session touches
+  - persist a session-scoped explicit `user_access_token` snapshot when the inbound event provides one
   - provide capability-lane routing keys for downstream execution
 - Main entry:
   - `resolveLarkBindingRuntime()`
@@ -117,6 +118,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - auth checks
   - HTTP endpoint handling
   - response shaping
+  - internal planner/company-brain bridge routes now fail closed unless the current request carries an explicit user auth header set; they no longer silently rehydrate document-search auth from unrelated stored OAuth state
   - optional request-body idempotency for JSON `POST` / `PUT` / `PATCH` routes via `idempotency_key`
   - replay the first persisted JSON result for repeated keyed requests instead of re-running the handler
   - persist first-response idempotency rows into SQLite `http_request_idempotency`
@@ -695,6 +697,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 - Responsibility:
   - isolate the cloud-document classification / reassignment follow-up workflow into a testable submodule instead of keeping all branch logic inside `lane-executor.mjs`
   - knowledge-assistant lane turns no longer call `answer-service.mjs` directly; they now execute through `executePlannedUserInput(...)`, keep the strict planner envelope as internal runtime state, and pass both success and controlled failure through the shared `normalizeUserResponse()` boundary before rendering the fixed natural-language `答案 -> 來源 -> 待確認/限制` reply, so chat output does not serialize raw planner JSON or trace fields to the user
+  - the same knowledge/doc path now captures `user_access_token` from `im.message.receive_v1`, stores a session-scoped explicit-auth snapshot, and propagates that auth through planner dispatch into `/agent/company-brain/*`; missing explicit auth now returns a natural-language auth error instead of silent stored-token fallback or empty document-search output
   - strict planner envelopes still reject semantically mismatched actions and stale previous-turn decision reuse as structured internal errors, but `executePlannedUserInput(...)` now gives `semantic_mismatch` one reroute attempt before surfacing a user-facing fallback
   - the same planner boundary now also fail-closes unsupported slash commands and "不存在的 agent" style requests inside `/answer`: if the LLM tries to map those turns to `get_runtime_info` or any other planner tool action, semantic validation converts them into `semantic_mismatch`, then reroutes to the deterministic tool-flow path instead of returning runtime info
   - keep cloud-doc organization follow-ups in the same workflow mode, including a plain-language re-explanation path, a dedicated "why can't this be directly assigned?" explainer path, and second-pass review continuation for generic confirmation follow-ups

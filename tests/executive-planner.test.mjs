@@ -25,6 +25,7 @@ import {
   validatePresetOutput,
   normalizeError,
 } from "../src/executive-planner.mjs";
+import { EXPLICIT_USER_AUTH_HEADERS } from "../src/explicit-user-auth.mjs";
 import {
   getLatestPlannerTaskLifecycleSnapshot,
   replacePlannerTaskLifecycleStoreForTests,
@@ -2641,6 +2642,98 @@ test("runPlannerToolFlow routes the exact scanoo exclusion live query into docum
     title: "Scanoo PRD｜後台核心系統迭代",
     doc_id: "doc_scanoo_prd",
   }]);
+});
+
+test("runPlannerToolFlow keeps explicit auth on the exact scanoo cloud-doc query", async () => {
+  resetPlannerRuntimeContext();
+  const originalFetch = globalThis.fetch;
+  let capturedHeaders = null;
+  globalThis.fetch = async (_url, init = {}) => {
+    capturedHeaders = init.headers;
+    return {
+      status: 200,
+      async text() {
+        return JSON.stringify({
+          ok: true,
+          action: "search_company_brain_docs",
+          trace_id: "trace_scanoo_auth_ok",
+          data: {
+            success: true,
+            data: {
+              q: "scanoo",
+              total: 1,
+              items: [
+                {
+                  doc_id: "doc_scanoo_auth",
+                  title: "Scanoo Launch Checklist",
+                },
+              ],
+            },
+            error: null,
+          },
+        });
+      },
+    };
+  };
+
+  try {
+    const result = await runPlannerToolFlow({
+      userIntent: "你把我的雲端文件再看一遍，把不屬於scanoo的內容摘出去讓我確認",
+      logger: console,
+      baseUrl: "http://127.0.0.1:3999",
+      authContext: {
+        account_id: "acct-1",
+        access_token: "event-user-token-1",
+        source: "event_user_access_token",
+      },
+    });
+
+    assert.equal(result.selected_action, "search_company_brain_docs");
+    assert.equal(result.execution_result?.formatted_output?.kind, "search");
+    assert.equal(capturedHeaders[EXPLICIT_USER_AUTH_HEADERS.accountId], "acct-1");
+    assert.equal(capturedHeaders[EXPLICIT_USER_AUTH_HEADERS.userAccessToken], "event-user-token-1");
+    assert.equal(capturedHeaders[EXPLICIT_USER_AUTH_HEADERS.required], "true");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("executePlannedUserInput returns explicit auth error for the same scanoo cloud-doc query when token is missing", async () => {
+  resetPlannerRuntimeContext();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    status: 401,
+    async text() {
+      return JSON.stringify({
+        ok: false,
+        error: "missing_user_access_token",
+        message: "This document-search path now requires an explicit user_access_token on the current request.",
+      });
+    },
+  });
+
+  try {
+    const result = await executePlannedUserInput({
+      text: "你把我的雲端文件再看一遍，把不屬於scanoo的內容摘出去讓我確認",
+      plannedDecision: {
+        action: "search_company_brain_docs",
+        params: {
+          q: "scanoo",
+          query: "scanoo",
+        },
+      },
+      logger: console,
+      baseUrl: "http://127.0.0.1:3999",
+    });
+    const reply = buildPlannedUserInputUserFacingReply(result);
+
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "missing_user_access_token");
+    assert.match(reply.answer, /不直接查文件|授權/);
+    assert.match(reply.limitations.join("\n"), /明確的使用者 token|重新送出/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("runPlannerToolFlow emits doc query route and result debug traces for search flow", async () => {

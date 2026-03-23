@@ -135,6 +135,7 @@ Behavior:
 - resolve binding/session/workspace/sandbox keys
 - resolve one capability lane from peer scope plus message intent
 - persist latest session touch to local state
+- when the event carries `user_access_token`, also persist a session-scoped explicit auth snapshot so later planner/doc turns can survive async boundaries and service restart without silently falling back to unrelated stored auth
 
 ### Inspection API
 

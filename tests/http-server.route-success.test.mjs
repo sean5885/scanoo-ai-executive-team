@@ -7,6 +7,7 @@ import { getHttpIdempotencyRecord } from "../src/http-idempotency-store.mjs";
 import { startHttpServer } from "../src/http-server.mjs";
 import { docUpdateConfirmationStorePath, executiveImprovementStorePath } from "../src/config.mjs";
 import { setupExecutiveTaskStateTestHarness } from "./helpers/executive-task-state-harness.mjs";
+import { EXPLICIT_USER_AUTH_HEADERS } from "../src/explicit-user-auth.mjs";
 
 setupExecutiveTaskStateTestHarness();
 
@@ -61,6 +62,18 @@ function ensureTestAccount(accountId = "acct-1") {
     created_at: timestamp,
     updated_at: timestamp,
   });
+}
+
+function createExplicitPlannerAuthHeaders({
+  accountId = "acct-1",
+  accessToken = "event-token-1",
+} = {}) {
+  return {
+    [EXPLICIT_USER_AUTH_HEADERS.accountId]: accountId,
+    [EXPLICIT_USER_AUTH_HEADERS.userAccessToken]: accessToken,
+    [EXPLICIT_USER_AUTH_HEADERS.source]: "test_event_user_access_token",
+    [EXPLICIT_USER_AUTH_HEADERS.required]: "true",
+  };
 }
 
 function insertCompanyBrainFixture({
@@ -483,7 +496,9 @@ test("agent company-brain search and detail routes return structured summaries f
   const { server } = await startTestServer(t, {});
   const { port } = server.address();
 
-  const searchResponse = await fetch(`http://127.0.0.1:${port}/agent/company-brain/search?q=launch%20checklist`);
+  const searchResponse = await fetch(`http://127.0.0.1:${port}/agent/company-brain/search?q=launch%20checklist`, {
+    headers: createExplicitPlannerAuthHeaders(),
+  });
   const searchPayload = await searchResponse.json();
   assert.equal(searchResponse.status, 200);
   assert.equal(searchPayload.ok, true);
@@ -492,7 +507,9 @@ test("agent company-brain search and detail routes return structured summaries f
   assert.equal(searchPayload.data.data.items[0].doc_id, docId);
   assert.match(searchPayload.data.data.items[0].summary.overview, /Planner Delivery SOP/);
 
-  const detailResponse = await fetch(`http://127.0.0.1:${port}/agent/company-brain/docs/${docId}`);
+  const detailResponse = await fetch(`http://127.0.0.1:${port}/agent/company-brain/docs/${docId}`, {
+    headers: createExplicitPlannerAuthHeaders(),
+  });
   const detailPayload = await detailResponse.json();
   assert.equal(detailResponse.status, 200);
   assert.equal(detailPayload.ok, true);
@@ -503,6 +520,30 @@ test("agent company-brain search and detail routes return structured summaries f
     "Planner Delivery SOP",
     "Owner",
   ]);
+});
+
+test("agent company-brain search fails closed without explicit user token", async (t) => {
+  const docId = `doc-agent-company-brain-auth-${Date.now()}`;
+  insertCompanyBrainFixture({
+    docId,
+    title: "Scanoo Delivery Notes",
+    rawText: "scanoo launch checklist",
+  });
+  t.after(() => {
+    db.prepare("DELETE FROM company_brain_docs WHERE account_id = ? AND doc_id = ?").run("acct-1", docId);
+    db.prepare("DELETE FROM lark_documents WHERE account_id = ? AND document_id = ?").run("acct-1", docId);
+  });
+
+  const { server } = await startTestServer(t, {});
+  const { port } = server.address();
+
+  const response = await fetch(`http://127.0.0.1:${port}/agent/company-brain/search?q=scanoo`);
+  const payload = await response.json();
+
+  assert.equal(response.status, 401);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.error, "missing_user_access_token");
+  assert.match(payload.message, /explicit user_access_token/i);
 });
 
 test("agent company-brain review conflict approval apply slice is end-to-end verifiable", async (t) => {
@@ -529,14 +570,19 @@ test("agent company-brain review conflict approval apply slice is end-to-end ver
   const { server } = await startTestServer(t, {});
   const { port } = server.address();
 
-  const beforeResponse = await fetch(`http://127.0.0.1:${port}/agent/company-brain/approved/search?q=launch%20owner`);
+  const beforeResponse = await fetch(`http://127.0.0.1:${port}/agent/company-brain/approved/search?q=launch%20owner`, {
+    headers: createExplicitPlannerAuthHeaders(),
+  });
   const beforePayload = await beforeResponse.json();
   assert.equal(beforeResponse.status, 200);
   assert.equal(beforePayload.data.data.total, 0);
 
   const reviewResponse = await fetch(`http://127.0.0.1:${port}/agent/company-brain/review`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...createExplicitPlannerAuthHeaders(),
+    },
     body: JSON.stringify({
       doc_id: docId,
       title: "Formal Launch Runbook",
@@ -552,7 +598,10 @@ test("agent company-brain review conflict approval apply slice is end-to-end ver
 
   const conflictResponse = await fetch(`http://127.0.0.1:${port}/agent/company-brain/conflicts`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...createExplicitPlannerAuthHeaders(),
+    },
     body: JSON.stringify({
       doc_id: docId,
       title: "Formal Launch Runbook",
@@ -568,7 +617,10 @@ test("agent company-brain review conflict approval apply slice is end-to-end ver
 
   const approvalResponse = await fetch(`http://127.0.0.1:${port}/agent/company-brain/approval-transition`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...createExplicitPlannerAuthHeaders(),
+    },
     body: JSON.stringify({
       doc_id: docId,
       decision: "approve",
@@ -585,7 +637,10 @@ test("agent company-brain review conflict approval apply slice is end-to-end ver
 
   const applyResponse = await fetch(`http://127.0.0.1:${port}/agent/company-brain/docs/${docId}/apply`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...createExplicitPlannerAuthHeaders(),
+    },
     body: JSON.stringify({
       actor: "reviewer@test",
       source_stage: "approved_knowledge",
@@ -597,7 +652,9 @@ test("agent company-brain review conflict approval apply slice is end-to-end ver
   assert.equal(applyPayload.action, "apply_company_brain_approved_knowledge");
   assert.equal(applyPayload.data.data.approval.status, "approved");
 
-  const approvedSearchResponse = await fetch(`http://127.0.0.1:${port}/agent/company-brain/approved/search?q=launch%20owner`);
+  const approvedSearchResponse = await fetch(`http://127.0.0.1:${port}/agent/company-brain/approved/search?q=launch%20owner`, {
+    headers: createExplicitPlannerAuthHeaders(),
+  });
   const approvedSearchPayload = await approvedSearchResponse.json();
   assert.equal(approvedSearchResponse.status, 200);
   assert.equal(approvedSearchPayload.ok, true);
@@ -605,7 +662,9 @@ test("agent company-brain review conflict approval apply slice is end-to-end ver
   assert.equal(approvedSearchPayload.data.data.items[0].doc_id, docId);
   assert.equal(approvedSearchPayload.data.data.items[0].knowledge_state.stage, "approved");
 
-  const approvedDetailResponse = await fetch(`http://127.0.0.1:${port}/agent/company-brain/approved/docs/${docId}`);
+  const approvedDetailResponse = await fetch(`http://127.0.0.1:${port}/agent/company-brain/approved/docs/${docId}`, {
+    headers: createExplicitPlannerAuthHeaders(),
+  });
   const approvedDetailPayload = await approvedDetailResponse.json();
   assert.equal(approvedDetailResponse.status, 200);
   assert.equal(approvedDetailPayload.ok, true);

@@ -61,3 +61,29 @@ test("chat reply converts semantic mismatch into natural language without exposi
   assert.match(text, /文件|知識庫|安全/);
   assert.doesNotMatch(text, /semantic_mismatch|chosen_lane|chosen_action|fallback_reason|trace|details/);
 });
+
+test("chat reply converts missing_user_access_token into explicit natural-language auth guidance", () => {
+  const userResponse = normalizeUserResponse({
+    plannerEnvelope: {
+      ok: false,
+      error: "missing_user_access_token",
+      trace: {
+        chosen_action: "search_company_brain_docs",
+        fallback_reason: "missing_user_access_token",
+      },
+      execution_result: {
+        ok: false,
+        error: "missing_user_access_token",
+        data: {
+          reason: "missing_user_access_token",
+        },
+      },
+    },
+  });
+  const text = renderUserResponseText(userResponse);
+
+  assert.equal(userResponse.ok, false);
+  assert.match(text, /不直接查文件|授權/);
+  assert.match(text, /明確的使用者 token|重新送出/);
+  assert.doesNotMatch(text, /missing_user_access_token|trace|chosen_action|fallback_reason/);
+});

@@ -42,6 +42,7 @@ import {
   getTenantAccessToken,
   getValidUserToken,
 } from "./lark-user-auth.mjs";
+import { buildExplicitUserAuthContext } from "./explicit-user-auth.mjs";
 import { buildLaneIntroReply } from "./capability-lane.mjs";
 import {
   CLOUD_DOC_ORGANIZATION_MODE,
@@ -92,6 +93,10 @@ import {
   setAccountPreference,
 } from "./rag-repository.mjs";
 import { getActiveExecutiveTask } from "./executive-task-state.mjs";
+import {
+  getResolvedSessionExplicitAuth,
+  setResolvedSessionExplicitAuth,
+} from "./session-scope-store.mjs";
 import { normalizeUserResponse, renderUserResponseText } from "./user-response-normalizer.mjs";
 
 function incomingText(event) {
@@ -577,7 +582,39 @@ async function resolveAuthContext(event, logger = noopLogger, { allowTenantFallb
   };
 }
 
-async function executeKnowledgeAssistant({ event, scope, logger = noopLogger }) {
+async function resolvePlannerExplicitAuthContext({ event, scope, accountId, logger = noopLogger } = {}) {
+  const sessionKey = cleanText(scope?.session_key || "");
+  const authFromEvent = buildExplicitUserAuthContext({
+    event,
+    accountId,
+  });
+
+  if (sessionKey && authFromEvent?.access_token) {
+    await setResolvedSessionExplicitAuth(sessionKey, authFromEvent);
+    return authFromEvent;
+  }
+
+  const persistedAuth = sessionKey
+    ? await getResolvedSessionExplicitAuth(sessionKey)
+    : null;
+  const mergedAuth = buildExplicitUserAuthContext({
+    event,
+    accountId,
+    persistedAuth,
+  });
+
+  if (!mergedAuth?.access_token) {
+    logger.warn("planner_explicit_auth_missing", {
+      session_key: sessionKey || null,
+      account_id: formatIdentifierHint(accountId),
+    });
+    return null;
+  }
+
+  return mergedAuth;
+}
+
+async function executeKnowledgeAssistant({ event, scope, logger = noopLogger, traceId = null }) {
   const lanePlan = resolveLaneExecutionPlan({ event, scope });
   logger.info("lane_execution_planned", lanePlan);
   const context = await resolveAuthContext(event, logger, { allowTenantFallback: true });
@@ -590,9 +627,17 @@ async function executeKnowledgeAssistant({ event, scope, logger = noopLogger }) 
     return { text: buildLaneIntroReply(scope, scope) };
   }
 
+  const explicitAuth = await resolvePlannerExplicitAuthContext({
+    event,
+    scope,
+    accountId: context.account?.id || "",
+    logger,
+  });
+
   const plannedResult = await executePlannedUserInput({
     text,
     logger,
+    authContext: explicitAuth,
   });
   const plannerEnvelope = attachLaneTrace(
     buildPlannedUserInputEnvelope(plannedResult),
@@ -603,6 +648,9 @@ async function executeKnowledgeAssistant({ event, scope, logger = noopLogger }) 
   const userResponse = normalizeUserResponse({
     plannerResult: plannedResult,
     plannerEnvelope,
+    logger,
+    traceId,
+    handlerName: "executeKnowledgeAssistant",
   });
   if (userResponse.ok === false) {
     logger.info("lane_execution_user_fallback", {
@@ -613,6 +661,8 @@ async function executeKnowledgeAssistant({ event, scope, logger = noopLogger }) 
   logger.info("lane_execution_result", plannerEnvelope.trace);
   return {
     text: renderUserResponseText(userResponse),
+    handlerName: "executeKnowledgeAssistant",
+    traceId,
   };
 }
 
@@ -2062,7 +2112,7 @@ async function executeGroupSharedAssistant({ event, scope, logger = noopLogger }
   });
 }
 
-export async function executeCapabilityLane({ event, scope, logger = noopLogger }) {
+export async function executeCapabilityLane({ event, scope, logger = noopLogger, traceId = null }) {
   const meetingReply = await executeMeetingCommand({ event, scope, logger });
   if (meetingReply) {
     return meetingReply;
@@ -2135,7 +2185,7 @@ export async function executeCapabilityLane({ event, scope, logger = noopLogger 
   }
 
   if (lane === "knowledge-assistant") {
-    return executeKnowledgeAssistant({ event, scope, logger });
+    return executeKnowledgeAssistant({ event, scope, logger, traceId });
   }
   if (lane === "doc-editor") {
     return executeDocEditor({ event, scope, logger });
