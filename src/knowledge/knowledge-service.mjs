@@ -22,6 +22,11 @@ const QUERY_ALIAS_MAP = {
   onboarding: ['onboarding', '導入', '交付', '流程'],
 };
 
+function shouldSuppressGenericBusinessExpansion(raw = '', latinTokens = []) {
+  const explicitBusiness = latinTokens.some((token) => token.toLowerCase() === 'business');
+  return !explicitBusiness && (raw.includes('商機') || latinTokens.some((token) => token.toLowerCase() === 'bd'));
+}
+
 export function getIndex() {
   if (!cachedIndex) cachedIndex = loadDocsFromDir('./docs/system');
   return cachedIndex;
@@ -201,15 +206,23 @@ function normalizeKnowledgeQueries(keyword) {
 
   const variants = [];
   const latinTokens = raw.match(/[A-Za-z0-9][A-Za-z0-9_-]*/g) || [];
-  const aliasVariants = latinTokens.flatMap(
-    (token) => QUERY_ALIAS_MAP[token.toLowerCase()] || [],
-  );
+  const suppressGenericBusiness = shouldSuppressGenericBusinessExpansion(raw, latinTokens);
+  const aliasVariants = latinTokens.flatMap((token) => {
+    const aliases = QUERY_ALIAS_MAP[token.toLowerCase()] || [];
+    if (!suppressGenericBusiness || token.toLowerCase() !== 'bd') {
+      return aliases;
+    }
+    return aliases.filter((alias) => alias.toLowerCase() !== 'business');
+  });
 
   variants.push(...aliasVariants);
 
   Object.entries(QUERY_NORMALIZATION_MAP).forEach(([source, target]) => {
     if (raw.includes(source)) {
-      variants.push(source, target);
+      variants.push(source);
+      if (!(suppressGenericBusiness && source === '商機' && target.toLowerCase() === 'business')) {
+        variants.push(target);
+      }
     }
   });
 

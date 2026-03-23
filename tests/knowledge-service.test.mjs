@@ -89,6 +89,18 @@ test("queryKnowledgeWithContext keeps BD flow docs ahead of generic normalizatio
   }
 });
 
+test("queryKnowledgeWithContext suppresses generic business leakage for BD opportunity queries", () => {
+  const bdResults = queryKnowledgeWithContext("BD 商機管理");
+  const bdText = bdResults.map((item) => item.snippet || "").join(" ");
+  const genericBusinessResults = queryKnowledgeWithContext("business");
+
+  assert.ok(bdResults.length > 0);
+  assert.doesNotMatch(bdText, /business_error/i);
+  assert.ok(
+    genericBusinessResults.some((item) => /business_error/i.test(item.snippet || "")),
+  );
+});
+
 test("cleanSnippet strips navigation artifacts at the start of previews", () => {
   assert.equal(
     cleanKnowledgeSnippet("Back to README.md\nLoop Runbook: planner verification keeps evidence requirements explicit.", "verification"),
