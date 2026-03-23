@@ -7,7 +7,12 @@ import {
 } from "./executive-closed-loop.mjs";
 import { buildLifecycleTransition } from "./executive-lifecycle.mjs";
 import { buildVisibleMessageText, cleanText } from "./message-intent-utils.mjs";
-import { looksLikeExecutiveExit, looksLikeExecutiveStart, planExecutiveTurn } from "./executive-planner.mjs";
+import {
+  looksLikeExecutiveExit,
+  looksLikeExecutiveStart,
+  planExecutiveTurn,
+  renderPlannerUserFacingReplyText,
+} from "./executive-planner.mjs";
 import { FALLBACK_DISABLED, ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
 import {
   appendExecutiveAgentOutput,
@@ -19,6 +24,7 @@ import {
   startExecutiveTask,
   updateExecutiveTask,
 } from "./executive-task-state.mjs";
+import { normalizeUserResponse } from "./user-response-normalizer.mjs";
 
 const noopLogger = {
   info() {},
@@ -34,6 +40,23 @@ const noopLogger = {
     return { message: typeof error === "string" ? error : String(error) };
   },
 };
+
+function buildExecutiveUserFacingErrorText({
+  answer = "",
+  limitations = [],
+} = {}) {
+  const normalized = normalizeUserResponse({
+    payload: {
+      ok: false,
+      answer,
+      sources: [],
+      limitations,
+    },
+    logger: noopLogger,
+    handlerName: "executiveOrchestrator",
+  });
+  return renderPlannerUserFacingReplyText(normalized);
+}
 
 const EXECUTIVE_MAX_ROLES = 3;
 const EXECUTIVE_MAX_SUPPORTING_ROLES = EXECUTIVE_MAX_ROLES - 1;
@@ -1135,7 +1158,13 @@ export async function executeWorkItemsSequentially({
   };
 }
 
-export async function executeExecutiveTurn({ accountId, event, scope, logger = noopLogger }) {
+export async function executeExecutiveTurn({
+  accountId,
+  event,
+  scope,
+  logger = noopLogger,
+  planExecutiveTurnFn = planExecutiveTurn,
+}) {
   const text = buildVisibleMessageText(event);
   const sessionKey = sessionKeyFromScope(scope, accountId);
   if (!accountId || !sessionKey || !cleanText(text)) {
@@ -1208,16 +1237,37 @@ export async function executeExecutiveTurn({ accountId, event, scope, logger = n
       pending_questions: [],
     };
   } else {
-    decision = await planExecutiveTurn({ text, activeTask, logger, sessionKey });
+    decision = await planExecutiveTurnFn({ text, activeTask, logger, sessionKey });
     if (decision?.error === FALLBACK_DISABLED) {
+      const failureEnvelope = {
+        ok: false,
+        error: FALLBACK_DISABLED,
+        details: {
+          message: cleanText(decision.reason || "") || "executive_planner_fallback_disabled",
+        },
+        context: {
+          objective: cleanText(decision.objective || requestText || "") || null,
+          primary_agent_id: cleanText(decision.primary_agent_id || "") || null,
+          next_agent_id: cleanText(decision.next_agent_id || "") || null,
+          supporting_agent_ids: Array.isArray(decision.supporting_agent_ids)
+            ? decision.supporting_agent_ids.map((item) => cleanText(item)).filter(Boolean)
+            : [],
+          why: cleanText(decision.why || "") || null,
+          alternative: decision.alternative || null,
+        },
+      };
       return {
-        text: JSON.stringify({
-          ok: false,
-          error: FALLBACK_DISABLED,
-          details: {
-            message: cleanText(decision.reason || "") || "executive_planner_fallback_disabled",
-          },
-        }, null, 2),
+        text: buildExecutiveUserFacingErrorText({
+          answer: "這輪 executive planner 暫時沒有產出可安全執行的決策，所以我先不直接顯示未整理的系統錯誤。",
+          limitations: [
+            "內部錯誤原因與 decision context 已保留在程式層與 runtime/log，這裡先不直接暴露 raw JSON。",
+            cleanText(decision?.alternative?.summary || "")
+              || "如果你要繼續，可以改用明確的 agent slash 指令，或把任務目標說得更具體一點後再試。",
+          ],
+        }),
+        error: failureEnvelope.error,
+        details: failureEnvelope.details,
+        context: failureEnvelope.context,
       };
     }
     nextAgent = getRegisteredAgent(decision.next_agent_id) || getRegisteredAgent("generalist");

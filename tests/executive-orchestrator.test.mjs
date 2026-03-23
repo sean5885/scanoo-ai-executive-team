@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { FALLBACK_DISABLED } from "../src/planner-error-codes.mjs";
 import {
   buildExecutiveBrief,
   buildSupportingContext,
@@ -177,4 +178,62 @@ test("executeExecutiveTurn slash-command no-match reply is natural language inst
   assert.match(result.text, /^結論/m);
   assert.match(result.text, /registered agent|slash 指令/);
   assert.doesNotMatch(result.text, /ROUTING_NO_MATCH|registered_agent_command_no_match|\"ok\"|\"error\"|\"details\"/);
+});
+
+test("executeExecutiveTurn planner fallback-disabled reply is natural language and keeps structured fields", async () => {
+  const result = await executeExecutiveTurn({
+    accountId: "acct-executive-2",
+    scope: {
+      session_key: "session-executive-fallback-disabled",
+      trace_id: "trace-executive-fallback-disabled",
+    },
+    event: {
+      trace_id: "trace-executive-fallback-disabled",
+      message: {
+        content: JSON.stringify({
+          text: "請多 agent 一起評估這題",
+        }),
+      },
+    },
+    async planExecutiveTurnFn() {
+      return {
+        error: FALLBACK_DISABLED,
+        action: null,
+        objective: "請多 agent 一起評估這題",
+        primary_agent_id: "generalist",
+        next_agent_id: "generalist",
+        supporting_agent_ids: ["consult"],
+        reason: "executive_planner_fallback_disabled",
+        why: "LLM planner 沒有產出可用 JSON，而且 heuristic fallback 已被停用。",
+        alternative: {
+          action: "clarify",
+          agent_id: "generalist",
+          summary: "如需繼續，必須先提供更明確的 agent 指令或讓 planner 重新產生合法 JSON。",
+        },
+        pending_questions: [],
+        work_items: [],
+      };
+    },
+  });
+
+  assert.ok(result);
+  assert.match(result.text, /^結論/m);
+  assert.match(result.text, /executive planner|系統錯誤/);
+  assert.doesNotMatch(result.text, /FALLBACK_DISABLED|executive_planner_fallback_disabled|\"ok\"|\"error\"|\"details\"/);
+  assert.equal(result.error, FALLBACK_DISABLED);
+  assert.deepEqual(result.details, {
+    message: "executive_planner_fallback_disabled",
+  });
+  assert.deepEqual(result.context, {
+    objective: "請多 agent 一起評估這題",
+    primary_agent_id: "generalist",
+    next_agent_id: "generalist",
+    supporting_agent_ids: ["consult"],
+    why: "LLM planner 沒有產出可用 JSON，而且 heuristic fallback 已被停用。",
+    alternative: {
+      action: "clarify",
+      agent_id: "generalist",
+      summary: "如需繼續，必須先提供更明確的 agent 指令或讓 planner 重新產生合法 JSON。",
+    },
+  });
 });
