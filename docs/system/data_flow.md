@@ -520,6 +520,7 @@ Actual AI-like execution paths:
 
 - planner-gated retrieval / tool execution
   - answer route -> `executive-planner.mjs` strict single-step `{ action, params }` or bounded `{ steps: [{ action, params }] }` decision -> contract-bound planner action/preset execution or sequential planner tool execution
+  - knowledge-assistant chat lane -> `lane-executor.mjs` -> `executive-planner.mjs` -> shared `normalizeUserResponse()` boundary -> fixed natural-language chat reply text
   - direct user-input answer fallback is disabled; `answer-service.mjs` is no longer the first responder for `/answer` or the knowledge-assistant lane
 
 - comment-driven rewrite

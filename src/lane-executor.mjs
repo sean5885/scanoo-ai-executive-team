@@ -1,9 +1,7 @@
 import { generateDocumentCommentSuggestionCard } from "./comment-suggestion-workflow.mjs";
 import {
   buildPlannedUserInputEnvelope,
-  buildPlannedUserInputUserFacingReply,
   executePlannedUserInput,
-  renderPlannerUserFacingReplyText,
 } from "./executive-planner.mjs";
 import {
   ensureMeetingWorkflowTask,
@@ -94,6 +92,7 @@ import {
   setAccountPreference,
 } from "./rag-repository.mjs";
 import { getActiveExecutiveTask } from "./executive-task-state.mjs";
+import { normalizeUserResponse, renderUserResponseText } from "./user-response-normalizer.mjs";
 
 function incomingText(event) {
   return buildVisibleMessageText(event);
@@ -595,26 +594,25 @@ async function executeKnowledgeAssistant({ event, scope, logger = noopLogger }) 
     text,
     logger,
   });
-  const userFacingReply = buildPlannedUserInputUserFacingReply(plannedResult);
-  if (userFacingReply) {
-    logger.info("lane_execution_user_fallback", {
-      chosen_action: cleanText(plannedResult?.action || plannedResult?.steps?.[0]?.action || "") || null,
-      planner_error: cleanText(plannedResult?.error || plannedResult?.execution_result?.error || "") || null,
-    });
-    return {
-      text: renderPlannerUserFacingReplyText(userFacingReply),
-    };
-  }
-
   const plannerEnvelope = attachLaneTrace(
     buildPlannedUserInputEnvelope(plannedResult),
     {
       scope,
     },
   );
+  const userResponse = normalizeUserResponse({
+    plannerResult: plannedResult,
+    plannerEnvelope,
+  });
+  if (userResponse.ok === false) {
+    logger.info("lane_execution_user_fallback", {
+      chosen_action: cleanText(plannedResult?.action || plannedResult?.steps?.[0]?.action || "") || null,
+      planner_error: cleanText(plannedResult?.error || plannedResult?.execution_result?.error || "") || null,
+    });
+  }
   logger.info("lane_execution_result", plannerEnvelope.trace);
   return {
-    text: JSON.stringify(plannerEnvelope, null, 2),
+    text: renderUserResponseText(userResponse),
   };
 }
 

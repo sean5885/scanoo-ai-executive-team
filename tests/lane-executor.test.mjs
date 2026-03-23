@@ -251,6 +251,24 @@ test("lane execution plan keeps scoped cloud-doc exclusion requests out of perso
   assert.equal(plan.fallback_reason, "semantic_mismatch_document_request_in_personal_lane");
 });
 
+test("lane execution plan keeps the exact scanooo cloud-doc rereview query out of personal lane", () => {
+  const plan = resolveLaneExecutionPlan({
+    scope: {
+      capability_lane: "personal-assistant",
+    },
+    event: {
+      message: {
+        content: JSON.stringify({
+          text: "你把我的雲端文件再看一遍，把不屬於 scanooo 的內容摘出去讓我確認",
+        }),
+      },
+    },
+  });
+
+  assert.equal(plan.chosen_action, null);
+  assert.equal(plan.fallback_reason, "semantic_mismatch_document_request_in_personal_lane");
+});
+
 test("lane execution plan keeps doc-boundary keep requests out of personal lane", () => {
   const plan = resolveLaneExecutionPlan({
     scope: {
