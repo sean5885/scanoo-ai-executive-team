@@ -5,6 +5,25 @@ import {
 } from "./executive-planner.mjs";
 import { normalizeText } from "./text-utils.mjs";
 
+function emitBoundaryLog({
+  logger = null,
+  traceId = null,
+  handlerName = null,
+  ok = null,
+} = {}) {
+  const payload = {
+    chat_output_boundary: "normalized",
+    handler_name: normalizeText(handlerName || "") || "unknown_handler",
+    trace_id: normalizeText(traceId || "") || null,
+    ok: typeof ok === "boolean" ? ok : null,
+  };
+  if (logger?.info) {
+    logger.info("chat_output_boundary", payload);
+    return;
+  }
+  console.info("chat_output_boundary", payload);
+}
+
 export function normalizeUserResponseList(items = []) {
   return [...new Set(
     (Array.isArray(items) ? items : [])
@@ -13,11 +32,52 @@ export function normalizeUserResponseList(items = []) {
   )];
 }
 
+function normalizePlannerDocumentItems(items = []) {
+  return Array.from(
+    new Map(
+      (Array.isArray(items) ? items : [])
+        .map((item) => ({
+          title: normalizeText(item?.title || ""),
+          doc_id: normalizeText(item?.doc_id || ""),
+          url: normalizeText(item?.url || ""),
+          reason: normalizeText(item?.reason || ""),
+        }))
+        .filter((item) => item.title || item.doc_id || item.url || item.reason)
+        .map((item) => [
+          [item.doc_id, item.title, item.url].filter(Boolean).join("::"),
+          item,
+        ]),
+    ).values(),
+  );
+}
+
+function buildPlannerDocumentSourceLine(item = {}) {
+  const label = item.title || item.doc_id || "未命名文件";
+  const reason = item.reason || "目前已列為這輪查詢最相關的文件。";
+  if (item.url) {
+    return `${label}：${reason} 連結：${item.url}`;
+  }
+  return `${label}：${reason}`;
+}
+
+function buildPlannerNextSteps(execution = {}, fallbacks = []) {
+  const actionLayerNextSteps = Array.isArray(execution?.action_layer?.next_actions)
+    ? execution.action_layer.next_actions
+    : Array.isArray(execution?.action_layer?.nextSteps)
+      ? execution.action_layer.nextSteps
+      : [];
+  return normalizeUserResponseList([
+    ...actionLayerNextSteps,
+    ...fallbacks,
+  ]).slice(0, 3);
+}
+
 export function buildPlannerSuccessUserResponse(envelope = {}) {
   const execution = envelope?.execution_result && typeof envelope.execution_result === "object"
     ? envelope.execution_result
     : {};
   const kind = normalizeText(execution.kind || "");
+  const documentItems = normalizePlannerDocumentItems(execution.items);
 
   if (kind === "runtime_info") {
     const summary = [
@@ -29,66 +89,78 @@ export function buildPlannerSuccessUserResponse(envelope = {}) {
     return {
       ok: true,
       answer: summary || "目前 runtime 有正常回應。",
-      sources: ["runtime 即時狀態"],
-      limitations: normalizeUserResponseList([
+      sources: ["runtime 即時狀態：這份回覆直接來自目前 process 的即時資訊。"],
+      limitations: buildPlannerNextSteps(execution, [
         execution.service_start_time ? `這是啟動於 ${execution.service_start_time} 的即時 runtime 快照。` : "這是目前 runtime 的即時快照。",
       ]),
     };
   }
 
   if (kind === "search") {
-    const items = Array.isArray(execution.items) ? execution.items : [];
+    const query = normalizeText(execution.match_reason || "");
     return {
       ok: true,
-      answer: items.length > 0
-        ? `我找到 ${items.length} 份相關文件，你可以直接指定想看哪一份。`
-        : "目前沒有找到直接相關的文件。",
-      sources: normalizeUserResponseList(items.map((item) => (
-        [normalizeText(item?.title || ""), normalizeText(item?.doc_id || "")]
-          .filter(Boolean)
-          .join(" / ")
-      ))),
-      limitations: ["如果你要，我可以繼續打開其中一份文件幫你整理內容。"],
+      answer: documentItems.length > 0
+        ? `我已先按目前已索引的文件，標出和「${query || "這輪需求"}」最相關的 ${documentItems.length} 份文件。`
+        : normalizeText(execution.content_summary || "") || "目前沒有找到可直接對應的已索引文件。",
+      sources: normalizeUserResponseList(documentItems.map(buildPlannerDocumentSourceLine)),
+      limitations: buildPlannerNextSteps(execution, documentItems.length > 0
+        ? [
+            "如果你要，我可以直接打開其中一份文件幫你整理內容。",
+            "如果這是在做排除/重分配，也可以直接告訴我要保留或排除哪幾份。",
+          ]
+        : [
+            query ? `可以換一個更精準的主題詞、文件名或角色範圍，再重新查「${query}」相關文件。` : "可以換一個更精準的主題詞、文件名或角色範圍再試一次。",
+            "如果你預期它應該存在，也可以先同步最新雲文件後再試。",
+          ]),
     };
   }
 
   if (kind === "detail" || kind === "search_and_detail") {
     const title = normalizeText(execution.title || "");
     const summary = normalizeText(execution.content_summary || "");
+    const effectiveSources = documentItems.length > 0
+      ? documentItems
+      : normalizePlannerDocumentItems([{
+          title,
+          doc_id: execution.doc_id,
+          reason: execution.match_reason || "這份文件直接命中這輪需求。",
+        }]);
     return {
       ok: true,
-      answer: [title ? `「${title}」的重點如下：` : null, summary || "我已經找到對應文件，但目前可用摘要有限。"]
+      answer: [title ? `我先以「${title}」作為這輪最直接的對應文件。` : null, summary || "我已經找到對應文件，但目前可用摘要有限。"]
         .filter(Boolean)
         .join(" "),
-      sources: normalizeUserResponseList([
-        [title, normalizeText(execution.doc_id || "")].filter(Boolean).join(" / "),
-      ]),
-      limitations: normalizeUserResponseList([
-        execution.match_reason ? `這次是依照「${execution.match_reason}」命中的文件。` : null,
+      sources: normalizeUserResponseList(effectiveSources.map(buildPlannerDocumentSourceLine)),
+      limitations: buildPlannerNextSteps(execution, [
+        execution.match_reason ? `如果你要，我可以繼續沿著「${execution.match_reason}」把這份文件整理成更短的摘要或 checklist。` : "如果你要，我可以把這份文件再整理成更短的摘要或 checklist。",
       ]),
     };
   }
 
   if (kind === "search_and_detail_candidates") {
-    const items = Array.isArray(execution.items) ? execution.items : [];
+    const query = normalizeText(execution.match_reason || "");
     return {
       ok: true,
-      answer: `我找到 ${items.length || "多"} 份可能相關的文件，還需要你指定要打開哪一份。`,
-      sources: normalizeUserResponseList(items.map((item) => (
-        [normalizeText(item?.title || ""), normalizeText(item?.doc_id || "")]
-          .filter(Boolean)
-          .join(" / ")
-      ))),
-      limitations: ["你可以直接回我第幾份，或貼出想看的文件名稱。"],
+      answer: `我先標出 ${documentItems.length || "多"} 份需要你確認的候選文件，因為這輪需求還沒有唯一對到單一文件。`,
+      sources: normalizeUserResponseList(documentItems.map(buildPlannerDocumentSourceLine)),
+      limitations: buildPlannerNextSteps(execution, [
+        query ? `你可以直接回我第幾份，或告訴我只保留和「${query}」最相關的文件。` : "你可以直接回我第幾份，或貼出想看的文件名稱。",
+      ]),
     };
   }
 
   if (kind === "search_and_detail_not_found") {
     return {
       ok: true,
-      answer: "目前沒有找到可以直接整理的對應文件。",
+      answer: normalizeText(execution.content_summary || "") || "目前沒有找到可以直接整理的對應文件。",
       sources: [],
-      limitations: ["可以換一個關鍵詞，或補更多上下文再試一次。"],
+      limitations: buildPlannerNextSteps(execution, [
+        execution.match_reason
+          ? `你可以換一個更明確的文件名稱、主題或角色範圍，再重新查「${execution.match_reason}」。`
+          : "你可以換一個更明確的文件名稱、主題或角色範圍再試一次。",
+        "如果你預期它應該存在，也可以先同步最新雲文件後再試。",
+      ]),
     };
   }
 
@@ -106,6 +178,9 @@ export function normalizeUserResponse({
   plannerResult = null,
   plannerEnvelope = null,
   payload = null,
+  logger = null,
+  traceId = null,
+  handlerName = null,
 } = {}) {
   const envelope = plannerEnvelope && typeof plannerEnvelope === "object"
     ? plannerEnvelope
@@ -116,27 +191,48 @@ export function normalizeUserResponse({
   if (envelope) {
     const failureReply = buildPlannedUserInputUserFacingReply(plannerEnvelope || plannerResult || envelope);
     if (failureReply) {
-      return {
+      const normalizedFailure = {
         ok: false,
         answer: normalizeText(failureReply.answer || "") || "這次沒有拿到可以直接交付的安全結果。",
         sources: normalizeUserResponseList(failureReply.sources),
         limitations: normalizeUserResponseList(failureReply.limitations),
       };
+      emitBoundaryLog({
+        logger,
+        traceId,
+        handlerName,
+        ok: normalizedFailure.ok,
+      });
+      return normalizedFailure;
     }
-    return buildPlannerSuccessUserResponse(envelope);
+    const normalizedSuccess = buildPlannerSuccessUserResponse(envelope);
+    emitBoundaryLog({
+      logger,
+      traceId,
+      handlerName,
+      ok: normalizedSuccess.ok,
+    });
+    return normalizedSuccess;
   }
 
   const objectPayload = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
   if (normalizeText(objectPayload.answer || "")) {
-    return {
+    const normalizedPayload = {
       ok: objectPayload.ok !== false,
       answer: normalizeText(objectPayload.answer || ""),
       sources: normalizeUserResponseList(objectPayload.sources),
       limitations: normalizeUserResponseList(objectPayload.limitations),
     };
+    emitBoundaryLog({
+      logger,
+      traceId,
+      handlerName,
+      ok: normalizedPayload.ok,
+    });
+    return normalizedPayload;
   }
 
-  return {
+  const normalizedFallback = {
     ok: objectPayload.ok !== false,
     answer: normalizeText(objectPayload.message || "") || "這次沒有拿到可以直接交付的結果。",
     sources: [],
@@ -144,6 +240,13 @@ export function normalizeUserResponse({
       "詳細 internal error 與 trace 已保留在 runtime/log，不直接暴露給使用者。",
     ]),
   };
+  emitBoundaryLog({
+    logger,
+    traceId,
+    handlerName,
+    ok: normalizedFallback.ok,
+  });
+  return normalizedFallback;
 }
 
 export function renderUserResponseText(response = {}) {

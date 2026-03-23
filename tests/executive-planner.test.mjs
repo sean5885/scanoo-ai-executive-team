@@ -2641,6 +2641,8 @@ test("runPlannerToolFlow routes the exact scanoo exclusion live query into docum
   assert.deepEqual(result.execution_result?.formatted_output?.items, [{
     title: "Scanoo PRD｜後台核心系統迭代",
     doc_id: "doc_scanoo_prd",
+    url: null,
+    reason: "目前這份文件和「scanoo」最相關。",
   }]);
 });
 
@@ -2690,6 +2692,7 @@ test("runPlannerToolFlow keeps explicit auth on the exact scanoo cloud-doc query
 
     assert.equal(result.selected_action, "search_company_brain_docs");
     assert.equal(result.execution_result?.formatted_output?.kind, "search");
+    assert.match(result.execution_result?.formatted_output?.items?.[0]?.reason || "", /scanoo/);
     assert.equal(capturedHeaders[EXPLICIT_USER_AUTH_HEADERS.accountId], "acct-1");
     assert.equal(capturedHeaders[EXPLICIT_USER_AUTH_HEADERS.userAccessToken], "event-user-token-1");
     assert.equal(capturedHeaders[EXPLICIT_USER_AUTH_HEADERS.required], "true");
@@ -2871,8 +2874,8 @@ test("runPlannerToolFlow formats search result instead of only returning raw too
   assert.equal(result.execution_result?.ok, true);
   assert.equal(result.execution_result?.formatted_output?.kind, "search");
   assert.deepEqual(result.execution_result?.formatted_output?.items, [
-    { title: "OKR 文件", doc_id: "doc_1" },
-    { title: "OKR 範本", doc_id: "doc_2" },
+    { title: "OKR 文件", doc_id: "doc_1", url: null, reason: "目前這份文件和「幫我找 OKR 文件」最相關。" },
+    { title: "OKR 範本", doc_id: "doc_2", url: null, reason: "目前這份文件和「幫我找 OKR 文件」最相關。" },
   ]);
   assert.equal(result.execution_result?.formatted_output?.found, true);
   assert.deepEqual(result.execution_result?.formatted_output?.action_layer, {
@@ -3073,9 +3076,9 @@ test("runPlannerToolFlow returns candidate list when search_and_detail_doc hits 
   assert.equal(result.execution_result?.ok, true);
   assert.equal(result.execution_result?.formatted_output?.kind, "search_and_detail_candidates");
   assert.deepEqual(result.execution_result?.formatted_output?.items, [
-    { title: "BD Playbook", doc_id: "doc_bd_1" },
-    { title: "BD SOP", doc_id: "doc_bd_2" },
-    { title: "BD FAQ", doc_id: "doc_bd_3" },
+    { title: "BD Playbook", doc_id: "doc_bd_1", url: null, reason: "目前這份文件和「幫我整理 BD 文件重點」最相關。" },
+    { title: "BD SOP", doc_id: "doc_bd_2", url: null, reason: "目前這份文件和「幫我整理 BD 文件重點」最相關。" },
+    { title: "BD FAQ", doc_id: "doc_bd_3", url: null, reason: "目前這份文件和「幫我整理 BD 文件重點」最相關。" },
   ]);
   assert.equal(result.execution_result?.formatted_output?.match_reason, "幫我整理 BD 文件重點");
   assert.equal(result.execution_result?.formatted_output?.found, true);
@@ -3132,7 +3135,7 @@ test("runPlannerToolFlow returns explicit not-found output when search_and_detai
     doc_id: null,
     items: [],
     match_reason: "整理不存在的流程並解釋",
-    content_summary: null,
+    content_summary: "目前沒有找到標題、文件代號、摘要或已學習標籤明確命中「整理不存在的流程並解釋」的已索引文件。",
     learning_status: null,
     learning_concepts: [],
     learning_tags: [],

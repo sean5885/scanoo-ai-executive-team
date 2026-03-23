@@ -193,7 +193,7 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Purpose: planner-facing search action with composite ranking over keyword match, semantic-lite similarity, learning tags/key concepts, and recency
   - Response shape: `{ ok, action, data, trace_id }`, where `data` keeps a unified `{ success, data, error }` envelope
   - Input note: accepts `q` plus `top_k` (default `5`); legacy `limit` remains as a compatibility alias
-  - Data note: search items contain structured `summary`, `learning_state`, and `match`; `match` now includes composite `score`, per-signal scores, and simplified `ranking_basis`
+  - Data note: search items contain `doc_id`, `title`, optional mirrored `url`, structured `summary`, `learning_state`, and `match`; `match` now includes composite `score`, per-signal scores, and simplified `ranking_basis`
   - Validation note: empty `q` returns `ok=false` with `error=invalid_query`
   - Log note: emits `stage=agent_bridge`
 
@@ -438,6 +438,7 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Response note: planner must first emit strict legacy `{ action, params }` or bounded multi-step `{ steps: [{ action, params }] }`; wrapped/non-JSON output is rejected as `error=planner_failed`
   - Response note: both success and controlled failure now pass through a final `normalizeUserResponse()` boundary
   - Response note: the outward body is always natural-language JSON shaped as `{ ok, answer, sources, limitations }`
+  - Response note: for document-search style results, `sources[]` are rendered from per-document evidence rows and can include document title, concrete reason, and link when the mirrored source URL exists
   - Response note: planner/executor internals such as `action`, `params`, `error`, `details`, `execution_result`, `trace`, and `trace_id` do not appear in the response body; request trace remains available through the HTTP trace header / monitoring path
 
 - `GET /agent/security/status`

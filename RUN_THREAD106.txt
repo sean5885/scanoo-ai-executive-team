@@ -1,0 +1,12 @@
+Improve evidence-first answer quality:
+- always include document titles if available
+- include clickable links if source exists
+- map each decision to a specific document
+- if no document found, explain why (not generic no-result)
+- if auth missing, show explicit auth-required message
+- output structure:
+  conclusion
+  flagged documents (title + reason + link)
+  next step
+- ensure single-voice merged output
+- add regression for scanoo cloud-doc exclusion query

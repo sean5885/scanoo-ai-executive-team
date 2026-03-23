@@ -57,7 +57,16 @@ function buildPlannerFormattedOutput({
     kind: cleanText(kind) || null,
     title: cleanText(title) || null,
     doc_id: cleanText(docId) || null,
-    items: Array.isArray(items) ? items : [],
+    items: Array.isArray(items)
+      ? items
+        .map((item) => ({
+          title: cleanText(item?.title) || null,
+          doc_id: cleanText(item?.doc_id) || null,
+          url: cleanText(item?.url) || null,
+          reason: cleanText(item?.reason) || null,
+        }))
+        .filter((item) => item.title || item.doc_id || item.url || item.reason)
+      : [],
     match_reason: cleanText(matchReason) || null,
     content_summary: cleanText(contentSummary) || null,
     learning_status: cleanText(learningStatus) || null,
@@ -133,6 +142,61 @@ function summarizePlannerDocumentContent(content = "", maxLength = 180) {
     return normalized;
   }
   return `${normalized.slice(0, maxLength).trim()}...`;
+}
+
+function summarizePlannerEvidenceSnippet(text = "", maxLength = 140) {
+  const normalized = cleanText(String(text || "").replace(/\s+/g, " "));
+  if (!normalized) {
+    return "";
+  }
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength).trim()}...`;
+}
+
+function buildPlannerSearchItemReason(item = {}, query = "") {
+  const snippet = summarizePlannerEvidenceSnippet(item?.summary?.snippet || item?.summary?.overview || "");
+  if (snippet) {
+    return snippet;
+  }
+
+  const normalizedQuery = cleanText(query);
+  const rankingBasis = Array.isArray(item?.match?.ranking_basis)
+    ? item.match.ranking_basis.map((entry) => cleanText(entry).toLowerCase()).filter(Boolean)
+    : [];
+
+  if (rankingBasis.some((entry) => entry.startsWith("keyword:title") || entry.startsWith("keyword:doc_id"))) {
+    return normalizedQuery
+      ? `標題或文件代號直接命中「${normalizedQuery}」。`
+      : "標題或文件代號直接命中這輪查詢。";
+  }
+  if (rankingBasis.some((entry) => entry.startsWith("keyword:content"))) {
+    return normalizedQuery
+      ? `文件內容直接命中「${normalizedQuery}」。`
+      : "文件內容直接命中這輪查詢。";
+  }
+  if (rankingBasis.some((entry) => entry.startsWith("learning:"))) {
+    return normalizedQuery
+      ? `已學習標籤或概念命中「${normalizedQuery}」。`
+      : "已學習標籤或概念命中這輪查詢。";
+  }
+  if (Number(item?.match?.semantic_score) > 0) {
+    return normalizedQuery
+      ? `語義上最接近「${normalizedQuery}」的文件之一。`
+      : "語義上最接近這輪查詢的文件之一。";
+  }
+  return normalizedQuery
+    ? `目前這份文件和「${normalizedQuery}」最相關。`
+    : "目前這份文件是最相關的候選結果。";
+}
+
+function buildPlannerNotFoundReason(query = "") {
+  const normalizedQuery = cleanText(query);
+  if (normalizedQuery) {
+    return `目前沒有找到標題、文件代號、摘要或已學習標籤明確命中「${normalizedQuery}」的已索引文件。`;
+  }
+  return "目前沒有找到可直接對應的已索引文件。";
 }
 
 function parsePlannerDocQueryReadResponse(rawText = "") {
@@ -434,12 +498,17 @@ export async function formatDocQueryExecutionResult({
 
   if (normalizedAction === "search_company_brain_docs") {
     const items = extractCompanyBrainItems(executionResult);
+    const query = cleanText(normalizedPayload.q) || cleanText(normalizedPayload.query) || normalizedIntent;
     const result = withFormattedOutput(executionResult, buildPlannerFormattedOutput({
       kind: "search",
       items: items.map((item) => ({
         title: cleanText(item?.title) || null,
         doc_id: cleanText(item?.doc_id) || null,
+        url: cleanText(item?.url) || null,
+        reason: buildPlannerSearchItemReason(item, query),
       })),
+      matchReason: query || null,
+      contentSummary: items.length > 0 ? null : buildPlannerNotFoundReason(query),
       found: items.length > 0,
     }));
     logDocQueryTrace(logger, buildDocQueryTraceEvent({
@@ -462,6 +531,8 @@ export async function formatDocQueryExecutionResult({
     const learningState = extractCompanyBrainLearningState(executionResult);
     const docId = cleanText(detailItem?.doc_id);
     const title = cleanText(detailItem?.title);
+    const reason = summarizePlannerEvidenceSnippet(detailPayload?.summary?.snippet)
+      || buildPlannerSearchItemReason(detailItem, cleanText(normalizedPayload.query) || normalizedIntent);
     const contentResult = await contentReader({
       docId,
       baseUrl,
@@ -470,6 +541,13 @@ export async function formatDocQueryExecutionResult({
       kind: "detail",
       title: title || contentResult?.title || "",
       docId,
+      items: [{
+        title: title || contentResult?.title || "",
+        doc_id: docId,
+        url: cleanText(detailItem?.url) || cleanText(detailPayload?.doc?.url) || null,
+        reason,
+      }],
+      matchReason: cleanText(normalizedPayload.query) || normalizedIntent || null,
       contentSummary: cleanText(detailPayload?.summary?.overview)
         || cleanText(detailPayload?.summary?.snippet)
         || summarizePlannerDocumentContent(contentResult?.content || ""),
@@ -509,10 +587,12 @@ export async function formatDocQueryExecutionResult({
     const learningState = extractCompanyBrainLearningState(detailResult) || searchItem?.learning_state || null;
 
     if (!detailResult && searchItems.length === 0) {
+      const query = cleanText(normalizedPayload.q) || normalizedIntent || "由搜尋結果命中";
       const result = withFormattedOutput(executionResult, buildPlannerFormattedOutput({
         kind: "search_and_detail_not_found",
         items: [],
-        matchReason: cleanText(normalizedPayload.q) || normalizedIntent || "由搜尋結果命中",
+        matchReason: query,
+        contentSummary: buildPlannerNotFoundReason(query),
         found: false,
       }));
       logDocQueryTrace(logger, buildDocQueryTraceEvent({
@@ -530,13 +610,16 @@ export async function formatDocQueryExecutionResult({
     }
 
     if (!detailResult && searchItems.length > 1) {
+      const query = cleanText(normalizedPayload.q) || normalizedIntent || "由搜尋結果命中";
       const result = withFormattedOutput(executionResult, buildPlannerFormattedOutput({
         kind: "search_and_detail_candidates",
         items: searchItems.slice(0, 5).map((item) => ({
           title: cleanText(item?.title) || null,
           doc_id: cleanText(item?.doc_id) || null,
+          url: cleanText(item?.url) || null,
+          reason: buildPlannerSearchItemReason(item, query),
         })),
-        matchReason: cleanText(normalizedPayload.q) || normalizedIntent || "由搜尋結果命中",
+        matchReason: query,
         found: true,
       }));
       logDocQueryTrace(logger, buildDocQueryTraceEvent({
@@ -555,6 +638,9 @@ export async function formatDocQueryExecutionResult({
 
     const docId = cleanText(detailItem?.doc_id) || cleanText(searchItem?.doc_id);
     const title = cleanText(detailItem?.title) || cleanText(searchItem?.title);
+    const query = cleanText(normalizedPayload.q) || normalizedIntent || "由搜尋結果命中";
+    const reason = summarizePlannerEvidenceSnippet(detailPayload?.summary?.snippet)
+      || buildPlannerSearchItemReason(detailItem || searchItem, query);
     const contentResult = await contentReader({
       docId,
       baseUrl,
@@ -563,7 +649,13 @@ export async function formatDocQueryExecutionResult({
       kind: "search_and_detail",
       title: title || contentResult?.title || "",
       docId,
-      matchReason: cleanText(normalizedPayload.q) || normalizedIntent || "由搜尋結果命中",
+      items: [{
+        title: title || contentResult?.title || "",
+        doc_id: docId,
+        url: cleanText(detailItem?.url) || cleanText(searchItem?.url) || null,
+        reason,
+      }],
+      matchReason: query,
       contentSummary: cleanText(detailPayload?.summary?.overview)
         || cleanText(detailPayload?.summary?.snippet)
         || summarizePlannerDocumentContent(contentResult?.content || ""),

@@ -325,10 +325,10 @@ function buildPlannerUserFacingAnswer({
   const normalizedFallbackReason = cleanText(fallbackReason);
 
   if (normalizedError === "missing_user_access_token") {
-    return "這次我先不直接查文件，因為這輪請求沒有帶到可驗證的 Lark 使用者授權。";
+    return "這次我先不直接查文件，因為目前這條文件路徑是 auth-required，而這輪請求沒有帶到可驗證的 Lark 使用者授權。";
   }
   if (normalizedError === "oauth_reauth_required") {
-    return "這次我先不直接查文件，因為目前的 Lark 使用者授權已失效，需要重新登入授權。";
+    return "這次我先不直接查文件，因為目前這條文件路徑是 auth-required，而現有的 Lark 使用者授權已失效，需要重新登入授權。";
   }
   if (normalizedError === "semantic_mismatch") {
     return "我先沒有直接執行原本那個內部動作，因為它和你這輪的需求不一致。";
@@ -367,13 +367,13 @@ function buildPlannerUserFacingLimitations({
 
   if (normalizedError === "missing_user_access_token") {
     return normalizePlannerUserFacingList([
-      "目前文件搜尋/閱讀路徑必須帶明確的使用者 token，不能再默默改用本地 stored token 或空結果。",
+      "目前文件搜尋/閱讀路徑是明確的 auth-required 邊界，必須帶使用者 token，不能再默默改用本地 stored token 或空結果。",
       "請從有帶授權的 Lark 對話重新送出這輪需求，或先完成登入授權。",
     ]);
   }
   if (normalizedError === "oauth_reauth_required") {
     return normalizePlannerUserFacingList([
-      "目前文件搜尋/閱讀路徑不會在授權失效時偷偷退回其他 token 或空結果。",
+      "目前文件搜尋/閱讀路徑仍在 auth-required 邊界內，不會在授權失效時偷偷退回其他 token 或空結果。",
       `請先重新登入授權：${oauthBaseUrl}/oauth/lark/login`,
     ]);
   }
@@ -425,14 +425,14 @@ export function renderPlannerUserFacingReplyText({
   const normalizedLimitations = normalizePlannerUserFacingList(limitations);
 
   return [
-    "答案",
+    "結論",
     cleanText(answer) || "目前沒有可直接交付的結果。",
     "",
-    "來源",
-    ...(normalizedSources.length > 0 ? normalizedSources.map((item) => `- ${item}`) : ["- 這次沒有對外提供可引用來源。"]),
+    "標記文件",
+    ...(normalizedSources.length > 0 ? normalizedSources.map((item) => `- ${item}`) : ["- 目前沒有可標記的相關文件。"]),
     "",
-    "待確認/限制",
-    ...(normalizedLimitations.length > 0 ? normalizedLimitations.map((item) => `- ${item}`) : ["- 目前沒有補充限制。"]),
+    "下一步",
+    ...(normalizedLimitations.length > 0 ? normalizedLimitations.map((item) => `- ${item}`) : ["- 目前沒有更具體的下一步。"]),
   ].join("\n");
 }
 

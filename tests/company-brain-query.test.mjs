@@ -136,6 +136,7 @@ test("searchCompanyBrainDocsAction hits matching docs and returns structured sum
     assert.equal(result.error, null);
     assert.equal(result.data.total, 1);
     assert.equal(result.data.items[0].doc_id, "doc_company_brain_search_1");
+    assert.equal(result.data.items[0].url, "https://larksuite.com/docx/doc_company_brain_search_1");
     assert.equal(result.data.items[0].summary.overview.length > 0, true);
     assert.deepEqual(result.data.items[0].summary.headings.slice(0, 2), [
       "Customer Onboarding Playbook",
@@ -426,6 +427,7 @@ test("getCompanyBrainDocDetailAction returns structured content summary without 
     assert.equal(result.error, null);
     assert.equal(result.data.doc.doc_id, "doc_company_brain_detail_1");
     assert.equal(result.data.doc.title, "Delivery SOP");
+    assert.equal(result.data.doc.url, "https://larksuite.com/docx/doc_company_brain_detail_1");
     assert.match(result.data.summary.overview, /Delivery SOP/);
     assert.deepEqual(result.data.summary.headings.slice(0, 3), [
       "Delivery SOP",

@@ -105,6 +105,7 @@ function buildCompanyBrainDocMeta(row = {}) {
   return {
     doc_id: cleanText(row?.doc_id) || null,
     title: cleanText(row?.title) || null,
+    url: cleanText(row?.url) || null,
     source: cleanText(row?.source) || null,
     created_at: cleanText(row?.created_at) || null,
     creator: normalizeCreator(row),

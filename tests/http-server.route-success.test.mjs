@@ -505,6 +505,7 @@ test("agent company-brain search and detail routes return structured summaries f
   assert.equal(searchPayload.action, "search_company_brain_docs");
   assert.equal(searchPayload.data.success, true);
   assert.equal(searchPayload.data.data.items[0].doc_id, docId);
+  assert.equal(searchPayload.data.data.items[0].url, `https://larksuite.com/docx/${docId}`);
   assert.match(searchPayload.data.data.items[0].summary.overview, /Planner Delivery SOP/);
 
   const detailResponse = await fetch(`http://127.0.0.1:${port}/agent/company-brain/docs/${docId}`, {
@@ -516,6 +517,7 @@ test("agent company-brain search and detail routes return structured summaries f
   assert.equal(detailPayload.action, "get_company_brain_doc_detail");
   assert.equal(detailPayload.data.success, true);
   assert.equal(detailPayload.data.data.doc.doc_id, docId);
+  assert.equal(detailPayload.data.data.doc.url, `https://larksuite.com/docx/${docId}`);
   assert.deepEqual(detailPayload.data.data.summary.headings.slice(0, 2), [
     "Planner Delivery SOP",
     "Owner",

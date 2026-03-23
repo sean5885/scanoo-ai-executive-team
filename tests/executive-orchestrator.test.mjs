@@ -6,6 +6,7 @@ import {
   buildSupportingContext,
   buildVisibleSupportingOutputs,
   buildVisibleWorkPlan,
+  executeExecutiveTurn,
   executeWorkItemsSequentially,
   normalizeWorkPlan,
 } from "../src/executive-orchestrator.mjs";
@@ -153,4 +154,27 @@ test("executeWorkItemsSequentially preserves generalist fallback when a speciali
   assert.equal(result.reply?.text, "generalist:統一收斂");
   assert.equal(result.finalWorkPlan[0].status, "failed");
   assert.equal(result.finalWorkPlan[1].agent_id, "generalist");
+});
+
+test("executeExecutiveTurn slash-command no-match reply is natural language instead of raw JSON", async () => {
+  const result = await executeExecutiveTurn({
+    accountId: "acct-executive-1",
+    scope: {
+      session_key: "session-executive-no-match",
+      trace_id: "trace-executive-no-match",
+    },
+    event: {
+      trace_id: "trace-executive-no-match",
+      message: {
+        content: JSON.stringify({
+          text: "/knowledge unknown-subcommand 幫我看看",
+        }),
+      },
+    },
+  });
+
+  assert.ok(result);
+  assert.match(result.text, /^結論/m);
+  assert.match(result.text, /registered agent|slash 指令/);
+  assert.doesNotMatch(result.text, /ROUTING_NO_MATCH|registered_agent_command_no_match|\"ok\"|\"error\"|\"details\"/);
 });

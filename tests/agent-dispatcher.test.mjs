@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildRegisteredAgentPrompt, executeRegisteredAgent } from "../src/agent-dispatcher.mjs";
+import {
+  buildRegisteredAgentPrompt,
+  dispatchRegisteredAgentCommand,
+  executeRegisteredAgent,
+} from "../src/agent-dispatcher.mjs";
 import { getRegisteredAgent } from "../src/agent-registry.mjs";
 
 test("buildRegisteredAgentPrompt keeps persona goal, image context, and retrieval context compact", () => {
@@ -111,11 +115,35 @@ test("executeRegisteredAgent fallback reply no longer exposes extractive wording
   });
 
   assert.doesNotMatch(result.text, /extractive/);
-  if (result.text.includes("registered_agent_generation_fallback_disabled")) {
-    assert.match(result.text, /FALLBACK_DISABLED/);
+  assert.doesNotMatch(result.text, /FALLBACK_DISABLED|registered_agent_generation_fallback_disabled|\"ok\"|\"error\"|\"details\"/);
+  if (result.metadata.fallback_used === false) {
+    assert.match(result.text, /沒有可用的生成路徑|內部錯誤/);
     assert.equal(result.metadata.fallback_used, false);
   } else {
     assert.match(result.text, /先按目前找到的資料替你整理/);
     assert.equal(result.metadata.fallback_used, true);
   }
+});
+
+test("dispatchRegisteredAgentCommand no-match reply is natural language instead of raw JSON", async () => {
+  const result = await dispatchRegisteredAgentCommand({
+    accountId: "acct-1",
+    scope: {
+      session_key: "session-agent-no-match",
+      trace_id: "trace-agent-no-match",
+    },
+    event: {
+      trace_id: "trace-agent-no-match",
+      message: {
+        content: JSON.stringify({
+          text: "/knowledge unknown-subcommand 幫我看看",
+        }),
+      },
+    },
+  });
+
+  assert.ok(result);
+  assert.match(result.text, /^結論/m);
+  assert.match(result.text, /registered agent|slash 指令/);
+  assert.doesNotMatch(result.text, /ROUTING_NO_MATCH|registered_agent_command_no_match|\"ok\"|\"error\"|\"details\"/);
 });
