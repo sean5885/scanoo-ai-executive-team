@@ -37,6 +37,75 @@ const noopLogger = {
 
 const EXECUTIVE_MAX_ROLES = 3;
 const EXECUTIVE_MAX_SUPPORTING_ROLES = EXECUTIVE_MAX_ROLES - 1;
+const EXECUTIVE_MAX_KEY_POINTS = 5;
+const EXECUTIVE_DEFAULT_NEXT_STEP = "如果你要，我可以接著把這版整理成更具體的執行清單。";
+const EXECUTIVE_SOURCE_SECTION_PATTERN = /^來源\s*[:：]?$/i;
+const EXECUTIVE_CONCLUSION_HEADINGS = new Set([
+  "結論",
+  "核心結論",
+  "決策建議",
+  "技術判斷",
+  "交付狀態",
+  "現況",
+  "整體理解",
+  "盤點結論",
+  "一致性結論",
+  "衝突摘要",
+  "owner 建議",
+  "學習結論",
+  "核心問題",
+  "問題定義",
+  "治理目標",
+  "提案目標",
+  "可批准項",
+  "不建議項",
+  "答案",
+]);
+const EXECUTIVE_KEY_POINT_HEADINGS = new Set([
+  "重點",
+  "判斷依據",
+  "主要風險",
+  "使用者價值",
+  "建議方向",
+  "範圍",
+  "非目標",
+  "驗收",
+  "風險",
+  "受眾",
+  "訊息",
+  "動作建議",
+  "觀察",
+  "方案比較",
+  "現況缺口",
+  "建議指標或流程",
+  "阻塞",
+  "SOP 建議",
+  "例外處理",
+  "關鍵依據",
+  "關鍵來源",
+  "提案內容",
+  "影響範圍",
+  "條件",
+  "理由",
+  "替代方案",
+  "依據",
+  "待確認",
+  "主要缺口",
+  "重複或分散點",
+  "不一致點",
+  "涉及文件",
+  "待決策問題",
+  "建議確認版",
+  "建議保存方式",
+  "主題",
+]);
+const EXECUTIVE_NEXT_STEP_HEADINGS = new Set([
+  "下一步",
+  "建議下一步",
+  "建議執行順序",
+  "建議行動",
+  "後續動作",
+]);
 
 function sessionKeyFromScope(scope = {}, accountId = "") {
   return cleanText(scope?.session_key || scope?.chat_id || accountId);
@@ -83,6 +152,173 @@ function buildOrchestrationHeader({ action = "", task = null, nextAgent = null, 
 
 function summarizeAgentText(text = "", maxChars = 220) {
   return cleanText(String(text || "")).slice(0, maxChars);
+}
+
+function stripListMarker(text = "") {
+  return cleanText(text).replace(/^(?:[-*•]\s*|\d+[.)、]\s*|[（(]?\d+[)）]\s*|[一二三四五六七八九十]+[、.]\s*)/, "");
+}
+
+function normalizeForDedupe(text = "") {
+  return stripListMarker(text)
+    .replace(/[：:]/g, "")
+    .replace(/[、，,。.；;！？!?()[\]【】"'`]/g, "")
+    .replace(/\s+/g, "")
+    .toLowerCase();
+}
+
+function dedupeTextItems(items = [], initialSeen = new Set()) {
+  const result = [];
+  const seen = initialSeen;
+  for (const item of Array.isArray(items) ? items : []) {
+    const text = stripListMarker(item);
+    const key = normalizeForDedupe(text);
+    if (!text || !key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(text);
+  }
+  return result;
+}
+
+function splitHeadingAndInlineContent(line = "") {
+  const normalized = cleanText(line);
+  const match = normalized.match(/^([^：:]{1,24})[：:]\s*(.+)$/);
+  if (!match) {
+    return {
+      heading: normalized,
+      content: "",
+    };
+  }
+  return {
+    heading: cleanText(match[1]),
+    content: cleanText(match[2]),
+  };
+}
+
+function classifyExecutiveSection(heading = "") {
+  const normalized = cleanText(heading);
+  if (!normalized) {
+    return "";
+  }
+  if (EXECUTIVE_CONCLUSION_HEADINGS.has(normalized)) {
+    return "conclusion";
+  }
+  if (EXECUTIVE_KEY_POINT_HEADINGS.has(normalized)) {
+    return "key_points";
+  }
+  if (EXECUTIVE_NEXT_STEP_HEADINGS.has(normalized)) {
+    return "next_step";
+  }
+  return "";
+}
+
+function parseExecutiveReplySections(text = "") {
+  const lines = String(text || "").split(/\r?\n/);
+  const sections = {
+    conclusion: [],
+    key_points: [],
+    next_step: [],
+    sources: [],
+    body: [],
+  };
+  let currentSection = "";
+  let inSourceSection = false;
+
+  for (const rawLine of lines) {
+    const line = cleanText(rawLine);
+    if (!line) {
+      continue;
+    }
+
+    if (EXECUTIVE_SOURCE_SECTION_PATTERN.test(line)) {
+      inSourceSection = true;
+      currentSection = "";
+      continue;
+    }
+
+    if (inSourceSection) {
+      const sourceLine = stripListMarker(line);
+      if (!sourceLine) {
+        continue;
+      }
+      sections.sources.push(cleanText(sourceLine.split("｜")[0] || sourceLine));
+      continue;
+    }
+
+    const { heading, content } = splitHeadingAndInlineContent(line);
+    const detectedSection = classifyExecutiveSection(heading);
+    if (detectedSection) {
+      currentSection = detectedSection;
+      if (content) {
+        sections[detectedSection].push(content);
+      }
+      continue;
+    }
+
+    if (currentSection && sections[currentSection]) {
+      sections[currentSection].push(stripListMarker(line));
+      continue;
+    }
+
+    sections.body.push(stripListMarker(line));
+  }
+
+  return sections;
+}
+
+function deriveExecutiveSections({
+  primaryReplyText = "",
+  supportingOutputs = [],
+} = {}) {
+  const parsed = parseExecutiveReplySections(primaryReplyText);
+  const seen = new Set();
+  let conclusionItems = dedupeTextItems(parsed.conclusion, seen);
+  const supportingSummaries = dedupeTextItems(
+    (Array.isArray(supportingOutputs) ? supportingOutputs : []).map((item) => item?.summary || ""),
+    new Set(),
+  );
+
+  if (!conclusionItems.length && parsed.body.length) {
+    const dedupedBody = dedupeTextItems(parsed.body, seen);
+    if (dedupedBody.length) {
+      conclusionItems = [dedupedBody[0]];
+      parsed.body = dedupedBody.slice(1);
+    }
+  }
+
+  if (!conclusionItems.length && supportingSummaries.length) {
+    conclusionItems = [supportingSummaries[0]];
+    seen.add(normalizeForDedupe(supportingSummaries[0]));
+  }
+
+  const keyPointSeed = [...parsed.key_points, ...parsed.body];
+  let keyPoints = dedupeTextItems(keyPointSeed, seen);
+  if (!keyPoints.length) {
+    keyPoints = dedupeTextItems(supportingSummaries, seen);
+  }
+  if (parsed.sources.length) {
+    const sourcePoint = `參考來源：${dedupeTextItems(parsed.sources).join("、")}`;
+    keyPoints = dedupeTextItems([...keyPoints, sourcePoint], seen);
+  }
+  keyPoints = keyPoints.slice(0, EXECUTIVE_MAX_KEY_POINTS);
+
+  let nextStepItems = dedupeTextItems(parsed.next_step, new Set());
+  if (!nextStepItems.length) {
+    const actionLikePoint = keyPoints.find((item) => /^(先|再|接著|建議|可以|可先|需要|請)/.test(item));
+    if (actionLikePoint) {
+      nextStepItems = [actionLikePoint];
+    }
+  }
+  if (!nextStepItems.length) {
+    nextStepItems = [EXECUTIVE_DEFAULT_NEXT_STEP];
+  }
+
+  return {
+    conclusion: conclusionItems.join(" "),
+    keyPoints,
+    nextStep: nextStepItems[0],
+  };
 }
 
 function looksLikeAgentFailureText(text = "") {
@@ -197,14 +433,24 @@ export function buildExecutiveBrief({
   supportingOutputs = [],
   primaryReplyText = "",
 } = {}) {
+  const normalized = deriveExecutiveSections({
+    primaryReplyText,
+    supportingOutputs,
+  });
   return [
-    summarizeAgentText(primaryReplyText, 2400),
-    header,
-    buildVisibleWorkPlan(workPlan, { primaryAgentId }),
-    buildVisibleSupportingOutputs(supportingOutputs),
+    "結論：",
+    summarizeAgentText(normalized.conclusion, 560) || "待確認",
+    "",
+    "重點：",
+    ...(normalized.keyPoints.length
+      ? normalized.keyPoints.map((item) => `- ${summarizeAgentText(item, 220)}`)
+      : ["- 待確認"]),
+    "",
+    "下一步：",
+    summarizeAgentText(normalized.nextStep, 220) || EXECUTIVE_DEFAULT_NEXT_STEP,
   ]
     .filter(Boolean)
-    .join("\n\n");
+    .join("\n");
 }
 
 async function transitionTaskLifecycle(task, nextState, reason) {

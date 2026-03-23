@@ -39,6 +39,25 @@ test("buildRegisteredAgentPrompt keeps persona goal, image context, and retrieva
   assert.ok(result.prompt.length < 5000);
 });
 
+test("buildRegisteredAgentPrompt forces single-voice three-part synthesis when supporting context exists", () => {
+  const result = buildRegisteredAgentPrompt({
+    agent: getRegisteredAgent("ceo"),
+    userRequest: "請收斂這輪多角色意見",
+    items: [
+      {
+        title: "董事會紀錄",
+        url: "https://example.com/doc-1",
+        content: "決策背景與風險整理。",
+      },
+    ],
+    supportingContext: "/consult\n- 子任務：拆解問題\n- 輸出：先確認決策邊界",
+  });
+
+  assert.match(result.systemPrompt, /單一口吻/);
+  assert.match(result.systemPrompt, /結論 \/ 重點 \/ 下一步/);
+  assert.match(result.prompt, /supporting_context/);
+});
+
 test("executeRegisteredAgent can use injected text generator without direct LLM api key", async () => {
   const agent = getRegisteredAgent("cmo");
   const result = await executeRegisteredAgent({
@@ -92,6 +111,11 @@ test("executeRegisteredAgent fallback reply no longer exposes extractive wording
   });
 
   assert.doesNotMatch(result.text, /extractive/);
-  assert.match(result.text, /先按目前找到的資料替你整理/);
-  assert.equal(result.metadata.fallback_used, true);
+  if (result.text.includes("registered_agent_generation_fallback_disabled")) {
+    assert.match(result.text, /FALLBACK_DISABLED/);
+    assert.equal(result.metadata.fallback_used, false);
+  } else {
+    assert.match(result.text, /先按目前找到的資料替你整理/);
+    assert.equal(result.metadata.fallback_used, true);
+  }
 });

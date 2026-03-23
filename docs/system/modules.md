@@ -611,9 +611,11 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - maintain a minimal `active_task` contract with `workflow`, `workflow_state`, `routing_hint`, and `trace_id`
   - expose test-only in-memory/reset hooks so workflow suites can avoid writing shared task state into the file-backed store
   - planner text generation can now use the same dedicated OpenClaw MiniMax path when direct text-model credentials are absent
-  - keep a compact visible work plan for primary/supporting agents
+  - keep a compact work plan for primary/supporting agents
   - normalize supporting-agent outputs into short summaries
-  - answer first, then append orchestration context only when useful
+  - pass supporting-agent summaries into the merge agent as synthesis context
+  - normalize the final visible reply into `結論 / 重點 / 下一步`
+  - keep the final executive answer in one single voice instead of exposing separate supporting-agent summary blocks
   - explicit multi-turn continuation across registered agents
   - handoff logging between agents
   - persist a compact work plan and supporting-agent outputs per executive task

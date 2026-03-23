@@ -77,13 +77,30 @@ test("buildExecutiveBrief combines header, task list, support summaries, and syn
     supportingOutputs: [
       { agent_id: "consult", task: "做方案比較", summary: "已整理方案差異與風險" },
     ],
-    primaryReplyText: "結論\n先把模糊文檔拆成待確認與待改派兩類。",
+    primaryReplyText: [
+      "結論：先把模糊文檔拆成待確認與待改派兩類。",
+      "",
+      "重點：",
+      "- 待確認項目先補 owner",
+      "- 待確認項目先補 owner",
+      "",
+      "下一步：先補 owner，再決定要不要改派。",
+      "",
+      "來源",
+      "- 文件 A｜https://example.com/a",
+      "- 文件 B｜https://example.com/b",
+    ].join("\n"),
   });
 
-  assert.match(text, /^結論/);
-  assert.match(text, /這輪分工/);
-  assert.match(text, /我另外參考了/);
+  assert.match(text, /^結論：/);
   assert.match(text, /待確認與待改派/);
+  assert.match(text, /重點：/);
+  assert.match(text, /參考來源：文件 A、文件 B/);
+  assert.equal((text.match(/待確認項目先補 owner/g) || []).length, 1);
+  assert.match(text, /下一步：/);
+  assert.doesNotMatch(text, /這輪分工/);
+  assert.doesNotMatch(text, /我另外參考了/);
+  assert.doesNotMatch(text, /\/consult/);
 });
 
 test("executeWorkItemsSequentially runs specialists in order and merges into one final response", async () => {

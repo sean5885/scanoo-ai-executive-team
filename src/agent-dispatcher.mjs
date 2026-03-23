@@ -65,13 +65,23 @@ export function buildRegisteredAgentPrompt({
   imageContext = "",
   supportingContext = "",
 } = {}) {
+  const isMergeSynthesis = Boolean(cleanText(supportingContext));
   const systemPrompt = buildCompactSystemPrompt(agent?.role || "你是專責 agent。", [
     "先直接回答使用者真正的問題，再補必要的判斷與下一步。",
     "不要先列 agent 名單、流程、或內部 routing。",
     "沒有足夠證據時，要清楚標記不確定，而不是假裝完成。",
+    ...(isMergeSynthesis
+      ? [
+          "若有 supporting_context，請把補充內容收斂成單一口吻，不要逐段轉述、不要點名其他 agent。",
+          "若有 supporting_context，最終輸出固定三段：結論 / 重點 / 下一步。",
+        ]
+      : []),
     ...(agent?.rules || []),
   ]);
   const sourceBlocks = buildRetrievedContext(userRequest, items);
+  const effectiveOutputContract = isMergeSynthesis
+    ? "若提供了 supporting_context，請改用單一口吻輸出三段：結論 / 重點 / 下一步。"
+    : agent?.outputContract || "";
   const governed = governPromptSections({
     systemPrompt,
     format: "xml",
@@ -85,7 +95,7 @@ export function buildRegisteredAgentPrompt({
       {
         name: "agent_goal",
         label: "agent_goal",
-        text: [agent?.goal || "", agent?.outputContract || ""].filter(Boolean).join("\n"),
+        text: [agent?.goal || "", effectiveOutputContract].filter(Boolean).join("\n"),
         required: true,
         maxTokens: 120,
       },

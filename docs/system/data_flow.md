@@ -220,9 +220,8 @@ This request-flow mirror now reflects the current fail-closed routing baseline.
      - if any specialist fails, fall back to `/generalist` for final synthesis
      - render the final visible reply as:
        - direct answer first
-       - orchestration context only when useful
-       - visible subtask list
-       - visible supporting-agent summaries
+       - fixed `結論 / 重點 / 下一步`
+       - one single-voice synthesis after supporting outputs are merged
      - initialize task rules and lifecycle state
      - collect execution evidence
      - run verifier pass/fail checks before completion

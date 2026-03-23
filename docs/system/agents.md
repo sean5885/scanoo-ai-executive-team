@@ -218,9 +218,8 @@ What now exists in current code:
   - use the same dedicated `lobster-backend` OpenClaw MiniMax text path for planner decisions when direct `LLM_API_KEY` is unavailable
   - render user-facing executive replies as a fixed brief with:
     - direct answer first
-    - orchestration context only when useful
-    - visible subtask list
-    - visible supporting-agent summaries
+    - normalized `結論 / 重點 / 下一步` structure
+    - supporting-agent context absorbed into one single-voice final reply instead of separate visible agent blocks
   - expose a minimal planner-callable tool registry for three agent-bridge actions:
     - `create_doc`
     - `list_company_brain_docs`
