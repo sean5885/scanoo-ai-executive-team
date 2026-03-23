@@ -1,0 +1,14 @@
+Agent system stabilization:
+- take current failing tests:
+  agent-dispatcher / agent-learning-loop / agent-registry / http-monitoring / http-server.route-success
+- classify into:
+  1) existing unrelated failures
+  2) real regression risks
+- fix only stability issues in:
+  agent-dispatcher / agent-registry / learning-loop / monitoring
+- ensure no change to:
+  workflow output shape / evidence-first response / planner decision contract
+- avoid modifying product-level logic or user-facing response format
+- add regression tests where needed
+- report:
+  changed files + fixed tests + remaining non-blocking failures
