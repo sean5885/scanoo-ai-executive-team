@@ -1001,12 +1001,14 @@ function buildPlannerAgentOutput({
   selectedAction = null,
   executionResult = null,
   traceId = null,
+  routingReason = null,
   taskType = "",
   payload = {},
 } = {}) {
   return {
     selected_action: selectedAction,
     execution_result: executionResult,
+    routing_reason: cleanText(routingReason) || null,
     agent_execution: resolvePlannerAgentExecution({
       taskType,
       payload,
@@ -2024,6 +2026,7 @@ export function selectPlannerTool({
 
   let selectedAction = "";
   let reason = "";
+  let routingReason = "routing_no_match";
 
   if (
     normalizedIntent.includes("建立文件並查詢")
@@ -2033,6 +2036,7 @@ export function selectPlannerTool({
   ) {
     selectedAction = "create_search_detail_list_doc";
     reason = "命中完整流程任務，使用 demo preset。";
+    routingReason = "selector_create_search_detail_list_doc";
   } else if (
     normalizedIntent.includes("建立文件後列出知識庫")
     || normalizedIntent.includes("create doc then list docs")
@@ -2040,12 +2044,14 @@ export function selectPlannerTool({
   ) {
     selectedAction = "create_and_list_doc";
     reason = "命中複合任務，優先使用 preset。";
+    routingReason = "selector_create_and_list_doc";
   } else if (
     (normalizedIntent.includes("搜尋") || normalizedIntent.includes("搜索") || normalizedIntent.includes("search") || normalizedIntent.includes("查詢") || normalizedIntent.includes("查询") || normalizedIntent.includes("找"))
     && (normalizedIntent.includes("打開") || normalizedIntent.includes("打开") || normalizedIntent.includes("讀") || normalizedIntent.includes("读") || normalizedIntent.includes("內容") || normalizedIntent.includes("内容"))
   ) {
     selectedAction = "search_and_detail_doc";
     reason = "使用者同時要求搜尋與打開內容，優先走 search-and-detail。";
+    routingReason = "selector_search_and_detail_doc";
   } else if (
     normalizedTaskType === "doc_write"
     || normalizedIntent.includes("建立文件")
@@ -2055,6 +2061,7 @@ export function selectPlannerTool({
   ) {
     selectedAction = "create_doc";
     reason = "使用者意圖是建立文件，對應受控文件建立 bridge。";
+    routingReason = "selector_create_doc";
   } else if (
     normalizedTaskType === "knowledge_write"
     || normalizedIntent.includes("company brain")
@@ -2065,6 +2072,7 @@ export function selectPlannerTool({
   ) {
     selectedAction = "list_company_brain_docs";
     reason = "使用者意圖是查詢已驗證文件鏡像，對應 company_brain list bridge。";
+    routingReason = "selector_list_company_brain_docs";
   } else if (
     normalizedTaskType === "knowledge_learning"
     || normalizedIntent.includes("學習這份文件")
@@ -2074,6 +2082,7 @@ export function selectPlannerTool({
   ) {
     selectedAction = "ingest_learning_doc";
     reason = "使用者意圖是讓系統學習目前文件，對應 learning ingest bridge。";
+    routingReason = "selector_ingest_learning_doc";
   } else if (
     normalizedIntent.includes("更新學習狀態")
     || normalizedIntent.includes("更新学习状态")
@@ -2081,6 +2090,7 @@ export function selectPlannerTool({
   ) {
     selectedAction = "update_learning_state";
     reason = "使用者意圖是更新 learning state，對應 learning state bridge。";
+    routingReason = "selector_update_learning_state";
   } else if (
     normalizedIntent.includes("runtime")
     || normalizedIntent.includes("db path")
@@ -2092,10 +2102,12 @@ export function selectPlannerTool({
   ) {
     selectedAction = "get_runtime_info";
     reason = "使用者意圖是查詢當前執行環境資訊，對應 runtime info bridge。";
+    routingReason = "selector_get_runtime_info";
   }
 
   if (!selectedAction) {
     reason = ROUTING_NO_MATCH;
+    routingReason = "routing_no_match";
   }
 
   const reasoning = normalizeDecisionReasoning({
@@ -2109,14 +2121,16 @@ export function selectPlannerTool({
     task_type: normalizedTaskType || null,
     selected_action: selectedAction || null,
     chosen_action: selectedAction || null,
-    fallback_reason: selectedAction ? null : reason || null,
+    fallback_reason: selectedAction ? null : routingReason || null,
     reason: reason || null,
+    routing_reason: routingReason || null,
     reasoning,
   });
 
   return {
     selected_action: selectedAction || null,
     reason: reason || null,
+    routing_reason: routingReason || null,
     why: reasoning.why,
     alternative: reasoning.alternative,
   };
@@ -2484,6 +2498,7 @@ export async function runPlannerToolFlow({
       selectedAction: cleanText(forcedSelection?.selected_action || forcedSelection?.action || "") || null,
       executionResult: preAbortResult,
       traceId: preAbortResult.trace_id || null,
+      routingReason: cleanText(forcedSelection?.routing_reason || forcedSelection?.reason || "") || "forced_selection",
       taskType,
       payload,
     });
@@ -2504,6 +2519,7 @@ export async function runPlannerToolFlow({
     ? {
         selected_action: cleanText(forcedSelection.selected_action || forcedSelection.action || "") || null,
         reason: cleanText(forcedSelection.reason || "") || "forced_selection",
+        routing_reason: cleanText(forcedSelection.routing_reason || forcedSelection.reason || "") || "forced_selection",
       }
     : null;
   const plannerDocQueryContext = getPlannerDocQueryContext();
@@ -2564,13 +2580,17 @@ export async function runPlannerToolFlow({
     ? {
         ...selectorSelection,
         reason: selectorSelection?.reason || "命中更具體的 selector 規則，覆蓋 generic search hard route。",
+        routing_reason: cleanText(selectorSelection?.routing_reason || "") || "selector_override_generic_search_route",
       }
     : hardRoutedAction
     ? {
         selected_action: hardRoutedAction,
         reason: taskLifecycleFollowUp?.reason || "命中硬路由規則。",
+        routing_reason: cleanText(taskLifecycleFollowUp?.routing_reason || routedFlow?.routing_reason || "") || "hard_route_match",
       }
     : selectorSelection;
+  const selectionRoutingReason = cleanText(selection?.routing_reason || "")
+    || (cleanText(selection?.selected_action || "") ? "selector_match" : "routing_no_match");
   const selectionReasoning = normalizeDecisionReasoning({
     why: selection?.why || selection?.reason || null,
     alternative: selection?.alternative || buildUserInputDecisionAlternative({
@@ -2586,14 +2606,15 @@ export async function runPlannerToolFlow({
   if (!selectionAction) {
     maybeInvokePlannerHook(hooks, "onEscalation", {
       from: "planner_selection",
-      reason: selection?.reason || ROUTING_NO_MATCH,
+      reason: selectionRoutingReason || ROUTING_NO_MATCH,
     });
     executionResult = buildPlannerStoppedResult({
       action: null,
       error: "business_error",
       data: {
-        reason: "未命中受控工具規則，保持空選擇。",
-        routing_reason: cleanText(selection?.reason || "") || ROUTING_NO_MATCH,
+        reason: selectionRoutingReason,
+        message: "未命中受控工具規則，保持空選擇。",
+        routing_reason: selectionRoutingReason,
       },
       traceId: null,
       stopReason: "business_error",
@@ -2603,7 +2624,8 @@ export async function runPlannerToolFlow({
       action: selectionAction,
       error: INVALID_ACTION,
       data: {
-        reason: cleanText(selection?.reason || "") || INVALID_ACTION,
+        reason: selectionRoutingReason || "invalid_action",
+        routing_reason: selectionRoutingReason || "invalid_action",
       },
       traceId: null,
     });
@@ -2699,7 +2721,13 @@ export async function runPlannerToolFlow({
       task_type: cleanText(String(taskType || "").toLowerCase()) || null,
       selected_action: selection.selected_action || null,
       chosen_action: selection.selected_action || null,
-      fallback_reason: cleanText(selection.reason || executionResult?.data?.reason || executionResult?.data?.stop_reason || executionResult?.error || "") || null,
+      fallback_reason: cleanText(
+        selectionRoutingReason
+        || executionResult?.data?.reason
+        || executionResult?.data?.stop_reason
+        || executionResult?.error
+        || ""
+      ) || null,
     },
   }));
 
@@ -2746,6 +2774,7 @@ export async function runPlannerToolFlow({
     selectedAction: selection.selected_action,
     executionResult,
     traceId,
+    routingReason: selectionRoutingReason,
     taskType,
     payload: agentInput.payload,
   });
@@ -4867,6 +4896,7 @@ export async function executePlannedUserInput({
         selectedAction: decision.action,
         executionResult: abortedResult,
         traceId: abortedResult.trace_id || null,
+        routingReason: "strict_user_input_planner",
         payload: decision.params,
       });
     } else {

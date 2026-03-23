@@ -2086,9 +2086,11 @@ test("runPlannerToolFlow returns fallback when no planner tool matches", async (
   });
 
   assert.equal(result.selected_action, null);
+  assert.equal(result.routing_reason, "routing_no_match");
   assert.equal(result.execution_result?.ok, false);
   assert.equal(result.execution_result?.error, "business_error");
-  assert.equal(result.execution_result?.data?.reason, "未命中受控工具規則，保持空選擇。");
+  assert.equal(result.execution_result?.data?.reason, "routing_no_match");
+  assert.equal(result.execution_result?.data?.routing_reason, "routing_no_match");
   assert.equal(result.execution_result?.data?.stopped, true);
   assert.equal(result.execution_result?.data?.stop_reason, "business_error");
   assert.equal(result.trace_id, null);
@@ -2096,30 +2098,55 @@ test("runPlannerToolFlow returns fallback when no planner tool matches", async (
 });
 
 test("router hard-routes search-like query to company brain search", () => {
-  assert.equal(route("幫我找關於 OKR 的文件"), "search_company_brain_docs");
+  assert.deepEqual(route("幫我找關於 OKR 的文件"), {
+    action: "search_company_brain_docs",
+    selected_target: "search_company_brain_docs",
+    target_kind: "action",
+    routing_reason: "doc_query_search",
+  });
 });
 
 test("router prefers search over detail when query contains both 搜尋 and 內容", () => {
-  assert.equal(route("搜尋有提到 OKR 的內容"), "search_company_brain_docs");
+  assert.deepEqual(route("搜尋有提到 OKR 的內容"), {
+    action: "search_company_brain_docs",
+    selected_target: "search_company_brain_docs",
+    target_kind: "action",
+    routing_reason: "doc_query_search",
+  });
 });
 
 test("router uses active doc for pronoun detail query and falls back when missing", () => {
   assert.deepEqual(
     route("這份文件裡面寫了什麼", { activeDoc: { doc_id: "doc_123", title: "Demo" } }),
-    { action: "get_company_brain_doc_detail" },
+    {
+      action: "get_company_brain_doc_detail",
+      selected_target: "get_company_brain_doc_detail",
+      target_kind: "action",
+      routing_reason: "doc_query_active_doc_detail",
+    },
   );
-  assert.deepEqual(route("這份文件裡面寫了什麼"), { preset: "search_and_detail_doc" });
+  assert.deepEqual(route("這份文件裡面寫了什麼"), {
+    preset: "search_and_detail_doc",
+    selected_target: "search_and_detail_doc",
+    target_kind: "preset",
+    routing_reason: "doc_query_search_and_detail",
+  });
 });
 
 test("router uses active candidates for ordinal follow-up selection", () => {
-  assert.equal(
+  assert.deepEqual(
     route("打開第一個", {
       activeCandidates: [
         { doc_id: "doc_1", title: "OKR 文件" },
         { doc_id: "doc_2", title: "OKR 範本" },
       ],
     }),
-    "get_company_brain_doc_detail",
+    {
+      action: "get_company_brain_doc_detail",
+      selected_target: "get_company_brain_doc_detail",
+      target_kind: "action",
+      routing_reason: "doc_query_active_candidate_detail",
+    },
   );
 });
 
@@ -4115,6 +4142,7 @@ test("selectPlannerTool prefers preset for compound create-and-list intent", asy
 
   assert.equal(result.selected_action, "create_and_list_doc");
   assert.equal(result.reason, "命中複合任務，優先使用 preset。");
+  assert.equal(result.routing_reason, "selector_create_and_list_doc");
 });
 
 test("selectPlannerTool prefers create_search_detail_list_doc for compound create-and-search intent", async () => {
@@ -4127,6 +4155,7 @@ test("selectPlannerTool prefers create_search_detail_list_doc for compound creat
 
   assert.equal(result.selected_action, "create_search_detail_list_doc");
   assert.equal(result.reason, "命中完整流程任務，使用 demo preset。");
+  assert.equal(result.routing_reason, "selector_create_search_detail_list_doc");
 });
 
 test("runPlannerToolFlow executes preset runner when selection returns preset", async () => {

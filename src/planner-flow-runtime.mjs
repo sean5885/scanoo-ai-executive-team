@@ -41,16 +41,26 @@ function normalizePlannerRouteDecision(route = null) {
     return {
       action: "",
       preset: "",
+      error: "",
       target: "",
+      target_kind: "error",
+      routing_reason: "routing_no_match",
     };
   }
 
   const action = cleanText(route.action);
   const preset = cleanText(route.preset);
+  const error = cleanText(route.error);
+  const target = cleanText(route.selected_target || action || preset);
+  const targetKind = cleanText(route.target_kind || "")
+    || (action ? "action" : preset ? "preset" : "error");
   return {
     action,
     preset,
-    target: action || preset,
+    error,
+    target,
+    target_kind: targetKind || "error",
+    routing_reason: cleanText(route.routing_reason || "") || "routing_no_match",
   };
 }
 
@@ -115,6 +125,7 @@ export function resolvePlannerFlowRoute({
         flow,
         action: routeDecision.action || routeDecision.target,
         preset: routeDecision.preset || "",
+        routeDecision,
         payload: normalizePlannerPayload(route.payload),
         context,
         priority: normalizePlannerFlowPriority(flow),
@@ -129,6 +140,10 @@ export function resolvePlannerFlowRoute({
       flow: bestCandidate.flow,
       action: bestCandidate.action,
       ...(bestCandidate.preset ? { preset: bestCandidate.preset } : {}),
+      selected_target: bestCandidate.routeDecision?.target || bestCandidate.action || null,
+      target_kind: cleanText(bestCandidate.routeDecision?.target_kind || "")
+        || (bestCandidate.preset ? "preset" : bestCandidate.action ? "action" : "error"),
+      routing_reason: cleanText(bestCandidate.routeDecision?.routing_reason || "") || "routing_no_match",
       payload: bestCandidate.payload,
       context: bestCandidate.context,
     };
@@ -137,6 +152,9 @@ export function resolvePlannerFlowRoute({
   return {
     flow: null,
     action: null,
+    selected_target: null,
+    target_kind: "error",
+    routing_reason: "routing_no_match",
     payload: normalizePlannerPayload(payload),
     context: null,
     error: ROUTING_NO_MATCH,

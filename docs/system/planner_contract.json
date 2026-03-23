@@ -1,5 +1,139 @@
 {
   "version": "v1",
+  "errors": {
+    "planner_failed": {
+      "category": "planner_input",
+      "public": true
+    },
+    "invalid_action": {
+      "category": "planner_input",
+      "public": true
+    },
+    "INVALID_ACTION": {
+      "category": "planner_runtime",
+      "public": true,
+      "alias_of": "invalid_action"
+    },
+    "contract_violation": {
+      "category": "planner_runtime",
+      "public": true
+    },
+    "semantic_mismatch": {
+      "category": "planner_input",
+      "public": true
+    },
+    "stale_decision_reused": {
+      "category": "planner_input",
+      "public": true
+    },
+    "ROUTING_NO_MATCH": {
+      "category": "routing",
+      "public": true
+    },
+    "FALLBACK_DISABLED": {
+      "category": "routing",
+      "public": true
+    },
+    "tool_error": {
+      "category": "runtime",
+      "public": true
+    },
+    "runtime_exception": {
+      "category": "runtime",
+      "public": true
+    },
+    "business_error": {
+      "category": "runtime",
+      "public": true
+    },
+    "not_found": {
+      "category": "runtime",
+      "public": true
+    },
+    "permission_denied": {
+      "category": "runtime",
+      "public": true
+    },
+    "request_timeout": {
+      "category": "runtime",
+      "public": true
+    },
+    "request_cancelled": {
+      "category": "runtime",
+      "public": true
+    },
+    "missing_user_access_token": {
+      "category": "bridge_action",
+      "public": true
+    },
+    "invalid_query": {
+      "category": "bridge_action",
+      "public": true
+    },
+    "internal_error": {
+      "category": "bridge_action",
+      "public": true
+    }
+  },
+  "routing_reason": {
+    "routing_no_match": {
+      "surface": ["router", "doc_query", "planner"]
+    },
+    "doc_query_search": {
+      "surface": ["router", "doc_query", "planner_flow"]
+    },
+    "doc_query_search_and_detail": {
+      "surface": ["router", "doc_query", "planner_flow"]
+    },
+    "doc_query_active_candidate_detail": {
+      "surface": ["router", "doc_query", "planner_flow"]
+    },
+    "doc_query_active_doc_detail": {
+      "surface": ["router", "doc_query", "planner_flow"]
+    },
+    "selector_create_search_detail_list_doc": {
+      "surface": ["planner"]
+    },
+    "selector_create_and_list_doc": {
+      "surface": ["planner"]
+    },
+    "selector_search_and_detail_doc": {
+      "surface": ["planner"]
+    },
+    "selector_create_doc": {
+      "surface": ["planner"]
+    },
+    "selector_list_company_brain_docs": {
+      "surface": ["planner"]
+    },
+    "selector_ingest_learning_doc": {
+      "surface": ["planner"]
+    },
+    "selector_update_learning_state": {
+      "surface": ["planner"]
+    },
+    "selector_get_runtime_info": {
+      "surface": ["planner"]
+    },
+    "selector_match": {
+      "surface": ["planner"]
+    },
+    "selector_override_generic_search_route": {
+      "surface": ["planner"]
+    },
+    "hard_route_match": {
+      "surface": ["planner"]
+    },
+    "task_lifecycle_follow_up": {
+      "surface": ["planner"]
+    },
+    "forced_selection": {
+      "surface": ["planner"]
+    },
+    "strict_user_input_planner": {
+      "surface": ["planner"]
+    }
+  },
   "actions": {
     "create_doc": {
       "input_schema": {
@@ -597,10 +731,10 @@
     "search_and_detail_doc": {
       "input_schema": {
         "type": "object",
-        "required": ["q", "doc_id"],
+        "required": ["q"],
         "properties": {
           "q": { "type": "string" },
-          "doc_id": { "type": "string" },
+          "doc_id": { "type": ["string", "null"] },
           "limit": { "type": ["number", "string", "null"] }
         }
       },
@@ -657,6 +791,91 @@
         "internal_error"
       ],
       "stop_on_error": true
+    }
+  },
+  "public_contracts": {
+    "router_decision": {
+      "type": "object",
+      "required": ["selected_target", "target_kind", "routing_reason"],
+      "properties": {
+        "selected_target": { "type": ["string", "null"] },
+        "target_kind": { "type": "string" },
+        "routing_reason": { "type": "string" },
+        "action": { "type": "string" },
+        "preset": { "type": "string" },
+        "error": { "type": "string" }
+      }
+    },
+    "doc_query_route": {
+      "type": "object",
+      "required": ["selected_target", "target_kind", "routing_reason", "payload", "error"],
+      "properties": {
+        "selected_target": { "type": ["string", "null"] },
+        "target_kind": { "type": "string" },
+        "routing_reason": { "type": "string" },
+        "action": { "type": "string" },
+        "preset": { "type": "string" },
+        "payload": { "type": "object" },
+        "error": { "type": ["string", "null"] }
+      }
+    },
+    "planner_tool_flow_output": {
+      "type": "object",
+      "required": ["selected_action", "execution_result", "routing_reason", "agent_execution", "trace_id"],
+      "properties": {
+        "selected_action": { "type": ["string", "null"] },
+        "execution_result": { "type": ["object", "null"] },
+        "routing_reason": { "type": ["string", "null"] },
+        "agent_execution": { "type": ["object", "null"] },
+        "trace_id": { "type": ["string", "null"] }
+      }
+    },
+    "planned_user_input_envelope": {
+      "type": "object",
+      "required": ["ok", "error", "trace_id", "trace"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "action": { "type": ["string", "null"] },
+        "params": { "type": "object" },
+        "steps": { "type": "array" },
+        "error": { "type": ["string", "null"] },
+        "execution_result": { "type": ["object", "null"] },
+        "why": { "type": ["string", "null"] },
+        "alternative": {
+          "type": "object",
+          "required": ["action", "agent_id", "summary"],
+          "properties": {
+            "action": { "type": ["string", "null"] },
+            "agent_id": { "type": ["string", "null"] },
+            "summary": { "type": ["string", "null"] }
+          }
+        },
+        "trace_id": { "type": ["string", "null"] },
+        "trace": {
+          "type": "object",
+          "required": ["chosen_action", "fallback_reason", "reasoning"],
+          "properties": {
+            "chosen_action": { "type": ["string", "null"] },
+            "fallback_reason": { "type": ["string", "null"] },
+            "reasoning": {
+              "type": "object",
+              "required": ["why", "alternative"],
+              "properties": {
+                "why": { "type": ["string", "null"] },
+                "alternative": {
+                  "type": "object",
+                  "required": ["action", "agent_id", "summary"],
+                  "properties": {
+                    "action": { "type": ["string", "null"] },
+                    "agent_id": { "type": ["string", "null"] },
+                    "summary": { "type": ["string", "null"] }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

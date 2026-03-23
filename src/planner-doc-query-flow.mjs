@@ -335,6 +335,8 @@ export function resolveDocQueryRoute({
     activeCandidates,
   });
   const selectedTarget = getRouteTarget(routeDecision);
+  const targetKind = cleanText(routeDecision?.target_kind || "")
+    || (cleanText(routeDecision?.action) ? "action" : cleanText(routeDecision?.preset) ? "preset" : "error");
   const action = isRoutingNoMatch(selectedTarget) ? null : selectedTarget;
   const routedPayload = buildDocQueryPayload({
     action,
@@ -351,12 +353,15 @@ export function resolveDocQueryRoute({
     activeDoc,
     activeCandidates,
   }));
-  const directAction = typeof routeDecision === "string" ? cleanText(routeDecision) : "";
+  const directAction = typeof routeDecision === "string" ? cleanText(routeDecision) : cleanText(routeDecision?.action);
+  const directPreset = cleanText(routeDecision?.preset);
+  const routingReason = cleanText(routeDecision?.routing_reason || "") || "routing_no_match";
   return {
-    ...(directAction || cleanText(routeDecision?.action)
-      ? { action: directAction || cleanText(routeDecision.action) }
-      : {}),
-    ...(cleanText(routeDecision?.preset) ? { preset: cleanText(routeDecision.preset) } : {}),
+    ...(directAction ? { action: directAction } : {}),
+    ...(directPreset ? { preset: directPreset } : {}),
+    selected_target: action,
+    target_kind: action ? targetKind : "error",
+    routing_reason: routingReason,
     payload: routedPayload,
     error: action ? null : ROUTING_NO_MATCH,
   };

@@ -1729,6 +1729,7 @@ export async function maybeRunPlannerTaskLifecycleFollowUp({
   return {
     selected_action: intent.selected_action,
     reason: "命中 planner task lifecycle follow-up。",
+    routing_reason: "task_lifecycle_follow_up",
     execution_result: executionResult,
     snapshot: refreshedSnapshot,
   };
