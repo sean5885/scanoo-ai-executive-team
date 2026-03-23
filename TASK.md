@@ -1,7 +1,6 @@
-Thread100:
-- 實作 routing precedence（follow_up > doc > search > fallback）
-- 禁止 ambiguous routing（必須唯一 action）
-- search+content 強制 search
-- 對齊 router/planner/doc-query
-- 補 routing regression
-- 跑 regression-check
+Thread101 implement:
+1. deterministic ranking with tie-breaker
+2. deterministic top1 snippet per doc
+3. deterministic follow-up by previous candidate index only
+4. deterministic doc detail output shape
+5. add repeat-run test: same query x10 => identical result

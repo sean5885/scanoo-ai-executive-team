@@ -379,6 +379,7 @@ export function buildDocQueryPayload({
     : {};
   const normalizedIntent = cleanText(String(userIntent || ""));
   const candidateIndex = resolvePlannerCandidateIndex(normalizedIntent);
+  const isOrdinalFollowUp = Number.isInteger(candidateIndex);
   const selectedCandidate = Number.isInteger(candidateIndex) ? activeCandidates[candidateIndex] : null;
 
   if (action === "search_company_brain_docs") {
@@ -400,7 +401,7 @@ export function buildDocQueryPayload({
     if (!cleanText(effectivePayload.doc_id) && cleanText(selectedCandidate?.doc_id)) {
       effectivePayload.doc_id = cleanText(selectedCandidate.doc_id);
     }
-    if (!cleanText(effectivePayload.doc_id) && cleanText(activeDoc?.doc_id)) {
+    if (!isOrdinalFollowUp && !cleanText(effectivePayload.doc_id) && cleanText(activeDoc?.doc_id)) {
       effectivePayload.doc_id = cleanText(activeDoc.doc_id);
     }
     if (!cleanText(effectivePayload.query) && normalizedIntent) {

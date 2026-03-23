@@ -170,9 +170,12 @@ Planner-facing `data` is summary-oriented:
   - `items[]`
   - each item includes `summary`, `learning_state`, and `match`
   - `match` now carries composite `score`, per-signal component scores, and simplified `ranking_basis`
+  - ranking is now deterministic for the same query/data snapshot: composite score stays fixed for that snapshot, ties are broken by per-signal scores and stable doc metadata (`doc_id` / `title`), and no runtime randomness is used in the read-side ranking pass
+  - `summary.snippet` is now one deterministic top-1 sentence/line per document, chosen by exact-query/token hit score and then by source order
 - detail:
   - `doc`
   - `summary`
+  - `summary` keeps a fixed object shape: `overview`, `headings`, `highlights`, `snippet`, `content_length`
 - learning write actions return:
   - `doc`
   - `learning_state`
@@ -186,6 +189,7 @@ Current practical handoff behavior:
 - planner/runtime may hand off a bounded read request to company-brain routes
 - this is currently implemented as direct route dispatch plus a small internal query module, not as a separate handoff runtime module
 - detail-like planner presets still derive the follow-up `doc_id` from the ranked search result order, so higher-weight documents are preferred before detail fetch when the search side can safely narrow to one candidate
+- ordinal follow-up reads are expected to stay bound to the previously returned candidate index; they should not silently fall back to an unrelated active document when no candidate index is available
 
 Minimum handoff-compatible request types today:
 

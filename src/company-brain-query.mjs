@@ -15,8 +15,6 @@ import { normalizeText } from "./text-utils.mjs";
 const SEARCH_MATCH_THRESHOLD = 0.08;
 const DEFAULT_SEARCH_TOP_K = 5;
 const MAX_SEARCH_TOP_K = 200;
-const RECENCY_HALF_LIFE_DAYS = 45;
-const DAY_IN_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_RANKING_WEIGHTS = Object.freeze({
   keyword: 0.45,
   semantic_lite: 0.2,
@@ -74,6 +72,15 @@ function normalizeInlineText(text = "") {
   return String(cleanText(text) || "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function compareNormalizedText(left = "", right = "") {
+  const normalizedLeft = normalizeInlineText(left).toLowerCase();
+  const normalizedRight = normalizeInlineText(right).toLowerCase();
+  if (normalizedLeft === normalizedRight) {
+    return 0;
+  }
+  return normalizedLeft < normalizedRight ? -1 : 1;
 }
 
 function clampNumber(value, min, max) {
@@ -151,6 +158,20 @@ function buildSearchText(row = {}) {
     cleanText(row?.doc_id),
     normalizeInlineText(row?.raw_text),
   ].filter(Boolean).join("\n");
+}
+
+function compareRankedSearchItems(left = {}, right = {}) {
+  return (
+    Number(right?.match?.score || 0) - Number(left?.match?.score || 0)
+    || Number(right?.match?.keyword_score || 0) - Number(left?.match?.keyword_score || 0)
+    || Number(right?.match?.learning_score || 0) - Number(left?.match?.learning_score || 0)
+    || Number(right?.match?.semantic_score || 0) - Number(left?.match?.semantic_score || 0)
+    || Number(right?.match?.recency_score || 0) - Number(left?.match?.recency_score || 0)
+    || Number(right?.sort_timestamp || 0) - Number(left?.sort_timestamp || 0)
+    || compareNormalizedText(left?.row?.doc_id, right?.row?.doc_id)
+    || compareNormalizedText(left?.row?.title, right?.row?.title)
+    || compareNormalizedText(left?.row?.created_at, right?.row?.created_at)
+  );
 }
 
 function resolveSearchTopK(topK = null, limit = null, fallback = DEFAULT_SEARCH_TOP_K) {
@@ -345,7 +366,27 @@ function parseDocTimestamp(row = {}) {
   return Number.isFinite(timestamp) ? timestamp : null;
 }
 
-function computeRecencySignal(row = {}, now = Date.now()) {
+function buildDeterministicRecencyContext(rows = []) {
+  const timestamps = Array.from(new Set(
+    (Array.isArray(rows) ? rows : [])
+      .map((row) => parseDocTimestamp(row))
+      .filter((value) => Number.isFinite(value)),
+  )).sort((left, right) => right - left);
+
+  const maxRank = Math.max(0, timestamps.length - 1);
+  const scoreByTimestamp = new Map(
+    timestamps.map((timestamp, index) => [
+      timestamp,
+      maxRank === 0 ? 1 : Number((1 - (index / maxRank)).toFixed(6)),
+    ]),
+  );
+
+  return {
+    scoreByTimestamp,
+  };
+}
+
+function computeRecencySignal(row = {}, recencyContext = {}) {
   const timestamp = parseDocTimestamp(row);
   if (!timestamp) {
     return {
@@ -355,14 +396,16 @@ function computeRecencySignal(row = {}, now = Date.now()) {
     };
   }
 
-  const ageDays = Math.max(0, (now - timestamp) / DAY_IN_MS);
-  const score = Number(Math.exp(-ageDays / RECENCY_HALF_LIFE_DAYS).toFixed(6));
+  const scoreByTimestamp = recencyContext?.scoreByTimestamp instanceof Map
+    ? recencyContext.scoreByTimestamp
+    : new Map();
+  const score = Number(scoreByTimestamp.get(timestamp) ?? 0);
   let label = "stale";
-  if (ageDays <= 7) {
+  if (score >= 0.75) {
     label = "fresh";
-  } else if (ageDays <= 30) {
+  } else if (score >= 0.5) {
     label = "recent";
-  } else if (ageDays <= 90) {
+  } else if (score > 0) {
     label = "active";
   }
 
@@ -421,7 +464,7 @@ function buildSearchMatch({
       ...(learningSignal.basis || []),
       ...(semanticSignal.basis || []),
       ...(recencySignal.basis || []),
-    ])).slice(0, 6),
+    ])).sort(compareNormalizedText).slice(0, 6),
   };
 }
 
@@ -498,12 +541,13 @@ export function searchCompanyBrainDocsAction({
   const queryEmbedding = embedTextLocally(normalizedQuery);
   const topK = resolveSearchTopK(top_k, limit);
   const rankingWeights = normalizeRankingWeights(ranking_weights);
-  const now = Date.now();
-  const ranked = listCompanyBrainDocQueryRecords(normalizedAccountId).map((row) => {
+  const rows = listCompanyBrainDocQueryRecords(normalizedAccountId);
+  const recencyContext = buildDeterministicRecencyContext(rows);
+  const ranked = rows.map((row) => {
     const keywordSignal = computeKeywordSignal(row, normalizedQuery, queryTokens);
     const semanticSignal = computeSemanticSignal(queryEmbedding, row);
     const learningSignal = computeLearningSignal(row, normalizedQuery, queryTokens);
-    const recencySignal = computeRecencySignal(row, now);
+    const recencySignal = computeRecencySignal(row, recencyContext);
     const match = buildSearchMatch({
       keywordSignal,
       semanticSignal,
@@ -517,11 +561,8 @@ export function searchCompanyBrainDocsAction({
       sort_timestamp: recencySignal.timestamp || 0,
     };
   }).filter(({ match }) => (
-    match.type !== "none"
-  )).sort((left, right) => (
-    right.match.score - left.match.score
-    || right.sort_timestamp - left.sort_timestamp
-  )).slice(0, topK);
+      match.type !== "none"
+  )).sort(compareRankedSearchItems).slice(0, topK);
 
   const items = ranked.map(({ row, match }) => buildSearchItem(row, normalizedQuery, match));
   return buildUnifiedResult(true, {
@@ -588,12 +629,13 @@ export function searchApprovedCompanyBrainKnowledgeAction({
   const queryEmbedding = embedTextLocally(normalizedQuery);
   const topK = resolveSearchTopK(top_k, limit);
   const rankingWeights = normalizeRankingWeights(ranking_weights);
-  const now = Date.now();
-  const ranked = listApprovedCompanyBrainDocQueryRecords(normalizedAccountId).map((row) => {
+  const rows = listApprovedCompanyBrainDocQueryRecords(normalizedAccountId);
+  const recencyContext = buildDeterministicRecencyContext(rows);
+  const ranked = rows.map((row) => {
     const keywordSignal = computeKeywordSignal(row, normalizedQuery, queryTokens);
     const semanticSignal = computeSemanticSignal(queryEmbedding, row);
     const learningSignal = computeLearningSignal(row, normalizedQuery, queryTokens);
-    const recencySignal = computeRecencySignal(row, now);
+    const recencySignal = computeRecencySignal(row, recencyContext);
     const match = buildSearchMatch({
       keywordSignal,
       semanticSignal,
@@ -607,11 +649,8 @@ export function searchApprovedCompanyBrainKnowledgeAction({
       sort_timestamp: recencySignal.timestamp || 0,
     };
   }).filter(({ match }) => (
-    match.type !== "none"
-  )).sort((left, right) => (
-    right.match.score - left.match.score
-    || right.sort_timestamp - left.sort_timestamp
-  )).slice(0, topK);
+      match.type !== "none"
+  )).sort(compareRankedSearchItems).slice(0, topK);
 
   const items = ranked.map(({ row, match }) => buildApprovedSearchItem(row, normalizedQuery, match));
   return buildUnifiedResult(true, {

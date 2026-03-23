@@ -1,0 +1,7 @@
+Do Thread102 now:
+- add error-to-user-response layer
+- never expose internal JSON/error/trace to user
+- semantic_mismatch => reroute first, else human message
+- routing_no_match / invalid_action / business_error => natural language fallback
+- keep internal trace only in logs/runtime, not user output
+- add focused tests for no internal JSON exposure

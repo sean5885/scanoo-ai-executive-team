@@ -234,6 +234,129 @@ test("searchCompanyBrainDocsAction ranking weights can change document order", (
   }
 });
 
+test("searchCompanyBrainDocsAction uses deterministic tie-breaker when scores match", () => {
+  const accountId = `acct_company_brain_deterministic_tie_${Date.now()}`;
+  ensureTestAccount(accountId);
+  const sharedTimestamp = "2026-03-20T00:00:00.000Z";
+
+  insertDocFixture({
+    accountId,
+    docId: "doc_company_brain_tie_b",
+    title: "Deterministic Playbook",
+    rawText: "Launch handoff approval checklist for shared rollout review.",
+    createdAt: sharedTimestamp,
+    updatedAt: sharedTimestamp,
+  });
+  insertDocFixture({
+    accountId,
+    docId: "doc_company_brain_tie_a",
+    title: "Deterministic Playbook",
+    rawText: "Launch handoff approval checklist for shared rollout review.",
+    createdAt: sharedTimestamp,
+    updatedAt: sharedTimestamp,
+  });
+
+  try {
+    const result = searchCompanyBrainDocsAction({
+      accountId,
+      q: "launch handoff approval",
+      top_k: 2,
+    });
+
+    assert.equal(result.success, true);
+    assert.deepEqual(result.data.items.map((item) => item.doc_id), [
+      "doc_company_brain_tie_a",
+      "doc_company_brain_tie_b",
+    ]);
+    assert.equal(result.data.items[0].match.score, result.data.items[1].match.score);
+  } finally {
+    cleanupAccountFixtures(accountId);
+  }
+});
+
+test("searchCompanyBrainDocsAction returns identical results across the same query x10", () => {
+  const accountId = `acct_company_brain_repeat_${Date.now()}`;
+  ensureTestAccount(accountId);
+
+  insertDocFixture({
+    accountId,
+    docId: "doc_company_brain_repeat_1",
+    title: "Launch Handoff Guide",
+    rawText: [
+      "# Launch Handoff Guide",
+      "Launch handoff requires owner confirmation before rollout.",
+      "Checklist review happens before launch approval.",
+    ].join("\n"),
+    createdAt: "2026-03-01T00:00:00.000Z",
+    updatedAt: "2026-03-01T00:00:00.000Z",
+  });
+  insertDocFixture({
+    accountId,
+    docId: "doc_company_brain_repeat_2",
+    title: "Launch Review SOP",
+    rawText: [
+      "# Launch Review SOP",
+      "Launch review includes owner approval and rollback planning.",
+    ].join("\n"),
+    createdAt: "2026-03-18T00:00:00.000Z",
+    updatedAt: "2026-03-18T00:00:00.000Z",
+  });
+
+  const originalDateNow = Date.now;
+  const fixedBaseNow = originalDateNow();
+  try {
+    let baseline = null;
+    for (let index = 0; index < 10; index += 1) {
+      Date.now = () => fixedBaseNow + (index * 24 * 60 * 60 * 1000);
+      const result = searchCompanyBrainDocsAction({
+        accountId,
+        q: "launch handoff approval",
+        top_k: 2,
+      });
+      if (!baseline) {
+        baseline = result;
+      } else {
+        assert.deepEqual(result, baseline);
+      }
+    }
+  } finally {
+    Date.now = originalDateNow;
+    cleanupAccountFixtures(accountId);
+  }
+});
+
+test("searchCompanyBrainDocsAction selects a deterministic top1 snippet sentence per doc", () => {
+  const accountId = `acct_company_brain_snippet_${Date.now()}`;
+  ensureTestAccount(accountId);
+  insertDocFixture({
+    accountId,
+    docId: "doc_company_brain_snippet_1",
+    title: "Launch Notes",
+    rawText: [
+      "# Launch Notes",
+      "General context without the target words.",
+      "Launch handoff requires owner confirmation before rollout. Launch handoff approval is recorded in the checklist.",
+      "Another line that mentions launch only once.",
+    ].join("\n"),
+  });
+
+  try {
+    const result = searchCompanyBrainDocsAction({
+      accountId,
+      q: "launch handoff approval",
+      top_k: 1,
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(
+      result.data.items[0].summary.snippet,
+      "Launch handoff approval is recorded in the checklist.",
+    );
+  } finally {
+    cleanupAccountFixtures(accountId);
+  }
+});
+
 test("searchCompanyBrainDocsAction applies top_k and defaults to 5", () => {
   const accountId = `acct_company_brain_top_k_${Date.now()}`;
   ensureTestAccount(accountId);
@@ -308,6 +431,13 @@ test("getCompanyBrainDocDetailAction returns structured content summary without 
       "Delivery SOP",
       "Owner",
       "Deadline",
+    ]);
+    assert.deepEqual(Object.keys(result.data.summary), [
+      "overview",
+      "headings",
+      "highlights",
+      "snippet",
+      "content_length",
     ]);
     assert.equal(result.data.summary.highlights.length > 0, true);
     assert.equal("raw_text" in result.data.summary, false);

@@ -31,6 +31,7 @@ import {
 import { plannerBdFlow } from "../src/planner-bd-flow.mjs";
 import { plannerDeliveryFlow } from "../src/planner-delivery-flow.mjs";
 import {
+  buildDocQueryPayload,
   getPlannerDocQueryContext,
   hydratePlannerDocQueryRuntimeContext,
   plannerDocQueryFlow,
@@ -2158,6 +2159,35 @@ test("router uses active candidates for ordinal follow-up selection", () => {
       selected_target: "get_company_brain_doc_detail",
       target_kind: "action",
       routing_reason: "doc_query_active_candidate_detail",
+    },
+  );
+});
+
+test("router does not fall back to active doc for ordinal follow-up without active candidates", () => {
+  assert.deepEqual(
+    route("打開第一個", {
+      activeDoc: { doc_id: "doc_123", title: "Demo" },
+    }),
+    {
+      selected_target: null,
+      target_kind: "error",
+      routing_reason: "routing_no_match",
+      error: "ROUTING_NO_MATCH",
+    },
+  );
+});
+
+test("buildDocQueryPayload keeps ordinal follow-up bound to previous candidate index only", () => {
+  assert.deepEqual(
+    buildDocQueryPayload({
+      action: "get_company_brain_doc_detail",
+      userIntent: "打開第一個",
+      payload: {},
+      activeDoc: { doc_id: "doc_active", title: "Active Doc" },
+      activeCandidates: [],
+    }),
+    {
+      query: "打開第一個",
     },
   );
 });

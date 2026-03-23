@@ -1,0 +1,7 @@
+Do Thread101 now:
+- implement deterministic ranking with fixed tie-breaker
+- implement deterministic top1 snippet per doc
+- implement deterministic follow-up by previous candidate index only
+- implement deterministic doc detail output shape
+- add repeat-run regression: same query x10 => identical result
+- run focused tests and report changed files + test results + whether x10 identical passed

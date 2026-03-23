@@ -99,6 +99,13 @@ function splitSentences(rawText = "") {
     .filter(Boolean);
 }
 
+function splitLineSentences(line = "") {
+  return normalizeInlineText(line)
+    .split(/(?<=[。！？!?;；.])\s+/)
+    .map((item) => cleanText(item))
+    .filter(Boolean);
+}
+
 function buildOverview(rawText = "", title = "", maxLength = SUMMARY_OVERVIEW_LIMIT) {
   const normalized = normalizeInlineText(rawText || title);
   if (!normalized) {
@@ -165,23 +172,74 @@ function tokenizeSearchText(text = "") {
 }
 
 function buildQuerySnippet(rawText = "", title = "", query = "", maxLength = 180) {
-  const lines = splitContentLines(rawText);
   const normalizedQuery = cleanText(query).toLowerCase();
+  const queryTokens = tokenizeSearchText(query);
+  const lines = splitContentLines(rawText);
   if (!lines.length) {
     return buildOverview(rawText, title, maxLength);
   }
 
-  const matched = lines.find((line) => line.toLowerCase().includes(normalizedQuery));
-  if (matched) {
-    return matched.length <= maxLength ? matched : `${matched.slice(0, maxLength).trim()}...`;
+  const candidates = lines.flatMap((line, lineIndex) => {
+    const sentences = splitLineSentences(line);
+    if (!sentences.length) {
+      return [];
+    }
+    return sentences.map((sentence, sentenceIndex) => ({
+      text: sentence,
+      lineIndex,
+      sentenceIndex,
+    }));
+  });
+
+  if (!candidates.length) {
+    return buildOverview(rawText, title, maxLength);
   }
 
-  const tokens = tokenizeSearchText(query);
-  if (tokens.length) {
-    const partial = lines.find((line) => tokens.some((token) => line.toLowerCase().includes(token)));
-    if (partial) {
-      return partial.length <= maxLength ? partial : `${partial.slice(0, maxLength).trim()}...`;
+  const ranked = candidates.map((candidate) => {
+    const normalizedText = normalizeInlineText(candidate.text).toLowerCase();
+    let score = 0;
+
+    if (normalizedQuery && normalizedText.includes(normalizedQuery)) {
+      score += 100;
+      if (normalizedText.startsWith(normalizedQuery)) {
+        score += 8;
+      }
     }
+
+    let tokenHitCount = 0;
+    for (const token of queryTokens) {
+      if (!token || !normalizedText.includes(token)) {
+        continue;
+      }
+      tokenHitCount += 1;
+      score += 20;
+      if (normalizedText.startsWith(token)) {
+        score += 2;
+      }
+    }
+
+    if (tokenHitCount > 1) {
+      score += tokenHitCount;
+    }
+    if (/[。！？!?;；.]$/.test(candidate.text)) {
+      score += 1;
+    }
+
+    return {
+      ...candidate,
+      score,
+    };
+  }).filter((candidate) => candidate.score > 0)
+    .sort((left, right) => (
+      right.score - left.score
+      || left.lineIndex - right.lineIndex
+      || left.sentenceIndex - right.sentenceIndex
+      || left.text.length - right.text.length
+    ));
+
+  const matched = ranked[0]?.text || "";
+  if (matched) {
+    return matched.length <= maxLength ? matched : `${matched.slice(0, maxLength).trim()}...`;
   }
 
   return buildOverview(rawText, title, maxLength);

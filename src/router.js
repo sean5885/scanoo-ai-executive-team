@@ -86,11 +86,12 @@ function resolveFollowUpRouteCandidate(text = "", {
   activeCandidates = [],
 } = {}) {
   const candidates = [];
+  const wantsOrdinalFollowUp = hasDocOrdinalFollowUpIntent(text);
 
   if (
     Array.isArray(activeCandidates)
     && activeCandidates.length > 0
-    && hasDocOrdinalFollowUpIntent(text)
+    && wantsOrdinalFollowUp
   ) {
     candidates.push({
       action: "get_company_brain_doc_detail",
@@ -99,7 +100,8 @@ function resolveFollowUpRouteCandidate(text = "", {
   }
 
   if (
-    cleanText(activeDoc?.doc_id)
+    !wantsOrdinalFollowUp
+    && cleanText(activeDoc?.doc_id)
     && (hasDocPronounFollowUpIntent(text) || hasDocDetailContentIntent(text))
   ) {
     candidates.push({
