@@ -35,6 +35,24 @@ It records:
 - `72d811b` and `5ed0096` have the same tree, so `72d811b` is a superseded save, not a missing baseline commit
 - `0d4ad56` is also unreachable and reflects a mixed save that was later split into the reachable `5cdde38` plus the planner-task-driving save later amended into `5ed0096`
 
+## Thread110 Addendum
+
+This inventory originally stopped at the planner task-driving baseline. The latest completed stabilization round now additionally covers:
+
+| Thread | Status | Reachable commit(s) | Why it is treated as one thread |
+| --- | --- | --- | --- |
+| Agent-system stabilization baseline | completed on branch, pending merge/archive | `67a0bd6`, `28ba87b`, `7c037a5`, `cbf29d0`, `b452d7c`, `88b9d1e`, `cee5659` | This round hardens chat-facing dispatcher/orchestrator output boundaries and stabilizes local `docs/system` snippet extraction, BD retrieval ranking, and BD query alias handling without adding new product/runtime capabilities. |
+
+Thread110 themes:
+
+- dispatcher fallback/no-match replies now render natural language instead of raw JSON envelopes
+- registered-agent success output now guards against JSON-like structured payload leakage
+- executive planner fallback replies now render natural language instead of raw JSON envelopes
+- executive specialist/merge synthesis now rejects JSON-like structured replies
+- local `docs/system` snippet extraction is cleaner and more stable
+- BD retrieval ranking is more domain-aware
+- generic `business` alias leakage is suppressed for explicit BD / 商機 queries
+
 ## Thread to Commit Map
 
 | Thread | Status | Reachable commit(s) | Why it is treated as one thread |

@@ -179,6 +179,8 @@ What now exists in current code:
   - dispatch `/ceo`, `/product`, `/prd`, `/cmo`, `/consult`, `/cdo`, `/delivery`, `/ops`, `/tech`, `/generalist`, and `/knowledge *` before generic lane fallback
   - reuse retrieval grounding and compact workflow checkpoints for persona answers
   - when direct text-model credentials are absent, call the dedicated `lobster-backend` OpenClaw MiniMax text path before dropping to extractive retrieval-only output
+  - keep chat-facing slash-agent fallback/no-match replies on the shared natural-language reply boundary instead of exposing raw error envelopes
+  - reject JSON-like success payloads at the registered-agent output boundary and summarize them into visible natural language while keeping machine-readable fields in runtime data
 - Input:
   - slash command text
   - retrieved snippets
@@ -220,6 +222,7 @@ What now exists in current code:
     - direct answer first
     - normalized `結論 / 重點 / 下一步` structure
     - supporting-agent context absorbed into one single-voice final reply instead of separate visible agent blocks
+  - reject JSON-like specialist or merge replies before they are parsed as executive brief text, keeping structured blobs out of the visible single-voice answer
   - expose a minimal planner-callable tool registry for three agent-bridge actions:
     - `create_doc`
     - `list_company_brain_docs`

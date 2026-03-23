@@ -403,6 +403,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - optional compact image-context handoff into slash agents
   - when direct `LLM_API_KEY` is absent, registered agents now reuse the local OpenClaw MiniMax text path through the dedicated `lobster-backend` agent before falling back to extractive retrieval-only replies
   - registered-agent fallback/no-match chat replies now pass through the shared `normalizeUserResponse()` boundary before rendering `結論 -> 標記文件 -> 下一步`, so chat output no longer exposes raw `{ ok, error, details }` envelopes for `FALLBACK_DISABLED` or slash-command `ROUTING_NO_MATCH`
+  - registered-agent success replies now also enforce an output boundary: JSON-like object, fenced JSON, or nested JSON-string payloads are intercepted before visible chat rendering, summarized into natural language through the same user-response normalizer, and keep optional machine-readable `error` / `details` / `context` fields only in the returned runtime object
   - `openclaw-text-service.mjs` now normalizes optional abort signals before passing them into Node child-process/fetch-style options, so local callers can omit a signal without tripping `options.signal must be an instance of AbortSignal`
 - Main entry:
   - `parseRegisteredAgentCommand()`
@@ -626,6 +627,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - execute specialist work items sequentially, then synthesize one final response through the merge agent
   - when any specialist fails, preserve fail-soft behavior by switching final synthesis to `/generalist`
   - executive slash-command / planner-fallback chat errors now pass through the shared `normalizeUserResponse()` boundary before rendering `結論 -> 標記文件 -> 下一步`, so chat output no longer exposes raw `{ ok, error, details }` envelopes for `ROUTING_NO_MATCH` or `FALLBACK_DISABLED`
+  - specialist and merge-agent replies now reject JSON-like structured envelopes before brief parsing/synthesis; rejected outputs are marked as failed specialist work, skipped from the visible brief, and keep fail-soft fallback on the existing generalist merge path instead of letting raw structured blobs leak into the final executive answer
   - finalize each executive turn with evidence collection, verifier pass/fail, reflection, and improvement proposal generation
   - direct task completion is now blocked at orchestrator level; completion must pass the verifier gate in `executive-closed-loop.mjs`
   - meeting workflow now reuses the same task-state store through exported helpers, instead of inventing a separate control registry
@@ -880,6 +882,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - exposes `scoreDoc(doc, keyword)` and `rankResults(docs, keyword)`
   - scores documents by keyword presence, first-hit position, repeated exact-hit count, and a small boundary-like boost when the keyword appears adjacent to spaces
   - for BD-flavored queries (`bd`, `商機`, `business`, `管理`, `management`, and mixed forms such as `BD 商機管理`), also adds extra domain-keyword coverage boosts (`BD / 商機 / 客戶 / 跟進 / demo / 提案`), boosts docs that explicitly mention `planner-bd-flow.mjs` or the checked-in BD flow phrase, boosts `closed_loop.md` and `planner_agent_alignment.md`, and soft-penalizes broad inventory/pipeline docs such as `knowledge_pipeline.md` / `modules.md` / `system_state_snapshot.md` so generic docs do not crowd out BD-flow snippets
+  - ties are now broken deterministically by `doc.id`, so equal-score local ranking stays stable across runs
   - not connected to sync ingestion, SQLite persistence, planner routes, or company-brain approval/governance paths
 
 - `/Users/seanhan/Documents/Playground/src/knowledge/snippet-cleaner.mjs`

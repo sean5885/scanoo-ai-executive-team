@@ -750,6 +750,8 @@ The normalized executive decision shape in that same module now also carries det
 
 For the current Thread103 baseline, runtime normalization also caps executive collaboration to at most three unique roles per turn, with at most two `supporting_agent_ids`. Downstream execution in `/Users/seanhan/Documents/Playground/src/executive-orchestrator.mjs` then runs those work items sequentially instead of in parallel.
 
+That same downstream execution path now also enforces a visible-output boundary on specialist synthesis: JSON-like object replies, fenced JSON, and other structured-envelope outputs from specialist or merge agents are rejected before section parsing, logged as rejected specialist work, and kept on the existing fail-soft `/generalist` merge path instead of being treated as valid `結論 / 重點 / 下一步` brief text.
+
 That same decision-side task context now also includes a bounded `focus task` layer on top of `task driving v1`. It remains deterministic and local-only:
 
 - scope resolution prefers `active_doc`, then matching `source_title` mentioned in the current user text, then matching task titles, then `active_theme`, then latest scope

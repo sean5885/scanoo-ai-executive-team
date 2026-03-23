@@ -5,6 +5,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 ## Stability Baselines
 
 - thread98: planner contract stabilization baseline
+- thread110: [agent-system stabilization baseline](/Users/seanhan/Documents/Playground/docs/system/system_state_snapshot.md)
 
 ## Core Capabilities
 
@@ -35,6 +36,8 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - binding / session / workspace runtime foundation
 - capability-lane routing for DM / group / doc / knowledge requests
 - closed-loop executive planner with shared multi-turn task state, evidence-based verification, reflection, and agent-to-agent handoff across registered agents
+- natural-language chat output boundary for registered-agent fallback/no-match paths and executive planner fallback paths, so user-facing replies no longer expose raw JSON error envelopes
+- registered-agent success boundary guard plus executive specialist/merge reply rejection for JSON-like structured envelopes, keeping machine-readable error/details/context in runtime state while visible chat stays single-voice natural language
 - bounded planner-side task driving v1 for unfinished / blocked / in-progress tasks, using local JSON task snapshots to suggest next steps, unblock actions, and minimal action-layer reminders without changing public planner contracts
 - planner-side placeholder result envelope/formatter helpers for deterministic `meeting|doc|runtime|mixed` local result normalization
 - lane-specific execution strategies for DM / group / doc / knowledge requests
@@ -103,6 +106,7 @@ AI-like components exist, and now include:
 - prompt slimming with stable section labels to improve cache-friendly prefixes for repeated LLM calls
 - XML prompt wrapping and anti-hallucination guardrails for answer, rewrite, meeting-summary, and semantic-classifier flows
 - shared compact system-prompt builder so answer / rewrite / meeting / classifier prompts do not repeat the same core rules
+- local `docs/system` knowledge preview stabilization with line-aware snippet cleanup, block-first snippet extraction, BD-oriented ranking boosts, and suppression of generic `business` alias expansion for explicit BD / 商機 queries
 
 ## Partial
 
@@ -112,6 +116,7 @@ AI-like components exist, and now include:
 - runtime contract hardening between Node and `lobster_security`
 - provider-side prompt caching cannot be confirmed from repo code, so the repo now uses stable prompt templates plus external checkpoints instead of re-sending large historical context each round
 - the executive planner is still thin and synchronous; it does not yet run parallel subagents or a background queue
+- the local `docs/system` knowledge helpers remain read-side utilities only; they are not the SQLite/company-brain retrieval pipeline or an approval-governed knowledge source
 
 ## Not Implemented
 
