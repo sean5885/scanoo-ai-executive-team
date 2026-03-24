@@ -278,8 +278,11 @@ async function buildRoutingSummary({ routingArchiveDir } = {}) {
   };
 }
 
-async function buildPlannerSummary({ plannerArchiveDir } = {}) {
-  const report = runPlannerContractConsistencyCheck();
+async function buildPlannerSummary({
+  plannerArchiveDir,
+  plannerContractCheck = runPlannerContractConsistencyCheck,
+} = {}) {
+  const report = plannerContractCheck();
   let latestSnapshot = null;
 
   try {
@@ -305,7 +308,7 @@ async function buildPlannerSummary({ plannerArchiveDir } = {}) {
     ? "planner gate passes"
     : "planner gate fails";
   const guidance = gate === "fail"
-    ? "先看 planner gate；依序看 undefined_actions、undefined_presets、selector_contract_mismatches。"
+    ? "先看 planner gate；依序看 undefined_actions、undefined_presets、selector_contract_mismatches、action_governance_mismatches。"
     : hasObviousRegression
       ? "planner gate 雖然 pass，但 compare 變差；先看 planner diagnostics compare。"
       : "planner 線目前穩定；若接下來改 planner，再跑 npm run planner:diagnostics。";
@@ -492,7 +495,12 @@ export function renderSystemSelfCheckReport(result = {}) {
   ].join("\n");
 }
 
-export async function runSystemSelfCheck({ routingArchiveDir, plannerArchiveDir, selfCheckArchiveDir } = {}) {
+export async function runSystemSelfCheck({
+  routingArchiveDir,
+  plannerArchiveDir,
+  selfCheckArchiveDir,
+  plannerContractCheck = runPlannerContractConsistencyCheck,
+} = {}) {
   const agents = listRegisteredAgents();
   const agentMap = new Map(agents.map((agent) => [agent.id, agent]));
 
@@ -539,7 +547,7 @@ export async function runSystemSelfCheck({ routingArchiveDir, plannerArchiveDir,
 
   const [controlSummary, plannerSummary, routingSummary] = await Promise.all([
     buildControlSummary(),
-    buildPlannerSummary({ plannerArchiveDir }),
+    buildPlannerSummary({ plannerArchiveDir, plannerContractCheck }),
     buildRoutingSummary({ routingArchiveDir }),
   ]);
   const baseOk = !hasBlockingBaseFailures({

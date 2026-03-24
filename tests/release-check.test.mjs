@@ -303,6 +303,48 @@ test("release-check report points planner contract failure to planner registry f
   });
 });
 
+test("release-check report points create_doc governance mismatch to gate modules", () => {
+  const report = buildReleaseCheckReport({
+    selfCheckResult: {
+      ok: false,
+      system_summary: {
+        core_checks: "pass",
+      },
+      routing_summary: {
+        status: "pass",
+        compare: {
+          has_obvious_regression: false,
+        },
+      },
+      planner_summary: {
+        gate: "fail",
+        compare: {
+          has_obvious_regression: false,
+        },
+      },
+      planner_contract: {
+        failing_categories: ["action_governance_mismatches"],
+      },
+    },
+    drilldown: {
+      failing_area: "doc",
+      representative_fail_case: ["action_governance_mismatches:create_doc via action_governance:create_doc:contract_vs_route_contract"],
+      drilldown_source: ["release-check triage", "planner diagnostics/history"],
+    },
+  });
+
+  assert.deepEqual(report, {
+    overall_status: "fail",
+    blocking_checks: ["planner_contract_failure"],
+    doc_boundary_regression: false,
+    suggested_next_step: "先看 planner contract failure 的 create_doc gate 模組：src/executive-planner.mjs、src/http-route-contracts.mjs、src/lark-write-guard.mjs；只有 intentional stable target 才改 docs/system/planner_contract.json。",
+    action_hint: "run planner-contract-check and fix governance mismatch",
+    failing_area: "doc",
+    representative_fail_case: ["action_governance_mismatches:create_doc via action_governance:create_doc:contract_vs_route_contract"],
+    drilldown_source: ["release-check triage", "planner diagnostics/history"],
+  });
+});
+
 test("release-check drilldown derives routing representative miss cases from history", () => {
   const drilldown = buildReleaseCheckDrilldown({
     selfCheckResult: {

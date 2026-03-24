@@ -6,7 +6,12 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp } from "node:fs/promises";
 
-import { runPlannerContractConsistencyCheck } from "../src/planner-contract-consistency.mjs";
+import {
+  buildPlannerContractGate,
+  buildPlannerDiagnosticsDecision,
+  buildPlannerDiagnosticsSummary,
+  runPlannerContractConsistencyCheck,
+} from "../src/planner-contract-consistency.mjs";
 import { archivePlannerDiagnosticsSnapshot } from "../src/planner-diagnostics-history.mjs";
 import { buildRoutingDiagnosticsSummary } from "../src/routing-eval-diagnostics.mjs";
 import { archiveRoutingDiagnosticsSnapshot } from "../src/routing-diagnostics-history.mjs";
@@ -214,6 +219,81 @@ test("system self-check marks doc-boundary routing regressions and points to int
   assert.match(result.routing_summary.guidance, /doc-boundary 類問題/);
   assert.equal(result.system_summary.review_priority, "routing");
   assert.match(result.system_summary.guidance, /優先檢查 intent guard/);
+});
+
+test("system self-check surfaces planner create_doc governance mismatches", async () => {
+  const archives = await seedSelfCheckArchives();
+  const baseReport = runPlannerContractConsistencyCheck();
+  const governanceFindings = [
+    {
+      category: "action_governance_mismatches",
+      source_id: "action_governance:create_doc:contract_vs_route_contract",
+      file: "/Users/seanhan/Documents/Playground/docs/system/planner_contract.json",
+      target: "create_doc",
+      reason: "confirm_required_mismatch",
+      field: "confirm_required",
+      expected: null,
+      actual: true,
+      counterpart_file: "/Users/seanhan/Documents/Playground/src/http-route-contracts.mjs",
+    },
+  ];
+  const diagnosticsSummary = buildPlannerDiagnosticsSummary({
+    gate: buildPlannerContractGate({
+      undefined_actions: [],
+      undefined_presets: [],
+      selector_contract_mismatches: [],
+      action_governance_mismatches: governanceFindings,
+      deprecated_reachable_targets: [],
+    }),
+    summary: {
+      undefined_actions: 0,
+      undefined_presets: 0,
+      selector_contract_mismatches: 0,
+      action_governance_mismatches: governanceFindings.length,
+      deprecated_reachable_targets: 0,
+    },
+  });
+  const plannerReport = {
+    ...baseReport,
+    ok: false,
+    gate: buildPlannerContractGate({
+      undefined_actions: [],
+      undefined_presets: [],
+      selector_contract_mismatches: [],
+      action_governance_mismatches: governanceFindings,
+      deprecated_reachable_targets: [],
+    }),
+    diagnostics_summary: diagnosticsSummary,
+    decision: buildPlannerDiagnosticsDecision(diagnosticsSummary),
+    summary: {
+      ...baseReport.summary,
+      undefined_actions: 0,
+      undefined_presets: 0,
+      selector_contract_mismatches: 0,
+      action_governance_mismatches: governanceFindings.length,
+      deprecated_reachable_targets: 0,
+    },
+    findings: {
+      ...baseReport.findings,
+      undefined_actions: [],
+      undefined_presets: [],
+      selector_contract_mismatches: [],
+      action_governance_mismatches: governanceFindings,
+      deprecated_reachable_targets: [],
+    },
+  };
+
+  const result = await runSystemSelfCheck({
+    ...archives,
+    plannerContractCheck: () => plannerReport,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.system_summary.review_priority, "planner");
+  assert.equal(result.planner_summary.gate, "fail");
+  assert.equal(result.planner_contract.gate_ok, false);
+  assert.deepEqual(result.planner_contract.failing_categories, ["action_governance_mismatches"]);
+  assert.match(result.planner_summary.guidance, /action_governance_mismatches/);
 });
 
 test("self-check CLI renders concise guidance by default", async () => {

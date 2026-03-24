@@ -20,6 +20,7 @@ function parseEnvList(name) {
 const DEMO_LIKE_TITLE_PATTERN = /\b(test|demo|verify|verification|smoke|e2e)\b/i;
 const WRITE_BLOCKED_MESSAGE = "Lark write blocked (ALLOW_LARK_WRITES not enabled)";
 const WRITE_PRODUCTION_BLOCKED_MESSAGE = "Lark write disabled in production";
+const CONDITIONAL_REVIEW_REQUIRED = "conditional";
 
 function isProductionEnvironment() {
   return cleanText(process.env.NODE_ENV).toLowerCase() === "production";
@@ -51,6 +52,14 @@ export function getLarkWriteGuardPolicy() {
     allowedTenantKeys: parseEnvList("LARK_WRITE_ALLOWED_TENANT_KEYS"),
     sandboxTenantKeys: parseEnvList("LARK_WRITE_SANDBOX_TENANT_KEYS"),
     productionLocked,
+  };
+}
+
+export function getDocumentCreateGovernanceContract() {
+  return {
+    external_write: true,
+    confirm_required: true,
+    review_required: CONDITIONAL_REVIEW_REQUIRED,
   };
 }
 

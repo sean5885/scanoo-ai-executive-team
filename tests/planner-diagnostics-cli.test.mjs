@@ -27,7 +27,7 @@ test("planner diagnostics CLI renders the fixed single-view summary", () => {
 
   assert.match(output, /Planner Diagnostics/);
   assert.match(output, /planner contract gate: pass/);
-  assert.match(output, /summary: gate=pass \| undefined_actions=0 \| undefined_presets=0 \| selector_contract_mismatches=0 \| deprecated_reachable_targets=0/);
+  assert.match(output, /summary: gate=pass \| undefined_actions=0 \| undefined_presets=0 \| selector_contract_mismatches=0 \| action_governance_mismatches=0 \| deprecated_reachable_targets=0/);
   assert.match(output, /decision: Gate passes\. No planner implementation or contract change is required\./);
 });
 
@@ -54,6 +54,7 @@ test("planner diagnostics CLI archives the full JSON report into snapshot histor
     undefined_actions: 0,
     undefined_presets: 0,
     selector_contract_mismatches: 0,
+    action_governance_mismatches: 0,
     deprecated_reachable_targets: 0,
   });
   assert.deepEqual(snapshot, parsed);

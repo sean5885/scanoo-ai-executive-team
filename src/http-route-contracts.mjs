@@ -1,3 +1,5 @@
+import { getDocumentCreateGovernanceContract } from "./lark-write-guard.mjs";
+
 const EXACT_METHODS = new Map([
   ["/health", ["GET"]],
   ["/monitoring", ["GET"]],
@@ -93,6 +95,18 @@ const REGEX_METHODS = [
   [/^\/api\/sheets\/spreadsheets\/[^/]+\/sheets\/[^/]+\/replace-batch$/, ["POST"]],
 ];
 
+const EXACT_ROUTE_CONTRACTS = new Map([
+  ["/api/doc/create", {
+    action: "create_doc",
+    governance: getDocumentCreateGovernanceContract(),
+  }],
+  ["/agent/docs/create", {
+    action: "create_doc",
+    delegates_to: "/api/doc/create",
+    governance: getDocumentCreateGovernanceContract(),
+  }],
+]);
+
 export function getAllowedMethodsForPath(pathname) {
   if (EXACT_METHODS.has(pathname)) {
     return EXACT_METHODS.get(pathname);
@@ -105,4 +119,20 @@ export function getAllowedMethodsForPath(pathname) {
   }
 
   return null;
+}
+
+export function getRouteContract(pathname = "") {
+  const methods = getAllowedMethodsForPath(pathname);
+  if (!Array.isArray(methods) || methods.length === 0) {
+    return null;
+  }
+
+  const contract = EXACT_ROUTE_CONTRACTS.get(pathname);
+  return {
+    pathname,
+    methods,
+    action: contract?.action || null,
+    delegates_to: contract?.delegates_to || null,
+    governance: contract?.governance || null,
+  };
 }

@@ -6,6 +6,11 @@ import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import {
+  buildDiagnosticsReportingSummary,
+  runControlDiagnostics,
+} from "../src/control-diagnostics.mjs";
+
 function readJson(filePath) {
   return JSON.parse(readFileSync(filePath, "utf8"));
 }
@@ -45,6 +50,8 @@ test("control diagnostics CLI renders the fixed single-view summary", async () =
   assert.match(output, /control_summary: issues=0 \| decisions=3 \| owners=3 \| integrations=3/);
   assert.match(output, /routing_summary: status=pass \| accuracy=1 \| compare=unavailable \| doc_boundary_regression=false/);
   assert.match(output, /write_summary: issues=0 \| guarded_operations=5 \| create_surfaces=2/);
+  assert.match(output, /reporting_summary: error_code_groups=0 \| failure_groups=0 \| top_regressions=0/);
+  assert.match(output, /top_regressions: none/);
   assert.match(output, /decision: observe_only \| line none/);
 });
 
@@ -80,6 +87,265 @@ test("control diagnostics CLI archives the full JSON report into snapshot histor
     write_issue_count: 0,
   });
   assert.deepEqual(snapshot, parsed);
+});
+
+test("control diagnostics reporting groups error codes and failure families deterministically", () => {
+  const reportingSummary = buildDiagnosticsReportingSummary({
+    controlSummary: {
+      status: "fail",
+      issues: [
+        {
+          code: "control_scenario_failed:active_executive_task_keeps_follow_up_ownership",
+          summary: "Control scenario failed: active executive task follow-up",
+          file: path.join(process.cwd(), "src/control-kernel.mjs"),
+        },
+        {
+          code: "control_integration_missing:lane_executor_owner_assertions",
+          summary: "Control integration missing: owner assertions",
+          file: path.join(process.cwd(), "src/lane-executor.mjs"),
+        },
+      ],
+    },
+    routingSummary: {
+      status: "degrade",
+      issue_count: 2,
+      issues: [
+        {
+          code: "routing_compare_regression",
+          summary: "Routing compare shows an obvious regression.",
+          file: path.join(process.cwd(), ".tmp/routing-diagnostics-history/snapshots/routing-2.json"),
+        },
+        {
+          code: "routing_decision_requires_review",
+          summary: "Routing diagnostics require manual review.",
+          file: path.join(process.cwd(), ".tmp/routing-diagnostics-history/snapshots/routing-2.json"),
+        },
+      ],
+      latest_snapshot: {
+        snapshot_path: path.join(process.cwd(), ".tmp/routing-diagnostics-history/snapshots/routing-2.json"),
+      },
+      diagnostics_summary: {
+        top_miss_cases: [
+          {
+            id: "doc-023a",
+            category: "doc",
+            miss_dimensions: ["planner_action", "agent_or_tool"],
+            actual: {
+              planner_action: "ROUTING_NO_MATCH",
+              agent_or_tool: "error:ROUTING_NO_MATCH",
+              route_source: "planner_flow",
+            },
+          },
+          {
+            id: "doc-023b",
+            category: "doc",
+            miss_dimensions: ["lane"],
+            actual: {
+              planner_action: "ROUTING_NO_MATCH",
+              route_source: "lane_executor",
+            },
+          },
+        ],
+      },
+    },
+    writeSummary: {
+      status: "fail",
+      issues: [
+        {
+          code: "write_scenario_failed:external_write_requires_confirmation",
+          summary: "Write guard scenario failed: confirmation required",
+          file: path.join(process.cwd(), "src/write-guard.mjs"),
+        },
+      ],
+    },
+  });
+
+  assert.deepEqual(reportingSummary.error_code_classes.map((item) => ({
+    class_key: item.class_key,
+    count: item.count,
+  })), [
+    {
+      class_key: "control_integration_missing",
+      count: 1,
+    },
+    {
+      class_key: "control_scenario_failed",
+      count: 1,
+    },
+    {
+      class_key: "write_scenario_failed",
+      count: 1,
+    },
+    {
+      class_key: "routing_top_miss:ROUTING_NO_MATCH",
+      count: 2,
+    },
+    {
+      class_key: "routing_compare_regression",
+      count: 1,
+    },
+    {
+      class_key: "routing_decision_requires_review",
+      count: 1,
+    },
+  ]);
+  assert.deepEqual(reportingSummary.failure_groups.map((item) => ({
+    group_key: item.group_key,
+    count: item.count,
+  })), [
+    {
+      group_key: "control:deterministic_scenarios",
+      count: 1,
+    },
+    {
+      group_key: "control:integration_surface",
+      count: 1,
+    },
+    {
+      group_key: "write:deterministic_scenarios",
+      count: 1,
+    },
+    {
+      group_key: "routing:top_miss_cases",
+      count: 2,
+    },
+    {
+      group_key: "routing:compare_regression",
+      count: 1,
+    },
+    {
+      group_key: "routing:decision_review",
+      count: 1,
+    },
+  ]);
+});
+
+test("control diagnostics reporting emits stable top regression cases without changing gate verdicts", async () => {
+  const controlArchiveDir = await mkdtemp(path.join(os.tmpdir(), "control-diagnostics-reporting-"));
+  const routingArchiveDir = await mkdtemp(path.join(os.tmpdir(), "control-diagnostics-routing-reporting-"));
+  seedRoutingDiagnosticsArchive(routingArchiveDir);
+
+  const report = await runControlDiagnostics({
+    routingArchiveDir,
+  });
+
+  assert.equal(report.ok, true);
+  assert.deepEqual(report.diagnostics_summary, {
+    overall_status: "pass",
+    control_status: "pass",
+    routing_status: "pass",
+    write_status: "pass",
+    control_issue_count: 0,
+    routing_issue_count: 0,
+    write_issue_count: 0,
+  });
+  assert.equal(report.decision.action, "observe_only");
+  assert.equal(report.decision.line, "none");
+  assert.deepEqual(report.reporting_summary, {
+    error_code_class_count: 0,
+    failure_group_count: 0,
+    top_regression_case_count: 0,
+    error_code_classes: [],
+    failure_groups: [],
+    top_regression_cases: [],
+  });
+
+  const degradedReporting = buildDiagnosticsReportingSummary({
+    controlSummary: {
+      status: "fail",
+      issues: [
+        {
+          code: "control_scenario_failed:active_executive_task_keeps_follow_up_ownership",
+          summary: "Control scenario failed: active executive task follow-up",
+          file: path.join(process.cwd(), "src/control-kernel.mjs"),
+        },
+      ],
+    },
+    routingSummary: {
+      status: "degrade",
+      issue_count: 1,
+      issues: [
+        {
+          code: "routing_compare_regression",
+          summary: "Routing compare shows an obvious regression.",
+          file: path.join(process.cwd(), ".tmp/routing-diagnostics-history/snapshots/routing-2.json"),
+        },
+      ],
+      latest_snapshot: {
+        snapshot_path: path.join(process.cwd(), ".tmp/routing-diagnostics-history/snapshots/routing-2.json"),
+      },
+      diagnostics_summary: {
+        top_miss_cases: [
+          {
+            id: "doc-023a",
+            category: "doc",
+            miss_dimensions: ["planner_action", "agent_or_tool"],
+            actual: {
+              planner_action: "ROUTING_NO_MATCH",
+              route_source: "planner_flow",
+            },
+          },
+          {
+            id: "doc-023b",
+            category: "doc",
+            miss_dimensions: ["lane"],
+            actual: {
+              planner_action: "ROUTING_NO_MATCH",
+              route_source: "lane_executor",
+            },
+          },
+        ],
+      },
+    },
+    writeSummary: {
+      status: "fail",
+      issues: [
+        {
+          code: "write_integration_missing:http_server_guarded_operations",
+          summary: "Write guard integration missing: guarded operations",
+          file: path.join(process.cwd(), "src/http-server.mjs"),
+        },
+      ],
+    },
+  });
+
+  assert.deepEqual(degradedReporting.top_regression_cases.map((item) => ({
+    rank: item.rank,
+    line: item.line,
+    case_id: item.case_id,
+    failure_group: item.failure_group,
+  })), [
+    {
+      rank: 1,
+      line: "control",
+      case_id: "control_scenario_failed:active_executive_task_keeps_follow_up_ownership",
+      failure_group: "control:deterministic_scenarios",
+    },
+    {
+      rank: 2,
+      line: "write",
+      case_id: "write_integration_missing:http_server_guarded_operations",
+      failure_group: "write:integration_surface",
+    },
+    {
+      rank: 3,
+      line: "routing",
+      case_id: "routing_compare_regression",
+      failure_group: "routing:compare_regression",
+    },
+    {
+      rank: 4,
+      line: "routing",
+      case_id: "doc-023a",
+      failure_group: "routing:top_miss_cases",
+    },
+    {
+      rank: 5,
+      line: "routing",
+      case_id: "doc-023b",
+      failure_group: "routing:top_miss_cases",
+    },
+  ]);
 });
 
 test("control diagnostics CLI renders compare-previous with directional markers", async () => {

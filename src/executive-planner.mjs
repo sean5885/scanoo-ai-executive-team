@@ -22,6 +22,7 @@ import {
   buildExplicitUserAuthHeaders,
   normalizeExplicitUserAuthContext,
 } from "./explicit-user-auth.mjs";
+import { getDocumentCreateGovernanceContract } from "./lark-write-guard.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import { callOpenClawTextGeneration } from "./openclaw-text-service.mjs";
 import { FALLBACK_DISABLED, INVALID_ACTION, ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
@@ -2430,6 +2431,7 @@ const plannerToolRegistry = new Map([
     action: "create_doc",
     method: "POST",
     pathname: "/agent/docs/create",
+    governance: getDocumentCreateGovernanceContract(),
   }],
   ["list_company_brain_docs", {
     action: "list_company_brain_docs",
@@ -2591,6 +2593,7 @@ export function listPlannerTools() {
     method: tool.method,
     pathname: tool.pathname || null,
     has_dynamic_pathname: typeof tool.pathnameBuilder === "function",
+    governance: tool.governance || null,
   }));
 }
 

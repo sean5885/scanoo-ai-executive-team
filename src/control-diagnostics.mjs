@@ -3,6 +3,11 @@ import path from "node:path";
 
 import { decideIntent } from "./control-kernel.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
+import {
+  FALLBACK_DISABLED,
+  INVALID_ACTION,
+  ROUTING_NO_MATCH,
+} from "./planner-error-codes.mjs";
 import { buildRoutingDiagnosticsSummary } from "./routing-eval-diagnostics.mjs";
 import {
   resolvePreviousRoutingDiagnosticsSnapshot,
@@ -16,6 +21,20 @@ const STATUS_ORDER = {
   degrade: 1,
   pass: 2,
 };
+const DIAGNOSTIC_LINE_PRIORITY = {
+  control: 0,
+  write: 1,
+  routing: 2,
+};
+const DIAGNOSTIC_SOURCE_PRIORITY = {
+  issue: 0,
+  routing_top_miss: 1,
+};
+const ROUTING_DIAGNOSTIC_ERROR_CODES = new Set([
+  ROUTING_NO_MATCH,
+  INVALID_ACTION,
+  FALLBACK_DISABLED,
+]);
 
 export const CONTROL_DIAGNOSTICS_COMPARE_FIELDS = [
   "overall_status",
@@ -150,6 +169,307 @@ function countMatches(text = "", pattern) {
 function extractOperationNames(text = "") {
   const matches = [...String(text || "").matchAll(/operation:\s*"([^"]+)"/g)];
   return [...new Set(matches.map((match) => cleanText(match[1])).filter(Boolean))].sort((left, right) => left.localeCompare(right));
+}
+
+function buildUniqueSorted(items = []) {
+  return [...new Set(items.map((item) => cleanText(item)).filter(Boolean))].sort((left, right) => left.localeCompare(right));
+}
+
+function normalizeDiagnosticsStatus(status = "") {
+  return cleanText(status) || "fail";
+}
+
+function normalizeErrorCodeClass({ line = "", source = "issue", code = "" } = {}) {
+  const normalizedLine = cleanText(line) || "diagnostics";
+  const normalizedCode = cleanText(code) || "diagnostic_issue";
+  const prefix = normalizedCode.split(":")[0] || normalizedCode;
+
+  if (source === "routing_top_miss") {
+    return `routing_top_miss:${normalizedCode}`;
+  }
+
+  return prefix.startsWith(`${normalizedLine}_`)
+    ? prefix
+    : `${normalizedLine}:${prefix}`;
+}
+
+function normalizeFailureGroup({ line = "", source = "issue", code = "" } = {}) {
+  const normalizedLine = cleanText(line) || "diagnostics";
+  const normalizedCode = cleanText(code) || "diagnostic_issue";
+  const prefix = normalizedCode.split(":")[0] || normalizedCode;
+
+  if (source === "routing_top_miss") {
+    return "routing:top_miss_cases";
+  }
+  if (prefix.endsWith("_scenario_failed")) {
+    return `${normalizedLine}:deterministic_scenarios`;
+  }
+  if (prefix.endsWith("_integration_missing")) {
+    return `${normalizedLine}:integration_surface`;
+  }
+  if (prefix === "routing_snapshot_missing") {
+    return "routing:snapshot_history";
+  }
+  if (prefix === "routing_accuracy_below_threshold") {
+    return "routing:accuracy_threshold";
+  }
+  if (prefix === "routing_compare_regression") {
+    return "routing:compare_regression";
+  }
+  if (prefix === "routing_doc_boundary_regression") {
+    return "routing:doc_boundary";
+  }
+  if (prefix === "routing_decision_requires_review") {
+    return "routing:decision_review";
+  }
+  return `${normalizedLine}:other`;
+}
+
+function extractRoutingMissErrorCode(miss = {}) {
+  const candidates = [
+    cleanText(miss?.actual?.planner_action),
+    cleanText(miss?.expected?.planner_action),
+    cleanText(miss?.actual?.agent_or_tool).replace(/^error:/, ""),
+    cleanText(miss?.expected?.agent_or_tool).replace(/^error:/, ""),
+  ].filter(Boolean);
+
+  return candidates.find((candidate) => ROUTING_DIAGNOSTIC_ERROR_CODES.has(candidate)) || null;
+}
+
+function buildRoutingMissSummary(miss = {}) {
+  const caseId = cleanText(miss?.id) || "routing-miss";
+  const category = cleanText(miss?.category) || "mixed";
+  const mismatch = Array.isArray(miss?.miss_dimensions) && miss.miss_dimensions.length > 0
+    ? miss.miss_dimensions.map((item) => cleanText(item)).filter(Boolean).join("+")
+    : "unknown";
+  const routeSource = cleanText(miss?.actual?.route_source) || "unknown";
+
+  return `${caseId} [${category}] ${mismatch} via ${routeSource}`;
+}
+
+function buildDiagnosticsIssueEntry({ line = "", status = "", issue = {} } = {}) {
+  const code = cleanText(issue?.code) || `${cleanText(line) || "diagnostics"}_issue`;
+  const normalizedLine = cleanText(line) || "diagnostics";
+  return {
+    line: normalizedLine,
+    status: normalizeDiagnosticsStatus(status),
+    source: "issue",
+    case_id: code,
+    code,
+    summary: cleanText(issue?.summary) || code,
+    file: cleanText(issue?.file) || null,
+    error_code_class: normalizeErrorCodeClass({
+      line: normalizedLine,
+      source: "issue",
+      code,
+    }),
+    failure_group: normalizeFailureGroup({
+      line: normalizedLine,
+      source: "issue",
+      code,
+    }),
+  };
+}
+
+function buildRoutingTopMissEntry({ miss = {}, status = "", file = null } = {}) {
+  const errorCode = extractRoutingMissErrorCode(miss) || "unknown";
+  return {
+    line: "routing",
+    status: normalizeDiagnosticsStatus(status || "degrade"),
+    source: "routing_top_miss",
+    case_id: cleanText(miss?.id) || "routing-miss",
+    code: cleanText(errorCode) || "unknown",
+    summary: buildRoutingMissSummary(miss),
+    file: cleanText(file) || null,
+    error_code_class: normalizeErrorCodeClass({
+      line: "routing",
+      source: "routing_top_miss",
+      code: errorCode,
+    }),
+    failure_group: normalizeFailureGroup({
+      line: "routing",
+      source: "routing_top_miss",
+      code: errorCode,
+    }),
+  };
+}
+
+function buildDiagnosticsEntries({
+  controlSummary = {},
+  routingSummary = {},
+  writeSummary = {},
+} = {}) {
+  const entries = [];
+
+  for (const issue of Array.isArray(controlSummary?.issues) ? controlSummary.issues : []) {
+    entries.push(buildDiagnosticsIssueEntry({
+      line: "control",
+      status: controlSummary?.status,
+      issue,
+    }));
+  }
+
+  for (const issue of Array.isArray(writeSummary?.issues) ? writeSummary.issues : []) {
+    entries.push(buildDiagnosticsIssueEntry({
+      line: "write",
+      status: writeSummary?.status,
+      issue,
+    }));
+  }
+
+  for (const issue of Array.isArray(routingSummary?.issues) ? routingSummary.issues : []) {
+    entries.push(buildDiagnosticsIssueEntry({
+      line: "routing",
+      status: routingSummary?.status,
+      issue,
+    }));
+  }
+
+  const topMissCases = Array.isArray(routingSummary?.diagnostics_summary?.top_miss_cases)
+    ? routingSummary.diagnostics_summary.top_miss_cases.slice(0, 3)
+    : [];
+  const shouldIncludeRoutingMisses = cleanText(routingSummary?.status) !== "pass"
+    || Number(routingSummary?.issue_count || 0) > 0;
+
+  if (shouldIncludeRoutingMisses) {
+    for (const miss of topMissCases) {
+      entries.push(buildRoutingTopMissEntry({
+        miss,
+        status: routingSummary?.status,
+        file: routingSummary?.latest_snapshot?.snapshot_path,
+      }));
+    }
+  }
+
+  return entries;
+}
+
+function buildErrorCodeClasses(entries = []) {
+  const groups = new Map();
+
+  for (const entry of entries) {
+    const key = cleanText(entry?.error_code_class);
+    if (!key) {
+      continue;
+    }
+    const existing = groups.get(key) || {
+      class_key: key,
+      line: cleanText(entry?.line) || "diagnostics",
+      status: normalizeDiagnosticsStatus(entry?.status),
+      count: 0,
+      source_types: [],
+      sample_codes: [],
+    };
+    existing.count += 1;
+    existing.status = normalizeDiagnosticsStatus(existing.status);
+    existing.source_types = buildUniqueSorted([...existing.source_types, entry?.source]);
+    existing.sample_codes = buildUniqueSorted([...existing.sample_codes, entry?.code]).slice(0, 3);
+    groups.set(key, existing);
+  }
+
+  return [...groups.values()].sort((left, right) => (
+    (DIAGNOSTIC_LINE_PRIORITY[left.line] ?? Number.MAX_SAFE_INTEGER)
+    - (DIAGNOSTIC_LINE_PRIORITY[right.line] ?? Number.MAX_SAFE_INTEGER)
+    || (STATUS_ORDER[left.status] ?? Number.MAX_SAFE_INTEGER)
+      - (STATUS_ORDER[right.status] ?? Number.MAX_SAFE_INTEGER)
+    || Number(right.count || 0) - Number(left.count || 0)
+    || left.class_key.localeCompare(right.class_key)
+  ));
+}
+
+function buildFailureGroups(entries = []) {
+  const groups = new Map();
+
+  for (const entry of entries) {
+    const key = cleanText(entry?.failure_group);
+    if (!key) {
+      continue;
+    }
+    const existing = groups.get(key) || {
+      group_key: key,
+      line: cleanText(entry?.line) || "diagnostics",
+      status: normalizeDiagnosticsStatus(entry?.status),
+      count: 0,
+      error_code_classes: [],
+      sample_cases: [],
+      files: [],
+    };
+    existing.count += 1;
+    existing.status = normalizeDiagnosticsStatus(existing.status);
+    existing.error_code_classes = buildUniqueSorted([
+      ...existing.error_code_classes,
+      entry?.error_code_class,
+    ]).slice(0, 5);
+    existing.sample_cases = buildUniqueSorted([
+      ...existing.sample_cases,
+      entry?.case_id,
+    ]).slice(0, 3);
+    existing.files = buildUniqueSorted([
+      ...existing.files,
+      entry?.file,
+    ]).slice(0, 3);
+    groups.set(key, existing);
+  }
+
+  return [...groups.values()].sort((left, right) => (
+    (DIAGNOSTIC_LINE_PRIORITY[left.line] ?? Number.MAX_SAFE_INTEGER)
+    - (DIAGNOSTIC_LINE_PRIORITY[right.line] ?? Number.MAX_SAFE_INTEGER)
+    || (STATUS_ORDER[left.status] ?? Number.MAX_SAFE_INTEGER)
+      - (STATUS_ORDER[right.status] ?? Number.MAX_SAFE_INTEGER)
+    || Number(right.count || 0) - Number(left.count || 0)
+    || left.group_key.localeCompare(right.group_key)
+  ));
+}
+
+function buildTopRegressionCases(entries = []) {
+  return [...entries]
+    .sort((left, right) => (
+      (DIAGNOSTIC_LINE_PRIORITY[left.line] ?? Number.MAX_SAFE_INTEGER)
+      - (DIAGNOSTIC_LINE_PRIORITY[right.line] ?? Number.MAX_SAFE_INTEGER)
+      || (DIAGNOSTIC_SOURCE_PRIORITY[left.source] ?? Number.MAX_SAFE_INTEGER)
+        - (DIAGNOSTIC_SOURCE_PRIORITY[right.source] ?? Number.MAX_SAFE_INTEGER)
+      || (STATUS_ORDER[left.status] ?? Number.MAX_SAFE_INTEGER)
+        - (STATUS_ORDER[right.status] ?? Number.MAX_SAFE_INTEGER)
+      || left.case_id.localeCompare(right.case_id)
+      || left.summary.localeCompare(right.summary)
+    ))
+    .slice(0, 5)
+    .map((entry, index) => ({
+      rank: index + 1,
+      line: entry.line,
+      status: entry.status,
+      source: entry.source,
+      case_id: entry.case_id,
+      code: entry.code,
+      summary: entry.summary,
+      file: entry.file,
+      error_code_class: entry.error_code_class,
+      failure_group: entry.failure_group,
+    }));
+}
+
+export function buildDiagnosticsReportingSummary({
+  controlSummary = {},
+  routingSummary = {},
+  writeSummary = {},
+} = {}) {
+  const entries = buildDiagnosticsEntries({
+    controlSummary,
+    routingSummary,
+    writeSummary,
+  });
+  const errorCodeClasses = buildErrorCodeClasses(entries);
+  const failureGroups = buildFailureGroups(entries);
+  const topRegressionCases = buildTopRegressionCases(entries);
+
+  return {
+    error_code_class_count: errorCodeClasses.length,
+    failure_group_count: failureGroups.length,
+    top_regression_case_count: topRegressionCases.length,
+    error_code_classes: errorCodeClasses,
+    failure_groups: failureGroups,
+    top_regression_cases: topRegressionCases,
+  };
 }
 
 function withEnv(values = {}, callback) {
@@ -979,6 +1299,11 @@ export async function runControlDiagnostics({ routingArchiveDir } = {}) {
     routingSummary,
     writeSummary,
   });
+  const reportingSummary = buildDiagnosticsReportingSummary({
+    controlSummary,
+    routingSummary,
+    writeSummary,
+  });
 
   return {
     ok: diagnosticsSummary.overall_status === "pass",
@@ -986,6 +1311,7 @@ export async function runControlDiagnostics({ routingArchiveDir } = {}) {
     control_summary: controlSummary,
     routing_summary: routingSummary,
     write_summary: writeSummary,
+    reporting_summary: reportingSummary,
     decision: buildDecision({
       controlSummary,
       routingSummary,

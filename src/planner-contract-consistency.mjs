@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { cleanText } from "./message-intent-utils.mjs";
+import { getRouteContract } from "./http-route-contracts.mjs";
 import {
   listPlannerPresets,
   listPlannerTools,
@@ -26,6 +27,7 @@ import { route as routeDocQuery } from "./router.js";
 
 const CONTRACT_FILE = fileURLToPath(new URL("../docs/system/planner_contract.json", import.meta.url));
 const EXECUTIVE_PLANNER_FILE = fileURLToPath(new URL("./executive-planner.mjs", import.meta.url));
+const HTTP_ROUTE_CONTRACTS_FILE = fileURLToPath(new URL("./http-route-contracts.mjs", import.meta.url));
 const ROUTER_FILE = fileURLToPath(new URL("./router.js", import.meta.url));
 const DOC_QUERY_FLOW_FILE = fileURLToPath(new URL("./planner-doc-query-flow.mjs", import.meta.url));
 const RUNTIME_INFO_FLOW_FILE = fileURLToPath(new URL("./planner-runtime-info-flow.mjs", import.meta.url));
@@ -36,11 +38,13 @@ const GATE_FAILURE_CATEGORIES = [
   "undefined_actions",
   "undefined_presets",
   "selector_contract_mismatches",
+  "action_governance_mismatches",
 ];
 const FINDING_CATEGORY_ORDER = [
   "undefined_actions",
   "undefined_presets",
   "selector_contract_mismatches",
+  "action_governance_mismatches",
   "deprecated_reachable_targets",
 ];
 export const PLANNER_DIAGNOSTICS_COMPARE_FIELDS = [
@@ -48,10 +52,19 @@ export const PLANNER_DIAGNOSTICS_COMPARE_FIELDS = [
   "undefined_actions",
   "undefined_presets",
   "selector_contract_mismatches",
+  "action_governance_mismatches",
   "deprecated_reachable_targets",
 ];
+const GOVERNANCE_FIELDS = [
+  "external_write",
+  "confirm_required",
+  "review_required",
+];
 
-function loadPlannerContract() {
+function loadPlannerContract({ contractOverride } = {}) {
+  if (contractOverride && typeof contractOverride === "object") {
+    return contractOverride;
+  }
   return JSON.parse(readFileSync(CONTRACT_FILE, "utf8"));
 }
 
@@ -100,6 +113,156 @@ function uniqTargets(values = []) {
       .map((value) => cleanText(value))
       .filter(Boolean),
   ));
+}
+
+function normalizeGovernanceField(field = "", value) {
+  const normalizedField = cleanText(field);
+  if (normalizedField === "external_write" || normalizedField === "confirm_required") {
+    if (value === true) {
+      return true;
+    }
+    if (value === false) {
+      return false;
+    }
+    return null;
+  }
+
+  if (normalizedField === "review_required") {
+    if (value === true) {
+      return "always";
+    }
+    if (value === false) {
+      return "never";
+    }
+    const normalizedValue = cleanText(value).toLowerCase();
+    if (normalizedValue === "always" || normalizedValue === "never" || normalizedValue === "conditional") {
+      return normalizedValue;
+    }
+    return null;
+  }
+
+  return null;
+}
+
+function normalizeGovernanceContract(governance = null) {
+  if (!governance || typeof governance !== "object" || Array.isArray(governance)) {
+    return null;
+  }
+
+  const normalized = Object.fromEntries(
+    GOVERNANCE_FIELDS.map((field) => [
+      field,
+      normalizeGovernanceField(field, governance[field]),
+    ]),
+  );
+
+  return GOVERNANCE_FIELDS.some((field) => normalized[field] !== null)
+    ? normalized
+    : null;
+}
+
+function formatGovernanceValue(value) {
+  if (value === null || value === undefined) {
+    return "missing";
+  }
+  if (value === true) {
+    return "true";
+  }
+  if (value === false) {
+    return "false";
+  }
+  return cleanText(value) || "missing";
+}
+
+function buildGovernanceFinding({
+  action = "",
+  comparison = "",
+  field = "",
+  expected = null,
+  actual = null,
+  sourceFile = "",
+  counterpartFile = "",
+  reason = "",
+} = {}) {
+  return {
+    category: "action_governance_mismatches",
+    source_id: `action_governance:${cleanText(action)}:${cleanText(comparison)}`,
+    file: cleanText(sourceFile) || null,
+    target: cleanText(action) || null,
+    reason: cleanText(reason) || "governance_mismatch",
+    field: cleanText(field) || null,
+    expected,
+    actual,
+    counterpart_file: cleanText(counterpartFile) || null,
+  };
+}
+
+function collectActionGovernanceFindings(contract = {}) {
+  const findings = [];
+  for (const tool of listPlannerTools()) {
+    const action = cleanText(tool?.action);
+    if (!action) {
+      continue;
+    }
+
+    const contractEntry = getContractTargetEntry(contract, action);
+    const contractGovernance = normalizeGovernanceContract(contractEntry?.governance);
+    const toolGovernance = normalizeGovernanceContract(tool?.governance);
+    const routeContract = getRouteContract(tool?.pathname || "");
+    const routeGovernance = normalizeGovernanceContract(routeContract?.governance);
+    const hasGovernance = Boolean(contractGovernance || toolGovernance || routeGovernance);
+
+    if (!hasGovernance) {
+      continue;
+    }
+
+    for (const field of GOVERNANCE_FIELDS) {
+      const contractValue = contractGovernance?.[field] ?? null;
+      const toolValue = toolGovernance?.[field] ?? null;
+      const routeValue = routeGovernance?.[field] ?? null;
+
+      if (contractValue !== toolValue) {
+        findings.push(buildGovernanceFinding({
+          action,
+          comparison: "contract_vs_tool_registry",
+          field,
+          expected: contractValue,
+          actual: toolValue,
+          sourceFile: CONTRACT_FILE,
+          counterpartFile: EXECUTIVE_PLANNER_FILE,
+          reason: `${field}_mismatch`,
+        }));
+      }
+
+      if (contractValue !== routeValue) {
+        findings.push(buildGovernanceFinding({
+          action,
+          comparison: "contract_vs_route_contract",
+          field,
+          expected: contractValue,
+          actual: routeValue,
+          sourceFile: CONTRACT_FILE,
+          counterpartFile: HTTP_ROUTE_CONTRACTS_FILE,
+          reason: `${field}_mismatch`,
+        }));
+      }
+
+      if (toolValue !== routeValue) {
+        findings.push(buildGovernanceFinding({
+          action,
+          comparison: "tool_registry_vs_route_contract",
+          field,
+          expected: toolValue,
+          actual: routeValue,
+          sourceFile: EXECUTIVE_PLANNER_FILE,
+          counterpartFile: HTTP_ROUTE_CONTRACTS_FILE,
+          reason: `${field}_mismatch`,
+        }));
+      }
+    }
+  }
+
+  return findings;
 }
 
 function buildObservedSource({
@@ -513,6 +676,9 @@ export function buildPlannerDiagnosticsSummary(report = {}) {
     selector_contract_mismatches: Number.isFinite(report?.summary?.selector_contract_mismatches)
       ? report.summary.selector_contract_mismatches
       : 0,
+    action_governance_mismatches: Number.isFinite(report?.summary?.action_governance_mismatches)
+      ? report.summary.action_governance_mismatches
+      : 0,
     deprecated_reachable_targets: Number.isFinite(report?.summary?.deprecated_reachable_targets)
       ? report.summary.deprecated_reachable_targets
       : 0,
@@ -560,6 +726,7 @@ function normalizePlannerDiagnosticsSummary(summary = {}) {
     undefined_actions: Number(summary?.undefined_actions || 0),
     undefined_presets: Number(summary?.undefined_presets || 0),
     selector_contract_mismatches: Number(summary?.selector_contract_mismatches || 0),
+    action_governance_mismatches: Number(summary?.action_governance_mismatches || 0),
     deprecated_reachable_targets: Number(summary?.deprecated_reachable_targets || 0),
   };
 }
@@ -597,12 +764,15 @@ export function buildPlannerDiagnosticsCompareSummary({
   return compareSummary;
 }
 
-export function runPlannerContractConsistencyCheck() {
-  const contract = loadPlannerContract();
+export function runPlannerContractConsistencyCheck({ contractOverride } = {}) {
+  const contract = loadPlannerContract({ contractOverride });
   const contractCatalog = buildContractCatalog(contract);
   const observedSources = collectObservedSources();
   const findings = dedupeFindings(
-    observedSources.flatMap((source) => classifyObservedSource(contract, source)),
+    [
+      ...observedSources.flatMap((source) => classifyObservedSource(contract, source)),
+      ...collectActionGovernanceFindings(contract),
+    ],
   );
 
   const groupedFindings = {
@@ -610,6 +780,7 @@ export function runPlannerContractConsistencyCheck() {
     undefined_presets: findings.filter((finding) => finding.category === "undefined_presets"),
     deprecated_reachable_targets: findings.filter((finding) => finding.category === "deprecated_reachable_targets"),
     selector_contract_mismatches: findings.filter((finding) => finding.category === "selector_contract_mismatches"),
+    action_governance_mismatches: findings.filter((finding) => finding.category === "action_governance_mismatches"),
   };
   const gate = buildPlannerContractGate(groupedFindings);
 
@@ -621,6 +792,7 @@ export function runPlannerContractConsistencyCheck() {
       undefined_presets: groupedFindings.undefined_presets.length,
       deprecated_reachable_targets: groupedFindings.deprecated_reachable_targets.length,
       selector_contract_mismatches: groupedFindings.selector_contract_mismatches.length,
+      action_governance_mismatches: groupedFindings.action_governance_mismatches.length,
     },
   });
   const decision = buildPlannerDiagnosticsDecision(diagnosticsSummary);
@@ -641,6 +813,7 @@ export function runPlannerContractConsistencyCheck() {
       undefined_presets: groupedFindings.undefined_presets.length,
       deprecated_reachable_targets: groupedFindings.deprecated_reachable_targets.length,
       selector_contract_mismatches: groupedFindings.selector_contract_mismatches.length,
+      action_governance_mismatches: groupedFindings.action_governance_mismatches.length,
     },
     observed_sources: observedSources,
     findings: groupedFindings,
@@ -655,7 +828,7 @@ export function renderPlannerContractConsistencyReport(report = {}) {
     `planner contract gate: ${report?.gate?.ok ? "pass" : "fail"}`,
     `planner contract consistency: ${report?.ok ? "ok" : "drift_detected"}`,
     `contract version: ${cleanText(report?.contract?.version) || "unknown"}`,
-    `summary: gate=${diagnosticsSummary.gate} | undefined_actions=${diagnosticsSummary.undefined_actions} | undefined_presets=${diagnosticsSummary.undefined_presets} | selector_contract_mismatches=${diagnosticsSummary.selector_contract_mismatches} | deprecated_reachable_targets=${diagnosticsSummary.deprecated_reachable_targets}`,
+    `summary: gate=${diagnosticsSummary.gate} | undefined_actions=${diagnosticsSummary.undefined_actions} | undefined_presets=${diagnosticsSummary.undefined_presets} | selector_contract_mismatches=${diagnosticsSummary.selector_contract_mismatches} | action_governance_mismatches=${diagnosticsSummary.action_governance_mismatches} | deprecated_reachable_targets=${diagnosticsSummary.deprecated_reachable_targets}`,
     `decision: ${decision.summary}`,
   ];
 
@@ -671,6 +844,13 @@ export function renderPlannerContractConsistencyReport(report = {}) {
   if (orderedFindings.length > 0) {
     lines.push("findings:");
     for (const finding of orderedFindings) {
+      if (finding.category === "action_governance_mismatches") {
+        lines.push(
+          `- ${finding.category}: ${finding.target} via ${finding.source_id} (${finding.reason}; field=${finding.field || "unknown"}; expected=${formatGovernanceValue(finding.expected)}; actual=${formatGovernanceValue(finding.actual)})`,
+        );
+        continue;
+      }
+
       lines.push(
         `- ${finding.category}: ${finding.target} via ${finding.source_id} (${finding.reason}; contract_kind=${finding.contract_kind || "missing"})`,
       );

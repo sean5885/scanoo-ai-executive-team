@@ -25,6 +25,7 @@ const PLANNER_FINDING_ORDER = [
   "undefined_actions",
   "undefined_presets",
   "selector_contract_mismatches",
+  "action_governance_mismatches",
   "deprecated_reachable_targets",
 ];
 const RELEASE_STATUS_ORDER = {
@@ -121,13 +122,22 @@ function buildPlannerContractFailureNextStep(selfCheckResult = {}) {
     : [];
   const hasRegistryDrift = failingCategories.includes("undefined_actions") || failingCategories.includes("undefined_presets");
   const hasSelectorMismatch = failingCategories.includes("selector_contract_mismatches");
+  const hasGovernanceMismatch = failingCategories.includes("action_governance_mismatches");
 
-  if (hasRegistryDrift && !hasSelectorMismatch) {
+  if (hasGovernanceMismatch && !hasRegistryDrift && !hasSelectorMismatch) {
+    return "先看 planner contract failure 的 create_doc gate 模組：src/executive-planner.mjs、src/http-route-contracts.mjs、src/lark-write-guard.mjs；只有 intentional stable target 才改 docs/system/planner_contract.json。";
+  }
+
+  if (hasRegistryDrift && !hasSelectorMismatch && !hasGovernanceMismatch) {
     return "先看 planner contract failure 的 registry 模組：src/executive-planner.mjs；只有 intentional stable target 才改 docs/system/planner_contract.json。";
   }
 
-  if (hasSelectorMismatch && !hasRegistryDrift) {
+  if (hasSelectorMismatch && !hasRegistryDrift && !hasGovernanceMismatch) {
     return "先看 planner contract failure 的 route 模組：src/router.js 與 src/planner-*-flow.mjs；只有 intentional stable target 才改 docs/system/planner_contract.json。";
+  }
+
+  if (hasGovernanceMismatch) {
+    return "先看 planner contract failure：src/executive-planner.mjs、src/http-route-contracts.mjs、src/lark-write-guard.mjs，必要時再對齊 docs/system/planner_contract.json。";
   }
 
   return "先看 planner contract failure：src/executive-planner.mjs 與 src/planner-*-flow.mjs；只有 intentional stable target 才改 docs/system/planner_contract.json。";
@@ -153,6 +163,15 @@ function inferPlannerActionHintType({ suggestedNextStep = "", drilldown = {} } =
     || normalizedNextStep.includes("src/planner-*-flow.mjs")
   ) {
     return "selector";
+  }
+
+  if (
+    representativeCases.some((item) => item.startsWith("action_governance_mismatches:"))
+    || normalizedNextStep.includes("create_doc gate 模組")
+    || normalizedNextStep.includes("src/http-route-contracts.mjs")
+    || normalizedNextStep.includes("src/lark-write-guard.mjs")
+  ) {
+    return "governance";
   }
 
   return "contract";

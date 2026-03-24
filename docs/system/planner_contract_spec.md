@@ -7,6 +7,7 @@
 - `actions`
   - stable tool targets callable by planner runtime
   - each action defines `input_schema`, `output_schema`, and bridge/tool-side `error_codes`
+  - controlled write actions may also define checked-in `governance` metadata such as `external_write`, `confirm_required`, and conditional `review_required`
 - `presets`
   - stable multi-step planner targets
   - each preset defines `input_schema`, `output_schema`, and `step_actions`
@@ -39,6 +40,7 @@
 - public `error` / `fallback_reason` values must resolve to `errors`
 - public `routing_reason` values must resolve to `routing_reason`
 - public `selected_target` must resolve to `actions` or `presets` according to `target_kind`
+- planner action governance for controlled writes must stay aligned across `planner_contract.json`, planner tool registry, and checked-in route contracts
 - if runtime behavior changes intentionally, update code and this contract in the same change
 - if docs disagree with code, code is the current fact and the conflict must be tracked in `open_questions.md`
 

@@ -139,6 +139,11 @@
   },
   "actions": {
     "create_doc": {
+      "governance": {
+        "confirm_required": true,
+        "review_required": "conditional",
+        "external_write": true
+      },
       "input_schema": {
         "type": "object",
         "required": ["title"],
