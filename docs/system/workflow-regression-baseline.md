@@ -97,6 +97,20 @@ node --test \
   tests/lane-executor.test.mjs
 ```
 
+#### Document Review / Triage
+
+```bash
+node --test \
+  tests/document-review-triage-workflow.test.mjs
+```
+
+覆蓋：
+
+- reusable internal document review / triage workflow execution
+- structured result contract：`conclusion` / `referenced_documents` / `reasons` / `next_actions`
+- evidence-first reply rendering：`結論 / 標記文件 / 下一步`
+- verifier-gated completion for the read-only workflow path
+
 ### 4. Monitoring Learning Baseline
 
 用途：

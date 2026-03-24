@@ -180,7 +180,7 @@ This request-flow mirror now reflects the current fail-closed routing baseline.
    - later plain-text messages in the same chat are appended silently into a local capture buffer
    - explicit status-check questions such as `請問在持續記錄中嗎` return a short status reply instead of being appended to the transcript
    - microphone process metadata is persisted with the meeting session so status/stop can recover after a service restart
-   - if an existing meeting document is reused, the same `full_access` grant is repaired on reuse
+   - if an existing meeting document is reused and the initiating user's `open_id` is available, the same `full_access` grant is repaired on reuse
 3. user ends capture by saying `會議結束了` or `/meeting stop`
 4. on stop, the host recording is stopped and transcribed through local `faster-whisper` by default, or a configured OpenAI-compatible endpoint when explicitly selected
 5. captured audio transcript text plus chat-captured text, or the original `/meeting ...` content, is passed into `meeting-agent.mjs`
@@ -575,6 +575,12 @@ Actual AI-like execution paths:
   - knowledge-assistant chat lane -> `lane-executor.mjs` -> `executive-planner.mjs` -> shared `normalizeUserResponse()` boundary -> evidence-first chat reply text (`結論 / 重點 / 下一步`)
     - that boundary now deduplicates repeated evidence rows, can merge near-duplicate retrieval reasons into one bounded `重點`, and prefers query-aware `下一步` guidance for lookup / debug / decision style queries without changing the outward JSON shape or adding unsupported facts
   - direct user-input answer fallback is disabled; `answer-service.mjs` is no longer the first responder for `/answer` or the knowledge-assistant lane
+
+- internal document review / triage workflow
+  - reusable internal call -> `document-review-triage-workflow.mjs` -> `executive-orchestrator.mjs` verifier gate
+  - input is bounded to `user request + document set`
+  - output stays aligned with the shared evidence-first reply family (`結論 / 標記文件 / 下一步`) while preserving workflow-local structured fields (`conclusion`, `referenced_documents`, `reasons`, `next_actions`)
+  - this path is read-only and currently not wired into planner, lane routing, or HTTP route surfaces
 
 - comment-driven rewrite
   - rewrite route -> `doc-comment-rewrite.mjs` -> external checkpoint + governed XML prompt -> optional LLM

@@ -19,6 +19,7 @@ export const VERIFICATION_CHECKLISTS = Object.freeze({
   meeting_processing: ["has_structured_output", "has_decisions", "has_action_items", "has_owner_coverage", "has_deadline_coverage_or_open_questions", "has_knowledge_writeback"],
   doc_rewrite: ["has_rewrite_diff", "has_apply_evidence", "preserves_structure"],
   cloud_doc: ["has_scope", "has_preview_or_apply_result", "has_apply_evidence"],
+  document_review: ["has_conclusion", "has_referenced_documents", "has_reasons", "has_next_actions", "has_source_evidence"],
   proposal_creation: ["has_proposal_body", "has_scope", "has_rationale"],
   prd_generation: ["has_background", "has_goal", "has_scope", "has_acceptance", "has_risk"],
   task_assignment: ["has_action_items", "has_owner_coverage"],
@@ -257,6 +258,40 @@ export function verifyTaskCompletion({
     if (!hasApplyEvidence) {
       issues.push("insufficient_evidence");
       result.required_evidence_present = false;
+    }
+  }
+
+  if (taskType === "document_review") {
+    const referencedDocuments = Array.isArray(structuredResult?.referenced_documents)
+      ? structuredResult.referenced_documents
+      : [];
+    const reasons = Array.isArray(structuredResult?.reasons) ? structuredResult.reasons : [];
+    const nextActions = Array.isArray(structuredResult?.next_actions) ? structuredResult.next_actions : [];
+    const documentCount = Number(structuredResult?.document_count || 0);
+
+    if (!cleanText(structuredResult?.conclusion)) {
+      issues.push("missing_conclusion");
+    }
+    if (!Array.isArray(structuredResult?.referenced_documents)) {
+      issues.push("missing_referenced_documents");
+    }
+    if (!Array.isArray(structuredResult?.reasons) || !reasons.length) {
+      issues.push("missing_reasons");
+    }
+    if (!Array.isArray(structuredResult?.next_actions) || !nextActions.length) {
+      issues.push("missing_next_actions");
+    }
+    if (!Number.isFinite(documentCount) || documentCount <= 0) {
+      issues.push("missing_document_set");
+      result.partial_completion = true;
+    }
+    if (!evidenceSet.has(EVIDENCE_TYPES.tool_output)) {
+      issues.push("insufficient_evidence");
+      result.required_evidence_present = false;
+    }
+    if (Array.isArray(structuredResult?.referenced_documents) && referencedDocuments.length > documentCount) {
+      issues.push("referenced_documents_exceed_input");
+      result.partial_completion = true;
     }
   }
 

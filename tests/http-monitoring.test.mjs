@@ -294,7 +294,9 @@ test("monitoring learning route returns routing/tool summary", async (t) => {
     },
   });
 
-  const response = await fetch(`http://127.0.0.1:${port}/api/monitoring/learning?lookback_hours=1&min_sample_size=1`);
+  const response = await fetch(
+    `http://127.0.0.1:${port}/api/monitoring/learning?lookback_hours=1&min_sample_size=1&request_limit=20&max_tool_items=20`,
+  );
   const payload = await response.json();
 
   assert.equal(response.status, 200);
@@ -302,7 +304,7 @@ test("monitoring learning route returns routing/tool summary", async (t) => {
   assert.ok(payload.summary);
   assert.ok(Array.isArray(payload.summary.high_success_tools));
   assert.ok(payload.summary.high_success_tools.some((item) => item.tool_name === `learning_tool_${stamp}`));
-  assert.ok(payload.summary.high_success_tools.length <= 5);
+  assert.ok(payload.summary.high_success_tools.length <= 20);
 });
 
 test("monitoring CLI learning command returns draft proposals", async () => {

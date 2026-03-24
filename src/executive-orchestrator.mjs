@@ -1,5 +1,6 @@
 import { executeRegisteredAgent } from "./agent-dispatcher.mjs";
 import { getRegisteredAgent, parseRegisteredAgentCommand } from "./agent-registry.mjs";
+import { runDocumentReviewTriageWorkflow } from "./document-review-triage-workflow.mjs";
 import {
   buildTaskInitialization,
   finalizeExecutiveTaskTurn,
@@ -993,6 +994,188 @@ export async function finalizeDocRewriteWorkflowTask({
   return {
     ...finalized,
     task: current,
+  };
+}
+
+export async function ensureDocumentReviewWorkflowTask({
+  accountId = "",
+  requestText = "",
+  event = {},
+  scope = {},
+  workflowState = "triaging",
+  routingHint = "document_review_triaging",
+  meta = {},
+} = {}) {
+  const sessionKey = sessionKeyFromScope(scope, accountId);
+  if (!accountId || !sessionKey) {
+    return null;
+  }
+
+  const traceId = cleanText(scope?.trace_id || event?.trace_id || "");
+  const objective = cleanText(requestText || "document_review");
+  const existing = await getActiveExecutiveTask(accountId, sessionKey);
+  let task = existing?.workflow === "document_review" ? existing : null;
+
+  if (!task) {
+    const initialization = buildTaskInitialization({
+      objective,
+      agentId: "document_review",
+      requestText: objective,
+      workflow: "document_review",
+    });
+    task = await startExecutiveTask({
+      accountId,
+      sessionKey,
+      chatId: cleanText(event?.message?.chat_id),
+      workflow: "document_review",
+      workflowState,
+      routingHint,
+      traceId,
+      objective,
+      primaryAgentId: "document_review",
+      currentAgentId: "document_review",
+      constraints: ["document review workflow must keep conclusion, referenced documents, reasons, and next actions aligned with evidence"],
+      taskType: initialization.task_type,
+      lifecycleState: initialization.lifecycle_state,
+      goal: initialization.goal,
+      successCriteria: initialization.success_criteria,
+      failureCriteria: initialization.failure_criteria,
+      evidenceRequirements: initialization.evidence_requirements,
+      validationMethod: initialization.validation_method,
+      retryPolicy: initialization.retry_policy,
+      escalationPolicy: initialization.escalation_policy,
+      riskLevel: initialization.risk_level,
+      meta: {
+        source: "document_review_workflow",
+        request_text: objective,
+        ...meta,
+      },
+    });
+    task = await advanceTaskLifecycle(task, ["clarified", "planned"], "document_review_initialized");
+  }
+
+  task = await updateExecutiveTask(task.id, {
+    workflow: "document_review",
+    workflow_state: workflowState,
+    routing_hint: routingHint,
+    trace_id: traceId || task.trace_id,
+    status: "active",
+    meta: {
+      request_text: objective || cleanText(task.meta?.request_text || ""),
+      ...meta,
+    },
+  });
+
+  if (workflowState === "triaging") {
+    task = await advanceTaskLifecycle(task, ["executing"], "document_review_triaging");
+  }
+
+  return task;
+}
+
+export async function finalizeDocumentReviewWorkflowTask({
+  accountId = "",
+  scope = {},
+  taskId = "",
+  replyText = "",
+  structuredResult = null,
+  extraEvidence = [],
+} = {}) {
+  const sessionKey = sessionKeyFromScope(scope, accountId);
+  const task = taskId
+    ? await getExecutiveTask(taskId)
+    : await getActiveExecutiveTask(accountId, sessionKey);
+  if (!task?.id || task.workflow !== "document_review") {
+    return null;
+  }
+
+  let reviewTask = task;
+  if (reviewTask.lifecycle_state === "executing") {
+    reviewTask = await transitionTaskLifecycle(reviewTask, "awaiting_result", "document_review_result_ready");
+  }
+
+  const finalized = await finalizeWorkflowVerificationGate({
+    task: reviewTask,
+    taskType: "document_review",
+    replyText,
+    structuredResult,
+    extraEvidence,
+    expectedOutputSchema: {
+      conclusion: "string",
+      referenced_documents: "array",
+      reasons: "array",
+      next_actions: "array",
+      document_count: "number",
+    },
+  });
+  if (!finalized?.task) {
+    return finalized;
+  }
+
+  let current = finalized.task;
+  if (finalized.verification?.pass) {
+    current = await updateExecutiveTask(current.id, {
+      workflow_state: "completed",
+      routing_hint: "",
+      status: "completed",
+    });
+    if (accountId && sessionKey) {
+      await clearActiveExecutiveTask(accountId, sessionKey);
+    }
+  } else {
+    if (current.lifecycle_state !== "blocked") {
+      current = await transitionTaskLifecycle(current, "blocked", "document_review_verification_failed");
+    }
+    current = await updateExecutiveTask(current.id, {
+      workflow_state: "blocked",
+      routing_hint: "document_review_retry_required",
+      status: "blocked",
+    });
+  }
+
+  return {
+    ...finalized,
+    task: current,
+  };
+}
+
+export async function executeDocumentReviewWorkflow({
+  accountId = "",
+  requestText = "",
+  documents = [],
+  event = {},
+  scope = {},
+  meta = {},
+} = {}) {
+  const task = await ensureDocumentReviewWorkflowTask({
+    accountId,
+    requestText,
+    event,
+    scope,
+    workflowState: "triaging",
+    routingHint: "document_review_triaging",
+    meta,
+  });
+  if (!task?.id) {
+    return null;
+  }
+
+  const execution = runDocumentReviewTriageWorkflow({
+    requestText,
+    documents,
+  });
+  const finalized = await finalizeDocumentReviewWorkflowTask({
+    accountId,
+    scope,
+    taskId: task.id,
+    replyText: execution.reply_text,
+    structuredResult: execution.structured_result,
+    extraEvidence: execution.extra_evidence,
+  });
+
+  return {
+    ...execution,
+    ...finalized,
   };
 }
 

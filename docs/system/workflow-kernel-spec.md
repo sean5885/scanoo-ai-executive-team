@@ -301,6 +301,15 @@ follow-up 吸附優先順序應固定如下：
 - `scope_key`
 - preview 不可被當作完成結果
 
+### Document Review
+
+- `conclusion`
+- `referenced_documents`
+- `reasons`
+- `next_actions`
+- `document_count`
+- 這是 read-only workflow，不走 apply/writeback，但仍必須帶 read-side evidence 與 verifier pass 才能 `completed`
+
 verifier fail 後只允許：
 
 - `blocked`
@@ -324,8 +333,8 @@ verifier fail 後只允許：
 ### Control
 
 - 接入 `active_task`
-- 接入 review gate
-- 接入 applying / writeback gate
+- 接入 review gate；若 workflow 是 read-only，必須明確記錄為「直接 `triaging -> verifying`」而不是隱含 apply
+- 接入 applying / writeback gate；若 workflow 沒有 write path，必須在文件與 verifier contract 中明示
 - 接入 verifier gate
 - 確認沒有 direct completed path
 

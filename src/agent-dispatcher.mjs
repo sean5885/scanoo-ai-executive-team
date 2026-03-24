@@ -294,7 +294,7 @@ function buildRegisteredAgentStructuredBoundaryResult({
       || objectPayload.trace
       || cleanText(objectPayload.status || "").toLowerCase() === "error"
       || cleanText(objectPayload.status || "").toLowerCase() === "failed"
-    ),
+    )
   );
 
   const normalized = normalizeUserResponse({
