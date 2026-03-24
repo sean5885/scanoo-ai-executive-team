@@ -1086,6 +1086,34 @@ export function getSyncSummary(accountId) {
   `).get(accountId);
 }
 
+export function markDocumentsInactiveByFileTokens(accountId, fileTokens = [], inactiveReason = "trashed_test_artifact") {
+  const normalizedTokens = [...new Set((Array.isArray(fileTokens) ? fileTokens : [])
+    .map((token) => String(token || "").trim())
+    .filter(Boolean))];
+
+  if (!accountId || !normalizedTokens.length) {
+    return 0;
+  }
+
+  const timestamp = nowIso();
+  const placeholders = normalizedTokens.map(() => "?").join(", ");
+  const result = db.prepare(`
+    UPDATE lark_documents
+    SET active = 0,
+        inactive_reason = ?,
+        updated_at = ?
+    WHERE account_id = ?
+      AND file_token IN (${placeholders})
+  `).run(
+    inactiveReason,
+    timestamp,
+    accountId,
+    ...normalizedTokens,
+  );
+
+  return result.changes;
+}
+
 export function listIndexedDocumentsForOrganization(accountId, limit = 400) {
   return db.prepare(`
     SELECT

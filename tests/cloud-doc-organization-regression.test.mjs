@@ -9,6 +9,7 @@ import {
   clearCloudOrganizationReviewCache,
   CLOUD_DOC_ORGANIZATION_MODE,
   extractCloudOrganizationScopedSubject,
+  isCloudOrganizationTestResidualTitle,
   looksLikeCloudOrganizationReReviewRequest,
   resolveCloudOrganizationAction,
   readSessionWorkflowMode,
@@ -126,6 +127,14 @@ test("cloud doc workflow routes direct why-question into why branch", () => {
   assert.equal(action, "why");
 });
 
+test("cloud doc workflow recognizes demo and verify titles as test residuals", () => {
+  assert.equal(isCloudOrganizationTestResidualTitle("Planner Intent Demo"), true);
+  assert.equal(isCloudOrganizationTestResidualTitle("Planner Tool Success Verify"), true);
+  assert.equal(isCloudOrganizationTestResidualTitle("Lifecycle Retry Live Verify"), true);
+  assert.equal(isCloudOrganizationTestResidualTitle("Lifecycle verify_failed 1773905703367"), true);
+  assert.equal(isCloudOrganizationTestResidualTitle("Administrator Manual"), false);
+});
+
 test("cloud doc workflow persists mode by session key", () => {
   const account = upsertAccount({
     open_id: `acct-mode-open-${Date.now()}`,
@@ -218,6 +227,37 @@ test("review reply shows resolved cloud document names with concise pending chec
   assert.match(reply.pending_items[0]?.actions?.[0]?.metadata?.file_token || "", /^file_/);
 });
 
+test("review reply skips test residual docs instead of sending them to pending confirmation", async () => {
+  const account = upsertAccount({
+    open_id: `acct-review-residual-open-${Date.now()}`,
+    name: "acct-review-residual",
+  });
+  seedIndexedDocument({
+    accountId: account.id,
+    suffix: "administrator-manual-residual-check",
+    title: "Administrator Manual",
+    rawText: "manual",
+  });
+  seedIndexedDocument({
+    accountId: account.id,
+    suffix: "planner-tool-success-verify",
+    title: "Planner Tool Success Verify",
+    rawText: "workspace guide",
+  });
+
+  const reply = await buildCloudOrganizationReviewReplyCached({
+    accountId: account.id,
+    sessionKey: `session-residual-review-${Date.now()}`,
+    forceReReview: false,
+  });
+
+  assert.match(reply.text, /待人工確認：1 份/);
+  assert.match(reply.text, /已自動忽略 1 份測試殘留文件/);
+  assert.match(reply.text, /Administrator Manual/);
+  assert.doesNotMatch(reply.text, /Planner Tool Success Verify/);
+  assert.equal(reply.pending_items.length, 1);
+});
+
 test("review reply prefers source record cloud file name over inferred document title", async () => {
   const account = upsertAccount({
     open_id: `acct-review-source-title-open-${Date.now()}`,
@@ -288,6 +328,33 @@ test("generic review reply uses local fast summary instead of semantic rereview 
 
   assert.match(reply.text, /先用目前已索引的/);
   assert.doesNotMatch(reply.text, /MiniMax 小批量語義複審/);
+});
+
+test("why reply skips test residual docs when explaining pending confirmation", async () => {
+  const account = upsertAccount({
+    open_id: `acct-why-residual-open-${Date.now()}`,
+    name: "acct-why-residual",
+  });
+  seedIndexedDocument({
+    accountId: account.id,
+    suffix: "member-manual-residual-check",
+    title: "Member Manual",
+    rawText: "workspace member onboarding",
+  });
+  seedIndexedDocument({
+    accountId: account.id,
+    suffix: "planner-e2e-success-verify",
+    title: "Planner E2E Success Verify",
+    rawText: "workspace guide",
+  });
+
+  const reply = await buildCloudOrganizationWhyReply({ accountId: account.id });
+
+  assert.match(reply.text, /待人工確認：1 份/);
+  assert.match(reply.text, /已自動忽略 1 份測試殘留文件/);
+  assert.match(reply.text, /Member Manual/);
+  assert.doesNotMatch(reply.text, /Planner E2E Success Verify/);
+  assert.equal(reply.pending_items.length, 1);
 });
 
 test("cloud doc pending item follow-up resolves one file via mark_resolved", async () => {

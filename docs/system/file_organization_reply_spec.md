@@ -181,6 +181,8 @@ If items cannot be confidently grouped, place them in:
 
 Do not pretend everything is confidently classified.
 
+Titles that match obvious test-residual patterns such as `Demo`, `Verify`, `Retry`, or `verify_failed` must not enter the visible `待人工確認` bucket. Cloud-doc follow-up review should treat them as test artifacts, omit them from pending-item checklists, and optionally summarize how many were auto-ignored.
+
 When rendering any pending item list such as `待人工確認`, `待重新分配`, or `待覆核`, the user-facing reply must include concrete document locators instead of only a total count or a generic summary.
 
 Minimum per-item fields:

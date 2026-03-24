@@ -152,6 +152,7 @@ const categoryRoleMap = {
 const cloudOrganizationReviewCategories = new Set(["其他", "文檔", "表格", "附件", "快捷方式", "腦圖"]);
 const cloudOrganizationPendingItemStatuses = new Set(["待人工確認", "待重新分配", "待覆核"]);
 const cloudOrganizationOrdinalLabels = ["第一個", "第二個", "第三個", "第四個", "第五個", "第六個", "第七個", "第八個", "第九個", "第十個"];
+const cloudOrganizationTestResidualTitlePattern = /(?:\b(?:demo|verify|retry)\b|verify_failed)/iu;
 const cloudOrganizationScopedSubjectPatterns = [
   /不屬於\s*([^，。,.、；;：:\n]+?)(?:的(?:內容|内容|文檔|文档|文件|集合|範圍|范围|主題|主题)|\s|$)/iu,
   /不是\s*([^，。,.、；;：:\n]+?)(?:的(?:內容|内容|文檔|文档|文件|集合|範圍|范围|主題|主题)|\s|$)/iu,
@@ -243,6 +244,41 @@ function getCloudOrganizationDocumentTitle(item = {}) {
     cleanText(item?.file_token),
     cleanText(item?.node_id),
   ].find(Boolean) || "untitled";
+}
+
+export function isCloudOrganizationTestResidualTitle(title = "") {
+  return cloudOrganizationTestResidualTitlePattern.test(cleanText(title));
+}
+
+function isCloudOrganizationTestResidualItem(item = {}) {
+  return isCloudOrganizationTestResidualTitle(getCloudOrganizationDocumentTitle(item));
+}
+
+function splitCloudOrganizationIndexedDocs(items = []) {
+  return (Array.isArray(items) ? items : []).reduce((state, item) => {
+    if (isCloudOrganizationTestResidualItem(item)) {
+      state.testResidualDocs.push(item);
+      return state;
+    }
+    state.businessDocs.push(item);
+    return state;
+  }, {
+    businessDocs: [],
+    testResidualDocs: [],
+  });
+}
+
+function buildCloudOrganizationTestResidualSummaryLine(testResidualDocs = []) {
+  const count = Array.isArray(testResidualDocs) ? testResidualDocs.length : 0;
+  if (!count) {
+    return "";
+  }
+  return `- 已自動忽略 ${count} 份測試殘留文件（名稱含 Demo / Verify / Retry / verify_failed），不納入待人工確認。`;
+}
+
+function hasCloudOrganizationTestResidualPendingItems(items = []) {
+  return (Array.isArray(items) ? items : []).some((item) =>
+    isCloudOrganizationTestResidualTitle(`${cleanText(item?.label)} ${cleanText(item?.text_line)}`));
 }
 
 function summarizeCloudOrganizationReasons(reasons = [], fallback = "") {
@@ -734,6 +770,7 @@ export async function buildCloudOrganizationPreviewReply({
   replyBuilderName = "buildCloudOrganizationPreviewReply",
 } = {}) {
   const indexedDocs = listIndexedDocumentsForOrganization(accountId, 240);
+  const { businessDocs, testResidualDocs } = splitCloudOrganizationIndexedDocs(indexedDocs);
   if (!indexedDocs.length) {
     logCloudDocReplyTrace(logger, {
       replyBuilderName,
@@ -754,7 +791,26 @@ export async function buildCloudOrganizationPreviewReply({
     };
   }
 
-  const candidates = indexedDocs.map((item) => ({
+  if (!businessDocs.length) {
+    logCloudDocReplyTrace(logger, {
+      replyBuilderName,
+      finalTextSourceFunction: "buildCloudOrganizationPreviewReply",
+    });
+    return {
+      text: [
+        "結論",
+        `目前已索引的 ${indexedDocs.length} 份雲文檔都被判定為測試殘留，暫不納入正式分類預覽。`,
+        "",
+        "重點",
+        buildCloudOrganizationTestResidualSummaryLine(testResidualDocs),
+        "",
+        "下一步",
+        "- 如果你要，我可以直接把這批測試殘留移到垃圾桶，或等下一輪同步後再整理正式文件。",
+      ].filter(Boolean).join("\n"),
+    };
+  }
+
+  const candidates = businessDocs.map((item) => ({
     id: item.id,
     title: getCloudOrganizationDocumentTitle(item),
     type: item.source_type || "docx",
@@ -764,7 +820,7 @@ export async function buildCloudOrganizationPreviewReply({
   const classified = classifyDocumentsLocally(candidates);
   const buckets = new Map();
 
-  for (const item of indexedDocs) {
+  for (const item of businessDocs) {
     const result = classified.get(item.id) || { category: "其他", confidence: 0, reason: "unclassified" };
     const bucket = buckets.get(result.category) || {
       category: result.category,
@@ -787,12 +843,13 @@ export async function buildCloudOrganizationPreviewReply({
   return {
     text: [
       "結論",
-      `我已先按本地已索引的 ${indexedDocs.length} 份雲文檔做分類預覽，並給出建議負責角色。`,
+      `我已先按本地已索引的 ${businessDocs.length} 份雲文檔做分類預覽，並給出建議負責角色。`,
       "",
       "重點",
       ...topBuckets.map(
         (bucket) => `- ${bucket.category} -> ${bucket.role}｜${bucket.count} 份｜例如：${bucket.examples.join("、")}`,
       ),
+      buildCloudOrganizationTestResidualSummaryLine(testResidualDocs),
       "",
       "下一步",
       "- 你現在可以直接接著說：哪些文檔跟某個角色無關、要怎麼重新分配、或要先看哪一類。",
@@ -809,14 +866,16 @@ export async function buildCloudOrganizationReviewReply({
   replyBuilderName = "buildCloudOrganizationReviewReply",
 } = {}) {
   const cached = !forceReReview ? readCloudOrganizationReviewCache(accountId, sessionKey) : null;
-  if (cached?.text) {
+  const cachedPendingItems = Array.isArray(cached?.pending_items) ? cached.pending_items : [];
+  const shouldBypassCache = hasCloudOrganizationTestResidualPendingItems(cachedPendingItems);
+  if (cached?.text && !shouldBypassCache) {
     const cachedPendingItems = await syncCloudOrganizationPendingItems({
       sessionKey,
       sourceKind: forceReReview ? "cloud_doc_rereview" : "cloud_doc_review",
       sourceTitle: forceReReview ? "Cloud Doc Rereview" : "Cloud Doc Review",
       sourceSummary: cached.text,
       sourceMatchReason: forceReReview ? "重新複審待人工確認文件" : "待人工確認文件",
-      pendingItems: Array.isArray(cached?.pending_items) ? cached.pending_items : [],
+      pendingItems: cachedPendingItems,
     });
     logCloudDocReplyTrace(logger, {
       replyBuilderName,
@@ -831,7 +890,12 @@ export async function buildCloudOrganizationReviewReply({
     };
   }
 
+  if (cached?.text && shouldBypassCache) {
+    clearCloudOrganizationReviewCache(accountId, sessionKey);
+  }
+
   const indexedDocs = listIndexedDocumentsForOrganization(accountId, 240);
+  const { businessDocs, testResidualDocs } = splitCloudOrganizationIndexedDocs(indexedDocs);
   if (!indexedDocs.length) {
     logCloudDocReplyTrace(logger, {
       replyBuilderName,
@@ -851,7 +915,30 @@ export async function buildCloudOrganizationReviewReply({
     };
   }
 
-  const candidates = indexedDocs.map((item) => ({
+  if (!businessDocs.length) {
+    logCloudDocReplyTrace(logger, {
+      replyBuilderName,
+      finalTextSourceFunction: "buildCloudOrganizationReviewReply",
+      sessionKey,
+      forceReReview,
+      cacheHit: false,
+    });
+    return {
+      text: [
+        "結論",
+        `目前已索引的 ${indexedDocs.length} 份文檔都已判定為測試殘留，不再進入待人工確認。`,
+        "",
+        "摘要",
+        buildCloudOrganizationTestResidualSummaryLine(testResidualDocs),
+        "",
+        "待處理清單",
+        "- 目前沒有新的待人工確認項目。",
+      ].filter(Boolean).join("\n"),
+      pending_items: [],
+    };
+  }
+
+  const candidates = businessDocs.map((item) => ({
     id: item.id,
     title: getCloudOrganizationDocumentTitle(item),
     type: item.source_type || "docx",
@@ -859,7 +946,7 @@ export async function buildCloudOrganizationReviewReply({
     text: item.raw_text || "",
   }));
   const localClassified = classifyDocumentsLocally(candidates);
-  const reviewSeed = indexedDocs
+  const reviewSeed = businessDocs
     .map((item) => {
       const local = localClassified.get(item.id) || { category: "其他", confidence: 0, reason: "unclassified" };
       return { item, local };
@@ -901,10 +988,11 @@ export async function buildCloudOrganizationReviewReply({
     });
     return {
       text: buildCloudOrganizationPendingReplyText({
-        conclusion: `我先用目前已索引的 ${indexedDocs.length} 份雲文檔，整理出最需要你二次確認的 ${reviewSeed.length} 份模糊文件。`,
+        conclusion: `我先用目前已索引的 ${businessDocs.length} 份雲文檔，整理出最需要你二次確認的 ${reviewSeed.length} 份模糊文件。`,
         summaryLines: [
           "- 這一輪先用本地分類結果快速整理，避免你每次追問都重新等一輪語義複審。",
           `- 待人工確認：${visibleUnresolved.length} 份`,
+          buildCloudOrganizationTestResidualSummaryLine(testResidualDocs),
         ],
         pendingItems: visibleUnresolved,
       }),
@@ -1012,11 +1100,12 @@ export async function buildCloudOrganizationReviewReply({
   });
   return {
     text: buildCloudOrganizationPendingReplyText({
-      conclusion: `我已進入第二輪角色審核，先從 ${indexedDocs.length} 份已索引文檔中挑出 ${reviewSeed.length} 份模糊或泛類文檔做複審。`,
+      conclusion: `我已進入第二輪角色審核，先從 ${businessDocs.length} 份已索引文檔中挑出 ${reviewSeed.length} 份模糊或泛類文檔做複審。`,
       summaryLines: [
         "- 審核方式：先本地分類，再對模糊文檔做 MiniMax 小批量語義複審。",
         `- 待重新分配：${visibleReassignments.length} 份`,
         `- 待人工確認：${visibleUnresolved.length} 份`,
+        buildCloudOrganizationTestResidualSummaryLine(testResidualDocs),
       ],
       pendingItems: [
         ...visibleReassignments,
@@ -1060,6 +1149,7 @@ export async function buildCloudOrganizationWhyReply({
   replyBuilderName = "buildCloudOrganizationWhyReply",
 } = {}) {
   const indexedDocs = listIndexedDocumentsForOrganization(accountId, 240);
+  const { businessDocs, testResidualDocs } = splitCloudOrganizationIndexedDocs(indexedDocs);
   if (!indexedDocs.length) {
     logCloudDocReplyTrace(logger, {
       replyBuilderName,
@@ -1076,7 +1166,27 @@ export async function buildCloudOrganizationWhyReply({
     };
   }
 
-  const candidates = indexedDocs.map((item) => ({
+  if (!businessDocs.length) {
+    logCloudDocReplyTrace(logger, {
+      replyBuilderName,
+      finalTextSourceFunction: "buildCloudOrganizationWhyReply",
+    });
+    return {
+      text: [
+        "結論",
+        "目前沒有需要人工確認的正式文檔，因為已索引項目都被判定為測試殘留。",
+        "",
+        "重點",
+        buildCloudOrganizationTestResidualSummaryLine(testResidualDocs),
+        "",
+        "下一步",
+        "- 如果你要，我可以直接整理這批測試殘留的移除清單。",
+      ].filter(Boolean).join("\n"),
+      pending_items: [],
+    };
+  }
+
+  const candidates = businessDocs.map((item) => ({
     id: item.id,
     title: getCloudOrganizationDocumentTitle(item),
     type: item.source_type || "docx",
@@ -1084,7 +1194,7 @@ export async function buildCloudOrganizationWhyReply({
     text: item.raw_text || "",
   }));
   const localClassified = classifyDocumentsLocally(candidates);
-  const unresolved = indexedDocs
+  const unresolved = businessDocs
     .map((item) => {
       const local = localClassified.get(item.id) || { category: "其他", confidence: 0, reason: "unclassified" };
       const reasons = collectCloudOrganizationReviewReasons(item, local);
@@ -1141,7 +1251,10 @@ export async function buildCloudOrganizationWhyReply({
   return {
     text: buildCloudOrganizationPendingReplyText({
       conclusion: "這些文件不是完全不能分配，而是現在只靠標題或少量內容，還不能很有把握地判定它們只屬於單一角色，所以我先放進待人工確認。",
-      summaryLines: [`- 待人工確認：${visibleUnresolved.length} 份`],
+      summaryLines: [
+        `- 待人工確認：${visibleUnresolved.length} 份`,
+        buildCloudOrganizationTestResidualSummaryLine(testResidualDocs),
+      ],
       pendingItems: visibleUnresolved,
     }),
     pending_items: visibleUnresolved,
