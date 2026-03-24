@@ -17,6 +17,7 @@ const MAX_RECENCY_RANK = Number.MAX_SAFE_INTEGER;
 
 const listRequestsForLearningStmt = db.prepare(`
   SELECT
+    rowid AS monitor_row_id,
     trace_id,
     request_id,
     method,
@@ -31,7 +32,7 @@ const listRequestsForLearningStmt = db.prepare(`
     finished_at
   FROM http_request_monitor
   WHERE finished_at >= ?
-  ORDER BY finished_at DESC, trace_id DESC
+  ORDER BY finished_at DESC, monitor_row_id DESC, trace_id DESC
   LIMIT ?
 `);
 
@@ -91,6 +92,7 @@ function buildSinceIso(lookbackHours) {
 
 function toRequestRecord(row = {}) {
   return {
+    monitor_row_id: Number.isFinite(Number(row.monitor_row_id)) ? Number(row.monitor_row_id) : null,
     trace_id: cleanText(row.trace_id) || null,
     request_id: cleanText(row.request_id) || null,
     method: cleanText(row.method) || "GET",
@@ -138,6 +140,7 @@ function compareIsoDesc(left, right) {
 
 function compareRecencyDesc(left = {}, right = {}) {
   return compareIsoDesc(left.latest_finished_at, right.latest_finished_at)
+    || (Number(right.monitor_row_id ?? 0) - Number(left.monitor_row_id ?? 0))
     || (Number(left.latest_request_rank ?? MAX_RECENCY_RANK) - Number(right.latest_request_rank ?? MAX_RECENCY_RANK))
     || (cleanText(right.latest_trace_id) || "").localeCompare(cleanText(left.latest_trace_id) || "");
 }
@@ -151,6 +154,7 @@ function buildTraceRecencyByTraceId(requests = []) {
       continue;
     }
     traceRecency.set(traceId, {
+      monitor_row_id: Number.isFinite(Number(request?.monitor_row_id)) ? Number(request.monitor_row_id) : 0,
       latest_request_rank: index,
       latest_finished_at: cleanText(request?.finished_at) || cleanText(request?.started_at) || null,
       latest_trace_id: traceId,

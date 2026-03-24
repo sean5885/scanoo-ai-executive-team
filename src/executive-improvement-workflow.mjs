@@ -75,6 +75,9 @@ function normalizeImprovementEntry(entry = {}) {
     title: cleanText(entry.title),
     description: cleanText(entry.description),
     target: cleanText(entry.target),
+    context: entry.context && typeof entry.context === "object" && !Array.isArray(entry.context)
+      ? { ...entry.context }
+      : null,
     source_error_type: cleanText(entry.source_error_type),
     status: cleanText(entry.status || "pending_approval") || "pending_approval",
     decision_actor: cleanText(entry.decision_actor),
