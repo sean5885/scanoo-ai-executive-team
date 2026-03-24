@@ -241,13 +241,13 @@ test("review reply prefers source record cloud file name over inferred document 
     source_type: "docx",
     external_key: source.external_key,
     external_id: source.external_id,
-    file_token: "file_source-title-demo",
-    document_id: "doc_source-title-demo",
-    title: "Planner Intent Demo",
+    file_token: "file_source-title-shadow",
+    document_id: "doc_source-title-shadow",
+    title: "Workspace Onboarding Policy",
     raw_text: "manual workspace onboarding policy",
     parent_path: "/shared/live",
     meta_json: {
-      title: "Planner Intent Demo",
+      title: "Workspace Onboarding Policy",
     },
     active: 1,
   });
@@ -259,7 +259,7 @@ test("review reply prefers source record cloud file name over inferred document 
   });
 
   assert.match(reply.text, /文件名：真實雲端文件名/);
-  assert.doesNotMatch(reply.text, /文件名：Planner Intent Demo/);
+  assert.doesNotMatch(reply.text, /文件名：Workspace Onboarding Policy/);
 });
 
 test("generic review reply uses local fast summary instead of semantic rereview wording", async () => {
@@ -298,15 +298,15 @@ test("cloud doc pending item follow-up resolves one file via mark_resolved", asy
   const sessionKey = `session-review-action-${Date.now()}`;
   seedIndexedDocument({
     accountId: account.id,
-    suffix: "planner-intent-demo",
-    title: "Planner Intent Demo",
+    suffix: "workspace-onboarding-policy",
+    title: "Workspace Onboarding Policy",
     rawText: "manual",
     parentPath: "/06_知識庫歸檔",
   });
   seedIndexedDocument({
     accountId: account.id,
-    suffix: "planner-full-demo",
-    title: "Planner Full Demo",
+    suffix: "team-access-guide",
+    title: "Team Access Guide",
     rawText: "workspace guide",
     parentPath: "/06_知識庫歸檔",
   });
