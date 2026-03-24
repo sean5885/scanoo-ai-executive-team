@@ -181,6 +181,27 @@ function stripTrace(payload) {
   return rest;
 }
 
+function withEnv(t, values = {}) {
+  const previous = new Map();
+  for (const [key, value] of Object.entries(values)) {
+    previous.set(key, Object.prototype.hasOwnProperty.call(process.env, key) ? process.env[key] : undefined);
+    if (value == null) {
+      delete process.env[key];
+    } else {
+      process.env[key] = String(value);
+    }
+  }
+  t.after(() => {
+    for (const [key, value] of previous.entries()) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  });
+}
+
 test("drive organize preview success route returns trace and handler step logs", async (t) => {
   const { server, calls } = await startTestServer(t, {
     resolveDriveRootFolderToken: async () => "fld-root",
@@ -406,6 +427,9 @@ test("document rewrite preview accepts nested target document links", async (t) 
 });
 
 test("document create classifies verified mirror ingest as direct intake", async (t) => {
+  withEnv(t, {
+    ALLOW_LARK_WRITES: "true",
+  });
   const documentId = `doc-create-direct-${Date.now()}`;
   const title = `Ops Runbook Direct ${Date.now()}`;
   const { server, calls } = await startTestServer(t, {
@@ -421,7 +445,7 @@ test("document create classifies verified mirror ingest as direct intake", async
   const createResponse = await fetch(`http://127.0.0.1:${port}/api/doc/create`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ title }),
+    body: JSON.stringify({ title, confirm: true }),
   });
   const createPayload = await createResponse.json();
   assert.equal(createResponse.status, 200);
@@ -439,6 +463,9 @@ test("document create classifies verified mirror ingest as direct intake", async
 });
 
 test("document create classifies title overlap as review and conflict check required", async (t) => {
+  withEnv(t, {
+    ALLOW_LARK_WRITES: "true",
+  });
   const base = Date.now();
   const title = `Ops Runbook Overlap ${base}`;
   let counter = 0;
@@ -460,7 +487,7 @@ test("document create classifies title overlap as review and conflict check requ
     const response = await fetch(`http://127.0.0.1:${port}/api/doc/create`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title }),
+      body: JSON.stringify({ title, confirm: true }),
     });
     assert.equal(response.status, 200);
   }
@@ -472,6 +499,93 @@ test("document create classifies title overlap as review and conflict check requ
   assert.equal(overlapBoundaryLog?.[1]?.conflict_check_required, true);
   assert.equal(overlapBoundaryLog?.[1]?.matched_docs?.length, 1);
   assert.equal(overlapBoundaryLog?.[1]?.matched_docs?.[0]?.match_type, "same_title");
+});
+
+test("document create is fail-closed when ALLOW_LARK_WRITES is not enabled", async (t) => {
+  withEnv(t, {
+    ALLOW_LARK_WRITES: null,
+    LARK_WRITE_SANDBOX_FOLDER_TOKEN: null,
+  });
+  const { server } = await startTestServer(t, {
+    createDocument: async () => {
+      throw new Error("should_not_create");
+    },
+  });
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/doc/create`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ title: "Blocked Live Create", confirm: true }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 500);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.error, "internal_error");
+  assert.equal(payload.message, "Lark write blocked (ALLOW_LARK_WRITES not enabled)");
+});
+
+test("document create requires confirm=true even when live writes are enabled", async (t) => {
+  withEnv(t, {
+    ALLOW_LARK_WRITES: "true",
+  });
+  const { server } = await startTestServer(t, {
+    createDocument: async () => {
+      throw new Error("should_not_create");
+    },
+  });
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/doc/create`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ title: "Missing Confirmation" }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 409);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.error, "lark_write_confirmation_required");
+});
+
+test("document create redirects demo-like titles into sandbox folder", async (t) => {
+  withEnv(t, {
+    ALLOW_LARK_WRITES: "true",
+    LARK_WRITE_SANDBOX_FOLDER_TOKEN: "sandbox-folder-token",
+  });
+  const seen = [];
+  const { server } = await startTestServer(t, {
+    createDocument: async (_accessToken, title, folderToken) => {
+      seen.push({ title, folderToken });
+      return {
+        document_id: "doc-sandbox-demo",
+        revision_id: "rev-sandbox-demo",
+        title,
+        folder_token: folderToken,
+        url: "https://larksuite.com/docx/doc-sandbox-demo",
+      };
+    },
+  });
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/doc/create`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      title: "Planner E2E Success Verify",
+      folder_token: "prod-knowledge-folder",
+      confirm: true,
+    }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.ok, true);
+  assert.deepEqual(seen, [{
+    title: "Planner E2E Success Verify",
+    folderToken: "sandbox-folder-token",
+  }]);
 });
 
 test("agent company-brain search and detail routes return structured summaries for planner use", async (t) => {

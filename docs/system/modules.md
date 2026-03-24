@@ -289,6 +289,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 
 - Location:
   - `/Users/seanhan/Documents/Playground/src/lark-content.mjs`
+  - `/Users/seanhan/Documents/Playground/src/lark-write-guard.mjs`
 - Responsibility:
   - direct Lark SDK calls for drive, wiki, doc, comments, messages, reactions, calendar, freebusy, tasks, bitable, and sheets
   - resolve a valid user token from account-scoped auth context before each Lark API call
@@ -296,7 +297,9 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - grant the initiating Lark user `full_access` on Lobster-created docx files
   - repair reused Lobster meeting docs so the initiator keeps management access instead of read-only access
   - docx create adapter now emits structured platform diagnostics (`stage/http_status/platform_code/platform_msg/log_id/token_type/title/folder_token/raw`) instead of collapsing all failures into a plain 400 message
-  - docx create now probes root-vs-folder capability through the adapter path and falls back to root create when folder-scoped create is blocked by platform code `1063003`
+  - all Lark mutating adapters now hard-stop unless `ALLOW_LARK_WRITES=true`; `NODE_ENV=production` is an unconditional write lock and cannot be bypassed by env override
+  - docx create still treats `test/demo/verify/smoke/e2e` titles as sandbox-only, and create probes remain blocked unless `ALLOW_LARK_WRITE_PROBES=true`
+  - folder-scoped docx create no longer falls back to root create unless `ALLOW_LARK_CREATE_ROOT_FALLBACK=true`
   - expose a test-only client dispose hook so integration suites can tear down any SDK transport agents without changing production defaults
 - Core path:
   - yes
@@ -434,7 +437,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 - Location:
   - `/Users/seanhan/Documents/Playground/src/executive-rules.mjs`
   - `/Users/seanhan/Documents/Playground/src/executive-lifecycle.mjs`
-  - `/Users/seanhan/Documents/Playground/src/executive-verifier.mjs`
+- `/Users/seanhan/Documents/Playground/src/executive-verifier.mjs`
   - `/Users/seanhan/Documents/Playground/src/executive-reflection.mjs`
   - `/Users/seanhan/Documents/Playground/src/executive-improvement.mjs`
   - `/Users/seanhan/Documents/Playground/src/executive-memory.mjs`
@@ -443,7 +446,8 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 - Responsibility:
   - define execution / verification / knowledge / tool / meeting rules
   - enforce lifecycle state transitions
-  - require evidence plus verifier pass before completion
+- require evidence plus verifier pass before completion
+- read execution evidence only through the task `execution_journal`; `supportingOutputs`, plain `reply.text`, and planner synthetic hints are not verifier-grade execution evidence
   - route verification failure back to `executing`, `blocked`, or `escalated` instead of silently treating a reply as completed
   - generate reflection records and improvement proposals
   - maintain session / approved / proposal memory stores
@@ -640,8 +644,8 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - the same module now includes a minimal tool-selection policy helper that takes `user intent / task type` and returns `selected_action + reason`; it still prefers bounded presets for explicit create-then-list / create-then-search intents, now treats explicit topical list phrasing such as `列出 OKR 文件` as stable `list_company_brain_docs`, keeps search-first priority over mixed search+content wording, logs `stage=planner_tool_select`, and returns `reason = "ROUTING_NO_MATCH"` when unmatched instead of silently continuing into default fallback wording
   - contract-alignment checkpoint: `src/router.js` now provides a minimal hard pre-route for company-brain document intents before the planner selector. Explicit search wording (`找|搜尋|搜索|查|search`) now keeps priority over generic detail cues such as `內容`, so mixed phrasing like `搜尋有提到 OKR 的內容` still hard-routes to `search_company_brain_docs`; `整理|解釋` still routes to `preset:search_and_detail_doc`; pronoun/detail follow-ups such as `這份文件裡面寫了什麼` still route to detail/preset depending on whether `activeDoc` exists; ordinal follow-ups like `第一份 / 第二份 / 打開第一個` can also route to detail when the planner has active candidates. Direct action routes expose the action string outward, while preset/error routes keep the object envelope used by the flow runtime.
   - the same planner runtime now also keeps a minimal in-memory read context: after a successful `search_and_detail_doc` or `get_company_brain_doc_detail`, the planner can remember `active_doc = { doc_id, title }`; after an ambiguous successful search it can also remember a bounded `active_candidates` list; themed knowledge flows can also remember `active_theme = okr|bd|delivery`; follow-up pronoun/detail questions like `這份文件裡面寫了什麼` route directly to `get_company_brain_doc_detail`, ordinal follow-ups can resolve through those candidates, and compacted planner memory can restore that doc-query context after runtime reset/restart
-  - the same module now includes a minimal end-to-end helper that runs `selectPlannerTool(...)` and, when matched, executes either the preset runner or `dispatchPlannerTool(...)`, returning `{ selected_action, execution_result, agent_execution, trace_id }` and logging `stage=planner_end_to_end`
-  - that `agent_execution` field now stays bounded and deterministic: `src/planner/agent-executor.mjs` derives the checked-in lane-to-agent/action mapping, and `src/planner/agent-runtime.mjs` wraps it with local formatted placeholder `result` envelopes instead of invoking live agent handoff/runtime ownership; planner-side company-brain learning actions now also stay on the checked-in `doc` lane rather than falling through `fallback_agent`
+- the same module now includes a minimal end-to-end helper that runs `selectPlannerTool(...)` and, when matched, executes either the preset runner or `dispatchPlannerTool(...)`, returning `{ selected_action, execution_result, synthetic_agent_hint, trace_id }` and logging `stage=planner_end_to_end`
+- that `synthetic_agent_hint` field now stays bounded and deterministic: `src/planner/agent-executor.mjs` derives the checked-in lane-to-agent/action mapping, and `src/planner/agent-runtime.mjs` wraps it with local formatted placeholder `result` envelopes instead of invoking live agent handoff/runtime ownership; planner-side company-brain learning actions now also stay on the checked-in `doc` lane rather than falling through `fallback_agent`; this hint is not verifier evidence
   - `src/planner/result-schema.mjs` and `src/planner/result-formatters.mjs` now provide a small shared envelope for those local placeholder result families, exposing deterministic `kind/status/summary/actionable_items/confidence/data` formatting for `meeting`, `doc`, `runtime`, and `mixed` shapes without changing the existing public planner response surface
   - runtime-info planner flow matching now also recognizes generic runtime-health wording such as `runtime status`, `系統狀態`, `穩不穩`, `風險`, and `運行情況`, so direct planner calls can hard-route those phrases into `get_runtime_info` instead of stopping at `ROUTING_NO_MATCH`
   - after successful company-brain read-side execution, `runPlannerToolFlow(...)` now also adds a minimal response formatter inside `execution_result.formatted_output`: search-like results keep bounded per-document evidence rows (`title`, `doc_id`, optional `url`, `reason`), detail-like results keep `title + content_summary`, and `search_and_detail_doc` still returns either one direct hit, an explicit not-found payload, or a bounded candidate list for follow-up selection, while keeping the raw tool result intact

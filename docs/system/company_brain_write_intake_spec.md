@@ -98,6 +98,9 @@ Minimum write/intake capability set:
 
 - title must exist
 - write target must stay inside a controlled route / adapter path
+- live Lark create must fail closed unless `ALLOW_LARK_WRITES=true`
+- direct route-driven create also requires explicit confirmation at the request boundary (`confirm=true`)
+- `test` / `demo` / `verify` / `smoke` / `e2e` create requests must stay in a configured sandbox folder and must not rely on root fallback
 - returned `doc_id` or equivalent write evidence must exist before success can be claimed
 
 ### failure handling

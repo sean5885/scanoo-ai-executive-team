@@ -269,7 +269,9 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
 - `POST /api/doc/create`
   - Handler: `handleDocumentCreate`
   - Purpose: create docx, optional initial content
-  - Side effect note: the docx adapter keeps `POST /open-apis/docx/v1/documents`, adds structured create-error diagnostics, and may fall back from folder-scoped create to root create when the platform rejects the folder target with `1063003`
+  - Guard note: live document creation is now fail-closed by default; the route throws when `ALLOW_LARK_WRITES !== true`, and `NODE_ENV=production` is a hard stop even if the env flag is set
+  - Guard note: titles/sources that look like `test` / `demo` / `verify` / `smoke` / `e2e` are sandbox-only; they are redirected to `LARK_WRITE_SANDBOX_FOLDER_TOKEN` when configured, otherwise blocked
+  - Side effect note: the docx adapter keeps `POST /open-apis/docx/v1/documents`, adds structured create-error diagnostics, and no longer falls back from folder-scoped create to root create unless `ALLOW_LARK_CREATE_ROOT_FALLBACK=true` is explicitly enabled
   - Route behavior note: document creation is the blocking step; post-create manager-permission grant is non-blocking, skipped when the current user is already the owner, and returned as `permission_grant_failed` / `permission_grant_skipped` / `permission_grant_error`
   - Index note: after create succeeds, the route writes normalized metadata `{ doc_id, source, created_at, creator: { account_id, open_id }, title, folder_token }` into the existing `lark_sources` / `lark_documents` index as a non-blocking `document_index` step; this is not a separate company-brain module
   - Lifecycle note: the route now advances `lark_documents.status` through `created -> indexed -> verified`, records `indexed_at` / `verified_at`, and writes `create_failed` / `index_failed` / `verify_failed` plus `failure_reason` on the corresponding failure path, with `document_lifecycle_update` logs for each transition

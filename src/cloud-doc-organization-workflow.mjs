@@ -195,13 +195,45 @@ function getCloudOrganizationItemMeta(item = {}) {
   }
 }
 
+function getCloudOrganizationSourceMeta(item = {}) {
+  const rawMeta = item?.source_meta_json;
+  if (!rawMeta) {
+    return {};
+  }
+  if (typeof rawMeta === "object" && !Array.isArray(rawMeta)) {
+    return rawMeta;
+  }
+  if (typeof rawMeta !== "string") {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(rawMeta);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 function getCloudOrganizationNamedField(item = {}, fieldName = "") {
   const meta = getCloudOrganizationItemMeta(item);
   return cleanText(item?.[fieldName]) || cleanText(meta?.[fieldName]);
 }
 
+function getCloudOrganizationSourceNamedField(item = {}, fieldName = "") {
+  const meta = getCloudOrganizationSourceMeta(item);
+  if (fieldName === "title") {
+    return cleanText(item?.source_title) || cleanText(meta?.title);
+  }
+  return cleanText(item?.[`source_${fieldName}`]) || cleanText(meta?.[fieldName]);
+}
+
 function getCloudOrganizationDocumentTitle(item = {}) {
   return [
+    getCloudOrganizationSourceNamedField(item, "title"),
+    getCloudOrganizationSourceNamedField(item, "node_title"),
+    getCloudOrganizationSourceNamedField(item, "document_title"),
+    getCloudOrganizationSourceNamedField(item, "file_name"),
+    getCloudOrganizationSourceNamedField(item, "name"),
     getCloudOrganizationNamedField(item, "title"),
     getCloudOrganizationNamedField(item, "node_title"),
     getCloudOrganizationNamedField(item, "document_title"),

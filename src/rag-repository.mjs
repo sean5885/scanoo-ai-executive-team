@@ -1089,25 +1089,29 @@ export function getSyncSummary(accountId) {
 export function listIndexedDocumentsForOrganization(accountId, limit = 400) {
   return db.prepare(`
     SELECT
-      id,
-      title,
-      url,
-      parent_path,
-      source_type,
-      raw_text,
-      document_id,
-      file_token,
-      node_id,
-      space_id,
-      meta_json,
-      synced_at,
-      updated_at_remote
-    FROM lark_documents
-    WHERE account_id = ?
-      AND active = 1
+      d.id,
+      d.title,
+      d.url,
+      d.parent_path,
+      d.source_type,
+      d.raw_text,
+      d.document_id,
+      d.file_token,
+      d.node_id,
+      d.space_id,
+      d.meta_json,
+      s.title AS source_title,
+      s.meta_json AS source_meta_json,
+      d.synced_at,
+      d.updated_at_remote
+    FROM lark_documents d
+    LEFT JOIN lark_sources s
+      ON s.id = d.source_id
+    WHERE d.account_id = ?
+      AND d.active = 1
       AND COALESCE(TRIM(raw_text), '') <> ''
     ORDER BY
-      COALESCE(updated_at_remote, synced_at, updated_at) DESC
+      COALESCE(d.updated_at_remote, d.synced_at, d.updated_at) DESC
     LIMIT ?
   `).all(accountId, limit);
 }

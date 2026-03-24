@@ -1286,6 +1286,7 @@ export function createMeetingCoordinator(overrides = {}) {
       {
         tokenType: "user",
         managerOpenId: accountOpenId,
+        source: "meeting_confirm_write",
       },
     );
     deps.saveMeetingDocumentMapping({

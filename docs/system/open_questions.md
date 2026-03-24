@@ -50,15 +50,24 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
       - `/Users/seanhan/Documents/Playground/src/rag-repository.mjs`
       - `/Users/seanhan/Documents/Playground/src/secret-crypto.mjs`
 
+6. Live Lark write hard-stops now support tenant allow-lists, but the repo still does not carry a checked-in canonical sandbox tenant mapping.
+   - Why it matters:
+     - `ALLOW_LARK_WRITES` is now fail-closed, and `LARK_WRITE_ALLOWED_TENANT_KEYS` / `LARK_WRITE_SANDBOX_TENANT_KEYS` can constrain live vs sandbox tenants
+     - but tenant isolation is only as strong as the deployed env configuration; the repo itself cannot prove which tenant is the intended sandbox
+   - Files:
+     - `/Users/seanhan/Documents/Playground/src/lark-write-guard.mjs`
+     - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
+     - `/Users/seanhan/Documents/Playground/docs/system/api_map.md`
+
 ## Medium
 
-6. Retrieval now has a local semantic embedding sidecar, but not an external vector store.
+7. Retrieval now has a local semantic embedding sidecar, but not an external vector store.
    - Files:
       - `/Users/seanhan/Documents/Playground/src/answer-service.mjs`
       - `/Users/seanhan/Documents/Playground/src/rag-repository.mjs`
       - `/Users/seanhan/Documents/Playground/src/semantic-embeddings.mjs`
 
-7. `lobster_security` is a separate Python subproject with its own architecture boundary.
+8. `lobster_security` is a separate Python subproject with its own architecture boundary.
    - Why it matters:
      - runtime contract mismatch is now visible, but still requires humans to keep both sides aligned
    - Files:
@@ -66,26 +75,26 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
       - `/Users/seanhan/Documents/Playground/src/runtime-contract.mjs`
       - `/Users/seanhan/Documents/Playground/lobster_security`
 
-8. Semantic organization no longer hard-depends on OpenClaw, but local fallback quality is weaker.
+9. Semantic organization no longer hard-depends on OpenClaw, but local fallback quality is weaker.
    - Files:
       - `/Users/seanhan/Documents/Playground/src/lark-drive-semantic-classifier.mjs`
 
-9. Bitable / Sheet APIs now include batch helpers, but higher-level workflow contracts are still not fully productized.
+10. Bitable / Sheet APIs now include batch helpers, but higher-level workflow contracts are still not fully productized.
    - Files:
       - `/Users/seanhan/Documents/Playground/README.md`
       - `/Users/seanhan/Documents/Playground/lark_feishu_capability_gap.md`
       - `/Users/seanhan/Documents/Playground/src/config.mjs`
       - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
 
-10. The repo now has a thin executive planner and downstream registered agents, but it still does not have background workers, parallel subagent execution, or a tenant-wide memory graph.
-    - Why it matters:
+11. The repo now has a thin executive planner and downstream registered agents, but it still does not have background workers, parallel subagent execution, or a tenant-wide memory graph.
+   - Why it matters:
       - future docs should describe this as a checked-in executive orchestration layer, not as a fully autonomous company-brain system
 
-12. New-comment suggestion cards now support timer/manual polling, but there is still no native Lark comment event trigger entering this repo.
+13. New-comment suggestion cards now support timer/manual polling, but there is still no native Lark comment event trigger entering this repo.
    - Why it matters:
      - true automatic push still depends on polling or an upstream trigger
 
-13. Provider-side prompt caching cannot be confirmed from this repo's current OpenAI-compatible HTTP client.
+14. Provider-side prompt caching cannot be confirmed from this repo's current OpenAI-compatible HTTP client.
    - Why it matters:
      - cache-friendly stable prefixes are now implemented in prompt assembly
      - but there is still no repo-visible vendor flag or billing signal proving upstream prompt caching is actually enabled
@@ -94,7 +103,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
      - `/Users/seanhan/Documents/Playground/src/doc-comment-rewrite.mjs`
      - `/Users/seanhan/Documents/Playground/src/agent-token-governance.mjs`
 
-14. Workflow checkpoints are now externalized, but they are still local JSON state rather than a shared multi-runtime store.
+15. Workflow checkpoints are now externalized, but they are still local JSON state rather than a shared multi-runtime store.
    - Why it matters:
      - this solves token replay in the current local service
      - but it is still local-first state, not a tenant-wide checkpoint service
@@ -102,7 +111,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
      - `/Users/seanhan/Documents/Playground/src/agent-workflow-state.mjs`
      - `/Users/seanhan/Documents/Playground/src/config.mjs`
 
-15. `/meeting` is now available, and a real slash-agent registry exists, but `/meeting` still remains a specialized workflow rather than a planner-managed delegated subtask.
+16. `/meeting` is now available, and a real slash-agent registry exists, but `/meeting` still remains a specialized workflow rather than a planner-managed delegated subtask.
    - Why it matters:
      - future contributors should not describe `/meeting` as evidence of a broader planner/specialist agent framework
    - Files:
@@ -110,7 +119,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
      - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
      - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
 
-16. MiniMax speech-transcription API contract is not yet confirmed from this repo or the checked-in local config.
+17. MiniMax speech-transcription API contract is not yet confirmed from this repo or the checked-in local config.
    - Why it matters:
      - the repo now defaults meeting transcription to local `faster-whisper` instead of pretending the existing MiniMax M2.5 text path can also transcribe audio
    - Files:

@@ -1537,7 +1537,7 @@ function buildPlannerAgentOutput({
     selected_action: selectedAction,
     execution_result: executionResult,
     routing_reason: cleanText(routingReason) || null,
-    agent_execution: resolvePlannerAgentExecution({
+    synthetic_agent_hint: resolvePlannerAgentExecution({
       taskType,
       payload,
       selectedAction,
@@ -5829,7 +5829,7 @@ export async function executePlannedUserInput({
           params: null,
           error: cleanText(reroutedResult?.execution_result?.error || "") || null,
           execution_result: reroutedResult?.execution_result || null,
-          agent_execution: reroutedResult?.agent_execution || null,
+          synthetic_agent_hint: reroutedResult?.synthetic_agent_hint || null,
           trace_id: reroutedResult?.trace_id || null,
           why: "原始 decision 與這輪需求不一致，所以先改走 reroute。",
           alternative: normalizeDecisionAlternative(decision?.alternative),
@@ -5947,7 +5947,7 @@ export async function executePlannedUserInput({
     params: decision.params,
     error: cleanText(runtimeResult?.execution_result?.error || "") || null,
     execution_result: runtimeResult?.execution_result || null,
-    agent_execution: runtimeResult?.agent_execution || null,
+    synthetic_agent_hint: runtimeResult?.synthetic_agent_hint || null,
     trace_id: runtimeResult?.trace_id || null,
     why: cleanText(decision?.why || "") || null,
     alternative: normalizeDecisionAlternative(decision?.alternative),

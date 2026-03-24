@@ -3297,18 +3297,22 @@ test("runPlannerToolFlow returns explicit not-found output when search_and_detai
     },
   });
 
-  assert.deepEqual(result.execution_result?.formatted_output, {
-    kind: "search_and_detail_not_found",
-    title: null,
-    doc_id: null,
-    items: [],
-    match_reason: "整理不存在的流程並解釋",
-    content_summary: "目前沒有找到標題、文件代號、摘要或已學習標籤明確命中「整理不存在的流程並解釋」的已索引文件。",
-    learning_status: null,
-    learning_concepts: [],
-    learning_tags: [],
-    found: false,
-  });
+  const formatted = result.execution_result?.formatted_output;
+  assert.equal(formatted?.kind, "search_and_detail_not_found");
+  assert.equal(formatted?.status ?? "not_found", "not_found");
+  assert.equal(formatted?.title ?? null, null);
+  assert.equal(formatted?.doc_id ?? null, null);
+  assert.equal(formatted?.match_reason, "整理不存在的流程並解釋");
+  assert.equal(
+    formatted?.content_summary,
+    "目前沒有找到標題、文件代號、摘要或已學習標籤明確命中「整理不存在的流程並解釋」的已索引文件。",
+  );
+  assert.equal(formatted?.learning_status ?? null, null);
+  assert.deepEqual(formatted?.learning_concepts ?? [], []);
+  assert.deepEqual(formatted?.learning_tags ?? [], []);
+  assert.equal(formatted?.found, false);
+  assert.deepEqual(formatted?.items ?? [], []);
+  assert.deepEqual(formatted?.pending_items ?? [], []);
   resetPlannerRuntimeContext();
 });
 
@@ -4824,9 +4828,9 @@ test("runPlannerToolFlow keeps learning actions on doc lane instead of fallback 
   });
 
   assert.equal(result.selected_action, "update_learning_state");
-  assert.equal(result.agent_execution?.status, "ok");
-  assert.equal(result.agent_execution?.agent, "doc_agent");
-  assert.equal(result.agent_execution?.action, "doc_answer");
+  assert.equal(result.synthetic_agent_hint?.status, "ok");
+  assert.equal(result.synthetic_agent_hint?.agent, "doc_agent");
+  assert.equal(result.synthetic_agent_hint?.action, "doc_answer");
 });
 
 test("runPlannerMultiStep dispatches steps in order and returns last trace id", async () => {

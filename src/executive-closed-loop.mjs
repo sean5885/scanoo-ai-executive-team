@@ -21,6 +21,8 @@ import {
 } from "./executive-task-state.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 
+const VALID_EVIDENCE_TYPES = new Set(Object.values(EVIDENCE_TYPES));
+
 export function buildTaskInitialization({
   objective = "",
   agentId = "",
@@ -40,48 +42,185 @@ export function buildTaskInitialization({
   };
 }
 
-export function buildExecutionEvidence({
+function normalizeDispatchedActionRecord(item = {}) {
+  if (typeof item === "string") {
+    const action = cleanText(item);
+    return action
+      ? {
+          action,
+          target: null,
+          status: null,
+        }
+      : null;
+  }
+
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+
+  const action = cleanText(item.action || item.name || "");
+  if (!action) {
+    return null;
+  }
+
+  return {
+    action,
+    target: cleanText(item.target || item.agent_id || item.tool || "") || null,
+    status: cleanText(item.status || "") || null,
+  };
+}
+
+function normalizeRawEvidenceRecord(item = {}) {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+
+  const type = cleanText(item.type || "");
+  const source = cleanText(item.source || "");
+  const summary = cleanText(item.summary || "");
+  if (!type && !source && !summary) {
+    return null;
+  }
+
+  return {
+    type: type || null,
+    source: source || null,
+    summary: summary || null,
+    status: cleanText(item.status || "") || null,
+  };
+}
+
+function buildRawExecutionEvidence({
   reply = null,
   supportingOutputs = [],
   structuredResult = null,
   extraEvidence = [],
 } = {}) {
-  const evidence = [];
+  const evidence = Array.isArray(extraEvidence)
+    ? extraEvidence.map((item) => normalizeRawEvidenceRecord(item)).filter(Boolean)
+    : [];
   if (reply?.metadata?.retrieval_count > 0) {
     evidence.push({
       type: EVIDENCE_TYPES.tool_output,
       summary: `retrieved_sources:${reply.metadata.retrieval_count}`,
+      source: "reply_metadata",
     });
   }
   if (reply?.text) {
     evidence.push({
       type: EVIDENCE_TYPES.summary_generated,
       summary: "reply_text_present",
-    });
-    evidence.push({
-      type: EVIDENCE_TYPES.structured_output,
-      summary: "text_output_validated",
+      source: "reply_text",
     });
   }
-  if (Array.isArray(supportingOutputs) && supportingOutputs.length) {
+  if (structuredResult && typeof structuredResult === "object" && !Array.isArray(structuredResult)) {
     evidence.push({
-      type: EVIDENCE_TYPES.tool_output,
-      summary: `supporting_agents:${supportingOutputs.length}`,
+      type: EVIDENCE_TYPES.structured_output,
+      summary: "structured_result_present",
+      source: "structured_result",
     });
   }
   if (structuredResult?.knowledge_writeback?.proposal_ids?.length) {
     evidence.push({
       type: EVIDENCE_TYPES.knowledge_proposal_created,
       summary: `knowledge_proposals:${structuredResult.knowledge_writeback.proposal_ids.length}`,
+      source: "structured_result",
     });
   }
   if (Array.isArray(structuredResult?.action_items) && structuredResult.action_items.length) {
     evidence.push({
       type: EVIDENCE_TYPES.action_items_created,
       summary: `action_items:${structuredResult.action_items.length}`,
+      source: "structured_result",
     });
   }
-  return [...evidence, ...(Array.isArray(extraEvidence) ? extraEvidence : [])];
+  if (Array.isArray(supportingOutputs) && supportingOutputs.length) {
+    evidence.push({
+      source: "supporting_outputs",
+      summary: `supporting_agents:${supportingOutputs.length}`,
+    });
+  }
+  return evidence;
+}
+
+export function buildExecutionJournal({
+  classifiedIntent = "",
+  selectedAction = "",
+  dispatchedActions = [],
+  reply = null,
+  supportingOutputs = [],
+  structuredResult = null,
+  extraEvidence = [],
+  fallbackUsed = false,
+  toolRequired = false,
+  verifierVerdict = null,
+  syntheticAgentHint = null,
+  expectedOutputSchema = null,
+} = {}) {
+  return {
+    classified_intent: cleanText(classifiedIntent || ""),
+    selected_action: cleanText(selectedAction || ""),
+    dispatched_actions: (Array.isArray(dispatchedActions) ? dispatchedActions : [])
+      .map((item) => normalizeDispatchedActionRecord(item))
+      .filter(Boolean),
+    raw_evidence: buildRawExecutionEvidence({
+      reply,
+      supportingOutputs,
+      structuredResult,
+      extraEvidence,
+    }),
+    fallback_used: fallbackUsed === true,
+    tool_required: toolRequired === true,
+    verifier_verdict: verifierVerdict && typeof verifierVerdict === "object"
+      ? {
+          pass: verifierVerdict.pass === true,
+          issues: Array.isArray(verifierVerdict.issues) ? verifierVerdict.issues : [],
+          execution_policy_state: cleanText(verifierVerdict.execution_policy_state || ""),
+          execution_policy_reason: cleanText(verifierVerdict.execution_policy_reason || ""),
+        }
+      : null,
+    synthetic_agent_hint:
+      syntheticAgentHint && typeof syntheticAgentHint === "object"
+        ? {
+            agent: cleanText(syntheticAgentHint.agent || ""),
+            action: cleanText(syntheticAgentHint.action || ""),
+            status: cleanText(syntheticAgentHint.status || ""),
+          }
+        : null,
+    reply_text: cleanText(reply?.text || ""),
+    structured_result: structuredResult,
+    expected_output_schema: expectedOutputSchema,
+  };
+}
+
+function withVerifierVerdict(executionJournal = null, verifierVerdict = null) {
+  return {
+    ...executionJournal,
+    verifier_verdict: verifierVerdict && typeof verifierVerdict === "object"
+      ? {
+          pass: verifierVerdict.pass === true,
+          issues: Array.isArray(verifierVerdict.issues) ? verifierVerdict.issues : [],
+          execution_policy_state: cleanText(verifierVerdict.execution_policy_state || ""),
+          execution_policy_reason: cleanText(verifierVerdict.execution_policy_reason || ""),
+        }
+      : null,
+  };
+}
+
+export function buildExecutionEvidence({
+  executionJournal = null,
+} = {}) {
+  const rawEvidence = Array.isArray(executionJournal?.raw_evidence)
+    ? executionJournal.raw_evidence
+    : [];
+  return rawEvidence
+    .map((item) => normalizeRawEvidenceRecord(item))
+    .filter((item) => item?.type && VALID_EVIDENCE_TYPES.has(item.type))
+    .map((item) => ({
+      type: item.type,
+      summary: item.summary || item.type,
+      status: item.status || "present",
+    }));
 }
 
 async function applyLifecycle(task, nextState, reason) {
@@ -104,6 +243,20 @@ async function syncTaskStatus(task, status) {
 }
 
 export function resolveVerificationOutcome(verification = {}) {
+  if (verification?.execution_policy_state === "failed") {
+    return {
+      nextState: "failed",
+      nextStatus: "failed",
+      reason: verification.execution_policy_reason || "verification_failed",
+    };
+  }
+  if (verification?.execution_policy_state === "blocked") {
+    return {
+      nextState: "blocked",
+      nextStatus: "blocked",
+      reason: verification.execution_policy_reason || "verification_failed",
+    };
+  }
   if (verification?.pass) {
     return {
       nextState: "completed",
@@ -145,10 +298,24 @@ export async function finalizeWorkflowVerificationGate({
   }
 
   let current = await applyLifecycle(task, "verifying", "workflow returned output");
-  const evidence = buildExecutionEvidence({
+  const executionJournal = buildExecutionJournal({
+    classifiedIntent: taskType,
+    selectedAction: cleanText(task?.execution_journal?.selected_action || ""),
+    dispatchedActions: task?.execution_journal?.dispatched_actions || [],
     reply: replyText ? { text: replyText } : null,
+    supportingOutputs: [],
     structuredResult,
     extraEvidence,
+    fallbackUsed: task?.execution_journal?.fallback_used === true,
+    toolRequired: task?.execution_journal?.tool_required === true,
+    syntheticAgentHint: task?.execution_journal?.synthetic_agent_hint || null,
+    expectedOutputSchema,
+  });
+  const evidence = buildExecutionEvidence({
+    executionJournal,
+  });
+  current = await updateExecutiveTask(task.id, {
+    execution_journal: executionJournal,
   });
 
   for (const item of evidence) {
@@ -157,10 +324,10 @@ export async function finalizeWorkflowVerificationGate({
 
   const verification = verifyTaskCompletion({
     taskType,
-    replyText,
-    evidence,
-    structuredResult,
-    expectedOutputSchema,
+    executionJournal,
+  });
+  current = await updateExecutiveTask(task.id, {
+    execution_journal: withVerifierVerdict(executionJournal, verification),
   });
   current = await appendExecutiveTaskVerification(task.id, verification);
 
@@ -192,11 +359,25 @@ export async function finalizeExecutiveTaskTurn({
   }
 
   let current = await applyLifecycle(task, "verifying", "executor returned output");
-  const evidence = buildExecutionEvidence({
+  const toolRequired = (Array.isArray(task?.work_plan) ? task.work_plan : []).some((item) => item?.tool_required === true);
+  const executionJournal = buildExecutionJournal({
+    classifiedIntent: current?.task_type || task.task_type,
+    selectedAction: cleanText(routing?.action || ""),
+    dispatchedActions: routing?.dispatched_actions || [],
     reply,
     supportingOutputs,
     structuredResult,
     extraEvidence,
+    fallbackUsed: routing?.fallback_used === true,
+    toolRequired,
+    syntheticAgentHint: routing?.synthetic_agent_hint || null,
+    expectedOutputSchema: { text: "string" },
+  });
+  const evidence = buildExecutionEvidence({
+    executionJournal,
+  });
+  current = await updateExecutiveTask(task.id, {
+    execution_journal: executionJournal,
   });
   for (const item of evidence) {
     current = await appendExecutiveTaskEvidence(task.id, item);
@@ -204,10 +385,10 @@ export async function finalizeExecutiveTaskTurn({
 
   const verification = verifyTaskCompletion({
     taskType: current?.task_type || task.task_type,
-    replyText: reply?.text || "",
-    evidence,
-    structuredResult,
-    expectedOutputSchema: { text: "string" },
+    executionJournal,
+  });
+  current = await updateExecutiveTask(task.id, {
+    execution_journal: withVerifierVerdict(executionJournal, verification),
   });
   current = await appendExecutiveTaskVerification(task.id, verification);
 

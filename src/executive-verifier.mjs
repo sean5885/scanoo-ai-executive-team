@@ -55,26 +55,89 @@ function validateBasicSections(text = "", keywords = []) {
   return keywords.every((keyword) => normalized.includes(keyword));
 }
 
+function buildExecutionJournal({
+  executionJournal = null,
+  replyText = "",
+  evidence = [],
+  structuredResult = null,
+  expectedOutputSchema = null,
+} = {}) {
+  if (executionJournal && typeof executionJournal === "object") {
+    return {
+      classified_intent: cleanText(executionJournal.classified_intent || ""),
+      selected_action: cleanText(executionJournal.selected_action || ""),
+      dispatched_actions: Array.isArray(executionJournal.dispatched_actions)
+        ? executionJournal.dispatched_actions
+        : [],
+      raw_evidence: Array.isArray(executionJournal.raw_evidence)
+        ? executionJournal.raw_evidence
+        : [],
+      fallback_used: executionJournal.fallback_used === true,
+      tool_required: executionJournal.tool_required === true,
+      synthetic_agent_hint: executionJournal.synthetic_agent_hint && typeof executionJournal.synthetic_agent_hint === "object"
+        ? executionJournal.synthetic_agent_hint
+        : null,
+      reply_text: cleanText(
+        executionJournal.reply_text
+        || executionJournal.reply?.text
+        || replyText,
+      ),
+      structured_result:
+        executionJournal.structured_result !== undefined
+          ? executionJournal.structured_result
+          : structuredResult,
+      expected_output_schema:
+        executionJournal.expected_output_schema !== undefined
+          ? executionJournal.expected_output_schema
+          : expectedOutputSchema,
+    };
+  }
+
+  return {
+    classified_intent: "",
+    selected_action: "",
+    dispatched_actions: [],
+    raw_evidence: Array.isArray(evidence) ? evidence : [],
+    fallback_used: false,
+    tool_required: false,
+    synthetic_agent_hint: null,
+    reply_text: cleanText(replyText),
+    structured_result: structuredResult,
+    expected_output_schema: expectedOutputSchema,
+  };
+}
+
 export function verifyTaskCompletion({
   taskType = "search",
   replyText = "",
   evidence = [],
   structuredResult = null,
   expectedOutputSchema = null,
+  executionJournal = null,
 } = {}) {
   const checklist = VERIFICATION_CHECKLISTS[taskType] || VERIFICATION_CHECKLISTS.search;
-  const evidenceSet = evidenceTypeSet(evidence);
+  const journal = buildExecutionJournal({
+    executionJournal,
+    replyText,
+    evidence,
+    structuredResult,
+    expectedOutputSchema,
+  });
+  const evidenceSet = evidenceTypeSet(journal.raw_evidence);
   const issues = [];
-  const normalizedReply = cleanText(replyText);
+  const normalizedReply = cleanText(journal.reply_text);
+  const normalizedStructuredResult = journal.structured_result;
+  const normalizedExpectedOutputSchema = journal.expected_output_schema;
+  const dispatchedActions = Array.isArray(journal.dispatched_actions) ? journal.dispatched_actions : [];
+  const fallbackUsed = journal.fallback_used === true;
+  const toolRequired = journal.tool_required === true;
 
-  if (!normalizedReply && !structuredResult) {
+  if (!normalizedReply && !normalizedStructuredResult) {
     issues.push("empty_output");
   }
 
-  if (expectedOutputSchema && typeof expectedOutputSchema === "object" && !normalizedReply && !structuredResult) {
+  if (normalizedExpectedOutputSchema && typeof normalizedExpectedOutputSchema === "object" && !normalizedReply && !normalizedStructuredResult) {
     issues.push("schema_invalid");
-  } else if (expectedOutputSchema) {
-    evidenceSet.add(EVIDENCE_TYPES.structured_output);
   }
 
   const result = {
@@ -86,8 +149,23 @@ export function verifyTaskCompletion({
     fake_completion: false,
     overclaim: false,
     partial_completion: false,
+    execution_policy_state: "clear",
+    execution_policy_reason: "",
     pass: false,
   };
+
+  if (toolRequired && dispatchedActions.length === 0) {
+    issues.push("tool_dispatch_missing");
+    result.required_evidence_present = false;
+    result.execution_policy_state = fallbackUsed ? "blocked" : "failed";
+    result.execution_policy_reason = fallbackUsed
+      ? "tool_required_fallback_without_dispatch"
+      : "tool_required_no_dispatch";
+  } else if (toolRequired && fallbackUsed) {
+    issues.push("tool_required_fallback_blocked");
+    result.execution_policy_state = "blocked";
+    result.execution_policy_reason = "tool_required_fallback_used";
+  }
 
   if (taskType === "summarize" && !evidenceSet.has(EVIDENCE_TYPES.summary_generated)) {
     issues.push("insufficient_evidence");
@@ -102,10 +180,10 @@ export function verifyTaskCompletion({
   }
 
   if (taskType === "meeting_processing") {
-    const actionItems = Array.isArray(structuredResult?.action_items) ? structuredResult.action_items : [];
-    const decisions = Array.isArray(structuredResult?.decisions) ? structuredResult.decisions : [];
-    const knowledgeWriteback = structuredResult?.knowledge_writeback;
-    if (!structuredResult?.summary) {
+    const actionItems = Array.isArray(normalizedStructuredResult?.action_items) ? normalizedStructuredResult.action_items : [];
+    const decisions = Array.isArray(normalizedStructuredResult?.decisions) ? normalizedStructuredResult.decisions : [];
+    const knowledgeWriteback = normalizedStructuredResult?.knowledge_writeback;
+    if (!normalizedStructuredResult?.summary) {
       issues.push("missing_summary");
     }
     if (!decisions.length) {
@@ -118,7 +196,7 @@ export function verifyTaskCompletion({
       issues.push("missing_owner");
       result.partial_completion = true;
     }
-    if (countMissingDeadlines(actionItems) > 0 && !(structuredResult?.open_questions || []).length) {
+    if (countMissingDeadlines(actionItems) > 0 && !(normalizedStructuredResult?.open_questions || []).length) {
       issues.push("missing_deadline");
       result.partial_completion = true;
     }
@@ -139,14 +217,14 @@ export function verifyTaskCompletion({
   }
 
   if (taskType === "doc_rewrite") {
-    const patchPlan = Array.isArray(structuredResult?.patch_plan) ? structuredResult.patch_plan : [];
+    const patchPlan = Array.isArray(normalizedStructuredResult?.patch_plan) ? normalizedStructuredResult.patch_plan : [];
     const hasDiff = patchPlan.length > 0
-      || (Array.isArray(structuredResult?.before_excerpt) && Array.isArray(structuredResult?.after_excerpt))
-      || (cleanText(structuredResult?.before_excerpt) && cleanText(structuredResult?.after_excerpt));
+      || (Array.isArray(normalizedStructuredResult?.before_excerpt) && Array.isArray(normalizedStructuredResult?.after_excerpt))
+      || (cleanText(normalizedStructuredResult?.before_excerpt) && cleanText(normalizedStructuredResult?.after_excerpt));
     if (!hasDiff) {
       issues.push("missing_rewrite_diff");
     }
-    if (structuredResult?.structure_preserved !== true) {
+    if (normalizedStructuredResult?.structure_preserved !== true) {
       issues.push("structure_broken");
       result.partial_completion = true;
     }
@@ -157,13 +235,13 @@ export function verifyTaskCompletion({
   }
 
   if (taskType === "cloud_doc") {
-    if (!cleanText(structuredResult?.scope_key)) {
+    if (!cleanText(normalizedStructuredResult?.scope_key)) {
       issues.push("missing_scope");
     }
-    const hasApplyResult = structuredResult?.apply_result && typeof structuredResult.apply_result === "object";
-    const hasPreviewPlan = structuredResult?.preview_plan
-      && Array.isArray(structuredResult.preview_plan.moves)
-      && Array.isArray(structuredResult.preview_plan.target_folders);
+    const hasApplyResult = normalizedStructuredResult?.apply_result && typeof normalizedStructuredResult.apply_result === "object";
+    const hasPreviewPlan = normalizedStructuredResult?.preview_plan
+      && Array.isArray(normalizedStructuredResult.preview_plan.moves)
+      && Array.isArray(normalizedStructuredResult.preview_plan.target_folders);
     if (!hasPreviewPlan) {
       issues.push("missing_preview_plan");
     }
@@ -171,7 +249,7 @@ export function verifyTaskCompletion({
       issues.push("preview_is_not_completion");
     }
     const hasSkippedOrConflictArrays =
-      Array.isArray(structuredResult?.skipped_items) || Array.isArray(structuredResult?.conflict_items);
+      Array.isArray(normalizedStructuredResult?.skipped_items) || Array.isArray(normalizedStructuredResult?.conflict_items);
     if (!hasSkippedOrConflictArrays) {
       issues.push("missing_skipped_or_conflict_items");
     }
@@ -196,7 +274,7 @@ export function verifyTaskCompletion({
   }
 
   if (taskType === "task_assignment") {
-    const actionItems = Array.isArray(structuredResult?.action_items) ? structuredResult.action_items : [];
+    const actionItems = Array.isArray(normalizedStructuredResult?.action_items) ? normalizedStructuredResult.action_items : [];
     if (!evidenceSet.has(EVIDENCE_TYPES.action_items_created)) {
       issues.push("insufficient_evidence");
       result.required_evidence_present = false;
@@ -220,7 +298,7 @@ export function verifyTaskCompletion({
     issues.push("overclaim");
   }
 
-  result.pass = issues.length === 0;
+  result.pass = issues.length === 0 && result.execution_policy_state === "clear";
   return result;
 }
 

@@ -48,3 +48,70 @@ test("verifier passes when summary has evidence and structured result", () => {
 
   assert.equal(result.pass, true);
 });
+
+test("reply text alone cannot satisfy verifier for tool-backed search", () => {
+  const result = verifyTaskCompletion({
+    taskType: "search",
+    executionJournal: {
+      classified_intent: "search",
+      selected_action: "search_company_brain_docs",
+      dispatched_actions: [{ action: "search_company_brain_docs", status: "attempted" }],
+      raw_evidence: [
+        { type: EVIDENCE_TYPES.summary_generated, summary: "reply_text_present", source: "reply_text" },
+      ],
+      fallback_used: false,
+      tool_required: false,
+      reply_text: "我已經整理好了。",
+    },
+  });
+
+  assert.equal(result.pass, false);
+  assert.equal(result.required_evidence_present, false);
+  assert.match(result.issues.join(" "), /insufficient_evidence/);
+});
+
+test("supporting outputs cannot satisfy verifier as tool evidence", () => {
+  const result = verifyTaskCompletion({
+    taskType: "search",
+    executionJournal: {
+      classified_intent: "search",
+      selected_action: "search_company_brain_docs",
+      dispatched_actions: [{ action: "search_company_brain_docs", status: "attempted" }],
+      raw_evidence: [
+        { type: EVIDENCE_TYPES.summary_generated, summary: "reply_text_present", source: "reply_text" },
+        { source: "supporting_outputs", summary: "supporting_agents:2" },
+      ],
+      fallback_used: false,
+      tool_required: false,
+    },
+  });
+
+  assert.equal(result.pass, false);
+  assert.equal(result.required_evidence_present, false);
+  assert.match(result.issues.join(" "), /insufficient_evidence/);
+});
+
+test("synthetic agent hint cannot count as execution evidence", () => {
+  const result = verifyTaskCompletion({
+    taskType: "search",
+    executionJournal: {
+      classified_intent: "search",
+      selected_action: "search_company_brain_docs",
+      dispatched_actions: [{ action: "search_company_brain_docs", status: "attempted" }],
+      raw_evidence: [
+        { type: EVIDENCE_TYPES.summary_generated, summary: "reply_text_present", source: "reply_text" },
+      ],
+      fallback_used: false,
+      tool_required: false,
+      synthetic_agent_hint: {
+        agent: "doc_agent",
+        action: "doc_answer",
+        status: "ok",
+      },
+    },
+  });
+
+  assert.equal(result.pass, false);
+  assert.equal(result.required_evidence_present, false);
+  assert.match(result.issues.join(" "), /insufficient_evidence/);
+});

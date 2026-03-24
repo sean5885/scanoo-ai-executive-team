@@ -205,6 +205,12 @@ In that checklist view, each pending item should keep only:
 
 Document name resolution in that checklist view should prefer:
 
+- `source_title`
+- `source_meta_json.title`
+- `source_meta_json.node_title`
+- `source_meta_json.document_title`
+- `source_meta_json.file_name`
+- `source_meta_json.name`
 - `title`
 - `node_title`
 - `document_title`

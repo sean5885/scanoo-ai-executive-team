@@ -479,6 +479,47 @@ function isSafeExecutiveBriefLine(text = "") {
   return !classifyExecutiveReplyBoundary(text).rejected;
 }
 
+function normalizeDispatchedActions(actions = []) {
+  return (Array.isArray(actions) ? actions : [])
+    .map((item) => {
+      if (typeof item === "string") {
+        const action = cleanText(item);
+        return action
+          ? {
+              action,
+              target: null,
+              status: null,
+            }
+          : null;
+      }
+
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+
+      const action = cleanText(item.action || item.name || "");
+      if (!action) {
+        return null;
+      }
+
+      return {
+        action,
+        target: cleanText(item.target || item.tool || item.agent_id || "") || null,
+        status: cleanText(item.status || "") || null,
+      };
+    })
+    .filter(Boolean)
+    .slice(-12);
+}
+
+function extractReplyDispatchedActions(reply = null) {
+  return normalizeDispatchedActions(
+    reply?.metadata?.dispatched_actions
+    || reply?.dispatched_actions
+    || [],
+  );
+}
+
 export function normalizeWorkPlan(task = null, decision = null, requestText = "") {
   const primaryAgentId = resolveWorkPlanPrimaryAgentId(task, decision);
   const plan = Array.isArray(decision?.work_items) && decision.work_items.length
@@ -499,11 +540,14 @@ export function normalizeWorkPlan(task = null, decision = null, requestText = ""
       continue;
     }
     seen.add(agentId);
+    const selectedAction = cleanText(item?.selected_action || item?.action || "");
     const normalizedItem = {
       agent_id: agentId,
       task: work,
       role: cleanText(item?.role || (agentId === primaryAgentId ? "primary" : "supporting")),
       status: cleanText(item?.status || "pending") || "pending",
+      ...(selectedAction ? { selected_action: selectedAction } : {}),
+      ...(item?.tool_required === true ? { tool_required: true } : {}),
     };
     if (agentId === primaryAgentId) {
       mergeItem = normalizedItem;
@@ -1148,6 +1192,7 @@ export async function executeWorkItemsSequentially({
   const outputs = [];
   const failedAgents = [];
   const executedSpecialists = [];
+  const dispatchedActions = [];
 
   for (const item of specialistItems) {
     const agent = getRegisteredAgent(item.agent_id);
@@ -1173,6 +1218,7 @@ export async function executeWorkItemsSequentially({
         logger,
       });
       const summary = cleanText(reply?.text || "");
+      dispatchedActions.push(...extractReplyDispatchedActions(reply));
       const boundary = classifyExecutiveReplyBoundary(reply?.text || "");
       if (!summary || looksLikeAgentFailureText(summary) || boundary.rejected) {
         logger.warn("executive_specialist_output_rejected", {
@@ -1243,6 +1289,7 @@ export async function executeWorkItemsSequentially({
         supportingContext: buildSupportingContext(outputs),
         logger,
       });
+      dispatchedActions.push(...extractReplyDispatchedActions(candidateReply));
       const boundary = classifyExecutiveReplyBoundary(candidateReply?.text || "");
       if (!cleanText(candidateReply?.text || "") || looksLikeAgentFailureText(candidateReply?.text || "") || boundary.rejected) {
         throw new Error("merge_agent_failed");
@@ -1265,6 +1312,8 @@ export async function executeWorkItemsSequentially({
     task: mergeItem.task || requestText,
     role: "primary",
     status: reply?.text ? "completed" : "failed",
+    ...(mergeItem.selected_action ? { selected_action: mergeItem.selected_action } : {}),
+    ...(mergeItem.tool_required === true ? { tool_required: true } : {}),
   }]) {
     if (!item?.agent_id || finalSeen.has(item.agent_id)) {
       continue;
@@ -1283,6 +1332,7 @@ export async function executeWorkItemsSequentially({
     finalWorkPlan,
     failedAgents,
     fallbackUsed,
+    dispatchedActions: normalizeDispatchedActions(dispatchedActions),
   };
 }
 
@@ -1543,6 +1593,9 @@ export async function executeExecutiveTurn({
       primary_agent_id: task.primary_agent_id,
       action: decision.action,
       reason: decision.reason,
+      dispatched_actions: execution.dispatchedActions,
+      fallback_used: execution.fallbackUsed,
+      synthetic_agent_hint: null,
     },
   });
 

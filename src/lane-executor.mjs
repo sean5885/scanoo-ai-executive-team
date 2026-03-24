@@ -1049,6 +1049,7 @@ async function ensureMeetingCaptureDoc({ accessToken, tokenType = "user", sessio
     {
       tokenType,
       managerOpenId: session?.started_by_open_id || "",
+      source: "meeting_capture_session",
     },
   );
   attachMeetingCaptureDocument(session?.id, {

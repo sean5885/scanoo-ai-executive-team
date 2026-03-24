@@ -18,7 +18,7 @@ import {
   handlePlannerPendingItemAction,
   maybeRunPlannerTaskLifecycleFollowUp,
 } from "../src/planner-task-lifecycle-v1.mjs";
-import { upsertAccount, upsertDocument } from "../src/rag-repository.mjs";
+import { upsertAccount, upsertDocument, upsertSource } from "../src/rag-repository.mjs";
 import { setupPlannerTaskLifecycleTestHarness } from "./helpers/planner-task-lifecycle-harness.mjs";
 
 setupPlannerTaskLifecycleTestHarness();
@@ -216,6 +216,50 @@ test("review reply shows resolved cloud document names with concise pending chec
   assert.equal(reply.pending_items[0]?.actions?.[0]?.metadata?.action, "mark_resolved");
   assert.match(reply.pending_items[0]?.actions?.[0]?.metadata?.document_id || "", /^doc_/);
   assert.match(reply.pending_items[0]?.actions?.[0]?.metadata?.file_token || "", /^file_/);
+});
+
+test("review reply prefers source record cloud file name over inferred document title", async () => {
+  const account = upsertAccount({
+    open_id: `acct-review-source-title-open-${Date.now()}`,
+    name: "acct-review-source-title",
+  });
+  const source = upsertSource({
+    account_id: account.id,
+    source_type: "docx",
+    external_key: `drive:source-title-${Date.now()}`,
+    external_id: `source-title-${Date.now()}`,
+    title: "真實雲端文件名",
+    parent_path: "/shared/live",
+    meta_json: {
+      title: "真實雲端文件名",
+    },
+  });
+
+  upsertDocument({
+    account_id: account.id,
+    source_id: source.id,
+    source_type: "docx",
+    external_key: source.external_key,
+    external_id: source.external_id,
+    file_token: "file_source-title-demo",
+    document_id: "doc_source-title-demo",
+    title: "Planner Intent Demo",
+    raw_text: "manual workspace onboarding policy",
+    parent_path: "/shared/live",
+    meta_json: {
+      title: "Planner Intent Demo",
+    },
+    active: 1,
+  });
+
+  const reply = await buildCloudOrganizationReviewReplyCached({
+    accountId: account.id,
+    sessionKey: `session-source-title-${Date.now()}`,
+    forceReReview: false,
+  });
+
+  assert.match(reply.text, /文件名：真實雲端文件名/);
+  assert.doesNotMatch(reply.text, /文件名：Planner Intent Demo/);
 });
 
 test("generic review reply uses local fast summary instead of semantic rereview wording", async () => {

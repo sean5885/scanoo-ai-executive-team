@@ -41,6 +41,68 @@ function normalizeList(items = [], limit = 8) {
   return result;
 }
 
+function normalizeExecutionJournal(journal = {}) {
+  if (!journal || typeof journal !== "object") {
+    return null;
+  }
+
+  const rawEvidence = Array.isArray(journal.raw_evidence)
+    ? journal.raw_evidence
+        .map((item) => ({
+          type: normalizeText(item?.type),
+          source: normalizeText(item?.source),
+          summary: normalizeText(item?.summary),
+          status: normalizeText(item?.status || ""),
+        }))
+        .filter((item) => item.type || item.source || item.summary)
+        .slice(-24)
+    : [];
+  const dispatchedActions = Array.isArray(journal.dispatched_actions)
+    ? journal.dispatched_actions
+        .map((item) =>
+          typeof item === "string"
+            ? {
+                action: normalizeText(item),
+                target: "",
+                status: "",
+              }
+            : {
+                action: normalizeText(item?.action),
+                target: normalizeText(item?.target || ""),
+                status: normalizeText(item?.status || ""),
+              })
+        .filter((item) => item.action)
+        .slice(-12)
+    : [];
+  const verifierVerdict = journal.verifier_verdict && typeof journal.verifier_verdict === "object"
+    ? {
+        pass: journal.verifier_verdict.pass === true,
+        issues: normalizeList(journal.verifier_verdict.issues || [], 12),
+        execution_policy_state: normalizeText(journal.verifier_verdict.execution_policy_state || ""),
+        execution_policy_reason: normalizeText(journal.verifier_verdict.execution_policy_reason || ""),
+        at: journal.verifier_verdict.at || nowIso(),
+      }
+    : null;
+  const syntheticAgentHint = journal.synthetic_agent_hint && typeof journal.synthetic_agent_hint === "object"
+    ? {
+        agent: normalizeText(journal.synthetic_agent_hint.agent || ""),
+        action: normalizeText(journal.synthetic_agent_hint.action || ""),
+        status: normalizeText(journal.synthetic_agent_hint.status || ""),
+      }
+    : null;
+
+  return {
+    classified_intent: normalizeText(journal.classified_intent || ""),
+    selected_action: normalizeText(journal.selected_action || ""),
+    dispatched_actions: dispatchedActions,
+    raw_evidence: rawEvidence,
+    fallback_used: journal.fallback_used === true,
+    tool_required: journal.tool_required === true,
+    verifier_verdict: verifierVerdict,
+    synthetic_agent_hint: syntheticAgentHint,
+  };
+}
+
 function normalizeTask(task = {}) {
   return {
     id: normalizeText(task.id),
@@ -73,8 +135,10 @@ function normalizeTask(task = {}) {
           .map((item) => ({
             agent_id: normalizeText(item?.agent_id),
             task: normalizeText(item?.task),
+            selected_action: normalizeText(item?.selected_action || item?.action || ""),
             role: normalizeText(item?.role || ""),
             status: normalizeText(item?.status || "pending") || "pending",
+            tool_required: item?.tool_required === true,
           }))
           .filter((item) => item.agent_id && item.task)
           .slice(0, 3)
@@ -102,6 +166,8 @@ function normalizeTask(task = {}) {
             fake_completion: item?.fake_completion === true,
             overclaim: item?.overclaim === true,
             partial_completion: item?.partial_completion === true,
+            execution_policy_state: normalizeText(item?.execution_policy_state || ""),
+            execution_policy_reason: normalizeText(item?.execution_policy_reason || ""),
             at: item?.at || nowIso(),
           }))
           .slice(-12)
@@ -152,6 +218,7 @@ function normalizeTask(task = {}) {
       : [],
     turns: Array.isArray(task.turns) ? task.turns.slice(-12) : [],
     handoffs: Array.isArray(task.handoffs) ? task.handoffs.slice(-12) : [],
+    execution_journal: normalizeExecutionJournal(task.execution_journal),
     meta: task.meta && typeof task.meta === "object" ? { ...task.meta } : {},
     lifecycle_last_transition:
       task.lifecycle_last_transition && typeof task.lifecycle_last_transition === "object"
@@ -355,6 +422,10 @@ export async function updateExecutiveTask(taskId = "", patch = {}) {
       patch.handoffs == null
         ? current.handoffs
         : patch.handoffs,
+    execution_journal:
+      patch.execution_journal === undefined
+        ? current.execution_journal
+        : patch.execution_journal,
     meta: {
       ...current.meta,
       ...(patch.meta && typeof patch.meta === "object" ? patch.meta : {}),
@@ -454,6 +525,8 @@ export async function appendExecutiveTaskVerification(taskId = "", verification 
       fake_completion: verification.fake_completion === true,
       overclaim: verification.overclaim === true,
       partial_completion: verification.partial_completion === true,
+      execution_policy_state: normalizeText(verification.execution_policy_state || ""),
+      execution_policy_reason: normalizeText(verification.execution_policy_reason || ""),
       at: nowIso(),
     },
   ].slice(-12);

@@ -44,7 +44,7 @@ Current minimum runtime responsibilities already implemented there:
 - minimal retry policy
 - minimal input self-healing
 - planner stop boundary
-- bounded planner-side `agent_execution` derivation on planner output
+- bounded planner-side `synthetic_agent_hint` derivation on planner output
 
 This means `planner_agent` currently maps to a runtime module, not just a pure spec.
 
@@ -150,11 +150,12 @@ Boundary:
 `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` now consumes that helper in a bounded way:
 
 - `runPlannerToolFlow(...)` returns:
-  - `{ "selected_action": "string|null", "execution_result": "object|null", "agent_execution": "object", "trace_id": "string|null" }`
-- `agent_execution` prefers explicit `payload.lane` or `taskType`
+  - `{ "selected_action": "string|null", "execution_result": "object|null", "synthetic_agent_hint": "object", "trace_id": "string|null" }`
+- `synthetic_agent_hint` prefers explicit `payload.lane` or `taskType`
 - otherwise it only infers a small checked-in mapping from known planner actions/presets
 - the derived execution is then wrapped through `runAgentExecution(...)`, so current planner output can also carry deterministic placeholder `result` payloads for the checked-in lane/agent pairs
 - when no bounded mapping exists, output falls back to `fallback_agent` with `result.status = "fallback"`
+- this field is metadata only and must not be promoted into verifier/evidence as if a real tool or specialist execution had happened
 
 ## Input Shape
 
@@ -206,7 +207,7 @@ This path is bounded by the checked-in planner contract:
 - unmatched routing still fails closed internally as `ROUTING_NO_MATCH` instead of silently falling through selector/default-reply paths; the public `runPlannerToolFlow(...)` fallback surface normalizes that no-match case to `business_error` while preserving the internal routing reason in structured detail
 - `semantic_mismatch` on strict user-input planning now attempts one bounded reroute through `runPlannerToolFlow(...)` before surfacing a user-facing fallback
 - no heuristic or free-text fallback is used on this strict user-input planning path
-- bounded `agent_execution` lane inference now also keeps company-brain learning actions (`ingest_learning_doc`, `update_learning_state`) on the checked-in `doc` lane instead of falling through `fallback_agent`
+- bounded `synthetic_agent_hint` lane inference now also keeps company-brain learning actions (`ingest_learning_doc`, `update_learning_state`) on the checked-in `doc` lane instead of falling through `fallback_agent`
 
 ## Contract Consistency Check
 

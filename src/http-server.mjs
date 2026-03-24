@@ -147,6 +147,7 @@ import {
   listImprovementWorkflowProposals,
   resolveImprovementWorkflowProposal,
 } from "./executive-improvement-workflow.mjs";
+import { assertLarkWriteAllowed, planDocumentCreateGuard } from "./lark-write-guard.mjs";
 import {
   buildAgentLearningSummary,
   generateLearningLoopImprovementProposals,
@@ -980,6 +981,8 @@ function buildDocumentCreateInput(body = {}) {
     title: String(body.title || "").trim(),
     folderToken: String(body.folder_token || "").trim() || undefined,
     content: String(body.content || "").trim(),
+    source: String(body.source || "").trim(),
+    confirm: body.confirm === true,
   };
 }
 
@@ -2793,12 +2796,19 @@ async function handleDocumentRead(res, requestUrl, body) {
 }
 
 async function handleDocumentCreate(res, requestUrl, body, logger = noopHttpLogger) {
+  assertLarkWriteAllowed();
   const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
   if (!context) {
     return;
   }
 
-  const { title, folderToken, content } = buildDocumentCreateInput(body);
+  const {
+    title,
+    folderToken: requestedFolderToken,
+    content,
+    source,
+    confirm,
+  } = buildDocumentCreateInput(body);
 
   if (!title) {
     logger.warn("document_create_missing_title");
@@ -2806,10 +2816,40 @@ async function handleDocumentCreate(res, requestUrl, body, logger = noopHttpLogg
     return;
   }
 
+  const createGuard = planDocumentCreateGuard({
+    title,
+    source,
+    requestedFolderToken,
+    account: context.account,
+    requireConfirmation: true,
+    confirmed: confirm,
+  });
+  if (!createGuard.ok) {
+    logger.warn("document_create_guard_blocked", {
+      account_id: context.account.id,
+      tenant_key: context.account?.tenant_key || null,
+      error: createGuard.error,
+      requested_folder_token: createGuard.requested_folder_token,
+      resolved_folder_token: createGuard.resolved_folder_token,
+      demo_like: createGuard.classification?.demo_like === true,
+    });
+    respondDocumentWriteFailure(res, createGuard.statusCode, createGuard.error, {
+      message: createGuard.message,
+      requested_folder_token: createGuard.requested_folder_token,
+      resolved_folder_token: createGuard.resolved_folder_token,
+      demo_like: createGuard.classification?.demo_like === true,
+    });
+    return;
+  }
+  const folderToken = createGuard.resolved_folder_token || undefined;
+
   logger.info("document_create_started", {
     account_id: context.account.id,
     has_folder_token: Boolean(folderToken),
+    requested_folder_token: requestedFolderToken || null,
+    resolved_folder_token: folderToken || null,
     has_initial_content: Boolean(content),
+    demo_like: createGuard.classification?.demo_like === true,
   });
   let created;
   try {
@@ -2818,6 +2858,7 @@ async function handleDocumentCreate(res, requestUrl, body, logger = noopHttpLogg
       title,
       folderToken,
       "user",
+      { source: source || "api_doc_create" },
     );
   } catch (error) {
     await persistCreateFailedLifecycleRecord({
