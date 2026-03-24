@@ -4,6 +4,7 @@ node_modules/
 npm-debug.log*
 .logs/
 .tmp/
+tmp/
 *.swp
 *.swo
 .DS_Store
