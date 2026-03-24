@@ -55,7 +55,9 @@ import { executeAgent } from "./planner/agent-executor.mjs";
 import { runAgentExecution } from "./planner/agent-runtime.mjs";
 import {
   buildPlannerLifecycleUnfinishedItems,
+  getLatestPlannerTaskLifecycleSnapshot,
   getPlannerTaskDecisionContext,
+  handlePlannerPendingItemAction,
   maybeRunPlannerTaskLifecycleFollowUp,
   resetPlannerTaskLifecycleStore,
   syncPlannerActionLayerTaskLifecycle,
@@ -1541,6 +1543,75 @@ function buildPlannerAgentOutput({
       selectedAction,
     }),
     trace_id: traceId,
+  };
+}
+
+function attachPlannerPendingItems({
+  executionResult = null,
+  lifecycleSnapshot = null,
+} = {}) {
+  if (!executionResult || typeof executionResult !== "object") {
+    return executionResult;
+  }
+  const formattedOutput = executionResult?.formatted_output;
+  if (!formattedOutput || typeof formattedOutput !== "object") {
+    return executionResult;
+  }
+
+  const pendingItems = buildPlannerLifecycleUnfinishedItems(lifecycleSnapshot);
+  return {
+    ...executionResult,
+    formatted_output: {
+      ...formattedOutput,
+      pending_items: pendingItems,
+    },
+  };
+}
+
+function buildPlannerPendingItemActionResult({
+  actionResult = null,
+  task = null,
+  userIntent = "",
+} = {}) {
+  if (!actionResult || typeof actionResult !== "object") {
+    return actionResult;
+  }
+  const title = cleanText(task?.title) || "未命名 pending item";
+  const pendingItems = Array.isArray(actionResult?.data?.pending_items) ? actionResult.data.pending_items : [];
+  const summary = title
+    ? `已將「${title}」標記完成。`
+    : "已將這個 pending item 標記完成。";
+  return {
+    ...actionResult,
+    formatted_output: {
+      kind: "pending_item_action",
+      title,
+      doc_id: cleanText(task?.id) || null,
+      items: pendingItems
+        .map((item) => ({
+          title: cleanText(item?.label || ""),
+          doc_id: cleanText(item?.item_id || item?.id || "") || null,
+        }))
+        .filter((item) => item.title || item.doc_id)
+        .slice(0, 5),
+      match_reason: cleanText(userIntent) || null,
+      content_summary: summary,
+      found: true,
+      resolved_item: {
+        title,
+        item_id: cleanText(task?.id) || null,
+        status: cleanText(actionResult?.data?.status || "") || "resolved",
+      },
+      pending_items: pendingItems,
+      action_layer: {
+        summary,
+        next_actions: pendingItems.map((item) => cleanText(item?.label)).filter(Boolean).slice(0, 5),
+        owner: cleanText(task?.owner) || null,
+        deadline: cleanText(task?.deadline) || null,
+        risks: Array.isArray(task?.risks) ? task.risks : [],
+        status: cleanText(actionResult?.data?.status || "") || "resolved",
+      },
+    },
   };
 }
 
@@ -3165,7 +3236,12 @@ export async function runPlannerToolFlow({
       traceId: null,
       stopReason: "business_error",
     });
-  } else if (!taskLifecycleFollowUp?.execution_result && !getPlannerActionContract(selectionAction) && !getPlannerPreset(selectionAction)) {
+  } else if (
+    !taskLifecycleFollowUp?.execution_result
+    && selectionAction !== "mark_resolved"
+    && !getPlannerActionContract(selectionAction)
+    && !getPlannerPreset(selectionAction)
+  ) {
     executionResult = buildPlannerStoppedResult({
       action: selectionAction,
       error: INVALID_ACTION,
@@ -3180,6 +3256,27 @@ export async function runPlannerToolFlow({
   if (!executionResult && selection.selected_action) {
     if (taskLifecycleFollowUp?.execution_result) {
       executionResult = taskLifecycleFollowUp.execution_result;
+      traceId = executionResult?.trace_id || null;
+    } else if (selection.selected_action === "mark_resolved") {
+      const pendingItemAction = taskLifecycleFollowUp?.pending_item_action || null;
+      const actionResult = await handlePlannerPendingItemAction({
+        itemId: cleanText(pendingItemAction?.item_id || "") || "",
+        action: "mark_resolved",
+      });
+      if (actionResult?.ok === true) {
+        executionResult = buildPlannerPendingItemActionResult({
+          actionResult,
+          task: pendingItemAction?.task || null,
+          userIntent: agentInput.user_intent,
+        });
+      } else {
+        executionResult = buildPlannerStoppedResult({
+          action: selection.selected_action,
+          error: actionResult?.error || "business_error",
+          data: actionResult?.data || {},
+          traceId: null,
+        });
+      }
       traceId = executionResult?.trace_id || null;
     } else if (getPlannerPreset(selection.selected_action)) {
       maybeInvokePlannerHook(hooks, "onHandoff", {
@@ -3279,7 +3376,7 @@ export async function runPlannerToolFlow({
     },
   }));
 
-  if (!taskLifecycleFollowUp?.execution_result) {
+  if (!taskLifecycleFollowUp?.execution_result && selection.selected_action !== "mark_resolved") {
     syncPlannerFlowContext({
       flow: selectedFlow,
       selectedAction: selection.selected_action,
@@ -3288,7 +3385,7 @@ export async function runPlannerToolFlow({
     });
   }
 
-  if (!taskLifecycleFollowUp?.execution_result) {
+  if (!taskLifecycleFollowUp?.execution_result && selection.selected_action !== "mark_resolved") {
     lifecycleSnapshot = await syncPlannerActionLayerTaskLifecycle({
       flow: selectedFlow,
       context: selectedFlow?.readContext?.() || {},
@@ -3298,6 +3395,13 @@ export async function runPlannerToolFlow({
       traceId,
     });
   }
+  if (selection.selected_action === "mark_resolved") {
+    lifecycleSnapshot = await getLatestPlannerTaskLifecycleSnapshot();
+  }
+  executionResult = attachPlannerPendingItems({
+    executionResult,
+    lifecycleSnapshot,
+  });
 
   recordPlannerConversationExchange({
     userQuery: agentInput.user_intent,

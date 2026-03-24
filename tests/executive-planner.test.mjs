@@ -26,6 +26,7 @@ import {
   normalizeError,
 } from "../src/executive-planner.mjs";
 import { EXPLICIT_USER_AUTH_HEADERS } from "../src/explicit-user-auth.mjs";
+import { resetPlannerConversationMemory } from "../src/planner-conversation-memory.mjs";
 import {
   getLatestPlannerTaskLifecycleSnapshot,
   replacePlannerTaskLifecycleStoreForTests,
@@ -43,6 +44,7 @@ import { plannerOkrFlow } from "../src/planner-okr-flow.mjs";
 import { plannerRuntimeInfoFlow } from "../src/planner-runtime-info-flow.mjs";
 import { getPlannerFlowForAction, resolvePlannerFlowRoute } from "../src/planner-flow-runtime.mjs";
 import { route } from "../src/router.js";
+import { normalizeUserResponse, renderUserResponseText } from "../src/user-response-normalizer.mjs";
 import { setupPlannerTaskLifecycleTestHarness } from "./helpers/planner-task-lifecycle-harness.mjs";
 
 setupPlannerTaskLifecycleTestHarness();
@@ -3771,6 +3773,82 @@ test("follow-up turn can advance a single targeted task state by ordinal and lat
     status.execution_result?.formatted_output?.content_summary,
     "目前 task 狀態：planned 1 個、in_progress 0 個、blocked 1 個、done 1 個。",
   );
+});
+
+test("search/detail reply renders pending item actions and mark_resolved follow-up works end-to-end", async () => {
+  resetPlannerRuntimeContext();
+  resetPlannerConversationMemory();
+
+  const seed = await runPlannerToolFlow({
+    userIntent: "整理 BD 文件",
+    payload: { limit: 5 },
+    logger: console,
+    async presetRunner() {
+      return {
+        ok: true,
+        preset: "search_and_detail_doc",
+        steps: [
+          { action: "search_company_brain_docs" },
+          { action: "get_company_brain_doc_detail" },
+        ],
+        results: [
+          {
+            ok: true,
+            action: "company_brain_docs_search",
+            items: [{ doc_id: "bd_mark_resolved_e2e", title: "BD Playbook" }],
+            trace_id: "trace_bd_mark_resolved_search",
+          },
+          {
+            ok: true,
+            action: "company_brain_doc_detail",
+            item: { doc_id: "bd_mark_resolved_e2e", title: "BD Playbook" },
+            trace_id: "trace_bd_mark_resolved_detail",
+          },
+        ],
+        trace_id: "trace_bd_mark_resolved_detail",
+        stopped: false,
+        stopped_at_step: null,
+      };
+    },
+    async contentReader() {
+      return {
+        title: "BD Playbook",
+        content: "負責人：Bob；截止：下週一；風險：客戶回覆延遲。",
+      };
+    },
+  });
+
+  const seedText = renderUserResponseText(normalizeUserResponse({
+    plannerResult: seed,
+    plannerEnvelope: buildPlannedUserInputEnvelope(seed),
+  }));
+  assert.match(seedText, /操作：標記完成/);
+
+  const resolved = await runPlannerToolFlow({
+    userIntent: "第一個標記完成",
+    payload: {},
+    logger: console,
+    async dispatcher() {
+      throw new Error("should_not_dispatch_doc_tool");
+    },
+  });
+
+  assert.equal(resolved.selected_action, "mark_resolved");
+  assert.equal(resolved.routing_reason, "task_lifecycle_pending_item_action");
+  assert.equal(resolved.execution_result?.action, "mark_resolved");
+  assert.equal(resolved.execution_result?.data?.status, "resolved");
+  assert.equal(resolved.execution_result?.data?.changed, true);
+
+  const resolvedText = renderUserResponseText(normalizeUserResponse({
+    plannerResult: resolved,
+    plannerEnvelope: buildPlannedUserInputEnvelope(resolved),
+  }));
+  assert.match(resolvedText, /已將「確認 BD後續跟進事項」標記完成/);
+  assert.doesNotMatch(resolvedText, /沒有找到可以安全執行/);
+
+  const snapshot = await getLatestPlannerTaskLifecycleSnapshot();
+  assert.equal(snapshot?.tasks?.[0]?.pending_item_status, "resolved");
+  assert.match(snapshot?.tasks?.[0]?.pending_item_resolved_at || "", /\d{4}-\d{2}-\d{2}T/);
 });
 
 test("ambiguous '這個' follow-up returns candidate tasks without updating state", async () => {

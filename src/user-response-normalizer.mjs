@@ -291,12 +291,31 @@ function buildPlannerNextSteps({
   ]).slice(0, MAX_USER_FACING_NEXT_STEPS);
 }
 
+function buildPendingItemRenderLines(items = []) {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+  return normalizeUserResponseList(items.map((item) => {
+    const label = normalizeText(item?.label || "");
+    if (!label) {
+      return null;
+    }
+    const actionLabels = normalizeUserResponseList(
+      (Array.isArray(item?.actions) ? item.actions : []).map((action) => `操作：${normalizeText(action?.label || "")}`),
+    );
+    return actionLabels.length > 0
+      ? `${label}｜${actionLabels.join("、")}`
+      : label;
+  })).slice(0, 5);
+}
+
 export function buildPlannerSuccessUserResponse(envelope = {}) {
   const execution = envelope?.execution_result && typeof envelope.execution_result === "object"
     ? envelope.execution_result
     : {};
   const kind = normalizeText(execution.kind || "");
   const documentItems = normalizePlannerDocumentItems(execution.items);
+  const pendingItemLines = buildPendingItemRenderLines(execution.pending_items);
   const evidenceSourceLines = normalizeUserResponseList(
     buildPlannerDocumentSourceGroups(documentItems).map(buildPlannerDocumentSourceLine),
   );
@@ -373,7 +392,10 @@ export function buildPlannerSuccessUserResponse(envelope = {}) {
             .join(" ")
         : buildPlannerEvidenceGapAnswer({ title, docId }),
       sources: normalizeUserResponseList(
-        buildPlannerDocumentSourceGroups(effectiveSources).map(buildPlannerDocumentSourceLine),
+        [
+          ...buildPlannerDocumentSourceGroups(effectiveSources).map(buildPlannerDocumentSourceLine),
+          ...pendingItemLines,
+        ],
       ),
       limitations: buildPlannerNextSteps({
         envelope,
@@ -422,6 +444,30 @@ export function buildPlannerSuccessUserResponse(envelope = {}) {
           : "你可以換一個更明確的文件名稱、主題或角色範圍再試一次。",
         "如果你預期它應該存在，也可以先同步最新雲文件後再試。",
         ],
+      }),
+    };
+  }
+
+  if (kind === "task_lifecycle" || kind === "task_lifecycle_update" || kind === "task_lifecycle_candidates" || kind === "pending_item_action") {
+    const resolvedItemTitle = normalizeText(execution?.resolved_item?.title || "");
+    const resolvedItemStatus = normalizeText(execution?.resolved_item?.status || "");
+    return {
+      ok: true,
+      answer: normalizeText(execution.content_summary || "")
+        || (resolvedItemTitle ? `已更新「${resolvedItemTitle}」。` : "已更新 pending item。"),
+      sources: normalizeUserResponseList([
+        resolvedItemTitle
+          ? `已更新：${resolvedItemTitle}${resolvedItemStatus ? `｜狀態：${resolvedItemStatus}` : ""}`
+          : null,
+        ...pendingItemLines,
+      ]),
+      limitations: buildPlannerNextSteps({
+        envelope,
+        execution,
+        hasEvidence: true,
+        fallbacks: pendingItemLines.length > 0
+          ? ["如果你要，我可以繼續幫你標記下一個 pending item。"]
+          : ["目前這批 pending item 已沒有新的待處理項目。"],
       }),
     };
   }

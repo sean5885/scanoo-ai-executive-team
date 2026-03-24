@@ -1177,6 +1177,17 @@ function classifyTaskLifecycleIntent(userIntent = "") {
     stopLabels: ["結果", "result"],
   });
 
+  if (/(標記完成|标记完成|標成完成|标成完成|mark resolved|mark_resolved)/i.test(text)) {
+    return {
+      selected_action: "mark_resolved",
+      query_type: "pending_item_action",
+      target_state: null,
+      progress_status: null,
+      note: null,
+      result: null,
+    };
+  }
+
   if (/完成一半|做完一半|已做一半|一半了|half done/i.test(text)) {
     return {
       selected_action: "update_task_lifecycle_v1",
@@ -1702,6 +1713,94 @@ export async function maybeRunPlannerTaskLifecycleFollowUp({
     : targetResolution.mode === "single"
       ? targetResolution.tasks
       : targetResolution.candidates;
+
+  if (intent.selected_action === "mark_resolved") {
+    const pendingTasks = snapshot.tasks.filter((task) => cleanText(task?.pending_item_status || "pending") !== "resolved");
+    const pendingTargetResolution = targetResolution.mode === "all"
+      ? pendingTasks.length === 1
+        ? {
+            mode: "single",
+            reason: "single_pending_item",
+            tasks: [pendingTasks[0]],
+            candidates: [],
+          }
+        : {
+            mode: "ambiguous",
+            reason: "pending_item_target_required",
+            tasks: [],
+            candidates: pendingTasks.slice(0, 5),
+          }
+      : targetResolution;
+    const pendingTargetTasks = pendingTargetResolution.mode === "single"
+      ? pendingTargetResolution.tasks
+      : pendingTargetResolution.candidates;
+
+    if (pendingTargetResolution.mode !== "single") {
+      const traceId = buildTaskLifecycleTraceId(scopeKey, userIntent, "mark_resolved");
+      const executionResult = {
+        ok: true,
+        action: "mark_resolved",
+        data: {
+          scope: snapshot.scope,
+          tasks: pendingTargetTasks,
+          query_type: "pending_item_action",
+          target_state: null,
+          updated_count: 0,
+          target_mode: pendingTargetResolution.mode,
+          target_reason: pendingTargetResolution.reason,
+        },
+        formatted_output: buildTaskLifecycleFormattedOutput({
+          scope: snapshot.scope,
+          tasks: pendingTargetTasks,
+          userIntent,
+          queryType: "pending_item_action",
+          targetState: null,
+          updatedCount: 0,
+          targetMode: pendingTargetResolution.mode,
+          targetReason: pendingTargetResolution.reason,
+        }),
+        trace_id: traceId,
+      };
+
+      logger?.debug?.("planner_task_lifecycle_v1", {
+        stage: "planner_task_lifecycle_v1",
+        event_type: "pending_item_action_candidates",
+        query_type: "pending_item_action",
+        target_state: null,
+        updated_count: 0,
+        scope_key: snapshot.scope?.scope_key || null,
+        source_doc_id: snapshot.scope?.source_doc_id || null,
+        task_count: pendingTargetTasks.length,
+        target_mode: pendingTargetResolution.mode,
+        target_reason: pendingTargetResolution.reason,
+        trace_id: traceId,
+      });
+
+      return {
+        selected_action: "mark_resolved",
+        reason: "命中 planner pending item action，但目前無法唯一定位 item。",
+        routing_reason: "task_lifecycle_pending_item_action",
+        execution_result: executionResult,
+        snapshot,
+      };
+    }
+
+    const targetTask = pendingTargetTasks[0] || null;
+    if (!targetTask?.id) {
+      return null;
+    }
+
+    return {
+      selected_action: "mark_resolved",
+      reason: "命中 planner pending item action。",
+      routing_reason: "task_lifecycle_pending_item_action",
+      pending_item_action: {
+        item_id: cleanText(targetTask.id),
+        task: cloneValue(targetTask),
+      },
+      snapshot,
+    };
+  }
 
   let updatedCount = 0;
   let mutated = false;
