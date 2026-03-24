@@ -105,9 +105,13 @@ import {
   applyApprovedCompanyBrainKnowledgeAction,
   approvalTransitionCompanyBrainDocAction,
   checkCompanyBrainConflictAction,
+  getCompanyBrainApprovalState,
   reviewCompanyBrainDocAction,
   stageCompanyBrainReviewState,
 } from "./company-brain-review.mjs";
+import {
+  evaluateCompanyBrainApplyGate,
+} from "./company-brain-lifecycle-contract.mjs";
 import { resolveCompanyBrainWriteIntake } from "./company-brain-write-intake.mjs";
 import { applyRewrittenDocument, rewriteDocumentFromComments } from "./doc-comment-rewrite.mjs";
 import {
@@ -157,9 +161,6 @@ import {
 import { decideWriteGuard } from "./write-guard.mjs";
 import {
   buildCreateDocWritePolicy,
-  buildDocumentCommentRewriteApplyWritePolicy,
-  buildDriveOrganizeApplyWritePolicy,
-  buildWikiOrganizeApplyWritePolicy,
 } from "./write-policy-contract.mjs";
 import {
   evaluateWritePolicyEnforcement,
@@ -168,6 +169,15 @@ import {
   buildAgentLearningSummary,
   generateLearningLoopImprovementProposals,
 } from "./agent-learning-loop.mjs";
+import {
+  admitMutation,
+  buildCompanyBrainApplyCanonicalRequest,
+  buildCreateDocCanonicalRequest,
+  buildDocumentCommentRewriteApplyCanonicalRequest,
+  buildDriveOrganizeApplyCanonicalRequest,
+  buildMeetingConfirmWriteCanonicalRequest,
+  buildWikiOrganizeApplyCanonicalRequest,
+} from "./mutation-admission.mjs";
 import {
   ensureDocRewriteWorkflowTask,
   ensureCloudDocWorkflowTask,
@@ -1861,6 +1871,78 @@ function getWriteGuardStatusCode(guard = {}) {
   return 409;
 }
 
+function buildLegacyWriteGuardFromAdmission(admission = {}) {
+  const guardResult =
+    admission?.guard_result && typeof admission.guard_result === "object" && !Array.isArray(admission.guard_result)
+      ? admission.guard_result
+      : {};
+
+  return {
+    decision: cleanText(guardResult.decision) || (admission?.allowed === true ? "allow" : "deny"),
+    allow: admission?.allowed === true,
+    external_write: admission?.policy_snapshot?.external_write === true,
+    require_confirmation: cleanText(guardResult.reason) === "confirmation_required",
+    reason: cleanText(guardResult.reason) || cleanText(admission?.reason) || null,
+    error_code: cleanText(guardResult.error_code) || null,
+    policy_enforcement:
+      guardResult.policy_enforcement && typeof guardResult.policy_enforcement === "object" && !Array.isArray(guardResult.policy_enforcement)
+        ? { ...guardResult.policy_enforcement }
+        : null,
+  };
+}
+
+function logMutationAdmissionRoute(logger, event, {
+  accountId = null,
+  canonicalRequest = null,
+  admission = null,
+} = {}) {
+  if (!logger || typeof logger.info !== "function") {
+    return;
+  }
+
+  const payload = {
+    stage: "mutation_admission",
+    account_id: cleanText(accountId) || null,
+    pathname: cleanText(canonicalRequest?.context?.pathname) || null,
+    action_type: cleanText(canonicalRequest?.action_type) || null,
+    resource_type: cleanText(canonicalRequest?.resource_type) || null,
+  };
+  if (cleanText(canonicalRequest?.resource_id)) {
+    payload.resource_id = cleanText(canonicalRequest.resource_id);
+  }
+  if (admission && typeof admission === "object") {
+    payload.allowed = admission.allowed === true;
+    payload.reason = cleanText(admission.reason) || null;
+  }
+
+  logger.info(event, payload);
+}
+
+function admitRouteMutation({
+  logger = noopHttpLogger,
+  traceId = null,
+  accountId = null,
+  canonicalRequest = null,
+  operation = null,
+} = {}) {
+  logMutationAdmissionRoute(logger, "mutation_admission_started", {
+    accountId,
+    canonicalRequest,
+  });
+  const admission = admitMutation({
+    canonicalRequest,
+    logger,
+    traceId,
+  });
+  logMutationAdmissionRoute(logger, "mutation_admission_decision", {
+    accountId,
+    canonicalRequest,
+    admission,
+  });
+  void operation;
+  return admission;
+}
+
 function buildCloudDocOrganizeResponse({
   context,
   apply,
@@ -2678,34 +2760,28 @@ async function handleDriveOrganize(res, requestUrl, body, apply, logger = noopHt
       );
       return;
     }
-    const writePolicy = buildDriveOrganizeApplyWritePolicy({
-      scopeKey,
-      folderToken,
-      idempotencyKey: getRequestIdempotencyKey(body),
-    });
-    const writeGuard = decideWriteGuard({
-      externalWrite: true,
-      confirmed: apply === true,
-      verifierCompleted: hasCloudDocPreviewPlan(applyingTask?.meta?.preview_plan),
+    const canonicalRequest = buildDriveOrganizeApplyCanonicalRequest({
       pathname: "/api/drive/organize/apply",
-      writePolicy,
-      reviewRequirementActive: true,
-      scopeKey,
-      idempotencyKey: getRequestIdempotencyKey(body),
-      logger,
-      owner: "cloud_doc_workflow",
-      workflow: "cloud_doc",
-      operation: "drive_organize_apply",
-      details: {
-        account_id: context.account.id,
-        folder_token: folderToken,
-        scope_key: scopeKey,
-        scope_type: "drive_folder",
-        write_policy: writePolicy,
+      method: "POST",
+      folderToken,
+      context: {
+        scopeKey,
+        idempotencyKey: getRequestIdempotencyKey(body),
+        confirmed: apply === true,
+        verifierCompleted: hasCloudDocPreviewPlan(applyingTask?.meta?.preview_plan),
+        reviewRequiredActive: true,
       },
+      originalRequest: body,
     });
-    if (!writeGuard.allow) {
-      respondCloudDocPreviewRequired(res, buildWriteGuardMessage(writeGuard));
+    const admission = admitRouteMutation({
+      logger,
+      traceId: res.__trace_id || null,
+      accountId: context.account.id,
+      canonicalRequest,
+      operation: "drive_organize_apply",
+    });
+    if (!admission.allowed) {
+      respondCloudDocPreviewRequired(res, buildWriteGuardMessage(buildLegacyWriteGuardFromAdmission(admission)));
       return;
     }
   }
@@ -2890,37 +2966,28 @@ async function handleWikiOrganize(res, requestUrl, body, apply, logger = noopHtt
       );
       return;
     }
-    const writePolicy = buildWikiOrganizeApplyWritePolicy({
-      scopeKey,
-      spaceId: options.spaceId,
-      parentNodeToken: options.parentNodeToken,
-      spaceName: options.spaceName,
-      idempotencyKey: getRequestIdempotencyKey(body),
-    });
-    const writeGuard = decideWriteGuard({
-      externalWrite: true,
-      confirmed: apply === true,
-      verifierCompleted: hasCloudDocPreviewPlan(applyingTask?.meta?.preview_plan),
+    const canonicalRequest = buildWikiOrganizeApplyCanonicalRequest({
       pathname: "/api/wiki/organize/apply",
-      writePolicy,
-      reviewRequirementActive: true,
-      scopeKey,
-      idempotencyKey: getRequestIdempotencyKey(body),
-      logger,
-      owner: "cloud_doc_workflow",
-      workflow: "cloud_doc",
-      operation: "wiki_organize_apply",
-      details: {
-        account_id: context.account.id,
-        space_id: options.spaceId || null,
-        parent_node_token: options.parentNodeToken || null,
-        scope_key: scopeKey,
-        scope_type: "wiki_scope",
-        write_policy: writePolicy,
+      method: "POST",
+      resourceId: options.spaceId || options.parentNodeToken || options.spaceName || "",
+      context: {
+        scopeKey,
+        idempotencyKey: getRequestIdempotencyKey(body),
+        confirmed: apply === true,
+        verifierCompleted: hasCloudDocPreviewPlan(applyingTask?.meta?.preview_plan),
+        reviewRequiredActive: true,
       },
+      originalRequest: body,
     });
-    if (!writeGuard.allow) {
-      respondCloudDocPreviewRequired(res, buildWriteGuardMessage(writeGuard));
+    const admission = admitRouteMutation({
+      logger,
+      traceId: res.__trace_id || null,
+      accountId: context.account.id,
+      canonicalRequest,
+      operation: "wiki_organize_apply",
+    });
+    if (!admission.allowed) {
+      respondCloudDocPreviewRequired(res, buildWriteGuardMessage(buildLegacyWriteGuardFromAdmission(admission)));
       return;
     }
   }
@@ -3030,9 +3097,11 @@ async function handleDocumentCreate(
     type,
     confirm,
   } = buildDocumentCreateInput(body);
+  const pathname = requireEntryGovernance ? "/agent/docs/create" : "/api/doc/create";
+  const idempotencyKey = getRequestIdempotencyKey(body);
   const writePolicy = buildCreateDocWritePolicy({
     folderToken: requestedFolderToken,
-    idempotencyKey: getRequestIdempotencyKey(body),
+    idempotencyKey,
   });
 
   if (!title) {
@@ -3095,17 +3164,58 @@ async function handleDocumentCreate(
   const folderToken = createGuard.resolved_folder_token || undefined;
   const resolvedWritePolicy = buildCreateDocWritePolicy({
     folderToken,
-    idempotencyKey: getRequestIdempotencyKey(body),
+    idempotencyKey,
   });
+  const canonicalRequest = buildCreateDocCanonicalRequest({
+    pathname,
+    method: "POST",
+    folderToken,
+    context: {
+      idempotencyKey,
+      confirmed: confirm === true,
+      verifierCompleted: true,
+      reviewRequiredActive: false,
+    },
+    originalRequest: body,
+  });
+  const admission = admitRouteMutation({
+    logger,
+    traceId: res.__trace_id || null,
+    accountId: context.account.id,
+    canonicalRequest,
+    operation: "document_comment_rewrite_apply",
+  });
+  if (!admission.allowed) {
+    const legacyWriteGuard = buildLegacyWriteGuardFromAdmission(admission);
+    if (legacyWriteGuard.reason === "policy_enforcement_blocked") {
+      logger.warn("document_create_blocked_by_write_policy_enforcement", {
+        account_id: context.account.id,
+        write_policy: resolvedWritePolicy,
+        write_policy_enforcement: legacyWriteGuard.policy_enforcement,
+      });
+      respondDocumentWriteFailure(res, 409, "write_policy_enforcement_blocked", {
+        message: legacyWriteGuard.policy_enforcement?.message || buildWriteGuardMessage(legacyWriteGuard),
+        violation_types: Array.isArray(legacyWriteGuard.policy_enforcement?.violation_types)
+          ? legacyWriteGuard.policy_enforcement.violation_types
+          : [],
+      });
+      return;
+    }
+    respondDocumentWriteFailure(res, getWriteGuardStatusCode(legacyWriteGuard), "write_guard_denied", {
+      message: buildWriteGuardMessage(legacyWriteGuard),
+      write_guard: legacyWriteGuard,
+    });
+    return;
+  }
   const writePolicyEnforcement = evaluateWritePolicyEnforcement({
     action: "create_doc",
-    pathname: requireEntryGovernance ? "/agent/docs/create" : "/api/doc/create",
+    pathname,
     writePolicy: resolvedWritePolicy,
     confirmed: confirm === true,
     reviewCompleted: true,
     reviewRequirementActive: false,
     scopeKey: resolvedWritePolicy.scope_key,
-    idempotencyKey: getRequestIdempotencyKey(body),
+    idempotencyKey,
   });
   if (writePolicyEnforcement.should_block) {
     logger.warn("document_create_blocked_by_write_policy_enforcement", {
@@ -3707,6 +3817,54 @@ async function handleAgentApplyApprovedCompanyBrainKnowledge(res, requestUrl, bo
   }
 
   const docId = parseCompanyBrainDocId(requestUrl, body);
+  const approvalState = getCompanyBrainApprovalState({
+    accountId: context.account.id,
+    docId,
+  }) || {
+    review_state: null,
+    approval: null,
+  };
+  const applyGate = evaluateCompanyBrainApplyGate({
+    approvalState,
+  });
+  if (applyGate.can_apply === true) {
+    const canonicalRequest = buildCompanyBrainApplyCanonicalRequest({
+      pathname: "/agent/company-brain/docs/:doc_id/apply",
+      method: "POST",
+      docId,
+      context: {
+        idempotencyKey: getRequestIdempotencyKey(body),
+        externalWrite: false,
+        confirmed: true,
+        verifierCompleted: true,
+        reviewRequiredActive: true,
+      },
+      originalRequest: body,
+    });
+    const admission = admitRouteMutation({
+      logger,
+      traceId: res.__trace_id || null,
+      accountId: context.account.id,
+      canonicalRequest,
+    });
+    if (!admission.allowed) {
+      const blockedResult = {
+        success: false,
+        data: {
+          doc_id: docId,
+          review_state: approvalState.review_state,
+          approval_state: approvalState,
+        },
+        error: admission.guard_result?.error_code || "approval_apply_failed",
+      };
+      jsonResponse(
+        res,
+        400,
+        buildCompanyBrainAgentResult(res, "apply_company_brain_approved_knowledge", blockedResult),
+      );
+      return;
+    }
+  }
   const result = applyApprovedCompanyBrainKnowledgeAction({
     accountId: context.account.id,
     docId,
@@ -4296,8 +4454,8 @@ async function handleDocumentComments(res, requestUrl, body) {
   });
 }
 
-async function handleDocumentRewriteFromComments(res, requestUrl, body) {
-  const context = await requireUserContext(res, getAccountId(requestUrl, body));
+async function handleDocumentRewriteFromComments(res, requestUrl, body, logger = noopHttpLogger) {
+  const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
   if (!context) {
     return;
   }
@@ -4431,41 +4589,35 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body) {
     return;
   }
 
-  const writeGuard = decideWriteGuard({
-    externalWrite: true,
-    confirmed: confirm === true && Boolean(confirmationId),
-    verifierCompleted:
-      Array.isArray(pendingConfirmation.patch_plan)
-        && typeof pendingConfirmation.rewritten_content === "string"
-        && pendingConfirmation.rewritten_content.trim().length > 0,
+  const canonicalRequest = buildDocumentCommentRewriteApplyCanonicalRequest({
     pathname: "/api/doc/rewrite-from-comments",
-    writePolicy: buildDocumentCommentRewriteApplyWritePolicy({
-      documentId,
+    method: "POST",
+    documentId,
+    context: {
       idempotencyKey: getRequestIdempotencyKey(body),
-    }),
-    scopeKey: cleanText(documentId) ? `doc-rewrite:${cleanText(documentId)}` : null,
-    idempotencyKey: getRequestIdempotencyKey(body),
-    logger,
-    owner: "doc_rewrite_workflow",
-    workflow: "doc_rewrite",
-    operation: "document_comment_rewrite_apply",
-    details: {
-      account_id: context.account.id,
-      confirmation_id: confirmationId || null,
-      document_id: documentId,
-      write_policy: buildDocumentCommentRewriteApplyWritePolicy({
-        documentId,
-        idempotencyKey: getRequestIdempotencyKey(body),
-      }),
+      confirmed: confirm === true && Boolean(confirmationId),
+      verifierCompleted:
+        Array.isArray(pendingConfirmation.patch_plan)
+          && typeof pendingConfirmation.rewritten_content === "string"
+          && pendingConfirmation.rewritten_content.trim().length > 0,
+      reviewRequiredActive: false,
     },
+    originalRequest: body,
   });
-  if (!writeGuard.allow) {
+  const admission = admitRouteMutation({
+    logger,
+    traceId: res.__trace_id || null,
+    accountId: context.account.id,
+    canonicalRequest,
+  });
+  if (!admission.allowed) {
+    const legacyWriteGuard = buildLegacyWriteGuardFromAdmission(admission);
     respondDocumentRewriteFailure(
       res,
-      getWriteGuardStatusCode(writeGuard),
+      getWriteGuardStatusCode(legacyWriteGuard),
       "write_guard_denied",
-      buildWriteGuardMessage(writeGuard),
-      { write_guard: writeGuard },
+      buildWriteGuardMessage(legacyWriteGuard),
+      { write_guard: legacyWriteGuard },
     );
     return;
   }
@@ -4623,6 +4775,50 @@ async function handleMeetingConfirm(res, requestUrl, body, logger = noopHttpLogg
     return;
   }
 
+  const pendingConfirmation = await peekMeetingWriteConfirmation({
+    confirmationId,
+    accountId: context.account.id,
+  });
+  if (pendingConfirmation) {
+    const canonicalRequest = buildMeetingConfirmWriteCanonicalRequest({
+      pathname: "/api/meeting/confirm",
+      method: "POST",
+      confirmationId,
+      targetDocumentId: pendingConfirmation.target_document_id,
+      context: {
+        idempotencyKey: getRequestIdempotencyKey(body),
+        confirmed: true,
+        verifierCompleted: Boolean(
+          normalizeText(pendingConfirmation.summary_content)
+          && normalizeText(pendingConfirmation.doc_entry_content),
+        ),
+        reviewRequiredActive: false,
+      },
+      originalRequest: body,
+    });
+    const admission = admitRouteMutation({
+      logger,
+      traceId: res.__trace_id || null,
+      accountId: context.account.id,
+      canonicalRequest,
+    });
+    if (!admission.allowed) {
+      const legacyWriteGuard = buildLegacyWriteGuardFromAdmission(admission);
+      logger.warn("meeting_confirm_blocked_by_write_guard", {
+        account_id: context.account.id,
+        confirmation_id: confirmationId,
+        write_guard: legacyWriteGuard,
+      });
+      jsonResponse(res, getWriteGuardStatusCode(legacyWriteGuard), {
+        ok: false,
+        error: "write_guard_denied",
+        message: buildWriteGuardMessage(legacyWriteGuard),
+        write_guard: legacyWriteGuard,
+      });
+      return;
+    }
+  }
+
   logger.info("meeting_confirm_started", {
     account_id: context.account.id,
     confirmation_id: confirmationId,
@@ -4674,7 +4870,7 @@ async function handleMeetingConfirm(res, requestUrl, body, logger = noopHttpLogg
   });
 }
 
-async function handleMeetingConfirmPage(res, requestUrl, body) {
+async function handleMeetingConfirmPage(res, requestUrl, body, logger = noopHttpLogger) {
   const accountId = getAccountId(requestUrl, body);
   const context = await resolveAccountContext(accountId);
   if (!context?.token?.access_token) {
@@ -4693,6 +4889,46 @@ async function handleMeetingConfirmPage(res, requestUrl, body) {
   if (!confirmationId) {
     htmlResponse(res, 400, "<h1>缺少 confirmation_id</h1>");
     return;
+  }
+
+  const pendingConfirmation = await peekMeetingWriteConfirmation({
+    confirmationId,
+    accountId: context.account.id,
+  });
+  if (pendingConfirmation) {
+    const canonicalRequest = buildMeetingConfirmWriteCanonicalRequest({
+      pathname: "/meeting/confirm",
+      method: "GET",
+      confirmationId,
+      targetDocumentId: pendingConfirmation.target_document_id,
+      context: {
+        confirmed: true,
+        verifierCompleted: Boolean(
+          normalizeText(pendingConfirmation.summary_content)
+          && normalizeText(pendingConfirmation.doc_entry_content),
+        ),
+        reviewRequiredActive: false,
+      },
+      originalRequest: {
+        account_id: context.account.id,
+        confirmation_id: confirmationId,
+      },
+    });
+    const admission = admitRouteMutation({
+      logger,
+      traceId: res.__trace_id || null,
+      accountId: context.account.id,
+      canonicalRequest,
+    });
+    if (!admission.allowed) {
+      const legacyWriteGuard = buildLegacyWriteGuardFromAdmission(admission);
+      htmlResponse(
+        res,
+        getWriteGuardStatusCode(legacyWriteGuard),
+        `<h1>外部寫入被阻擋</h1><p>${buildWriteGuardMessage(legacyWriteGuard)}</p>`,
+      );
+      return;
+    }
   }
 
   const result = await meetingCoordinator.confirmMeetingWrite({
@@ -6771,7 +7007,9 @@ export function startHttpServer({
       }
 
       if (requestUrl.pathname === "/api/doc/rewrite-from-comments" && req.method === "POST") {
-        await handleDocumentRewriteFromComments(res, requestUrl, body);
+        await runHttpRoute(requestLogger, "doc_rewrite_from_comments", (routeLogger) =>
+          handleDocumentRewriteFromComments(res, requestUrl, body, routeLogger)
+        );
         return;
       }
 
@@ -6800,7 +7038,9 @@ export function startHttpServer({
       }
 
       if (requestUrl.pathname === "/meeting/confirm" && req.method === "GET") {
-        await handleMeetingConfirmPage(res, requestUrl, body);
+        await runHttpRoute(requestLogger, "meeting_confirm_page", (routeLogger) =>
+          handleMeetingConfirmPage(res, requestUrl, body, routeLogger)
+        );
         return;
       }
 
