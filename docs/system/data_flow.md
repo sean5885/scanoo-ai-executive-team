@@ -68,7 +68,7 @@ This request-flow mirror now reflects the current fail-closed routing baseline.
 9. cloud-document organization follow-ups use a split path:
    - generic "what still needs second confirmation?" turns reuse a session-scoped cached review summary
    - explicit reassignment / re-review turns rerun the slower MiniMax second-pass semantic review
-   - those review/rereview/why replies can now append one local action line `操作：標記完成` per pending file while keeping the existing locator fields unchanged
+   - those review/rereview/why replies now render as `結論 / 摘要 / 待處理清單`; each pending file keeps only `文件名 / 狀態 / 簡短原因 / 操作`, and the visible operation hint is phrased like `回覆「第一個標記完成」`
    - the same pending files are synced into an isolated `planner-task-lifecycle-v1` scope for that chat, so explicit follow-ups like `第一個標記完成` reuse the existing `mark_resolved` handler instead of inventing a second mutation path
 
 ### External Skill Governance Flow
@@ -243,7 +243,7 @@ This request-flow mirror now reflects the current fail-closed routing baseline.
    - DM requests like "把我的雲文檔做分類 指派給對應的角色" now enter a chat-scoped cloud-doc organization workflow mode inside the personal lane
    - while that mode is active, follow-up turns about learning, unrelated docs, and reassignment stay on the same organization preview path instead of falling back to meeting/private-chat boilerplate
    - a second-pass role-review branch can now take those follow-up turns and run a small MiniMax semantic re-review only on ambiguous documents, returning reassignment candidates and manual-review candidates with concrete document titles plus locator fields instead of only top-level category counts
-   - those pending rows now also carry machine-readable `mark_resolved` metadata and a visible `操作：標記完成` line, while the lane keeps the original `文件 / 狀態 / 原因 / 路徑` render intact
+   - those pending rows now also carry machine-readable `mark_resolved` metadata, but the visible reply downgrades locator fields and shows a shorter checklist-style pending-item render instead of the earlier single-line `文件 / 狀態 / 原因 / 路徑` dump
    - if the user says the second-pass output is hard to understand, that same workflow now stays in mode and returns a plain-language version instead of leaking internal classifier reasons such as `local_rule_fallback`
    - follow-up questions like `這些待人工確認的文件，為什麼不能直接分配？` now force the cloud-doc organization workflow back into a reason-explainer branch, even if the earlier workflow mode was not successfully resumed
    - once the cloud-doc organization workflow mode is active, generic follow-ups like `還有什麼內容需要我二次確認` now stay in second-pass review instead of dropping back to the first-pass category overview

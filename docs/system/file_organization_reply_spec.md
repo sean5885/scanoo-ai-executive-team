@@ -190,11 +190,36 @@ Minimum per-item fields:
 - reason for the pending state
 - one explicit action line when an item is locally actionable, for example `操作：標記完成`
 
+For cloud-doc follow-up replies that are focused on pending-item cleanup, the visible text should be reorganized into:
+
+- `結論`
+- `摘要`
+- `待處理清單`
+
+In that checklist view, each pending item should keep only:
+
+- `文件名`
+- `狀態`
+- `簡短原因`
+- `操作`
+
+Document name resolution in that checklist view should prefer:
+
+- `title`
+- `node_title`
+- `document_title`
+- `file_name`
+- `name`
+
+Only when none of the above are available should the renderer fall back to identifiers such as `document_id` or `file_token`.
+
 Recommended locator fields when available:
 
 - `parent_path`
 - `document_id` / `file_token` / `node_id`
 - source type
+
+Those locator fields should be downgraded behind the checklist view or kept in machine-readable metadata; they should not be flattened into the same visible one-line pending-item summary.
 
 When the reply exposes a local pending-item action, the machine-readable metadata should keep the action payload separate from the visible text and include at least:
 
