@@ -17,6 +17,7 @@
     "eval:long-task": "node scripts/evaluate-long-task-governance.mjs",
     "routing:closed-loop": "node scripts/routing-eval-closed-loop.mjs",
     "routing:diagnostics": "node scripts/routing-diagnostics.mjs",
+    "control:diagnostics": "node scripts/control-diagnostics.mjs",
     "daily-status": "node scripts/daily-status.mjs",
     "self-check": "node scripts/self-check.mjs",
     "release-check": "node scripts/release-check.mjs",

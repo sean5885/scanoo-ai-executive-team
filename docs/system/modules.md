@@ -816,6 +816,22 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 - Core path:
   - yes for workflow write safety
 
+### 10E. Control Diagnostics
+
+- Location:
+  - `/Users/seanhan/Documents/Playground/src/control-diagnostics.mjs`
+  - `/Users/seanhan/Documents/Playground/src/control-diagnostics-history.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/control-diagnostics.mjs`
+- Responsibility:
+  - provide one read-only daily-entry diagnostics surface over control / routing / write
+  - emit fixed `control_summary / routing_summary / write_summary`
+  - reuse checked-in deterministic control/write scenarios instead of probing live runtime writes
+  - reuse archived routing diagnostics snapshots instead of rerunning routing eval
+  - archive the full JSON report into `.tmp/control-diagnostics-history/`
+  - support minimal snapshot compare without changing runtime behavior
+- Core path:
+  - yes for control/write/routing observability and traceback
+
 ### 11. OpenClaw Plugin
 
 - Location:

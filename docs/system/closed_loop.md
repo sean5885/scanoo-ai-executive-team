@@ -156,6 +156,14 @@ Closed-loop layer 對齊的 evidence 類型為：
 - `API_call_success`
 - `DB_write_confirmed`
 
+## Phase-3 Control Diagnostics
+
+- `npm run control:diagnostics` 是 Phase 3 的 read-only daily-entry，固定輸出 `control_summary`、`routing_summary`、`write_summary`。
+- control line 直接驗證 `src/control-kernel.mjs` 的 deterministic decision surface 與 `src/lane-executor.mjs` 的 integration callsite。
+- write line 直接驗證 `src/write-guard.mjs` / `src/lark-write-guard.mjs` 的 deterministic guard 行為，並掃描既有 guarded runtime surface。
+- routing line 只重用 `.tmp/routing-diagnostics-history/` 的 latest/previous archived evidence；若 snapshot 缺失，必須 fail-soft 回報 unavailable，而不是假裝 routing 正常。
+- 這條路徑支援 `--json`、snapshot history、`--compare-previous`、`--compare-snapshot <run-id|path>`，但不重跑 runtime、不 auto-fix，也不改 gate。
+
 ## Improvement Approval Workflow
 
 - `auto_apply` proposals are persisted and marked applied immediately
