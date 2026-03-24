@@ -162,12 +162,18 @@ export function getCompanyBrainLifecycleRouteContract(pathname = "") {
   if (!normalizedPathname) {
     return null;
   }
-  const matched = COMPANY_BRAIN_ROUTE_CONTRACT_FIXTURES.find((entry) => entry.pathname === normalizedPathname);
+  const matched = COMPANY_BRAIN_ROUTE_CONTRACT_FIXTURES.find((entry) => entry.pathname === normalizedPathname)
+    || (/^\/agent\/company-brain\/docs\/[^/]+\/apply$/.test(normalizedPathname)
+      ? COMPANY_BRAIN_ROUTE_CONTRACT_FIXTURES.find((entry) => entry.pathname === "/agent/company-brain/docs/test-doc/apply")
+      : null)
+    || (/^\/agent\/company-brain\/approved\/docs\/[^/]+$/.test(normalizedPathname)
+      ? COMPANY_BRAIN_ROUTE_CONTRACT_FIXTURES.find((entry) => entry.pathname === "/agent/company-brain/approved/docs/test-doc")
+      : null);
   if (!matched) {
     return null;
   }
   return {
-    pathname: matched.pathname,
+    pathname: normalizedPathname,
     action: matched.action,
     governance: {
       ...matched.governance,

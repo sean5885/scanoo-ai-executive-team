@@ -129,6 +129,13 @@ Grounded as a direct agent-facing decision transition plus a separate apply step
 - verified mirror ingest is still not formal approval
 - approval decision and apply are now explicit, separate runtime steps
 - approved knowledge can now be queried without reading mirror-only rows
+- checked-in governance can now classify lifecycle as:
+  - `mirror_only`
+  - `pending_review`
+  - `conflict_detected`
+  - `approved`
+  - `rejected`
+  - `applied`
 
 ### what it is not
 
@@ -183,3 +190,7 @@ Main gaps between spec and current runtime:
   - verified mirror ingest
   - explicit review/conflict/approval/apply slice
   - separate approved-only read boundary
+- checked-in governance coverage now also expects:
+  - route-contract coverage for review/conflict/approval/apply plus approved-only reads
+  - self-check apply-gate fixtures that fail when review is missing, conflict is unresolved, or approval is missing
+  - release-check surfacing lifecycle governance drift as a blocking check

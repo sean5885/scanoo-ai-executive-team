@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import db from "../src/db.mjs";
 import { ingestLearningDocAction } from "../src/company-brain-learning.mjs";
 import {
+  approvalTransitionCompanyBrainDocAction,
+  applyApprovedCompanyBrainKnowledgeAction,
   getCompanyBrainApprovalState,
   promoteApprovedCompanyBrainKnowledge,
   resolveCompanyBrainReviewDecision,
@@ -240,6 +242,80 @@ test("conflict candidates stay in review and cannot enter approved knowledge dir
     });
     assert.equal(formalSearch.success, true);
     assert.equal(formalSearch.data.total, 0);
+  } finally {
+    cleanupAccountFixtures(accountId);
+  }
+});
+
+test("apply stays blocked when formal admission has not entered review yet", () => {
+  const accountId = `acct_company_brain_no_review_${Date.now()}`;
+  const docId = "doc_company_brain_no_review_1";
+  ensureTestAccount(accountId);
+  insertDocFixture({
+    accountId,
+    docId,
+    title: "Policy Draft Without Review",
+    rawText: "# Policy Draft Without Review\nNo formal review recorded yet.",
+  });
+
+  try {
+    const applied = applyApprovedCompanyBrainKnowledgeAction({
+      accountId,
+      docId,
+      actor: "reviewer@test",
+    });
+
+    assert.equal(applied.success, false);
+    assert.equal(applied.error, "approval_required");
+    assert.equal(applied.data.review_state, null);
+    assert.equal(applied.data.approval_state.review_state, null);
+    assert.equal(applied.data.approval_state.approval, null);
+  } finally {
+    cleanupAccountFixtures(accountId);
+  }
+});
+
+test("apply stays blocked when approval decision is rejected", () => {
+  const accountId = `acct_company_brain_rejected_${Date.now()}`;
+  const docId = "doc_company_brain_rejected_1";
+  ensureTestAccount(accountId);
+  insertDocFixture({
+    accountId,
+    docId,
+    title: "Rejected Knowledge Draft",
+    rawText: "# Rejected Knowledge Draft\nShould not enter approved memory.",
+  });
+
+  try {
+    const staged = stageCompanyBrainReviewState({
+      accountId,
+      docId,
+      sourceStage: "mirror",
+      proposedAction: "approval_transition",
+      reviewStatus: "pending_review",
+    });
+    assert.equal(staged.success, true);
+
+    const rejected = approvalTransitionCompanyBrainDocAction({
+      accountId,
+      docId,
+      decision: "reject",
+      actor: "reviewer@test",
+      notes: "Rejected after review.",
+    });
+    assert.equal(rejected.success, true);
+    assert.equal(rejected.data.review_state.status, "rejected");
+
+    const applied = applyApprovedCompanyBrainKnowledgeAction({
+      accountId,
+      docId,
+      actor: "reviewer@test",
+    });
+    assert.equal(applied.success, false);
+    assert.equal(applied.error, "approval_required");
+    assert.equal(applied.data.review_state.status, "rejected");
+    assert.equal(applied.data.approval_state.review_state.status, "rejected");
+    assert.equal(applied.data.approval_state.approval, null);
   } finally {
     cleanupAccountFixtures(accountId);
   }

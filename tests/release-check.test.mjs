@@ -121,12 +121,69 @@ test("release-check compare summary only reports status and field changes", () =
   });
 });
 
+test("release-check report blocks on company-brain lifecycle governance failures", () => {
+  const report = buildReleaseCheckReport({
+    selfCheckResult: {
+      ok: false,
+      system_summary: {
+        core_checks: "pass",
+        company_brain_status: "fail",
+      },
+      company_brain_summary: {
+        status: "fail",
+        failing_routes: [
+          {
+            pathname: "/agent/company-brain/docs/test-doc/apply",
+          },
+        ],
+        failing_cases: [
+          {
+            case_id: "missing_review",
+          },
+        ],
+      },
+      control_summary: {
+        status: "pass",
+      },
+      routing_summary: {
+        status: "pass",
+        compare: {
+          has_obvious_regression: false,
+        },
+      },
+      planner_summary: {
+        gate: "pass",
+        compare: {
+          has_obvious_regression: false,
+        },
+      },
+    },
+    drilldown: {
+      failing_area: "doc",
+      representative_fail_case: ["company_brain_apply_gate:missing_review"],
+      drilldown_source: ["release-check triage"],
+    },
+  });
+
+  assert.deepEqual(report, {
+    overall_status: "fail",
+    blocking_checks: ["company_brain_lifecycle_failure"],
+    doc_boundary_regression: false,
+    suggested_next_step: "先看 company-brain lifecycle contract：src/company-brain-lifecycle-contract.mjs、src/http-route-contracts.mjs、src/system-self-check.mjs；不要改 runtime write path。",
+    action_hint: "inspect company-brain lifecycle contract and apply gate",
+    failing_area: "doc",
+    representative_fail_case: ["company_brain_apply_gate:missing_review"],
+    drilldown_source: ["release-check triage"],
+  });
+});
+
 test("release-check report prioritizes routing before planner when both block", () => {
   const report = buildReleaseCheckReport({
     selfCheckResult: {
       ok: false,
       system_summary: {
         core_checks: "pass",
+        company_brain_status: "pass",
       },
       routing_summary: {
         status: "degrade",
@@ -177,6 +234,7 @@ test("release-check report classifies system regression and points to base modul
       ok: false,
       system_summary: {
         core_checks: "fail",
+        company_brain_status: "pass",
       },
       routing_summary: {
         status: "pass",
@@ -225,6 +283,7 @@ test("release-check report classifies control regression and points to control m
       ok: false,
       system_summary: {
         core_checks: "pass",
+        company_brain_status: "pass",
       },
       control_summary: {
         status: "fail",
@@ -267,6 +326,7 @@ test("release-check report points planner contract failure to planner registry f
       ok: false,
       system_summary: {
         core_checks: "pass",
+        company_brain_status: "pass",
       },
       routing_summary: {
         status: "pass",
@@ -309,6 +369,7 @@ test("release-check report points create_doc governance mismatch to gate modules
       ok: false,
       system_summary: {
         core_checks: "pass",
+        company_brain_status: "pass",
       },
       routing_summary: {
         status: "pass",
@@ -362,6 +423,7 @@ test("release-check drilldown derives routing representative miss cases from his
       },
       system_summary: {
         core_checks: "pass",
+        company_brain_status: "pass",
       },
     },
     latestRoutingSnapshot: {
@@ -417,6 +479,7 @@ test("release-check drilldown derives planner representative findings from diagn
       },
       system_summary: {
         core_checks: "pass",
+        company_brain_status: "pass",
       },
     },
     plannerReport: {
@@ -458,6 +521,7 @@ test("release-check drilldown derives system representative cases from triage", 
     selfCheckResult: {
       system_summary: {
         core_checks: "fail",
+        company_brain_status: "pass",
       },
       routing_summary: {
         status: "pass",
@@ -540,6 +604,7 @@ test("release-check drilldown derives control representative issues from diagnos
     selfCheckResult: {
       system_summary: {
         core_checks: "pass",
+        company_brain_status: "pass",
       },
       control_summary: {
         status: "fail",

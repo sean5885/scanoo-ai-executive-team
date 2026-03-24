@@ -14,6 +14,35 @@ It is a spec only:
 
 The goal is to create a bounded contract for the next layer after `create_doc`, `update_doc`, and `ingest_doc`.
 
+## Lifecycle Contract
+
+Current governance contract for the bounded company-brain lifecycle is:
+
+- `mirror_only`
+- `pending_review`
+- `conflict_detected`
+- `approved`
+- `rejected`
+- `applied`
+
+Allowed transitions:
+
+- `mirror_only -> pending_review|conflict_detected`
+- `pending_review -> conflict_detected|approved|rejected`
+- `conflict_detected -> pending_review|approved|rejected`
+- `approved -> applied`
+- `applied -> applied` for idempotent re-apply
+
+`apply` is allowed only when lifecycle state is `approved` or `applied`.
+
+`apply` must stay blocked when:
+
+- review is missing
+- review is still pending
+- conflict is unresolved
+- approval is missing
+- review has been rejected
+
 ## Capability Inventory
 
 Minimum review/conflict/approval capability set:
@@ -228,6 +257,41 @@ Approval transition is not allowed when:
 ### purpose
 
 - move a reviewed and conflict-checked intake candidate into approved company-brain state
+
+### lifecycle boundary
+
+- `approval_transition` moves lifecycle into `approved` or `rejected`
+- it does not itself move lifecycle into `applied`
+- final formal admission still happens only through the separate `apply` step
+
+## `apply`
+
+### purpose
+
+- move a lifecycle state of `approved` into `applied`
+- persist approved company-brain knowledge into the approved-only read boundary
+
+### allowed only when
+
+- review lifecycle state is `approved`
+- conflict is no longer unresolved
+- approval is no longer missing
+
+### blocked when
+
+- no review state exists
+- review is still `pending_review`
+- review is `conflict_detected`
+- review is `rejected`
+
+## Contract Coverage
+
+The checked-in governance coverage for this lifecycle must stay aligned across:
+
+- route contract wiring in `/Users/seanhan/Documents/Playground/src/http-route-contracts.mjs`
+- lifecycle contract and apply-gate fixtures in `/Users/seanhan/Documents/Playground/src/company-brain-lifecycle-contract.mjs`
+- self-check visibility in `/Users/seanhan/Documents/Playground/src/system-self-check.mjs`
+- release gating in `/Users/seanhan/Documents/Playground/src/release-check.mjs`
 
 ### caller
 
