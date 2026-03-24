@@ -13,16 +13,17 @@ import {
 } from "../src/cloud-doc-organization-workflow.mjs";
 import { upsertAccount, upsertDocument } from "../src/rag-repository.mjs";
 
-function seedIndexedDocument({ accountId, suffix, title, rawText }) {
+function seedIndexedDocument({ accountId, suffix, title, rawText, parentPath = "/", sourceType = "docx" }) {
   upsertDocument({
     account_id: accountId,
-    source_type: "docx",
+    source_type: sourceType,
     external_key: `test:${accountId}:${suffix}`,
     external_id: `ext:${suffix}`,
     file_token: `file_${suffix}`,
     document_id: `doc_${suffix}`,
     title,
     raw_text: rawText,
+    parent_path: parentPath,
     active: 1,
   });
 }
@@ -142,6 +143,44 @@ test("why reply explains pending confirmation docs in plain language", async () 
   assert.match(reply.text, /不是完全不能分配/);
   assert.match(reply.text, /Administrator Manual|Member Manual/);
   assert.doesNotMatch(reply.text, /local_rule_fallback|local_default|信心/);
+});
+
+test("review reply renders concrete pending files with status reason and locator fields", async () => {
+  const account = upsertAccount({
+    open_id: `acct-review-locators-open-${Date.now()}`,
+    name: "acct-review-locators",
+  });
+  seedIndexedDocument({
+    accountId: account.id,
+    suffix: "administrator-manual",
+    title: "Administrator Manual",
+    rawText: "manual",
+    parentPath: "/shared/manuals",
+  });
+  seedIndexedDocument({
+    accountId: account.id,
+    suffix: "member-workspace-guide",
+    title: "Member Workspace Guide",
+    rawText: "workspace guide",
+    parentPath: "/shared/onboarding",
+    sourceType: "wiki",
+  });
+
+  const reply = await buildCloudOrganizationReviewReplyCached({
+    accountId: account.id,
+    sessionKey: `session-locators-${Date.now()}`,
+    forceReReview: false,
+  });
+
+  assert.match(reply.text, /待人工確認：2 份/);
+  assert.match(reply.text, /文件：Administrator Manual｜狀態：待人工確認/);
+  assert.match(reply.text, /文件：Member Workspace Guide｜狀態：待人工確認/);
+  assert.match(reply.text, /原因：/);
+  assert.match(reply.text, /路徑：\/shared\/manuals/);
+  assert.match(reply.text, /路徑：\/shared\/onboarding/);
+  assert.match(reply.text, /document_id：doc_administrator-manual/);
+  assert.match(reply.text, /file_token：file_member-workspace-guide/);
+  assert.match(reply.text, /來源：wiki/);
 });
 
 test("generic review reply uses local fast summary instead of semantic rereview wording", async () => {

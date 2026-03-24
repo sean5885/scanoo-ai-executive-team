@@ -148,6 +148,7 @@ const categoryRoleMap = {
 };
 
 const cloudOrganizationReviewCategories = new Set(["其他", "文檔", "表格", "附件", "快捷方式", "腦圖"]);
+const cloudOrganizationPendingItemStatuses = new Set(["待人工確認", "待重新分配", "待覆核"]);
 const cloudOrganizationScopedSubjectPatterns = [
   /不屬於\s*([^，。,.、；;：:\n]+?)(?:的(?:內容|内容|文檔|文档|文件|集合|範圍|范围|主題|主题)|\s|$)/iu,
   /不是\s*([^，。,.、；;：:\n]+?)(?:的(?:內容|内容|文檔|文档|文件|集合|範圍|范围|主題|主题)|\s|$)/iu,
@@ -170,6 +171,89 @@ function normalizeCloudOrganizationScopedSubject(value = "") {
     .replace(/\s*(?:的)?(?:內容|内容|文檔|文档|文件|集合|範圍|范围|主題|主题)\s*$/iu, "")
     .replace(/[，。,.、；;：:]+$/u, "")
     .trim();
+}
+
+function getCloudOrganizationDocumentTitle(item = {}) {
+  return item.title || item.document_id || item.file_token || item.node_id || "untitled";
+}
+
+function summarizeCloudOrganizationReasons(reasons = [], fallback = "") {
+  const unique = [];
+  for (const reason of Array.isArray(reasons) ? reasons : []) {
+    const normalized = cleanText(reason);
+    if (!normalized || unique.includes(normalized)) {
+      continue;
+    }
+    unique.push(normalized);
+  }
+  return unique.slice(0, 2).join("；") || fallback;
+}
+
+function collectCloudOrganizationReviewReasons(item = {}, result = {}) {
+  const reasons = [];
+  const title = cleanText(item?.title);
+  const rawText = cleanText(item?.raw_text);
+
+  if (!rawText.slice(0, 80)) {
+    reasons.push("可讀內容太少，只靠標題還不夠判斷");
+  }
+  if (cloudOrganizationReviewCategories.has(result.category)) {
+    reasons.push(`目前先放在「${categoryRoleMap[result.category] || "待人工確認"}」，因為它比較像通用文件而不是明確部門文件`);
+  }
+  if (result.confidence < 0.55) {
+    reasons.push("目前分類把握不高，直接分配很容易分錯");
+  }
+  if (/manual|workspace|member|administrator/i.test(title)) {
+    reasons.push("標題像操作手冊或通用教學，可能不只屬於單一角色");
+  }
+
+  return reasons;
+}
+
+function formatCloudOrganizationPendingItem({
+  item = {},
+  status = "",
+  reason = "",
+  stagingRole = "",
+  originalRole = "",
+  suggestedRole = "",
+} = {}) {
+  const resolvedStatus = cleanText(status);
+  const title = getCloudOrganizationDocumentTitle(item);
+  const fields = [`文件：${title}`];
+
+  if (cloudOrganizationPendingItemStatuses.has(resolvedStatus)) {
+    fields.push(`狀態：${resolvedStatus}`);
+  }
+  if (stagingRole) {
+    fields.push(`暫放：${stagingRole}`);
+  }
+  if (originalRole) {
+    fields.push(`原分配：${originalRole}`);
+  }
+  if (suggestedRole) {
+    fields.push(`建議改派：${suggestedRole}`);
+  }
+  if (reason) {
+    fields.push(`原因：${reason}`);
+  }
+  if (cleanText(item.parent_path)) {
+    fields.push(`路徑：${cleanText(item.parent_path)}`);
+  }
+  if (cleanText(item.document_id)) {
+    fields.push(`document_id：${cleanText(item.document_id)}`);
+  }
+  if (cleanText(item.file_token)) {
+    fields.push(`file_token：${cleanText(item.file_token)}`);
+  }
+  if (cleanText(item.node_id)) {
+    fields.push(`node_id：${cleanText(item.node_id)}`);
+  }
+  if (cleanText(item.source_type)) {
+    fields.push(`來源：${cleanText(item.source_type)}`);
+  }
+
+  return `- ${fields.join("｜")}`;
 }
 
 export function looksLikeCloudOrganizationRequest(text = "") {
@@ -513,22 +597,16 @@ export async function buildCloudOrganizationReviewReply({ accountId, sessionKey 
 
   if (!forceReReview) {
     const unresolved = reviewSeed.map(({ item, local }) => {
-      const title = item.title || item.document_id || item.file_token || item.node_id || "untitled";
       const finalRole = categoryRoleMap[local.category] || "待人工確認";
-      const reasons = [];
-      if (!cleanText(item.raw_text).slice(0, 80)) {
-        reasons.push("可讀內容太少，只靠標題還不夠判斷");
-      }
-      if (cloudOrganizationReviewCategories.has(local.category)) {
-        reasons.push(`目前先放在「${finalRole}」，因為它看起來像通用文件而不是單一角色專屬文件`);
-      }
-      if (local.confidence < 0.55) {
-        reasons.push("目前分類把握不高，直接分配很容易分錯");
-      }
-      if (/manual|workspace|member|administrator/i.test(cleanText(title))) {
-        reasons.push("標題像操作手冊或通用教學，可能會同時服務多個角色");
-      }
-      return `${title}：目前暫放「${finalRole}」。${reasons[0] || "這份文件仍需要你再確認一次。"}`
+      return formatCloudOrganizationPendingItem({
+        item,
+        status: "待人工確認",
+        stagingRole: finalRole,
+        reason: summarizeCloudOrganizationReasons(
+          collectCloudOrganizationReviewReasons(item, local),
+          "這份文件仍需要你再確認一次。",
+        ),
+      });
     });
 
     return {
@@ -538,8 +616,8 @@ export async function buildCloudOrganizationReviewReply({ accountId, sessionKey 
         "",
         "重點",
         "- 這一輪先用本地分類結果快速整理，避免你每次追問都重新等一輪語義複審。",
-        `- 目前最值得你先確認的：${Math.min(unresolved.length, 8)} 份`,
-        ...unresolved.slice(0, 8).map((line) => `- ${line}`),
+        `- 待人工確認：${unresolved.length} 份`,
+        ...unresolved,
         "",
         "下一步",
         "- 如果你要我真的重新複審並改派，直接說「重新分配這批待確認文件」或指定某個角色，我就會再跑第二輪語義複審。",
@@ -594,41 +672,37 @@ export async function buildCloudOrganizationReviewReply({ accountId, sessionKey 
     return `我目前先把它放在「${role}」，但還需要下一輪確認。`;
   }
 
-  function explainNeedsReview(item, result) {
-    const reasons = [];
-    const title = cleanText(item?.title);
-    const rawText = cleanText(item?.raw_text);
-    if (!rawText.slice(0, 80)) {
-      reasons.push("這份文件可讀內容太少，只靠標題還不夠判斷");
-    }
-    if (cloudOrganizationReviewCategories.has(result.category)) {
-      reasons.push(`目前先放在「${categoryRoleMap[result.category] || "待人工確認"}」，因為它像通用文件而不是明確部門文件`);
-    }
-    if (result.confidence < 0.55) {
-      reasons.push("目前分類把握不高，容易分錯");
-    }
-    if (/manual|workspace|member|administrator/i.test(title)) {
-      reasons.push("標題像操作手冊或通用教學，可能不只屬於單一角色");
-    }
-    return reasons[0] || "目前看起來不像單一角色專屬文件，所以先請你確認。";
-  }
-
   for (const { item, local } of reviewSeed) {
     const semantic = semanticClassified.get(item.id);
     const finalResult = semantic || local;
     const finalRole = categoryRoleMap[finalResult.category] || "待人工確認";
     const localRole = categoryRoleMap[local.category] || "待人工確認";
-    const title = item.title || item.document_id || item.file_token || item.node_id || "untitled";
 
     if (finalResult.category !== local.category) {
       reassignments.push(
-        `${title}：原本先放在「${localRole}」，現在改成「${finalRole}」。${explainCategory(finalResult.category)}`,
+        formatCloudOrganizationPendingItem({
+          item,
+          status: "待重新分配",
+          originalRole: localRole,
+          suggestedRole: finalRole,
+          reason: explainCategory(finalResult.category),
+        }),
       );
       continue;
     }
 
     if (cloudOrganizationReviewCategories.has(finalResult.category) || finalResult.confidence < 0.55) {
-      unresolved.push(`${title}：目前暫放「${finalRole}」。${explainNeedsReview(item, finalResult)}`);
+      unresolved.push(
+        formatCloudOrganizationPendingItem({
+          item,
+          status: "待人工確認",
+          stagingRole: finalRole,
+          reason: summarizeCloudOrganizationReasons(
+            collectCloudOrganizationReviewReasons(item, finalResult),
+            "目前看起來不像單一角色專屬文件，所以先請你確認。",
+          ),
+        }),
+      );
     }
   }
 
@@ -640,9 +714,9 @@ export async function buildCloudOrganizationReviewReply({ accountId, sessionKey 
       "重點",
       "- 審核方式：先本地分類，再對模糊文檔做 MiniMax 小批量語義複審。",
       `- 待重新分配：${reassignments.length} 份`,
-      ...reassignments.slice(0, 8).map((line) => `- ${line}`),
+      ...reassignments,
       `- 待人工確認：${unresolved.length} 份`,
-      ...unresolved.slice(0, 8).map((line) => `- ${line}`),
+      ...unresolved,
       "",
       "下一步",
       "- 你現在可以直接說哪些文檔要保留原分配、哪些要改派，或指定先只看某個角色的待重分配清單。",
@@ -690,29 +764,15 @@ export async function buildCloudOrganizationWhyReply({ accountId }) {
   const unresolved = indexedDocs
     .map((item) => {
       const local = localClassified.get(item.id) || { category: "其他", confidence: 0, reason: "unclassified" };
-      const title = item.title || item.document_id || item.file_token || item.node_id || "untitled";
-      const rawText = cleanText(item.raw_text);
-      const reasons = [];
-      if (!rawText.slice(0, 80)) {
-        reasons.push("可讀內容太少，只靠標題還不夠判斷");
-      }
-      if (cloudOrganizationReviewCategories.has(local.category)) {
-        reasons.push("內容比較像通用文件，不像單一角色專屬文件");
-      }
-      if (local.confidence < 0.55) {
-        reasons.push("目前分類把握不高，直接分配很容易分錯");
-      }
-      if (/manual|workspace|member|administrator/i.test(title)) {
-        reasons.push("標題像操作手冊或通用教學，可能會同時服務多個角色");
-      }
+      const reasons = collectCloudOrganizationReviewReasons(item, local);
       return {
-        title,
+        item,
         role: categoryRoleMap[local.category] || "待人工確認",
         reasons,
       };
     })
     .filter((item) => item.reasons.length > 0)
-    .slice(0, 6);
+    .slice(0, 24);
 
   if (!unresolved.length) {
     return {
@@ -735,7 +795,17 @@ export async function buildCloudOrganizationWhyReply({ accountId }) {
       "這些文件不是完全不能分配，而是現在只靠標題或少量內容，還不能很有把握地判定它們只屬於單一角色，所以我先放進待人工確認。",
       "",
       "重點",
-      ...unresolved.map((item) => `- ${item.title}：目前先放「${item.role}」，因為${item.reasons[0]}。`),
+      `- 待人工確認：${unresolved.length} 份`,
+      ...unresolved.map((item) =>
+        formatCloudOrganizationPendingItem({
+          item: item.item,
+          status: "待人工確認",
+          stagingRole: item.role,
+          reason: summarizeCloudOrganizationReasons(
+            item.reasons,
+            "目前看起來還不能很有把握地直接分配。",
+          ),
+        })),
       "",
       "下一步",
       "- 你可以直接告訴我哪些文件其實是法務、營運、HR 或知識管理，我就能幫你做第二次重新分配。",
