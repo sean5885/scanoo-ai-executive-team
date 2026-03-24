@@ -212,6 +212,7 @@ let activeHttpServiceOverrides = {};
 const serviceStartTime = nowIso();
 const inFlightIdempotentRequests = new Map();
 const REQUEST_CANCELLED_STATUS_CODE = 499;
+const SYNTHETIC_REQUEST_USER_AGENT_PATTERN = /\b(node(?:\.js)?|undici|jest|vitest|mocha|tap|ava|playwright|cypress|postman|insomnia|curl|wget)\b/i;
 
 function emitOauthReauthAlert({ accountId = null, scope = "http", pathname = null, reason = null } = {}) {
   emitRateLimitedAlert({
@@ -919,6 +920,8 @@ function ingestVerifiedDocumentToCompanyBrain({ account, row, logger = noopHttpL
     details: {
       account_id: account.id,
       document_id: row.document_id,
+      traffic_source: "real",
+      request_backed: false,
     },
   });
   if (!writeGuard.allow) {
@@ -2030,6 +2033,57 @@ function buildSearchParamObject(searchParams) {
   return result;
 }
 
+function readRequestHeader(headers = {}, name = "") {
+  const normalizedName = normalizeText(name).toLowerCase();
+  if (!normalizedName || !headers || typeof headers !== "object") {
+    return "";
+  }
+  const rawValue = headers[normalizedName] ?? headers[name];
+  return normalizeText(Array.isArray(rawValue) ? rawValue[0] : rawValue) || "";
+}
+
+function normalizeTrafficSource(value = "") {
+  const normalized = cleanText(value).toLowerCase();
+  if (normalized === "real" || normalized === "test" || normalized === "replay") {
+    return normalized;
+  }
+  return "";
+}
+
+function resolveRequestTrafficSource({ req, requestUrl } = {}) {
+  const explicitSource = normalizeTrafficSource(
+    readRequestHeader(req?.headers, "x-lobster-traffic-source")
+    || readRequestHeader(req?.headers, "x-traffic-source")
+    || requestUrl?.searchParams?.get("traffic_source")
+    || "",
+  );
+  if (explicitSource) {
+    return explicitSource;
+  }
+
+  const replayHint = readRequestHeader(req?.headers, "x-lobster-replay")
+    || readRequestHeader(req?.headers, "x-idempotency-replay")
+    || requestUrl?.searchParams?.get("replay")
+    || "";
+  if (/^(?:1|true|yes)$/i.test(replayHint)) {
+    return "replay";
+  }
+
+  const userAgent = readRequestHeader(req?.headers, "user-agent");
+  if (SYNTHETIC_REQUEST_USER_AGENT_PATTERN.test(userAgent)) {
+    return "test";
+  }
+
+  return "real";
+}
+
+function buildRequestTrafficMetadata({ req, requestUrl } = {}) {
+  return {
+    traffic_source: resolveRequestTrafficSource({ req, requestUrl }),
+    request_backed: true,
+  };
+}
+
 function buildRequestInputTrace({ req, requestUrl, body }) {
   const query = buildSearchParamObject(requestUrl.searchParams);
   const normalizedBody = body && typeof body === "object" && !Array.isArray(body)
@@ -2037,10 +2091,13 @@ function buildRequestInputTrace({ req, requestUrl, body }) {
     : body == null
       ? null
       : { raw_body: String(body) };
+  const requestTraffic = buildRequestTrafficMetadata({ req, requestUrl });
 
   return sanitizeTracePayload({
     method: req.method || "GET",
     pathname: requestUrl.pathname,
+    traffic_source: requestTraffic.traffic_source,
+    request_backed: requestTraffic.request_backed,
     query,
     body: normalizedBody,
   });
@@ -2133,6 +2190,7 @@ async function prepareIdempotentRequest({ req, res, requestUrl, body, logger = n
       pathname: requestUrl?.pathname || null,
       account_id: accountId || null,
       source: "db",
+      traffic_source: "replay",
       original_trace_id: existing.first_trace_id,
     });
     jsonResponse(res, existing.status_code, cloneReplayPayload(existing.response_payload, res.__trace_id));
@@ -2146,6 +2204,7 @@ async function prepareIdempotentRequest({ req, res, requestUrl, body, logger = n
       pathname: requestUrl?.pathname || null,
       account_id: accountId || null,
       source: "in_flight",
+      traffic_source: "replay",
     });
     const awaitedRecord = await inFlight.promise.catch(() => null);
     const replayRecord = awaitedRecord || getHttpIdempotencyRecord({ scopeKey });
@@ -6114,6 +6173,7 @@ export function startHttpServer({
     const requestStartedAt = Date.now();
     const requestStartedAtIso = nowIso();
     const traceId = createTraceId("http");
+    const requestTraffic = buildRequestTrafficMetadata({ req, requestUrl });
     const requestId = normalizeText(Array.isArray(req.headers["x-request-id"]) ? req.headers["x-request-id"][0] : req.headers["x-request-id"])
       || createRequestId("http_request");
     const requestLogger = httpLogger.child("request", {
@@ -6121,6 +6181,8 @@ export function startHttpServer({
       request_id: requestId,
       method: req.method || "GET",
       pathname: requestUrl.pathname,
+      traffic_source: requestTraffic.traffic_source,
+      request_backed: requestTraffic.request_backed,
       request_timeout_ms: Number.isFinite(Number(requestTimeoutMs)) ? Number(requestTimeoutMs) : null,
     });
     const abortController = new AbortController();
@@ -6134,6 +6196,8 @@ export function startHttpServer({
     res.__request_id = requestId;
     res.__pathname = requestUrl.pathname;
     res.__request_headers = req.headers;
+    res.__traffic_source = requestTraffic.traffic_source;
+    res.__request_backed = requestTraffic.request_backed;
     res.__monitor_payload = null;
     res.__abort_signal = abortController.signal;
     requestLogger.__abort_signal = abortController.signal;

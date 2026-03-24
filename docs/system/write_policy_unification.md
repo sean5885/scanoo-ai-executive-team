@@ -480,8 +480,14 @@ Make the existing high-risk write paths speak one checked-in policy language wit
      - scope / idempotency coverage when trace evidence exists
      - bounded upgrade advice
 4. Phase 4
-   - expand the same contract to remaining external mutation families
+   - add evidence / data layer hardening for rollout trust
+   - split trace evidence by:
+     - `traffic_source = real|test|replay`
+     - `request_backed = true|false`
+   - make warn -> enforce advice depend on trusted real request-backed data only
 5. Phase 5
+   - expand the same contract to remaining external mutation families
+6. Phase 6
    - decide whether write-policy metadata should become part of planner/runtime public evidence surfaces
 
 ### Phase 3 rollout checkpoint
@@ -501,3 +507,27 @@ Current rollout target is intentionally narrow:
 - `wiki_organize_apply`
   - stays `observe`
   - diagnostics now surface route-level scope/idempotency coverage rates when trace evidence exists
+
+### Phase 4 evidence-layer checkpoint
+
+Current rollout decision now treats mixed trace evidence as unsafe by default.
+
+Trusted rollout basis is narrowed to:
+
+- `traffic_source = real`
+- `request_backed = true`
+
+Current warn -> enforce rule is intentionally fixed and additive:
+
+- real request-backed sample size must be at least `20`
+- real request-backed violation rate must stay below `1%`
+- `confirm_required` / `review_required` coverage must already be wired in checked-in enforcement checks
+
+This checkpoint still does **not**:
+
+- change write behavior
+- change enforcement logic
+- change Lark adapter behavior
+- auto-upgrade route modes
+
+It only changes which evidence is considered credible enough for rollout advice.

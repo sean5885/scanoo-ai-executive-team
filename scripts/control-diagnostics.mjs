@@ -116,7 +116,7 @@ function formatControlDiagnosticsReport(report = {}) {
     ? writeSummary.rollout_advice.routes
     : [];
   const rolloutLines = rolloutRoutes.map((route) => (
-    `write_route: ${cleanText(route?.pathname) || "unknown"} | action=${cleanText(route?.action) || "unknown"} | mode=${cleanText(route?.mode) || "observe"} | violation_rate=${route?.violation_rate == null ? "unknown" : route.violation_rate} | scope_rate=${route?.scope_key_coverage_rate == null ? "unknown" : route.scope_key_coverage_rate} | idempotency_rate=${route?.idempotency_key_coverage_rate == null ? "unknown" : route.idempotency_key_coverage_rate} | recommendation=${cleanText(route?.recommendation) || "keep_current"}`
+    `write_route: ${cleanText(route?.pathname) || "unknown"} | action=${cleanText(route?.action) || "unknown"} | mode=${cleanText(route?.mode) || "observe"} | violation_rate=${route?.violation_rate == null ? "unknown" : route.violation_rate} | real_rate=${route?.real_traffic_violation_rate == null ? "unknown" : route.real_traffic_violation_rate} | test_rate=${route?.test_traffic_violation_rate == null ? "unknown" : route.test_traffic_violation_rate} | scope_rate=${route?.scope_key_coverage_rate == null ? "unknown" : route.scope_key_coverage_rate} | idempotency_rate=${route?.idempotency_key_coverage_rate == null ? "unknown" : route.idempotency_key_coverage_rate} | rollout_basis=${route?.rollout_basis?.eligible === true ? "yes" : route?.rollout_basis?.applicable === true ? "no" : "n/a"} | recommendation=${cleanText(route?.recommendation) || "keep_current"}`
   ));
 
   return [

@@ -8,6 +8,8 @@ import path from "node:path";
 
 import {
   buildDiagnosticsReportingSummary,
+  buildWritePolicyRuntimeStatsFromRows,
+  buildWriteRouteRolloutAdvice,
   runControlDiagnostics,
 } from "../src/control-diagnostics.mjs";
 
@@ -380,6 +382,103 @@ test("control diagnostics reporting emits stable top regression cases without ch
       failure_group: "routing:top_miss_cases",
     },
   ]);
+});
+
+test("write policy runtime stats split real/test traffic and rollout gating uses real request-backed evidence only", () => {
+  const rows = [
+    ...Array.from({ length: 20 }, (_, index) => ({
+      payload_json: JSON.stringify({
+        action: "meeting_confirm_write",
+        traffic_source: "real",
+        request_backed: true,
+        allow: true,
+        policy_enforcement: {
+          violation_count: 0,
+          should_block: false,
+          violation_types: [],
+          violation_reasons: [],
+          signals: {
+            scope_key_present: true,
+            idempotency_key_present: false,
+            confirmation_present: true,
+            review_completed: true,
+            review_required_active: false,
+          },
+        },
+      }),
+      created_at: `2026-03-24T00:00:${String(index).padStart(2, "0")}.000Z`,
+      pathname: "/api/meeting/confirm",
+      request_input_payload_json: JSON.stringify({
+        request_input: {
+          traffic_source: "real",
+          request_backed: true,
+        },
+      }),
+    })),
+    ...Array.from({ length: 4 }, (_, index) => ({
+      payload_json: JSON.stringify({
+        action: "meeting_confirm_write",
+        traffic_source: "test",
+        request_backed: true,
+        allow: false,
+        policy_enforcement: {
+          violation_count: 1,
+          should_block: false,
+          violation_types: ["confirm_required"],
+          violation_reasons: ["missing_confirmation"],
+          signals: {
+            scope_key_present: true,
+            idempotency_key_present: false,
+            confirmation_present: false,
+            review_completed: true,
+            review_required_active: false,
+          },
+        },
+      }),
+      created_at: `2026-03-24T00:01:${String(index).padStart(2, "0")}.000Z`,
+      pathname: "/api/meeting/confirm",
+      request_input_payload_json: JSON.stringify({
+        request_input: {
+          traffic_source: "test",
+          request_backed: true,
+        },
+      }),
+    })),
+  ];
+
+  const runtimeStats = buildWritePolicyRuntimeStatsFromRows(rows);
+  const routeRuntime = runtimeStats.by_path["/api/meeting/confirm"];
+
+  assert.equal(routeRuntime.request_backed_breakdown.by_source.real.sample_count, 20);
+  assert.equal(routeRuntime.request_backed_breakdown.by_source.real.violation_rate, 0);
+  assert.equal(routeRuntime.request_backed_breakdown.by_source.test.sample_count, 4);
+  assert.equal(routeRuntime.request_backed_breakdown.by_source.test.violation_rate, 1);
+
+  const rollout = buildWriteRouteRolloutAdvice({
+    pathname: "/api/meeting/confirm",
+    action: "meeting_confirm_write",
+    mode: "warn",
+    checks: {
+      scope_key: true,
+      idempotency_key: false,
+      confirm_required: true,
+      review_required: true,
+    },
+    runtime: {
+      real_traffic_sample_count: routeRuntime.request_backed_breakdown.by_source.real.sample_count,
+      real_traffic_violation_rate: routeRuntime.request_backed_breakdown.by_source.real.violation_rate,
+      test_traffic_sample_count: routeRuntime.request_backed_breakdown.by_source.test.sample_count,
+      test_traffic_violation_rate: routeRuntime.request_backed_breakdown.by_source.test.violation_rate,
+      replay_traffic_sample_count: 0,
+      replay_traffic_violation_rate: null,
+    },
+  });
+
+  assert.equal(rollout.recommendation, "upgrade_to_enforce");
+  assert.equal(rollout.upgrade_ready, true);
+  assert.equal(rollout.rollout_basis.eligible, true);
+  assert.equal(rollout.rollout_basis.real_traffic_sample_count, 20);
+  assert.equal(rollout.rollout_basis.real_traffic_violation_rate, 0);
 });
 
 test("control diagnostics CLI renders compare-previous with directional markers", async () => {

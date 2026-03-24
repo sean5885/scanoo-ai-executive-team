@@ -328,6 +328,7 @@ test("self-check CLI renders concise guidance by default", async () => {
   assert.match(output, /現在系統能不能放心改：可以/);
   assert.match(output, /結論：core pass \| company-brain pass \| control pass \| write-policy pass \| routing pass \| planner pass \| regression no/);
   assert.match(output, /write policy：coverage 7\/7 \| modes enforce:2,observe:2,warn:3/);
+  assert.match(output, /write evidence：real_only_violation meeting_confirm_write=unknown \| rollout_basis 0\/1 ready/);
   assert.match(output, /write rollout：ready none \| high_risk meeting_confirm_write/);
   assert.match(output, /先看：none/);
   assert.match(output, /指引：可以開始改；改 control 後回看 control:diagnostics，改 routing 後回看 routing:diagnostics，改 planner 後回看 planner:diagnostics 與 self-check。/);

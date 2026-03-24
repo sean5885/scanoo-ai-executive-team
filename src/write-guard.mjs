@@ -4,6 +4,14 @@ function cleanText(value) {
   return String(value || "").trim();
 }
 
+function normalizeTrafficSource(value = "") {
+  const normalized = cleanText(value).toLowerCase();
+  if (normalized === "real" || normalized === "test" || normalized === "replay") {
+    return normalized;
+  }
+  return null;
+}
+
 function normalizeObject(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {};
@@ -173,9 +181,14 @@ function emitWriteGuardDecisionLog({
   const sink = typeof logger[level] === "function"
     ? logger[level].bind(logger)
     : logger.info.bind(logger);
+  const normalizedDetails = normalizeObject(details);
+  const trafficSource = normalizeTrafficSource(normalizedDetails.traffic_source);
+  const requestBacked = typeof normalizedDetails.request_backed === "boolean"
+    ? normalizedDetails.request_backed
+    : null;
 
   sink("write_guard_decision", {
-    ...(normalizeObject(details)),
+    ...normalizedDetails,
     action: cleanText(operation) || "write_guard",
     owner: cleanText(owner) || null,
     workflow: cleanText(workflow) || null,
@@ -188,6 +201,8 @@ function emitWriteGuardDecisionLog({
     reason: cleanText(decision.reason) || null,
     error_code: cleanText(decision.error_code) || null,
     policy_enforcement: clonePolicyEnforcement(policyEnforcement),
+    ...(trafficSource ? { traffic_source: trafficSource } : {}),
+    ...(requestBacked == null ? {} : { request_backed: requestBacked }),
     ...(cleanText(requestId) ? { request_id: cleanText(requestId) } : {}),
     ...(cleanText(traceId) ? { trace_id: cleanText(traceId) } : {}),
   });

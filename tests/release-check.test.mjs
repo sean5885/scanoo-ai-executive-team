@@ -102,6 +102,30 @@ const PASS_WRITE_GOVERNANCE = {
     confirm_required: 7,
     review_required: 4,
   },
+  rollout_rules: {
+    evidence_source: "real_request_backed",
+    warn_to_enforce: {
+      max_real_violation_rate: 0.01,
+      min_real_sample_size: 20,
+    },
+  },
+  rollout_basis_summary: {
+    evidence_source: "real_request_backed",
+    candidate_route_count: 1,
+    eligible_route_count: 0,
+    blocked_route_count: 1,
+    routes: [
+      {
+        pathname: "/api/meeting/confirm",
+        action: "meeting_confirm_write",
+        current_mode: "warn",
+        target_mode: "enforce",
+        eligible: false,
+        real_traffic_sample_count: 0,
+        real_traffic_violation_rate: null,
+      },
+    ],
+  },
   upgrade_ready_routes: [],
   high_risk_routes: [
     {
@@ -110,6 +134,8 @@ const PASS_WRITE_GOVERNANCE = {
       current_mode: "warn",
       target_mode: "enforce",
       recommendation: "hold_warn",
+      real_traffic_sample_count: 0,
+      real_traffic_violation_rate: null,
     },
     {
       pathname: "/meeting/confirm",
@@ -117,6 +143,8 @@ const PASS_WRITE_GOVERNANCE = {
       current_mode: "warn",
       target_mode: "enforce",
       recommendation: "hold_warn",
+      real_traffic_sample_count: 0,
+      real_traffic_violation_rate: null,
     },
   ],
 };
@@ -687,6 +715,7 @@ test("release-check human output stays minimal with drilldown line", () => {
       "能否放心合併/發布：先不要",
       "若不能，先修哪一條線：system regression",
       "下一步：inspect blocking_checks and representative_fail_case",
+      "write evidence：real_only_violation none | rollout_basis none",
       "write rollout：ready none | high_risk none",
     ].join("\n"),
   );
@@ -705,6 +734,7 @@ test("release-check human output flags doc-boundary routing regressions", () => 
       "能否放心合併/發布：先不要",
       "若不能，先修哪一條線：routing regression",
       "下一步：這是 doc-boundary 類問題，優先檢查 intent guard；run routing-eval doc-boundary pack and inspect message-intent-utils / lane-executor guard",
+      "write evidence：real_only_violation none | rollout_basis none",
       "write rollout：ready none | high_risk none",
     ].join("\n"),
   );
@@ -768,7 +798,7 @@ test("release-check CLI emits only the minimal JSON structure", async () => {
   });
 });
 
-test("release-check CLI default output stays limited to three lines", async () => {
+test("release-check CLI default output stays limited to the minimal write-governance view", async () => {
   const archives = await seedReleaseCheckArchives();
   const output = execFileSync("node", ["scripts/release-check.mjs"], {
     cwd: process.cwd(),
@@ -786,6 +816,7 @@ test("release-check CLI default output stays limited to three lines", async () =
     "能否放心合併/發布：可以",
     "若不能，先修哪一條線：無",
     "下一步：無",
+    "write evidence：real_only_violation meeting_confirm_write=unknown | rollout_basis 0/1 ready",
     "write rollout：ready none | high_risk meeting_confirm_write",
   ].join("\n"));
 });

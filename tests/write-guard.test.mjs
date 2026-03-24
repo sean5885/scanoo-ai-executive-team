@@ -92,7 +92,11 @@ test("write guard emits structured observability logs with owner workflow and de
       },
     },
     component: "test_write_guard",
-    baseFields: { trace_id: traceId },
+    baseFields: {
+      trace_id: traceId,
+      traffic_source: "test",
+      request_backed: true,
+    },
   });
 
   const result = decideWriteGuard({
@@ -128,6 +132,8 @@ test("write guard emits structured observability logs with owner workflow and de
   assert.equal(decisionLog[1].reason, "confirmation_required");
   assert.equal(decisionLog[1].error_code, "write_guard_confirmation_required");
   assert.equal(decisionLog[1].trace_id, traceId);
+  assert.equal(decisionLog[1].traffic_source, "test");
+  assert.equal(decisionLog[1].request_backed, true);
   assert.deepEqual(decisionLog[1].write_policy, {
     policy_version: "write_policy_v1",
     source: "meeting_confirm",

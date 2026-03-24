@@ -133,21 +133,25 @@ This request-flow mirror now reflects the current fail-closed routing baseline.
 1. `http-server.mjs` creates a per-request `trace_id`
 2. the HTTP layer echoes that trace through JSON `trace_id` payload injection when the response is an object, and through the `X-Trace-Id` header for every response
 3. when the response finishes, the runtime writes one compact row into SQLite `http_request_monitor` with request identity, status, outcome, error summary, and duration
-4. high-risk routes use route-level child loggers (`route_started` / `route_succeeded` / `route_failed`)
-5. high-risk handlers emit step logs for start, validation failure, and completion
-6. current high-risk coverage includes:
+4. request-scoped trace events now also carry bounded traffic provenance:
+   - `traffic_source = real|test|replay`
+   - `request_backed = true`
+   - source can be forced by explicit request hint, otherwise obvious synthetic clients are downgraded to `test`
+5. high-risk routes use route-level child loggers (`route_started` / `route_succeeded` / `route_failed`)
+6. high-risk handlers emit step logs for start, validation failure, and completion
+7. current high-risk coverage includes:
    - drive organize preview/apply
    - wiki organize preview/apply
    - bitable records list/search/create/get/update/delete
    - calendar event create/freebusy
    - task get/create/comments list/create/update/delete
-7. `/api/monitoring/requests`, `/api/monitoring/errors`, `/api/monitoring/errors/latest`, and `/api/monitoring/metrics` query that persisted request-monitor table
-8. `/monitoring` renders a simple server-side HTML dashboard from the same monitoring snapshot, showing success rate, error rate, recent errors, and recent requests
-9. `tool_execution` events now also persist into `http_request_trace_events`, including `duration_ms`, so later analysis can measure per-tool success rate and latency without scraping console logs
-10. `/api/monitoring/learning` and `scripts/monitoring-cli.mjs learning ...` derive a review-first learning summary from recent request rows plus trace events
-11. `POST /agent/improvements/learning/generate` converts that summary into `pending_approval` improvement proposals instead of auto-applying routing/tool changes
-12. success-path smoke fixtures verify these routes can initialize and return shaped JSON with `trace_id`
-13. self-check verifies both preview/read and apply/write route-contract presence for these high-risk HTTP families
+8. `/api/monitoring/requests`, `/api/monitoring/errors`, `/api/monitoring/errors/latest`, and `/api/monitoring/metrics` query that persisted request-monitor table
+9. `/monitoring` renders a simple server-side HTML dashboard from the same monitoring snapshot, showing success rate, error rate, recent errors, and recent requests
+10. `tool_execution` events now also persist into `http_request_trace_events`, including `duration_ms`, so later analysis can measure per-tool success rate and latency without scraping console logs
+11. `/api/monitoring/learning` and `scripts/monitoring-cli.mjs learning ...` derive a review-first learning summary from recent request rows plus trace events
+12. `POST /agent/improvements/learning/generate` converts that summary into `pending_approval` improvement proposals instead of auto-applying routing/tool changes
+13. success-path smoke fixtures verify these routes can initialize and return shaped JSON with `trace_id`
+14. self-check verifies both preview/read and apply/write route-contract presence for these high-risk HTTP families
 
 ### Meeting Flow
 
@@ -375,6 +379,8 @@ Thread 60 CLI shortcuts checkpoint:
    - checked-in write governance summary from `src/control-diagnostics.mjs`:
      - per-route enforcement mode for the grounded Phase 1 write family
      - metadata-vs-enforced coverage
+     - source-layered runtime evidence from `write_guard_decision`
+     - real-only rollout-basis summary (`traffic_source = real` and `request_backed = true`)
      - bounded violation-type stats
    - latest routing diagnostics snapshot from `.tmp/routing-diagnostics-history/`, plus compare against the previous routing snapshot when available
    - current planner contract gate from `scripts/planner-contract-check.mjs`, using the same blocking criteria for undefined actions, undefined presets, and selector/contract mismatches

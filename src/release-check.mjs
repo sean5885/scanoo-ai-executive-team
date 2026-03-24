@@ -225,6 +225,7 @@ function buildReleaseCheckActionHint({
 
 function buildWriteGovernanceSummary(selfCheckResult = {}) {
   const writeSummary = selfCheckResult?.write_summary || {};
+  const rolloutAdvice = writeSummary?.rollout_advice || {};
   return {
     status: cleanText(writeSummary?.status) || "fail",
     metadata_route_count: Number(writeSummary?.policy_coverage?.metadata_route_count || 0),
@@ -232,11 +233,13 @@ function buildWriteGovernanceSummary(selfCheckResult = {}) {
     route_coverage_ratio: Number(writeSummary?.policy_coverage?.route_coverage_ratio || 0),
     mode_counts: writeSummary?.enforcement_modes?.mode_counts || {},
     violation_type_stats: writeSummary?.violation_type_stats || {},
-    upgrade_ready_routes: Array.isArray(writeSummary?.rollout_advice?.upgrade_ready_routes)
-      ? writeSummary.rollout_advice.upgrade_ready_routes
+    rollout_rules: rolloutAdvice?.rollout_rules || null,
+    rollout_basis_summary: rolloutAdvice?.basis_summary || null,
+    upgrade_ready_routes: Array.isArray(rolloutAdvice?.upgrade_ready_routes)
+      ? rolloutAdvice.upgrade_ready_routes
       : [],
-    high_risk_routes: Array.isArray(writeSummary?.rollout_advice?.high_risk_routes)
-      ? writeSummary.rollout_advice.high_risk_routes
+    high_risk_routes: Array.isArray(rolloutAdvice?.high_risk_routes)
+      ? rolloutAdvice.high_risk_routes
       : [],
   };
 }
@@ -701,17 +704,30 @@ export function renderReleaseCheckReport(report = {}) {
   const docBoundaryNote = report?.doc_boundary_regression === true && firstBlockingLine === BLOCKING_ROUTING_REGRESSION
     ? "這是 doc-boundary 類問題，優先檢查 intent guard；"
     : "";
+  const rolloutBasisSummary = report?.write_governance?.rollout_basis_summary || {};
   const upgradeReady = Array.isArray(report?.write_governance?.upgrade_ready_routes)
     ? uniqValues(report.write_governance.upgrade_ready_routes.map((route) => cleanText(route?.action) || cleanText(route?.pathname)))
     : [];
   const highRisk = Array.isArray(report?.write_governance?.high_risk_routes)
     ? uniqValues(report.write_governance.high_risk_routes.map((route) => cleanText(route?.action) || cleanText(route?.pathname)))
     : [];
+  const rolloutBasisRoutes = Array.isArray(rolloutBasisSummary?.routes)
+    ? rolloutBasisSummary.routes
+    : [];
+  const realOnlyLine = rolloutBasisRoutes.length > 0
+    ? rolloutBasisRoutes
+      .map((route) => `${cleanText(route?.action) || cleanText(route?.pathname) || "unknown"}=${route?.real_traffic_violation_rate == null ? "unknown" : route.real_traffic_violation_rate}`)
+      .join(",")
+    : "none";
+  const rolloutBasisLine = rolloutBasisRoutes.length > 0
+    ? `${Number(rolloutBasisSummary?.eligible_route_count || 0)}/${Number(rolloutBasisSummary?.candidate_route_count || 0)} ready`
+    : "none";
 
   return [
     `能否放心合併/發布：${canMergeOrRelease}`,
     `若不能，先修哪一條線：${renderBlockingLineLabel(firstBlockingLine)}`,
     `下一步：${docBoundaryNote}${actionHint}`,
+    `write evidence：real_only_violation ${realOnlyLine} | rollout_basis ${rolloutBasisLine}`,
     `write rollout：ready ${upgradeReady.length > 0 ? upgradeReady.join(",") : "none"} | high_risk ${highRisk.length > 0 ? highRisk.join(",") : "none"}`,
   ].join("\n");
 }

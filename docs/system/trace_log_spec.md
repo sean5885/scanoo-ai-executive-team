@@ -18,6 +18,8 @@ All minimum trace/log events should align around these fields:
 
 - `request_id`
 - `trace_id`
+- `traffic_source`
+- `request_backed`
 - `action`
 - `status`
 - `event_type`
@@ -41,6 +43,8 @@ All minimum trace/log events should align around these fields:
 {
   "request_id": "string|null",
   "trace_id": "string|null",
+  "traffic_source": "real|test|replay|null",
+  "request_backed": "boolean|null",
   "action": "string|null",
   "status": "string|null",
   "event_type": "string",
@@ -73,6 +77,8 @@ All minimum trace/log events should align around these fields:
 ### Fields already commonly present in current runtime logs
 
 - `trace_id`
+- `traffic_source`
+- `request_backed`
 - `action`
 - `status`
 - event name / event-like label
@@ -119,6 +125,8 @@ All minimum trace/log events should align around these fields:
   - `deny`
   - `reason`
   - deny-only `error_code`
+  - `traffic_source`
+  - `request_backed`
 - those `tool_execution` events are now also persisted into SQLite `http_request_trace_events`, so request-scoped learning/analysis can measure per-tool success rate and latency from the same trace surface
 - the HTTP runtime now also persists one compact SQLite request-monitor row per finished request keyed by `trace_id`; this is a query surface over request outcomes, not a replacement for structured logs
 - the HTTP runtime now also emits explicit `request_timeout` / `request_cancelled` trace events and persists the corresponding `error_code` into `http_request_monitor`
@@ -167,6 +175,8 @@ The reconstruction CLI reads both tables so operators can quickly inspect:
   - `event_type`
   - `request_input.method`
   - `request_input.pathname`
+  - `request_input.traffic_source`
+  - `request_input.request_backed`
 - optional fields:
   - `request_input.query`
   - `request_input.body`
