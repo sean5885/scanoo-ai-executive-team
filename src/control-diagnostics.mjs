@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { decideIntent } from "./control-kernel.mjs";
+import { getRouteContract } from "./http-route-contracts.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import {
   FALLBACK_DISABLED,
@@ -15,6 +16,10 @@ import {
 } from "./routing-diagnostics-history.mjs";
 import { decideWriteGuard } from "./write-guard.mjs";
 import { planDocumentCreateGuard } from "./lark-write-guard.mjs";
+import {
+  collectWritePolicyMissingFields,
+  listPhase1RouteWritePolicyFixtures,
+} from "./write-policy-contract.mjs";
 
 const STATUS_ORDER = {
   fail: 0,
@@ -55,8 +60,10 @@ const FILES = {
   writeGuard: path.join(SRC_DIR, "write-guard.mjs"),
   larkWriteGuard: path.join(SRC_DIR, "lark-write-guard.mjs"),
   httpServer: path.join(SRC_DIR, "http-server.mjs"),
+  httpRouteContracts: path.join(SRC_DIR, "http-route-contracts.mjs"),
   meetingAgent: path.join(SRC_DIR, "meeting-agent.mjs"),
   larkContent: path.join(SRC_DIR, "lark-content.mjs"),
+  writePolicyContract: path.join(SRC_DIR, "write-policy-contract.mjs"),
 };
 const CLOUD_DOC_WORKFLOW = "cloud_doc";
 
@@ -156,6 +163,23 @@ function normalizeIntegrationPoint({
 
 async function readText(filePath = "") {
   return readFile(filePath, "utf8");
+}
+
+function buildWritePolicyRouteChecks() {
+  return listPhase1RouteWritePolicyFixtures().map((fixture) => {
+    const routeContract = getRouteContract(fixture.pathname);
+    const actualPolicy = routeContract?.write_policy || null;
+    const missingFields = collectWritePolicyMissingFields(actualPolicy);
+    const actionMatches = cleanText(routeContract?.action) === cleanText(fixture.action);
+    return {
+      pathname: fixture.pathname,
+      action: fixture.action,
+      ok: actionMatches && missingFields.length === 0,
+      missing_fields: missingFields,
+      actual_action: cleanText(routeContract?.action) || null,
+      has_write_policy: Boolean(actualPolicy),
+    };
+  });
 }
 
 function countMatches(text = "", pattern) {
@@ -934,8 +958,10 @@ function buildLarkCreateGuardScenarios() {
 async function buildWriteSummary() {
   const writeGuardText = await readText(FILES.writeGuard);
   const httpServerText = await readText(FILES.httpServer);
+  const httpRouteContractsText = await readText(FILES.httpRouteContracts);
   const meetingAgentText = await readText(FILES.meetingAgent);
   const larkContentText = await readText(FILES.larkContent);
+  const writePolicyContractText = await readText(FILES.writePolicyContract);
 
   const writeGuardScenarios = buildWriteGuardScenarios();
   const larkCreateGuardScenarios = buildLarkCreateGuardScenarios();
@@ -956,6 +982,11 @@ async function buildWriteSummary() {
     "meeting_confirm_write",
     "wiki_organize_apply",
   ];
+  const writePolicyRouteChecks = buildWritePolicyRouteChecks();
+  const uniquePolicyActions = buildUniqueSorted(writePolicyRouteChecks.map((item) => item.action));
+  const writePolicyLogReferences =
+    countMatches(httpServerText, /write_policy:/g)
+    + countMatches(meetingAgentText, /write_policy:/g);
 
   const integrationPoints = [
     normalizeIntegrationPoint({
@@ -980,6 +1011,26 @@ async function buildWriteSummary() {
       ok: meetingAgentText.includes("operation: \"meeting_confirm_write\""),
       details: {
         guarded_operations: extractOperationNames(meetingAgentText),
+      },
+    }),
+    normalizeIntegrationPoint({
+      name: "phase1_write_policy_route_contracts",
+      file: FILES.httpRouteContracts,
+      ok: writePolicyRouteChecks.every((item) => item.ok),
+      details: {
+        route_checks: writePolicyRouteChecks,
+      },
+    }),
+    normalizeIntegrationPoint({
+      name: "phase1_write_policy_log_fields",
+      file: FILES.writePolicyContract,
+      ok:
+        httpRouteContractsText.includes("write_policy:")
+        && writePolicyContractText.includes("policy_version")
+        && writePolicyLogReferences >= expectedGuardedOperations.length,
+      details: {
+        write_policy_log_references: writePolicyLogReferences,
+        expected_minimum: expectedGuardedOperations.length,
       },
     }),
     normalizeIntegrationPoint({
@@ -1032,6 +1083,8 @@ async function buildWriteSummary() {
       : "Inspect `src/write-guard.mjs`, `src/lark-write-guard.mjs`, and guarded callsites in `src/http-server.mjs`, `src/meeting-agent.mjs`, and `src/lark-content.mjs` before changing any write runtime.",
     scenario_results: scenarioResults,
     guarded_operations: uniqueGuardedOperations,
+    policy_actions: uniquePolicyActions,
+    policy_route_checks: writePolicyRouteChecks,
     create_guard_surfaces: [
       {
         file: FILES.httpServer,

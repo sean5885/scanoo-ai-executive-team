@@ -803,11 +803,13 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 ### 10D. Shared Write Guard
 
 - Location:
+  - `/Users/seanhan/Documents/Playground/src/write-policy-contract.mjs`
   - `/Users/seanhan/Documents/Playground/src/write-guard.mjs`
   - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
   - `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`
   - `/Users/seanhan/Documents/Playground/src/doc-update-confirmations.mjs`
 - Responsibility:
+  - provide one checked-in write-policy metadata contract (`policy_version / source / owner / intent / action_type / external_write / confirm_required / review_required / scope_key / idempotency_key`) for the Phase 1 high-risk write family
   - provide one bounded `decideWriteGuard(...)` decision surface for workflow-level write gating
   - keep the return shape compact as `decision / allow / external_write / require_confirmation / reason`, with deny-only `error_code` for observability
   - block external writes when the request is still preview-only
@@ -815,7 +817,8 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - block external writes when the workflow-specific preview/review verification precondition has not been completed
   - allow internal writes such as company-brain mirror ingest to stay on the existing internal path
   - guard doc-rewrite apply, meeting confirm write, and drive/wiki organize apply without changing their surrounding workflow contracts
-  - emit one `write_guard_decision` runtime log for every allow/deny decision, carrying `owner`, `workflow`, `decision`, `reason`, and deny `error_code`
+  - emit Phase 1 normalized `write_policy` metadata through existing create/write decision logs without changing allow/deny behavior
+  - emit one `write_guard_decision` runtime log for every allow/deny decision, carrying `owner`, `workflow`, `decision`, `reason`, deny `error_code`, and any wired `write_policy`
 - Core path:
   - yes for workflow write safety
 
@@ -829,6 +832,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - provide one read-only daily-entry diagnostics surface over control / routing / write
   - emit fixed `control_summary / routing_summary / write_summary`
   - reuse checked-in deterministic control/write scenarios instead of probing live runtime writes
+  - verify that the Phase 1 high-risk write actions still expose checked-in `write_policy` metadata through route contracts and log callsites
   - reuse archived routing diagnostics snapshots instead of rerunning routing eval
   - archive the full JSON report into `.tmp/control-diagnostics-history/`
   - support minimal snapshot compare without changing runtime behavior

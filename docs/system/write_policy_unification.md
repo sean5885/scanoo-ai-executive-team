@@ -23,6 +23,7 @@ Current code truth for this design is grounded in:
 - `/Users/seanhan/Documents/Playground/src/write-guard.mjs`
 - `/Users/seanhan/Documents/Playground/src/lark-write-guard.mjs`
 - `/Users/seanhan/Documents/Playground/src/http-route-contracts.mjs`
+- `/Users/seanhan/Documents/Playground/src/write-policy-contract.mjs`
 - `/Users/seanhan/Documents/Playground/src/http-idempotency-store.mjs`
 - `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`
 - `/Users/seanhan/Documents/Playground/src/cloud-doc-organization-workflow.mjs`
@@ -241,6 +242,41 @@ Current runtime is split across three partially overlapping governance shapes:
    - write-guard prerequisite behavior
    - company-brain lifecycle rules
 5. `idempotency_key` exists at generic HTTP level, but is not yet classified per action.
+
+## Phase 1 Grounded Status
+
+The current checked-in Phase 1 landing stays metadata-only.
+
+It now adds one shared checked-in write-policy module and mounts that metadata on the requested high-risk write family without changing write behavior:
+
+- shared source of truth:
+  - `/Users/seanhan/Documents/Playground/src/write-policy-contract.mjs`
+- route-contract mount:
+  - `/Users/seanhan/Documents/Playground/src/http-route-contracts.mjs`
+- log-surface mount:
+  - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
+  - `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`
+- diagnostics presence check:
+  - `/Users/seanhan/Documents/Playground/src/control-diagnostics.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/control-diagnostics.mjs`
+
+Grounded Phase 1 write-policy route surfaces are:
+
+- `/api/doc/create`
+- `/agent/docs/create`
+- `/api/drive/organize/apply`
+- `/api/wiki/organize/apply`
+- `/api/doc/rewrite-from-comments` (apply metadata only; preview/apply runtime behavior stays unchanged)
+- `/api/meeting/confirm`
+- `/meeting/confirm`
+
+The normalized Phase 1 action set exposed through diagnostics is:
+
+- `create_doc`
+- `drive_organize_apply`
+- `wiki_organize_apply`
+- `document_comment_rewrite_apply`
+- `meeting_confirm_write`
 
 ## D. Phase 1 Patch Plan
 

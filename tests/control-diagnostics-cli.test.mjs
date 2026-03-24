@@ -49,7 +49,7 @@ test("control diagnostics CLI renders the fixed single-view summary", async () =
   assert.match(output, /summary: overall=pass \| control=pass \| routing=pass \| write=pass/);
   assert.match(output, /control_summary: issues=0 \| decisions=3 \| owners=3 \| integrations=3/);
   assert.match(output, /routing_summary: status=pass \| accuracy=1 \| compare=unavailable \| doc_boundary_regression=false/);
-  assert.match(output, /write_summary: issues=0 \| guarded_operations=5 \| create_surfaces=2/);
+  assert.match(output, /write_summary: issues=0 \| guarded_operations=5 \| create_surfaces=2 \| policy_actions=5/);
   assert.match(output, /reporting_summary: error_code_groups=0 \| failure_groups=0 \| top_regressions=0/);
   assert.match(output, /top_regressions: none/);
   assert.match(output, /decision: observe_only \| line none/);
@@ -249,6 +249,15 @@ test("control diagnostics reporting emits stable top regression cases without ch
     failure_groups: [],
     top_regression_cases: [],
   });
+  assert.deepEqual(report.write_summary.policy_actions, [
+    "create_doc",
+    "document_comment_rewrite_apply",
+    "drive_organize_apply",
+    "meeting_confirm_write",
+    "wiki_organize_apply",
+  ]);
+  assert.equal(report.write_summary.policy_route_checks.length, 7);
+  assert.equal(report.write_summary.policy_route_checks.every((item) => item.ok), true);
 
   const degradedReporting = buildDiagnosticsReportingSummary({
     controlSummary: {

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { createRuntimeLogger, createTraceId } from "../src/runtime-observability.mjs";
 import { decideWriteGuard } from "../src/write-guard.mjs";
+import { buildMeetingConfirmWritePolicy } from "../src/write-policy-contract.mjs";
 
 test("unconfirmed external write is denied", () => {
   const result = decideWriteGuard({
@@ -102,6 +103,9 @@ test("write guard emits structured observability logs with owner workflow and de
     details: {
       account_id: "acct-1",
       confirmation_id: "confirmation-1",
+      write_policy: buildMeetingConfirmWritePolicy({
+        confirmationId: "confirmation-1",
+      }),
     },
   });
 
@@ -118,4 +122,16 @@ test("write guard emits structured observability logs with owner workflow and de
   assert.equal(calls[0][1].reason, "confirmation_required");
   assert.equal(calls[0][1].error_code, "write_guard_confirmation_required");
   assert.equal(calls[0][1].trace_id, traceId);
+  assert.deepEqual(calls[0][1].write_policy, {
+    policy_version: "write_policy_v1",
+    source: "meeting_confirm",
+    owner: "meeting_agent",
+    intent: "meeting_writeback",
+    action_type: "writeback",
+    external_write: true,
+    confirm_required: true,
+    review_required: "never",
+    scope_key: "meeting-confirm:confirmation-1",
+    idempotency_key: null,
+  });
 });

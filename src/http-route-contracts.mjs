@@ -2,6 +2,10 @@ import {
   getCompanyBrainLifecycleRouteContract,
 } from "./company-brain-lifecycle-contract.mjs";
 import { getDocumentCreateGovernanceContract } from "./lark-write-guard.mjs";
+import {
+  cloneWritePolicyRecord,
+  getPhase1RouteWritePolicyFixture,
+} from "./write-policy-contract.mjs";
 
 const EXACT_METHODS = new Map([
   ["/health", ["GET"]],
@@ -109,11 +113,33 @@ const EXACT_ROUTE_CONTRACTS = new Map([
   ["/api/doc/create", {
     action: "create_doc",
     governance: getDocumentCreateGovernanceContract(),
+    write_policy: getPhase1RouteWritePolicyFixture("/api/doc/create")?.write_policy,
   }],
   ["/agent/docs/create", {
     action: "create_doc",
     delegates_to: "/api/doc/create",
     governance: getDocumentCreateGovernanceContract(),
+    write_policy: getPhase1RouteWritePolicyFixture("/agent/docs/create")?.write_policy,
+  }],
+  ["/api/drive/organize/apply", {
+    action: "drive_organize_apply",
+    write_policy: getPhase1RouteWritePolicyFixture("/api/drive/organize/apply")?.write_policy,
+  }],
+  ["/api/wiki/organize/apply", {
+    action: "wiki_organize_apply",
+    write_policy: getPhase1RouteWritePolicyFixture("/api/wiki/organize/apply")?.write_policy,
+  }],
+  ["/api/doc/rewrite-from-comments", {
+    action: "document_comment_rewrite_apply",
+    write_policy: getPhase1RouteWritePolicyFixture("/api/doc/rewrite-from-comments")?.write_policy,
+  }],
+  ["/api/meeting/confirm", {
+    action: "meeting_confirm_write",
+    write_policy: getPhase1RouteWritePolicyFixture("/api/meeting/confirm")?.write_policy,
+  }],
+  ["/meeting/confirm", {
+    action: "meeting_confirm_write",
+    write_policy: getPhase1RouteWritePolicyFixture("/meeting/confirm")?.write_policy,
   }],
 ]);
 
@@ -144,5 +170,6 @@ export function getRouteContract(pathname = "") {
     action: contract?.action || null,
     delegates_to: contract?.delegates_to || null,
     governance: contract?.governance || null,
+    write_policy: cloneWritePolicyRecord(contract?.write_policy),
   };
 }

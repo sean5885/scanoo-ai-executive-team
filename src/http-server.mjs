@@ -156,6 +156,12 @@ import {
 } from "./lark-write-guard.mjs";
 import { decideWriteGuard } from "./write-guard.mjs";
 import {
+  buildCreateDocWritePolicy,
+  buildDocumentCommentRewriteApplyWritePolicy,
+  buildDriveOrganizeApplyWritePolicy,
+  buildWikiOrganizeApplyWritePolicy,
+} from "./write-policy-contract.mjs";
+import {
   buildAgentLearningSummary,
   generateLearningLoopImprovementProposals,
 } from "./agent-learning-loop.mjs";
@@ -2607,6 +2613,11 @@ async function handleDriveOrganize(res, requestUrl, body, apply, logger = noopHt
       );
       return;
     }
+    const writePolicy = buildDriveOrganizeApplyWritePolicy({
+      scopeKey,
+      folderToken,
+      idempotencyKey: getRequestIdempotencyKey(body),
+    });
     const writeGuard = decideWriteGuard({
       externalWrite: true,
       confirmed: apply === true,
@@ -2620,6 +2631,7 @@ async function handleDriveOrganize(res, requestUrl, body, apply, logger = noopHt
         folder_token: folderToken,
         scope_key: scopeKey,
         scope_type: "drive_folder",
+        write_policy: writePolicy,
       },
     });
     if (!writeGuard.allow) {
@@ -2808,6 +2820,13 @@ async function handleWikiOrganize(res, requestUrl, body, apply, logger = noopHtt
       );
       return;
     }
+    const writePolicy = buildWikiOrganizeApplyWritePolicy({
+      scopeKey,
+      spaceId: options.spaceId,
+      parentNodeToken: options.parentNodeToken,
+      spaceName: options.spaceName,
+      idempotencyKey: getRequestIdempotencyKey(body),
+    });
     const writeGuard = decideWriteGuard({
       externalWrite: true,
       confirmed: apply === true,
@@ -2822,6 +2841,7 @@ async function handleWikiOrganize(res, requestUrl, body, apply, logger = noopHtt
         parent_node_token: options.parentNodeToken || null,
         scope_key: scopeKey,
         scope_type: "wiki_scope",
+        write_policy: writePolicy,
       },
     });
     if (!writeGuard.allow) {
@@ -2935,6 +2955,10 @@ async function handleDocumentCreate(
     type,
     confirm,
   } = buildDocumentCreateInput(body);
+  const writePolicy = buildCreateDocWritePolicy({
+    folderToken: requestedFolderToken,
+    idempotencyKey: getRequestIdempotencyKey(body),
+  });
 
   if (!title) {
     logger.warn("document_create_missing_title");
@@ -2957,6 +2981,7 @@ async function handleDocumentCreate(
         owner: entryGovernance.governance?.owner || null,
         intent: entryGovernance.governance?.intent || null,
         type: entryGovernance.governance?.type || null,
+        write_policy: writePolicy,
       });
       respondDocumentWriteFailure(res, 400, entryGovernance.error, {
         message: entryGovernance.message,
@@ -2982,6 +3007,7 @@ async function handleDocumentCreate(
       requested_folder_token: createGuard.requested_folder_token,
       resolved_folder_token: createGuard.resolved_folder_token,
       demo_like: createGuard.classification?.demo_like === true,
+      write_policy: writePolicy,
     });
     respondDocumentWriteFailure(res, createGuard.statusCode, createGuard.error, {
       message: createGuard.message,
@@ -3000,6 +3026,10 @@ async function handleDocumentCreate(
     resolved_folder_token: folderToken || null,
     has_initial_content: Boolean(content),
     demo_like: createGuard.classification?.demo_like === true,
+    write_policy: buildCreateDocWritePolicy({
+      folderToken,
+      idempotencyKey: getRequestIdempotencyKey(body),
+    }),
   });
   let created;
   try {
@@ -3082,6 +3112,10 @@ async function handleDocumentCreate(
     initial_content_write_failed: initialContentWriteFailed,
     permission_grant_failed: permissionGrantFailed,
     permission_grant_skipped: permissionGrantSkipped,
+    write_policy: buildCreateDocWritePolicy({
+      folderToken,
+      idempotencyKey: getRequestIdempotencyKey(body),
+    }),
   });
 
   respondDocumentWriteSuccess(res, 200, buildDocumentCreateResult({
@@ -4315,6 +4349,10 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body) {
       account_id: context.account.id,
       confirmation_id: confirmationId || null,
       document_id: documentId,
+      write_policy: buildDocumentCommentRewriteApplyWritePolicy({
+        documentId,
+        idempotencyKey: getRequestIdempotencyKey(body),
+      }),
     },
   });
   if (!writeGuard.allow) {

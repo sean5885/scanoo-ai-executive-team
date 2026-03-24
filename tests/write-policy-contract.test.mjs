@@ -1,0 +1,72 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import { getRouteContract } from "../src/http-route-contracts.mjs";
+import {
+  buildCreateDocWritePolicy,
+  buildDocumentCommentRewriteApplyWritePolicy,
+  buildDriveOrganizeApplyWritePolicy,
+  buildMeetingConfirmWritePolicy,
+  buildWikiOrganizeApplyWritePolicy,
+  collectWritePolicyMissingFields,
+  listPhase1RouteWritePolicyFixtures,
+  WRITE_POLICY_VERSION,
+} from "../src/write-policy-contract.mjs";
+
+test("write policy builders normalize phase1 metadata with stable contract fields", () => {
+  const createPolicy = buildCreateDocWritePolicy({
+    folderToken: "fld_123",
+    idempotencyKey: "idem-create",
+  });
+  const drivePolicy = buildDriveOrganizeApplyWritePolicy({
+    scopeKey: "drive:fld_ops",
+    idempotencyKey: "idem-drive",
+  });
+  const wikiPolicy = buildWikiOrganizeApplyWritePolicy({
+    spaceId: "space_123",
+  });
+  const rewritePolicy = buildDocumentCommentRewriteApplyWritePolicy({
+    documentId: "doc_123",
+  });
+  const meetingPolicy = buildMeetingConfirmWritePolicy({
+    confirmationId: "confirm_123",
+    targetDocumentId: "doc_meeting",
+  });
+
+  assert.deepEqual(createPolicy, {
+    policy_version: WRITE_POLICY_VERSION,
+    source: "create_doc",
+    owner: "document_http_route",
+    intent: "create_doc",
+    action_type: "create",
+    external_write: true,
+    confirm_required: true,
+    review_required: "conditional",
+    scope_key: "drive:fld_123",
+    idempotency_key: "idem-create",
+  });
+  assert.equal(drivePolicy.action_type, "move");
+  assert.equal(drivePolicy.review_required, "always");
+  assert.equal(drivePolicy.scope_key, "drive:fld_ops");
+  assert.equal(drivePolicy.idempotency_key, "idem-drive");
+  assert.equal(wikiPolicy.scope_key, "wiki:space_123");
+  assert.equal(rewritePolicy.scope_key, "doc-rewrite:doc_123");
+  assert.equal(rewritePolicy.action_type, "replace");
+  assert.equal(meetingPolicy.scope_key, "doc:doc_meeting");
+  assert.equal(meetingPolicy.action_type, "writeback");
+  assert.deepEqual(collectWritePolicyMissingFields(meetingPolicy), []);
+});
+
+test("phase1 route contracts expose complete write policy metadata for each wired surface", () => {
+  const fixtures = listPhase1RouteWritePolicyFixtures();
+
+  assert.equal(fixtures.length, 7);
+
+  for (const fixture of fixtures) {
+    const routeContract = getRouteContract(fixture.pathname);
+
+    assert.equal(routeContract?.action, fixture.action);
+    assert.deepEqual(collectWritePolicyMissingFields(routeContract?.write_policy), []);
+    assert.deepEqual(routeContract?.write_policy, fixture.write_policy);
+  }
+});

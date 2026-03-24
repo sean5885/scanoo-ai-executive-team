@@ -34,6 +34,7 @@ import { registerKnowledgeWriteback } from "./executive-closed-loop.mjs";
 import { EVIDENCE_TYPES, verifyMeetingWorkflowCompletion } from "./executive-verifier.mjs";
 import { normalizeText, nowIso } from "./text-utils.mjs";
 import { decideWriteGuard } from "./write-guard.mjs";
+import { buildMeetingConfirmWritePolicy } from "./write-policy-contract.mjs";
 
 const WEEKLY_PROGRESS_KEYWORDS = ["進展", "推进", "推進", "完成度", "完成", "達成", "okr", "kr", "目標", "objective"];
 const WEEKLY_ISSUE_KEYWORDS = ["卡點", "阻塞", "問題", "风险", "風險", "瓶頸"];
@@ -1562,6 +1563,10 @@ export function createMeetingCoordinator(overrides = {}) {
         confirmation_id: confirmationId || null,
         project_key: pendingConfirmation.project_key || null,
         target_document_id: pendingConfirmation.target_document_id || null,
+        write_policy: buildMeetingConfirmWritePolicy({
+          confirmationId,
+          targetDocumentId: pendingConfirmation.target_document_id,
+        }),
       },
     });
     if (!writeGuard.allow) {

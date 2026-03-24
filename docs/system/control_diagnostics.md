@@ -77,6 +77,7 @@ routing summary 不會重跑 routing runtime，也不新增新的 routing diagno
 
 write summary 目前重用：
 
+- `/Users/seanhan/Documents/Playground/src/write-policy-contract.mjs`
 - `/Users/seanhan/Documents/Playground/src/write-guard.mjs`
 - `/Users/seanhan/Documents/Playground/src/lark-write-guard.mjs`
 - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
@@ -87,6 +88,7 @@ write summary 目前重用：
 
 1. fixed deterministic guard scenarios
 2. checked-in runtime integration surface scan
+3. Phase 1 write-policy metadata presence check
 
 目前固定檢查的 write guard family 包含：
 
@@ -108,6 +110,20 @@ write summary 目前重用：
 - `document_comment_rewrite_apply`
 - `planDocumentCreateGuard(...)`
 - `assertDocumentCreateAllowed(...)`
+
+目前固定檢查的 Phase 1 write-policy action family 包含：
+
+- `create_doc`
+- `drive_organize_apply`
+- `wiki_organize_apply`
+- `document_comment_rewrite_apply`
+- `meeting_confirm_write`
+
+這一層只驗證 checked-in metadata 是否存在於：
+
+- route contract
+- existing create/write decision log surface
+- shared write-policy contract module
 
 ## CLI
 
@@ -134,6 +150,11 @@ npm run control:diagnostics -- --compare-snapshot <run-id|path>
 - `routing_summary`
 - `write_summary`
 - `decision`
+
+目前 `write_summary` 會額外暴露：
+
+- `policy_actions`
+- `policy_route_checks`
 
 compare mode 仍保持 read-only：
 
