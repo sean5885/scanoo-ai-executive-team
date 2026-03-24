@@ -412,6 +412,54 @@ test("meeting confirmation creates new general document when no existing documen
   assert.ok(harness.documents.get("doc-1").startsWith("[20260315]"));
 });
 
+test("meeting confirmation deny path logs write observability fields", async () => {
+  const calls = [];
+  const harness = createCoordinatorHarness();
+
+  const preview = await harness.coordinator.processMeetingPreview({
+    accountId: "acct-1",
+    accessToken: "token",
+    transcriptText: `
+      客戶會議
+      參與人員：Sean
+      主要內容：確認交付範圍
+      關鍵結論：四月啟動
+    `,
+    chatId: "chat-9",
+    metadata: { date: "20260315" },
+  });
+
+  const confirmation = harness.confirmations.get(preview.confirmation.confirmation_id);
+  confirmation.doc_entry_content = "";
+  harness.confirmations.set(preview.confirmation.confirmation_id, confirmation);
+
+  const denied = await harness.coordinator.confirmMeetingWrite({
+    accountId: "acct-1",
+    accessToken: "token",
+    confirmationId: preview.confirmation.confirmation_id,
+    logger: {
+      info(...args) {
+        calls.push(args);
+      },
+      warn(...args) {
+        calls.push(args);
+      },
+    },
+  });
+
+  assert.equal(denied?.ok, false);
+  assert.equal(denied?.error, "write_guard_denied");
+  assert.equal(denied?.write_guard?.error_code, "write_guard_verifier_incomplete");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], "write_guard_decision");
+  assert.equal(calls[0][1].owner, "meeting_agent");
+  assert.equal(calls[0][1].workflow, "meeting");
+  assert.equal(calls[0][1].status, "deny");
+  assert.equal(calls[0][1].allow, false);
+  assert.equal(calls[0][1].reason, "verifier_incomplete");
+  assert.equal(calls[0][1].error_code, "write_guard_verifier_incomplete");
+});
+
 test("prependMeetingEntry deduplicates repeated meeting content", async () => {
   const harness = createCoordinatorHarness();
   harness.documents.set("doc-existing", "[20260315]\n\n參與人員：\n- Sean");

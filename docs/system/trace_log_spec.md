@@ -111,6 +111,14 @@ All minimum trace/log events should align around these fields:
  - `result.error`
  - `duration_ms`
  - optional `trace_id`
+- workflow write-gate callers now also emit `write_guard_decision` events with:
+  - `owner`
+  - `workflow`
+  - `decision`
+  - `allow`
+  - `deny`
+  - `reason`
+  - deny-only `error_code`
 - those `tool_execution` events are now also persisted into SQLite `http_request_trace_events`, so request-scoped learning/analysis can measure per-tool success rate and latency from the same trace surface
 - the HTTP runtime now also persists one compact SQLite request-monitor row per finished request keyed by `trace_id`; this is a query surface over request outcomes, not a replacement for structured logs
 - the HTTP runtime now also emits explicit `request_timeout` / `request_cancelled` trace events and persists the corresponding `error_code` into `http_request_monitor`
@@ -235,6 +243,46 @@ The reconstruction CLI reads both tables so operators can quickly inspect:
 - boundary:
   - dispatch start is not success
   - dispatch start is not completion
+
+## 1A. `write_guard_decision`
+
+- purpose:
+  - record one workflow-level write gate decision for both allow and deny outcomes
+- trigger:
+  - any guarded internal/external write path calls `decideWriteGuard(...)`
+- required fields:
+  - `event_type`
+  - `action`
+  - `owner`
+  - `workflow`
+  - `decision`
+  - `allow`
+  - `deny`
+  - `reason`
+- optional fields:
+  - `trace_id`
+  - `request_id`
+  - `error_code`
+  - workflow-specific target identifiers such as `document_id`, `folder_token`, or `scope_key`
+- sample shape:
+  ```json
+  {
+    "event_type": "write_guard_decision",
+    "action": "meeting_confirm_write",
+    "owner": "meeting_agent",
+    "workflow": "meeting",
+    "decision": "deny",
+    "allow": false,
+    "deny": true,
+    "reason": "confirmation_required",
+    "error_code": "write_guard_confirmation_required",
+    "trace_id": "http_123"
+  }
+  ```
+- boundary:
+  - this event is guard evidence only
+  - it explains why a write was allowed or denied
+  - it does not itself prove the downstream write succeeded
 
 ## 2. `action_result`
 

@@ -806,12 +806,13 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - `/Users/seanhan/Documents/Playground/src/doc-update-confirmations.mjs`
 - Responsibility:
   - provide one bounded `decideWriteGuard(...)` decision surface for workflow-level write gating
-  - keep the return shape compact as `allow / external_write / require_confirmation`
+  - keep the return shape compact as `decision / allow / external_write / require_confirmation / reason`, with deny-only `error_code` for observability
   - block external writes when the request is still preview-only
   - block external writes when explicit confirm/apply intent is still missing
   - block external writes when the workflow-specific preview/review verification precondition has not been completed
   - allow internal writes such as company-brain mirror ingest to stay on the existing internal path
   - guard doc-rewrite apply, meeting confirm write, and drive/wiki organize apply without changing their surrounding workflow contracts
+  - emit one `write_guard_decision` runtime log for every allow/deny decision, carrying `owner`, `workflow`, `decision`, `reason`, and deny `error_code`
 - Core path:
   - yes for workflow write safety
 

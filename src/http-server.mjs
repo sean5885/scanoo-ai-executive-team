@@ -899,6 +899,14 @@ function ingestVerifiedDocumentToCompanyBrain({ account, row, logger = noopHttpL
     externalWrite: false,
     confirmed: true,
     verifierCompleted: true,
+    logger,
+    owner: "company_brain_write_intake",
+    workflow: "company_brain_mirror_ingest",
+    operation: "document_company_brain_ingest",
+    details: {
+      account_id: account.id,
+      document_id: row.document_id,
+    },
   });
   if (!writeGuard.allow) {
     logger.warn("document_company_brain_ingest_blocked_by_write_guard", {
@@ -2575,6 +2583,16 @@ async function handleDriveOrganize(res, requestUrl, body, apply, logger = noopHt
       externalWrite: true,
       confirmed: apply === true,
       verifierCompleted: hasCloudDocPreviewPlan(applyingTask?.meta?.preview_plan),
+      logger,
+      owner: "cloud_doc_workflow",
+      workflow: "cloud_doc",
+      operation: "drive_organize_apply",
+      details: {
+        account_id: context.account.id,
+        folder_token: folderToken,
+        scope_key: scopeKey,
+        scope_type: "drive_folder",
+      },
     });
     if (!writeGuard.allow) {
       respondCloudDocPreviewRequired(res, buildWriteGuardMessage(writeGuard));
@@ -2766,6 +2784,17 @@ async function handleWikiOrganize(res, requestUrl, body, apply, logger = noopHtt
       externalWrite: true,
       confirmed: apply === true,
       verifierCompleted: hasCloudDocPreviewPlan(applyingTask?.meta?.preview_plan),
+      logger,
+      owner: "cloud_doc_workflow",
+      workflow: "cloud_doc",
+      operation: "wiki_organize_apply",
+      details: {
+        account_id: context.account.id,
+        space_id: options.spaceId || null,
+        parent_node_token: options.parentNodeToken || null,
+        scope_key: scopeKey,
+        scope_type: "wiki_scope",
+      },
     });
     if (!writeGuard.allow) {
       respondCloudDocPreviewRequired(res, buildWriteGuardMessage(writeGuard));
@@ -4184,8 +4213,17 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body) {
     confirmed: confirm === true && Boolean(confirmationId),
     verifierCompleted:
       Array.isArray(pendingConfirmation.patch_plan)
-      && typeof pendingConfirmation.rewritten_content === "string"
-      && pendingConfirmation.rewritten_content.trim().length > 0,
+        && typeof pendingConfirmation.rewritten_content === "string"
+        && pendingConfirmation.rewritten_content.trim().length > 0,
+    logger,
+    owner: "doc_rewrite_workflow",
+    workflow: "doc_rewrite",
+    operation: "document_comment_rewrite_apply",
+    details: {
+      account_id: context.account.id,
+      confirmation_id: confirmationId || null,
+      document_id: documentId,
+    },
   });
   if (!writeGuard.allow) {
     respondDocumentRewriteFailure(
@@ -4359,6 +4397,7 @@ async function handleMeetingConfirm(res, requestUrl, body, logger = noopHttpLogg
     accountId: context.account.id,
     accessToken: context.token,
     confirmationId,
+    logger,
   });
   if (!result) {
     logger.warn("meeting_confirm_invalid_or_expired", {

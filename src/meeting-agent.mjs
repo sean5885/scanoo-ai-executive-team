@@ -1232,6 +1232,7 @@ function defaultCoordinatorDeps() {
     findSyncedMeetingDocument,
     listWeeklyTrackerItems,
     upsertWeeklyTrackerItem,
+    logger: null,
   };
 }
 
@@ -1535,6 +1536,7 @@ export function createMeetingCoordinator(overrides = {}) {
     accountOpenId = "",
     accessToken,
     confirmationId,
+    logger = deps.logger,
   }) {
     const pendingConfirmation = await deps.peekConfirmation({
       confirmationId,
@@ -1551,6 +1553,16 @@ export function createMeetingCoordinator(overrides = {}) {
         normalizeText(pendingConfirmation.summary_content)
         && normalizeText(pendingConfirmation.doc_entry_content),
       ),
+      logger,
+      owner: "meeting_agent",
+      workflow: "meeting",
+      operation: "meeting_confirm_write",
+      details: {
+        account_id: accountId,
+        confirmation_id: confirmationId || null,
+        project_key: pendingConfirmation.project_key || null,
+        target_document_id: pendingConfirmation.target_document_id || null,
+      },
     });
     if (!writeGuard.allow) {
       return {
