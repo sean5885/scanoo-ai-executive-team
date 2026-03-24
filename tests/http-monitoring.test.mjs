@@ -22,10 +22,11 @@ function createLogger() {
   };
 }
 
-async function startTestServer(t) {
+async function startTestServer(t, options = {}) {
   const server = startHttpServer({
     listen: false,
     logger: createLogger(),
+    ...options,
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
@@ -129,7 +130,9 @@ test("http server records timed out requests in monitoring store", async (t) => 
 });
 
 test("answer route normalizes the exact leaking runtime query into natural-language output", async (t) => {
-  const server = await startTestServer(t);
+  const server = await startTestServer(t, {
+    requestTimeoutMs: 180000,
+  });
   const { port } = server.address();
 
   const response = await fetch(`http://127.0.0.1:${port}/answer?q=${encodeURIComponent("查 runtime info")}`);

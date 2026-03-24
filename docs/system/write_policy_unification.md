@@ -25,6 +25,8 @@ Current code truth for this design is grounded in:
 - `/Users/seanhan/Documents/Playground/src/http-route-contracts.mjs`
 - `/Users/seanhan/Documents/Playground/src/write-policy-contract.mjs`
 - `/Users/seanhan/Documents/Playground/src/http-idempotency-store.mjs`
+- `/Users/seanhan/Documents/Playground/src/lark-write-budget-guard.mjs`
+- `/Users/seanhan/Documents/Playground/src/execute-lark-write.mjs`
 - `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`
 - `/Users/seanhan/Documents/Playground/src/cloud-doc-organization-workflow.mjs`
 - `/Users/seanhan/Documents/Playground/src/company-brain-write-intake.mjs`
@@ -50,12 +52,12 @@ These are the write actions that should define the first shared policy vocabular
 
 | action key | current entry | target | current grounded governance |
 | --- | --- | --- | --- |
-| `create_doc` | `POST /api/doc/create`, `POST /agent/docs/create` | external Lark doc create, plus optional initial content write | explicit create guard in `lark-write-guard.mjs`; planner/agent governance in `planner_contract.json`; explicit `confirm=true`; `external_write=true`; `review_required=conditional` |
-| `update_doc` | `POST /api/doc/update` | external Lark doc update | replace mode already uses preview/confirm; heading-targeted updates require explicit target; downstream company-brain intake classifies update as review-gated |
-| `document_comment_rewrite_apply` | `POST /api/doc/rewrite-from-comments` with apply path | external Lark doc replace plus optional comment resolution | preview confirmation artifact plus `decideWriteGuard(...)`; verifier precondition is patch-plan plus rewritten content |
-| `meeting_confirm_write` | `POST /api/meeting/confirm`, `GET /meeting/confirm` | external Lark meeting doc prepend/writeback | confirmation artifact plus `decideWriteGuard(...)`; verifier precondition is summary/doc-entry completeness |
-| `drive_organize_apply` | `POST /api/drive/organize/apply` | external Drive move task submission | same-scope preview/review prerequisite, executive task must already be `awaiting_review`, plus `decideWriteGuard(...)` |
-| `wiki_organize_apply` | `POST /api/wiki/organize/apply` | external Wiki move task submission | same-scope preview/review prerequisite, executive task must already be `awaiting_review`, plus `decideWriteGuard(...)` |
+| `create_doc` | `POST /api/doc/create`, `POST /agent/docs/create` | external Lark doc create, plus optional initial content write | explicit create guard in `lark-write-guard.mjs`; create is now preview-first via `document_create` confirmation artifacts and requires `confirm=true + confirmation_id` on apply; planner/agent governance in `planner_contract.json`; final external write now routes through `executeLarkWrite(...)` plus budget / duplicate guard; `external_write=true`; `review_required=conditional` |
+| `update_doc` | `POST /api/doc/update` | external Lark doc update | replace/targeted modes use preview/confirm; append keeps existing direct-apply API shape; all final writes now route through `executeLarkWrite(...)` plus budget / duplicate guard; downstream company-brain intake classifies update as review-gated |
+| `document_comment_rewrite_apply` | `POST /api/doc/rewrite-from-comments` with apply path | external Lark doc replace plus optional comment resolution | preview confirmation artifact plus `decideWriteGuard(...)`; verifier precondition is patch-plan plus rewritten content; budget / duplicate guard before apply |
+| `meeting_confirm_write` | `POST /api/meeting/confirm`, `GET /meeting/confirm` | external Lark meeting doc prepend/writeback | confirmation artifact plus `decideWriteGuard(...)`; verifier precondition is summary/doc-entry completeness; budget / duplicate guard before writeback |
+| `drive_organize_apply` | `POST /api/drive/organize/apply` | external Drive move task submission | same-scope preview/review prerequisite, executive task must already be `awaiting_review`, plus `decideWriteGuard(...)` and budget / duplicate guard |
+| `wiki_organize_apply` | `POST /api/wiki/organize/apply` | external Wiki move task submission | same-scope preview/review prerequisite, executive task must already be `awaiting_review`, plus `decideWriteGuard(...)` and budget / duplicate guard |
 | `cloud_doc_apply` | cloud-doc workflow task layer above drive/wiki apply | workflow owner over external Drive/Wiki apply | scope-bound executive task, preview-plan evidence, verifier gate on completion |
 | `ingest_doc` | `ingestVerifiedDocumentToCompanyBrain(...)` internal path | internal mirror write into `company_brain_docs` | internal write guard allow, intake boundary classification, optional staged review state |
 | `review_company_brain_doc` | `POST /agent/company-brain/review` | internal review-state write | lifecycle contract exists in `company-brain-lifecycle-contract.mjs`; review route is explicit |
@@ -99,6 +101,8 @@ These are real external write actions in code, but they are not yet part of one 
   - `spreadsheet_update`
   - `spreadsheet_replace`
   - `spreadsheet_replace_batch`
+
+These public HTTP write surfaces now also route their final external mutation through `executeLarkWrite(...)` so they share the same budget / dedupe boundary as the high-risk doc and meeting write family, even though they do not introduce a new preview/confirmation contract.
 
 ### Other grounded internal mutation routes
 
@@ -192,6 +196,7 @@ Every write action should be able to emit the same bounded policy object:
     - `company-brain:<doc_id>`
 - `idempotency_key`
   - request-level dedupe key when the same write may be retried or replayed
+  - only explicit caller-provided keys participate in idempotency replay / duplicate detection; internal request fingerprints stay separate fallback dedupe evidence
   - may be `null` for one-shot confirmation-token paths
 
 ### Contract rules

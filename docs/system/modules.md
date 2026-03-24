@@ -119,7 +119,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - HTTP endpoint handling
   - response shaping
   - internal planner/company-brain bridge routes now fail closed unless the current request carries an explicit user auth header set; they no longer silently rehydrate document-search auth from unrelated stored OAuth state
-  - optional request-body idempotency for JSON `POST` / `PUT` / `PATCH` routes via `idempotency_key`
+  - optional explicit request-body idempotency for JSON `POST` / `PUT` / `PATCH` routes via `idempotency_key`
   - replay the first persisted JSON result for repeated keyed requests instead of re-running the handler
   - persist first-response idempotency rows into SQLite `http_request_idempotency`
   - per-request trace creation and request lifecycle logging
@@ -781,6 +781,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - persist pending confirmation state before any doc write
   - find/create/prepend meeting docs with newest entry on top
   - update weekly todo tracker after confirmation
+  - fail soft with a blocked/safe reply when meeting-capture doc create/update/delete is denied by the shared write executor
   - mirror controlled meeting state into `active_task` with `workflow="meeting"` and `workflow_state` transitions for `capturing`, `awaiting_confirmation`, `writing_back`, and verifier-gated completion
 - Core path:
   - yes for `/meeting`
@@ -803,20 +804,34 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 ### 10D. Shared Write Guard
 
 - Location:
+  - `/Users/seanhan/Documents/Playground/src/execute-lark-write.mjs`
+  - `/Users/seanhan/Documents/Playground/src/mutation-admission.mjs`
   - `/Users/seanhan/Documents/Playground/src/write-policy-contract.mjs`
   - `/Users/seanhan/Documents/Playground/src/write-guard.mjs`
+  - `/Users/seanhan/Documents/Playground/src/lark-write-budget-guard.mjs`
   - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
   - `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`
   - `/Users/seanhan/Documents/Playground/src/doc-update-confirmations.mjs`
 - Responsibility:
+  - provide one shared `executeLarkWrite(...)` runtime boundary for final external mutations
+  - provide a contract-only unified mutation admission layer with fixed canonical request builders, fixed input/output schema validators, and one shared adapter entrypoint
+  - keep `mutation-admission.mjs` builder-only in Step 2: no route execute wiring, no planner/Lark/DB mutation, and no route-specific business logic inside the adapter
+  - keep `company-brain apply` ordering explicit as `lifecycle gate first, mutation admission adapter second`
   - provide one checked-in write-policy metadata contract (`policy_version / source / owner / intent / action_type / external_write / confirm_required / review_required / scope_key / idempotency_key`) for the Phase 1 high-risk write family
   - provide one bounded `decideWriteGuard(...)` decision surface for workflow-level write gating
+  - provide one checked-in rolling write-budget / dedupe guard with `recordCall`, `getBudgetState`, `isNearLimit`, `isOverSoftLimit`, `isOverHardLimit`, `shouldAllowWrite`, and `fallbackToPreviewReason`
   - keep the return shape compact as `decision / allow / external_write / require_confirmation / reason`, with deny-only `error_code` for observability
   - block external writes when the request is still preview-only
   - block external writes when explicit confirm/apply intent is still missing
   - block external writes when the workflow-specific preview/review verification precondition has not been completed
+  - keep existing route-level preview/confirm behavior stable while still forcing the final external mutation hop through one checked-in executor
+  - support preview-first `document_create` artifacts with explicit `peek -> consume -> write` lifecycle before real doc create
+  - downgrade non-essential writes back to preview when the soft write budget limit is reached
+  - block all non-whitelisted writes when the hard write budget limit is reached
+  - record blocked budget decisions and same-session / same-doc duplicate suppression into a local budget log
   - allow internal writes such as company-brain mirror ingest to stay on the existing internal path
-  - guard doc-rewrite apply, meeting confirm write, and drive/wiki organize apply without changing their surrounding workflow contracts
+  - guard doc create, doc update, doc-rewrite apply, meeting confirm write, and drive/wiki organize apply without changing their surrounding workflow contracts more than necessary
+  - guard public HTTP write surfaces for messages, calendar events, tasks, bitable writes, spreadsheet writes, task comments, and message reactions through the same executor boundary
   - emit Phase 1 normalized `write_policy` metadata through existing create/write decision logs without changing allow/deny behavior
   - emit one `write_guard_decision` runtime log for every allow/deny decision, carrying `owner`, `workflow`, `decision`, `reason`, deny `error_code`, and any wired `write_policy`
 - Core path:
@@ -909,7 +924,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - now prefers focused excerpts, compact comment summaries, doc-specific checkpoints, and XML-governed anti-hallucination prompt rules over full-doc replay
 
 - `/Users/seanhan/Documents/Playground/src/doc-update-confirmations.mjs`
-  - preview / confirm state store for safe doc overwrite and patch-plan apply
+  - preview / confirm state store for safe doc create, doc overwrite, meeting writeback, and patch-plan apply
 
 - `/Users/seanhan/Documents/Playground/src/agent-token-governance.mjs`
   - shared context budget, rolling-summary, XML prompt wrapper, anti-hallucination rules, and tool-output compression logic

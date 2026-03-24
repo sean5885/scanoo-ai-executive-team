@@ -22,17 +22,23 @@ This request-flow mirror now reflects the current fail-closed routing baseline.
 3. if the stored token is expired, the request layer refreshes it with the persisted `refresh_token` and writes the replacement token back into SQLite
 4. only when refresh cannot recover does the HTTP path fail soft with `error=oauth_reauth_required`
    - runtime observability now also emits an immediate console alert for `oauth_reauth_required`, rate-limited in-memory to avoid repeated bursts from the same failing account
-5. for heading-targeted doc updates, preview may still resolve the target doc from explicit IDs or shared doc URLs and then read current raw markdown
-6. the handler resolves the target heading section and turns the requested insert into a full-document replace candidate
-7. targeted updates then reuse the same preview/confirm replace gate instead of introducing a second Lark write primitive
-8. the final write step no longer trusts preview-time URL resolution alone; it requires explicit `document_id` and `section_heading`, otherwise it returns structured `missing_explicit_write_target`
-9. handler calls `lark-content.mjs`
-10. `lark-content.mjs` calls Lark SDK
-11. for Lobster-created `docx` files, the initiating user's `open_id` is granted `full_access`
-12. Result is normalized and returned
-13. if the JSON write request included `idempotency_key`, the HTTP layer persists the first response into SQLite `http_request_idempotency`
-14. later repeated requests with the same `method + pathname + explicit account_id when provided + idempotency_key` replay that first persisted result instead of re-running the write path
-15. direct-message cleanup requests can also delete the latest Lobster meeting doc through tenant-token fallback and persist a chat-only failure-report preference
+5. high-risk write routes now route their final mutation step through `executeLarkWrite(...)`
+6. document create is now preview-first and returns a temporary `document_create` confirmation artifact; the real create path requires `confirm=true + confirmation_id`, while document replace, heading-targeted update, comment rewrite apply, meeting confirm write, and drive/wiki organize apply keep their existing preview/confirmation or preview/review boundary
+7. append-style doc updates still keep their existing direct-apply API shape, but the actual `updateDocument(...)` call now also runs inside the shared write executor
+8. for heading-targeted writes, preview may still resolve the target doc from explicit IDs or shared doc URLs and then read current raw markdown
+9. the final write step no longer trusts preview-time URL resolution alone; confirmed overwrite paths still require explicit `document_id` plus the preview confirmation, otherwise they return structured write-target or confirmation errors
+10. before external writes run, the route evaluates:
+   - generic HTTP idempotency
+   - workflow write guard
+   - local Lark write budget / duplicate suppression guard
+11. soft-limit budget hits downgrade non-essential writes back to their existing preview/review boundary when that boundary exists; hard-limit hits block non-whitelisted writes
+12. handler calls `lark-content.mjs`
+13. route-backed raw write adapters for docs/drive/wiki/calendar/tasks/bitable/sheets/reactions/comments only run inside the shared executor in development mode; chat preview notifications still stay on their older non-executor path
+14. for Lobster-created `docx` files, the initiating user's `open_id` is granted `full_access`
+15. result is normalized and returned
+16. if the JSON write request included an explicit `idempotency_key`, the HTTP layer persists the first response into SQLite `http_request_idempotency`
+17. later repeated requests with the same `method + pathname + explicit account_id when provided + idempotency_key` replay that first persisted result instead of re-running the write path; the downstream Lark budget guard only treats explicit keys as idempotency duplicates and leaves non-keyed retries to request-fingerprint dedupe
+18. direct-message cleanup requests can also delete the latest Lobster meeting doc through the same shared write executor and persist a chat-only failure-report preference
 
 ### Sync Flow
 
@@ -101,11 +107,11 @@ This request-flow mirror now reflects the current fail-closed routing baseline.
 5. LLM returns:
    - change summary
    - revised full document content
-6. preview mode returns proposal only
-7. apply mode replaces doc content
-8. optional comment resolution marks comments as solved
+6. preview mode returns proposal only plus one confirmation artifact
+7. apply mode replaces doc content only after explicit confirmation
+8. optional comment resolution marks comments as solved only after the write succeeds
 9. rewrite checkpoint is updated externally after preview/apply
-10. shared `write-guard.mjs` blocks the apply step unless the path is no longer preview-only, explicit confirmation is present, and the preview/review precondition has completed
+10. shared write guard and write-budget guard block apply when preview/review evidence, confirmation, dedupe, or budget conditions are not satisfied
 
 ### Comment Suggestion Card Flow
 
@@ -123,10 +129,14 @@ This request-flow mirror now reflects the current fail-closed routing baseline.
 1. workflow enters a preview/review boundary first
 2. write caller resolves whether the target is an external write or an internal write
 3. external write paths call `decideWriteGuard(...)`
-4. preview-mode requests are denied before any external mutation
-5. missing confirm/apply intent is denied before any external mutation
-6. missing preview/review verification precondition is denied before any external mutation
-7. internal writes such as company-brain mirror ingest continue on their existing internal path
+4. external write paths also call `lark-write-budget-guard.mjs`
+5. preview-mode requests are denied before any external mutation
+6. missing confirm/apply intent is denied before any external mutation
+7. missing preview/review verification precondition is denied before any external mutation
+8. same-session duplicate and same-doc duplicate-content writes are downgraded back to preview
+9. soft-limit budget overflow downgrades non-essential writes back to preview
+10. hard-limit budget overflow blocks all non-whitelisted writes
+11. internal writes such as company-brain mirror ingest continue on their existing internal path
 
 ### HTTP High-Risk Route Governance
 
@@ -202,10 +212,11 @@ This request-flow mirror now reflects the current fail-closed routing baseline.
 10. a pending confirmation artifact is stored locally
 11. no document write happens before confirmation in that preview-only path
 12. user confirms via card button, `/meeting confirm <confirmation_id>`, or `POST /api/meeting/confirm`
-13. service finds an existing mapped meeting doc or creates a stable doc on demand
-14. new meeting entry is prepended to the top of the target document
-15. if meeting type is `weekly`, structured todo tracker rows are upserted after the doc write
-16. on confirmed write, meeting knowledge writeback is registered into pending proposal memory instead of jumping straight into approved long-term knowledge
+13. before the confirmed write runs, the route checks write guard, write budget, and duplicate suppression
+14. service finds an existing mapped meeting doc or creates a stable doc on demand
+15. new meeting entry is prepended to the top of the target document unless the same content is already present
+16. if meeting type is `weekly`, structured todo tracker rows are upserted after the doc write
+17. on confirmed write, meeting knowledge writeback is registered into pending proposal memory instead of jumping straight into approved long-term knowledge
 
 ## Event Flow
 

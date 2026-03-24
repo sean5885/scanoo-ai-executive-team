@@ -835,7 +835,7 @@
     },
     "planner_tool_flow_output": {
       "type": "object",
-      "required": ["selected_action", "execution_result", "routing_reason", "agent_execution", "trace_id"],
+      "required": ["selected_action", "execution_result", "routing_reason", "trace_id"],
       "properties": {
         "selected_action": { "type": ["string", "null"] },
         "execution_result": { "type": ["object", "null"] },

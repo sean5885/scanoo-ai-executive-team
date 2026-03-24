@@ -80,6 +80,33 @@ export const sessionScopeStorePath =
 export const docUpdateConfirmationStorePath =
   process.env.LARK_DOC_UPDATE_CONFIRMATION_STORE ||
   path.resolve(process.cwd(), ".data/doc-update-confirmations.json");
+export const larkWriteBudgetStorePath =
+  process.env.LARK_WRITE_BUDGET_STORE ||
+  path.resolve(process.cwd(), ".data/lark-write-budget.json");
+export const larkWriteBudgetWindowMs = Number.parseInt(
+  process.env.LARK_WRITE_BUDGET_WINDOW_MS || String(24 * 60 * 60 * 1000),
+  10,
+);
+export const larkWriteBudgetNearRatio = parseFloatOrDefault(
+  process.env.LARK_WRITE_BUDGET_NEAR_RATIO || "0.8",
+  0.8,
+);
+export const larkWriteBudgetSoftLimit = Number.parseInt(
+  process.env.LARK_WRITE_BUDGET_SOFT_LIMIT || "40",
+  10,
+);
+export const larkWriteBudgetHardLimit = Number.parseInt(
+  process.env.LARK_WRITE_BUDGET_HARD_LIMIT || "60",
+  10,
+);
+export const larkWriteBudgetDuplicateWindowMs = Number.parseInt(
+  process.env.LARK_WRITE_BUDGET_DUPLICATE_WINDOW_MS || String(30 * 60 * 1000),
+  10,
+);
+export const larkWriteBudgetHardWhitelist = String(process.env.LARK_WRITE_BUDGET_HARD_WHITELIST || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
 export const docCommentWatchStorePath =
   process.env.LARK_DOC_COMMENT_WATCH_STORE ||
   path.resolve(process.cwd(), ".data/doc-comment-watch.json");

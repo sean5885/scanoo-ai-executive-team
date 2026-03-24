@@ -60,6 +60,7 @@ export async function createDocumentReplaceConfirmation({
   currentRevisionId,
   currentContent,
   proposedContent,
+  mode = "replace",
 }) {
   const store = await loadStore();
   const confirmationId = crypto.randomUUID();
@@ -67,11 +68,13 @@ export async function createDocumentReplaceConfirmation({
   const expiresAt = new Date(Date.now() + CONFIRMATION_TTL_MS).toISOString();
 
   store.items[confirmationId] = {
+    kind: "document_replace",
     account_id: accountId || null,
     document_id: documentId,
     title: title || null,
     current_revision_id: currentRevisionId || null,
     content_hash: hashContent(proposedContent),
+    mode: String(mode || "replace"),
     created_at: createdAt,
     expires_at: expiresAt,
   };
@@ -86,6 +89,7 @@ export async function createDocumentReplaceConfirmation({
     preview: {
       document_id: documentId,
       title: title || null,
+      mode: String(mode || "replace"),
       current_revision_id: currentRevisionId || null,
       current_length: String(currentContent || "").length,
       proposed_length: String(proposedContent || "").length,
@@ -110,7 +114,7 @@ export async function consumeDocumentReplaceConfirmation({
 }) {
   const store = await loadStore();
   const entry = store.items[confirmationId];
-  if (!entry) {
+  if (!entry || (entry.kind && entry.kind !== "document_replace")) {
     return null;
   }
 
@@ -127,6 +131,134 @@ export async function consumeDocumentReplaceConfirmation({
   delete store.items[confirmationId];
   await writeJsonFile(docUpdateConfirmationStorePath, store);
   return entry;
+}
+
+export async function peekDocumentReplaceConfirmation({
+  confirmationId,
+  accountId,
+  documentId,
+  proposedContent,
+}) {
+  const store = await loadStore();
+  const entry = store.items[confirmationId];
+  if (!entry || (entry.kind && entry.kind !== "document_replace")) {
+    return null;
+  }
+
+  if ((entry.account_id || null) !== (accountId || null)) {
+    return null;
+  }
+  if (entry.document_id !== documentId) {
+    return null;
+  }
+  if (typeof proposedContent === "string" && entry.content_hash !== hashContent(proposedContent)) {
+    return null;
+  }
+
+  return { ...entry };
+}
+
+export async function createDocumentCreateConfirmation({
+  accountId,
+  title,
+  requestedFolderToken,
+  resolvedFolderToken,
+  content,
+  source,
+  owner,
+  intent,
+  type,
+}) {
+  const store = await loadStore();
+  const confirmationId = crypto.randomUUID();
+  const createdAt = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + CONFIRMATION_TTL_MS).toISOString();
+
+  store.items[confirmationId] = {
+    kind: "document_create",
+    account_id: accountId || null,
+    title: String(title || "").trim(),
+    requested_folder_token: String(requestedFolderToken || "").trim() || null,
+    resolved_folder_token: String(resolvedFolderToken || "").trim() || null,
+    content: String(content || ""),
+    source: String(source || "").trim() || null,
+    owner: String(owner || "").trim() || null,
+    intent: String(intent || "").trim() || null,
+    type: String(type || "").trim() || null,
+    content_hash: hashContent(content),
+    created_at: createdAt,
+    expires_at: expiresAt,
+  };
+
+  await writeJsonFile(docUpdateConfirmationStorePath, store);
+
+  return {
+    confirmation_id: confirmationId,
+    confirmation_type: "document_create",
+    created_at: createdAt,
+    expires_at: expiresAt,
+    preview: {
+      title: String(title || "").trim() || null,
+      requested_folder_token: String(requestedFolderToken || "").trim() || null,
+      resolved_folder_token: String(resolvedFolderToken || "").trim() || null,
+      has_initial_content: Boolean(String(content || "").trim()),
+      initial_content_length: String(content || "").length,
+      initial_content_excerpt: buildExcerpt(content),
+      source: String(source || "").trim() || null,
+      owner: String(owner || "").trim() || null,
+      intent: String(intent || "").trim() || null,
+      type: String(type || "").trim() || null,
+    },
+  };
+}
+
+export async function consumeDocumentCreateConfirmation({
+  confirmationId,
+  accountId,
+  title,
+  requestedFolderToken,
+  resolvedFolderToken,
+  content,
+}) {
+  const store = await loadStore();
+  const entry = store.items[confirmationId];
+  if (!entry || entry.kind !== "document_create") {
+    return null;
+  }
+  if ((entry.account_id || null) !== (accountId || null)) {
+    return null;
+  }
+  if ((entry.title || "") !== String(title || "").trim()) {
+    return null;
+  }
+  if ((entry.requested_folder_token || null) !== (String(requestedFolderToken || "").trim() || null)) {
+    return null;
+  }
+  if ((entry.resolved_folder_token || null) !== (String(resolvedFolderToken || "").trim() || null)) {
+    return null;
+  }
+  if ((entry.content_hash || "") !== hashContent(content)) {
+    return null;
+  }
+
+  delete store.items[confirmationId];
+  await writeJsonFile(docUpdateConfirmationStorePath, store);
+  return entry;
+}
+
+export async function peekDocumentCreateConfirmation({
+  confirmationId,
+  accountId,
+}) {
+  const store = await loadStore();
+  const entry = store.items[confirmationId];
+  if (!entry || entry.kind !== "document_create") {
+    return null;
+  }
+  if ((entry.account_id || null) !== (accountId || null)) {
+    return null;
+  }
+  return { ...entry };
 }
 
 export async function createCommentRewriteConfirmation({

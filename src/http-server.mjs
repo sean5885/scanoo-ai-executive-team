@@ -130,12 +130,16 @@ import { runCommentSuggestionPollOnce } from "./comment-suggestion-poller.mjs";
 import { buildCloudDocStructuredResult, buildCloudDocWorkflowScopeKey } from "./cloud-doc-organization-workflow.mjs";
 import {
   consumeCommentRewriteConfirmation,
+  consumeDocumentCreateConfirmation,
   consumeDocumentReplaceConfirmation,
   consumeMeetingWriteConfirmation,
   createCommentRewriteConfirmation,
+  createDocumentCreateConfirmation,
   createDocumentReplaceConfirmation,
   createMeetingWriteConfirmation,
   peekCommentRewriteConfirmation,
+  peekDocumentCreateConfirmation,
+  peekDocumentReplaceConfirmation,
   peekMeetingWriteConfirmation,
 } from "./doc-update-confirmations.mjs";
 import {
@@ -193,6 +197,7 @@ import { getAllowedMethodsForPath } from "./http-route-contracts.mjs";
 import { listResolvedSessions } from "./session-scope-store.mjs";
 import { createMeetingCoordinator } from "./meeting-agent.mjs";
 import { cleanText, extractDocumentId } from "./message-intent-utils.mjs";
+import { executeLarkWrite } from "./execute-lark-write.mjs";
 import {
   buildHttpIdempotencyScopeKey,
   getHttpIdempotencyRecord,
@@ -1038,6 +1043,7 @@ function buildDocumentCreateInput(body = {}) {
     intent: String(body.intent || "").trim(),
     type: String(body.type || "").trim(),
     confirm: body.confirm === true,
+    confirmationId: String(body.confirmation_id || "").trim(),
   };
 }
 
@@ -1119,6 +1125,15 @@ function respondDocumentWriteFailure(res, statusCode, error, extra = {}) {
   });
 }
 
+function respondWriteExecutionFailure(res, execution, fallbackStatusCode = 409) {
+  jsonResponse(res, Number(execution?.statusCode || fallbackStatusCode), {
+    ok: false,
+    error: execution?.error || "write_guard_denied",
+    ...(execution?.message ? { message: execution.message } : {}),
+    write_guard: execution?.write_guard || null,
+  });
+}
+
 function buildDocumentCreateResult({
   context,
   created,
@@ -1138,6 +1153,22 @@ function buildDocumentCreateResult({
     write_result: writeResult,
     initial_content_write_failed: initialContentWriteFailed,
     initial_content_write_error: initialContentWriteError,
+  };
+}
+
+function buildDocumentCreatePreviewResult({
+  context,
+  preview,
+  message = "Document creation preview is ready. Re-submit with confirm=true and confirmation_id to create the document.",
+}) {
+  return {
+    ...buildDocumentWriteAuthPayload(context, "document_create_preview"),
+    preview_required: true,
+    message,
+    confirmation_id: preview.confirmation_id,
+    confirmation_type: preview.confirmation_type,
+    confirmation_expires_at: preview.expires_at,
+    create_preview: preview.preview,
   };
 }
 
@@ -2613,7 +2644,32 @@ async function handleDriveCreateFolder(res, requestUrl, body) {
     return;
   }
 
-  const result = await createDriveFolder(context.token, folderToken, name);
+  const execution = await executeLarkWrite({
+    apiName: "create_drive_folder",
+    action: "create_drive_folder",
+    pathname: "/api/drive/create-folder",
+    accountId: context.account.id,
+    accessToken: context.token,
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: `drive:${folderToken}`,
+      payload: {
+        folder_token: folderToken,
+        name,
+      },
+    },
+    performWrite: async ({ accessToken }) => createDriveFolder(accessToken, folderToken, name),
+  });
+  if (!execution.ok) {
+    jsonResponse(res, 409, {
+      ok: false,
+      error: execution.error,
+      message: execution.message,
+      write_guard: execution.write_guard || null,
+    });
+    return;
+  }
+  const result = execution.result;
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -2638,7 +2694,35 @@ async function handleDriveMove(res, requestUrl, body) {
     return;
   }
 
-  const result = await moveDriveItem(context.token, fileToken, type, folderToken);
+  const execution = await executeLarkWrite({
+    apiName: "move_drive_item",
+    action: "move_drive_item",
+    pathname: "/api/drive/move",
+    accountId: context.account.id,
+    accessToken: context.token,
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: `drive:${folderToken}`,
+      documentId: fileToken,
+      targetDocumentId: folderToken,
+      payload: {
+        file_token: fileToken,
+        type,
+        folder_token: folderToken,
+      },
+    },
+    performWrite: async ({ accessToken }) => moveDriveItem(accessToken, fileToken, type, folderToken),
+  });
+  if (!execution.ok) {
+    jsonResponse(res, 409, {
+      ok: false,
+      error: execution.error,
+      message: execution.message,
+      write_guard: execution.write_guard || null,
+    });
+    return;
+  }
+  const result = execution.result;
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -2684,7 +2768,33 @@ async function handleDriveDelete(res, requestUrl, body) {
     return;
   }
 
-  const result = await deleteDriveItem(context.token, fileToken, type);
+  const execution = await executeLarkWrite({
+    apiName: "delete_drive_item",
+    action: "delete_drive_item",
+    pathname: "/api/drive/delete",
+    accountId: context.account.id,
+    accessToken: context.token,
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: `drive:${fileToken}`,
+      documentId: fileToken,
+      payload: {
+        file_token: fileToken,
+        type,
+      },
+    },
+    performWrite: async ({ accessToken }) => deleteDriveItem(accessToken, fileToken, type),
+  });
+  if (!execution.ok) {
+    jsonResponse(res, 409, {
+      ok: false,
+      error: execution.error,
+      message: execution.message,
+      write_guard: execution.write_guard || null,
+    });
+    return;
+  }
+  const result = execution.result;
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -2785,12 +2895,50 @@ async function handleDriveOrganize(res, requestUrl, body, apply, logger = noopHt
       return;
     }
   }
+  const execution = apply
+    ? await executeLarkWrite({
+        apiName: "drive_organize_apply",
+        action: "drive_organize_apply",
+        pathname: "/api/drive/organize/apply",
+        accountId: context.account.id,
+        accessToken: context.token,
+        canonicalRequest: buildDriveOrganizeApplyCanonicalRequest({
+          pathname: "/api/drive/organize/apply",
+          method: "POST",
+          folderToken,
+          context: {
+            scopeKey,
+            idempotencyKey: getRequestIdempotencyKey(body),
+            confirmed: true,
+            verifierCompleted: hasCloudDocPreviewPlan(applyingTask?.meta?.preview_plan),
+            reviewRequiredActive: true,
+          },
+          originalRequest: body,
+        }),
+        budget: {
+          sessionKey: context.account.id,
+          scopeKey,
+          targetDocumentId: folderToken,
+          payload: {
+            folder_token: folderToken,
+            recursive: options.recursive,
+            include_folders: options.includeFolders,
+          },
+          previewPlan: applyingTask?.meta?.preview_plan || null,
+        },
+        performWrite: async ({ accessToken }) => getHttpService("applyDriveOrganization", applyDriveOrganization)(
+          accessToken,
+          folderToken,
+          options,
+        ),
+      })
+    : null;
+  if (apply && !execution.ok) {
+    respondCloudDocPreviewRequired(res, execution.message || "Drive organize apply is blocked by write policy.");
+    return;
+  }
   const result = apply
-    ? await getHttpService("applyDriveOrganization", applyDriveOrganization)(
-        context.token,
-        folderToken,
-        options
-      )
+    ? execution.result
     : await getHttpService("previewDriveOrganization", previewDriveOrganization)(
         context.token,
         folderToken,
@@ -2863,7 +3011,34 @@ async function handleWikiCreateNode(res, requestUrl, body) {
     return;
   }
 
-  const result = await createWikiNode(context.token, spaceId, title, parentNodeToken);
+  const execution = await executeLarkWrite({
+    apiName: "create_wiki_node",
+    action: "create_wiki_node",
+    pathname: "/api/wiki/create-node",
+    accountId: context.account.id,
+    accessToken: context.token,
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: `wiki:${spaceId}:${parentNodeToken || "root"}`,
+      targetDocumentId: parentNodeToken || null,
+      payload: {
+        space_id: spaceId,
+        title,
+        parent_node_token: parentNodeToken || null,
+      },
+    },
+    performWrite: async ({ accessToken }) => createWikiNode(accessToken, spaceId, title, parentNodeToken),
+  });
+  if (!execution.ok) {
+    jsonResponse(res, 409, {
+      ok: false,
+      error: execution.error,
+      message: execution.message,
+      write_guard: execution.write_guard || null,
+    });
+    return;
+  }
+  const result = execution.result;
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -2889,13 +3064,42 @@ async function handleWikiMove(res, requestUrl, body) {
     return;
   }
 
-  const result = await moveWikiNode(
-    context.token,
-    spaceId,
-    nodeToken,
-    targetParentToken,
-    targetSpaceId,
-  );
+  const execution = await executeLarkWrite({
+    apiName: "move_wiki_node",
+    action: "move_wiki_node",
+    pathname: "/api/wiki/move",
+    accountId: context.account.id,
+    accessToken: context.token,
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: `wiki:${spaceId}:${targetParentToken}`,
+      documentId: nodeToken,
+      targetDocumentId: targetParentToken,
+      payload: {
+        space_id: spaceId,
+        node_token: nodeToken,
+        target_parent_token: targetParentToken,
+        target_space_id: targetSpaceId || null,
+      },
+    },
+    performWrite: async ({ accessToken }) => moveWikiNode(
+      accessToken,
+      spaceId,
+      nodeToken,
+      targetParentToken,
+      targetSpaceId,
+    ),
+  });
+  if (!execution.ok) {
+    jsonResponse(res, 409, {
+      ok: false,
+      error: execution.error,
+      message: execution.message,
+      write_guard: execution.write_guard || null,
+    });
+    return;
+  }
+  const result = execution.result;
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -2991,11 +3195,51 @@ async function handleWikiOrganize(res, requestUrl, body, apply, logger = noopHtt
       return;
     }
   }
+  const execution = apply
+    ? await executeLarkWrite({
+        apiName: "wiki_organize_apply",
+        action: "wiki_organize_apply",
+        pathname: "/api/wiki/organize/apply",
+        accountId: context.account.id,
+        accessToken: context.token,
+        canonicalRequest: buildWikiOrganizeApplyCanonicalRequest({
+          pathname: "/api/wiki/organize/apply",
+          method: "POST",
+          resourceId: options.spaceId || options.parentNodeToken || options.spaceName || "",
+          context: {
+            scopeKey,
+            idempotencyKey: getRequestIdempotencyKey(body),
+            confirmed: true,
+            verifierCompleted: hasCloudDocPreviewPlan(applyingTask?.meta?.preview_plan),
+            reviewRequiredActive: true,
+          },
+          originalRequest: body,
+        }),
+        budget: {
+          sessionKey: context.account.id,
+          scopeKey,
+          targetDocumentId: options.parentNodeToken || options.spaceId || null,
+          payload: {
+            space_id: options.spaceId || null,
+            space_name: options.spaceName || null,
+            parent_node_token: options.parentNodeToken || null,
+            recursive: options.recursive,
+            include_containers: options.includeContainers,
+          },
+          previewPlan: applyingTask?.meta?.preview_plan || null,
+        },
+        performWrite: async ({ accessToken }) => getHttpService("applyWikiOrganization", applyWikiOrganization)(
+          accessToken,
+          options,
+        ),
+      })
+    : null;
+  if (apply && !execution.ok) {
+    respondCloudDocPreviewRequired(res, execution.message || "Wiki organize apply is blocked by write policy.");
+    return;
+  }
   const result = apply
-    ? await getHttpService("applyWikiOrganization", applyWikiOrganization)(
-        context.token,
-        options
-      )
+    ? execution.result
     : await getHttpService("previewWikiOrganization", previewWikiOrganization)(
         context.token,
         options
@@ -3096,6 +3340,7 @@ async function handleDocumentCreate(
     intent,
     type,
     confirm,
+    confirmationId,
   } = buildDocumentCreateInput(body);
   const pathname = requireEntryGovernance ? "/agent/docs/create" : "/api/doc/create";
   const idempotencyKey = getRequestIdempotencyKey(body);
@@ -3140,7 +3385,7 @@ async function handleDocumentCreate(
     source,
     requestedFolderToken,
     account: context.account,
-    requireConfirmation: true,
+    requireConfirmation: false,
     confirmed: confirm,
   });
   if (!createGuard.ok) {
@@ -3166,13 +3411,91 @@ async function handleDocumentCreate(
     folderToken,
     idempotencyKey,
   });
+  const autoConfirmLegacyAgentCreate = requireEntryGovernance === true && !confirmationId;
+  let effectiveConfirm = confirm;
+  let effectiveConfirmationId = confirmationId;
+  let pendingCreateConfirmation = null;
+
+  if (!confirm && !autoConfirmLegacyAgentCreate) {
+    const preview = await createDocumentCreateConfirmation({
+      accountId: context.account.id,
+      title,
+      requestedFolderToken,
+      resolvedFolderToken: folderToken,
+      content,
+      source,
+      owner,
+      intent,
+      type,
+    });
+    logger.info("document_create_preview_ready", {
+      account_id: context.account.id,
+      requested_folder_token: requestedFolderToken || null,
+      resolved_folder_token: folderToken || null,
+      confirmation_id: preview.confirmation_id,
+      has_initial_content: Boolean(content),
+      demo_like: createGuard.classification?.demo_like === true,
+      write_policy: resolvedWritePolicy,
+    });
+    respondDocumentWriteSuccess(res, 200, buildDocumentCreatePreviewResult({
+      context,
+      preview,
+    }));
+    return;
+  }
+  if (autoConfirmLegacyAgentCreate) {
+    const preview = await createDocumentCreateConfirmation({
+      accountId: context.account.id,
+      title,
+      requestedFolderToken,
+      resolvedFolderToken: folderToken,
+      content,
+      source,
+      owner,
+      intent,
+      type,
+    });
+    effectiveConfirm = true;
+    effectiveConfirmationId = preview.confirmation_id;
+    pendingCreateConfirmation = await peekDocumentCreateConfirmation({
+      confirmationId: effectiveConfirmationId,
+      accountId: context.account.id,
+    });
+    logger.info("document_create_agent_bridge_auto_confirmed", {
+      account_id: context.account.id,
+      requested_folder_token: requestedFolderToken || null,
+      resolved_folder_token: folderToken || null,
+      confirmation_id: effectiveConfirmationId,
+      has_initial_content: Boolean(content),
+      demo_like: createGuard.classification?.demo_like === true,
+      write_policy: resolvedWritePolicy,
+    });
+  }
+  if (!effectiveConfirmationId) {
+    respondDocumentWriteFailure(res, 400, "missing_confirmation_id", {
+      message: "A valid confirmation_id is required before document creation can proceed.",
+    });
+    return;
+  }
+  if (!pendingCreateConfirmation) {
+    pendingCreateConfirmation = await peekDocumentCreateConfirmation({
+      confirmationId: effectiveConfirmationId,
+      accountId: context.account.id,
+    });
+  }
+  if (!pendingCreateConfirmation) {
+    respondDocumentWriteFailure(res, 400, "invalid_or_expired_confirmation", {
+      message: "The document creation confirmation is missing or expired.",
+    });
+    return;
+  }
   const canonicalRequest = buildCreateDocCanonicalRequest({
     pathname,
     method: "POST",
     folderToken,
     context: {
       idempotencyKey,
-      confirmed: confirm === true,
+      confirmed: true,
       verifierCompleted: true,
       reviewRequiredActive: false,
     },
@@ -3183,7 +3506,7 @@ async function handleDocumentCreate(
     traceId: res.__trace_id || null,
     accountId: context.account.id,
     canonicalRequest,
-    operation: "document_comment_rewrite_apply",
+    operation: "create_doc",
   });
   if (!admission.allowed) {
     const legacyWriteGuard = buildLegacyWriteGuardFromAdmission(admission);
@@ -3211,7 +3534,7 @@ async function handleDocumentCreate(
     action: "create_doc",
     pathname,
     writePolicy: resolvedWritePolicy,
-    confirmed: confirm === true,
+    confirmed: effectiveConfirm === true,
     reviewCompleted: true,
     reviewRequirementActive: false,
     scopeKey: resolvedWritePolicy.scope_key,
@@ -3240,90 +3563,160 @@ async function handleDocumentCreate(
     write_policy: resolvedWritePolicy,
     write_policy_enforcement: writePolicyEnforcement,
   });
-  let created;
-  try {
-    created = await getHttpService("createDocument", createDocument)(
-      context.token,
-      title,
-      folderToken,
-      "user",
-      { source: source || "api_doc_create" },
-    );
-  } catch (error) {
-    await persistCreateFailedLifecycleRecord({
-      account: context.account,
-      res,
-      title,
-      folderToken,
-      logger,
-      error,
-    });
-    throw error;
-  }
-  const createdAt = nowIso();
-  await persistCreatedLifecycleSeed({
-    account: context.account,
-    created,
-    folderToken,
-    createdAt,
+  const execution = await executeLarkWrite({
+    apiName: "create_doc",
+    action: "create_doc",
+    pathname,
+    accountId: context.account.id,
+    accessToken: context.token,
+    traceId: res.__trace_id || null,
     logger,
+    confirmation: {
+      kind: "document_create",
+      requireConfirm: true,
+      requireConfirmationId: true,
+      confirm: effectiveConfirm,
+      confirmationId: effectiveConfirmationId,
+      pending: pendingCreateConfirmation,
+      consume: async () => consumeDocumentCreateConfirmation({
+        confirmationId: effectiveConfirmationId,
+        accountId: context.account.id,
+        title,
+        requestedFolderToken,
+        resolvedFolderToken: folderToken,
+        content,
+      }),
+    },
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: resolvedWritePolicy.scope_key,
+      targetDocumentId: folderToken || null,
+      content,
+      payload: {
+        title,
+        folder_token: folderToken || null,
+        requested_folder_token: requestedFolderToken || null,
+        source: source || "api_doc_create",
+        owner: owner || null,
+        intent: intent || null,
+        type: type || null,
+      },
+      idempotencyKey,
+    },
+    performWrite: async ({ accessToken }) => {
+      let created;
+      try {
+        created = await getHttpService("createDocument", createDocument)(
+          accessToken,
+          title,
+          folderToken,
+          "user",
+          { source: source || "api_doc_create" },
+        );
+      } catch (error) {
+        await persistCreateFailedLifecycleRecord({
+          account: context.account,
+          res,
+          title,
+          folderToken,
+          logger,
+          error,
+        });
+        throw error;
+      }
+
+      const createdAt = nowIso();
+      await persistCreatedLifecycleSeed({
+        account: context.account,
+        created,
+        folderToken,
+        createdAt,
+        logger,
+      });
+      logger.info("document_create_create_succeeded", {
+        account_id: context.account.id,
+        document_id: created.document_id || null,
+        folder_token: folderToken || null,
+      });
+
+      const {
+        permissionGrantFailed,
+        permissionGrantSkipped,
+        permissionGrantError,
+      } = await applyDocumentManagerPermissionGrant({
+        context,
+        created,
+        logger,
+      });
+
+      let writeResult = null;
+      let initialContentWriteFailed = false;
+      let initialContentWriteError = null;
+      let indexedContent = content || null;
+      if (content && created.document_id) {
+        try {
+          writeResult = await getHttpService("updateDocument", updateDocument)(
+            accessToken,
+            created.document_id,
+            content,
+            "replace",
+          );
+        } catch (error) {
+          initialContentWriteFailed = true;
+          initialContentWriteError = extractHttpPlatformError(error);
+          indexedContent = null;
+          logDocumentCreateInitialContentWriteFailed(
+            logger,
+            context,
+            created,
+            initialContentWriteError,
+          );
+        }
+      }
+
+      await handleDocumentCreateIndexBoundary({
+        context,
+        created,
+        folderToken,
+        content: indexedContent,
+        createdAt,
+        logger,
+      });
+      logger.info("document_create_completed", {
+        account_id: context.account.id,
+        document_id: created.document_id || null,
+        wrote_initial_content: Boolean(writeResult),
+        initial_content_write_failed: initialContentWriteFailed,
+        permission_grant_failed: permissionGrantFailed,
+        permission_grant_skipped: permissionGrantSkipped,
+        write_policy: resolvedWritePolicy,
+        write_policy_enforcement: writePolicyEnforcement,
+      });
+
+      return {
+        created,
+        permissionGrantFailed,
+        permissionGrantSkipped,
+        permissionGrantError,
+        writeResult,
+        initialContentWriteFailed,
+        initialContentWriteError,
+      };
+    },
   });
-  logger.info("document_create_create_succeeded", {
-    account_id: context.account.id,
-    document_id: created.document_id || null,
-    folder_token: folderToken || null,
-  });
+  if (!execution.ok) {
+    respondWriteExecutionFailure(res, execution);
+    return;
+  }
   const {
+    created,
     permissionGrantFailed,
     permissionGrantSkipped,
     permissionGrantError,
-  } = await applyDocumentManagerPermissionGrant({
-    context,
-    created,
-    logger,
-  });
-  let writeResult = null;
-  let initialContentWriteFailed = false;
-  let initialContentWriteError = null;
-  let indexedContent = content || null;
-  if (content && created.document_id) {
-    try {
-      writeResult = await getHttpService("updateDocument", updateDocument)(
-        context.token,
-        created.document_id,
-        content,
-        "replace",
-      );
-    } catch (error) {
-      initialContentWriteFailed = true;
-      initialContentWriteError = extractHttpPlatformError(error);
-      indexedContent = null;
-      logDocumentCreateInitialContentWriteFailed(
-        logger,
-        context,
-        created,
-        initialContentWriteError,
-      );
-    }
-  }
-  await handleDocumentCreateIndexBoundary({
-    context,
-    created,
-    folderToken,
-    content: indexedContent,
-    createdAt,
-    logger,
-  });
-  logger.info("document_create_completed", {
-    account_id: context.account.id,
-    document_id: created.document_id || null,
-    wrote_initial_content: Boolean(writeResult),
-    initial_content_write_failed: initialContentWriteFailed,
-    permission_grant_failed: permissionGrantFailed,
-    permission_grant_skipped: permissionGrantSkipped,
-    write_policy: resolvedWritePolicy,
-    write_policy_enforcement: writePolicyEnforcement,
-  });
+    writeResult,
+    initialContentWriteFailed,
+    initialContentWriteError,
+  } = execution.result;
 
   respondDocumentWriteSuccess(res, 200, buildDocumentCreateResult({
     context,
@@ -4219,6 +4612,7 @@ async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogg
   let resolvedContent = content;
   let targeting = null;
   let currentDocument = null;
+  let pendingReplaceConfirmation = null;
 
   if (targetHeading) {
     try {
@@ -4305,14 +4699,14 @@ async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogg
       return;
     }
 
-    const confirmation = await consumeDocumentReplaceConfirmation({
+    pendingReplaceConfirmation = await peekDocumentReplaceConfirmation({
       confirmationId,
       accountId: context.account.id,
       documentId: finalDocumentId,
       proposedContent: resolvedContent,
     });
 
-    if (!confirmation) {
+    if (!pendingReplaceConfirmation) {
       respondDocumentWriteFailure(
         res,
         400,
@@ -4323,9 +4717,9 @@ async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogg
     }
 
     if (
-      confirmation.current_revision_id &&
+      pendingReplaceConfirmation.current_revision_id &&
       current.revision_id &&
-      confirmation.current_revision_id !== current.revision_id
+      pendingReplaceConfirmation.current_revision_id !== current.revision_id
     ) {
       respondDocumentWriteFailure(
         res,
@@ -4363,12 +4757,65 @@ async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogg
     mode: resolvedMode,
     target_heading: targetHeading || null,
   });
-  const result = await getHttpService("updateDocument", updateDocument)(
-    context.token,
-    finalDocumentId,
-    resolvedContent,
-    resolvedMode,
-  );
+  const execution = await executeLarkWrite({
+    apiName: "document_update",
+    action: targeting
+      ? "document_update_targeted_apply"
+      : resolvedMode === "replace"
+        ? "document_update_replace_apply"
+        : "document_update",
+    pathname: "/api/doc/update",
+    accountId: context.account.id,
+    accessToken: context.token,
+    traceId: res.__trace_id || null,
+    logger,
+    confirmation: resolvedMode === "replace"
+      ? {
+          kind: "document_replace",
+          requireConfirm: true,
+          confirm,
+          requireConfirmationId: true,
+          confirmationId,
+          pending: pendingReplaceConfirmation,
+          consume: async () => consumeDocumentReplaceConfirmation({
+            confirmationId,
+            accountId: context.account.id,
+            documentId: finalDocumentId,
+            proposedContent: resolvedContent,
+          }),
+        }
+      : {
+          kind: "document_update",
+          requireConfirm: false,
+          confirm,
+        },
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: `document:${finalDocumentId}`,
+      documentId: finalDocumentId,
+      targetDocumentId: finalDocumentId,
+      content: resolvedContent,
+      payload: {
+        mode: resolvedMode,
+        target_heading: targetHeading || null,
+        target_position: targetPosition || null,
+      },
+    },
+    performWrite: async ({ accessToken }) => getHttpService("updateDocument", updateDocument)(
+      accessToken,
+      finalDocumentId,
+      resolvedContent,
+      resolvedMode,
+    ),
+  });
+  if (!execution.ok) {
+    respondDocumentWriteFailure(res, getWriteGuardStatusCode(execution.write_guard), execution.error, {
+      message: execution.message,
+      write_guard: execution.write_guard || null,
+    });
+    return;
+  }
+  const result = execution.result;
   logger.info("document_update_completed", {
     account_id: context.account.id,
     document_id: finalDocumentId,
@@ -4604,56 +5051,74 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
     },
     originalRequest: body,
   });
-  const admission = admitRouteMutation({
-    logger,
+  const execution = await executeLarkWrite({
+    apiName: "document_comment_rewrite_apply",
+    action: "document_comment_rewrite_apply",
+    pathname: "/api/doc/rewrite-from-comments",
+    accountId: context.account.id,
+    accessToken: context.token,
     traceId: res.__trace_id || null,
-    accountId: context.account.id,
+    logger,
     canonicalRequest,
-  });
-  if (!admission.allowed) {
-    const legacyWriteGuard = buildLegacyWriteGuardFromAdmission(admission);
-    respondDocumentRewriteFailure(
-      res,
-      getWriteGuardStatusCode(legacyWriteGuard),
-      "write_guard_denied",
-      buildWriteGuardMessage(legacyWriteGuard),
-      { write_guard: legacyWriteGuard },
-    );
-    return;
-  }
-
-  const confirmation = await consumeCommentRewriteConfirmation({
-    confirmationId,
-    accountId: context.account.id,
-    documentId,
-  });
-  if (!confirmation) {
-    respondDocumentRewriteFailure(
-      res,
-      400,
-      "invalid_or_expired_confirmation",
-      "The rewrite confirmation is missing or expired. Generate a fresh preview first.",
-    );
-    return;
-  }
-
-  await markDocRewriteApplying({
-    accountId: context.account.id,
-    scope: workflowScope,
-    meta: buildDocumentRewriteTaskMeta("document_rewrite_from_comments_apply", {
-      confirmation_id: confirmationId,
-    }),
-  });
-
-  const applied = await applyRewrittenDocument(
-    context.token,
-    documentId,
-    confirmation.rewritten_content,
-    {
-      patchPlan: confirmation.patch_plan || [],
-      resolveCommentIds: confirmation.resolve_comments ? confirmation.comment_ids : [],
+    confirmation: {
+      kind: "comment_rewrite",
+      requireConfirm: true,
+      confirm,
+      requireConfirmationId: true,
+      confirmationId,
+      pending: pendingConfirmation,
+      consume: async () => consumeCommentRewriteConfirmation({
+        confirmationId,
+        accountId: context.account.id,
+        documentId,
+      }),
+      invalidMessage: "The rewrite confirmation is missing or expired. Generate a fresh preview first.",
     },
-  );
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: workflowScope,
+      documentId,
+      targetDocumentId: documentId,
+      content: pendingConfirmation.rewritten_content || "",
+      payload: {
+        confirmation_id: confirmationId,
+        comment_ids: pendingConfirmation.comment_ids || [],
+        resolve_comments: pendingConfirmation.resolve_comments === true,
+      },
+      essential: true,
+    },
+    performWrite: async ({ accessToken, confirmation }) => {
+      await markDocRewriteApplying({
+        accountId: context.account.id,
+        scope: workflowScope,
+        meta: buildDocumentRewriteTaskMeta("document_rewrite_from_comments_apply", {
+          confirmation_id: confirmationId,
+        }),
+      });
+
+      return applyRewrittenDocument(
+        accessToken,
+        documentId,
+        confirmation.rewritten_content,
+        {
+          patchPlan: confirmation.patch_plan || [],
+          resolveCommentIds: confirmation.resolve_comments ? confirmation.comment_ids : [],
+        },
+      );
+    },
+  });
+  if (!execution.ok) {
+    respondDocumentRewriteFailure(
+      res,
+      getWriteGuardStatusCode(execution.write_guard),
+      execution.error,
+      execution.message,
+      { write_guard: execution.write_guard || null },
+    );
+    return;
+  }
+  const confirmation = pendingConfirmation;
+  const applied = execution.result;
   const finalized = await finalizeDocRewriteWorkflowTask({
     accountId: context.account.id,
     scope: workflowScope,
@@ -5086,10 +5551,37 @@ async function handleMessageReply(res, requestUrl, body, logger = noopHttpLogger
     reply_in_thread: replyInThread,
     as_card: Boolean(cardTitle),
   });
-  const result = await replyMessage(context.token, messageId, content, {
-    replyInThread,
-    cardTitle,
+  const execution = await executeLarkWrite({
+    apiName: "message_reply",
+    action: "message_reply",
+    pathname: requestUrl.pathname,
+    accountId: context.account.id,
+    accessToken: context.token,
+    logger,
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: `message:${messageId}`,
+      documentId: messageId,
+      targetDocumentId: messageId,
+      content,
+      payload: {
+        message_id: messageId,
+        content,
+        reply_in_thread: replyInThread,
+        card_title: cardTitle || null,
+      },
+      idempotencyKey: getRequestIdempotencyKey(body),
+    },
+    performWrite: async ({ accessToken }) => replyMessage(accessToken, messageId, content, {
+      replyInThread,
+      cardTitle,
+    }),
   });
+  if (!execution.ok) {
+    respondWriteExecutionFailure(res, execution);
+    return;
+  }
+  const result = execution.result;
   logger.info("message_reply_completed", {
     account_id: context.account.id,
     message_id: messageId,
@@ -5203,18 +5695,43 @@ async function handleCalendarCreateEvent(res, requestUrl, body, logger = noopHtt
     calendar_id: calendarId,
     reminders: reminders.length,
   });
-  const result = await getHttpService("createCalendarEvent", createCalendarEvent)(
-    context.token,
-    calendarId,
-    {
+  const eventPayload = {
     summary,
     description: typeof body.description === "string" ? body.description.trim() : undefined,
     startTime,
     endTime,
     timezone: typeof body.timezone === "string" && body.timezone.trim() ? body.timezone.trim() : "Asia/Taipei",
     reminders,
-    }
-  );
+  };
+  const execution = await executeLarkWrite({
+    apiName: "calendar_create_event",
+    action: "calendar_create_event",
+    pathname: requestUrl.pathname,
+    accountId: context.account.id,
+    accessToken: context.token,
+    logger,
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: `calendar:${calendarId}`,
+      targetDocumentId: calendarId,
+      content: JSON.stringify(eventPayload),
+      payload: {
+        calendar_id: calendarId,
+        ...eventPayload,
+      },
+      idempotencyKey: getRequestIdempotencyKey(body),
+    },
+    performWrite: async ({ accessToken }) => getHttpService("createCalendarEvent", createCalendarEvent)(
+      accessToken,
+      calendarId,
+      eventPayload,
+    ),
+  });
+  if (!execution.ok) {
+    respondWriteExecutionFailure(res, execution);
+    return;
+  }
+  const result = execution.result;
   logger.info("calendar_create_event_completed", {
     account_id: context.account.id,
     calendar_id: calendarId,
@@ -5306,14 +5823,35 @@ async function handleTaskCreate(res, requestUrl, body, logger = noopHttpLogger) 
     has_due_time: Boolean(body.due_time),
     has_link_url: Boolean(body.link_url),
   });
-  const result = await getHttpService("createTask", createTask)(context.token, {
+  const taskPayload = {
     summary,
     description: typeof body.description === "string" ? body.description.trim() : undefined,
     dueTime: typeof body.due_time === "string" ? body.due_time.trim() : undefined,
     timezone: typeof body.timezone === "string" && body.timezone.trim() ? body.timezone.trim() : "Asia/Taipei",
     linkUrl: typeof body.link_url === "string" ? body.link_url.trim() : undefined,
     linkTitle: typeof body.link_title === "string" ? body.link_title.trim() : undefined,
+  };
+  const execution = await executeLarkWrite({
+    apiName: "task_create",
+    action: "task_create",
+    pathname: requestUrl.pathname,
+    accountId: context.account.id,
+    accessToken: context.token,
+    logger,
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: `task:create:${context.account.id}`,
+      content: JSON.stringify(taskPayload),
+      payload: taskPayload,
+      idempotencyKey: getRequestIdempotencyKey(body),
+    },
+    performWrite: async ({ accessToken }) => getHttpService("createTask", createTask)(accessToken, taskPayload),
   });
+  if (!execution.ok) {
+    respondWriteExecutionFailure(res, execution);
+    return;
+  }
+  const result = execution.result;
   logger.info("task_create_completed", {
     account_id: context.account.id,
     task_id: result.task?.task_id || result.data?.task_id || null,
@@ -5338,7 +5876,7 @@ async function handleBitableAppCreate(res, requestUrl, body) {
     return;
   }
 
-  const result = await createBitableApp(context.token, {
+  const appPayload = {
     name,
     folderToken: typeof body.folder_token === "string" ? body.folder_token.trim() : undefined,
     timeZone: typeof body.time_zone === "string" ? body.time_zone.trim() : undefined,
@@ -5346,7 +5884,28 @@ async function handleBitableAppCreate(res, requestUrl, body) {
     sourceAppToken: typeof body.source_app_token === "string" ? body.source_app_token.trim() : undefined,
     copyTypes: Array.isArray(body.copy_types) ? body.copy_types : undefined,
     apiType: typeof body.api_type === "string" ? body.api_type.trim() : undefined,
+  };
+  const execution = await executeLarkWrite({
+    apiName: "bitable_app_create",
+    action: "bitable_app_create",
+    pathname: requestUrl.pathname,
+    accountId: context.account.id,
+    accessToken: context.token,
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: `bitable_app:${appPayload.folderToken || "root"}`,
+      targetDocumentId: appPayload.folderToken || null,
+      content: JSON.stringify(appPayload),
+      payload: appPayload,
+      idempotencyKey: getRequestIdempotencyKey(body),
+    },
+    performWrite: async ({ accessToken }) => getHttpService("createBitableApp", createBitableApp)(accessToken, appPayload),
   });
+  if (!execution.ok) {
+    respondWriteExecutionFailure(res, execution);
+    return;
+  }
+  const result = execution.result;
 
   jsonResponse(res, 200, {
     ok: true,
@@ -5375,10 +5934,39 @@ async function handleBitableAppUpdate(res, requestUrl, body, appToken) {
   const context = await requireUserContext(res, getAccountId(requestUrl, body));
   if (!context) return;
 
-  const result = await updateBitableApp(context.token, appToken, {
+  const appPayload = {
     name: typeof body.name === "string" ? body.name.trim() : undefined,
     isAdvanced: typeof body.is_advanced === "boolean" ? body.is_advanced : undefined,
+  };
+  const execution = await executeLarkWrite({
+    apiName: "bitable_app_update",
+    action: "bitable_app_update",
+    pathname: requestUrl.pathname,
+    accountId: context.account.id,
+    accessToken: context.token,
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: `bitable_app:${appToken}`,
+      documentId: appToken,
+      targetDocumentId: appToken,
+      content: JSON.stringify(appPayload),
+      payload: {
+        app_token: appToken,
+        ...appPayload,
+      },
+      idempotencyKey: getRequestIdempotencyKey(body),
+    },
+    performWrite: async ({ accessToken }) => getHttpService("updateBitableApp", updateBitableApp)(
+      accessToken,
+      appToken,
+      appPayload,
+    ),
   });
+  if (!execution.ok) {
+    respondWriteExecutionFailure(res, execution);
+    return;
+  }
+  const result = execution.result;
 
   jsonResponse(res, 200, {
     ok: true,
@@ -5418,11 +6006,40 @@ async function handleBitableTableCreate(res, requestUrl, body, appToken) {
     return;
   }
 
-  const result = await createBitableTable(context.token, appToken, {
+  const tablePayload = {
     name,
     defaultViewName: typeof body.default_view_name === "string" ? body.default_view_name.trim() : undefined,
     fields: Array.isArray(body.fields) ? body.fields : [],
+  };
+  const execution = await executeLarkWrite({
+    apiName: "bitable_table_create",
+    action: "bitable_table_create",
+    pathname: requestUrl.pathname,
+    accountId: context.account.id,
+    accessToken: context.token,
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: `bitable_table:${appToken}`,
+      documentId: appToken,
+      targetDocumentId: appToken,
+      content: JSON.stringify(tablePayload),
+      payload: {
+        app_token: appToken,
+        ...tablePayload,
+      },
+      idempotencyKey: getRequestIdempotencyKey(body),
+    },
+    performWrite: async ({ accessToken }) => getHttpService("createBitableTable", createBitableTable)(
+      accessToken,
+      appToken,
+      tablePayload,
+    ),
   });
+  if (!execution.ok) {
+    respondWriteExecutionFailure(res, execution);
+    return;
+  }
+  const result = execution.result;
 
   jsonResponse(res, 200, {
     ok: true,
@@ -5536,17 +6153,43 @@ async function handleBitableRecordCreate(res, requestUrl, body, appToken, tableI
     app_token: appToken,
     table_id: tableId,
   });
-  const result = await getHttpService("createBitableRecord", createBitableRecord)(
-    context.token,
-    appToken,
-    tableId,
-    {
+  const recordPayload = {
     fields: body.fields,
     userIdType: typeof body.user_id_type === "string" ? body.user_id_type.trim() : undefined,
     clientToken: typeof body.client_token === "string" ? body.client_token.trim() : undefined,
     ignoreConsistencyCheck: body.ignore_consistency_check === true,
-    }
-  );
+  };
+  const execution = await executeLarkWrite({
+    apiName: "bitable_record_create",
+    action: "bitable_record_create",
+    pathname: requestUrl.pathname,
+    accountId: context.account.id,
+    accessToken: context.token,
+    logger,
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: `bitable_record:${appToken}:${tableId}`,
+      targetDocumentId: tableId,
+      content: JSON.stringify(recordPayload),
+      payload: {
+        app_token: appToken,
+        table_id: tableId,
+        ...recordPayload,
+      },
+      idempotencyKey: getRequestIdempotencyKey(body),
+    },
+    performWrite: async ({ accessToken }) => getHttpService("createBitableRecord", createBitableRecord)(
+      accessToken,
+      appToken,
+      tableId,
+      recordPayload,
+    ),
+  });
+  if (!execution.ok) {
+    respondWriteExecutionFailure(res, execution);
+    return;
+  }
+  const result = execution.result;
   logger.info("bitable_record_create_completed", {
     account_id: context.account.id,
     app_token: appToken,
@@ -5621,16 +6264,44 @@ async function handleBitableRecordUpdate(res, requestUrl, body, appToken, tableI
     table_id: tableId,
     record_id: recordId,
   });
-  const result = await getHttpService("updateBitableRecord", updateBitableRecord)(
-    context.token,
-    appToken,
-    tableId,
-    recordId,
-    {
+  const recordPayload = {
     fields: body.fields,
     userIdType: typeof body.user_id_type === "string" ? body.user_id_type.trim() : undefined,
-    }
-  );
+  };
+  const execution = await executeLarkWrite({
+    apiName: "bitable_record_update",
+    action: "bitable_record_update",
+    pathname: requestUrl.pathname,
+    accountId: context.account.id,
+    accessToken: context.token,
+    logger,
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: `bitable_record:${appToken}:${tableId}`,
+      documentId: recordId,
+      targetDocumentId: tableId,
+      content: JSON.stringify(recordPayload),
+      payload: {
+        app_token: appToken,
+        table_id: tableId,
+        record_id: recordId,
+        ...recordPayload,
+      },
+      idempotencyKey: getRequestIdempotencyKey(body),
+    },
+    performWrite: async ({ accessToken }) => getHttpService("updateBitableRecord", updateBitableRecord)(
+      accessToken,
+      appToken,
+      tableId,
+      recordId,
+      recordPayload,
+    ),
+  });
+  if (!execution.ok) {
+    respondWriteExecutionFailure(res, execution);
+    return;
+  }
+  const result = execution.result;
   logger.info("bitable_record_update_completed", {
     account_id: context.account.id,
     app_token: appToken,
@@ -5657,12 +6328,38 @@ async function handleBitableRecordDelete(res, requestUrl, body, appToken, tableI
     table_id: tableId,
     record_id: recordId,
   });
-  const result = await getHttpService("deleteBitableRecord", deleteBitableRecord)(
-    context.token,
-    appToken,
-    tableId,
-    recordId
-  );
+  const execution = await executeLarkWrite({
+    apiName: "bitable_record_delete",
+    action: "bitable_record_delete",
+    pathname: requestUrl.pathname,
+    accountId: context.account.id,
+    accessToken: context.token,
+    logger,
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: `bitable_record:${appToken}:${tableId}`,
+      documentId: recordId,
+      targetDocumentId: tableId,
+      content: recordId,
+      payload: {
+        app_token: appToken,
+        table_id: tableId,
+        record_id: recordId,
+      },
+      idempotencyKey: getRequestIdempotencyKey(body),
+    },
+    performWrite: async ({ accessToken }) => getHttpService("deleteBitableRecord", deleteBitableRecord)(
+      accessToken,
+      appToken,
+      tableId,
+      recordId,
+    ),
+  });
+  if (!execution.ok) {
+    respondWriteExecutionFailure(res, execution);
+    return;
+  }
+  const result = execution.result;
   logger.info("bitable_record_delete_completed", {
     account_id: context.account.id,
     app_token: appToken,
@@ -5697,15 +6394,41 @@ async function handleBitableRecordsBulkUpsert(res, requestUrl, body, appToken, t
     table_id: tableId,
     record_count: body.records.length,
   });
-  const result = await getHttpService("bulkUpsertBitableRecords", bulkUpsertBitableRecords)(
-    context.token,
-    appToken,
-    tableId,
-    {
+  const bulkPayload = {
     records: body.records,
     userIdType: body.user_id_type,
-    }
-  );
+  };
+  const execution = await executeLarkWrite({
+    apiName: "bitable_records_bulk_upsert",
+    action: "bitable_records_bulk_upsert",
+    pathname: requestUrl.pathname,
+    accountId: context.account.id,
+    accessToken: context.token,
+    logger,
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: `bitable_record:${appToken}:${tableId}`,
+      targetDocumentId: tableId,
+      content: JSON.stringify(bulkPayload),
+      payload: {
+        app_token: appToken,
+        table_id: tableId,
+        ...bulkPayload,
+      },
+      idempotencyKey: getRequestIdempotencyKey(body),
+    },
+    performWrite: async ({ accessToken }) => getHttpService("bulkUpsertBitableRecords", bulkUpsertBitableRecords)(
+      accessToken,
+      appToken,
+      tableId,
+      bulkPayload,
+    ),
+  });
+  if (!execution.ok) {
+    respondWriteExecutionFailure(res, execution);
+    return;
+  }
+  const result = execution.result;
   logger.info("bitable_records_bulk_upsert_completed", {
     account_id: context.account.id,
     app_token: appToken,
@@ -5732,10 +6455,34 @@ async function handleSpreadsheetCreate(res, requestUrl, body) {
     return;
   }
 
-  const result = await createSpreadsheet(context.token, {
+  const spreadsheetPayload = {
     title,
     folderToken: typeof body.folder_token === "string" ? body.folder_token.trim() : undefined,
+  };
+  const execution = await executeLarkWrite({
+    apiName: "spreadsheet_create",
+    action: "spreadsheet_create",
+    pathname: requestUrl.pathname,
+    accountId: context.account.id,
+    accessToken: context.token,
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: `spreadsheet:create:${spreadsheetPayload.folderToken || "root"}`,
+      targetDocumentId: spreadsheetPayload.folderToken || null,
+      content: JSON.stringify(spreadsheetPayload),
+      payload: spreadsheetPayload,
+      idempotencyKey: getRequestIdempotencyKey(body),
+    },
+    performWrite: async ({ accessToken }) => getHttpService("createSpreadsheet", createSpreadsheet)(
+      accessToken,
+      spreadsheetPayload,
+    ),
   });
+  if (!execution.ok) {
+    respondWriteExecutionFailure(res, execution);
+    return;
+  }
+  const result = execution.result;
 
   jsonResponse(res, 200, {
     ok: true,
@@ -5770,7 +6517,36 @@ async function handleSpreadsheetUpdate(res, requestUrl, body, spreadsheetToken) 
     return;
   }
 
-  const result = await updateSpreadsheet(context.token, spreadsheetToken, { title });
+  const spreadsheetPayload = { title };
+  const execution = await executeLarkWrite({
+    apiName: "spreadsheet_update",
+    action: "spreadsheet_update",
+    pathname: requestUrl.pathname,
+    accountId: context.account.id,
+    accessToken: context.token,
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: `spreadsheet:${spreadsheetToken}`,
+      documentId: spreadsheetToken,
+      targetDocumentId: spreadsheetToken,
+      content: JSON.stringify(spreadsheetPayload),
+      payload: {
+        spreadsheet_token: spreadsheetToken,
+        ...spreadsheetPayload,
+      },
+      idempotencyKey: getRequestIdempotencyKey(body),
+    },
+    performWrite: async ({ accessToken }) => getHttpService("updateSpreadsheet", updateSpreadsheet)(
+      accessToken,
+      spreadsheetToken,
+      spreadsheetPayload,
+    ),
+  });
+  if (!execution.ok) {
+    respondWriteExecutionFailure(res, execution);
+    return;
+  }
+  const result = execution.result;
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -5820,7 +6596,7 @@ async function handleSpreadsheetReplace(res, requestUrl, body, spreadsheetToken,
     return;
   }
 
-  const result = await replaceSpreadsheetCells(context.token, spreadsheetToken, sheetId, {
+  const replacePayload = {
     range,
     find,
     replacement,
@@ -5828,7 +6604,38 @@ async function handleSpreadsheetReplace(res, requestUrl, body, spreadsheetToken,
     matchEntireCell: body.match_entire_cell === true,
     searchByRegex: body.search_by_regex === true,
     includeFormulas: body.include_formulas === true,
+  };
+  const execution = await executeLarkWrite({
+    apiName: "spreadsheet_replace",
+    action: "spreadsheet_replace",
+    pathname: requestUrl.pathname,
+    accountId: context.account.id,
+    accessToken: context.token,
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: `spreadsheet:${spreadsheetToken}:${sheetId}`,
+      documentId: spreadsheetToken,
+      targetDocumentId: sheetId,
+      content: JSON.stringify(replacePayload),
+      payload: {
+        spreadsheet_token: spreadsheetToken,
+        sheet_id: sheetId,
+        ...replacePayload,
+      },
+      idempotencyKey: getRequestIdempotencyKey(body),
+    },
+    performWrite: async ({ accessToken }) => getHttpService("replaceSpreadsheetCells", replaceSpreadsheetCells)(
+      accessToken,
+      spreadsheetToken,
+      sheetId,
+      replacePayload,
+    ),
   });
+  if (!execution.ok) {
+    respondWriteExecutionFailure(res, execution);
+    return;
+  }
+  const result = execution.result;
 
   jsonResponse(res, 200, {
     ok: true,
@@ -5847,12 +6654,38 @@ async function handleSpreadsheetReplaceBatch(res, requestUrl, body, spreadsheetT
     return;
   }
 
-  const result = await replaceSpreadsheetCellsBatch(
-    context.token,
-    spreadsheetToken,
-    sheetId,
-    { replacements: body.replacements },
-  );
+  const batchPayload = { replacements: body.replacements };
+  const execution = await executeLarkWrite({
+    apiName: "spreadsheet_replace_batch",
+    action: "spreadsheet_replace_batch",
+    pathname: requestUrl.pathname,
+    accountId: context.account.id,
+    accessToken: context.token,
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: `spreadsheet:${spreadsheetToken}:${sheetId}`,
+      documentId: spreadsheetToken,
+      targetDocumentId: sheetId,
+      content: JSON.stringify(batchPayload),
+      payload: {
+        spreadsheet_token: spreadsheetToken,
+        sheet_id: sheetId,
+        ...batchPayload,
+      },
+      idempotencyKey: getRequestIdempotencyKey(body),
+    },
+    performWrite: async ({ accessToken }) => getHttpService("replaceSpreadsheetCellsBatch", replaceSpreadsheetCellsBatch)(
+      accessToken,
+      spreadsheetToken,
+      sheetId,
+      batchPayload,
+    ),
+  });
+  if (!execution.ok) {
+    respondWriteExecutionFailure(res, execution);
+    return;
+  }
+  const result = execution.result;
 
   jsonResponse(res, 200, {
     ok: true,
@@ -5961,12 +6794,41 @@ async function handleTaskCommentCreate(res, requestUrl, body, taskId, logger = n
     task_id: taskId,
     has_parent_id: Boolean(body.parent_id),
   });
-  const result = await getHttpService("createTaskComment", createTaskComment)(context.token, taskId, {
+  const commentPayload = {
     content: content || undefined,
     richContent: typeof body.rich_content === "string" ? body.rich_content.trim() : undefined,
     parentId: typeof body.parent_id === "string" ? body.parent_id.trim() : undefined,
     userIdType: typeof body.user_id_type === "string" ? body.user_id_type.trim() : undefined,
+  };
+  const execution = await executeLarkWrite({
+    apiName: "task_comment_create",
+    action: "task_comment_create",
+    pathname: requestUrl.pathname,
+    accountId: context.account.id,
+    accessToken: context.token,
+    logger,
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: `task_comment:${taskId}`,
+      targetDocumentId: taskId,
+      content: content || commentPayload.richContent || "",
+      payload: {
+        task_id: taskId,
+        ...commentPayload,
+      },
+      idempotencyKey: getRequestIdempotencyKey(body),
+    },
+    performWrite: async ({ accessToken }) => getHttpService("createTaskComment", createTaskComment)(
+      accessToken,
+      taskId,
+      commentPayload,
+    ),
   });
+  if (!execution.ok) {
+    respondWriteExecutionFailure(res, execution);
+    return;
+  }
+  const result = execution.result;
   logger.info("task_comment_create_completed", {
     account_id: context.account.id,
     task_id: taskId,
@@ -6029,11 +6891,43 @@ async function handleTaskCommentUpdate(res, requestUrl, body, taskId, commentId,
     task_id: taskId,
     comment_id: commentId,
   });
-  const result = await getHttpService("updateTaskComment", updateTaskComment)(context.token, taskId, commentId, {
+  const commentPayload = {
     content: content || undefined,
     richContent: typeof body.rich_content === "string" ? body.rich_content.trim() : undefined,
     userIdType: typeof body.user_id_type === "string" ? body.user_id_type.trim() : undefined,
+  };
+  const execution = await executeLarkWrite({
+    apiName: "task_comment_update",
+    action: "task_comment_update",
+    pathname: requestUrl.pathname,
+    accountId: context.account.id,
+    accessToken: context.token,
+    logger,
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: `task_comment:${taskId}`,
+      documentId: commentId,
+      targetDocumentId: taskId,
+      content: content || commentPayload.richContent || "",
+      payload: {
+        task_id: taskId,
+        comment_id: commentId,
+        ...commentPayload,
+      },
+      idempotencyKey: getRequestIdempotencyKey(body),
+    },
+    performWrite: async ({ accessToken }) => getHttpService("updateTaskComment", updateTaskComment)(
+      accessToken,
+      taskId,
+      commentId,
+      commentPayload,
+    ),
   });
+  if (!execution.ok) {
+    respondWriteExecutionFailure(res, execution);
+    return;
+  }
+  const result = execution.result;
   logger.info("task_comment_update_completed", {
     account_id: context.account.id,
     task_id: taskId,
@@ -6058,7 +6952,36 @@ async function handleTaskCommentDelete(res, requestUrl, body, taskId, commentId,
     task_id: taskId,
     comment_id: commentId,
   });
-  const result = await getHttpService("deleteTaskComment", deleteTaskComment)(context.token, taskId, commentId);
+  const execution = await executeLarkWrite({
+    apiName: "task_comment_delete",
+    action: "task_comment_delete",
+    pathname: requestUrl.pathname,
+    accountId: context.account.id,
+    accessToken: context.token,
+    logger,
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: `task_comment:${taskId}`,
+      documentId: commentId,
+      targetDocumentId: taskId,
+      content: commentId,
+      payload: {
+        task_id: taskId,
+        comment_id: commentId,
+      },
+      idempotencyKey: getRequestIdempotencyKey(body),
+    },
+    performWrite: async ({ accessToken }) => getHttpService("deleteTaskComment", deleteTaskComment)(
+      accessToken,
+      taskId,
+      commentId,
+    ),
+  });
+  if (!execution.ok) {
+    respondWriteExecutionFailure(res, execution);
+    return;
+  }
+  const result = execution.result;
   logger.info("task_comment_delete_completed", {
     account_id: context.account.id,
     task_id: taskId,
@@ -6104,7 +7027,35 @@ async function handleMessageReactionCreate(res, requestUrl, body, messageId) {
     return;
   }
 
-  const result = await createMessageReaction(context.token, messageId, emojiType);
+  const execution = await executeLarkWrite({
+    apiName: "message_reaction_create",
+    action: "message_reaction_create",
+    pathname: requestUrl.pathname,
+    accountId: context.account.id,
+    accessToken: context.token,
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: `message_reaction:${messageId}`,
+      documentId: messageId,
+      targetDocumentId: messageId,
+      content: emojiType,
+      payload: {
+        message_id: messageId,
+        emoji_type: emojiType,
+      },
+      idempotencyKey: getRequestIdempotencyKey(body),
+    },
+    performWrite: async ({ accessToken }) => getHttpService("createMessageReaction", createMessageReaction)(
+      accessToken,
+      messageId,
+      emojiType,
+    ),
+  });
+  if (!execution.ok) {
+    respondWriteExecutionFailure(res, execution);
+    return;
+  }
+  const result = execution.result;
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -6118,7 +7069,35 @@ async function handleMessageReactionDelete(res, requestUrl, body, messageId, rea
   const context = await requireUserContext(res, getAccountId(requestUrl, body));
   if (!context) return;
 
-  const result = await deleteMessageReaction(context.token, messageId, reactionId);
+  const execution = await executeLarkWrite({
+    apiName: "message_reaction_delete",
+    action: "message_reaction_delete",
+    pathname: requestUrl.pathname,
+    accountId: context.account.id,
+    accessToken: context.token,
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: `message_reaction:${messageId}`,
+      documentId: reactionId,
+      targetDocumentId: messageId,
+      content: reactionId,
+      payload: {
+        message_id: messageId,
+        reaction_id: reactionId,
+      },
+      idempotencyKey: getRequestIdempotencyKey(body),
+    },
+    performWrite: async ({ accessToken }) => getHttpService("deleteMessageReaction", deleteMessageReaction)(
+      accessToken,
+      messageId,
+      reactionId,
+    ),
+  });
+  if (!execution.ok) {
+    respondWriteExecutionFailure(res, execution);
+    return;
+  }
+  const result = execution.result;
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,

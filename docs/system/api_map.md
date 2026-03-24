@@ -100,10 +100,12 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
 - `POST /api/drive/create-folder`
   - Handler: `handleDriveCreateFolder`
   - Purpose: create folder
+  - Guard note: the final folder-create mutation now routes through `executeLarkWrite(...)` and the local Lark write-budget / duplicate guard
 
 - `POST /api/drive/move`
   - Handler: `handleDriveMove`
   - Purpose: move item
+  - Guard note: the final move mutation now routes through `executeLarkWrite(...)` and the local Lark write-budget / duplicate guard
 
 - `GET /api/drive/task-status`
   - Handler: `handleDriveTaskStatus`
@@ -112,11 +114,14 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
 - `POST /api/drive/delete`
   - Handler: `handleDriveDelete`
   - Purpose: delete/trash item
+  - Guard note: the final delete mutation now routes through `executeLarkWrite(...)` and the local Lark write-budget / duplicate guard
 
 - `POST /api/drive/organize/preview`
 - `POST /api/drive/organize/apply`
   - Handler: `handleDriveOrganize`
   - Purpose: preview/apply drive organization
+  - Guard note: apply now routes the final mutation through the shared `executeLarkWrite(...)` entry and checks the local Lark write-budget / duplicate guard before any folder create or move submission
+  - Apply note: if budget soft-limit / hard-limit or duplicate suppression triggers, the route does not mutate Drive and remains on the existing preview/review workflow boundary
 
 - `GET /api/wiki/spaces`
   - Handler: inline wiki spaces branch
@@ -129,15 +134,19 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
 - `POST /api/wiki/create-node`
   - Handler: `handleWikiCreateNode`
   - Purpose: create wiki doc node
+  - Guard note: the final create mutation now routes through `executeLarkWrite(...)` and the local Lark write-budget / duplicate guard
 
 - `POST /api/wiki/move`
   - Handler: `handleWikiMove`
   - Purpose: move wiki node
+  - Guard note: the final move mutation now routes through `executeLarkWrite(...)` and the local Lark write-budget / duplicate guard
 
 - `POST /api/wiki/organize/preview`
 - `POST /api/wiki/organize/apply`
   - Handler: `handleWikiOrganize`
   - Purpose: preview/apply wiki organization
+  - Guard note: apply now routes the final mutation through the shared `executeLarkWrite(...)` entry and checks the local Lark write-budget / duplicate guard before any wiki node create or move submission
+  - Apply note: if budget soft-limit / hard-limit or duplicate suppression triggers, the route does not mutate Wiki and remains on the existing preview/review workflow boundary
 
 - `GET /api/doc/read`
   - Handler: `handleDocumentRead`
@@ -269,9 +278,11 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
 - `POST /api/doc/create`
   - Handler: `handleDocumentCreate`
   - Purpose: create docx, optional initial content
-  - Guard note: live document creation is now fail-closed by default; the route throws when `ALLOW_LARK_WRITES !== true`, and `NODE_ENV=production` is a hard stop even if the env flag is set
+  - Guard note: the route is now preview-first for live create; the first request returns a temporary `document_create` confirmation artifact and the real create path requires both `confirm=true` and `confirmation_id`
+  - Guard note: live document creation remains fail-closed by default on the actual write path; `NODE_ENV=production` stays a hard stop even if write env flags are set
   - Guard note: titles/sources that look like `test` / `demo` / `verify` / `smoke` / `e2e` are sandbox-only; they are redirected to `LARK_WRITE_SANDBOX_FOLDER_TOKEN` when configured, otherwise blocked
-  - Side effect note: the docx adapter keeps `POST /open-apis/docx/v1/documents`, adds structured create-error diagnostics, and no longer falls back from folder-scoped create to root create unless `ALLOW_LARK_CREATE_ROOT_FALLBACK=true` is explicitly enabled
+  - Side effect note: the confirmed write path now performs `peek -> consume -> executeLarkWrite(...) -> createDocument/updateDocument`; the docx adapter still adds structured create-error diagnostics and still avoids root-create fallback unless `ALLOW_LARK_CREATE_ROOT_FALLBACK=true` is explicitly enabled
+  - Budget note: confirmed create also checks the local Lark write-budget / duplicate guard before any real doc create or initial replace write
   - Route behavior note: document creation is the blocking step; post-create manager-permission grant is non-blocking, skipped when the current user is already the owner, and returned as `permission_grant_failed` / `permission_grant_skipped` / `permission_grant_error`
   - Index note: after create succeeds, the route writes normalized metadata `{ doc_id, source, created_at, creator: { account_id, open_id }, title, folder_token }` into the existing `lark_sources` / `lark_documents` index as a non-blocking `document_index` step; this is not a separate company-brain module
   - Lifecycle note: the route now advances `lark_documents.status` through `created -> indexed -> verified`, records `indexed_at` / `verified_at`, and writes `create_failed` / `index_failed` / `verify_failed` plus `failure_reason` on the corresponding failure path, with `document_lifecycle_update` logs for each transition
@@ -279,11 +290,12 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
 
 - `POST /api/doc/update`
   - Handler: `handleDocumentUpdate`
-  - Purpose: append doc content, preview-then-confirm replace, or do a minimal heading-targeted insert
+  - Purpose: append doc content immediately, or preview/confirm replace and heading-targeted insert for doc content
   - Input note: target doc can be supplied as `document_id` / `doc_token`, or as a doc URL via `document_url` / `document_link` / `doc_link`
   - Input note: heading-targeted insert is enabled by `target_heading` plus optional `target_position=end_of_section|after_heading`
   - Final-write note: preview can still resolve doc URLs and heading aliases, but the real write step now requires explicit `document_id` plus `section_heading`; missing either returns structured `missing_explicit_write_target`
-  - Side effect note: `replace` and heading-targeted updates create a temporary confirmation artifact before real overwrite
+  - Side effect note: replace and heading-targeted updates create a temporary confirmation artifact before real overwrite; append keeps its existing external behavior but the final write now still routes through `executeLarkWrite(...)`
+  - Budget note: all final doc writes now check the local Lark write-budget / duplicate guard before calling Lark
 
 - `GET /api/doc/comments`
   - Handler: `handleDocumentComments`
@@ -306,7 +318,8 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Handler: `handleDocumentRewriteFromComments`
   - Purpose: preview comment-driven patch plan, then confirm before apply
   - Input note: target doc can be supplied as `document_id` / `doc_token`, a doc URL field, or a nested `target_document.url`
-  - Side effect note: preview path also returns a rewrite summary card; apply path depends on a temporary confirmation artifact, carries a patch plan, and may resolve comments after write
+  - Side effect note: preview path also returns a rewrite summary card; apply path depends on a temporary confirmation artifact, enters the shared `executeLarkWrite(...)` path, carries a patch plan, and may resolve comments after write
+  - Budget note: confirmed apply now also checks the local Lark write-budget / duplicate guard before replacing the doc
 
 - `GET /api/messages`
   - Handler: `handleMessagesList`
@@ -323,10 +336,12 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
 - `POST /api/messages/reply`
   - Handler: `handleMessageReply`
   - Purpose: text reply
+  - Guard note: the final reply mutation now routes through `executeLarkWrite(...)` and the local Lark write-budget / duplicate guard
 
 - `POST /api/messages/reply-card`
   - Handler: `handleMessageReply`
   - Purpose: card reply
+  - Guard note: the final reply mutation now routes through `executeLarkWrite(...)` and the local Lark write-budget / duplicate guard
 
 - `GET /api/calendar/primary`
   - Handler: `handleCalendarPrimary`
@@ -343,6 +358,7 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
 - `POST /api/calendar/events/create`
   - Handler: `handleCalendarCreateEvent`
   - Purpose: create event
+  - Guard note: the final calendar create mutation now routes through `executeLarkWrite(...)` and the local Lark write-budget / duplicate guard
 
 - `POST /api/calendar/freebusy`
   - Handler: `handleCalendarFreebusy`
@@ -359,31 +375,37 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
 - `POST /api/tasks/create`
   - Handler: `handleTaskCreate`
   - Purpose: create task
+  - Guard note: the final task create mutation now routes through `executeLarkWrite(...)` and the local Lark write-budget / duplicate guard
 
 - `GET /api/tasks/:task_id/comments`
 - `POST /api/tasks/:task_id/comments`
   - Handler: `handleTaskCommentsList` / `handleTaskCommentCreate`
   - Purpose: list or create task comments
+  - Guard note: the create mutation now routes through `executeLarkWrite(...)` and the local Lark write-budget / duplicate guard
 
 - `GET /api/tasks/:task_id/comments/:comment_id`
 - `POST|PUT|PATCH /api/tasks/:task_id/comments/:comment_id`
 - `DELETE /api/tasks/:task_id/comments/:comment_id`
   - Handler: `handleTaskCommentGet` / `handleTaskCommentUpdate` / `handleTaskCommentDelete`
   - Purpose: manage one task comment
+  - Guard note: update/delete now route through `executeLarkWrite(...)` and the local Lark write-budget / duplicate guard
 
 - `POST /api/bitable/apps/create`
   - Handler: `handleBitableAppCreate`
   - Purpose: create one Bitable app
+  - Guard note: the final create mutation now routes through `executeLarkWrite(...)` and the local Lark write-budget / duplicate guard
 
 - `GET /api/bitable/apps/:app_token`
 - `POST|PATCH /api/bitable/apps/:app_token`
   - Handler: `handleBitableAppGet` / `handleBitableAppUpdate`
   - Purpose: inspect or update one Bitable app
+  - Guard note: the update mutation now routes through `executeLarkWrite(...)` and the local Lark write-budget / duplicate guard
 
 - `GET /api/bitable/apps/:app_token/tables`
 - `POST /api/bitable/apps/:app_token/tables/create`
   - Handler: `handleBitableTablesList` / `handleBitableTableCreate`
   - Purpose: list or create tables
+  - Guard note: the create mutation now routes through `executeLarkWrite(...)` and the local Lark write-budget / duplicate guard
 
 - `GET /api/bitable/apps/:app_token/tables/:table_id/records`
 - `POST /api/bitable/apps/:app_token/tables/:table_id/records/search`
@@ -392,21 +414,25 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Handler: `handleBitableRecordsList` / `handleBitableRecordsSearch` / `handleBitableRecordCreate`
   - `handleBitableRecordsBulkUpsert`
   - Purpose: browse, filter, create, or bulk-upsert records
+  - Guard note: create and bulk-upsert now route through `executeLarkWrite(...)` and the local Lark write-budget / duplicate guard
 
 - `GET /api/bitable/apps/:app_token/tables/:table_id/records/:record_id`
 - `POST|PATCH /api/bitable/apps/:app_token/tables/:table_id/records/:record_id`
 - `DELETE /api/bitable/apps/:app_token/tables/:table_id/records/:record_id`
   - Handler: `handleBitableRecordGet` / `handleBitableRecordUpdate` / `handleBitableRecordDelete`
   - Purpose: manage one Bitable record
+  - Guard note: update/delete now route through `executeLarkWrite(...)` and the local Lark write-budget / duplicate guard
 
 - `POST /api/sheets/spreadsheets/create`
   - Handler: `handleSpreadsheetCreate`
   - Purpose: create spreadsheet
+  - Guard note: the final create mutation now routes through `executeLarkWrite(...)` and the local Lark write-budget / duplicate guard
 
 - `GET /api/sheets/spreadsheets/:spreadsheet_token`
 - `POST|PATCH /api/sheets/spreadsheets/:spreadsheet_token`
   - Handler: `handleSpreadsheetGet` / `handleSpreadsheetUpdate`
   - Purpose: inspect or rename spreadsheet
+  - Guard note: the rename mutation now routes through `executeLarkWrite(...)` and the local Lark write-budget / duplicate guard
 
 - `GET /api/sheets/spreadsheets/:spreadsheet_token/sheets`
 - `GET /api/sheets/spreadsheets/:spreadsheet_token/sheets/:sheet_id`
@@ -418,12 +444,14 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Handler: `handleSpreadsheetReplace`
   - `handleSpreadsheetReplaceBatch`
   - Purpose: replace matching cell values in one range or in batch
+  - Guard note: both replace paths now route through `executeLarkWrite(...)` and the local Lark write-budget / duplicate guard
 
 - `GET /api/messages/:message_id/reactions`
 - `POST /api/messages/:message_id/reactions`
 - `DELETE /api/messages/:message_id/reactions/:reaction_id`
   - Handler: `handleMessageReactionsList` / `handleMessageReactionCreate` / `handleMessageReactionDelete`
   - Purpose: manage message reactions
+  - Guard note: create/delete now route through `executeLarkWrite(...)` and the local Lark write-budget / duplicate guard
 
 - `POST /sync/full`
 - `POST /sync/incremental`
@@ -456,6 +484,7 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Handler: `handleAgentCreateDoc`
   - Purpose: expose `/api/doc/create` through an agent-facing bridge
   - Input note: this bridge now requires bounded entry governance fields `source`, `owner`, `intent`, and `type`; missing any of them returns `error=entry_governance_required`
+  - Compatibility note: when an older one-shot caller omits `confirmation_id`, the bridge internally creates a preview artifact and immediately consumes that confirmation before the final write so the agent-facing contract stays one-step compatible
   - Response shape: `{ ok, action, data, trace_id }` with `action=create_doc`
   - Log note: emits `stage=agent_bridge`
 

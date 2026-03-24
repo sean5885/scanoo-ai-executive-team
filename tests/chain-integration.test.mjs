@@ -61,6 +61,7 @@ function createMeetingHarness() {
         });
         return { confirmation_id: "confirm-1" };
       },
+      peekConfirmation: async () => confirmations.get("confirm-1"),
       consumeConfirmation: async () => confirmations.get("confirm-1"),
       listWeeklyTrackerItems: () => [],
       upsertWeeklyTrackerItem: () => null,

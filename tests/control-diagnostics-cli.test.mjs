@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
@@ -32,31 +32,41 @@ function seedRoutingDiagnosticsArchive(routingArchiveDir) {
   });
 }
 
+function runControlDiagnosticsCli(args, env) {
+  const result = spawnSync("node", ["scripts/control-diagnostics.mjs", ...args], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env,
+  });
+  return {
+    status: result.status,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
+}
+
 test("control diagnostics CLI renders the fixed single-view summary", async () => {
   const controlArchiveDir = await mkdtemp(path.join(os.tmpdir(), "control-diagnostics-summary-"));
   const routingArchiveDir = await mkdtemp(path.join(os.tmpdir(), "control-diagnostics-routing-summary-"));
   seedRoutingDiagnosticsArchive(routingArchiveDir);
 
-  const output = execFileSync("node", ["scripts/control-diagnostics.mjs"], {
-    cwd: process.cwd(),
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      CONTROL_DIAGNOSTICS_ARCHIVE_DIR: controlArchiveDir,
-      ROUTING_DIAGNOSTICS_ARCHIVE_DIR: routingArchiveDir,
-    },
+  const { status, stdout: output } = runControlDiagnosticsCli([], {
+    ...process.env,
+    CONTROL_DIAGNOSTICS_ARCHIVE_DIR: controlArchiveDir,
+    ROUTING_DIAGNOSTICS_ARCHIVE_DIR: routingArchiveDir,
   });
 
+  assert.equal(status, 1);
   assert.match(output, /Control Diagnostics/);
-  assert.match(output, /summary: overall=pass \| control=pass \| routing=pass \| write=pass/);
+  assert.match(output, /summary: overall=fail \| control=pass \| routing=pass \| write=fail/);
   assert.match(output, /control_summary: issues=0 \| decisions=3 \| owners=3 \| integrations=3/);
   assert.match(output, /routing_summary: status=pass \| accuracy=1 \| compare=unavailable \| doc_boundary_regression=false/);
-  assert.match(output, /write_summary: issues=0 \| guarded_operations=5 \| policy_actions=5 \| enforced_routes=7 \| modes=enforce:2,observe:2,warn:3/);
-  assert.match(output, /reporting_summary: error_code_groups=0 \| failure_groups=0 \| top_regressions=0/);
-  assert.match(output, /top_regressions: none/);
+  assert.match(output, /write_summary: issues=1 \| guarded_operations=5 \| policy_actions=5 \| enforced_routes=7 \| modes=enforce:2,observe:2,warn:3/);
+  assert.match(output, /reporting_summary: error_code_groups=1 \| failure_groups=1 \| top_regressions=1/);
+  assert.match(output, /top_regressions: write_integration_missing:http_server_guarded_operations/);
   assert.match(output, /write_route: \/api\/doc\/rewrite-from-comments \| action=document_comment_rewrite_apply \| mode=warn/);
   assert.match(output, /write_route: \/api\/meeting\/confirm \| action=meeting_confirm_write \| mode=warn .* recommendation=hold_warn/);
-  assert.match(output, /decision: observe_only \| line none/);
+  assert.match(output, /decision: inspect_write_guard \| line write/);
 });
 
 test("control diagnostics CLI archives the full JSON report into snapshot history", async () => {
@@ -64,31 +74,28 @@ test("control diagnostics CLI archives the full JSON report into snapshot histor
   const routingArchiveDir = await mkdtemp(path.join(os.tmpdir(), "control-diagnostics-routing-history-"));
   seedRoutingDiagnosticsArchive(routingArchiveDir);
 
-  const raw = execFileSync("node", ["scripts/control-diagnostics.mjs", "--json"], {
-    cwd: process.cwd(),
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      CONTROL_DIAGNOSTICS_ARCHIVE_DIR: controlArchiveDir,
-      ROUTING_DIAGNOSTICS_ARCHIVE_DIR: routingArchiveDir,
-    },
+  const { status, stdout: raw } = runControlDiagnosticsCli(["--json"], {
+    ...process.env,
+    CONTROL_DIAGNOSTICS_ARCHIVE_DIR: controlArchiveDir,
+    ROUTING_DIAGNOSTICS_ARCHIVE_DIR: routingArchiveDir,
   });
   const parsed = JSON.parse(raw);
   const manifest = readJson(path.join(controlArchiveDir, "manifest.json"));
   const latestEntry = manifest.snapshots[0];
   const snapshot = readJson(path.join(controlArchiveDir, "snapshots", `${manifest.latest_run_id}.json`));
 
+  assert.equal(status, 1);
   assert.equal(manifest.latest_run_id, latestEntry.run_id);
   assert.deepEqual(latestEntry, {
     run_id: manifest.latest_run_id,
     timestamp: latestEntry.timestamp,
-    overall_status: "pass",
+    overall_status: "fail",
     control_status: "pass",
     routing_status: "pass",
-    write_status: "pass",
+    write_status: "fail",
     control_issue_count: 0,
     routing_issue_count: 0,
-    write_issue_count: 0,
+    write_issue_count: 1,
   });
   assert.deepEqual(snapshot, parsed);
 });
@@ -233,25 +240,57 @@ test("control diagnostics reporting emits stable top regression cases without ch
     routingArchiveDir,
   });
 
-  assert.equal(report.ok, true);
+  assert.equal(report.ok, false);
   assert.deepEqual(report.diagnostics_summary, {
-    overall_status: "pass",
+    overall_status: "fail",
     control_status: "pass",
     routing_status: "pass",
-    write_status: "pass",
+    write_status: "fail",
     control_issue_count: 0,
     routing_issue_count: 0,
-    write_issue_count: 0,
+    write_issue_count: 1,
   });
-  assert.equal(report.decision.action, "observe_only");
-  assert.equal(report.decision.line, "none");
+  assert.equal(report.decision.action, "inspect_write_guard");
+  assert.equal(report.decision.line, "write");
   assert.deepEqual(report.reporting_summary, {
-    error_code_class_count: 0,
-    failure_group_count: 0,
-    top_regression_case_count: 0,
-    error_code_classes: [],
-    failure_groups: [],
-    top_regression_cases: [],
+    error_code_class_count: 1,
+    failure_group_count: 1,
+    top_regression_case_count: 1,
+    error_code_classes: [
+      {
+        class_key: "write_integration_missing",
+        line: "write",
+        status: "fail",
+        count: 1,
+        source_types: ["issue"],
+        sample_codes: ["write_integration_missing:http_server_guarded_operations"],
+      },
+    ],
+    failure_groups: [
+      {
+        group_key: "write:integration_surface",
+        line: "write",
+        status: "fail",
+        count: 1,
+        error_code_classes: ["write_integration_missing"],
+        sample_cases: ["write_integration_missing:http_server_guarded_operations"],
+        files: [path.join(process.cwd(), "src/http-server.mjs")],
+      },
+    ],
+    top_regression_cases: [
+      {
+        rank: 1,
+        line: "write",
+        status: "fail",
+        source: "issue",
+        case_id: "write_integration_missing:http_server_guarded_operations",
+        code: "write_integration_missing:http_server_guarded_operations",
+        summary: "Write guard integration missing: http_server_guarded_operations",
+        file: path.join(process.cwd(), "src/http-server.mjs"),
+        error_code_class: "write_integration_missing",
+        failure_group: "write:integration_surface",
+      },
+    ],
   });
   assert.deepEqual(report.write_summary.policy_actions, [
     "create_doc",
@@ -486,15 +525,12 @@ test("control diagnostics CLI renders compare-previous with directional markers"
   const routingArchiveDir = await mkdtemp(path.join(os.tmpdir(), "control-diagnostics-routing-compare-previous-"));
   seedRoutingDiagnosticsArchive(routingArchiveDir);
 
-  execFileSync("node", ["scripts/control-diagnostics.mjs", "--json"], {
-    cwd: process.cwd(),
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      CONTROL_DIAGNOSTICS_ARCHIVE_DIR: controlArchiveDir,
-      ROUTING_DIAGNOSTICS_ARCHIVE_DIR: routingArchiveDir,
-    },
+  const initial = runControlDiagnosticsCli(["--json"], {
+    ...process.env,
+    CONTROL_DIAGNOSTICS_ARCHIVE_DIR: controlArchiveDir,
+    ROUTING_DIAGNOSTICS_ARCHIVE_DIR: routingArchiveDir,
   });
+  assert.equal(initial.status, 1);
 
   const manifestPath = path.join(controlArchiveDir, "manifest.json");
   const manifest = readJson(manifestPath);
@@ -517,26 +553,24 @@ test("control diagnostics CLI renders compare-previous with directional markers"
   manifest.snapshots[0].write_issue_count = 1;
   writeJson(manifestPath, manifest);
 
-  const output = execFileSync("node", ["scripts/control-diagnostics.mjs", "--compare-previous"], {
-    cwd: process.cwd(),
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      CONTROL_DIAGNOSTICS_ARCHIVE_DIR: controlArchiveDir,
-      ROUTING_DIAGNOSTICS_ARCHIVE_DIR: routingArchiveDir,
-    },
+  const { status, stdout: output } = runControlDiagnosticsCli(["--compare-previous"], {
+    ...process.env,
+    CONTROL_DIAGNOSTICS_ARCHIVE_DIR: controlArchiveDir,
+    ROUTING_DIAGNOSTICS_ARCHIVE_DIR: routingArchiveDir,
   });
 
+  assert.equal(status, 1);
   assert.match(output, /Control Diagnostics Compare/);
   assert.match(output, /Current: snapshot:control-diagnostics-/);
   assert.match(output, new RegExp(`Compare: snapshot:${firstRunId}`));
-  assert.match(output, /↓ overall_status: fail -> pass/);
+  assert.match(output, /= overall_status: fail/);
   assert.match(output, /↓ control_status: fail -> pass/);
   assert.match(output, /= routing_status: pass/);
-  assert.match(output, /↓ write_status: fail -> pass/);
+  assert.match(output, /= write_status: fail/);
   assert.match(output, /↓ control_issue_count: 2 -> 0 \(-2\)/);
   assert.match(output, /= routing_issue_count: 0/);
-  assert.match(output, /↓ write_issue_count: 1 -> 0 \(-1\)/);
+  assert.match(output, /= write_issue_count: 1/);
+  assert.match(output, /Manifest:/);
 });
 
 test("control diagnostics CLI json compare_summary only includes changed fields", async () => {
@@ -544,15 +578,12 @@ test("control diagnostics CLI json compare_summary only includes changed fields"
   const routingArchiveDir = await mkdtemp(path.join(os.tmpdir(), "control-diagnostics-routing-compare-json-"));
   seedRoutingDiagnosticsArchive(routingArchiveDir);
 
-  execFileSync("node", ["scripts/control-diagnostics.mjs", "--json"], {
-    cwd: process.cwd(),
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      CONTROL_DIAGNOSTICS_ARCHIVE_DIR: controlArchiveDir,
-      ROUTING_DIAGNOSTICS_ARCHIVE_DIR: routingArchiveDir,
-    },
+  const initial = runControlDiagnosticsCli(["--json"], {
+    ...process.env,
+    CONTROL_DIAGNOSTICS_ARCHIVE_DIR: controlArchiveDir,
+    ROUTING_DIAGNOSTICS_ARCHIVE_DIR: routingArchiveDir,
   });
+  assert.equal(initial.status, 1);
 
   const manifestPath = path.join(controlArchiveDir, "manifest.json");
   const manifest = readJson(manifestPath);
@@ -571,24 +602,21 @@ test("control diagnostics CLI json compare_summary only includes changed fields"
   manifest.snapshots[0].routing_issue_count = 2;
   writeJson(manifestPath, manifest);
 
-  const raw = execFileSync("node", ["scripts/control-diagnostics.mjs", "--json", "--compare-snapshot", firstRunId], {
-    cwd: process.cwd(),
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      CONTROL_DIAGNOSTICS_ARCHIVE_DIR: controlArchiveDir,
-      ROUTING_DIAGNOSTICS_ARCHIVE_DIR: routingArchiveDir,
-    },
+  const { status, stdout: raw } = runControlDiagnosticsCli(["--json", "--compare-snapshot", firstRunId], {
+    ...process.env,
+    CONTROL_DIAGNOSTICS_ARCHIVE_DIR: controlArchiveDir,
+    ROUTING_DIAGNOSTICS_ARCHIVE_DIR: routingArchiveDir,
   });
   const parsed = JSON.parse(raw);
   const updatedManifest = readJson(manifestPath);
   const latestSnapshot = readJson(path.join(controlArchiveDir, "snapshots", `${updatedManifest.latest_run_id}.json`));
 
+  assert.equal(status, 1);
   assert.deepEqual(parsed.compare_summary, {
     overall_status: {
       previous: "degrade",
-      current: "pass",
-      status: "better",
+      current: "fail",
+      status: "worse",
     },
     routing_status: {
       previous: "degrade",

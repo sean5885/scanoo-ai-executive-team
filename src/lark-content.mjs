@@ -8,6 +8,7 @@ import {
   assertDocumentCreateProbeAllowed,
   shouldAllowCreateRootFallback,
 } from "./lark-write-guard.mjs";
+import { assertLarkWriteExecutionAllowed } from "./execute-lark-write.mjs";
 
 const userClient = new Lark.Client(baseConfig);
 const contentLogger = createRuntimeLogger({ logger: console, component: "lark_content" });
@@ -544,6 +545,7 @@ export async function resolveDriveRootFolderToken(accessToken) {
 
 export async function createDriveFolder(accessToken, folderToken, name) {
   assertLarkWriteAllowed();
+  assertLarkWriteExecutionAllowed("createDriveFolder");
   ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.drive.v1.file.createFolder(
@@ -568,6 +570,7 @@ export async function createDriveFolder(accessToken, folderToken, name) {
 
 export async function moveDriveItem(accessToken, fileToken, type, folderToken) {
   assertLarkWriteAllowed();
+  assertLarkWriteExecutionAllowed("moveDriveItem");
   ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.drive.v1.file.move(
@@ -595,6 +598,7 @@ export async function moveDriveItem(accessToken, fileToken, type, folderToken) {
 
 export async function deleteDriveItem(accessToken, fileToken, type, tokenType = "user") {
   assertLarkWriteAllowed();
+  assertLarkWriteExecutionAllowed("deleteDriveItem");
   ({ accessToken, tokenType } = await resolveContentAuth(accessToken, tokenType));
   const data = unwrapResponse(
     await userClient.drive.v1.file.delete(
@@ -688,6 +692,7 @@ export async function listWikiSpaceNodes(accessToken, spaceId, parentNodeToken, 
 
 export async function createWikiNode(accessToken, spaceId, title, parentNodeToken) {
   assertLarkWriteAllowed();
+  assertLarkWriteExecutionAllowed("createWikiNode");
   ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.wiki.v2.spaceNode.create(
@@ -720,6 +725,7 @@ export async function createWikiNode(accessToken, spaceId, title, parentNodeToke
 
 export async function moveWikiNode(accessToken, spaceId, nodeToken, targetParentToken, targetSpaceId) {
   assertLarkWriteAllowed();
+  assertLarkWriteExecutionAllowed("moveWikiNode");
   ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.wiki.v2.spaceNode.move(
@@ -750,6 +756,7 @@ export async function moveWikiNode(accessToken, spaceId, nodeToken, targetParent
 }
 
 export async function createDocument(accessToken, title, folderToken, tokenType = "user", options = {}) {
+  assertLarkWriteExecutionAllowed("createDocument");
   const createGuard = assertDocumentCreateAllowed({
     title,
     source: options?.source || "",
@@ -1027,6 +1034,7 @@ export async function listDocumentComments(
 
 export async function resolveDocumentComment(accessToken, documentId, commentId, isSolved = true, fileType = "docx") {
   assertLarkWriteAllowed();
+  assertLarkWriteExecutionAllowed("resolveDocumentComment");
   ({ accessToken } = await resolveContentAuth(accessToken));
   unwrapResponse(
     await userClient.drive.v1.fileComment.patch(
@@ -1118,6 +1126,7 @@ async function convertMarkdownToBlocks(accessToken, content, tokenType = "user")
 
 export async function updateDocument(accessToken, documentId, content, mode = "append", tokenType = "user") {
   assertLarkWriteAllowed();
+  assertLarkWriteExecutionAllowed("updateDocument");
   ({ accessToken, tokenType } = await resolveContentAuth(accessToken, tokenType));
   const normalizedContent = normalizeDocumentContent(content);
   if (!normalizedContent) {
@@ -1495,6 +1504,7 @@ export async function createCalendarEvent(
   { summary, description, startTime, endTime, timezone = "Asia/Taipei", reminders = [] },
 ) {
   assertLarkWriteAllowed();
+  assertLarkWriteExecutionAllowed("createCalendarEvent");
   ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.calendar.v4.calendarEvent.create(
@@ -1574,6 +1584,7 @@ export async function createTask(
   { summary, description, dueTime, timezone = "Asia/Taipei", linkUrl, linkTitle },
 ) {
   assertLarkWriteAllowed();
+  assertLarkWriteExecutionAllowed("createTask");
   ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.task.v1.task.create(
@@ -1611,6 +1622,7 @@ export async function createBitableApp(
   { name, folderToken, timeZone, customizedConfig, sourceAppToken, copyTypes, apiType } = {},
 ) {
   assertLarkWriteAllowed();
+  assertLarkWriteExecutionAllowed("createBitableApp");
   ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.bitable.v1.app.create(
@@ -1654,6 +1666,7 @@ export async function getBitableApp(accessToken, appToken) {
 
 export async function updateBitableApp(accessToken, appToken, { name, isAdvanced } = {}) {
   assertLarkWriteAllowed();
+  assertLarkWriteExecutionAllowed("updateBitableApp");
   ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.bitable.v1.app.update(
@@ -1707,6 +1720,7 @@ export async function createBitableTable(
   { name, defaultViewName, fields = [] } = {},
 ) {
   assertLarkWriteAllowed();
+  assertLarkWriteExecutionAllowed("createBitableTable");
   ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.bitable.v1.appTable.create(
@@ -1824,6 +1838,7 @@ export async function createBitableRecord(
   { fields, userIdType, clientToken, ignoreConsistencyCheck } = {},
 ) {
   assertLarkWriteAllowed();
+  assertLarkWriteExecutionAllowed("createBitableRecord");
   ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.bitable.v1.appTableRecord.create(
@@ -1887,6 +1902,7 @@ export async function updateBitableRecord(
   { fields, userIdType } = {},
 ) {
   assertLarkWriteAllowed();
+  assertLarkWriteExecutionAllowed("updateBitableRecord");
   ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.bitable.v1.appTableRecord.update(
@@ -1917,6 +1933,7 @@ export async function bulkUpsertBitableRecords(
   tableId,
   { records = [], userIdType } = {},
 ) {
+  assertLarkWriteExecutionAllowed("bulkUpsertBitableRecords");
   ({ accessToken } = await resolveContentAuth(accessToken));
   const items = [];
   for (const item of Array.isArray(records) ? records : []) {
@@ -1942,6 +1959,7 @@ export async function bulkUpsertBitableRecords(
 
 export async function deleteBitableRecord(accessToken, appToken, tableId, recordId) {
   assertLarkWriteAllowed();
+  assertLarkWriteExecutionAllowed("deleteBitableRecord");
   ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.bitable.v1.appTableRecord.delete(
@@ -1967,6 +1985,7 @@ export async function deleteBitableRecord(accessToken, appToken, tableId, record
 
 export async function createSpreadsheet(accessToken, { title, folderToken } = {}) {
   assertLarkWriteAllowed();
+  assertLarkWriteExecutionAllowed("createSpreadsheet");
   ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.sheets.v3.spreadsheet.create(
@@ -2003,6 +2022,7 @@ export async function getSpreadsheet(accessToken, spreadsheetToken) {
 
 export async function updateSpreadsheet(accessToken, spreadsheetToken, { title } = {}) {
   assertLarkWriteAllowed();
+  assertLarkWriteExecutionAllowed("updateSpreadsheet");
   ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.sheets.v3.spreadsheet.patch(
@@ -2067,6 +2087,7 @@ export async function replaceSpreadsheetCells(
   { range, find, replacement, matchCase, matchEntireCell, searchByRegex, includeFormulas } = {},
 ) {
   assertLarkWriteAllowed();
+  assertLarkWriteExecutionAllowed("replaceSpreadsheetCells");
   ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.sheets.v3.spreadsheetSheet.replace(
@@ -2106,6 +2127,7 @@ export async function replaceSpreadsheetCellsBatch(
   { replacements = [] } = {},
 ) {
   assertLarkWriteAllowed();
+  assertLarkWriteExecutionAllowed("replaceSpreadsheetCellsBatch");
   ({ accessToken } = await resolveContentAuth(accessToken));
   const items = [];
   for (const replacement of Array.isArray(replacements) ? replacements : []) {
@@ -2212,6 +2234,7 @@ export async function createTaskComment(
   { content, richContent, parentId, userIdType = "open_id" } = {},
 ) {
   assertLarkWriteAllowed();
+  assertLarkWriteExecutionAllowed("createTaskComment");
   ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.task.v1.taskComment.create(
@@ -2243,6 +2266,7 @@ export async function updateTaskComment(
   { content, richContent, userIdType = "open_id" } = {},
 ) {
   assertLarkWriteAllowed();
+  assertLarkWriteExecutionAllowed("updateTaskComment");
   ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.task.v1.taskComment.update(
@@ -2269,6 +2293,7 @@ export async function updateTaskComment(
 
 export async function deleteTaskComment(accessToken, taskId, commentId) {
   assertLarkWriteAllowed();
+  assertLarkWriteExecutionAllowed("deleteTaskComment");
   ({ accessToken } = await resolveContentAuth(accessToken));
   unwrapResponse(
     await userClient.task.v1.taskComment.delete(
@@ -2324,6 +2349,7 @@ export async function listMessageReactions(
 
 export async function createMessageReaction(accessToken, messageId, emojiType) {
   assertLarkWriteAllowed();
+  assertLarkWriteExecutionAllowed("createMessageReaction");
   ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.im.v1.messageReaction.create(
@@ -2347,6 +2373,7 @@ export async function createMessageReaction(accessToken, messageId, emojiType) {
 
 export async function deleteMessageReaction(accessToken, messageId, reactionId) {
   assertLarkWriteAllowed();
+  assertLarkWriteExecutionAllowed("deleteMessageReaction");
   ({ accessToken } = await resolveContentAuth(accessToken));
   const data = unwrapResponse(
     await userClient.im.v1.messageReaction.delete(

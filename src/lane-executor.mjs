@@ -106,6 +106,7 @@ import {
   setResolvedSessionExplicitAuth,
 } from "./session-scope-store.mjs";
 import { normalizeUserResponse, renderUserResponseText } from "./user-response-normalizer.mjs";
+import { executeLarkWrite } from "./execute-lark-write.mjs";
 
 function incomingText(event) {
   return buildVisibleMessageText(event);
@@ -499,6 +500,72 @@ async function runLoggedStep(logger, event, fields, fn) {
     });
     throw error;
   }
+}
+
+async function executeLaneLarkWrite({
+  apiName,
+  action = apiName,
+  pathname,
+  accountId,
+  accessToken,
+  logger = noopLogger,
+  scopeKey,
+  sessionKey = null,
+  documentId = null,
+  targetDocumentId = null,
+  content = "",
+  payload = null,
+  essential = true,
+  performWrite,
+} = {}) {
+  const execution = await executeLarkWrite({
+    apiName,
+    action,
+    pathname,
+    accountId,
+    accessToken,
+    logger,
+    budget: {
+      sessionKey: cleanText(sessionKey) || cleanText(scopeKey) || accountId || null,
+      scopeKey,
+      documentId,
+      targetDocumentId,
+      content,
+      payload,
+      essential,
+    },
+    performWrite,
+  });
+  if (!execution.ok) {
+    const error = new Error(execution.message || execution.error || "lark_write_blocked");
+    error.code = execution.error || "write_guard_denied";
+    error.write_guard = execution.write_guard || null;
+    throw error;
+  }
+  return execution.result;
+}
+
+function isLaneWriteBlockedError(error) {
+  return Boolean(
+    error?.write_guard
+    || cleanText(error?.code) === "write_guard_denied"
+    || cleanText(error?.code) === "write_policy_enforcement_blocked",
+  );
+}
+
+function buildLaneWriteBlockedReply(error) {
+  return {
+    text: [
+      "結論",
+      "這次外部寫入被系統保護機制擋下來了，我不會繞過保護直接重送。",
+      "",
+      "重點",
+      `- 原因：${cleanText(error?.message) || cleanText(error?.code) || "write_guard_denied"}`,
+      "",
+      "下一步",
+      "- 稍後再重試一次，或先回到預覽/整理階段確認內容後再送出。",
+    ].join("\n"),
+  };
 }
 
 const meetingCoordinator = createMeetingCoordinator();
@@ -1049,20 +1116,36 @@ async function ensureMeetingCaptureDoc({ accessToken, tokenType = "user", sessio
       existed: true,
     };
   }
-  const created = await createManagedDocument(
+  const title = fallbackTitle || buildMeetingCaptureDocTitle({
+    eventSummary: session?.event_summary,
+    eventStartTime: session?.event_start_time,
+    chatId: session?.chat_id,
+  });
+  const created = await executeLaneLarkWrite({
+    apiName: "meeting_capture_create_document",
+    action: "meeting_capture_create_document",
+    pathname: "/lane/meeting/capture/create-document",
+    accountId: session?.account_id || null,
     accessToken,
-    fallbackTitle || buildMeetingCaptureDocTitle({
-      eventSummary: session?.event_summary,
-      eventStartTime: session?.event_start_time,
-      chatId: session?.chat_id,
-    }),
-    meetingDocFolderToken || undefined,
-    {
-      tokenType,
-      managerOpenId: session?.started_by_open_id || "",
+    scopeKey: `meeting_capture:${session?.id || session?.chat_id || "unknown"}`,
+    sessionKey: session?.id || session?.chat_id || null,
+    targetDocumentId: meetingDocFolderToken || null,
+    payload: {
+      title,
+      folder_token: meetingDocFolderToken || null,
       source: "meeting_capture_session",
     },
-  );
+    performWrite: async ({ accessToken: resolvedAccessToken }) => createManagedDocument(
+      resolvedAccessToken,
+      title,
+      meetingDocFolderToken || undefined,
+      {
+        tokenType,
+        managerOpenId: session?.started_by_open_id || "",
+        source: "meeting_capture_session",
+      },
+    ),
+  });
   attachMeetingCaptureDocument(session?.id, {
     documentId: created.document_id,
     title: created.title,
@@ -1180,17 +1263,38 @@ async function executeMeetingCommand({ event, scope, logger = noopLogger }) {
       "meeting_doc_update",
       { document_id: formatIdentifierHint(meetingDoc.document_id), mode: "replace" },
       () =>
-        updateDocument(
-          context.token,
-          meetingDoc.document_id,
-          buildMeetingDraftDocContent({
+        executeLaneLarkWrite({
+          apiName: "meeting_capture_document_update",
+          action: "meeting_capture_document_update",
+          pathname: "/lane/meeting/capture/update-document",
+          accountId: context.account.id,
+          accessToken: context.token,
+          logger,
+          scopeKey: `meeting_capture:${activeSession.id}`,
+          sessionKey: activeSession.id,
+          documentId: meetingDoc.document_id,
+          targetDocumentId: meetingDoc.document_id,
+          content: buildMeetingDraftDocContent({
             title: meetingDoc.title,
             eventSummary: meeting.event.summary,
             meetingUrl: meeting.event.meeting_url,
           }),
-          "replace",
-          context.tokenKind,
-        ),
+          payload: {
+            mode: "replace",
+            source: "meeting_start_capture_calendar",
+          },
+          performWrite: async ({ accessToken }) => updateDocument(
+            accessToken,
+            meetingDoc.document_id,
+            buildMeetingDraftDocContent({
+              title: meetingDoc.title,
+              eventSummary: meeting.event.summary,
+              meetingUrl: meeting.event.meeting_url,
+            }),
+            "replace",
+            context.tokenKind,
+          ),
+        }),
     );
     await ensureMeetingWorkflowTask({
       accountId: context.account.id,
@@ -1270,17 +1374,38 @@ async function executeMeetingCommand({ event, scope, logger = noopLogger }) {
       "meeting_doc_update",
       { document_id: formatIdentifierHint(meetingDoc.document_id), mode: "replace" },
       () =>
-        updateDocument(
-          context.token,
-          meetingDoc.document_id,
-          buildMeetingDraftDocContent({
+        executeLaneLarkWrite({
+          apiName: "meeting_capture_document_update",
+          action: "meeting_capture_document_update",
+          pathname: "/lane/meeting/capture/update-document",
+          accountId: context.account.id,
+          accessToken: context.token,
+          logger,
+          scopeKey: `meeting_capture:${activeSession.id}`,
+          sessionKey: activeSession.id,
+          documentId: meetingDoc.document_id,
+          targetDocumentId: meetingDoc.document_id,
+          content: buildMeetingDraftDocContent({
             title: meetingDoc.title,
             eventSummary: meeting?.event?.summary,
             meetingUrl: meeting?.event?.meeting_url,
           }),
-          "replace",
-          context.tokenKind,
-        ),
+          payload: {
+            mode: "replace",
+            source: "meeting_start_capture",
+          },
+          performWrite: async ({ accessToken }) => updateDocument(
+            accessToken,
+            meetingDoc.document_id,
+            buildMeetingDraftDocContent({
+              title: meetingDoc.title,
+              eventSummary: meeting?.event?.summary,
+              meetingUrl: meeting?.event?.meeting_url,
+            }),
+            "replace",
+            context.tokenKind,
+          ),
+        }),
     );
     await ensureMeetingWorkflowTask({
       accountId: context.account.id,
@@ -1375,12 +1500,28 @@ async function executeMeetingCommand({ event, scope, logger = noopLogger }) {
             "meeting_doc_delete",
             { document_id: formatIdentifierHint(meetingDoc.document_id) },
             () =>
-              deleteDriveItem(
-                context.token,
-                meetingDoc.document_id,
-                "docx",
-                context.tokenKind,
-              ),
+              executeLaneLarkWrite({
+                apiName: "meeting_capture_document_delete",
+                action: "meeting_capture_document_delete",
+                pathname: "/lane/meeting/capture/delete-document",
+                accountId: context.account.id,
+                accessToken: context.token,
+                logger,
+                scopeKey: `meeting_capture:${activeSession.id}`,
+                sessionKey: activeSession.id,
+                documentId: meetingDoc.document_id,
+                targetDocumentId: meetingDoc.document_id,
+                payload: {
+                  type: "docx",
+                  source: "meeting_stop_capture_failure_cleanup",
+                },
+                performWrite: async ({ accessToken }) => deleteDriveItem(
+                  accessToken,
+                  meetingDoc.document_id,
+                  "docx",
+                  context.tokenKind,
+                ),
+              }),
           );
           clearMeetingCaptureDocument(activeSession.id);
           deletedFailureDoc = true;
@@ -1397,19 +1538,42 @@ async function executeMeetingCommand({ event, scope, logger = noopLogger }) {
           "meeting_doc_update",
           { document_id: formatIdentifierHint(meetingDoc.document_id), mode: "replace" },
           () =>
-            updateDocument(
-              context.token,
-              meetingDoc.document_id,
-              buildFailedMeetingDocContent({
+            executeLaneLarkWrite({
+              apiName: "meeting_capture_document_update",
+              action: "meeting_capture_document_update",
+              pathname: "/lane/meeting/capture/update-document",
+              accountId: context.account.id,
+              accessToken: context.token,
+              logger,
+              scopeKey: `meeting_capture:${activeSession.id}`,
+              sessionKey: activeSession.id,
+              documentId: meetingDoc.document_id,
+              targetDocumentId: meetingDoc.document_id,
+              content: buildFailedMeetingDocContent({
                 title: meetingDoc.title,
                 eventSummary: activeSession.event_summary,
                 meetingUrl: activeSession.meeting_url,
                 audioReason: audioTranscript?.ok ? "" : audioTranscript?.reason || "",
                 hasChatNotes: entries.length > 0,
               }),
-              "replace",
-              context.tokenKind,
-            ),
+              payload: {
+                mode: "replace",
+                source: "meeting_stop_capture_failure_doc",
+              },
+              performWrite: async ({ accessToken }) => updateDocument(
+                accessToken,
+                meetingDoc.document_id,
+                buildFailedMeetingDocContent({
+                  title: meetingDoc.title,
+                  eventSummary: activeSession.event_summary,
+                  meetingUrl: activeSession.meeting_url,
+                  audioReason: audioTranscript?.ok ? "" : audioTranscript?.reason || "",
+                  hasChatNotes: entries.length > 0,
+                }),
+                "replace",
+                context.tokenKind,
+              ),
+            }),
         );
       }
       return {
@@ -1444,19 +1608,42 @@ async function executeMeetingCommand({ event, scope, logger = noopLogger }) {
       "meeting_doc_update",
       { document_id: formatIdentifierHint(meetingDoc.document_id), mode: "replace" },
       () =>
-        updateDocument(
-          context.token,
-          meetingDoc.document_id,
-          buildFinalMeetingDocContent({
+        executeLaneLarkWrite({
+          apiName: "meeting_capture_document_update",
+          action: "meeting_capture_document_update",
+          pathname: "/lane/meeting/capture/update-document",
+          accountId: context.account.id,
+          accessToken: context.token,
+          logger,
+          scopeKey: `meeting_capture:${activeSession.id}`,
+          sessionKey: activeSession.id,
+          documentId: meetingDoc.document_id,
+          targetDocumentId: meetingDoc.document_id,
+          content: buildFinalMeetingDocContent({
             title: meetingDoc.title,
             summaryContent: result.summary_content,
             transcriptText,
             eventSummary: activeSession.event_summary,
             meetingUrl: activeSession.meeting_url,
           }),
-          "replace",
-          context.tokenKind,
-        ),
+          payload: {
+            mode: "replace",
+            source: "meeting_stop_capture_final_doc",
+          },
+          performWrite: async ({ accessToken }) => updateDocument(
+            accessToken,
+            meetingDoc.document_id,
+            buildFinalMeetingDocContent({
+              title: meetingDoc.title,
+              summaryContent: result.summary_content,
+              transcriptText,
+              eventSummary: activeSession.event_summary,
+              meetingUrl: activeSession.meeting_url,
+            }),
+            "replace",
+            context.tokenKind,
+          ),
+        }),
     );
     await ensureMeetingWorkflowTask({
       accountId: context.account.id,
@@ -1527,6 +1714,21 @@ async function executeMeetingCommand({ event, scope, logger = noopLogger }) {
           "",
           "下一步",
           "- 請重新執行一次 /meeting 生成新的摘要預覽。",
+        ].join("\n"),
+      };
+    }
+    if (result.ok === false) {
+      return {
+        text: [
+          "結論",
+          "這次確認寫入被系統的外部寫入保護機制擋下來了。",
+          "",
+          "重點",
+          `- 原因：${result.message || result.error || "write_guard_denied"}`,
+          "- 目前不會繞過保護機制直接重送。",
+          "",
+          "下一步",
+          "- 稍後重新確認一次，或先回到預覽/摘要階段重新生成新的確認流程。",
         ].join("\n"),
       };
     }
@@ -1851,12 +2053,28 @@ async function executePersonalAssistant({ event, scope, logger = noopLogger }) {
 
     if (wantsDeleteMeetingDoc && recentMeetingSession?.target_document_id) {
       try {
-        await deleteDriveItem(
-          context.token,
-          recentMeetingSession.target_document_id,
-          "docx",
-          context.tokenKind,
-        );
+        await executeLaneLarkWrite({
+          apiName: "meeting_capture_document_delete",
+          action: "meeting_capture_document_delete",
+          pathname: "/lane/personal-assistant/delete-meeting-document",
+          accountId: context.account.id,
+          accessToken: context.token,
+          logger,
+          scopeKey: `meeting_capture:${recentMeetingSession.id || recentMeetingSession.chat_id || "recent"}`,
+          sessionKey: recentMeetingSession.id || recentMeetingSession.chat_id || null,
+          documentId: recentMeetingSession.target_document_id,
+          targetDocumentId: recentMeetingSession.target_document_id,
+          payload: {
+            type: "docx",
+            source: "personal_assistant_delete_meeting_doc",
+          },
+          performWrite: async ({ accessToken }) => deleteDriveItem(
+            accessToken,
+            recentMeetingSession.target_document_id,
+            "docx",
+            context.tokenKind,
+          ),
+        });
         clearMeetingCaptureDocument(recentMeetingSession.id);
         deleted = true;
       } catch (error) {
@@ -2246,7 +2464,19 @@ async function executeGroupSharedAssistant({ event, scope, logger = noopLogger }
 }
 
 export async function executeCapabilityLane({ event, scope, logger = noopLogger, traceId = null }) {
-  const meetingReply = await executeMeetingCommand({ event, scope, logger });
+  let meetingReply = null;
+  try {
+    meetingReply = await executeMeetingCommand({ event, scope, logger });
+  } catch (error) {
+    if (isLaneWriteBlockedError(error)) {
+      logger.warn("lane_write_blocked_fail_soft", {
+        error: logger.compactError(error),
+        session_key: cleanText(scope?.session_key || scope?.chat_id || event?.message?.chat_id),
+      });
+      return buildLaneWriteBlockedReply(error);
+    }
+    throw error;
+  }
   if (meetingReply) {
     return meetingReply;
   }

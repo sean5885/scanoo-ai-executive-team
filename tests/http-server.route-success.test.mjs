@@ -181,6 +181,63 @@ function stripTrace(payload) {
   return rest;
 }
 
+async function previewThenConfirmDocumentCreate({
+  port,
+  body,
+  assertReplayFailure = true,
+}) {
+  const previewResponse = await fetch(`http://127.0.0.1:${port}/api/doc/create`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const previewPayload = await previewResponse.json();
+
+  assert.equal(previewResponse.status, 200);
+  assert.equal(previewPayload.ok, true);
+  assert.equal(previewPayload.action, "document_create_preview");
+  assert.equal(previewPayload.preview_required, true);
+  assert.match(previewPayload.confirmation_id || "", /.+/);
+
+  const applyResponse = await fetch(`http://127.0.0.1:${port}/api/doc/create`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      ...body,
+      confirm: true,
+      confirmation_id: previewPayload.confirmation_id,
+    }),
+  });
+  const applyPayload = await applyResponse.json();
+
+  let replayResponse = null;
+  let replayPayload = null;
+  if (assertReplayFailure) {
+    replayResponse = await fetch(`http://127.0.0.1:${port}/api/doc/create`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ...body,
+        confirm: true,
+        confirmation_id: previewPayload.confirmation_id,
+      }),
+    });
+    replayPayload = await replayResponse.json();
+    assert.equal(replayResponse.status, 400);
+    assert.equal(replayPayload.ok, false);
+    assert.equal(replayPayload.error, "invalid_or_expired_confirmation");
+  }
+
+  return {
+    previewResponse,
+    previewPayload,
+    applyResponse,
+    applyPayload,
+    replayResponse,
+    replayPayload,
+  };
+}
+
 function withEnv(t, values = {}) {
   const previous = new Map();
   for (const [key, value] of Object.entries(values)) {
@@ -426,7 +483,7 @@ test("document rewrite preview accepts nested target document links", async (t) 
   assert.equal(seen.rewrite, documentId);
 });
 
-test("document create classifies verified mirror ingest as direct intake", async (t) => {
+test("document create preview/confirm classifies verified mirror ingest as direct intake", async (t) => {
   withEnv(t, {
     ALLOW_LARK_WRITES: "true",
   });
@@ -442,14 +499,17 @@ test("document create classifies verified mirror ingest as direct intake", async
   });
 
   const { port } = server.address();
-  const createResponse = await fetch(`http://127.0.0.1:${port}/api/doc/create`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ title, confirm: true }),
+  const {
+    previewPayload,
+    applyResponse,
+    applyPayload,
+  } = await previewThenConfirmDocumentCreate({
+    port,
+    body: { title },
   });
-  const createPayload = await createResponse.json();
-  assert.equal(createResponse.status, 200);
-  assert.equal(createPayload.document_id, documentId);
+  assert.equal(previewPayload.create_preview.title, title);
+  assert.equal(applyResponse.status, 200);
+  assert.equal(applyPayload.document_id, documentId);
 
   const boundaryLog = calls.find((entry) => entry[1]?.event === "document_company_brain_intake_classified");
   assert.equal(boundaryLog?.[1]?.doc_id, documentId);
@@ -462,7 +522,7 @@ test("document create classifies verified mirror ingest as direct intake", async
   assert.equal(ingestedLog?.[1]?.source, "api");
 });
 
-test("document create classifies title overlap as review and conflict check required", async (t) => {
+test("document create preview/confirm classifies title overlap as review and conflict check required", async (t) => {
   withEnv(t, {
     ALLOW_LARK_WRITES: "true",
   });
@@ -484,12 +544,11 @@ test("document create classifies title overlap as review and conflict check requ
 
   const { port } = server.address();
   for (let index = 0; index < 2; index += 1) {
-    const response = await fetch(`http://127.0.0.1:${port}/api/doc/create`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title, confirm: true }),
+    const { applyResponse } = await previewThenConfirmDocumentCreate({
+      port,
+      body: { title },
     });
-    assert.equal(response.status, 200);
+    assert.equal(applyResponse.status, 200);
   }
 
   const overlapBoundaryLog = calls
@@ -526,7 +585,7 @@ test("document create is fail-closed when ALLOW_LARK_WRITES is not enabled", asy
   assert.equal(payload.message, "Lark write blocked (ALLOW_LARK_WRITES not enabled)");
 });
 
-test("document create requires confirm=true even when live writes are enabled", async (t) => {
+test("document create returns preview and confirmation_id before any live write", async (t) => {
   withEnv(t, {
     ALLOW_LARK_WRITES: "true",
   });
@@ -544,12 +603,14 @@ test("document create requires confirm=true even when live writes are enabled", 
   });
   const payload = await response.json();
 
-  assert.equal(response.status, 409);
-  assert.equal(payload.ok, false);
-  assert.equal(payload.error, "lark_write_confirmation_required");
+  assert.equal(response.status, 200);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.action, "document_create_preview");
+  assert.equal(payload.preview_required, true);
+  assert.match(payload.confirmation_id || "", /.+/);
 });
 
-test("document create redirects demo-like titles into sandbox folder", async (t) => {
+test("document create preview/confirm redirects demo-like titles into sandbox folder", async (t) => {
   withEnv(t, {
     ALLOW_LARK_WRITES: "true",
     LARK_WRITE_SANDBOX_FOLDER_TOKEN: "sandbox-folder-token",
@@ -569,26 +630,29 @@ test("document create redirects demo-like titles into sandbox folder", async (t)
   });
 
   const { port } = server.address();
-  const response = await fetch(`http://127.0.0.1:${port}/api/doc/create`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
+  const {
+    previewPayload,
+    applyResponse,
+    applyPayload,
+  } = await previewThenConfirmDocumentCreate({
+    port,
+    body: {
       title: "Planner E2E Success Verify",
       folder_token: "prod-knowledge-folder",
-      confirm: true,
-    }),
+    },
   });
-  const payload = await response.json();
 
-  assert.equal(response.status, 200);
-  assert.equal(payload.ok, true);
+  assert.equal(previewPayload.create_preview.requested_folder_token, "prod-knowledge-folder");
+  assert.equal(previewPayload.create_preview.resolved_folder_token, "sandbox-folder-token");
+  assert.equal(applyResponse.status, 200);
+  assert.equal(applyPayload.ok, true);
   assert.deepEqual(seen, [{
     title: "Planner E2E Success Verify",
     folderToken: "sandbox-folder-token",
   }]);
 });
 
-test("document create keeps 200 response when initial content write fails after create", async (t) => {
+test("document create preview/confirm keeps 200 response when initial content write fails after create", async (t) => {
   withEnv(t, {
     ALLOW_LARK_WRITES: "true",
   });
@@ -622,17 +686,19 @@ test("document create keeps 200 response when initial content write fails after 
   });
 
   const { port } = server.address();
-  const response = await fetch(`http://127.0.0.1:${port}/api/doc/create`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
+  const {
+    previewPayload,
+    applyResponse: response,
+    applyPayload: payload,
+  } = await previewThenConfirmDocumentCreate({
+    port,
+    body: {
       title: "Post-create write fail-soft",
       content: "# Draft\n\nInitial content",
-      confirm: true,
-    }),
+    },
   });
-  const payload = await response.json();
 
+  assert.equal(previewPayload.create_preview.has_initial_content, true);
   assert.equal(response.status, 200);
   assert.equal(payload.ok, true);
   assert.equal(payload.document_id, documentId);
