@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  assertRoutingDecisionFinalOwner,
+  assertRoutingDecisionOwner,
   looksLikeChatOnlyFailurePreference,
   looksLikeCloudOrganizationExit,
   looksLikeCloudOrganizationPlainLanguageRequest,
@@ -147,6 +149,27 @@ test("cloud organization why-follow-up is recognized", () => {
 test("cloud organization active-mode follow-up remains in second-pass workflow", () => {
   assert.equal(looksLikeCloudOrganizationRequest("好的，現在請告訴我還有什麼內容是需要我二次做確認的"), false);
   assert.equal(looksLikeCloudOrganizationReviewRequest("好的，現在請告訴我還有什麼內容是需要我二次做確認的"), true);
+});
+
+test("missing final_owner throws immediately", () => {
+  assert.throws(
+    () => assertRoutingDecisionFinalOwner({}),
+    /control_kernel_missing_final_owner/,
+  );
+});
+
+test("owner assertion throws when actual dispatch owner mismatches final_owner", () => {
+  assert.throws(
+    () => assertRoutingDecisionOwner({ expected: "doc-editor", actual: "personal-assistant" }),
+    /control_kernel_owner_mismatch: expected=doc-editor actual=personal-assistant/,
+  );
+});
+
+test("owner assertion passes when executive dispatch matches final_owner", () => {
+  assert.equal(
+    assertRoutingDecisionOwner({ expected: "executive", actual: "executive" }),
+    "executive",
+  );
 });
 
 test("multimodal image exception falls back to text lane", () => {

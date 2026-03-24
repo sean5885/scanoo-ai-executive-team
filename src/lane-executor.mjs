@@ -65,6 +65,7 @@ import {
   resolveCloudOrganizationAction,
   writeSessionWorkflowMode,
 } from "./cloud-doc-organization-workflow.mjs";
+import { decideIntent } from "./control-kernel.mjs";
 import { ensureCloudDocWorkflowTask } from "./executive-orchestrator.mjs";
 import { formatIdentifierHint } from "./runtime-observability.mjs";
 import { ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
@@ -424,20 +425,30 @@ export function shouldPreferActiveExecutiveTask({
   lane = "",
   wantsCloudOrganizationFollowUp = false,
 } = {}) {
-  if (!activeTask?.id || activeTask?.status !== "active") {
-    return false;
+  return decideIntent({
+    lane,
+    activeTask,
+    wantsCloudOrganizationFollowUp,
+  }).guard.executive_fallback_eligible;
+}
+
+export function assertRoutingDecisionFinalOwner(routingDecision = null) {
+  const finalOwner = cleanText(routingDecision?.final_owner);
+  if (!finalOwner) {
+    throw new Error("control_kernel_missing_final_owner");
   }
-  const workflow = cleanText(activeTask.workflow);
-  if (workflow === "meeting") {
-    return true;
+  return finalOwner;
+}
+
+export function assertRoutingDecisionOwner({ expected = "", actual = "" } = {}) {
+  const normalizedExpected = cleanText(expected);
+  const normalizedActual = cleanText(actual);
+  if (normalizedExpected !== normalizedActual) {
+    throw new Error(
+      `control_kernel_owner_mismatch: expected=${normalizedExpected || "missing"} actual=${normalizedActual || "missing"}`,
+    );
   }
-  if (workflow !== "executive") {
-    return false;
-  }
-  if (wantsCloudOrganizationFollowUp && lane === "personal-assistant") {
-    return true;
-  }
-  return true;
+  return normalizedActual;
 }
 
 export function looksLikeMeetingCaptureStatusQuery(text = "") {
@@ -2262,15 +2273,18 @@ export async function executeCapabilityLane({ event, scope, logger = noopLogger,
     text: normalizedText,
     activeWorkflowMode,
   }) !== "none";
-  const preferActiveExecutiveTask =
-    cleanText(activeExecutiveTask?.workflow) === "executive"
-    && shouldPreferActiveExecutiveTask({
-      activeTask: activeExecutiveTask,
-      lane,
-      wantsCloudOrganizationFollowUp,
-    });
+  const routingDecision = decideIntent({
+    text: normalizedText,
+    lane,
+    activeTask: activeExecutiveTask,
+    wantsCloudOrganizationFollowUp,
+    cloudDocScopeKey: buildCloudDocWorkflowScopeKey({ sessionKey }),
+  });
+  logger.info("control_kernel_decision", routingDecision);
+  const expectedOwner = assertRoutingDecisionFinalOwner(routingDecision);
 
-  if (agentContext?.account?.id && (preferActiveExecutiveTask || !(lane === "personal-assistant" && wantsCloudOrganizationFollowUp))) {
+  if (agentContext?.account?.id && expectedOwner === "executive") {
+    assertRoutingDecisionOwner({ expected: expectedOwner, actual: "executive" });
     const executiveReply = await executeExecutiveTurn({
       accountId: agentContext.account.id,
       event,
@@ -2282,18 +2296,16 @@ export async function executeCapabilityLane({ event, scope, logger = noopLogger,
     }
   }
 
-  // TODO(control-unification-phase2): move meeting/doc-rewrite/cloud-doc follow-up routing onto workflow-state machines.
-
-  if (cleanText(activeExecutiveTask?.workflow) === "doc_rewrite") {
+  if (expectedOwner === "doc-editor") {
+    assertRoutingDecisionOwner({ expected: expectedOwner, actual: "doc-editor" });
     return executeDocEditor({ event, scope, logger });
   }
-  if (cleanText(activeExecutiveTask?.workflow) === CLOUD_DOC_WORKFLOW) {
-    const cloudDocScopeKey = buildCloudDocWorkflowScopeKey({
-      sessionKey,
-    });
-    if (matchesCloudDocWorkflowScope(activeExecutiveTask, cloudDocScopeKey)) {
-      return executePersonalAssistant({ event, scope, logger });
-    }
+  if (
+    expectedOwner === "personal-assistant"
+    && routingDecision.precedence_source === "same_session_same_workflow_same_scope"
+  ) {
+    assertRoutingDecisionOwner({ expected: expectedOwner, actual: "personal-assistant" });
+    return executePersonalAssistant({ event, scope, logger });
   }
 
   const imageReply = await executeImageTaskReply({ event, logger });
@@ -2307,13 +2319,17 @@ export async function executeCapabilityLane({ event, scope, logger = noopLogger,
   }
 
   if (lane === "knowledge-assistant") {
+    assertRoutingDecisionOwner({ expected: expectedOwner, actual: "knowledge-assistant" });
     return executeKnowledgeAssistant({ event, scope, logger, traceId });
   }
   if (lane === "doc-editor") {
+    assertRoutingDecisionOwner({ expected: expectedOwner, actual: "doc-editor" });
     return executeDocEditor({ event, scope, logger });
   }
   if (lane === "group-shared-assistant") {
+    assertRoutingDecisionOwner({ expected: expectedOwner, actual: "group-shared-assistant" });
     return executeGroupSharedAssistant({ event, scope, logger });
   }
+  assertRoutingDecisionOwner({ expected: expectedOwner, actual: "personal-assistant" });
   return executePersonalAssistant({ event, scope, logger });
 }

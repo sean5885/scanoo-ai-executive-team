@@ -106,8 +106,9 @@ Implemented through:
   - `workflow_state`
   - `routing_hint`
   - `trace_id`
+- `src/control-kernel.mjs` 現在收斂 `lane-executor.mjs` 的 follow-up owner 決策，輸出固定 `decision / matched_task_id / precedence_source / routing_reason / guard / final_owner`。
 - `executive-orchestrator.mjs` 不再用 direct status patch 把 task 標成 `completed`；完成只能經 `executive-closed-loop.mjs` 的 verifier gate。
-- `lane-executor.mjs` 現在會優先讓同 session 的 active executive task 接手 follow-up，再回到既有 lane heuristic。
+- `lane-executor.mjs` 現在先呼叫 `decideIntent(...)`，依 `final_owner` 決定 follow-up 應回 `executive`、`doc-editor` 或既有 lane；同 scope 的 cloud-doc 才能延續原 workflow，否則回既有 lane 決策。
 - 第二階段才會把 meeting / 文件整理 / doc rewrite 完整接到 workflow-state machine。
 
 ## Phase-2 Meeting Workflow Control

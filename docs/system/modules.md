@@ -699,9 +699,11 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 - Location:
   - `/Users/seanhan/Documents/Playground/src/capability-lane.mjs`
   - `/Users/seanhan/Documents/Playground/src/cloud-doc-organization-workflow.mjs`
+  - `/Users/seanhan/Documents/Playground/src/control-kernel.mjs`
   - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
   - `/Users/seanhan/Documents/Playground/src/message-intent-utils.mjs`
 - Responsibility:
+  - `control-kernel.mjs` now owns the bounded follow-up routing decision surface for lane execution and returns one stable decision object with `decision / matched_task_id / precedence_source / routing_reason / guard / final_owner`
   - isolate the cloud-document classification / reassignment follow-up workflow into a testable submodule instead of keeping all branch logic inside `lane-executor.mjs`
   - knowledge-assistant lane turns no longer call `answer-service.mjs` directly; they now execute through `executePlannedUserInput(...)`, keep the strict planner envelope as internal runtime state, and pass both success and controlled failure through the shared `normalizeUserResponse()` boundary before rendering the evidence-first `結論 -> 重點 -> 下一步` reply, so chat output does not serialize raw planner JSON or trace fields to the user
   - that same planner reply boundary now keeps the machine body shape stable as `{ ok, answer, sources, limitations }`, but the visible chat renderer is fixed to three sections: `結論`, `重點`, `下一步`; for planner doc/detail hits it only states facts present in `formatted_output` / retrieved evidence rows, and when content summary is missing it explicitly says sources are insufficient instead of filling in extra detail
@@ -732,7 +734,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - run a second-pass role-review branch inside that workflow, using local classification plus a small MiniMax semantic re-review set for ambiguous documents, so follow-up turns can return reassignment candidates instead of only category totals
   - intercept `/meeting` plus explicit preview-then-confirm meeting requests as a command-style workflow that runs before lane-specific fallback replies
   - suppress normal lane replies while a chat-scoped meeting capture session is actively recording plain-text notes
-  - prefer the same-session active executive task before falling back to generic lane heuristics
+  - `lane-executor.mjs` now consumes `decideIntent(...)` as the single source of truth for follow-up owner selection: same-session doc-rewrite stays on `doc-editor`, cloud-doc only sticks when `scope_key` still matches, and executive only takes control for explicit executive intent or an already-active executive task
   - prefer the same-session active meeting workflow for capture/confirm follow-up before generic lane fallback
   - prefer the same-session active doc-rewrite workflow for review follow-up before generic lane fallback
   - prefer the same-session active cloud-doc workflow only when the same `scope_key` matches, otherwise fall back to the existing planner/lane path
