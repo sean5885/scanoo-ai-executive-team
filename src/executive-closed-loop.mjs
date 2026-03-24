@@ -324,7 +324,10 @@ export async function finalizeWorkflowVerificationGate({
 
   const verification = verifyTaskCompletion({
     taskType,
-    executionJournal,
+    replyText,
+    evidence,
+    structuredResult,
+    expectedOutputSchema,
   });
   current = await updateExecutiveTask(task.id, {
     execution_journal: withVerifierVerdict(executionJournal, verification),

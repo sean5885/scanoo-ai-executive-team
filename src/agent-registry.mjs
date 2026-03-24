@@ -67,7 +67,7 @@ function createKnowledgeAgent({
   retrievalQueryPrefix = "",
   downstreamConsumer = "lark_reply",
   allowedTools = ["knowledge_search", "semantic_classifier", "image_understanding", "text_generation"],
-  fallbackBehavior = "fallback_to_grounded_retrieval_summary",
+  fallbackBehavior = "fail_closed",
   status = "ready",
 }) {
   return {
@@ -311,18 +311,9 @@ export function parseRegisteredAgentCommand(text = "") {
   const rawRemainder = cleanText(match[2] || "");
 
   if (slashName === "/knowledge") {
-    const parts = rawRemainder.split(/\s+/).filter(Boolean);
-    const [rawSubcommand = "", ...rest] = parts;
+    const [rawSubcommand = "", ...rest] = rawRemainder.split(/\s+/).filter(Boolean);
     const subcommand = rawSubcommand.toLowerCase();
     if (!knowledgeAgentSubcommands.includes(subcommand)) {
-      const fallbackAgent = agentRegistry["knowledge-brain"] || null;
-      if (fallbackAgent && parts.length <= 1) {
-        return {
-          agent: fallbackAgent,
-          body: rawRemainder,
-          raw: normalized,
-        };
-      }
       return {
         error: ROUTING_NO_MATCH,
         body: rawRemainder,

@@ -371,6 +371,15 @@ function buildCloudOrganizationPendingItemId(item = {}) {
   return seed ? `cloud_doc_pending_${sha256(seed).slice(0, 16)}` : null;
 }
 
+function compareCloudOrganizationPendingItems(left = {}, right = {}) {
+  const leftTitle = getCloudOrganizationDocumentTitle(left?.item || left).toLowerCase();
+  const rightTitle = getCloudOrganizationDocumentTitle(right?.item || right).toLowerCase();
+  return leftTitle.localeCompare(rightTitle)
+    || cleanText(left?.document_id || left?.metadata?.document_id || "").localeCompare(
+      cleanText(right?.document_id || right?.metadata?.document_id || ""),
+    );
+}
+
 function buildCloudOrganizationPendingItemAction(item = {}) {
   return {
     type: "mark_resolved",
@@ -955,6 +964,7 @@ export async function buildCloudOrganizationReviewReply({
       const hasSparseContent = !cleanText(item.raw_text).slice(0, 80);
       return local.confidence < 0.5 || cloudOrganizationReviewCategories.has(local.category) || hasSparseContent;
     })
+    .sort(compareCloudOrganizationPendingItems)
     .slice(0, 24);
 
   if (!forceReReview) {
@@ -1205,6 +1215,7 @@ export async function buildCloudOrganizationWhyReply({
       };
     })
     .filter((item) => item.reasons.length > 0)
+    .sort(compareCloudOrganizationPendingItems)
     .slice(0, 24);
 
   if (!unresolved.length) {

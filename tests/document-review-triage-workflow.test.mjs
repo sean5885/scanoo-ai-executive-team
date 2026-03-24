@@ -64,7 +64,7 @@ test("document review workflow executes end-to-end with evidence-first triage ou
   assert.match(result?.structured_result?.conclusion || "", /直接相關文件/);
   assert.match(result?.structured_result?.conclusion || "", /需要人工確認/);
   assert.match(result?.reply_text || "", /^結論/m);
-  assert.match(result?.reply_text || "", /^標記文件/m);
+  assert.match(result?.reply_text || "", /^重點/m);
   assert.match(result?.reply_text || "", /^下一步/m);
   assert.match(result?.reply_text || "", /SLA escalation policy/);
   assert.match(result?.reply_text || "", /Product onboarding checklist/);
