@@ -236,7 +236,6 @@ function looksLikeMissingAgentPlannerRequest(text = "") {
   }
   return /(不存在|不存在的|沒有這個|没有这个|unknown|invalid|not exist)/i.test(normalized);
 }
-
 function uniqueRegisteredAgentIds(agentIds = [], maxItems = EXECUTIVE_MAX_ROLES) {
   const result = [];
   const seen = new Set();
@@ -400,6 +399,61 @@ function trimExecutiveDecisionRoleCounts(decision = {}) {
   };
 }
 
+function formatExecutiveAgentLabels(agentIds = []) {
+  return uniqueRegisteredAgentIds(agentIds, EXECUTIVE_MAX_ROLES)
+    .map((agentId) => `/${agentId}`)
+    .join("、");
+}
+
+function buildDeterministicExecutiveSelectionReason({
+  mode = "",
+  primaryAgentId = "",
+  supportingAgentIds = [],
+} = {}) {
+  const primaryLabel = formatExecutiveAgentLabels([primaryAgentId]) || "/generalist";
+  const supportingLabels = formatExecutiveAgentLabels(supportingAgentIds);
+
+  if (mode === "compound") {
+    return supportingLabels
+      ? `複合請求命中 distinct specialist 需求，改由 ${primaryLabel} 主責，並補充 ${supportingLabels}。`
+      : `複合請求命中 distinct specialist 需求，改由 ${primaryLabel} 主責收斂。`;
+  }
+
+  if (mode === "explicit") {
+    return `使用者明確指定 ${primaryLabel}，不擴張額外 specialist。`;
+  }
+
+  return `簡單單一意圖請求，維持由 ${primaryLabel} 單一處理。`;
+}
+
+function didExecutiveSelectionChange(originalDecision = {}, nextDecision = {}) {
+  const originalSupporting = uniqueRegisteredAgentIds(
+    originalDecision.supporting_agent_ids,
+    EXECUTIVE_MAX_SUPPORTING_ROLES,
+  );
+  const nextSupporting = uniqueRegisteredAgentIds(
+    nextDecision.supporting_agent_ids,
+    EXECUTIVE_MAX_SUPPORTING_ROLES,
+  );
+
+  return (
+    cleanText(originalDecision.primary_agent_id || "") !== cleanText(nextDecision.primary_agent_id || "")
+    || cleanText(originalDecision.next_agent_id || "") !== cleanText(nextDecision.next_agent_id || "")
+    || JSON.stringify(originalSupporting) !== JSON.stringify(nextSupporting)
+  );
+}
+
+function resolveExecutiveSelectionReason({
+  originalDecision = {},
+  nextDecision = {},
+  deterministicReason = "",
+} = {}) {
+  const normalizedDeterministicReason = cleanText(deterministicReason);
+  if (didExecutiveSelectionChange(originalDecision, nextDecision)) {
+    return normalizedDeterministicReason;
+  }
+  return cleanText(originalDecision.reason);
+}
 function applyDeterministicExecutiveAgentSelection(decision = {}, fallbackText = "", activeTask = null) {
   const normalizedText = cleanText(String(fallbackText || "").toLowerCase());
   const normalizedDecision = trimExecutiveDecisionRoleCounts(decision);
@@ -431,30 +485,38 @@ function applyDeterministicExecutiveAgentSelection(decision = {}, fallbackText =
       detectedAgentIds.filter((agentId) => agentId !== primaryAgentId),
       EXECUTIVE_MAX_SUPPORTING_ROLES,
     );
-    return trimExecutiveDecisionRoleCounts({
+    const nextDecision = trimExecutiveDecisionRoleCounts({
       ...normalizedDecision,
       primary_agent_id: primaryAgentId,
       next_agent_id: primaryAgentId,
       supporting_agent_ids: supportingAgentIds,
-      reason: cleanText(normalizedDecision.reason)
-        || "複合請求命中多個 distinct specialist 需求，使用最小 multi-agent 分工。",
       work_items: buildCollaborativeWorkItems({
         primaryAgentId,
         supportingAgentIds,
         objective,
       }),
     });
+    return {
+      ...nextDecision,
+      reason: resolveExecutiveSelectionReason({
+        originalDecision: normalizedDecision,
+        nextDecision,
+        deterministicReason: buildDeterministicExecutiveSelectionReason({
+          mode: "compound",
+          primaryAgentId,
+          supportingAgentIds,
+        }),
+      }),
+    };
   }
 
   if (explicitAgentIds.length > 0) {
     const primaryAgentId = explicitAgentIds[0];
-    return trimExecutiveDecisionRoleCounts({
+    const nextDecision = trimExecutiveDecisionRoleCounts({
       ...normalizedDecision,
       primary_agent_id: primaryAgentId,
       next_agent_id: primaryAgentId,
       supporting_agent_ids: [],
-      reason: cleanText(normalizedDecision.reason)
-        || (singleRoleFallbackReason ? `使用者明確指定 /${primaryAgentId}，不擴張額外 specialist。` : ""),
       work_items: shouldSeedSingleRoleWorkItems
         ? buildSingleAgentWorkItems({
             primaryAgentId,
@@ -463,15 +525,24 @@ function applyDeterministicExecutiveAgentSelection(decision = {}, fallbackText =
           })
         : [],
     });
+    return {
+      ...nextDecision,
+      reason: resolveExecutiveSelectionReason({
+        originalDecision: normalizedDecision,
+        nextDecision,
+        deterministicReason: buildDeterministicExecutiveSelectionReason({
+          mode: "explicit",
+          primaryAgentId,
+        }),
+      }),
+    };
   }
 
-  return trimExecutiveDecisionRoleCounts({
+  const nextDecision = trimExecutiveDecisionRoleCounts({
     ...normalizedDecision,
     primary_agent_id: "generalist",
     next_agent_id: "generalist",
     supporting_agent_ids: [],
-    reason: cleanText(normalizedDecision.reason)
-      || (singleRoleFallbackReason ? "簡單單一意圖請求，預設由 generalist 處理。" : ""),
     work_items: shouldSeedSingleRoleWorkItems
       ? buildSingleAgentWorkItems({
           primaryAgentId: "generalist",
@@ -480,6 +551,17 @@ function applyDeterministicExecutiveAgentSelection(decision = {}, fallbackText =
         })
       : [],
   });
+  return {
+    ...nextDecision,
+    reason: resolveExecutiveSelectionReason({
+      originalDecision: normalizedDecision,
+      nextDecision,
+      deterministicReason: buildDeterministicExecutiveSelectionReason({
+        mode: singleRoleFallbackReason ? "single_start" : "single_continue",
+        primaryAgentId: "generalist",
+      }),
+    }),
+  };
 }
 
 function buildCollaborativeWorkItems({ primaryAgentId = "", supportingAgentIds = [], objective = "" } = {}) {
@@ -617,12 +699,12 @@ const plannerFlows = [
   },
 ].filter(Boolean);
 
-function buildPlannerFlowSnapshots(flows = plannerFlows) {
+function buildPlannerFlowSnapshots(flows = plannerFlows, { sessionKey = "" } = {}) {
   return Array.isArray(flows)
     ? flows.map((flow) => ({
         id: cleanText(flow?.id || "") || null,
         priority: Number.isFinite(flow?.priority) ? Number(flow.priority) : 0,
-        context: flow?.readContext?.() || {},
+        context: flow?.readContext?.({ sessionKey }) || {},
       }))
     : [];
 }
@@ -871,6 +953,7 @@ function mergePlannerUnfinishedItems(...groups) {
 function recordPlannerConversationExchange({
   userQuery = "",
   plannerReply = "",
+  sessionKey = "",
 } = {}) {
   recordPlannerConversationMessages([
     {
@@ -883,7 +966,7 @@ function recordPlannerConversationExchange({
       content: plannerReply,
       timestamp: new Date().toISOString(),
     },
-  ]);
+  ], { sessionKey });
 }
 
 function hasPlannerDocQueryRuntimeContext(context = {}) {
@@ -894,13 +977,13 @@ function hasPlannerDocQueryRuntimeContext(context = {}) {
   );
 }
 
-function restorePlannerRuntimeContextFromSummary() {
-  const currentDocQueryContext = getPlannerDocQueryContext();
+function restorePlannerRuntimeContextFromSummary({ sessionKey = "" } = {}) {
+  const currentDocQueryContext = getPlannerDocQueryContext({ sessionKey });
   if (hasPlannerDocQueryRuntimeContext(currentDocQueryContext)) {
     return currentDocQueryContext;
   }
 
-  const latestSummary = getPlannerConversationMemoryLayer()?.latest_summary;
+  const latestSummary = getPlannerConversationMemoryLayer({ sessionKey })?.latest_summary;
   if (!latestSummary || typeof latestSummary !== "object") {
     return currentDocQueryContext;
   }
@@ -909,13 +992,14 @@ function restorePlannerRuntimeContextFromSummary() {
     activeDoc: latestSummary.active_doc,
     activeCandidates: latestSummary.active_candidates,
     activeTheme: latestSummary.active_theme,
+    sessionKey,
   });
 }
 
 restorePlannerRuntimeContextFromSummary();
 
-export function getPlannerConversationMemory() {
-  return getPlannerConversationMemoryLayer();
+export function getPlannerConversationMemory({ sessionKey = "" } = {}) {
+  return getPlannerConversationMemoryLayer({ sessionKey });
 }
 
 export function compactPlannerConversationMemory({
@@ -924,15 +1008,17 @@ export function compactPlannerConversationMemory({
   unfinishedItems = [],
   latestSelectedAction = "",
   latestTraceId = null,
+  sessionKey = "",
 } = {}) {
-  restorePlannerRuntimeContextFromSummary();
+  restorePlannerRuntimeContextFromSummary({ sessionKey });
   return compactPlannerConversationMemoryLayer({
-    flows: buildPlannerFlowSnapshots(plannerFlows),
+    flows: buildPlannerFlowSnapshots(plannerFlows, { sessionKey }),
     unfinishedItems,
     latestSelectedAction,
     latestTraceId,
     logger,
     reason,
+    sessionKey,
   });
 }
 
@@ -1691,9 +1777,9 @@ function buildPlannerPresetOutput({
   };
 }
 
-export function resetPlannerRuntimeContext() {
-  resetPlannerFlowContexts(plannerFlows);
-  resetPlannerConversationMemory();
+export function resetPlannerRuntimeContext({ sessionKey = "" } = {}) {
+  resetPlannerFlowContexts(plannerFlows, { sessionKey });
+  resetPlannerConversationMemory({ sessionKey });
   resetPlannerTaskLifecycleStore().catch(() => {});
 }
 
@@ -3128,6 +3214,7 @@ export async function runPlannerToolFlow({
   disableAutoRouting = false,
   authContext = null,
   signal = null,
+  sessionKey = "",
 } = {}) {
   const preAbortResult = buildPlannerAbortResult({
     action: cleanText(forcedSelection?.selected_action || forcedSelection?.action || "") || null,
@@ -3143,11 +3230,12 @@ export async function runPlannerToolFlow({
       payload,
     });
   }
-  restorePlannerRuntimeContextFromSummary();
+  restorePlannerRuntimeContextFromSummary({ sessionKey });
   maybeCompactPlannerConversationMemory({
-    flows: buildPlannerFlowSnapshots(plannerFlows),
+    flows: buildPlannerFlowSnapshots(plannerFlows, { sessionKey }),
     logger,
     reason: "pre_run_planner_tool_flow",
+    sessionKey,
   });
   const agentInput = buildPlannerAgentInput({
     userIntent,
@@ -3162,7 +3250,7 @@ export async function runPlannerToolFlow({
         routing_reason: cleanText(forcedSelection.routing_reason || forcedSelection.reason || "") || "forced_selection",
       }
     : null;
-  const plannerDocQueryContext = getPlannerDocQueryContext();
+  const plannerDocQueryContext = getPlannerDocQueryContext({ sessionKey });
   const taskLifecycleFollowUp = (!disableAutoRouting && !normalizedForcedSelection)
     ? await maybeRunPlannerTaskLifecycleFollowUp({
         userIntent: agentInput.user_intent,
@@ -3198,6 +3286,7 @@ export async function runPlannerToolFlow({
             userIntent: agentInput.user_intent,
             payload: agentInput.payload,
             logger,
+            sessionKey,
           });
   const hardRoutedAction = taskLifecycleFollowUp?.selected_action || (!disableAutoRouting ? routedFlow.action : null);
   const routedPayload = taskLifecycleFollowUp?.execution_result?.data || routedFlow.payload;
@@ -3316,6 +3405,7 @@ export async function runPlannerToolFlow({
           userIntent: agentInput.user_intent,
           payload: agentInput.payload,
           logger,
+          sessionKey,
         }),
         logger,
         authContext,
@@ -3345,6 +3435,7 @@ export async function runPlannerToolFlow({
           userIntent: agentInput.user_intent,
           payload: agentInput.payload,
           logger,
+          sessionKey,
         }),
         logger,
         authContext,
@@ -3370,10 +3461,12 @@ export async function runPlannerToolFlow({
             userIntent: agentInput.user_intent,
             payload: agentInput.payload,
             logger,
+            sessionKey,
           }),
       baseUrl,
       contentReader,
       logger,
+      sessionKey,
     });
   }
   throwIfPlannerSignalAborted(signal);
@@ -3405,13 +3498,14 @@ export async function runPlannerToolFlow({
       selectedAction: selection.selected_action,
       executionResult,
       logger,
+      sessionKey,
     });
   }
 
   if (!taskLifecycleFollowUp?.execution_result && selection.selected_action !== "mark_resolved") {
     lifecycleSnapshot = await syncPlannerActionLayerTaskLifecycle({
       flow: selectedFlow,
-      context: selectedFlow?.readContext?.() || {},
+      context: selectedFlow?.readContext?.({ sessionKey }) || {},
       selectedAction: selection.selected_action,
       userIntent: agentInput.user_intent,
       executionResult,
@@ -3429,9 +3523,10 @@ export async function runPlannerToolFlow({
   recordPlannerConversationExchange({
     userQuery: agentInput.user_intent,
     plannerReply: describePlannerExecutionResult(executionResult),
+    sessionKey,
   });
   maybeCompactPlannerConversationMemory({
-    flows: buildPlannerFlowSnapshots(plannerFlows),
+    flows: buildPlannerFlowSnapshots(plannerFlows, { sessionKey }),
     unfinishedItems: mergePlannerUnfinishedItems(
       derivePlannerUnfinishedItems({
         selection,
@@ -3443,6 +3538,7 @@ export async function runPlannerToolFlow({
     latestTraceId: traceId,
     logger,
     reason: "post_run_planner_tool_flow",
+    sessionKey,
   });
 
   return buildPlannerAgentOutput({
@@ -4529,11 +4625,11 @@ function buildPlannerContextWindow({
   ]);
 }
 
-async function buildPlannerPrompt({ text, activeTask = null } = {}) {
-  const memorySnapshot = getPlannerConversationMemoryLayer();
+async function buildPlannerPrompt({ text, activeTask = null, sessionKey = "" } = {}) {
+  const memorySnapshot = getPlannerConversationMemoryLayer({ sessionKey });
   const latestSummary = memorySnapshot?.latest_summary || null;
   const recentMessages = Array.isArray(memorySnapshot?.recent_messages) ? memorySnapshot.recent_messages : [];
-  const plannerDocQueryContext = getPlannerDocQueryContext();
+  const plannerDocQueryContext = getPlannerDocQueryContext({ sessionKey });
   const taskDecisionContext = await getPlannerTaskDecisionContext({
     activeDoc: plannerDocQueryContext?.activeDoc || null,
     activeTheme: plannerDocQueryContext?.activeTheme || "",
@@ -4761,11 +4857,11 @@ export async function requestPlannerJson({
   return data.choices?.[0]?.message?.content || "";
 }
 
-async function buildPlannerUserInputPrompt({ text = "" } = {}) {
-  restorePlannerRuntimeContextFromSummary();
-  const latestSummary = getPlannerConversationMemoryLayer()?.latest_summary || null;
-  const recentMessages = (getPlannerConversationMemoryLayer()?.recent_messages || []).slice(-4);
-  const docQueryContext = getPlannerDocQueryContext();
+async function buildPlannerUserInputPrompt({ text = "", sessionKey = "" } = {}) {
+  restorePlannerRuntimeContextFromSummary({ sessionKey });
+  const latestSummary = getPlannerConversationMemoryLayer({ sessionKey })?.latest_summary || null;
+  const recentMessages = (getPlannerConversationMemoryLayer({ sessionKey })?.recent_messages || []).slice(-4);
+  const docQueryContext = getPlannerDocQueryContext({ sessionKey });
   const systemPrompt = buildCompactSystemPrompt("你是 Lobster user-input planner。", [
     "所有 user input 必須先被規劃成受控 planner action/preset，禁止直接回答問題。",
     "只輸出單一合法 JSON object，不要 Markdown、不要 code fence、不要前後文、不要多餘欄位。",
@@ -5394,9 +5490,9 @@ function parsePlannerConversationDecision(value = "") {
   }
 }
 
-function getLatestPlannerDecisionContext() {
-  const recentMessages = Array.isArray(getPlannerConversationMemoryLayer()?.recent_messages)
-    ? getPlannerConversationMemoryLayer().recent_messages
+function getLatestPlannerDecisionContext({ sessionKey = "" } = {}) {
+  const recentMessages = Array.isArray(getPlannerConversationMemoryLayer({ sessionKey })?.recent_messages)
+    ? getPlannerConversationMemoryLayer({ sessionKey }).recent_messages
     : [];
   let plannerMessage = null;
   let userMessage = null;
@@ -5446,8 +5542,9 @@ function canonicalizePlannerDecision(decision = {}) {
 function validatePlannerDecisionFreshness({
   text = "",
   decision = {},
+  sessionKey = "",
 } = {}) {
-  const latestContext = getLatestPlannerDecisionContext();
+  const latestContext = getLatestPlannerDecisionContext({ sessionKey });
   if (!latestContext?.previous_decision) {
     return { ok: true };
   }
@@ -5619,7 +5716,12 @@ function withUserInputDecisionExplanation(result = {}, {
   };
 }
 
-export async function planUserInputAction({ text = "", requester = requestPlannerJson, signal = null } = {}) {
+export async function planUserInputAction({
+  text = "",
+  requester = requestPlannerJson,
+  signal = null,
+  sessionKey = "",
+} = {}) {
   const preAbortInfo = derivePlannerAbortInfo({ signal });
   if (preAbortInfo) {
     return withUserInputDecisionExplanation({
@@ -5627,12 +5729,13 @@ export async function planUserInputAction({ text = "", requester = requestPlanne
       reason: preAbortInfo.code,
     }, { text });
   }
-  restorePlannerRuntimeContextFromSummary();
+  restorePlannerRuntimeContextFromSummary({ sessionKey });
   maybeCompactPlannerConversationMemory({
-    flows: buildPlannerFlowSnapshots(plannerFlows),
+    flows: buildPlannerFlowSnapshots(plannerFlows, { sessionKey }),
     reason: "pre_plan_user_input_action",
+    sessionKey,
   });
-  let promptInput = await buildPlannerUserInputPrompt({ text });
+  let promptInput = await buildPlannerUserInputPrompt({ text, sessionKey });
   let prompt = promptInput.prompt;
   let lastInvalidDecision = null;
 
@@ -5669,6 +5772,7 @@ export async function planUserInputAction({ text = "", requester = requestPlanne
           const freshnessValidation = validatePlannerDecisionFreshness({
             text,
             decision,
+            sessionKey,
           });
           if (!freshnessValidation.ok) {
             lastInvalidDecision = freshnessValidation;
@@ -5676,11 +5780,13 @@ export async function planUserInputAction({ text = "", requester = requestPlanne
             recordPlannerConversationExchange({
               userQuery: text,
               plannerReply: JSON.stringify(decision),
+              sessionKey,
             });
             maybeCompactPlannerConversationMemory({
-              flows: buildPlannerFlowSnapshots(plannerFlows),
+              flows: buildPlannerFlowSnapshots(plannerFlows, { sessionKey }),
               latestSelectedAction: decision.action || decision.steps?.[0]?.action || "",
               reason: "post_plan_user_input_action",
+              sessionKey,
             });
             return decision;
           }
@@ -5707,10 +5813,12 @@ export async function planUserInputAction({ text = "", requester = requestPlanne
         recordPlannerConversationExchange({
           userQuery: text,
           plannerReply: JSON.stringify(abortedResult),
+          sessionKey,
         });
         maybeCompactPlannerConversationMemory({
-          flows: buildPlannerFlowSnapshots(plannerFlows),
+          flows: buildPlannerFlowSnapshots(plannerFlows, { sessionKey }),
           reason: "post_plan_user_input_action_aborted",
+          sessionKey,
         });
         return abortedResult;
       }
@@ -5722,6 +5830,7 @@ export async function planUserInputAction({ text = "", requester = requestPlanne
     }
     promptInput = await buildPlannerUserInputPrompt({
       text: `${text}\n請只輸出合法 JSON，且僅能使用 target_catalog 的 action；不可沿用上一輪 decision，必須依這一輪 user_request 重新決策。`,
+      sessionKey,
     });
     prompt = promptInput.prompt;
   }
@@ -5754,10 +5863,12 @@ export async function planUserInputAction({ text = "", requester = requestPlanne
   recordPlannerConversationExchange({
     userQuery: text,
     plannerReply: JSON.stringify(errorResult),
+    sessionKey,
   });
   maybeCompactPlannerConversationMemory({
-    flows: buildPlannerFlowSnapshots(plannerFlows),
+    flows: buildPlannerFlowSnapshots(plannerFlows, { sessionKey }),
     reason: "post_plan_user_input_action_failed",
+    sessionKey,
   });
   return errorResult;
 }
@@ -5778,6 +5889,7 @@ export async function executePlannedUserInput({
   retryable_error_types = ["tool_error", "runtime_exception"],
   authContext = null,
   signal = null,
+  sessionKey = "",
 } = {}) {
   const preAbortInfo = derivePlannerAbortInfo({ signal });
   if (preAbortInfo) {
@@ -5806,7 +5918,7 @@ export async function executePlannedUserInput({
           { text },
         );
       })()
-    : await planUserInputAction({ text, requester, signal });
+    : await planUserInputAction({ text, requester, signal, sessionKey });
   if (decision?.error) {
     if (decision.error === "semantic_mismatch") {
       let reroutedResult = null;
@@ -5819,6 +5931,7 @@ export async function executePlannedUserInput({
           baseUrl,
           authContext,
           signal,
+          sessionKey,
         });
       } catch (error) {
         const abortedResult = buildPlannerAbortResult({
@@ -5944,6 +6057,7 @@ export async function executePlannedUserInput({
       },
       disableAutoRouting: true,
       signal,
+      sessionKey,
     });
   } catch (error) {
     const abortedResult = buildPlannerAbortResult({
@@ -6279,14 +6393,16 @@ export async function planExecutiveTurn({
   activeTask = null,
   requester = requestPlannerJson,
   logger = console,
+  sessionKey = "",
 } = {}) {
-  restorePlannerRuntimeContextFromSummary();
+  restorePlannerRuntimeContextFromSummary({ sessionKey });
   maybeCompactPlannerConversationMemory({
-    flows: buildPlannerFlowSnapshots(plannerFlows),
+    flows: buildPlannerFlowSnapshots(plannerFlows, { sessionKey }),
     logger,
     reason: "pre_plan_executive_turn",
+    sessionKey,
   });
-  const promptInput = await buildPlannerPrompt({ text, activeTask });
+  const promptInput = await buildPlannerPrompt({ text, activeTask, sessionKey });
   let prompt = promptInput.prompt;
 
   for (let attempt = 0; attempt <= llmJsonRetryMax; attempt += 1) {
@@ -6322,9 +6438,10 @@ export async function planExecutiveTurn({
       recordPlannerConversationExchange({
         userQuery: text,
         plannerReply: JSON.stringify(normalizedDecision),
+        sessionKey,
       });
       maybeCompactPlannerConversationMemory({
-        flows: buildPlannerFlowSnapshots(plannerFlows),
+        flows: buildPlannerFlowSnapshots(plannerFlows, { sessionKey }),
         logger,
         unfinishedItems: normalizedDecision.pending_questions.map((question) => ({
           type: "pending_question",
@@ -6332,13 +6449,18 @@ export async function planExecutiveTurn({
         })),
         latestSelectedAction: normalizedDecision.action,
         reason: "post_plan_executive_turn",
+        sessionKey,
       });
       return normalizedDecision;
     } catch {
       if (attempt >= llmJsonRetryMax) {
         break;
       }
-      prompt = (await buildPlannerPrompt({ text: `${text}\n請只輸出合法 JSON。`, activeTask })).prompt;
+      prompt = (await buildPlannerPrompt({
+        text: `${text}\n請只輸出合法 JSON。`,
+        activeTask,
+        sessionKey,
+      })).prompt;
     }
   }
 
@@ -6380,9 +6502,10 @@ export async function planExecutiveTurn({
   recordPlannerConversationExchange({
     userQuery: text,
     plannerReply: JSON.stringify(blockedDecision),
+    sessionKey,
   });
   maybeCompactPlannerConversationMemory({
-    flows: buildPlannerFlowSnapshots(plannerFlows),
+    flows: buildPlannerFlowSnapshots(plannerFlows, { sessionKey }),
     logger,
     unfinishedItems: blockedDecision.pending_questions.map((question) => ({
       type: "pending_question",
@@ -6390,6 +6513,7 @@ export async function planExecutiveTurn({
     })),
     latestSelectedAction: "",
     reason: "post_plan_executive_turn_failed",
+    sessionKey,
   });
   return blockedDecision;
 }

@@ -177,6 +177,41 @@ test("planExecutiveTurn keeps the same role set for repeated identical compound 
   );
 });
 
+test("planExecutiveTurn refreshes why when hardening overrides stale role explanation", async () => {
+  resetPlannerRuntimeContext();
+  const decision = await planExecutiveTurn({
+    text: "請同時從市場定位與技術風險評估這個功能，最後統一收斂建議",
+    activeTask: null,
+    async requester() {
+      return JSON.stringify({
+        action: "start",
+        objective: "評估新功能",
+        primary_agent_id: "consult",
+        next_agent_id: "consult",
+        supporting_agent_ids: ["product", "ops"],
+        reason: "請由 /consult 主責，並搭配 /product 與 /ops",
+        pending_questions: [],
+        work_items: [
+          { agent_id: "consult", task: "拆解", role: "primary" },
+          { agent_id: "product", task: "產品", role: "supporting" },
+          { agent_id: "ops", task: "營運", role: "supporting" },
+        ],
+      });
+    },
+  });
+
+  assert.equal(decision.primary_agent_id, "generalist");
+  assert.deepEqual(decision.supporting_agent_ids, ["cmo", "tech"]);
+  assert.match(decision.reason || "", /\/generalist/);
+  assert.match(decision.reason || "", /\/cmo/);
+  assert.match(decision.reason || "", /\/tech/);
+  assert.doesNotMatch(decision.reason || "", /\/consult|\/product|\/ops/);
+  assert.match(decision.why || "", /\/generalist/);
+  assert.match(decision.why || "", /\/cmo/);
+  assert.match(decision.why || "", /\/tech/);
+  assert.doesNotMatch(decision.why || "", /\/consult|\/product|\/ops/);
+});
+
 test("planUserInputAction rejects wrapped non-JSON output", async () => {
   resetPlannerRuntimeContext();
   const result = await planUserInputAction({
@@ -1478,6 +1513,53 @@ test("planner conversation memory persists latest summary across restart", () =>
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test("planner conversation memory keeps recent messages isolated per session", async () => {
+  resetPlannerRuntimeContext();
+
+  await planExecutiveTurn({
+    text: "session A 想看 OKR 文件",
+    sessionKey: "session-a",
+    async requester() {
+      return JSON.stringify({
+        action: "continue",
+        objective: "延續 session A",
+        primary_agent_id: "generalist",
+        next_agent_id: "generalist",
+        supporting_agent_ids: [],
+        reason: "session A memory",
+        pending_questions: [],
+        work_items: [],
+      });
+    },
+  });
+
+  await planExecutiveTurn({
+    text: "session B 想看 BD 文件",
+    sessionKey: "session-b",
+    async requester() {
+      return JSON.stringify({
+        action: "continue",
+        objective: "延續 session B",
+        primary_agent_id: "generalist",
+        next_agent_id: "generalist",
+        supporting_agent_ids: [],
+        reason: "session B memory",
+        pending_questions: [],
+        work_items: [],
+      });
+    },
+  });
+
+  const sessionAMemory = getPlannerConversationMemory({ sessionKey: "session-a" });
+  const sessionBMemory = getPlannerConversationMemory({ sessionKey: "session-b" });
+
+  assert.equal(sessionAMemory.recent_messages.some((item) => item.content.includes("session A")), true);
+  assert.equal(sessionAMemory.recent_messages.some((item) => item.content.includes("session B")), false);
+  assert.equal(sessionBMemory.recent_messages.some((item) => item.content.includes("session B")), true);
+  assert.equal(sessionBMemory.recent_messages.some((item) => item.content.includes("session A")), false);
+  resetPlannerRuntimeContext();
 });
 
 test("runPlannerToolFlow selects and dispatches matching planner tool", async () => {
@@ -4715,6 +4797,242 @@ test("runPlannerToolFlow reuses active candidates so ordinal follow-up hits deta
       query: "打開第一個",
     },
   }]);
+  resetPlannerRuntimeContext();
+});
+
+test("runPlannerToolFlow reuses active doc within the same session", async () => {
+  resetPlannerRuntimeContext();
+
+  await runPlannerToolFlow({
+    userIntent: "整理交付 SOP",
+    payload: {},
+    sessionKey: "doc-session-a",
+    logger: console,
+    async presetRunner() {
+      return {
+        ok: true,
+        preset: "search_and_detail_doc",
+        steps: [
+          { action: "search_company_brain_docs" },
+          { action: "get_company_brain_doc_detail" },
+        ],
+        results: [
+          {
+            ok: true,
+            action: "company_brain_docs_search",
+            items: [{ doc_id: "doc_delivery_1", title: "交付 SOP" }],
+            trace_id: "trace_delivery_search",
+          },
+          {
+            ok: true,
+            action: "company_brain_doc_detail",
+            item: { doc_id: "doc_delivery_1", title: "交付 SOP" },
+            trace_id: "trace_delivery_detail",
+          },
+        ],
+        trace_id: "trace_delivery_detail",
+        stopped: false,
+        stopped_at_step: null,
+      };
+    },
+    async contentReader() {
+      return null;
+    },
+  });
+
+  const followUp = await runPlannerToolFlow({
+    userIntent: "這份文件裡面寫了什麼",
+    payload: {},
+    sessionKey: "doc-session-a",
+    logger: console,
+    async dispatcher({ action, payload }) {
+      assert.equal(action, "get_company_brain_doc_detail");
+      assert.equal(payload.doc_id, "doc_delivery_1");
+      return {
+        ok: true,
+        action: "company_brain_doc_detail",
+        item: { doc_id: "doc_delivery_1", title: "交付 SOP" },
+        trace_id: "trace_delivery_followup",
+      };
+    },
+    async contentReader() {
+      return {
+        title: "交付 SOP",
+        content: "交付步驟與驗收說明。",
+      };
+    },
+  });
+
+  assert.equal(followUp.selected_action, "get_company_brain_doc_detail");
+  assert.equal(followUp.execution_result?.formatted_output?.doc_id, "doc_delivery_1");
+  resetPlannerRuntimeContext();
+});
+
+test("runPlannerToolFlow keeps ordinal candidate follow-up bound to the same session", async () => {
+  resetPlannerRuntimeContext();
+  const dispatcherCalls = [];
+
+  await runPlannerToolFlow({
+    userIntent: "幫我整理 BD 文件重點",
+    payload: { limit: 10 },
+    sessionKey: "candidate-session-a",
+    logger: console,
+    async presetRunner() {
+      return {
+        ok: true,
+        preset: "search_and_detail_doc",
+        steps: [
+          { action: "search_company_brain_docs" },
+        ],
+        results: [
+          {
+            ok: true,
+            action: "company_brain_docs_search",
+            items: [
+              { doc_id: "doc_bd_1", title: "BD Playbook" },
+              { doc_id: "doc_bd_2", title: "BD SOP" },
+            ],
+            trace_id: "trace_candidates_seed_session",
+          },
+        ],
+        trace_id: "trace_candidates_seed_session",
+        stopped: false,
+        stopped_at_step: null,
+      };
+    },
+  });
+
+  const followUp = await runPlannerToolFlow({
+    userIntent: "打開第二個",
+    payload: {},
+    sessionKey: "candidate-session-a",
+    logger: console,
+    async dispatcher({ action, payload }) {
+      dispatcherCalls.push({ action, payload });
+      return {
+        ok: true,
+        action: "company_brain_doc_detail",
+        item: { doc_id: payload.doc_id, title: "BD SOP" },
+        trace_id: "trace_second_candidate",
+      };
+    },
+  });
+
+  assert.equal(followUp.selected_action, "get_company_brain_doc_detail");
+  assert.deepEqual(dispatcherCalls, [{
+    action: "get_company_brain_doc_detail",
+    payload: {
+      doc_id: "doc_bd_2",
+      query: "打開第二個",
+    },
+  }]);
+  resetPlannerRuntimeContext();
+});
+
+test("runPlannerToolFlow keeps context isolated when session changes", async () => {
+  resetPlannerRuntimeContext();
+  let dispatcherCalled = false;
+
+  await planExecutiveTurn({
+    text: "session alpha 先記住這輪文檔脈絡",
+    sessionKey: "alpha-session",
+    async requester() {
+      return JSON.stringify({
+        action: "continue",
+        objective: "延續 alpha",
+        primary_agent_id: "generalist",
+        next_agent_id: "generalist",
+        supporting_agent_ids: [],
+        reason: "alpha memory",
+        pending_questions: [],
+        work_items: [],
+      });
+    },
+  });
+
+  await runPlannerToolFlow({
+    userIntent: "幫我整理 BD 文件重點",
+    payload: { limit: 10 },
+    sessionKey: "alpha-session",
+    logger: console,
+    async presetRunner() {
+      return {
+        ok: true,
+        preset: "search_and_detail_doc",
+        steps: [
+          { action: "search_company_brain_docs" },
+        ],
+        results: [
+          {
+            ok: true,
+            action: "company_brain_docs_search",
+            items: [
+              { doc_id: "doc_bd_1", title: "BD Playbook" },
+              { doc_id: "doc_bd_2", title: "BD SOP" },
+            ],
+            trace_id: "trace_alpha_candidates",
+          },
+        ],
+        trace_id: "trace_alpha_candidates",
+        stopped: false,
+        stopped_at_step: null,
+      };
+    },
+  });
+
+  const isolated = await runPlannerToolFlow({
+    userIntent: "打開第一個",
+    payload: {},
+    sessionKey: "beta-session",
+    logger: console,
+    async presetRunner({ preset, input }) {
+      assert.equal(preset, "search_and_detail_doc");
+      assert.equal(input.q, "打開第一個");
+      return {
+        ok: true,
+        preset,
+        steps: [
+          { action: "search_company_brain_docs" },
+        ],
+        results: [
+          {
+            ok: true,
+            action: "company_brain_docs_search",
+            items: [],
+            trace_id: "trace_beta_isolated_search",
+          },
+        ],
+        trace_id: "trace_beta_isolated_search",
+        stopped: false,
+        stopped_at_step: null,
+      };
+    },
+    async dispatcher() {
+      dispatcherCalled = true;
+      return {
+        ok: true,
+        action: "company_brain_doc_detail",
+        trace_id: "unexpected_beta_dispatch",
+      };
+    },
+  });
+
+  assert.equal(dispatcherCalled, false);
+  assert.equal(isolated.selected_action, "search_and_detail_doc");
+  assert.equal(isolated.execution_result?.formatted_output?.kind, "search_and_detail_not_found");
+  assert.deepEqual(getPlannerDocQueryContext({ sessionKey: "beta-session" }), {
+    activeDoc: null,
+    activeCandidates: [],
+    activeTheme: null,
+  });
+  assert.equal(
+    getPlannerConversationMemory({ sessionKey: "alpha-session" }).recent_messages.some((item) => item.content.includes("session alpha")),
+    true,
+  );
+  assert.equal(
+    getPlannerConversationMemory({ sessionKey: "beta-session" }).recent_messages.some((item) => item.content.includes("session alpha")),
+    false,
+  );
   resetPlannerRuntimeContext();
 });
 

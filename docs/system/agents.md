@@ -211,8 +211,9 @@ What now exists in current code:
   - maintain one active executive task per session
   - let registered slash agents continue across multiple turns
   - allow planner-selected handoff between registered agents
-  - let the planner attach a normalized small work plan with at most three roles
-  - execute work items sequentially, then merge specialist outputs into one final response
+  - let the planner attach a bounded work plan with at most three roles total (`1 primary + up to 2 supporting`)
+  - default simple single-intent requests to `/generalist`; only expand to multi-agent when one compound request needs distinct specialist roles
+  - run supporting-agent passes sequentially, then feed their compact outputs back into the primary agent for synthesis
   - if any specialist pass fails, keep the turn fail-soft by falling back to `/generalist` for final synthesis
   - support explicit exit from executive mode
   - derive task rules, success criteria, and lifecycle state on task initialization
@@ -223,9 +224,11 @@ What now exists in current code:
     - normalized `結論 / 重點 / 下一步` structure
     - supporting-agent context absorbed into one single-voice final reply instead of separate visible agent blocks
   - reject JSON-like specialist or merge replies before they are parsed as executive brief text, keeping structured blobs out of the visible single-voice answer
-  - expose a minimal planner-callable tool registry for three agent-bridge actions:
+  - expose a minimal planner-callable tool registry for five agent-bridge actions:
     - `create_doc`
     - `list_company_brain_docs`
+    - `search_company_brain_docs`
+    - `get_company_brain_doc_detail`
     - `get_runtime_info`
   - route those tool calls through the existing `/agent/*` HTTP bridges instead of duplicating document/runtime logic
 - Boundaries:

@@ -760,6 +760,14 @@ For the current Thread103 baseline, runtime normalization also caps executive co
 
 That same downstream execution path now also enforces a visible-output boundary on specialist synthesis: JSON-like object replies, fenced JSON, and other structured-envelope outputs from specialist or merge agents are rejected before section parsing, logged as rejected specialist work, and kept on the existing fail-soft `/generalist` merge path instead of being treated as valid `結論 / 重點 / 下一步` brief text.
 
+That same normalization path now also hardens agent selection deterministically after planner JSON parsing and before follow-up task-driving fill:
+
+- simple single-intent requests default back to `/generalist`
+- multi-agent is used only when the user request is compound and the checked-in keyword rules detect at least two distinct specialist roles
+- explicit slash-agent requests keep the named primary agent but do not auto-expand extra specialists unless the same request also qualifies for compound multi-agent collaboration
+- `supporting_agent_ids` is capped at two and `work_items` is capped at three total roles, matching the existing sequential in-process execution path
+- repeated identical requests therefore resolve to the same role set even if raw planner JSON proposes a different specialist mix
+
 That same decision-side task context now also includes a bounded `focus task` layer on top of `task driving v1`. It remains deterministic and local-only:
 
 - scope resolution prefers `active_doc`, then matching `source_title` mentioned in the current user text, then matching task titles, then `active_theme`, then latest scope

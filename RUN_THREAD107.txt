@@ -1,0 +1,13 @@
+Agent selection hardening:
+- define deterministic rules for when to use generalist vs multi-agent
+- default to generalist for simple single-intent requests
+- use multi-agent only for compound requests needing distinct specialist roles
+- cap work_items to max 3 roles
+- avoid unnecessary specialist expansion
+- no change to output format
+- no change to auth/runtime
+- add focused regression for:
+  1) simple query stays generalist
+  2) compound query uses multi-agent
+  3) same query repeated => same role set
+- report changed files + tests + whether selection is deterministic

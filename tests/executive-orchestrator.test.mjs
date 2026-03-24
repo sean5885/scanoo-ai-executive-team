@@ -33,6 +33,24 @@ test("normalizeWorkPlan keeps at most three roles and reserves the merge agent s
   assert.equal(plan[2].agent_id, "generalist");
 });
 
+test("normalizeWorkPlan caps visible work items to three unique roles", () => {
+  const plan = normalizeWorkPlan(
+    null,
+    {
+      work_items: [
+        { agent_id: "generalist", task: "主責收斂" },
+        { agent_id: "consult", task: "拆解問題" },
+        { agent_id: "tech", task: "檢查技術風險" },
+        { agent_id: "product", task: "補充產品價值" },
+      ],
+    },
+    "原始任務",
+  );
+
+  assert.equal(plan.length, 3);
+  assert.deepEqual(plan.map((item) => item.agent_id), ["consult", "tech", "generalist"]);
+});
+
 test("buildSupportingContext formats agent outputs for synthesis", () => {
   const text = buildSupportingContext([
     { agent_id: "consult", task: "拆解問題", summary: "問題邊界已整理" },
