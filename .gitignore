@@ -7,3 +7,4 @@ npm-debug.log*
 *.swp
 *.swo
 .DS_Store
+RUN_THREAD*.txt
