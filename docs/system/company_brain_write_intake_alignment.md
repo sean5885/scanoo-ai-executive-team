@@ -150,9 +150,13 @@ not to:
 
 ### current alignment
 
-Partially grounded as a helper-level boundary, not as a standalone runtime.
+Grounded as a bounded runtime route, but still not as a full human review system.
 
-There is still no dedicated company-brain `review_doc` route or review state machine today.
+Current route-level grounding exists through:
+
+- `POST /agent/company-brain/review`
+- `/Users/seanhan/Documents/Playground/src/company-brain-review.mjs`
+- `/Users/seanhan/Documents/Playground/src/company-brain-lifecycle-contract.mjs`
 
 ### partial adjacent grounding
 
@@ -166,14 +170,14 @@ Review/confirm gates already exist in other document/workflow paths:
 ### what this means
 
 - review as a system concept is grounded
-- company-brain-specific write/intake review is only a minimum policy decision today
-- it is **not** yet runtimeized as its own independent capability
+- company-brain-specific write/intake review now has a bounded route and stored review state
+- it is still **not** a full human workflow, reviewer assignment system, or autonomous review runtime
 
 ## `conflict_check` Alignment
 
 ### current alignment
 
-Partially grounded as a bounded evidence helper.
+Grounded as a bounded runtime route plus helper-backed evidence check.
 
 ### partial adjacent grounding
 
@@ -183,11 +187,12 @@ Conflict concepts already exist in surrounding system areas:
 - knowledge/conflict-oriented command/docs exist elsewhere in the repo
 - search/read-side capability now feeds the intake policy helper as bounded overlap evidence
 - current overlap evidence is limited to read-side `title` matches excluding the same `doc_id`
+- `POST /agent/company-brain/conflicts` now exposes that bounded conflict check through a direct agent-facing route
 
 ### what is not yet grounded
 
-- no dedicated company-brain write/intake conflict-check runtime
-- no explicit `conflict_check` route
+- no semantic/topic-level overlap resolver beyond current title-match evidence
+- no human-mediated conflict resolution workflow
 - no semantic/topic-level conflict resolver tied to write-side promotion
 
 ## In Scope
