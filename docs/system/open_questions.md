@@ -62,12 +62,22 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 ## Medium
 
 7. Retrieval now has a local semantic embedding sidecar, but not an external vector store.
-   - Files:
+  - Files:
       - `/Users/seanhan/Documents/Playground/src/answer-service.mjs`
       - `/Users/seanhan/Documents/Playground/src/rag-repository.mjs`
       - `/Users/seanhan/Documents/Playground/src/semantic-embeddings.mjs`
 
-8. `lobster_security` is a separate Python subproject with its own architecture boundary.
+8. `mutation_admission_contract_v1.md` is frozen, but the current Step 2 implementation is intentionally carrying two operator-directed field corrections.
+   - Why it matters:
+     - the frozen baseline text still says `meeting_confirm` and `create_doc -> drive_folder`
+     - the checked-in Step 2 builder layer now uses `meeting_confirm_write` and `create_doc.resource_type = doc_container`
+     - later contributors must not assume the frozen markdown and the checked-in builder outputs are identical
+   - Current code truth:
+     - `/Users/seanhan/Documents/Playground/src/mutation-admission.mjs`
+   - Frozen baseline:
+     - `/Users/seanhan/Documents/Playground/docs/system/mutation_admission_contract_v1.md`
+
+9. `lobster_security` is a separate Python subproject with its own architecture boundary.
    - Why it matters:
      - runtime contract mismatch is now visible, but still requires humans to keep both sides aligned
    - Files:
@@ -75,18 +85,18 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
       - `/Users/seanhan/Documents/Playground/src/runtime-contract.mjs`
       - `/Users/seanhan/Documents/Playground/lobster_security`
 
-9. Semantic organization no longer hard-depends on OpenClaw, but local fallback quality is weaker.
+10. Semantic organization no longer hard-depends on OpenClaw, but local fallback quality is weaker.
    - Files:
       - `/Users/seanhan/Documents/Playground/src/lark-drive-semantic-classifier.mjs`
 
-10. Bitable / Sheet APIs now include batch helpers, but higher-level workflow contracts are still not fully productized.
+11. Bitable / Sheet APIs now include batch helpers, but higher-level workflow contracts are still not fully productized.
    - Files:
       - `/Users/seanhan/Documents/Playground/README.md`
       - `/Users/seanhan/Documents/Playground/lark_feishu_capability_gap.md`
       - `/Users/seanhan/Documents/Playground/src/config.mjs`
       - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
 
-11. The repo now has a thin executive planner and downstream registered agents, but it still does not have background workers, parallel subagent execution, or a tenant-wide memory graph.
+12. The repo now has a thin executive planner and downstream registered agents, but it still does not have background workers, parallel subagent execution, or a tenant-wide memory graph.
    - Why it matters:
       - future docs should describe this as a checked-in executive orchestration layer, not as a fully autonomous company-brain system
 

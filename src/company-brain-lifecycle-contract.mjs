@@ -1,4 +1,5 @@
 import { cleanText } from "./message-intent-utils.mjs";
+import { buildCompanyBrainApplyWritePolicy, cloneWritePolicyRecord } from "./write-policy-contract.mjs";
 
 export const COMPANY_BRAIN_LIFECYCLE_STATES = Object.freeze([
   "mirror_only",
@@ -65,6 +66,9 @@ const COMPANY_BRAIN_ROUTE_CONTRACT_FIXTURES = Object.freeze([
   {
     pathname: "/agent/company-brain/docs/test-doc/apply",
     action: "apply_company_brain_approved_knowledge",
+    write_policy: Object.freeze(buildCompanyBrainApplyWritePolicy({
+      docId: "test-doc",
+    })),
     governance: Object.freeze({
       external_write: false,
       confirm_required: false,
@@ -145,6 +149,7 @@ export function listCompanyBrainLifecycleRouteContracts() {
   return COMPANY_BRAIN_ROUTE_CONTRACT_FIXTURES.map((entry) => ({
     pathname: entry.pathname,
     action: entry.action,
+    write_policy: cloneWritePolicyRecord(entry.write_policy),
     governance: {
       ...entry.governance,
       allowed_states: Array.isArray(entry.governance?.allowed_states)
@@ -175,6 +180,7 @@ export function getCompanyBrainLifecycleRouteContract(pathname = "") {
   return {
     pathname: normalizedPathname,
     action: matched.action,
+    write_policy: cloneWritePolicyRecord(matched.write_policy),
     governance: {
       ...matched.governance,
       allowed_states: Array.isArray(matched.governance?.allowed_states)

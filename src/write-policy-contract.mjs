@@ -239,6 +239,23 @@ export function buildMeetingConfirmWritePolicy({
   });
 }
 
+export function buildCompanyBrainApplyWritePolicy({
+  docId = "",
+  idempotencyKey = null,
+} = {}) {
+  return buildWritePolicyRecord({
+    source: "company_brain_apply",
+    owner: "company_brain_review_runtime",
+    intent: "formal_company_brain_apply",
+    actionType: "apply",
+    externalWrite: false,
+    confirmRequired: false,
+    reviewRequired: "always",
+    scopeKey: cleanText(docId) ? `company-brain:${cleanText(docId)}` : null,
+    idempotencyKey,
+  });
+}
+
 const PHASE1_ROUTE_WRITE_POLICY_FIXTURES = Object.freeze([
   Object.freeze({
     pathname: "/api/doc/create",
