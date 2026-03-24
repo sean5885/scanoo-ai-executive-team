@@ -7,7 +7,7 @@
 - `actions`
   - stable tool targets callable by planner runtime
   - each action defines `input_schema`, `output_schema`, and bridge/tool-side `error_codes`
-  - controlled write actions may also define checked-in `governance` metadata such as `external_write`, `confirm_required`, and conditional `review_required`
+  - controlled write actions may also define checked-in `governance` metadata such as `external_write`, `confirm_required`, conditional `review_required`, and required entry-governance fields
 - `presets`
   - stable multi-step planner targets
   - each preset defines `input_schema`, `output_schema`, and `step_actions`

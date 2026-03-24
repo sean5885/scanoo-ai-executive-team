@@ -235,10 +235,10 @@ test("system self-check surfaces planner create_doc governance mismatches", asyn
       source_id: "action_governance:create_doc:contract_vs_route_contract",
       file: "/Users/seanhan/Documents/Playground/docs/system/planner_contract.json",
       target: "create_doc",
-      reason: "confirm_required_mismatch",
-      field: "confirm_required",
+      reason: "required_entry_fields_mismatch",
+      field: "required_entry_fields",
       expected: null,
-      actual: true,
+      actual: ["source", "owner", "intent", "type"],
       counterpart_file: "/Users/seanhan/Documents/Playground/src/http-route-contracts.mjs",
     },
   ];
@@ -298,7 +298,7 @@ test("system self-check surfaces planner create_doc governance mismatches", asyn
   assert.equal(result.planner_summary.gate, "fail");
   assert.equal(result.planner_contract.gate_ok, false);
   assert.deepEqual(result.planner_contract.failing_categories, ["action_governance_mismatches"]);
-  assert.match(result.planner_summary.guidance, /action_governance_mismatches/);
+  assert.match(result.planner_summary.guidance, /source、owner、intent、type/);
 });
 
 test("self-check CLI renders concise guidance by default", async () => {

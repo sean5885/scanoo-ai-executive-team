@@ -21,6 +21,7 @@ const DEMO_LIKE_TITLE_PATTERN = /\b(test|demo|verify|verification|smoke|e2e)\b/i
 const WRITE_BLOCKED_MESSAGE = "Lark write blocked (ALLOW_LARK_WRITES not enabled)";
 const WRITE_PRODUCTION_BLOCKED_MESSAGE = "Lark write disabled in production";
 const CONDITIONAL_REVIEW_REQUIRED = "conditional";
+const CREATE_DOC_REQUIRED_ENTRY_FIELDS = Object.freeze(["source", "owner", "intent", "type"]);
 
 function isProductionEnvironment() {
   return cleanText(process.env.NODE_ENV).toLowerCase() === "production";
@@ -60,6 +61,37 @@ export function getDocumentCreateGovernanceContract() {
     external_write: true,
     confirm_required: true,
     review_required: CONDITIONAL_REVIEW_REQUIRED,
+    required_entry_fields: [...CREATE_DOC_REQUIRED_ENTRY_FIELDS],
+  };
+}
+
+export function validateDocumentCreateEntryGovernance({
+  source = "",
+  owner = "",
+  intent = "",
+  type = "",
+} = {}) {
+  const normalized = {
+    source: cleanText(source),
+    owner: cleanText(owner),
+    intent: cleanText(intent),
+    type: cleanText(type),
+  };
+  const missingFields = CREATE_DOC_REQUIRED_ENTRY_FIELDS.filter((field) => !normalized[field]);
+
+  if (missingFields.length > 0) {
+    return {
+      ok: false,
+      error: "entry_governance_required",
+      message: "Agent create_doc requires source, owner, intent, and type entry governance.",
+      missing_fields: missingFields,
+      governance: normalized,
+    };
+  }
+
+  return {
+    ok: true,
+    governance: normalized,
   };
 }
 

@@ -455,6 +455,7 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
 - `POST /agent/docs/create`
   - Handler: `handleAgentCreateDoc`
   - Purpose: expose `/api/doc/create` through an agent-facing bridge
+  - Input note: this bridge now requires bounded entry governance fields `source`, `owner`, `intent`, and `type`; missing any of them returns `error=entry_governance_required`
   - Response shape: `{ ok, action, data, trace_id }` with `action=create_doc`
   - Log note: emits `stage=agent_bridge`
 

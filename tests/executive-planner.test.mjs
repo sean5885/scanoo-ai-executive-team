@@ -1820,6 +1820,10 @@ test("dispatchPlannerTool heals missing required input and can return success", 
     });
 
     assert.equal(capturedBody.title, "");
+    assert.equal(capturedBody.source, "api_doc_create");
+    assert.equal(capturedBody.owner, "planner_agent");
+    assert.equal(capturedBody.intent, "create_doc");
+    assert.equal(capturedBody.type, "document_create");
     assert.equal(result.ok, true);
     assert.equal(result.data.healed, true);
     assert.equal(result.data.retry_count, 1);
@@ -2275,6 +2279,46 @@ test("dispatchPlannerTool does not retry business_error", async () => {
     assert.equal(result.data.retry_count, 0);
     assert.equal(result.data.stopped, true);
     assert.equal(result.data.stop_reason, "business_error");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("dispatchPlannerTool preserves entry governance failures without retry", async () => {
+  const originalFetch = globalThis.fetch;
+  let callCount = 0;
+  globalThis.fetch = async () => {
+    callCount += 1;
+    return {
+      status: 400,
+      async text() {
+        return JSON.stringify({
+          ok: false,
+          action: "create_doc",
+          error: "entry_governance_required",
+          data: {
+            message: "Agent create_doc requires source, owner, intent, and type entry governance.",
+            missing_fields: ["owner"],
+          },
+          trace_id: "trace_entry_governance",
+        });
+      },
+    };
+  };
+
+  try {
+    const result = await dispatchPlannerTool({
+      action: "create_doc",
+      payload: { title: "demo" },
+      logger: console,
+      baseUrl: "http://localhost:3333",
+    });
+
+    assert.equal(callCount, 1);
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "entry_governance_required");
+    assert.equal(result.trace_id, "trace_entry_governance");
+    assert.equal(result.data.stop_reason, "entry_governance_required");
   } finally {
     globalThis.fetch = originalFetch;
   }

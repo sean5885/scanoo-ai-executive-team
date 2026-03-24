@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 
 import {
   assertLarkWriteAllowed,
+  getDocumentCreateGovernanceContract,
   planDocumentCreateGuard,
   shouldAllowCreateRootFallback,
+  validateDocumentCreateEntryGovernance,
 } from "../src/lark-write-guard.mjs";
 
 function withEnv(t, values = {}) {
@@ -97,4 +99,23 @@ test("assertLarkWriteAllowed blocks production even when env is enabled", (t) =>
     () => assertLarkWriteAllowed(),
     /Lark write disabled in production/,
   );
+});
+
+test("document create governance contract includes required entry fields", () => {
+  const contract = getDocumentCreateGovernanceContract();
+
+  assert.deepEqual(contract.required_entry_fields, ["source", "owner", "intent", "type"]);
+});
+
+test("validateDocumentCreateEntryGovernance blocks missing entry metadata", () => {
+  const result = validateDocumentCreateEntryGovernance({
+    source: "api_doc_create",
+    owner: "",
+    intent: "create_doc",
+    type: "",
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "entry_governance_required");
+  assert.deepEqual(result.missing_fields, ["owner", "type"]);
 });

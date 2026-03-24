@@ -149,7 +149,11 @@ import {
   listImprovementWorkflowProposals,
   resolveImprovementWorkflowProposal,
 } from "./executive-improvement-workflow.mjs";
-import { assertLarkWriteAllowed, planDocumentCreateGuard } from "./lark-write-guard.mjs";
+import {
+  assertLarkWriteAllowed,
+  planDocumentCreateGuard,
+  validateDocumentCreateEntryGovernance,
+} from "./lark-write-guard.mjs";
 import { decideWriteGuard } from "./write-guard.mjs";
 import {
   buildAgentLearningSummary,
@@ -1008,6 +1012,9 @@ function buildDocumentCreateInput(body = {}) {
     folderToken: String(body.folder_token || "").trim() || undefined,
     content: String(body.content || "").trim(),
     source: String(body.source || "").trim(),
+    owner: String(body.owner || "").trim(),
+    intent: String(body.intent || "").trim(),
+    type: String(body.type || "").trim(),
     confirm: body.confirm === true,
   };
 }
@@ -2884,7 +2891,13 @@ async function handleDocumentRead(res, requestUrl, body) {
   });
 }
 
-async function handleDocumentCreate(res, requestUrl, body, logger = noopHttpLogger) {
+async function handleDocumentCreate(
+  res,
+  requestUrl,
+  body,
+  logger = noopHttpLogger,
+  { requireEntryGovernance = false } = {},
+) {
   assertLarkWriteAllowed();
   const context = await requireUserContext(res, getAccountId(requestUrl, body), logger);
   if (!context) {
@@ -2896,6 +2909,9 @@ async function handleDocumentCreate(res, requestUrl, body, logger = noopHttpLogg
     folderToken: requestedFolderToken,
     content,
     source,
+    owner,
+    intent,
+    type,
     confirm,
   } = buildDocumentCreateInput(body);
 
@@ -2903,6 +2919,30 @@ async function handleDocumentCreate(res, requestUrl, body, logger = noopHttpLogg
     logger.warn("document_create_missing_title");
     respondDocumentWriteFailure(res, 400, "missing_document_title");
     return;
+  }
+
+  if (requireEntryGovernance) {
+    const entryGovernance = validateDocumentCreateEntryGovernance({
+      source,
+      owner,
+      intent,
+      type,
+    });
+    if (!entryGovernance.ok) {
+      logger.warn("document_create_entry_governance_blocked", {
+        account_id: context.account.id,
+        missing_fields: entryGovernance.missing_fields,
+        source: entryGovernance.governance?.source || null,
+        owner: entryGovernance.governance?.owner || null,
+        intent: entryGovernance.governance?.intent || null,
+        type: entryGovernance.governance?.type || null,
+      });
+      respondDocumentWriteFailure(res, 400, entryGovernance.error, {
+        message: entryGovernance.message,
+        missing_fields: entryGovernance.missing_fields,
+      });
+      return;
+    }
   }
 
   const createGuard = planDocumentCreateGuard({
@@ -3180,7 +3220,15 @@ async function handleMonitoringDashboard(res, requestUrl) {
 }
 
 async function handleAgentCreateDoc(res, requestUrl, body, logger = noopHttpLogger) {
-  await invokeAgentBridge(handleDocumentCreate, {
+  await invokeAgentBridge((bridgeRes, bridgeRequestUrl, bridgeBody, bridgeLogger) => (
+    handleDocumentCreate(
+      bridgeRes,
+      bridgeRequestUrl,
+      bridgeBody,
+      bridgeLogger,
+      { requireEntryGovernance: true },
+    )
+  ), {
     requestUrl,
     body,
     logger,

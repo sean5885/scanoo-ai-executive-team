@@ -123,3 +123,18 @@ test("planner contract consistency flags missing create_doc confirm_required gov
   assert.equal(report.findings.action_governance_mismatches[0].field, "confirm_required");
   assert.equal(report.findings.action_governance_mismatches[0].reason, "confirm_required_mismatch");
 });
+
+test("planner contract consistency flags missing create_doc required_entry_fields governance", () => {
+  const contractOverride = JSON.parse(JSON.stringify(plannerContract));
+  delete contractOverride.actions.create_doc.governance.required_entry_fields;
+
+  const report = runPlannerContractConsistencyCheck({ contractOverride });
+
+  assert.equal(report.ok, false);
+  assert.equal(report.gate.ok, false);
+  assert.deepEqual(report.gate.failing_categories, ["action_governance_mismatches"]);
+  assert.equal(report.summary.action_governance_mismatches, 2);
+  assert.equal(report.findings.action_governance_mismatches[0].target, "create_doc");
+  assert.equal(report.findings.action_governance_mismatches[0].field, "required_entry_fields");
+  assert.equal(report.findings.action_governance_mismatches[0].reason, "required_entry_fields_mismatch");
+});

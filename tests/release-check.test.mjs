@@ -398,7 +398,7 @@ test("release-check report points create_doc governance mismatch to gate modules
     overall_status: "fail",
     blocking_checks: ["planner_contract_failure"],
     doc_boundary_regression: false,
-    suggested_next_step: "先看 planner contract failure 的 create_doc gate 模組：src/executive-planner.mjs、src/http-route-contracts.mjs、src/lark-write-guard.mjs；只有 intentional stable target 才改 docs/system/planner_contract.json。",
+    suggested_next_step: "先看 planner contract failure 的 create_doc gate 模組：src/executive-planner.mjs、src/http-route-contracts.mjs、src/lark-write-guard.mjs；先對齊 source、owner、intent、type entry governance，只有 intentional stable target 才改 docs/system/planner_contract.json。",
     action_hint: "run planner-contract-check and fix governance mismatch",
     failing_area: "doc",
     representative_fail_case: ["action_governance_mismatches:create_doc via action_governance:create_doc:contract_vs_route_contract"],

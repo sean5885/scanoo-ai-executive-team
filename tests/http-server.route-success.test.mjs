@@ -588,6 +588,71 @@ test("document create redirects demo-like titles into sandbox folder", async (t)
   }]);
 });
 
+test("agent create_doc blocks when entry governance metadata is missing", async (t) => {
+  withEnv(t, {
+    ALLOW_LARK_WRITES: "true",
+  });
+  const { server } = await startTestServer(t, {
+    createDocument: async () => {
+      throw new Error("should_not_create");
+    },
+  });
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/agent/docs/create`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      title: "Planner Controlled Create",
+      confirm: true,
+      source: "api_doc_create",
+      intent: "create_doc",
+    }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.action, "create_doc");
+  assert.equal(payload.data.error, "entry_governance_required");
+  assert.deepEqual(payload.data.missing_fields, ["owner", "type"]);
+});
+
+test("agent create_doc succeeds when entry governance metadata is present", async (t) => {
+  withEnv(t, {
+    ALLOW_LARK_WRITES: "true",
+  });
+  const documentId = `doc-agent-create-${Date.now()}`;
+  const { server } = await startTestServer(t, {
+    createDocument: async () => ({
+      document_id: documentId,
+      revision_id: "rev-agent-create-1",
+      title: "Planner Controlled Create",
+      url: `https://larksuite.com/docx/${documentId}`,
+    }),
+  });
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/agent/docs/create`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      title: "Planner Controlled Create",
+      confirm: true,
+      source: "api_doc_create",
+      owner: "planner_agent",
+      intent: "create_doc",
+      type: "document_create",
+    }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.action, "create_doc");
+  assert.equal(payload.data.document_id, documentId);
+});
+
 test("agent company-brain search and detail routes return structured summaries for planner use", async (t) => {
   const docId = `doc-agent-company-brain-${Date.now()}`;
   insertCompanyBrainFixture({

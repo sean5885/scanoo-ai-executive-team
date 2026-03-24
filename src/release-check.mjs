@@ -130,7 +130,7 @@ function buildPlannerContractFailureNextStep(selfCheckResult = {}) {
   const hasGovernanceMismatch = failingCategories.includes("action_governance_mismatches");
 
   if (hasGovernanceMismatch && !hasRegistryDrift && !hasSelectorMismatch) {
-    return "先看 planner contract failure 的 create_doc gate 模組：src/executive-planner.mjs、src/http-route-contracts.mjs、src/lark-write-guard.mjs；只有 intentional stable target 才改 docs/system/planner_contract.json。";
+    return "先看 planner contract failure 的 create_doc gate 模組：src/executive-planner.mjs、src/http-route-contracts.mjs、src/lark-write-guard.mjs；先對齊 source、owner、intent、type entry governance，只有 intentional stable target 才改 docs/system/planner_contract.json。";
   }
 
   if (hasRegistryDrift && !hasSelectorMismatch && !hasGovernanceMismatch) {

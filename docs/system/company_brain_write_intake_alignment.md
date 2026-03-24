@@ -71,6 +71,7 @@ Partially grounded in code through:
   - `external_write=true`
   - `confirm_required=true`
   - `review_required=conditional` because overlap detection still stages review at the mirror-intake boundary when applicable
+  - `required_entry_fields=["source","owner","intent","type"]` at the agent/planner entry boundary, with planner-managed defaults for the controlled planner path
 - successful create can later feed lifecycle and mirror ingest
 
 ### what it is not

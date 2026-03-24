@@ -79,7 +79,10 @@ Minimum write/intake capability set:
 {
   "title": "string",
   "folder_token": "string|null",
-  "source": "string|null"
+  "source": "string",
+  "owner": "string",
+  "intent": "string",
+  "type": "string"
 }
 ```
 
@@ -97,6 +100,7 @@ Minimum write/intake capability set:
 ### validation
 
 - title must exist
+- planner/agent entry must provide bounded `source`, `owner`, `intent`, and `type` metadata before create can continue
 - write target must stay inside a controlled route / adapter path
 - live Lark create must fail closed unless `ALLOW_LARK_WRITES=true`
 - direct route-driven create also requires explicit confirmation at the request boundary (`confirm=true`)

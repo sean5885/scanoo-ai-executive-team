@@ -59,6 +59,7 @@ const GOVERNANCE_FIELDS = [
   "external_write",
   "confirm_required",
   "review_required",
+  "required_entry_fields",
 ];
 
 function loadPlannerContract({ contractOverride } = {}) {
@@ -141,7 +142,25 @@ function normalizeGovernanceField(field = "", value) {
     return null;
   }
 
+  if (normalizedField === "required_entry_fields") {
+    if (!Array.isArray(value)) {
+      return null;
+    }
+    const normalizedValues = value.map((item) => cleanText(item)).filter(Boolean);
+    return normalizedValues.length > 0 ? normalizedValues : null;
+  }
+
   return null;
+}
+
+function governanceValuesEqual(left, right) {
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+      return false;
+    }
+    return left.every((value, index) => value === right[index]);
+  }
+  return left === right;
 }
 
 function normalizeGovernanceContract(governance = null) {
@@ -164,6 +183,9 @@ function normalizeGovernanceContract(governance = null) {
 function formatGovernanceValue(value) {
   if (value === null || value === undefined) {
     return "missing";
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0 ? value.join("|") : "missing";
   }
   if (value === true) {
     return "true";
@@ -221,7 +243,7 @@ function collectActionGovernanceFindings(contract = {}) {
       const toolValue = toolGovernance?.[field] ?? null;
       const routeValue = routeGovernance?.[field] ?? null;
 
-      if (contractValue !== toolValue) {
+      if (!governanceValuesEqual(contractValue, toolValue)) {
         findings.push(buildGovernanceFinding({
           action,
           comparison: "contract_vs_tool_registry",
@@ -234,7 +256,7 @@ function collectActionGovernanceFindings(contract = {}) {
         }));
       }
 
-      if (contractValue !== routeValue) {
+      if (!governanceValuesEqual(contractValue, routeValue)) {
         findings.push(buildGovernanceFinding({
           action,
           comparison: "contract_vs_route_contract",
@@ -247,7 +269,7 @@ function collectActionGovernanceFindings(contract = {}) {
         }));
       }
 
-      if (toolValue !== routeValue) {
+      if (!governanceValuesEqual(toolValue, routeValue)) {
         findings.push(buildGovernanceFinding({
           action,
           comparison: "tool_registry_vs_route_contract",

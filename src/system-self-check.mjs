@@ -319,8 +319,15 @@ async function buildPlannerSummary({
   const summary = gate === "pass"
     ? "planner gate passes"
     : "planner gate fails";
+  const failingCategories = Array.isArray(report?.gate?.failing_categories)
+    ? report.gate.failing_categories.map((category) => cleanText(category)).filter(Boolean)
+    : [];
   const guidance = gate === "fail"
-    ? "先看 planner gate；依序看 undefined_actions、undefined_presets、selector_contract_mismatches、action_governance_mismatches。"
+    ? (
+      failingCategories.length === 1 && failingCategories[0] === "action_governance_mismatches"
+        ? "先看 planner gate 的 action_governance_mismatches；create_doc 入口需要對齊 source、owner、intent、type 與既有 create gate。"
+        : "先看 planner gate；依序看 undefined_actions、undefined_presets、selector_contract_mismatches、action_governance_mismatches。"
+    )
     : hasObviousRegression
       ? "planner gate 雖然 pass，但 compare 變差；先看 planner diagnostics compare。"
       : "planner 線目前穩定；若接下來改 planner，再跑 npm run planner:diagnostics。";

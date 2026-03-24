@@ -1277,6 +1277,11 @@ const plannerExecutionPolicy = {
     retry: 0,
     stop_reason: "business_error",
   },
+  entry_governance_required: {
+    self_heal: 0,
+    retry: 0,
+    stop_reason: "entry_governance_required",
+  },
 };
 
 function getPlannerExecutionPolicy(errorCode = "") {
@@ -1923,12 +1928,27 @@ function normalizePlannerPayload(payload = {}) {
   return payload && typeof payload === "object" && !Array.isArray(payload) ? { ...payload } : {};
 }
 
+function applyCreateDocEntryGovernancePayload(action = "", payload = {}) {
+  if (cleanText(action) !== "create_doc") {
+    return normalizePlannerPayload(payload);
+  }
+
+  const normalizedPayload = normalizePlannerPayload(payload);
+  return {
+    ...normalizedPayload,
+    source: cleanText(normalizedPayload.source || "") || "api_doc_create",
+    owner: cleanText(normalizedPayload.owner || "") || "planner_agent",
+    intent: cleanText(normalizedPayload.intent || "") || "create_doc",
+    type: cleanText(normalizedPayload.type || "") || "document_create",
+  };
+}
+
 function resolveDispatchInput({
   action = "",
   payload = {},
   logger = console,
 } = {}) {
-  let effectivePayload = normalizePlannerPayload(payload);
+  let effectivePayload = applyCreateDocEntryGovernancePayload(action, payload);
   let selfHealRetryCount = 0;
   let healed = false;
 

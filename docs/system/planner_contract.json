@@ -46,6 +46,10 @@
       "category": "runtime",
       "public": true
     },
+    "entry_governance_required": {
+      "category": "runtime",
+      "public": true
+    },
     "not_found": {
       "category": "runtime",
       "public": true
@@ -142,7 +146,8 @@
       "governance": {
         "confirm_required": true,
         "review_required": "conditional",
-        "external_write": true
+        "external_write": true,
+        "required_entry_fields": ["source", "owner", "intent", "type"]
       },
       "input_schema": {
         "type": "object",
@@ -193,6 +198,7 @@
         }
       },
       "error_codes": [
+        "entry_governance_required",
         "missing_user_access_token",
         "internal_error"
       ]
