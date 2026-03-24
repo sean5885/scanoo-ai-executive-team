@@ -172,9 +172,28 @@ function normalizeUnfinishedItems(items = []) {
       if (!label) {
         return null;
       }
+      const actions = Array.isArray(item?.actions)
+        ? item.actions
+            .map((action) => {
+              const type = cleanText(action?.type || action?.action || "");
+              const actionLabel = cleanText(action?.label || "");
+              if (!type || !actionLabel) {
+                return null;
+              }
+              return {
+                type,
+                label: actionLabel,
+              };
+            })
+            .filter(Boolean)
+            .slice(0, 3)
+        : [];
       return {
         type: cleanText(item?.type || "") || null,
+        item_id: cleanText(item?.item_id || item?.id) || null,
         label,
+        status: cleanText(item?.status || "pending") || "pending",
+        actions,
       };
     })
     .filter(Boolean)

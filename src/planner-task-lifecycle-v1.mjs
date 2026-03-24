@@ -8,6 +8,7 @@ import { readJsonFile, writeJsonFile } from "./token-store.mjs";
 
 const STORE_VERSION = "planner_task_lifecycle_v1";
 const TASK_PROGRESS_STATES = Object.freeze(["planned", "in_progress", "blocked", "done"]);
+const PENDING_ITEM_STATUSES = Object.freeze(["pending", "resolved"]);
 const TASK_PROGRESS_TRANSITIONS = Object.freeze({
   planned: ["in_progress", "blocked", "done"],
   in_progress: ["blocked", "done"],
@@ -87,6 +88,12 @@ function normalizeTask(task = {}) {
   const note = cleanText(task.note) || null;
   const result = cleanText(task.result) || null;
   const progressStatus = normalizeExecutionProgressStatus(task.progress_status);
+  const normalizedPendingItemStatus = cleanText(task.pending_item_status);
+  const pendingItemStatus = taskState === "done"
+    ? "resolved"
+    : PENDING_ITEM_STATUSES.includes(normalizedPendingItemStatus)
+      ? normalizedPendingItemStatus
+      : "pending";
   const progressSummary = cleanText(task.progress_summary)
     || buildExecutionProgressSummary({
       progressStatus,
@@ -113,6 +120,11 @@ function normalizeTask(task = {}) {
     progress_summary: progressSummary,
     note,
     result,
+    pending_item_status: pendingItemStatus,
+    pending_item_resolved_at: cleanText(
+      task.pending_item_resolved_at
+      || (pendingItemStatus === "resolved" ? task.completed_at || task.last_completed_at : ""),
+    ) || null,
     execution_started_at: cleanText(task.execution_started_at) || null,
     last_progress_at: cleanText(task.last_progress_at) || null,
     completed_at: cleanText(task.completed_at || task.last_completed_at) || null,
@@ -645,12 +657,64 @@ export async function syncPlannerActionLayerTaskLifecycle({
 export function buildPlannerLifecycleUnfinishedItems(snapshot = null) {
   const tasks = Array.isArray(snapshot?.tasks) ? snapshot.tasks : [];
   return tasks
-    .filter((task) => cleanText(task?.task_state) !== "done")
+    .filter((task) => (
+      cleanText(task?.task_state) !== "done"
+      && cleanText(task?.pending_item_status || "pending") !== "resolved"
+    ))
     .slice(0, 5)
     .map((task) => ({
       type: "task_lifecycle_v1",
+      item_id: cleanText(task?.id) || null,
       label: `待跟進：${cleanText(task?.title)}`,
+      status: "pending",
+      actions: [
+        {
+          type: "mark_resolved",
+          label: "標記完成",
+        },
+      ],
     }));
+}
+
+function applyPendingItemResolution(task = null, actor = "planner_pending_item_action") {
+  const normalizedTask = normalizeTask(task);
+  if (!normalizedTask?.id) {
+    return {
+      task: normalizedTask,
+      changed: false,
+    };
+  }
+
+  if (cleanText(normalizedTask.pending_item_status) === "resolved") {
+    return {
+      task: normalizedTask,
+      changed: false,
+    };
+  }
+
+  const timestamp = nowIso();
+  return {
+    task: normalizeTask({
+      ...normalizedTask,
+      pending_item_status: "resolved",
+      pending_item_resolved_at: timestamp,
+      updated_at: timestamp,
+      execution_history: [
+        ...(Array.isArray(normalizedTask.execution_history) ? normalizedTask.execution_history : []),
+        {
+          task_state: cleanText(normalizedTask.task_state) || null,
+          progress_status: normalizedTask.progress_status,
+          progress_summary: normalizedTask.progress_summary,
+          note: normalizedTask.note,
+          result: normalizedTask.result,
+          reason: "pending_item_mark_resolved",
+          actor: cleanText(actor) || "planner_pending_item_action",
+          at: timestamp,
+        },
+      ].slice(-12),
+    }),
+    changed: true,
+  };
 }
 
 function buildPlannerTaskDecisionItem(task = {}) {
@@ -1738,6 +1802,71 @@ export async function maybeRunPlannerTaskLifecycleFollowUp({
 export async function getLatestPlannerTaskLifecycleSnapshot() {
   const store = await loadStore();
   return buildSnapshotFromStore(store, cleanText(store.latest_scope_key));
+}
+
+export async function handlePlannerPendingItemAction({
+  itemId = "",
+  action = "",
+  actor = "planner_pending_item_action",
+} = {}) {
+  const normalizedItemId = cleanText(itemId);
+  const normalizedAction = cleanText(
+    typeof action === "string"
+      ? action
+      : action?.type || action?.action,
+  );
+
+  if (normalizedAction !== "mark_resolved") {
+    return {
+      ok: false,
+      error: "unsupported_action",
+      data: {
+        item_id: normalizedItemId || null,
+        supported_actions: ["mark_resolved"],
+      },
+    };
+  }
+
+  if (!normalizedItemId) {
+    return {
+      ok: false,
+      error: "not_found",
+      data: {
+        item_id: null,
+      },
+    };
+  }
+
+  const store = await loadStore();
+  const currentTask = store.tasks?.[normalizedItemId];
+  if (!currentTask) {
+    return {
+      ok: false,
+      error: "not_found",
+      data: {
+        item_id: normalizedItemId,
+      },
+    };
+  }
+
+  const update = applyPendingItemResolution(currentTask, actor);
+  store.tasks[normalizedItemId] = update.task;
+  if (update.changed) {
+    await saveStore(store);
+  }
+
+  const snapshot = buildSnapshotFromStore(store, cleanText(update.task?.scope_key));
+  return {
+    ok: true,
+    action: normalizedAction,
+    data: {
+      item_id: normalizedItemId,
+      status: cleanText(update.task?.pending_item_status) || "resolved",
+      resolved_at: cleanText(update.task?.pending_item_resolved_at) || null,
+      changed: update.changed,
+      pending_items: buildPlannerLifecycleUnfinishedItems(snapshot),
+    },
+  };
 }
 
 export async function getPlannerTaskDecisionContext({
