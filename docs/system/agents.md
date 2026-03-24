@@ -286,7 +286,7 @@ What now exists in current code:
   - transcribe the local recording on meeting end with local `faster-whisper` by default, or an explicitly configured OpenAI-compatible audio endpoint
   - when user OAuth refresh is invalid, `/meeting` style capture can fall back to tenant-token doc creation and local capture instead of failing before recording starts
   - create a dedicated Lark meeting document at capture start and write the final usable minutes into that same document on meeting end
-  - grant the initiating user `full_access` on Lobster-created or reused meeting docs so the doc is manageable, not read-only
+  - grant the initiating user `full_access` on Lobster-created or reused meeting docs when the initiating user's `open_id` is available, so the doc is manageable, not read-only
   - generate a fixed summary format
   - send summary to a target group
   - attach a confirm-write button via interactive card

@@ -1209,8 +1209,10 @@ function defaultCoordinatorDeps() {
     getDocument,
     createDocument: createManagedDocument,
     updateDocument,
+    buildMeetingSummary,
     createConfirmation: createMeetingWriteConfirmation,
     consumeConfirmation: consumeMeetingWriteConfirmation,
+    ensureDocumentManagerPermission,
     getMappedMeetingDocument,
     saveMeetingDocumentMapping,
     findSyncedMeetingDocument,
@@ -1272,10 +1274,12 @@ export function createMeetingCoordinator(overrides = {}) {
   }) {
     const existing = await resolveMeetingDocumentTarget({ accountId, projectKey, projectName, meetingType, chatId });
     if (existing.document_id) {
-      await ensureDocumentManagerPermission(accessToken, existing.document_id, {
-        tokenType: "user",
-        managerOpenId: accountOpenId,
-      });
+      if (accountOpenId) {
+        await deps.ensureDocumentManagerPermission(accessToken, existing.document_id, {
+          tokenType: "user",
+          managerOpenId: accountOpenId,
+        });
+      }
       return existing;
     }
 
@@ -1355,7 +1359,7 @@ export function createMeetingCoordinator(overrides = {}) {
     }
 
     const classification = classifyMeeting({ text, metadata });
-    const summary = await buildMeetingSummary({ text, metadata, classification });
+    const summary = await deps.buildMeetingSummary({ text, metadata, classification });
     const identity = projectName
       ? { project_name: projectName, project_key: normalizeProjectKey(projectName) }
       : buildStableProjectIdentity({ text, metadata, chatId });
@@ -1463,7 +1467,7 @@ export function createMeetingCoordinator(overrides = {}) {
     }
 
     const classification = classifyMeeting({ text, metadata });
-    const summary = await buildMeetingSummary({ text, metadata, classification });
+    const summary = await deps.buildMeetingSummary({ text, metadata, classification });
     const identity = projectName
       ? { project_name: projectName, project_key: normalizeProjectKey(projectName) }
       : buildStableProjectIdentity({ text, metadata, chatId });

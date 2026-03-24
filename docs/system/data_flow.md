@@ -153,7 +153,7 @@ This request-flow mirror now reflects the current fail-closed routing baseline.
    - later plain-text messages in the same chat are appended silently into a local capture buffer
    - explicit status-check questions such as `請問在持續記錄中嗎` return a short status reply instead of being appended to the transcript
    - microphone process metadata is persisted with the meeting session so status/stop can recover after a service restart
-   - if an existing meeting document is reused, the same `full_access` grant is repaired on reuse
+   - if an existing meeting document is reused and the initiating user's `open_id` is available, the same `full_access` grant is repaired on reuse
 3. user ends capture by saying `會議結束了` or `/meeting stop`
 4. on stop, the host recording is stopped and transcribed through local `faster-whisper` by default, or a configured OpenAI-compatible endpoint when explicitly selected
 5. captured audio transcript text plus chat-captured text, or the original `/meeting ...` content, is passed into `meeting-agent.mjs`

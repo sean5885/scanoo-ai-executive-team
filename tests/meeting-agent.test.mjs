@@ -30,6 +30,50 @@ function createCoordinatorHarness() {
   const tracker = new Map();
   let confirmationSequence = 0;
 
+  async function buildSummary({ text, metadata = {}, classification }) {
+    const lines = String(text || "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const lineValue = (prefixes = []) => {
+      const prefixPattern = prefixes.join("|");
+      const line = lines.find((item) => new RegExp(`^(?:${prefixPattern})\\s*[:：]`, "i").test(item));
+      return line ? line.replace(new RegExp(`^(?:${prefixPattern})\\s*[:：]\\s*`, "i"), "").trim() : "";
+    };
+    const participants = (lineValue(["參與人員", "参与人员"]) || "待確認")
+      .split(/[、,，]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const todosText = lineValue(["TODO", "Todo", "todo", "待辦", "待办"]);
+    const todos = todosText
+      ? [{
+          owner: todosText.split(/\s+/)[0] || "待確認",
+          title: todosText.split(/\s+/).slice(1).join(" ").trim() || todosText.trim(),
+        }]
+      : [];
+
+    if (classification.meeting_type === "weekly") {
+      return {
+        meeting_type: "weekly",
+        time: metadata.date || "待確認",
+        participants: participants.length ? participants : ["待確認"],
+        progress: [lineValue(["核心進展", "進展"]) || "待確認"],
+        issues: [lineValue(["關鍵問題", "卡點", "問題"]) || "待確認"],
+        solutions: [lineValue(["解法", "方案"]) || "待確認"],
+        todos,
+      };
+    }
+
+    return {
+      meeting_type: "general",
+      time: metadata.date || "待確認",
+      participants: participants.length ? participants : ["待確認"],
+      main_points: [lineValue(["主要內容"]) || "待確認"],
+      conclusions: [lineValue(["關鍵結論", "結論"]) || "待確認"],
+      todos,
+    };
+  }
+
   const coordinator = createMeetingCoordinator({
     sendMessage: async (_accessToken, chatId, content, options = {}) => {
       sentMessages.push({ chatId, content, options });
@@ -67,6 +111,7 @@ function createCoordinatorHarness() {
       documents.set(documentId, content);
       return { document_id: documentId, mode: "replace" };
     },
+    buildMeetingSummary: buildSummary,
     createConfirmation: async (payload) => {
       confirmationSequence += 1;
       const confirmationId = `confirmation-${confirmationSequence}`;
