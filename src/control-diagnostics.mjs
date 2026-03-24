@@ -20,6 +20,11 @@ import {
   collectWritePolicyMissingFields,
   listPhase1RouteWritePolicyFixtures,
 } from "./write-policy-contract.mjs";
+import {
+  evaluateWritePolicyEnforcement,
+  listWritePolicyEnforcementFixtures,
+  WRITE_POLICY_VIOLATION_TYPES,
+} from "./write-policy-enforcement.mjs";
 
 const STATUS_ORDER = {
   fail: 0,
@@ -180,6 +185,142 @@ function buildWritePolicyRouteChecks() {
       has_write_policy: Boolean(actualPolicy),
     };
   });
+}
+
+function buildWritePolicyEnforcementRouteChecks() {
+  return listWritePolicyEnforcementFixtures().map((fixture) => {
+    const routeContract = getRouteContract(fixture.pathname);
+    const actual = routeContract?.write_policy_enforcement || null;
+    const expectedChecks = fixture.checks || {};
+    const actualChecks = actual?.checks || {};
+    const checksMatch = (
+      expectedChecks.scope_key === actualChecks.scope_key
+      && expectedChecks.idempotency_key === actualChecks.idempotency_key
+      && expectedChecks.confirm_required === actualChecks.confirm_required
+      && expectedChecks.review_required === actualChecks.review_required
+    );
+    return {
+      pathname: fixture.pathname,
+      action: fixture.action,
+      ok: cleanText(actual?.mode) === cleanText(fixture.mode) && checksMatch,
+      mode: cleanText(actual?.mode) || null,
+      checks: {
+        scope_key: actualChecks.scope_key === true,
+        idempotency_key: actualChecks.idempotency_key === true,
+        confirm_required: actualChecks.confirm_required === true,
+        review_required: actualChecks.review_required === true,
+      },
+    };
+  });
+}
+
+function buildWritePolicyCoverageSummary({
+  writePolicyRouteChecks = [],
+  writePolicyEnforcementRouteChecks = [],
+} = {}) {
+  const metadataRoutes = writePolicyRouteChecks.length;
+  const enforcedRoutes = writePolicyEnforcementRouteChecks.length;
+  const metadataActions = buildUniqueSorted(writePolicyRouteChecks.map((item) => item.action));
+  const enforcedActions = buildUniqueSorted(writePolicyEnforcementRouteChecks.map((item) => item.action));
+
+  return {
+    metadata_route_count: metadataRoutes,
+    enforced_route_count: enforcedRoutes,
+    metadata_action_count: metadataActions.length,
+    enforced_action_count: enforcedActions.length,
+    route_coverage_ratio: metadataRoutes > 0 ? Number((enforcedRoutes / metadataRoutes).toFixed(2)) : 0,
+    action_coverage_ratio: metadataActions.length > 0
+      ? Number((enforcedActions.length / metadataActions.length).toFixed(2))
+      : 0,
+  };
+}
+
+function buildWritePolicyEnforcementModeSummary(routeChecks = []) {
+  const modeCounts = tallyRecord(routeChecks.map((item) => item.mode));
+  return {
+    mode_counts: modeCounts,
+    routes: routeChecks.map((item) => ({
+      pathname: item.pathname,
+      action: item.action,
+      mode: item.mode,
+      checks: item.checks,
+    })),
+  };
+}
+
+function buildWritePolicyViolationTypeStats(routeChecks = []) {
+  const stats = Object.fromEntries(WRITE_POLICY_VIOLATION_TYPES.map((type) => [type, 0]));
+
+  for (const route of routeChecks) {
+    const routeContract = getRouteContract(route.pathname);
+    const writePolicy = routeContract?.write_policy || {};
+    const action = cleanText(route.action);
+    const pathname = cleanText(route.pathname);
+
+    if (route.checks?.scope_key === true) {
+      const result = evaluateWritePolicyEnforcement({
+        action,
+        pathname,
+        writePolicy: {
+          ...writePolicy,
+          scope_key: null,
+        },
+        confirmed: true,
+        reviewCompleted: true,
+        reviewRequirementActive: cleanText(writePolicy?.review_required) === "conditional",
+      });
+      if (result.violation_types.includes("missing_scope_key")) {
+        stats.missing_scope_key += 1;
+      }
+    }
+
+    if (route.checks?.idempotency_key === true) {
+      const result = evaluateWritePolicyEnforcement({
+        action,
+        pathname,
+        writePolicy: {
+          ...writePolicy,
+          idempotency_key: null,
+        },
+        confirmed: true,
+        reviewCompleted: true,
+        reviewRequirementActive: cleanText(writePolicy?.review_required) === "conditional",
+      });
+      if (result.violation_types.includes("missing_idempotency_key")) {
+        stats.missing_idempotency_key += 1;
+      }
+    }
+
+    if (route.checks?.confirm_required === true && writePolicy?.confirm_required === true) {
+      const result = evaluateWritePolicyEnforcement({
+        action,
+        pathname,
+        writePolicy,
+        confirmed: false,
+        reviewCompleted: true,
+        reviewRequirementActive: cleanText(writePolicy?.review_required) === "conditional",
+      });
+      if (result.violation_types.includes("confirm_required")) {
+        stats.confirm_required += 1;
+      }
+    }
+
+    if (route.checks?.review_required === true) {
+      const result = evaluateWritePolicyEnforcement({
+        action,
+        pathname,
+        writePolicy,
+        confirmed: true,
+        reviewCompleted: false,
+        reviewRequirementActive: cleanText(writePolicy?.review_required) === "conditional",
+      });
+      if (result.violation_types.includes("review_required")) {
+        stats.review_required += 1;
+      }
+    }
+  }
+
+  return stats;
 }
 
 function countMatches(text = "", pattern) {
@@ -955,7 +1096,7 @@ function buildLarkCreateGuardScenarios() {
   ];
 }
 
-async function buildWriteSummary() {
+export async function buildWriteSummary() {
   const writeGuardText = await readText(FILES.writeGuard);
   const httpServerText = await readText(FILES.httpServer);
   const httpRouteContractsText = await readText(FILES.httpRouteContracts);
@@ -983,6 +1124,13 @@ async function buildWriteSummary() {
     "wiki_organize_apply",
   ];
   const writePolicyRouteChecks = buildWritePolicyRouteChecks();
+  const writePolicyEnforcementRouteChecks = buildWritePolicyEnforcementRouteChecks();
+  const writePolicyCoverage = buildWritePolicyCoverageSummary({
+    writePolicyRouteChecks,
+    writePolicyEnforcementRouteChecks,
+  });
+  const writePolicyEnforcementModes = buildWritePolicyEnforcementModeSummary(writePolicyEnforcementRouteChecks);
+  const writePolicyViolationTypeStats = buildWritePolicyViolationTypeStats(writePolicyEnforcementRouteChecks);
   const uniquePolicyActions = buildUniqueSorted(writePolicyRouteChecks.map((item) => item.action));
   const writePolicyLogReferences =
     countMatches(httpServerText, /write_policy:/g)
@@ -1031,6 +1179,27 @@ async function buildWriteSummary() {
       details: {
         write_policy_log_references: writePolicyLogReferences,
         expected_minimum: expectedGuardedOperations.length,
+      },
+    }),
+    normalizeIntegrationPoint({
+      name: "phase2_write_policy_enforcement_route_contracts",
+      file: FILES.httpRouteContracts,
+      ok: writePolicyEnforcementRouteChecks.every((item) => item.ok),
+      details: {
+        route_checks: writePolicyEnforcementRouteChecks,
+      },
+    }),
+    normalizeIntegrationPoint({
+      name: "phase2_write_policy_enforcement_runtime_surface",
+      file: FILES.writeGuard,
+      ok:
+        writeGuardText.includes("write_policy_enforcement_warning")
+        && writeGuardText.includes("write_policy_enforcement_observed")
+        && httpServerText.includes("evaluateWritePolicyEnforcement(")
+        && meetingAgentText.includes("pathname: \"/api/meeting/confirm\""),
+      details: {
+        enforcement_warning_logs: countMatches(writeGuardText, /write_policy_enforcement_warning/g),
+        enforcement_observe_logs: countMatches(writeGuardText, /write_policy_enforcement_observed/g),
       },
     }),
     normalizeIntegrationPoint({
@@ -1085,6 +1254,10 @@ async function buildWriteSummary() {
     guarded_operations: uniqueGuardedOperations,
     policy_actions: uniquePolicyActions,
     policy_route_checks: writePolicyRouteChecks,
+    enforcement_route_checks: writePolicyEnforcementRouteChecks,
+    enforcement_modes: writePolicyEnforcementModes,
+    policy_coverage: writePolicyCoverage,
+    violation_type_stats: writePolicyViolationTypeStats,
     create_guard_surfaces: [
       {
         file: FILES.httpServer,

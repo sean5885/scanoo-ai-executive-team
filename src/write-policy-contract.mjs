@@ -153,7 +153,7 @@ export function buildCreateDocWritePolicy({
     externalWrite: true,
     confirmRequired: true,
     reviewRequired: "conditional",
-    scopeKey: normalizeNullableText(scopeKey) || (cleanText(folderToken) ? `drive:${cleanText(folderToken)}` : null),
+    scopeKey: normalizeNullableText(scopeKey) || (cleanText(folderToken) ? `drive:${cleanText(folderToken)}` : "drive:root"),
     idempotencyKey,
   });
 }

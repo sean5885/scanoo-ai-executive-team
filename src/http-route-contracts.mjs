@@ -6,6 +6,9 @@ import {
   cloneWritePolicyRecord,
   getPhase1RouteWritePolicyFixture,
 } from "./write-policy-contract.mjs";
+import {
+  getWritePolicyEnforcementFixture,
+} from "./write-policy-enforcement.mjs";
 
 const EXACT_METHODS = new Map([
   ["/health", ["GET"]],
@@ -171,5 +174,6 @@ export function getRouteContract(pathname = "") {
     delegates_to: contract?.delegates_to || null,
     governance: contract?.governance || null,
     write_policy: cloneWritePolicyRecord(contract?.write_policy),
+    write_policy_enforcement: getWritePolicyEnforcementFixture(pathname),
   };
 }

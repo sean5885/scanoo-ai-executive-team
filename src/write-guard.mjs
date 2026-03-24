@@ -1,3 +1,5 @@
+import { evaluateWritePolicyEnforcement } from "./write-policy-enforcement.mjs";
+
 function cleanText(value) {
   return String(value || "").trim();
 }
@@ -31,6 +33,8 @@ function resolveWriteGuardErrorCode({ allow = false, reason = "" } = {}) {
       return "write_guard_confirmation_required";
     case "verifier_incomplete":
       return "write_guard_verifier_incomplete";
+    case "policy_enforcement_blocked":
+      return "write_policy_enforcement_blocked";
     default:
       return "write_guard_denied";
   }
@@ -52,9 +56,62 @@ function buildWriteGuardDecision({
   };
 }
 
+function clonePolicyEnforcement(policyEnforcement = null) {
+  if (!policyEnforcement || typeof policyEnforcement !== "object" || Array.isArray(policyEnforcement)) {
+    return null;
+  }
+  return {
+    enforcement_version: cleanText(policyEnforcement.enforcement_version) || null,
+    action: cleanText(policyEnforcement.action) || null,
+    pathname: cleanText(policyEnforcement.pathname) || null,
+    mode: cleanText(policyEnforcement.mode) || null,
+    status: cleanText(policyEnforcement.status) || null,
+    checks: policyEnforcement.checks && typeof policyEnforcement.checks === "object"
+      ? {
+          scope_key: policyEnforcement.checks.scope_key === true,
+          idempotency_key: policyEnforcement.checks.idempotency_key === true,
+          confirm_required: policyEnforcement.checks.confirm_required === true,
+          review_required: policyEnforcement.checks.review_required === true,
+        }
+      : null,
+    violation_count: Number(policyEnforcement.violation_count || 0),
+    violation_types: Array.isArray(policyEnforcement.violation_types)
+      ? policyEnforcement.violation_types.map((item) => cleanText(item)).filter(Boolean)
+      : [],
+    violations: Array.isArray(policyEnforcement.violations)
+      ? policyEnforcement.violations.map((item) => ({
+          type: cleanText(item?.type) || null,
+          field: cleanText(item?.field) || null,
+          message: cleanText(item?.message) || null,
+        }))
+      : [],
+    should_block: policyEnforcement.should_block === true,
+    should_warn: policyEnforcement.should_warn === true,
+    should_observe: policyEnforcement.should_observe === true,
+    message: cleanText(policyEnforcement.message) || null,
+  };
+}
+
+function attachPolicyEnforcement(decision = {}, policyEnforcement = null) {
+  const nextDecision = {
+    ...decision,
+  };
+  const normalizedPolicyEnforcement = clonePolicyEnforcement(policyEnforcement);
+
+  if (normalizedPolicyEnforcement) {
+    nextDecision.policy_enforcement = normalizedPolicyEnforcement;
+    if (normalizedPolicyEnforcement.should_warn) {
+      nextDecision.warning = normalizedPolicyEnforcement.message;
+    }
+  }
+
+  return nextDecision;
+}
+
 function emitWriteGuardDecisionLog({
   logger = null,
   decision = {},
+  policyEnforcement = null,
   owner = "",
   workflow = "",
   operation = "",
@@ -84,9 +141,43 @@ function emitWriteGuardDecisionLog({
     require_confirmation: decision.require_confirmation === true,
     reason: cleanText(decision.reason) || null,
     error_code: cleanText(decision.error_code) || null,
+    policy_enforcement: clonePolicyEnforcement(policyEnforcement),
     ...(cleanText(requestId) ? { request_id: cleanText(requestId) } : {}),
     ...(cleanText(traceId) ? { trace_id: cleanText(traceId) } : {}),
   });
+
+  if (!policyEnforcement || policyEnforcement.violation_count <= 0) {
+    return;
+  }
+
+  if (policyEnforcement.should_warn) {
+    const warningSink = typeof logger.warn === "function"
+      ? logger.warn.bind(logger)
+      : sink;
+    warningSink("write_policy_enforcement_warning", {
+      action: cleanText(operation) || "write_guard",
+      owner: cleanText(owner) || null,
+      workflow: cleanText(workflow) || null,
+      policy_enforcement: clonePolicyEnforcement(policyEnforcement),
+      ...(cleanText(requestId) ? { request_id: cleanText(requestId) } : {}),
+      ...(cleanText(traceId) ? { trace_id: cleanText(traceId) } : {}),
+    });
+    return;
+  }
+
+  if (policyEnforcement.should_observe) {
+    const infoSink = typeof logger.info === "function"
+      ? logger.info.bind(logger)
+      : sink;
+    infoSink("write_policy_enforcement_observed", {
+      action: cleanText(operation) || "write_guard",
+      owner: cleanText(owner) || null,
+      workflow: cleanText(workflow) || null,
+      policy_enforcement: clonePolicyEnforcement(policyEnforcement),
+      ...(cleanText(requestId) ? { request_id: cleanText(requestId) } : {}),
+      ...(cleanText(traceId) ? { trace_id: cleanText(traceId) } : {}),
+    });
+  }
 }
 
 export function decideWriteGuard({
@@ -96,6 +187,12 @@ export function decideWriteGuard({
   mode = "",
   verifierCompleted = false,
   verification = null,
+  pathname = "",
+  writePolicy = null,
+  reviewCompleted = false,
+  reviewRequirementActive = false,
+  scopeKey = null,
+  idempotencyKey = null,
   logger = null,
   owner = "",
   workflow = "",
@@ -107,18 +204,30 @@ export function decideWriteGuard({
   const external = externalWrite === true;
   const previewMode = preview === true || cleanText(mode).toLowerCase() === "preview";
   const verificationDone = resolveVerifierCompleted({ verifierCompleted, verification });
+  const reviewDone = reviewCompleted === true || verificationDone;
+  const policyEnforcement = evaluateWritePolicyEnforcement({
+    action: operation,
+    pathname,
+    writePolicy,
+    confirmed,
+    reviewCompleted: reviewDone,
+    reviewRequirementActive,
+    scopeKey,
+    idempotencyKey,
+  });
   let decision = null;
 
   if (!external) {
-    decision = buildWriteGuardDecision({
+    decision = attachPolicyEnforcement(buildWriteGuardDecision({
       allow: true,
       externalWrite: false,
       requireConfirmation: false,
       reason: "internal_write",
-    });
+    }), policyEnforcement);
     emitWriteGuardDecisionLog({
       logger,
       decision,
+      policyEnforcement,
       owner,
       workflow,
       operation,
@@ -130,15 +239,16 @@ export function decideWriteGuard({
   }
 
   if (previewMode) {
-    decision = buildWriteGuardDecision({
+    decision = attachPolicyEnforcement(buildWriteGuardDecision({
       allow: false,
       externalWrite: true,
       requireConfirmation: false,
       reason: "preview_write_blocked",
-    });
+    }), policyEnforcement);
     emitWriteGuardDecisionLog({
       logger,
       decision,
+      policyEnforcement,
       owner,
       workflow,
       operation,
@@ -150,15 +260,16 @@ export function decideWriteGuard({
   }
 
   if (confirmed !== true) {
-    decision = buildWriteGuardDecision({
+    decision = attachPolicyEnforcement(buildWriteGuardDecision({
       allow: false,
       externalWrite: true,
       requireConfirmation: true,
       reason: "confirmation_required",
-    });
+    }), policyEnforcement);
     emitWriteGuardDecisionLog({
       logger,
       decision,
+      policyEnforcement,
       owner,
       workflow,
       operation,
@@ -170,15 +281,16 @@ export function decideWriteGuard({
   }
 
   if (!verificationDone) {
-    decision = buildWriteGuardDecision({
+    decision = attachPolicyEnforcement(buildWriteGuardDecision({
       allow: false,
       externalWrite: true,
       requireConfirmation: false,
       reason: "verifier_incomplete",
-    });
+    }), policyEnforcement);
     emitWriteGuardDecisionLog({
       logger,
       decision,
+      policyEnforcement,
       owner,
       workflow,
       operation,
@@ -195,9 +307,19 @@ export function decideWriteGuard({
     requireConfirmation: false,
     reason: "allowed",
   });
+  if (policyEnforcement.should_block) {
+    decision = buildWriteGuardDecision({
+      allow: false,
+      externalWrite: true,
+      requireConfirmation: false,
+      reason: "policy_enforcement_blocked",
+    });
+  }
+  decision = attachPolicyEnforcement(decision, policyEnforcement);
   emitWriteGuardDecisionLog({
     logger,
     decision,
+    policyEnforcement,
     owner,
     workflow,
     operation,

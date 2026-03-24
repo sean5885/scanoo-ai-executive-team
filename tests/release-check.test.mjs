@@ -86,6 +86,24 @@ function writeJson(filePath, payload) {
   writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
+const PASS_WRITE_GOVERNANCE = {
+  status: "pass",
+  metadata_route_count: 7,
+  enforced_route_count: 7,
+  route_coverage_ratio: 1,
+  mode_counts: {
+    enforce: 2,
+    observe: 3,
+    warn: 2,
+  },
+  violation_type_stats: {
+    missing_scope_key: 7,
+    missing_idempotency_key: 2,
+    confirm_required: 7,
+    review_required: 4,
+  },
+};
+
 test("release-check report passes when self-check, routing, and planner are stable", async () => {
   const archives = await seedReleaseCheckArchives();
   const result = await runReleaseCheck(archives);
@@ -94,6 +112,7 @@ test("release-check report passes when self-check, routing, and planner are stab
     overall_status: "pass",
     blocking_checks: [],
     doc_boundary_regression: false,
+    write_governance: PASS_WRITE_GOVERNANCE,
     suggested_next_step: "目前這個入口沒有 blocking check；若要正式 release，仍需跑既有測試與發布驗證流程。",
     action_hint: null,
     failing_area: null,
@@ -691,6 +710,7 @@ test("release-check CLI emits only the minimal JSON structure", async () => {
     overall_status: "pass",
     blocking_checks: [],
     doc_boundary_regression: false,
+    write_governance: PASS_WRITE_GOVERNANCE,
     suggested_next_step: "目前這個入口沒有 blocking check；若要正式 release，仍需跑既有測試與發布驗證流程。",
     action_hint: null,
     failing_area: null,
@@ -720,6 +740,7 @@ test("release-check CLI emits only the minimal JSON structure", async () => {
     overall_status: "pass",
     blocking_checks: [],
     doc_boundary_regression: false,
+    write_governance: PASS_WRITE_GOVERNANCE,
     suggested_next_step: "目前這個入口沒有 blocking check；若要正式 release，仍需跑既有測試與發布驗證流程。",
     action_hint: null,
     failing_area: null,
@@ -769,6 +790,17 @@ test("release-check CLI compare-previous prints only the minimal compare view", 
     },
   });
   const firstReport = JSON.parse(firstRaw);
+  assert.deepEqual(firstReport, {
+    overall_status: "pass",
+    blocking_checks: [],
+    doc_boundary_regression: false,
+    write_governance: PASS_WRITE_GOVERNANCE,
+    suggested_next_step: "目前這個入口沒有 blocking check；若要正式 release，仍需跑既有測試與發布驗證流程。",
+    action_hint: null,
+    failing_area: null,
+    representative_fail_case: [],
+    drilldown_source: [],
+  });
   const manifestPath = path.join(archives.releaseCheckArchiveDir, "manifest.json");
   const manifest = readJson(manifestPath);
   const firstSnapshotPath = path.join(
@@ -804,6 +836,7 @@ test("release-check CLI compare-previous prints only the minimal compare view", 
     overall_status: "pass",
     blocking_checks: [],
     doc_boundary_regression: false,
+    write_governance: PASS_WRITE_GOVERNANCE,
     suggested_next_step: "目前這個入口沒有 blocking check；若要正式 release，仍需跑既有測試與發布驗證流程。",
     action_hint: null,
     failing_area: null,
@@ -891,6 +924,7 @@ test("release-check CI entry emits minimal JSON and exits 0 on pass", async () =
     overall_status: "pass",
     blocking_checks: [],
     doc_boundary_regression: false,
+    write_governance: PASS_WRITE_GOVERNANCE,
     suggested_next_step: "目前這個入口沒有 blocking check；若要正式 release，仍需跑既有測試與發布驗證流程。",
     action_hint: null,
     failing_area: null,
@@ -983,6 +1017,7 @@ test("release-check CI entry exits 1 on fail", async () => {
     overall_status: "fail",
     blocking_checks: ["routing_regression"],
     doc_boundary_regression: false,
+    write_governance: PASS_WRITE_GOVERNANCE,
     suggested_next_step: "先看 routing regression：diagnostics 在 src/routing-eval-diagnostics.mjs；rule 看 src/router.js / src/planner-*-flow.mjs；fixture 看 evals/routing-eval-set.mjs。",
     action_hint: "run routing-eval and inspect mixed fixtures",
     failing_area: "mixed",

@@ -372,12 +372,17 @@ Thread 60 CLI shortcuts checkpoint:
    - knowledge subcommand coverage
    - key HTTP route-contract coverage, including high-risk write/apply paths
    - core service-module initialization
+   - checked-in write governance summary from `src/control-diagnostics.mjs`:
+     - per-route enforcement mode for the grounded Phase 1 write family
+     - metadata-vs-enforced coverage
+     - bounded violation-type stats
    - latest routing diagnostics snapshot from `.tmp/routing-diagnostics-history/`, plus compare against the previous routing snapshot when available
    - current planner contract gate from `scripts/planner-contract-check.mjs`, using the same blocking criteria for undefined actions, undefined presets, and selector/contract mismatches
    - planner compare against the latest archived planner diagnostics snapshot in `.tmp/planner-diagnostics-history/`, when one exists
    - archive the unified self-check result itself into `.tmp/system-self-check-history/manifest.json` and `.tmp/system-self-check-history/snapshots/<run-id>.json`
    - unified summary fields:
      - `system_summary`
+     - `write_summary`
      - `routing_summary`
      - `planner_summary`
    - self-check archive manifest fields:
@@ -395,6 +400,7 @@ Thread 60 CLI shortcuts checkpoint:
      - `overall_status`
      - `blocking_checks`
      - `doc_boundary_regression`
+     - `write_governance`
      - `suggested_next_step`
      - `action_hint`
      - `failing_area`
@@ -414,6 +420,7 @@ Thread 60 CLI shortcuts checkpoint:
      - `overall_status`
      - `blocking_checks`
      - `doc_boundary_regression`
+     - `write_governance`
      - `suggested_next_step`
      - `action_hint`
      - `failing_area`

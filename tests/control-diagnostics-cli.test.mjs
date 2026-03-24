@@ -49,7 +49,7 @@ test("control diagnostics CLI renders the fixed single-view summary", async () =
   assert.match(output, /summary: overall=pass \| control=pass \| routing=pass \| write=pass/);
   assert.match(output, /control_summary: issues=0 \| decisions=3 \| owners=3 \| integrations=3/);
   assert.match(output, /routing_summary: status=pass \| accuracy=1 \| compare=unavailable \| doc_boundary_regression=false/);
-  assert.match(output, /write_summary: issues=0 \| guarded_operations=5 \| create_surfaces=2 \| policy_actions=5/);
+  assert.match(output, /write_summary: issues=0 \| guarded_operations=5 \| policy_actions=5 \| enforced_routes=7 \| modes=enforce:2,observe:3,warn:2/);
   assert.match(output, /reporting_summary: error_code_groups=0 \| failure_groups=0 \| top_regressions=0/);
   assert.match(output, /top_regressions: none/);
   assert.match(output, /decision: observe_only \| line none/);
@@ -258,6 +258,27 @@ test("control diagnostics reporting emits stable top regression cases without ch
   ]);
   assert.equal(report.write_summary.policy_route_checks.length, 7);
   assert.equal(report.write_summary.policy_route_checks.every((item) => item.ok), true);
+  assert.equal(report.write_summary.enforcement_route_checks.length, 7);
+  assert.equal(report.write_summary.enforcement_route_checks.every((item) => item.ok), true);
+  assert.deepEqual(report.write_summary.policy_coverage, {
+    metadata_route_count: 7,
+    enforced_route_count: 7,
+    metadata_action_count: 5,
+    enforced_action_count: 5,
+    route_coverage_ratio: 1,
+    action_coverage_ratio: 1,
+  });
+  assert.deepEqual(report.write_summary.enforcement_modes.mode_counts, {
+    enforce: 2,
+    observe: 3,
+    warn: 2,
+  });
+  assert.deepEqual(report.write_summary.violation_type_stats, {
+    missing_scope_key: 7,
+    missing_idempotency_key: 2,
+    confirm_required: 7,
+    review_required: 4,
+  });
 
   const degradedReporting = buildDiagnosticsReportingSummary({
     controlSummary: {

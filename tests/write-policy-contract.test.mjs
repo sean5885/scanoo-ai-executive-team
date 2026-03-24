@@ -12,6 +12,9 @@ import {
   listPhase1RouteWritePolicyFixtures,
   WRITE_POLICY_VERSION,
 } from "../src/write-policy-contract.mjs";
+import {
+  listWritePolicyEnforcementFixtures,
+} from "../src/write-policy-enforcement.mjs";
 
 test("write policy builders normalize phase1 metadata with stable contract fields", () => {
   const createPolicy = buildCreateDocWritePolicy({
@@ -57,16 +60,26 @@ test("write policy builders normalize phase1 metadata with stable contract field
   assert.deepEqual(collectWritePolicyMissingFields(meetingPolicy), []);
 });
 
+test("create_doc policy falls back to a stable root scope key", () => {
+  const createPolicy = buildCreateDocWritePolicy();
+
+  assert.equal(createPolicy.scope_key, "drive:root");
+});
+
 test("phase1 route contracts expose complete write policy metadata for each wired surface", () => {
   const fixtures = listPhase1RouteWritePolicyFixtures();
+  const enforcementFixtures = listWritePolicyEnforcementFixtures();
 
   assert.equal(fixtures.length, 7);
+  assert.equal(enforcementFixtures.length, 7);
 
   for (const fixture of fixtures) {
     const routeContract = getRouteContract(fixture.pathname);
+    const enforcementFixture = enforcementFixtures.find((item) => item.pathname === fixture.pathname);
 
     assert.equal(routeContract?.action, fixture.action);
     assert.deepEqual(collectWritePolicyMissingFields(routeContract?.write_policy), []);
     assert.deepEqual(routeContract?.write_policy, fixture.write_policy);
+    assert.deepEqual(routeContract?.write_policy_enforcement, enforcementFixture);
   }
 });

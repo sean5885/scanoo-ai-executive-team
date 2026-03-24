@@ -278,6 +278,93 @@ The normalized Phase 1 action set exposed through diagnostics is:
 - `document_comment_rewrite_apply`
 - `meeting_confirm_write`
 
+## Phase 2 Grounded Status
+
+Phase 2 now upgrades the same Phase 1 metadata family into bounded runtime governance without rewriting adapters, DB schema, or planner/lane flow.
+
+Grounded Phase 2 files are:
+
+- `/Users/seanhan/Documents/Playground/src/write-policy-enforcement.mjs`
+- `/Users/seanhan/Documents/Playground/src/write-guard.mjs`
+- `/Users/seanhan/Documents/Playground/src/http-route-contracts.mjs`
+- `/Users/seanhan/Documents/Playground/src/http-server.mjs`
+- `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`
+- `/Users/seanhan/Documents/Playground/src/control-diagnostics.mjs`
+- `/Users/seanhan/Documents/Playground/src/system-self-check.mjs`
+- `/Users/seanhan/Documents/Playground/src/release-check.mjs`
+
+### Phase 2 enforcement model
+
+Every grounded Phase 1 write route now has one checked-in enforcement record:
+
+```json
+{
+  "enforcement_version": "write_policy_enforcement_v1",
+  "action": "string",
+  "pathname": "string",
+  "mode": "observe|warn|enforce",
+  "checks": {
+    "scope_key": "boolean",
+    "idempotency_key": "boolean",
+    "confirm_required": "boolean",
+    "review_required": "boolean"
+  }
+}
+```
+
+This layer stays additive:
+
+- `observe`
+  - log only
+- `warn`
+  - log plus explicit warning event
+- `enforce`
+  - convert a passing write guard / route path into a bounded block
+
+Current checked-in initial modes are:
+
+- `create_doc`
+  - `enforce`
+- `meeting_confirm_write`
+  - `warn`
+- `drive_organize_apply`
+  - `observe`
+- `wiki_organize_apply`
+  - `observe`
+- `document_comment_rewrite_apply`
+  - `observe`
+
+Current checked-in violation family is bounded to:
+
+- `missing_scope_key`
+- `missing_idempotency_key`
+- `confirm_required`
+- `review_required`
+
+### Phase 2 runtime mount
+
+Current code truth is:
+
+- `create_doc`
+  - route-level enforcement in `/Users/seanhan/Documents/Playground/src/http-server.mjs`
+  - stable fallback `scope_key = drive:root` when no folder token is supplied
+- `drive_organize_apply`
+  - policy evaluation is mounted through `/Users/seanhan/Documents/Playground/src/write-guard.mjs`
+- `wiki_organize_apply`
+  - policy evaluation is mounted through `/Users/seanhan/Documents/Playground/src/write-guard.mjs`
+- `document_comment_rewrite_apply`
+  - policy evaluation is mounted through `/Users/seanhan/Documents/Playground/src/write-guard.mjs`
+- `meeting_confirm_write`
+  - policy evaluation is mounted through `/Users/seanhan/Documents/Playground/src/write-guard.mjs` and `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`
+
+This still does **not** introduce:
+
+- a new approval runtime
+- a new background worker path
+- a DB-backed policy state store
+- a planner-owned write-policy lane
+- fail-close on every route at once
+
 ## D. Phase 1 Patch Plan
 
 Phase 1 should be intentionally small and should not change write behavior.
@@ -371,7 +458,8 @@ Make the existing high-risk write paths speak one checked-in policy language wit
 1. Phase 1
    - metadata unification only
 2. Phase 2
-   - diagnostics/self-check enforcement for the Phase 1 set
+   - bounded enforcement for the Phase 1 set
+   - diagnostics / self-check / release-check visibility for mode, coverage, and violation stats
 3. Phase 3
    - expand the same contract to remaining external mutation families
 4. Phase 4

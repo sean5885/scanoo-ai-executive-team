@@ -223,6 +223,18 @@ function buildReleaseCheckActionHint({
   return null;
 }
 
+function buildWriteGovernanceSummary(selfCheckResult = {}) {
+  const writeSummary = selfCheckResult?.write_summary || {};
+  return {
+    status: cleanText(writeSummary?.status) || "fail",
+    metadata_route_count: Number(writeSummary?.policy_coverage?.metadata_route_count || 0),
+    enforced_route_count: Number(writeSummary?.policy_coverage?.enforced_route_count || 0),
+    route_coverage_ratio: Number(writeSummary?.policy_coverage?.route_coverage_ratio || 0),
+    mode_counts: writeSummary?.enforcement_modes?.mode_counts || {},
+    violation_type_stats: writeSummary?.violation_type_stats || {},
+  };
+}
+
 function hasBlockingRoutingIssue(selfCheckResult = {}) {
   return (
     cleanText(selfCheckResult?.routing_summary?.status) !== "pass"
@@ -648,6 +660,7 @@ export function buildReleaseCheckReport({ selfCheckResult = {}, drilldown = null
     overall_status: blockingChecks.length === 0 && selfCheckResult?.ok === true ? "pass" : "fail",
     blocking_checks: blockingChecks,
     doc_boundary_regression: docBoundaryRegression,
+    ...(selfCheckResult?.write_summary ? { write_governance: buildWriteGovernanceSummary(selfCheckResult) } : {}),
     suggested_next_step: suggestedNextStep,
     action_hint: actionHint,
     failing_area: normalizedDrilldown.failing_area,

@@ -90,6 +90,7 @@ test("system self-check returns unified routing and planner summaries", async ()
   assert.equal(result.system_summary.core_checks, "pass");
   assert.equal(result.system_summary.company_brain_status, "pass");
   assert.equal(result.system_summary.control_status, "pass");
+  assert.equal(result.system_summary.write_policy_status, "pass");
   assert.equal(result.system_summary.routing_status, "pass");
   assert.equal(result.system_summary.planner_gate, "pass");
   assert.equal(result.system_summary.has_obvious_regression, false);
@@ -98,6 +99,12 @@ test("system self-check returns unified routing and planner summaries", async ()
   assert.equal(result.company_brain_summary.failing_cases.length, 0);
   assert.equal(result.control_summary.status, "pass");
   assert.equal(result.control_summary.issue_count, 0);
+  assert.equal(result.write_summary.status, "pass");
+  assert.deepEqual(result.write_summary.enforcement_modes.mode_counts, {
+    enforce: 2,
+    observe: 3,
+    warn: 2,
+  });
   assert.equal(result.routing_summary.status, "pass");
   assert.equal(result.routing_summary.doc_boundary_regression, false);
   assert.equal(result.routing_summary.compare.available, true);
@@ -134,8 +141,10 @@ test("system self-check returns unified routing and planner summaries", async ()
   assert.equal(snapshot.system_summary.status, "pass");
   assert.equal(snapshot.system_summary.company_brain_status, "pass");
   assert.equal(snapshot.system_summary.control_status, "pass");
+  assert.equal(snapshot.system_summary.write_policy_status, "pass");
   assert.equal(snapshot.doc_boundary_regression, false);
   assert.equal(snapshot.control_summary.status, "pass");
+  assert.equal(snapshot.write_summary.status, "pass");
   assert.equal(snapshot.routing_summary.status, "pass");
   assert.equal(snapshot.routing_summary.doc_boundary_regression, false);
   assert.equal(snapshot.planner_summary.gate, "pass");
@@ -316,7 +325,8 @@ test("self-check CLI renders concise guidance by default", async () => {
 
   assert.match(output, /System Self-Check/);
   assert.match(output, /現在系統能不能放心改：可以/);
-  assert.match(output, /結論：core pass \| company-brain pass \| control pass \| routing pass \| planner pass \| regression no/);
+  assert.match(output, /結論：core pass \| company-brain pass \| control pass \| write-policy pass \| routing pass \| planner pass \| regression no/);
+  assert.match(output, /write policy：coverage 7\/7 \| modes enforce:2,observe:3,warn:2/);
   assert.match(output, /先看：none/);
   assert.match(output, /指引：可以開始改；改 control 後回看 control:diagnostics，改 routing 後回看 routing:diagnostics，改 planner 後回看 planner:diagnostics 與 self-check。/);
 });
@@ -345,6 +355,7 @@ test("self-check CLI emits unified JSON report with --json", async () => {
     core_checks: "pass",
     company_brain_status: "pass",
     control_status: "pass",
+    write_policy_status: "pass",
     routing_status: "pass",
     planner_gate: "pass",
     has_obvious_regression: false,

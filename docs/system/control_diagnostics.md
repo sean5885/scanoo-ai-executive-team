@@ -155,6 +155,44 @@ npm run control:diagnostics -- --compare-snapshot <run-id|path>
 
 - `policy_actions`
 - `policy_route_checks`
+- `enforcement_route_checks`
+- `enforcement_modes`
+- `policy_coverage`
+- `violation_type_stats`
+
+其中：
+
+- `enforcement_route_checks`
+  - 每條 grounded write route 的 `mode` 與 check coverage
+- `enforcement_modes`
+  - 每條 route 的 mode 清單
+  - 以及 `observe` / `warn` / `enforce` 計數
+- `policy_coverage`
+  - `metadata_route_count`
+  - `enforced_route_count`
+  - `metadata_action_count`
+  - `enforced_action_count`
+  - route / action coverage ratio
+- `violation_type_stats`
+  - deterministic policy self-check 統計
+  - 目前固定看：
+    - `missing_scope_key`
+    - `missing_idempotency_key`
+    - `confirm_required`
+    - `review_required`
+
+目前 checked-in 初始 enforcement mode 是：
+
+- `create_doc`
+  - `enforce`
+- `meeting_confirm_write`
+  - `warn`
+- `drive_organize_apply`
+  - `observe`
+- `wiki_organize_apply`
+  - `observe`
+- `document_comment_rewrite_apply`
+  - `observe`
 
 compare mode 仍保持 read-only：
 
@@ -238,6 +276,8 @@ human-readable compare 使用固定方向標記：
 Phase 4 起，這條 read-only diagnostics 線也會被既有 gate 直接重用，但仍不改 runtime：
 
 - `self-check` 直接重用目前 code truth 產生的 `control_summary`
+- `self-check` 也會帶出同一份 write governance summary，但目前仍是 visibility-only，不新增新的 blocking gate
+- `release-check` 的 JSON/CI report 也會帶出同一份 write governance snapshot，但目前不新增新的 release blocking 類別
 - `system_summary.safe_to_change` 必須同時滿足：
   - `base`
   - `control`

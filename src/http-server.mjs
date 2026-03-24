@@ -162,6 +162,9 @@ import {
   buildWikiOrganizeApplyWritePolicy,
 } from "./write-policy-contract.mjs";
 import {
+  evaluateWritePolicyEnforcement,
+} from "./write-policy-enforcement.mjs";
+import {
   buildAgentLearningSummary,
   generateLearningLoopImprovementProposals,
 } from "./agent-learning-loop.mjs";
@@ -179,7 +182,7 @@ import { applyWikiOrganization, previewWikiOrganization } from "./lark-wiki-orga
 import { getAllowedMethodsForPath } from "./http-route-contracts.mjs";
 import { listResolvedSessions } from "./session-scope-store.mjs";
 import { createMeetingCoordinator } from "./meeting-agent.mjs";
-import { extractDocumentId } from "./message-intent-utils.mjs";
+import { cleanText, extractDocumentId } from "./message-intent-utils.mjs";
 import {
   buildHttpIdempotencyScopeKey,
   getHttpIdempotencyRecord,
@@ -1833,6 +1836,9 @@ function respondDocumentRewriteFailure(res, statusCode, error, message, extra = 
 }
 
 function buildWriteGuardMessage(guard = {}) {
+  if (guard.reason === "policy_enforcement_blocked") {
+    return cleanText(guard?.policy_enforcement?.message) || "External write is blocked by write policy enforcement.";
+  }
   if (guard.reason === "confirmation_required") {
     return "External write requires explicit confirmation before apply.";
   }
@@ -2622,6 +2628,11 @@ async function handleDriveOrganize(res, requestUrl, body, apply, logger = noopHt
       externalWrite: true,
       confirmed: apply === true,
       verifierCompleted: hasCloudDocPreviewPlan(applyingTask?.meta?.preview_plan),
+      pathname: "/api/drive/organize/apply",
+      writePolicy,
+      reviewRequirementActive: true,
+      scopeKey,
+      idempotencyKey: getRequestIdempotencyKey(body),
       logger,
       owner: "cloud_doc_workflow",
       workflow: "cloud_doc",
@@ -2831,6 +2842,11 @@ async function handleWikiOrganize(res, requestUrl, body, apply, logger = noopHtt
       externalWrite: true,
       confirmed: apply === true,
       verifierCompleted: hasCloudDocPreviewPlan(applyingTask?.meta?.preview_plan),
+      pathname: "/api/wiki/organize/apply",
+      writePolicy,
+      reviewRequirementActive: true,
+      scopeKey,
+      idempotencyKey: getRequestIdempotencyKey(body),
       logger,
       owner: "cloud_doc_workflow",
       workflow: "cloud_doc",
@@ -3018,6 +3034,32 @@ async function handleDocumentCreate(
     return;
   }
   const folderToken = createGuard.resolved_folder_token || undefined;
+  const resolvedWritePolicy = buildCreateDocWritePolicy({
+    folderToken,
+    idempotencyKey: getRequestIdempotencyKey(body),
+  });
+  const writePolicyEnforcement = evaluateWritePolicyEnforcement({
+    action: "create_doc",
+    pathname: requireEntryGovernance ? "/agent/docs/create" : "/api/doc/create",
+    writePolicy: resolvedWritePolicy,
+    confirmed: confirm === true,
+    reviewCompleted: true,
+    reviewRequirementActive: false,
+    scopeKey: resolvedWritePolicy.scope_key,
+    idempotencyKey: getRequestIdempotencyKey(body),
+  });
+  if (writePolicyEnforcement.should_block) {
+    logger.warn("document_create_blocked_by_write_policy_enforcement", {
+      account_id: context.account.id,
+      write_policy: resolvedWritePolicy,
+      write_policy_enforcement: writePolicyEnforcement,
+    });
+    respondDocumentWriteFailure(res, 409, "write_policy_enforcement_blocked", {
+      message: writePolicyEnforcement.message,
+      violation_types: writePolicyEnforcement.violation_types,
+    });
+    return;
+  }
 
   logger.info("document_create_started", {
     account_id: context.account.id,
@@ -3026,10 +3068,8 @@ async function handleDocumentCreate(
     resolved_folder_token: folderToken || null,
     has_initial_content: Boolean(content),
     demo_like: createGuard.classification?.demo_like === true,
-    write_policy: buildCreateDocWritePolicy({
-      folderToken,
-      idempotencyKey: getRequestIdempotencyKey(body),
-    }),
+    write_policy: resolvedWritePolicy,
+    write_policy_enforcement: writePolicyEnforcement,
   });
   let created;
   try {
@@ -3112,10 +3152,8 @@ async function handleDocumentCreate(
     initial_content_write_failed: initialContentWriteFailed,
     permission_grant_failed: permissionGrantFailed,
     permission_grant_skipped: permissionGrantSkipped,
-    write_policy: buildCreateDocWritePolicy({
-      folderToken,
-      idempotencyKey: getRequestIdempotencyKey(body),
-    }),
+    write_policy: resolvedWritePolicy,
+    write_policy_enforcement: writePolicyEnforcement,
   });
 
   respondDocumentWriteSuccess(res, 200, buildDocumentCreateResult({
@@ -4341,6 +4379,13 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body) {
       Array.isArray(pendingConfirmation.patch_plan)
         && typeof pendingConfirmation.rewritten_content === "string"
         && pendingConfirmation.rewritten_content.trim().length > 0,
+    pathname: "/api/doc/rewrite-from-comments",
+    writePolicy: buildDocumentCommentRewriteApplyWritePolicy({
+      documentId,
+      idempotencyKey: getRequestIdempotencyKey(body),
+    }),
+    scopeKey: cleanText(documentId) ? `doc-rewrite:${cleanText(documentId)}` : null,
+    idempotencyKey: getRequestIdempotencyKey(body),
     logger,
     owner: "doc_rewrite_workflow",
     workflow: "doc_rewrite",
