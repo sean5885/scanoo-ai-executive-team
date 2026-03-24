@@ -364,6 +364,56 @@ function trimExecutiveDecisionRoleCounts(decision = {}) {
   };
 }
 
+function formatExecutiveAgentLabels(agentIds = []) {
+  return uniqueRegisteredAgentIds(agentIds, EXECUTIVE_MAX_ROLES)
+    .map((agentId) => `/${agentId}`)
+    .join("、");
+}
+
+function buildDeterministicExecutiveSelectionReason({
+  mode = "",
+  primaryAgentId = "",
+  supportingAgentIds = [],
+} = {}) {
+  const primaryLabel = formatExecutiveAgentLabels([primaryAgentId]) || "/generalist";
+  const supportingLabels = formatExecutiveAgentLabels(supportingAgentIds);
+
+  if (mode === "compound") {
+    return supportingLabels
+      ? `複合請求命中 distinct specialist 需求，改由 ${primaryLabel} 主責，並補充 ${supportingLabels}。`
+      : `複合請求命中 distinct specialist 需求，改由 ${primaryLabel} 主責收斂。`;
+  }
+
+  if (mode === "explicit") {
+    return `使用者明確指定 ${primaryLabel}，不擴張額外 specialist。`;
+  }
+
+  return `簡單單一意圖請求，維持由 ${primaryLabel} 單一處理。`;
+}
+
+function didExecutiveSelectionChange(originalDecision = {}, nextDecision = {}) {
+  const originalSupporting = uniqueRegisteredAgentIds(originalDecision.supporting_agent_ids, EXECUTIVE_MAX_SUPPORTING_AGENTS);
+  const nextSupporting = uniqueRegisteredAgentIds(nextDecision.supporting_agent_ids, EXECUTIVE_MAX_SUPPORTING_AGENTS);
+
+  return (
+    cleanText(originalDecision.primary_agent_id || "") !== cleanText(nextDecision.primary_agent_id || "")
+    || cleanText(originalDecision.next_agent_id || "") !== cleanText(nextDecision.next_agent_id || "")
+    || JSON.stringify(originalSupporting) !== JSON.stringify(nextSupporting)
+  );
+}
+
+function resolveExecutiveSelectionReason({
+  originalDecision = {},
+  nextDecision = {},
+  deterministicReason = "",
+} = {}) {
+  const normalizedDeterministicReason = cleanText(deterministicReason);
+  if (didExecutiveSelectionChange(originalDecision, nextDecision)) {
+    return normalizedDeterministicReason;
+  }
+  return cleanText(originalDecision.reason);
+}
+
 function applyDeterministicExecutiveAgentSelection(decision = {}, fallbackText = "", activeTask = null) {
   const normalizedText = cleanText(String(fallbackText || "").toLowerCase());
   const normalizedDecision = trimExecutiveDecisionRoleCounts(decision);
@@ -395,30 +445,38 @@ function applyDeterministicExecutiveAgentSelection(decision = {}, fallbackText =
       detectedAgentIds.filter((agentId) => agentId !== primaryAgentId),
       EXECUTIVE_MAX_SUPPORTING_AGENTS,
     );
-    return trimExecutiveDecisionRoleCounts({
+    const nextDecision = trimExecutiveDecisionRoleCounts({
       ...normalizedDecision,
       primary_agent_id: primaryAgentId,
       next_agent_id: primaryAgentId,
       supporting_agent_ids: supportingAgentIds,
-      reason: cleanText(normalizedDecision.reason)
-        || "複合請求命中多個 distinct specialist 需求，使用最小 multi-agent 分工。",
       work_items: buildCollaborativeWorkItems({
         primaryAgentId,
         supportingAgentIds,
         objective,
       }),
     });
+    return {
+      ...nextDecision,
+      reason: resolveExecutiveSelectionReason({
+        originalDecision: normalizedDecision,
+        nextDecision,
+        deterministicReason: buildDeterministicExecutiveSelectionReason({
+          mode: "compound",
+          primaryAgentId,
+          supportingAgentIds,
+        }),
+      }),
+    };
   }
 
   if (explicitAgentIds.length > 0) {
     const primaryAgentId = explicitAgentIds[0];
-    return trimExecutiveDecisionRoleCounts({
+    const nextDecision = trimExecutiveDecisionRoleCounts({
       ...normalizedDecision,
       primary_agent_id: primaryAgentId,
       next_agent_id: primaryAgentId,
       supporting_agent_ids: [],
-      reason: cleanText(normalizedDecision.reason)
-        || (singleRoleFallbackReason ? `使用者明確指定 /${primaryAgentId}，不擴張額外 specialist。` : ""),
       work_items: shouldSeedSingleRoleWorkItems
         ? buildSingleAgentWorkItems({
             primaryAgentId,
@@ -427,15 +485,24 @@ function applyDeterministicExecutiveAgentSelection(decision = {}, fallbackText =
           })
         : [],
     });
+    return {
+      ...nextDecision,
+      reason: resolveExecutiveSelectionReason({
+        originalDecision: normalizedDecision,
+        nextDecision,
+        deterministicReason: buildDeterministicExecutiveSelectionReason({
+          mode: "explicit",
+          primaryAgentId,
+        }),
+      }),
+    };
   }
 
-  return trimExecutiveDecisionRoleCounts({
+  const nextDecision = trimExecutiveDecisionRoleCounts({
     ...normalizedDecision,
     primary_agent_id: "generalist",
     next_agent_id: "generalist",
     supporting_agent_ids: [],
-    reason: cleanText(normalizedDecision.reason)
-      || (singleRoleFallbackReason ? "簡單單一意圖請求，預設由 generalist 處理。" : ""),
     work_items: shouldSeedSingleRoleWorkItems
       ? buildSingleAgentWorkItems({
           primaryAgentId: "generalist",
@@ -444,6 +511,17 @@ function applyDeterministicExecutiveAgentSelection(decision = {}, fallbackText =
         })
       : [],
   });
+  return {
+    ...nextDecision,
+    reason: resolveExecutiveSelectionReason({
+      originalDecision: normalizedDecision,
+      nextDecision,
+      deterministicReason: buildDeterministicExecutiveSelectionReason({
+        mode: singleRoleFallbackReason ? "single_start" : "single_continue",
+        primaryAgentId: "generalist",
+      }),
+    }),
+  };
 }
 
 function buildCollaborativeWorkItems({ primaryAgentId = "", supportingAgentIds = [], objective = "" } = {}) {

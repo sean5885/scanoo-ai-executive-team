@@ -221,14 +221,16 @@ What now exists in current code:
     - orchestration context only when useful
     - visible subtask list
     - visible supporting-agent summaries
-  - expose a minimal planner-callable tool registry for three agent-bridge actions:
+  - expose a minimal planner-callable tool registry for five agent-bridge actions:
     - `create_doc`
     - `list_company_brain_docs`
+    - `search_company_brain_docs`
+    - `get_company_brain_doc_detail`
     - `get_runtime_info`
   - route those tool calls through the existing `/agent/*` HTTP bridges instead of duplicating document/runtime logic
 - Boundaries:
   - does not run an async worker queue
-  - supporting agents run as in-process sequential passes, not as background workers
+  - supporting agents run as in-process parallel async calls, not as background workers
   - does not maintain a tenant-wide memory graph
   - does not yet auto-apply high-risk prompt/governance proposals without review
 

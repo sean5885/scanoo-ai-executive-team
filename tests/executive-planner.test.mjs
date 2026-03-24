@@ -174,6 +174,41 @@ test("planExecutiveTurn keeps the same role set for repeated identical compound 
   );
 });
 
+test("planExecutiveTurn refreshes why when hardening overrides stale role explanation", async () => {
+  resetPlannerRuntimeContext();
+  const decision = await planExecutiveTurn({
+    text: "請同時從市場定位與技術風險評估這個功能，最後統一收斂建議",
+    activeTask: null,
+    async requester() {
+      return JSON.stringify({
+        action: "start",
+        objective: "評估新功能",
+        primary_agent_id: "consult",
+        next_agent_id: "consult",
+        supporting_agent_ids: ["product", "ops"],
+        reason: "請由 /consult 主責，並搭配 /product 與 /ops",
+        pending_questions: [],
+        work_items: [
+          { agent_id: "consult", task: "拆解", role: "primary" },
+          { agent_id: "product", task: "產品", role: "supporting" },
+          { agent_id: "ops", task: "營運", role: "supporting" },
+        ],
+      });
+    },
+  });
+
+  assert.equal(decision.primary_agent_id, "generalist");
+  assert.deepEqual(decision.supporting_agent_ids, ["cmo", "tech"]);
+  assert.match(decision.reason || "", /\/generalist/);
+  assert.match(decision.reason || "", /\/cmo/);
+  assert.match(decision.reason || "", /\/tech/);
+  assert.doesNotMatch(decision.reason || "", /\/consult|\/product|\/ops/);
+  assert.match(decision.why || "", /\/generalist/);
+  assert.match(decision.why || "", /\/cmo/);
+  assert.match(decision.why || "", /\/tech/);
+  assert.doesNotMatch(decision.why || "", /\/consult|\/product|\/ops/);
+});
+
 test("planUserInputAction rejects wrapped non-JSON output", async () => {
   resetPlannerRuntimeContext();
   const result = await planUserInputAction({
