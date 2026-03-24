@@ -216,6 +216,25 @@ export async function consumeCommentRewriteConfirmation({
   return entry;
 }
 
+export async function peekCommentRewriteConfirmation({
+  confirmationId,
+  accountId,
+  documentId,
+}) {
+  const store = await loadStore();
+  const entry = store.items[confirmationId];
+  if (!entry || entry.kind !== "comment_rewrite") {
+    return null;
+  }
+  if ((entry.account_id || null) !== (accountId || null)) {
+    return null;
+  }
+  if (entry.document_id !== documentId) {
+    return null;
+  }
+  return { ...entry };
+}
+
 export async function createMeetingWriteConfirmation({
   accountId,
   projectKey,
@@ -289,4 +308,19 @@ export async function consumeMeetingWriteConfirmation({
   delete store.items[confirmationId];
   await writeJsonFile(docUpdateConfirmationStorePath, store);
   return entry;
+}
+
+export async function peekMeetingWriteConfirmation({
+  confirmationId,
+  accountId,
+}) {
+  const store = await loadStore();
+  const entry = store.items[confirmationId];
+  if (!entry || entry.kind !== "meeting_write") {
+    return null;
+  }
+  if ((entry.account_id || null) !== (accountId || null)) {
+    return null;
+  }
+  return { ...entry };
 }

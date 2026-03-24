@@ -797,6 +797,24 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 - Core path:
   - important for drive/wiki organization safety
 
+### 10D. Shared Write Guard
+
+- Location:
+  - `/Users/seanhan/Documents/Playground/src/write-guard.mjs`
+  - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
+  - `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`
+  - `/Users/seanhan/Documents/Playground/src/doc-update-confirmations.mjs`
+- Responsibility:
+  - provide one bounded `decideWriteGuard(...)` decision surface for workflow-level write gating
+  - keep the return shape compact as `allow / external_write / require_confirmation`
+  - block external writes when the request is still preview-only
+  - block external writes when explicit confirm/apply intent is still missing
+  - block external writes when the workflow-specific preview/review verification precondition has not been completed
+  - allow internal writes such as company-brain mirror ingest to stay on the existing internal path
+  - guard doc-rewrite apply, meeting confirm write, and drive/wiki organize apply without changing their surrounding workflow contracts
+- Core path:
+  - yes for workflow write safety
+
 ### 11. OpenClaw Plugin
 
 - Location:

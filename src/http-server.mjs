@@ -131,6 +131,8 @@ import {
   createCommentRewriteConfirmation,
   createDocumentReplaceConfirmation,
   createMeetingWriteConfirmation,
+  peekCommentRewriteConfirmation,
+  peekMeetingWriteConfirmation,
 } from "./doc-update-confirmations.mjs";
 import {
   executeSecureAction,
@@ -148,6 +150,7 @@ import {
   resolveImprovementWorkflowProposal,
 } from "./executive-improvement-workflow.mjs";
 import { assertLarkWriteAllowed, planDocumentCreateGuard } from "./lark-write-guard.mjs";
+import { decideWriteGuard } from "./write-guard.mjs";
 import {
   buildAgentLearningSummary,
   generateLearningLoopImprovementProposals,
@@ -189,6 +192,7 @@ import { normalizeUserResponse } from "./user-response-normalizer.mjs";
 const pendingOauthStates = new Map();
 const meetingCoordinator = createMeetingCoordinator({
   createConfirmation: createMeetingWriteConfirmation,
+  peekConfirmation: peekMeetingWriteConfirmation,
   consumeConfirmation: consumeMeetingWriteConfirmation,
 });
 let activeHttpServiceOverrides = {};
@@ -888,6 +892,20 @@ function getCompanyBrainAgentStatusCode(result = {}) {
 
 function ingestVerifiedDocumentToCompanyBrain({ account, row, logger = noopHttpLogger }) {
   if (!account?.id || !row?.document_id) {
+    return null;
+  }
+
+  const writeGuard = decideWriteGuard({
+    externalWrite: false,
+    confirmed: true,
+    verifierCompleted: true,
+  });
+  if (!writeGuard.allow) {
+    logger.warn("document_company_brain_ingest_blocked_by_write_guard", {
+      account_id: account.id,
+      doc_id: row.document_id,
+      write_guard: writeGuard,
+    });
     return null;
   }
 
@@ -1698,6 +1716,10 @@ async function ensureCloudDocPreviewReviewTasks({
   });
 }
 
+function hasCloudDocPreviewPlan(previewPlan = null) {
+  return Array.isArray(previewPlan?.moves) && Array.isArray(previewPlan?.target_folders);
+}
+
 function buildDocumentRewriteWorkflowScope(documentId) {
   return {
     session_key: `doc-rewrite:${documentId}`,
@@ -1766,6 +1788,26 @@ function respondDocumentRewriteFailure(res, statusCode, error, message, extra = 
     ...(message ? { message } : {}),
     ...extra,
   });
+}
+
+function buildWriteGuardMessage(guard = {}) {
+  if (guard.reason === "confirmation_required") {
+    return "External write requires explicit confirmation before apply.";
+  }
+  if (guard.reason === "preview_write_blocked") {
+    return "Preview mode cannot execute external writes.";
+  }
+  if (guard.reason === "verifier_incomplete") {
+    return "External write is blocked until preview/review verification is complete.";
+  }
+  return "External write is blocked by write guard.";
+}
+
+function getWriteGuardStatusCode(guard = {}) {
+  if (guard.require_confirmation) {
+    return 409;
+  }
+  return 409;
 }
 
 function buildCloudDocOrganizeResponse({
@@ -2529,6 +2571,15 @@ async function handleDriveOrganize(res, requestUrl, body, apply, logger = noopHt
       );
       return;
     }
+    const writeGuard = decideWriteGuard({
+      externalWrite: true,
+      confirmed: apply === true,
+      verifierCompleted: hasCloudDocPreviewPlan(applyingTask?.meta?.preview_plan),
+    });
+    if (!writeGuard.allow) {
+      respondCloudDocPreviewRequired(res, buildWriteGuardMessage(writeGuard));
+      return;
+    }
   }
   const result = apply
     ? await getHttpService("applyDriveOrganization", applyDriveOrganization)(
@@ -2709,6 +2760,15 @@ async function handleWikiOrganize(res, requestUrl, body, apply, logger = noopHtt
         res,
         "Wiki organize apply requires a prior preview/review step for the same scope.",
       );
+      return;
+    }
+    const writeGuard = decideWriteGuard({
+      externalWrite: true,
+      confirmed: apply === true,
+      verifierCompleted: hasCloudDocPreviewPlan(applyingTask?.meta?.preview_plan),
+    });
+    if (!writeGuard.allow) {
+      respondCloudDocPreviewRequired(res, buildWriteGuardMessage(writeGuard));
       return;
     }
   }
@@ -4090,6 +4150,54 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body) {
   }
 
   const current = await getHttpService("getDocument", getDocument)(context.token, documentId);
+  const pendingConfirmation = await peekCommentRewriteConfirmation({
+    confirmationId,
+    accountId: context.account.id,
+    documentId,
+  });
+  if (!pendingConfirmation) {
+    respondDocumentRewriteFailure(
+      res,
+      400,
+      "invalid_or_expired_confirmation",
+      "The rewrite confirmation is missing or expired. Generate a fresh preview first.",
+    );
+    return;
+  }
+  if (
+    pendingConfirmation.current_revision_id &&
+    current.revision_id &&
+    pendingConfirmation.current_revision_id !== current.revision_id
+  ) {
+    respondDocumentRewriteFailure(
+      res,
+      409,
+      "stale_confirmation",
+      "The document changed after preview. Generate a fresh rewrite preview first.",
+      { current_revision_id: current.revision_id },
+    );
+    return;
+  }
+
+  const writeGuard = decideWriteGuard({
+    externalWrite: true,
+    confirmed: confirm === true && Boolean(confirmationId),
+    verifierCompleted:
+      Array.isArray(pendingConfirmation.patch_plan)
+      && typeof pendingConfirmation.rewritten_content === "string"
+      && pendingConfirmation.rewritten_content.trim().length > 0,
+  });
+  if (!writeGuard.allow) {
+    respondDocumentRewriteFailure(
+      res,
+      getWriteGuardStatusCode(writeGuard),
+      "write_guard_denied",
+      buildWriteGuardMessage(writeGuard),
+      { write_guard: writeGuard },
+    );
+    return;
+  }
+
   const confirmation = await consumeCommentRewriteConfirmation({
     confirmationId,
     accountId: context.account.id,
@@ -4101,20 +4209,6 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body) {
       400,
       "invalid_or_expired_confirmation",
       "The rewrite confirmation is missing or expired. Generate a fresh preview first.",
-    );
-    return;
-  }
-  if (
-    confirmation.current_revision_id &&
-    current.revision_id &&
-    confirmation.current_revision_id !== current.revision_id
-  ) {
-    respondDocumentRewriteFailure(
-      res,
-      409,
-      "stale_confirmation",
-      "The document changed after preview. Generate a fresh rewrite preview first.",
-      { current_revision_id: current.revision_id },
     );
     return;
   }
@@ -4278,6 +4372,20 @@ async function handleMeetingConfirm(res, requestUrl, body, logger = noopHttpLogg
     });
     return;
   }
+  if (result.ok === false && result.error === "write_guard_denied") {
+    logger.warn("meeting_confirm_blocked_by_write_guard", {
+      account_id: context.account.id,
+      confirmation_id: confirmationId,
+      write_guard: result.write_guard || null,
+    });
+    jsonResponse(res, getWriteGuardStatusCode(result.write_guard), {
+      ok: false,
+      error: result.error,
+      message: result.message,
+      write_guard: result.write_guard || null,
+    });
+    return;
+  }
 
   logger.info("meeting_confirm_completed", {
     account_id: context.account.id,
@@ -4325,6 +4433,14 @@ async function handleMeetingConfirmPage(res, requestUrl, body) {
       res,
       400,
       "<h1>確認失效或已使用</h1><p>請重新執行 /meeting 產生新的待確認摘要。</p>",
+    );
+    return;
+  }
+  if (result.ok === false && result.error === "write_guard_denied") {
+    htmlResponse(
+      res,
+      getWriteGuardStatusCode(result.write_guard),
+      `<h1>外部寫入被阻擋</h1><p>${result.message || buildWriteGuardMessage(result.write_guard)}</p>`,
     );
     return;
   }

@@ -23,6 +23,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 ```bash
 node --test \
+  tests/write-guard.test.mjs \
   tests/executive-task-state.test.mjs \
   tests/control-unification-phase2-meeting.test.mjs \
   tests/control-unification-phase2-doc-rewrite.test.mjs \
@@ -32,6 +33,7 @@ node --test \
 覆蓋：
 
 - active_task store
+- shared write guard
 - meeting gate
 - doc_rewrite gate
 - cloud_doc gate
@@ -130,6 +132,7 @@ node scripts/monitoring-cli.mjs learning 1 1
 - 修改 `src/executive-orchestrator.mjs`
 - 修改 `src/executive-closed-loop.mjs`
 - 修改 `src/executive-verifier.mjs`
+- 修改 `src/write-guard.mjs`
 - 修改 workflow state / gate 邏輯
 
 ### Run Integration Baseline When

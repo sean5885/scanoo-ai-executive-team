@@ -95,6 +95,10 @@ function createCoordinatorHarness() {
       confirmations.delete(confirmationId);
       return payload;
     },
+    peekConfirmation: async ({ confirmationId }) => {
+      const payload = confirmations.get(confirmationId) || null;
+      return payload ? { ...payload } : null;
+    },
     listWeeklyTrackerItems: (accountId, projectKey) => {
       const items = tracker.get(`${accountId}:${projectKey}`) || [];
       return items.map((item) => ({ ...item }));

@@ -19,6 +19,7 @@ import {
 import {
   consumeMeetingWriteConfirmation,
   createMeetingWriteConfirmation,
+  peekMeetingWriteConfirmation,
 } from "./doc-update-confirmations.mjs";
 import { buildCompactSystemPrompt, governPromptSections, trimTextForBudget } from "./agent-token-governance.mjs";
 import { callOpenClawTextGeneration } from "./openclaw-text-service.mjs";
@@ -32,12 +33,26 @@ import {
 import { registerKnowledgeWriteback } from "./executive-closed-loop.mjs";
 import { EVIDENCE_TYPES, verifyMeetingWorkflowCompletion } from "./executive-verifier.mjs";
 import { normalizeText, nowIso } from "./text-utils.mjs";
+import { decideWriteGuard } from "./write-guard.mjs";
 
 const WEEKLY_PROGRESS_KEYWORDS = ["進展", "推进", "推進", "完成度", "完成", "達成", "okr", "kr", "目標", "objective"];
 const WEEKLY_ISSUE_KEYWORDS = ["卡點", "阻塞", "問題", "风险", "風險", "瓶頸"];
 const WEEKLY_SOLUTION_KEYWORDS = ["解法", "方案", "決定", "處理", "修復", "對策"];
 const WEEKLY_TODO_KEYWORDS = ["todo", "待辦", "待办", "owner", "下週", "本週", "跟進", "跟进", "action item"];
 const GENERAL_CONCLUSION_KEYWORDS = ["結論", "结论", "決定", "决定", "共識", "共识", "確認", "确认"];
+
+function buildWriteGuardMessage(guard = {}) {
+  if (guard.reason === "confirmation_required") {
+    return "External write requires explicit confirmation before apply.";
+  }
+  if (guard.reason === "preview_write_blocked") {
+    return "Preview mode cannot execute external writes.";
+  }
+  if (guard.reason === "verifier_incomplete") {
+    return "External write is blocked until preview/review verification is complete.";
+  }
+  return "External write is blocked by write guard.";
+}
 const DONE_KEYWORDS = ["完成", "已完成", "done", "結案", "close"];
 const MEETING_WAKE_WORDS = ["會議", "会议", "meeting"];
 const MEETING_TOPIC_SIGNALS = ["會議", "会议", "meeting", "週會", "周会", "例會", "例会"];
@@ -1210,6 +1225,7 @@ function defaultCoordinatorDeps() {
     createDocument: createManagedDocument,
     updateDocument,
     createConfirmation: createMeetingWriteConfirmation,
+    peekConfirmation: peekMeetingWriteConfirmation,
     consumeConfirmation: consumeMeetingWriteConfirmation,
     getMappedMeetingDocument,
     saveMeetingDocumentMapping,
@@ -1520,6 +1536,31 @@ export function createMeetingCoordinator(overrides = {}) {
     accessToken,
     confirmationId,
   }) {
+    const pendingConfirmation = await deps.peekConfirmation({
+      confirmationId,
+      accountId,
+    });
+    if (!pendingConfirmation) {
+      return null;
+    }
+
+    const writeGuard = decideWriteGuard({
+      externalWrite: true,
+      confirmed: Boolean(confirmationId),
+      verifierCompleted: Boolean(
+        normalizeText(pendingConfirmation.summary_content)
+        && normalizeText(pendingConfirmation.doc_entry_content),
+      ),
+    });
+    if (!writeGuard.allow) {
+      return {
+        ok: false,
+        error: "write_guard_denied",
+        message: buildWriteGuardMessage(writeGuard),
+        write_guard: writeGuard,
+      };
+    }
+
     const confirmation = await deps.consumeConfirmation({
       confirmationId,
       accountId,

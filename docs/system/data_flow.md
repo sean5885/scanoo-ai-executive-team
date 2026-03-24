@@ -105,6 +105,7 @@ This request-flow mirror now reflects the current fail-closed routing baseline.
 7. apply mode replaces doc content
 8. optional comment resolution marks comments as solved
 9. rewrite checkpoint is updated externally after preview/apply
+10. shared `write-guard.mjs` blocks the apply step unless the path is no longer preview-only, explicit confirmation is present, and the preview/review precondition has completed
 
 ### Comment Suggestion Card Flow
 
@@ -116,6 +117,16 @@ This request-flow mirror now reflects the current fail-closed routing baseline.
 6. human-readable suggestion card is returned
 7. optional `message_id` path replies with the card
 8. optional `mark_seen=true` records those comments in local watch state
+
+### Shared External Write Guard Flow
+
+1. workflow enters a preview/review boundary first
+2. write caller resolves whether the target is an external write or an internal write
+3. external write paths call `decideWriteGuard(...)`
+4. preview-mode requests are denied before any external mutation
+5. missing confirm/apply intent is denied before any external mutation
+6. missing preview/review verification precondition is denied before any external mutation
+7. internal writes such as company-brain mirror ingest continue on their existing internal path
 
 ### HTTP High-Risk Route Governance
 
