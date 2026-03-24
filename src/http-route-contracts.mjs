@@ -1,3 +1,6 @@
+import {
+  getCompanyBrainLifecycleRouteContract,
+} from "./company-brain-lifecycle-contract.mjs";
 import { getDocumentCreateGovernanceContract } from "./lark-write-guard.mjs";
 
 const EXACT_METHODS = new Map([
@@ -57,6 +60,11 @@ const EXACT_METHODS = new Map([
   ["/agent/docs/create", ["POST"]],
   ["/agent/company-brain/docs", ["GET"]],
   ["/agent/company-brain/search", ["GET"]],
+  ["/agent/company-brain/approved/docs", ["GET"]],
+  ["/agent/company-brain/approved/search", ["GET"]],
+  ["/agent/company-brain/review", ["POST"]],
+  ["/agent/company-brain/conflicts", ["POST"]],
+  ["/agent/company-brain/approval-transition", ["POST"]],
   ["/agent/company-brain/learning/ingest", ["POST"]],
   ["/agent/company-brain/learning/state", ["POST"]],
   ["/agent/system/runtime-info", ["GET"]],
@@ -67,6 +75,8 @@ const EXACT_METHODS = new Map([
 const REGEX_METHODS = [
   [/^\/api\/company-brain\/docs\/[^/]+$/, ["GET"]],
   [/^\/agent\/company-brain\/docs\/[^/]+$/, ["GET"]],
+  [/^\/agent\/company-brain\/approved\/docs\/[^/]+$/, ["GET"]],
+  [/^\/agent\/company-brain\/docs\/[^/]+\/apply$/, ["POST"]],
   [/^\/agent\/approvals\/[^/]+\/(approve|reject)$/, ["POST"]],
   [/^\/agent\/improvements\/[^/]+\/(approve|reject)$/, ["POST"]],
   [/^\/agent\/improvements\/[^/]+\/apply$/, ["POST"]],
@@ -127,7 +137,7 @@ export function getRouteContract(pathname = "") {
     return null;
   }
 
-  const contract = EXACT_ROUTE_CONTRACTS.get(pathname);
+  const contract = EXACT_ROUTE_CONTRACTS.get(pathname) || getCompanyBrainLifecycleRouteContract(pathname);
   return {
     pathname,
     methods,

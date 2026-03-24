@@ -1,6 +1,7 @@
 import { listRegisteredAgents, knowledgeAgentSubcommands } from "./agent-registry.mjs";
 import { buildControlSummary } from "./control-diagnostics.mjs";
-import { getAllowedMethodsForPath } from "./http-route-contracts.mjs";
+import { runCompanyBrainLifecycleSelfCheck } from "./company-brain-lifecycle-contract.mjs";
+import { getAllowedMethodsForPath, getRouteContract } from "./http-route-contracts.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import {
   buildPlannerDiagnosticsCompareSummary,
@@ -65,6 +66,17 @@ const REQUIRED_HTTP_PATHS = [
   "/agent/improvements/test-proposal/approve",
   "/agent/improvements/test-proposal/reject",
   "/agent/improvements/test-proposal/apply",
+  "/agent/company-brain/docs",
+  "/agent/company-brain/search",
+  "/agent/company-brain/approved/docs",
+  "/agent/company-brain/approved/search",
+  "/agent/company-brain/review",
+  "/agent/company-brain/conflicts",
+  "/agent/company-brain/approval-transition",
+  "/agent/company-brain/learning/ingest",
+  "/agent/company-brain/learning/state",
+  "/agent/company-brain/approved/docs/test-doc",
+  "/agent/company-brain/docs/test-doc/apply",
   "/agent/tasks",
 ];
 
@@ -345,10 +357,12 @@ async function buildPlannerSummary({
 
 function buildSystemSummary({
   baseOk = false,
+  companyBrainSummary = {},
   controlSummary = {},
   routingSummary = {},
   plannerSummary = {},
 } = {}) {
+  const companyBrainStatus = cleanText(companyBrainSummary?.status) === "pass" ? "pass" : "fail";
   const controlStatus = cleanText(controlSummary?.status) === "pass" ? "pass" : "fail";
   const routingStatus = routingSummary?.status || "fail";
   const plannerGate = plannerSummary?.gate || "fail";
@@ -356,18 +370,25 @@ function buildSystemSummary({
     routingSummary?.compare?.has_obvious_regression
     || plannerSummary?.compare?.has_obvious_regression
   );
-  const status = !baseOk || controlStatus === "fail" || routingStatus === "fail" || plannerGate === "fail"
+  const status = !baseOk
+    || companyBrainStatus === "fail"
+    || controlStatus === "fail"
+    || routingStatus === "fail"
+    || plannerGate === "fail"
     ? "fail"
     : routingStatus === "degrade" || hasObviousRegression
       ? "degrade"
       : "pass";
   const safeToChange = baseOk
+    && companyBrainStatus === "pass"
     && controlStatus === "pass"
     && routingStatus === "pass"
     && plannerGate === "pass"
     && hasObviousRegression === false;
   const reviewPriority = !baseOk
     ? "base"
+    : companyBrainStatus !== "pass"
+      ? "company_brain"
     : controlStatus !== "pass"
       ? "control"
     : routingStatus !== "pass" || routingSummary?.compare?.has_obvious_regression
@@ -377,6 +398,8 @@ function buildSystemSummary({
         : "none";
   const guidance = reviewPriority === "base"
     ? "先修 self-check 基礎項目，再看 control / routing / planner。"
+    : reviewPriority === "company_brain"
+      ? "先看 company-brain lifecycle contract：確認 review / conflict / approval / apply 與 route contract、自檢案例一致；不要改 runtime write path。"
     : reviewPriority === "control"
       ? "先看 control：優先檢查 src/control-kernel.mjs 與 src/lane-executor.mjs，先修 ownership / same-scope drift，再動 downstream workflow。"
     : reviewPriority === "routing"
@@ -392,6 +415,7 @@ function buildSystemSummary({
     safe_to_change: safeToChange,
     answer: safeToChange ? "可以" : "先不要",
     core_checks: baseOk ? "pass" : "fail",
+    company_brain_status: companyBrainStatus,
     control_status: controlStatus,
     routing_status: routingStatus,
     planner_gate: plannerGate,
@@ -420,12 +444,15 @@ export function normalizeSystemSelfCheckStatus(report = {}) {
   }
 
   const baseOk = cleanText(report?.system_summary?.core_checks) === "pass";
+  const companyBrainStatus = normalizePlannerStatus(
+    report?.system_summary?.company_brain_status || report?.company_brain_summary?.status,
+  );
   const controlStatus = normalizePlannerStatus(report?.system_summary?.control_status || report?.control_summary?.status);
   const routingStatus = normalizeRoutingStatus(report?.system_summary?.routing_status || report?.routing_summary?.status);
   const plannerStatus = normalizePlannerStatus(report?.system_summary?.planner_gate || report?.planner_summary?.gate);
   const hasObviousRegression = Boolean(report?.system_summary?.has_obvious_regression);
 
-  if (!baseOk || controlStatus === "fail" || routingStatus === "fail" || plannerStatus === "fail") {
+  if (!baseOk || companyBrainStatus === "fail" || controlStatus === "fail" || routingStatus === "fail" || plannerStatus === "fail") {
     return "fail";
   }
   if (routingStatus === "degrade" || hasObviousRegression) {
@@ -489,7 +516,7 @@ export function renderSystemSelfCheckReport(result = {}) {
   return [
     "System Self-Check",
     `現在系統能不能放心改：${systemSummary?.answer || "先不要"}`,
-    `結論：core ${systemSummary?.core_checks || "fail"} | control ${systemSummary?.control_status || "fail"} | routing ${systemSummary?.routing_status || "fail"} | planner ${systemSummary?.planner_gate || "fail"} | regression ${systemSummary?.has_obvious_regression ? "yes" : "no"}`,
+    `結論：core ${systemSummary?.core_checks || "fail"} | company-brain ${systemSummary?.company_brain_status || "fail"} | control ${systemSummary?.control_status || "fail"} | routing ${systemSummary?.routing_status || "fail"} | planner ${systemSummary?.planner_gate || "fail"} | regression ${systemSummary?.has_obvious_regression ? "yes" : "no"}`,
     `先看：${systemSummary?.review_priority || "base"}`,
     `指引：${systemSummary?.guidance || "先看 self-check 失敗項目。"}`
   ].join("\n");
@@ -550,6 +577,9 @@ export async function runSystemSelfCheck({
     buildPlannerSummary({ plannerArchiveDir, plannerContractCheck }),
     buildRoutingSummary({ routingArchiveDir }),
   ]);
+  const companyBrainSummary = runCompanyBrainLifecycleSelfCheck({
+    getRouteContract,
+  });
   const baseOk = !hasBlockingBaseFailures({
     missingAgents,
     invalidContracts,
@@ -559,6 +589,7 @@ export async function runSystemSelfCheck({
   });
   const systemSummary = buildSystemSummary({
     baseOk,
+    companyBrainSummary,
     controlSummary,
     routingSummary,
     plannerSummary,
@@ -569,6 +600,7 @@ export async function runSystemSelfCheck({
     ok,
     doc_boundary_regression: routingSummary?.doc_boundary_regression === true,
     system_summary: systemSummary,
+    company_brain_summary: companyBrainSummary,
     control_summary: controlSummary,
     routing_summary: routingSummary,
     planner_summary: {

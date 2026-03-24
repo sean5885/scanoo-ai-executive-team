@@ -10,6 +10,7 @@ import { runSystemSelfCheck } from "./system-self-check.mjs";
 
 const BLOCKING_SYSTEM_REGRESSION = "system_regression";
 const BLOCKING_CONTROL_REGRESSION = "control_regression";
+const BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE = "company_brain_lifecycle_failure";
 const BLOCKING_ROUTING_REGRESSION = "routing_regression";
 const BLOCKING_PLANNER_CONTRACT_FAILURE = "planner_contract_failure";
 const FAILING_AREA_DOC = "doc";
@@ -90,6 +91,10 @@ function buildSystemRegressionNextStep(selfCheckResult = {}) {
 
 function buildControlRegressionNextStep() {
   return "先看 control regression 的 control 模組：src/control-kernel.mjs 與 src/lane-executor.mjs。";
+}
+
+function buildCompanyBrainRegressionNextStep() {
+  return "先看 company-brain lifecycle contract：src/company-brain-lifecycle-contract.mjs、src/http-route-contracts.mjs、src/system-self-check.mjs；不要改 runtime write path。";
 }
 
 function buildRoutingRegressionNextStep(selfCheckResult = {}) {
@@ -209,6 +214,9 @@ function buildReleaseCheckActionHint({
   if (firstBlockingCheck === BLOCKING_PLANNER_CONTRACT_FAILURE) {
     return buildPlannerActionHint({ suggestedNextStep, drilldown });
   }
+  if (firstBlockingCheck === BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE) {
+    return "inspect company-brain lifecycle contract and apply gate";
+  }
   if (firstBlockingCheck === BLOCKING_SYSTEM_REGRESSION || firstBlockingCheck === BLOCKING_CONTROL_REGRESSION) {
     return buildReleaseActionHint({ blockingChecks, drilldown });
   }
@@ -230,6 +238,16 @@ function hasBlockingControlIssue(selfCheckResult = {}) {
     return false;
   }
   return controlStatus !== "pass";
+}
+
+function hasBlockingCompanyBrainIssue(selfCheckResult = {}) {
+  const companyBrainStatus = cleanText(
+    selfCheckResult?.company_brain_summary?.status || selfCheckResult?.system_summary?.company_brain_status,
+  );
+  if (!companyBrainStatus) {
+    return false;
+  }
+  return companyBrainStatus !== "pass";
 }
 
 function hasBlockingPlannerIssue(selfCheckResult = {}) {
@@ -509,6 +527,31 @@ function buildSystemDrilldown(selfCheckResult = {}) {
   };
 }
 
+function buildCompanyBrainDrilldown(selfCheckResult = {}) {
+  const summary = selfCheckResult?.company_brain_summary || {};
+  const representativeFailCase = [
+    ...(Array.isArray(summary?.failing_routes)
+      ? summary.failing_routes.map((item) => `company_brain_route_contract:${cleanText(item?.pathname) || "unknown"}`)
+      : []),
+    ...(Array.isArray(summary?.failing_cases)
+      ? summary.failing_cases.map((item) => `company_brain_apply_gate:${cleanText(item?.case_id) || "unknown"}`)
+      : []),
+    ...(Array.isArray(summary?.failing_transitions)
+      ? summary.failing_transitions.map((item) => (
+        `company_brain_transition:${cleanText(item?.from) || "unknown"}->${cleanText(item?.to) || "unknown"}`
+      ))
+      : []),
+  ].slice(0, 2);
+
+  return {
+    failing_area: FAILING_AREA_DOC,
+    representative_fail_case: representativeFailCase.length > 0
+      ? representativeFailCase
+      : ["company-brain lifecycle self-check failed without representative case"],
+    drilldown_source: [RELEASE_CHECK_TRIAGE_SOURCE],
+  };
+}
+
 export function buildReleaseCheckDrilldown({
   selfCheckResult = {},
   controlSnapshot = null,
@@ -521,6 +564,7 @@ export function buildReleaseCheckDrilldown({
     : [
         ...(cleanText(selfCheckResult?.system_summary?.core_checks) !== "pass" ? [BLOCKING_SYSTEM_REGRESSION] : []),
         ...(hasBlockingControlIssue(selfCheckResult) ? [BLOCKING_CONTROL_REGRESSION] : []),
+        ...(hasBlockingCompanyBrainIssue(selfCheckResult) ? [BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE] : []),
         ...(hasBlockingRoutingIssue(selfCheckResult) ? [BLOCKING_ROUTING_REGRESSION] : []),
         ...(hasBlockingPlannerIssue(selfCheckResult) ? [BLOCKING_PLANNER_CONTRACT_FAILURE] : []),
       ];
@@ -531,6 +575,9 @@ export function buildReleaseCheckDrilldown({
   }
   if (firstBlockingCheck === BLOCKING_CONTROL_REGRESSION) {
     return buildControlDrilldown({ controlSnapshot, selfCheckResult });
+  }
+  if (firstBlockingCheck === BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE) {
+    return buildCompanyBrainDrilldown(selfCheckResult);
   }
   if (firstBlockingCheck === BLOCKING_ROUTING_REGRESSION) {
     return buildRoutingDrilldown({ latestRoutingSnapshot, selfCheckResult });
@@ -556,6 +603,10 @@ export function buildReleaseCheckReport({ selfCheckResult = {}, drilldown = null
     blockingChecks.push(BLOCKING_CONTROL_REGRESSION);
   }
 
+  if (hasBlockingCompanyBrainIssue(selfCheckResult)) {
+    blockingChecks.push(BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE);
+  }
+
   if (hasBlockingRoutingIssue(selfCheckResult)) {
     blockingChecks.push(BLOCKING_ROUTING_REGRESSION);
   }
@@ -574,6 +625,8 @@ export function buildReleaseCheckReport({ selfCheckResult = {}, drilldown = null
     ? buildSystemRegressionNextStep(selfCheckResult)
     : firstBlockingCheck === BLOCKING_CONTROL_REGRESSION
       ? buildControlRegressionNextStep(selfCheckResult)
+    : firstBlockingCheck === BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE
+      ? buildCompanyBrainRegressionNextStep(selfCheckResult)
     : firstBlockingCheck === BLOCKING_ROUTING_REGRESSION
       ? buildRoutingRegressionNextStep(selfCheckResult)
       : firstBlockingCheck === BLOCKING_PLANNER_CONTRACT_FAILURE
@@ -609,6 +662,9 @@ function renderBlockingLineLabel(blockingCheck = "") {
   }
   if (blockingCheck === BLOCKING_CONTROL_REGRESSION) {
     return "control regression";
+  }
+  if (blockingCheck === BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE) {
+    return "company-brain lifecycle failure";
   }
   if (blockingCheck === BLOCKING_ROUTING_REGRESSION) {
     return "routing regression";
@@ -728,6 +784,9 @@ export async function runReleaseCheck(options = {}) {
   }
   if (hasBlockingControlIssue(selfCheckResult)) {
     blockingChecks.push(BLOCKING_CONTROL_REGRESSION);
+  }
+  if (hasBlockingCompanyBrainIssue(selfCheckResult)) {
+    blockingChecks.push(BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE);
   }
   if (hasBlockingRoutingIssue(selfCheckResult)) {
     blockingChecks.push(BLOCKING_ROUTING_REGRESSION);
