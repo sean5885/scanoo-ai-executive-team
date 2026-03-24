@@ -438,7 +438,8 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Response note: planner must first emit strict legacy `{ action, params }` or bounded multi-step `{ steps: [{ action, params }] }`; wrapped/non-JSON output is rejected as `error=planner_failed`
   - Response note: both success and controlled failure now pass through a final `normalizeUserResponse()` boundary
   - Response note: the outward body is always natural-language JSON shaped as `{ ok, answer, sources, limitations }`
-  - Response note: for document-search style results, `sources[]` are rendered from per-document evidence rows and can include document title, concrete reason, and link when the mirrored source URL exists
+  - Response note: for document-search style results, `sources[]` keep bounded evidence-backed points derived only from retrieved rows; they may merge near-duplicate reasons while preserving ranked evidence order, and can still include document title, concrete reason, and link when the mirrored source URL exists
+  - Response note: chat-style rendering over that same body is fixed to `結論 / 重點 / 下一步`; `sources[]` are reused as evidence-backed `重點`, `limitations[]` prefer query-aware next-step guidance, and when no verified content summary exists the reply must explicitly mark source insufficiency instead of adding unsupported detail
   - Response note: planner/executor internals such as `action`, `params`, `error`, `details`, `execution_result`, `trace`, and `trace_id` do not appear in the response body; request trace remains available through the HTTP trace header / monitoring path
 
 - `GET /agent/security/status`

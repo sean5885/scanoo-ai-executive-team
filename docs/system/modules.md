@@ -199,7 +199,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - persist timeout/cancel outcomes as normal request-monitor rows so operators can query `request_timeout` / `request_cancelled` the same way as other failures
   - expose recent-request, recent-error, latest-error, success/error-rate, dashboard-snapshot, and per-trace reconstruction queries
   - derive monitoring-backed learning summaries over recent requests/traces, including routing failure-rate hotspots, per-tool success-rate/latency summaries, and human-reviewable improvement drafts
-  - learning summaries now rank equal-score routing/tool buckets by latest sampled request recency so top-N output does not let older buckets squeeze out fresher regression samples
+  - learning summaries now rank equal-score routing/tool buckets by latest sampled request recency so top-N output does not let older buckets squeeze out fresher regression samples; when multiple sampled requests land in the same millisecond, the learning path uses SQLite insertion order as the stable recency tie-breaker instead of trace-id lexical order
   - the same learning summary path now keeps `generated_at` and proposal ids deterministic for a fixed sampled request set, so CLI/test regression output is reproducible
   - persist generated learning-loop proposals into the existing executive improvement workflow as `pending_approval` items rather than auto-applying them
   - provide local CLIs so operators can inspect request health, view one compact dashboard, and reconstruct one request timeline without scraping logs
@@ -402,7 +402,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - slash-command execution before generic lane fallback
   - optional compact image-context handoff into slash agents
   - when direct `LLM_API_KEY` is absent, registered agents now reuse the local OpenClaw MiniMax text path through the dedicated `lobster-backend` agent before falling back to extractive retrieval-only replies
-  - registered-agent fallback/no-match chat replies now pass through the shared `normalizeUserResponse()` boundary before rendering `結論 -> 標記文件 -> 下一步`, so chat output no longer exposes raw `{ ok, error, details }` envelopes for `FALLBACK_DISABLED` or slash-command `ROUTING_NO_MATCH`
+  - registered-agent fallback/no-match chat replies now pass through the shared `normalizeUserResponse()` boundary before rendering fixed `結論 -> 重點 -> 下一步`, so chat output no longer exposes raw `{ ok, error, details }` envelopes for `FALLBACK_DISABLED` or slash-command `ROUTING_NO_MATCH`
   - registered-agent success replies now also enforce an output boundary: JSON-like object, fenced JSON, or nested JSON-string payloads are intercepted before visible chat rendering, summarized into natural language through the same user-response normalizer, and keep optional machine-readable `error` / `details` / `context` fields only in the returned runtime object
   - `openclaw-text-service.mjs` now normalizes optional abort signals before passing them into Node child-process/fetch-style options, so local callers can omit a signal without tripping `options.signal must be an instance of AbortSignal`
 - Main entry:
@@ -448,6 +448,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - generate reflection records and improvement proposals
   - maintain session / approved / proposal memory stores
   - persist reflection records and improvement proposals into dedicated stores
+  - improvement workflow proposal records now retain structured `context` payloads so later review, filtering, and learning-loop regression checks can still see source metadata such as `tool_name`, routing keys, and sampled traces
   - expose approve / reject / apply workflow for improvement proposals
   - resolve approve / reject / apply against the newest matching proposal record in the persisted workflow store so stale archived duplicates do not mutate the wrong task
 - Core path:
@@ -626,7 +627,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - normalize multi-agent work into at most three roles
   - execute specialist work items sequentially, then synthesize one final response through the merge agent
   - when any specialist fails, preserve fail-soft behavior by switching final synthesis to `/generalist`
-  - executive slash-command / planner-fallback chat errors now pass through the shared `normalizeUserResponse()` boundary before rendering `結論 -> 標記文件 -> 下一步`, so chat output no longer exposes raw `{ ok, error, details }` envelopes for `ROUTING_NO_MATCH` or `FALLBACK_DISABLED`
+  - executive slash-command / planner-fallback chat errors now pass through the shared `normalizeUserResponse()` boundary before rendering fixed `結論 -> 重點 -> 下一步`, so chat output no longer exposes raw `{ ok, error, details }` envelopes for `ROUTING_NO_MATCH` or `FALLBACK_DISABLED`
   - specialist and merge-agent replies now reject JSON-like structured envelopes before brief parsing/synthesis; rejected outputs are marked as failed specialist work, skipped from the visible brief, and keep fail-soft fallback on the existing generalist merge path instead of letting raw structured blobs leak into the final executive answer
   - finalize each executive turn with evidence collection, verifier pass/fail, reflection, and improvement proposal generation
   - direct task completion is now blocked at orchestrator level; completion must pass the verifier gate in `executive-closed-loop.mjs`
@@ -698,7 +699,8 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - `/Users/seanhan/Documents/Playground/src/message-intent-utils.mjs`
 - Responsibility:
   - isolate the cloud-document classification / reassignment follow-up workflow into a testable submodule instead of keeping all branch logic inside `lane-executor.mjs`
-  - knowledge-assistant lane turns no longer call `answer-service.mjs` directly; they now execute through `executePlannedUserInput(...)`, keep the strict planner envelope as internal runtime state, and pass both success and controlled failure through the shared `normalizeUserResponse()` boundary before rendering the evidence-first `結論 -> 標記文件 -> 下一步` reply, so chat output does not serialize raw planner JSON or trace fields to the user
+  - knowledge-assistant lane turns no longer call `answer-service.mjs` directly; they now execute through `executePlannedUserInput(...)`, keep the strict planner envelope as internal runtime state, and pass both success and controlled failure through the shared `normalizeUserResponse()` boundary before rendering the evidence-first `結論 -> 重點 -> 下一步` reply, so chat output does not serialize raw planner JSON or trace fields to the user
+  - that same planner reply boundary now keeps the machine body shape stable as `{ ok, answer, sources, limitations }`, but the visible chat renderer is fixed to three sections: `結論`, `重點`, `下一步`; for planner doc/detail hits it only states facts present in `formatted_output` / retrieved evidence rows, and when content summary is missing it explicitly says sources are insufficient instead of filling in extra detail
   - the same knowledge/doc path now captures `user_access_token` from `im.message.receive_v1`, stores a session-scoped explicit-auth snapshot, and propagates that auth through planner dispatch into `/agent/company-brain/*`; missing explicit auth now returns a natural-language auth error instead of silent stored-token fallback or empty document-search output
   - strict planner envelopes still reject semantically mismatched actions and stale previous-turn decision reuse as structured internal errors, but `executePlannedUserInput(...)` now gives `semantic_mismatch` one reroute attempt before surfacing a user-facing fallback
   - the same planner boundary now also fail-closes unsupported slash commands and "不存在的 agent" style requests inside `/answer`: if the LLM tries to map those turns to `get_runtime_info` or any other planner tool action, semantic validation converts them into `semantic_mismatch`, then reroutes to the deterministic tool-flow path instead of returning runtime info
@@ -847,6 +849,11 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - hybrid retrieval-to-answer pipeline
   - now uses XML-governed prompt sections, checkpoint summaries, retrieved-snippet budgets, and shared low-variance generation settings instead of stuffing raw chunks
   - answer prompt instructions are now stricter for low-variance text models: answer order is fixed as `answer -> sources -> unresolved/limits`, invented tool-use is explicitly forbidden, and missing evidence must be surfaced as uncertainty instead of filled-in facts; external API/response shape remains unchanged
+
+- `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
+  - final user-facing reply boundary for planner/agent answers
+  - keeps the outward shape stable as `{ ok, answer, sources, limitations }` and the visible text fixed to `結論 / 重點 / 下一步`
+  - for planner doc/detail hits, `sources[]` now deduplicate repeated evidence rows and can merge near-duplicate retrieval reasons into one bounded evidence point while preserving ranked result order; `limitations[]` now prefer query-aware next-step hints (lookup / debug / decision) before generic fallback guidance, but still only use current retrieved evidence and never add unsupported facts
 
 - `/Users/seanhan/Documents/Playground/src/doc-comment-rewrite.mjs`
   - comment-to-doc patch-plan workflow

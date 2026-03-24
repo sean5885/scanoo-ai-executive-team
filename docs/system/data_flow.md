@@ -526,7 +526,8 @@ Actual AI-like execution paths:
   - answer route -> `executive-planner.mjs` strict single-step `{ action, params }` or bounded `{ steps: [{ action, params }] }` decision -> contract-bound planner action/preset execution or sequential planner tool execution
   - if `/answer` receives an unsupported slash command such as `/executive ...` or a "不存在的 agent" request and the planner still proposes `get_runtime_info`, semantic validation now rejects that plan and reroutes into the deterministic tool-flow/no-match path instead of returning runtime info
   - scoped cloud-doc exclusion requests such as `你把我的雲端文件再看一遍，把不屬於scanoo的內容摘出去讓我確認` now stay on the document-search path: `router.js` resolves them to `search_company_brain_docs`, and `planner-doc-query-flow.mjs` compresses the search query down to the extracted scope subject (for example `scanoo`) before dispatch
-  - knowledge-assistant chat lane -> `lane-executor.mjs` -> `executive-planner.mjs` -> shared `normalizeUserResponse()` boundary -> evidence-first chat reply text (`結論 / 標記文件 / 下一步`)
+  - knowledge-assistant chat lane -> `lane-executor.mjs` -> `executive-planner.mjs` -> shared `normalizeUserResponse()` boundary -> evidence-first chat reply text (`結論 / 重點 / 下一步`)
+    - that boundary now deduplicates repeated evidence rows, can merge near-duplicate retrieval reasons into one bounded `重點`, and prefers query-aware `下一步` guidance for lookup / debug / decision style queries without changing the outward JSON shape or adding unsupported facts
   - direct user-input answer fallback is disabled; `answer-service.mjs` is no longer the first responder for `/answer` or the knowledge-assistant lane
 
 - comment-driven rewrite
