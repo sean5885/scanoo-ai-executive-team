@@ -589,6 +589,73 @@ test("planUserInputAction accepts strict multi-step output", async () => {
   assert.equal(result.alternative?.action, "create_doc");
 });
 
+test("planUserInputAction hardens unnecessary create multi-step back to single-step create_doc", async () => {
+  resetPlannerRuntimeContext();
+  const result = await planUserInputAction({
+    text: "幫我建立文件 demo",
+    async requester() {
+      return JSON.stringify({
+        steps: [
+          {
+            action: "create_doc",
+            params: {
+              title: "demo",
+            },
+          },
+          {
+            action: "list_company_brain_docs",
+            params: {
+              limit: 3,
+            },
+          },
+        ],
+      });
+    },
+  });
+
+  assert.equal(result.action, "create_doc");
+  assert.deepEqual(result.params, {
+    title: "demo",
+  });
+  assert.equal("steps" in result, false);
+});
+
+test("planUserInputAction downgrades missing-doc-id detail decision to conservative search", async () => {
+  resetPlannerRuntimeContext();
+  const result = await planUserInputAction({
+    text: "幫我看 OKR 文件內容",
+    async requester() {
+      return JSON.stringify({
+        action: "get_company_brain_doc_detail",
+        params: {},
+      });
+    },
+  });
+
+  assert.equal(result.action, "search_company_brain_docs");
+  assert.deepEqual(result.params, {
+    q: "幫我看 OKR 文件內容",
+  });
+});
+
+test("planUserInputAction hardens runtime-and-list preset back to single-step runtime query", async () => {
+  resetPlannerRuntimeContext();
+  const result = await planUserInputAction({
+    text: "查 runtime 狀態",
+    async requester() {
+      return JSON.stringify({
+        action: "runtime_and_list_docs",
+        params: {
+          limit: 5,
+        },
+      });
+    },
+  });
+
+  assert.equal(result.action, "get_runtime_info");
+  assert.deepEqual(result.params, {});
+});
+
 test("planExecutiveTurn accepts injected planner requester", async () => {
   resetPlannerRuntimeContext();
   const decision = await planExecutiveTurn({
@@ -4538,6 +4605,19 @@ test("selectPlannerTool prefers preset for compound create-and-list intent", asy
   assert.equal(result.routing_reason, "selector_create_and_list_doc");
 });
 
+test("selectPlannerTool keeps explicit list intent stable even with a topic qualifier", async () => {
+  const { selectPlannerTool } = await import("../src/executive-planner.mjs");
+  const result = selectPlannerTool({
+    userIntent: "列出 OKR 文件",
+    taskType: "",
+    logger: console,
+  });
+
+  assert.equal(result.selected_action, "list_company_brain_docs");
+  assert.equal(result.reason, "使用者意圖是查看文件清單，優先走保守 list action。");
+  assert.equal(result.routing_reason, "selector_list_company_brain_docs");
+});
+
 test("selectPlannerTool prefers create_search_detail_list_doc for compound create-and-search intent", async () => {
   const { selectPlannerTool } = await import("../src/executive-planner.mjs");
   const result = selectPlannerTool({
@@ -4601,6 +4681,74 @@ test("runPlannerToolFlow executes preset runner when selection returns preset", 
   assert.equal(result.execution_result?.preset, "create_and_list_doc");
   assert.equal(presetCalled, true);
   assert.equal(dispatcherCalled, false);
+});
+
+test("runPlannerToolFlow keeps learning actions on doc lane instead of fallback lane", async () => {
+  const result = await runPlannerToolFlow({
+    userIntent: "更新這份文件的學習狀態",
+    payload: {
+      doc_id: "doc_learning_1",
+      status: "learned",
+    },
+    disableAutoRouting: true,
+    forcedSelection: {
+      selected_action: "update_learning_state",
+      reason: "test_forced_learning_action",
+    },
+    logger: {
+      info() {},
+      debug() {},
+      warn() {},
+    },
+    async dispatcher({ action, payload }) {
+      assert.equal(action, "update_learning_state");
+      assert.deepEqual(payload, {
+        doc_id: "doc_learning_1",
+        status: "learned",
+      });
+      return {
+        ok: true,
+        action,
+        trace_id: "trace_learning_lane",
+        data: {
+          success: true,
+          data: {
+            doc: {
+              doc_id: "doc_learning_1",
+              title: "Learning Doc",
+              source: "mirror",
+              created_at: "2026-03-20T00:00:00.000Z",
+              creator: {
+                account_id: "acc_1",
+                open_id: "ou_1",
+              },
+            },
+            learning_state: {
+              status: "learned",
+              structured_summary: {
+                overview: "ok",
+                headings: [],
+                highlights: [],
+                snippet: "ok",
+                content_length: 2,
+              },
+              key_concepts: [],
+              tags: [],
+              notes: "",
+              learned_at: null,
+              updated_at: null,
+            },
+          },
+          error: null,
+        },
+      };
+    },
+  });
+
+  assert.equal(result.selected_action, "update_learning_state");
+  assert.equal(result.agent_execution?.status, "ok");
+  assert.equal(result.agent_execution?.agent, "doc_agent");
+  assert.equal(result.agent_execution?.action, "doc_answer");
 });
 
 test("runPlannerMultiStep dispatches steps in order and returns last trace id", async () => {

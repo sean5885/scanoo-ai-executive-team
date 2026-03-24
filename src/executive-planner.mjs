@@ -1500,8 +1500,8 @@ function derivePlannerAgentLane({
     "search_and_detail_doc",
     "create_and_list_doc",
     "create_search_detail_list_doc",
-    "update_company_brain_learning_state",
-    "ingest_company_brain_learning",
+    "update_learning_state",
+    "ingest_learning_doc",
   ].includes(action)) {
     return "doc";
   }
@@ -2225,11 +2225,15 @@ export function validatePresetOutput(presetName = "", result = null) {
   };
 }
 
-export function validatePlannerUserInputDecision(decision = {}) {
+export function validatePlannerUserInputDecision(decision = {}, { text = "" } = {}) {
   const normalizedDecision = decision && typeof decision === "object" && !Array.isArray(decision)
     ? decision
     : {};
-  const rawSteps = normalizedDecision.steps;
+  const effectiveDecision = hardenPlannerUserInputDecisionCandidate({
+    text,
+    decision: normalizedDecision,
+  }).decision;
+  const rawSteps = effectiveDecision.steps;
   if (rawSteps !== undefined) {
     if (!Array.isArray(rawSteps) || rawSteps.length === 0) {
       return {
@@ -2300,15 +2304,15 @@ export function validatePlannerUserInputDecision(decision = {}) {
     };
   }
 
-  const action = cleanText(normalizedDecision.action || "");
-  const rawParams = normalizedDecision.params;
+  const action = cleanText(effectiveDecision.action || "");
+  const rawParams = effectiveDecision.params;
   if (rawParams != null && (typeof rawParams !== "object" || Array.isArray(rawParams))) {
     return {
       ok: false,
       error: "planner_failed",
     };
   }
-  const params = normalizePlannerPayload(normalizedDecision.params);
+  const params = normalizePlannerPayload(effectiveDecision.params);
 
   if (!action) {
     return {
@@ -2549,7 +2553,7 @@ export function selectPlannerTool({
 } = {}) {
   const normalizedIntent = cleanText(String(userIntent || "").toLowerCase());
   const normalizedTaskType = cleanText(String(taskType || "").toLowerCase());
-  const wantsScopedDocExclusionSearch = hasScopedDocExclusionSearchIntent(userIntent);
+  const semantics = derivePlannerUserInputSemantics(userIntent);
 
   let selectedAction = "";
   let reason = "";
@@ -2582,6 +2586,10 @@ export function selectPlannerTool({
     selectedAction = "create_doc";
     reason = "使用者意圖是建立文件，對應受控文件建立 bridge。";
     routingReason = "selector_create_doc";
+  } else if (semantics.wants_document_list) {
+    selectedAction = "list_company_brain_docs";
+    reason = "使用者意圖是查看文件清單，優先走保守 list action。";
+    routingReason = "selector_list_company_brain_docs";
   } else if (
     normalizedTaskType === "knowledge_write"
     || normalizedIntent.includes("company brain")
@@ -2593,7 +2601,7 @@ export function selectPlannerTool({
     selectedAction = "list_company_brain_docs";
     reason = "使用者意圖是查詢已驗證文件鏡像，對應 company_brain list bridge。";
     routingReason = "selector_list_company_brain_docs";
-  } else if (wantsScopedDocExclusionSearch) {
+  } else if (semantics.wants_scoped_doc_exclusion_search) {
     selectedAction = "search_company_brain_docs";
     reason = "這輪是在文件範圍內重新盤點某個主題集合，所以先 search 候選文件。";
     routingReason = "selector_search_company_brain_docs_scoped_exclusion";
@@ -2627,13 +2635,11 @@ export function selectPlannerTool({
     selectedAction = "get_runtime_info";
     reason = "使用者意圖是查詢當前執行環境資訊，對應 runtime info bridge。";
     routingReason = "selector_get_runtime_info";
-  } else if (hasDocSearchIntent(normalizedIntent)) {
+  } else if (semantics.wants_document_search || hasDocSearchIntent(normalizedIntent)) {
     selectedAction = "search_company_brain_docs";
     reason = "使用者意圖是搜尋文件，固定走唯一 search action。";
     routingReason = "selector_search_company_brain_docs";
-  } else if (
-    /整理|解釋|解释|說明|说明|重點|重点|打開|打开|讀|读|內容|内容|寫了什麼|写了什么|這份文件|那份文件|這個文件|這份|那份|這個/.test(normalizedIntent)
-  ) {
+  } else if (semantics.wants_document_detail) {
     selectedAction = "search_and_detail_doc";
     reason = "使用者意圖是整理或閱讀文件內容，對應 search-and-detail。";
     routingReason = "selector_search_and_detail_doc";
@@ -4767,6 +4773,69 @@ function derivePlannerUserInputSemantics(text = "") {
     "重点",
     "summary",
   ];
+  const documentDetailSignals = [
+    ...documentSummarySignals,
+    "解釋",
+    "解释",
+    "說明",
+    "说明",
+    "打開",
+    "打开",
+    "讀",
+    "读",
+    "內容",
+    "内容",
+    "寫了什麼",
+    "写了什么",
+    "這份文件",
+    "这份文件",
+    "那份文件",
+    "那个文件",
+    "這個文件",
+    "这个文件",
+    "這份",
+    "这份",
+    "那份",
+    "這個",
+    "这个",
+  ];
+  const documentListSignals = [
+    "列出",
+    "列表",
+    "清單",
+    "清单",
+    "list doc",
+    "list docs",
+    "文件列表",
+    "文檔列表",
+    "文档列表",
+    "docs list",
+    "有哪些文件",
+    "有哪些文檔",
+    "有哪些文档",
+  ];
+  const explicitMultiStepSignals = [
+    "先",
+    "再",
+    "然後",
+    "然后",
+    "之後",
+    "之后",
+    "接著",
+    "接着",
+    "最後",
+    "最后",
+    " after ",
+    " then ",
+    "create then",
+    "建立文件後",
+    "建立後",
+    "创建文档后",
+    "並查詢",
+    "并查询",
+    "並列出",
+    "并列出",
+  ];
   const sameTaskSignals = [
     "這個",
     "这个",
@@ -4787,6 +4856,15 @@ function derivePlannerUserInputSemantics(text = "") {
   const wantsConversationSummary = plannerTextHasAny(normalizedText, conversationSummarySignals);
   const wantsDocumentSummary =
     plannerTextHasAny(normalizedText, documentSummarySignals) && plannerTextHasAny(normalizedText, documentSignals);
+  const wantsDocumentList =
+    plannerTextHasAny(normalizedText, documentListSignals)
+    && plannerTextHasAny(normalizedText, documentSignals);
+  const wantsDocumentDetail =
+    plannerTextHasAny(normalizedText, documentDetailSignals)
+    && (
+      plannerTextHasAny(normalizedText, documentSignals)
+      || /這份|这份|那份|這個|这个/.test(normalizedText)
+    );
   const wantsRuntimeInfo = plannerTextHasAny(normalizedText, [
     "runtime",
     "db path",
@@ -4804,13 +4882,22 @@ function derivePlannerUserInputSemantics(text = "") {
     "create doc",
     "新建文件",
   ]);
-  const wantsDocumentLookup = wantsDocumentSummary || plannerTextHasAny(normalizedText, [
-    "找文件",
-    "查文件",
-    "搜尋文件",
-    "搜索文件",
-    "查知識",
-    "查知识",
+  const wantsScopedDocExclusionSearch = hasScopedDocExclusionSearchIntent(normalizedText);
+  const wantsDocumentSearch =
+    wantsScopedDocExclusionSearch
+    || hasDocSearchIntent(normalizedText)
+    || plannerTextHasAny(normalizedText, [
+      "找文件",
+      "查文件",
+      "搜尋文件",
+      "搜索文件",
+      "查知識",
+      "查知识",
+      "search doc",
+      "search docs",
+      "search company brain",
+    ]);
+  const wantsDocumentLookup = wantsDocumentList || wantsDocumentSummary || wantsDocumentDetail || wantsDocumentSearch || plannerTextHasAny(normalizedText, [
     "company brain",
     "知識庫",
     "知识库",
@@ -4820,12 +4907,217 @@ function derivePlannerUserInputSemantics(text = "") {
     normalized_text: normalizedText,
     wants_conversation_summary: wantsConversationSummary,
     wants_document_summary: wantsDocumentSummary,
+    wants_document_list: wantsDocumentList,
+    wants_document_search: wantsDocumentSearch,
+    wants_document_detail: wantsDocumentDetail,
     wants_document_lookup: wantsDocumentLookup,
     wants_runtime_info: wantsRuntimeInfo,
     wants_unsupported_slash_command: wantsUnsupportedSlashCommand,
     wants_missing_agent_request: wantsMissingAgentRequest,
     wants_create_doc: wantsCreateDoc,
+    wants_scoped_doc_exclusion_search: wantsScopedDocExclusionSearch,
+    wants_explicit_multi_step: plannerTextHasAny(normalizedText, explicitMultiStepSignals),
     explicit_same_task: plannerTextHasAny(normalizedText, sameTaskSignals),
+  };
+}
+
+function buildPlannerConservativeSearchParams({
+  text = "",
+  params = {},
+} = {}) {
+  const normalizedParams = params && typeof params === "object" && !Array.isArray(params)
+    ? normalizePlannerPayload(params)
+    : {};
+  const q = cleanText(
+    normalizedParams.q
+    || normalizedParams.query
+    || normalizedParams.keyword
+    || normalizedParams.title
+    || text,
+  );
+  if (!q) {
+    return null;
+  }
+  return {
+    ...normalizedParams,
+    q,
+  };
+}
+
+function buildPlannerSingleStepDecision(action = "", params = {}) {
+  return {
+    action: cleanText(action || ""),
+    params: params && typeof params === "object" && !Array.isArray(params)
+      ? normalizePlannerPayload(params)
+      : {},
+  };
+}
+
+function hardenPlannerUserInputDecisionCandidate({
+  text = "",
+  decision = {},
+} = {}) {
+  const normalizedDecision = decision && typeof decision === "object" && !Array.isArray(decision)
+    ? decision
+    : {};
+  const semantics = derivePlannerUserInputSemantics(text);
+  const rawSteps = Array.isArray(normalizedDecision.steps) ? normalizedDecision.steps : null;
+
+  if (rawSteps && rawSteps.length > 0) {
+    const firstStep = rawSteps[0];
+    const firstAction = cleanText(firstStep?.action || "");
+    const firstParams = firstStep?.params && typeof firstStep.params === "object" && !Array.isArray(firstStep.params)
+      ? normalizePlannerPayload(firstStep.params)
+      : {};
+
+    if (semantics.wants_runtime_info && !semantics.wants_document_list && firstAction === "get_runtime_info") {
+      return {
+        decision: buildPlannerSingleStepDecision("get_runtime_info", firstParams),
+        reason: "runtime_query_prefers_single_step",
+      };
+    }
+
+    if (
+      semantics.wants_create_doc
+      && !semantics.wants_document_list
+      && !semantics.wants_document_search
+      && !semantics.wants_document_detail
+      && !semantics.wants_explicit_multi_step
+      && firstAction === "create_doc"
+    ) {
+      return {
+        decision: buildPlannerSingleStepDecision("create_doc", firstParams),
+        reason: "create_doc_prefers_single_step",
+      };
+    }
+
+    if (
+      semantics.wants_document_list
+      && !semantics.wants_document_search
+      && !semantics.wants_document_detail
+      && firstAction === "list_company_brain_docs"
+    ) {
+      return {
+        decision: buildPlannerSingleStepDecision("list_company_brain_docs", firstParams),
+        reason: "document_list_prefers_single_step",
+      };
+    }
+
+    if (
+      semantics.wants_document_search
+      && !semantics.wants_document_detail
+      && firstAction === "search_company_brain_docs"
+    ) {
+      return {
+        decision: buildPlannerSingleStepDecision(
+          "search_company_brain_docs",
+          buildPlannerConservativeSearchParams({ text, params: firstParams }) || firstParams,
+        ),
+        reason: "document_search_prefers_single_step",
+      };
+    }
+
+    return {
+      decision: normalizedDecision,
+      reason: null,
+    };
+  }
+
+  const action = cleanText(normalizedDecision.action || "");
+  const params = normalizedDecision.params && typeof normalizedDecision.params === "object" && !Array.isArray(normalizedDecision.params)
+    ? normalizePlannerPayload(normalizedDecision.params)
+    : normalizedDecision.params;
+
+  if (action === "runtime_and_list_docs" && semantics.wants_runtime_info && !semantics.wants_document_list) {
+    return {
+      decision: buildPlannerSingleStepDecision("get_runtime_info", {}),
+      reason: "runtime_query_prefers_single_step",
+    };
+  }
+
+  if (
+    ["create_and_list_doc", "create_search_detail_list_doc"].includes(action)
+    && semantics.wants_create_doc
+    && !semantics.wants_document_list
+    && !semantics.wants_document_search
+    && !semantics.wants_document_detail
+    && !semantics.wants_explicit_multi_step
+  ) {
+    return {
+      decision: buildPlannerSingleStepDecision("create_doc", params),
+      reason: "create_doc_prefers_single_step",
+    };
+  }
+
+  if (action === "search_and_detail_doc") {
+    const normalizedParams = params && typeof params === "object" && !Array.isArray(params)
+      ? params
+      : {};
+    const docId = cleanText(normalizedParams.doc_id || "");
+    if (docId) {
+      return {
+        decision: buildPlannerSingleStepDecision("get_company_brain_doc_detail", { doc_id: docId }),
+        reason: "doc_detail_with_doc_id_prefers_single_step",
+      };
+    }
+    if (semantics.wants_document_search && !semantics.wants_document_detail) {
+      const searchParams = buildPlannerConservativeSearchParams({
+        text,
+        params: normalizedParams,
+      });
+      if (searchParams) {
+        return {
+          decision: buildPlannerSingleStepDecision("search_company_brain_docs", searchParams),
+          reason: "document_search_prefers_single_step",
+        };
+      }
+    }
+  }
+
+  if (action === "get_company_brain_doc_detail") {
+    const normalizedParams = params && typeof params === "object" && !Array.isArray(params)
+      ? params
+      : {};
+    const docId = cleanText(normalizedParams.doc_id || "");
+    if (!docId) {
+      const searchParams = buildPlannerConservativeSearchParams({
+        text,
+        params: normalizedParams,
+      });
+      if (searchParams) {
+        return {
+          decision: buildPlannerSingleStepDecision("search_company_brain_docs", searchParams),
+          reason: "missing_doc_id_downgraded_to_search",
+        };
+      }
+    }
+  }
+
+  if (action === "search_company_brain_docs") {
+    const normalizedParams = params && typeof params === "object" && !Array.isArray(params)
+      ? params
+      : {};
+    const searchParams = buildPlannerConservativeSearchParams({
+      text,
+      params: normalizedParams,
+    });
+    if (searchParams) {
+      return {
+        decision: buildPlannerSingleStepDecision("search_company_brain_docs", searchParams),
+        reason: cleanText(normalizedParams.q || normalizedParams.query || "") ? null : "search_query_filled_from_user_request",
+      };
+    }
+    if (semantics.wants_document_list && !semantics.wants_document_search) {
+      return {
+        decision: buildPlannerSingleStepDecision("list_company_brain_docs", normalizedParams),
+        reason: "document_list_prefers_single_step",
+      };
+    }
+  }
+
+  return {
+    decision: normalizedDecision,
+    reason: null,
   };
 }
 
@@ -4941,7 +5233,11 @@ function validatePlannerDecisionSemantics({
     };
   }
 
-  if (semantics.wants_document_lookup && actionNames.some((name) => !allowedDocumentActions.has(name))) {
+  if (
+    semantics.wants_document_lookup
+    && !semantics.wants_create_doc
+    && actionNames.some((name) => !allowedDocumentActions.has(name))
+  ) {
     return {
       ok: false,
       ...buildPlannerSemanticMismatch({
@@ -5224,7 +5520,7 @@ export async function planUserInputAction({ text = "", requester = requestPlanne
       });
       throwIfPlannerSignalAborted(signal);
       const parsed = parseStrictPlannerUserInputJson(raw);
-      const validation = validatePlannerUserInputDecision(parsed);
+      const validation = validatePlannerUserInputDecision(parsed, { text });
       if (validation.ok) {
         const decision = withUserInputDecisionExplanation(Array.isArray(validation.steps)
           ? {
@@ -5369,7 +5665,7 @@ export async function executePlannedUserInput({
   }
   const decision = plannedDecision
     ? (() => {
-        const validatedDecision = validatePlannerUserInputDecision(plannedDecision);
+        const validatedDecision = validatePlannerUserInputDecision(plannedDecision, { text });
         if (validatedDecision?.ok !== true) {
           return withUserInputDecisionExplanation(validatedDecision, { text });
         }
