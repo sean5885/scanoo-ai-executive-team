@@ -112,15 +112,22 @@ function formatControlDiagnosticsReport(report = {}) {
   const topRegressions = Array.isArray(reportingSummary?.top_regression_cases)
     ? reportingSummary.top_regression_cases
     : [];
+  const rolloutRoutes = Array.isArray(writeSummary?.rollout_advice?.routes)
+    ? writeSummary.rollout_advice.routes
+    : [];
+  const rolloutLines = rolloutRoutes.map((route) => (
+    `write_route: ${cleanText(route?.pathname) || "unknown"} | action=${cleanText(route?.action) || "unknown"} | mode=${cleanText(route?.mode) || "observe"} | violation_rate=${route?.violation_rate == null ? "unknown" : route.violation_rate} | scope_rate=${route?.scope_key_coverage_rate == null ? "unknown" : route.scope_key_coverage_rate} | idempotency_rate=${route?.idempotency_key_coverage_rate == null ? "unknown" : route.idempotency_key_coverage_rate} | recommendation=${cleanText(route?.recommendation) || "keep_current"}`
+  ));
 
   return [
     "Control Diagnostics",
     `summary: overall=${cleanText(diagnosticsSummary?.overall_status) || "fail"} | control=${cleanText(diagnosticsSummary?.control_status) || "fail"} | routing=${cleanText(diagnosticsSummary?.routing_status) || "fail"} | write=${cleanText(diagnosticsSummary?.write_status) || "fail"}`,
     `control_summary: issues=${Number(controlSummary?.issue_count || 0)} | decisions=${Object.keys(controlSummary?.decision_counts || {}).length} | owners=${Object.keys(controlSummary?.owner_counts || {}).length} | integrations=${Array.isArray(controlSummary?.integration_points) ? controlSummary.integration_points.length : 0}`,
     `routing_summary: status=${cleanText(routingSummary?.status) || "fail"} | accuracy=${Number(routingSummary?.diagnostics_summary?.accuracy_ratio || 0)} | compare=${routingSummary?.compare?.available === true ? (routingSummary.compare.has_obvious_regression === true ? "regression" : "stable") : "unavailable"} | doc_boundary_regression=${routingSummary?.diagnostics_summary?.doc_boundary_regression === true}`,
-    `write_summary: issues=${Number(writeSummary?.issue_count || 0)} | guarded_operations=${Array.isArray(writeSummary?.guarded_operations) ? writeSummary.guarded_operations.length : 0} | create_surfaces=${Array.isArray(writeSummary?.create_guard_surfaces) ? writeSummary.create_guard_surfaces.length : 0} | policy_actions=${Array.isArray(writeSummary?.policy_actions) ? writeSummary.policy_actions.length : 0}`,
+    `write_summary: issues=${Number(writeSummary?.issue_count || 0)} | guarded_operations=${Array.isArray(writeSummary?.guarded_operations) ? writeSummary.guarded_operations.length : 0} | policy_actions=${Array.isArray(writeSummary?.policy_actions) ? writeSummary.policy_actions.length : 0} | enforced_routes=${Number(writeSummary?.policy_coverage?.enforced_route_count || 0)} | modes=${Object.entries(writeSummary?.enforcement_modes?.mode_counts || {}).map(([mode, count]) => `${mode}:${count}`).join(",") || "none"}`,
     `reporting_summary: error_code_groups=${Number(reportingSummary?.error_code_class_count || 0)} | failure_groups=${Number(reportingSummary?.failure_group_count || 0)} | top_regressions=${Number(reportingSummary?.top_regression_case_count || 0)}`,
     `top_regressions: ${topRegressions.length > 0 ? topRegressions.map((item) => cleanText(item?.case_id) || "unknown").join(", ") : "none"}`,
+    ...rolloutLines,
     `decision: ${cleanText(decision?.action) || "observe_only"} | line ${cleanText(decision?.line) || "none"}`,
     cleanText(decision?.summary) || "Control, write, and routing diagnostics are stable.",
     `next: ${cleanText(decision?.suggested_next_step) || "No repair is needed."}`,

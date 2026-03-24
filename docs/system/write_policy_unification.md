@@ -332,7 +332,7 @@ Current checked-in initial modes are:
 - `wiki_organize_apply`
   - `observe`
 - `document_comment_rewrite_apply`
-  - `observe`
+  - `warn`
 
 Current checked-in violation family is bounded to:
 
@@ -340,6 +340,18 @@ Current checked-in violation family is bounded to:
 - `missing_idempotency_key`
 - `confirm_required`
 - `review_required`
+
+Each violation record now also carries bounded structured detail:
+
+- `reason`
+  - `scope_key_unset`
+  - `idempotency_key_unset`
+  - `missing_confirmation`
+  - `missing_review_evidence`
+- `check`
+  - the specific coverage gate that produced the violation
+- `signals`
+  - whether `scope_key`, `idempotency_key`, confirmation, and review evidence were present at runtime
 
 ### Phase 2 runtime mount
 
@@ -461,6 +473,31 @@ Make the existing high-risk write paths speak one checked-in policy language wit
    - bounded enforcement for the Phase 1 set
    - diagnostics / self-check / release-check visibility for mode, coverage, and violation stats
 3. Phase 3
-   - expand the same contract to remaining external mutation families
+   - rollout enforcement upgrades on already grounded Phase 1 routes
+   - keep route-by-route diagnostics for:
+     - enforcement mode
+     - runtime violation rate
+     - scope / idempotency coverage when trace evidence exists
+     - bounded upgrade advice
 4. Phase 4
+   - expand the same contract to remaining external mutation families
+5. Phase 5
    - decide whether write-policy metadata should become part of planner/runtime public evidence surfaces
+
+### Phase 3 rollout checkpoint
+
+Current rollout target is intentionally narrow:
+
+- `meeting_confirm_write`
+  - target remains `enforce`
+  - but the route should stay at `warn` until request-backed runtime evidence shows acceptable violation rate
+  - optional emergency rollback path exists as env-controlled fail-open + alert, not as default behavior
+- `document_comment_rewrite_apply`
+  - upgraded from `observe` to `warn`
+  - warning events now expose structured violation reasons and coverage signals
+- `drive_organize_apply`
+  - stays `observe`
+  - diagnostics now surface route-level scope/idempotency coverage rates when trace evidence exists
+- `wiki_organize_apply`
+  - stays `observe`
+  - diagnostics now surface route-level scope/idempotency coverage rates when trace evidence exists

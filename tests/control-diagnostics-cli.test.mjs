@@ -49,9 +49,11 @@ test("control diagnostics CLI renders the fixed single-view summary", async () =
   assert.match(output, /summary: overall=pass \| control=pass \| routing=pass \| write=pass/);
   assert.match(output, /control_summary: issues=0 \| decisions=3 \| owners=3 \| integrations=3/);
   assert.match(output, /routing_summary: status=pass \| accuracy=1 \| compare=unavailable \| doc_boundary_regression=false/);
-  assert.match(output, /write_summary: issues=0 \| guarded_operations=5 \| policy_actions=5 \| enforced_routes=7 \| modes=enforce:2,observe:3,warn:2/);
+  assert.match(output, /write_summary: issues=0 \| guarded_operations=5 \| policy_actions=5 \| enforced_routes=7 \| modes=enforce:2,observe:2,warn:3/);
   assert.match(output, /reporting_summary: error_code_groups=0 \| failure_groups=0 \| top_regressions=0/);
   assert.match(output, /top_regressions: none/);
+  assert.match(output, /write_route: \/api\/doc\/rewrite-from-comments \| action=document_comment_rewrite_apply \| mode=warn/);
+  assert.match(output, /write_route: \/api\/meeting\/confirm \| action=meeting_confirm_write \| mode=warn .* recommendation=hold_warn/);
   assert.match(output, /decision: observe_only \| line none/);
 });
 
@@ -270,8 +272,8 @@ test("control diagnostics reporting emits stable top regression cases without ch
   });
   assert.deepEqual(report.write_summary.enforcement_modes.mode_counts, {
     enforce: 2,
-    observe: 3,
-    warn: 2,
+    observe: 2,
+    warn: 3,
   });
   assert.deepEqual(report.write_summary.violation_type_stats, {
     missing_scope_key: 7,
@@ -279,6 +281,8 @@ test("control diagnostics reporting emits stable top regression cases without ch
     confirm_required: 7,
     review_required: 4,
   });
+  assert.equal(report.write_summary.rollout_advice.upgrade_ready_routes.some((route) => route.action === "document_comment_rewrite_apply"), false);
+  assert.equal(report.write_summary.rollout_advice.high_risk_routes.some((route) => route.action === "meeting_confirm_write"), true);
 
   const degradedReporting = buildDiagnosticsReportingSummary({
     controlSummary: {

@@ -155,7 +155,16 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
      - `/Users/seanhan/Documents/Playground/src/executive-planner.mjs`
      - `/Users/seanhan/Documents/Playground/src/planner-runtime-info-flow.mjs`
    - Related mirror note:
-     - `/Users/seanhan/Documents/Playground/docs/system/routing_eval_system.md` therefore treats runtime-info coverage as a deterministic planner-adapter baseline, not as proof that every live runtime query already reaches planner end-to-end
+   - `/Users/seanhan/Documents/Playground/docs/system/routing_eval_system.md` therefore treats runtime-info coverage as a deterministic planner-adapter baseline, not as proof that every live runtime query already reaches planner end-to-end
+
+20. Write-policy runtime rollout stats now read local trace evidence, but the repo still cannot distinguish real user traffic from test-generated trace samples.
+   - Why it matters:
+     - `meeting_confirm_write` enforcement rollout should ideally rely on request-backed traffic with acceptable violation rate
+     - current diagnostics can tell `request_trace` vs detached `action_trace`, but cannot prove whether a request-backed sample came from production-like usage or from tests run on the same machine
+   - Current code truth:
+     - `/Users/seanhan/Documents/Playground/src/control-diagnostics.mjs`
+     - `/Users/seanhan/Documents/Playground/src/monitoring-store.mjs`
+     - `/Users/seanhan/Documents/Playground/src/runtime-observability.mjs`
 
 ## Cannot Be Confirmed From Code Alone
 

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { decideIntent } from "./control-kernel.mjs";
+import db from "./db.mjs";
 import { getRouteContract } from "./http-route-contracts.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import {
@@ -71,6 +72,14 @@ const FILES = {
   writePolicyContract: path.join(SRC_DIR, "write-policy-contract.mjs"),
 };
 const CLOUD_DOC_WORKFLOW = "cloud_doc";
+const WRITE_POLICY_RUNTIME_TRACE_LIMIT = Number.parseInt(process.env.WRITE_POLICY_RUNTIME_TRACE_LIMIT || "1000", 10);
+const WRITE_POLICY_PHASE3_TARGET_MODES = Object.freeze({
+  create_doc: "enforce",
+  meeting_confirm_write: "enforce",
+  document_comment_rewrite_apply: "warn",
+  drive_organize_apply: "observe",
+  wiki_organize_apply: "observe",
+});
 
 function buildCloudDocWorkflowScopeKey({
   sessionKey = "",
@@ -321,6 +330,384 @@ function buildWritePolicyViolationTypeStats(routeChecks = []) {
   }
 
   return stats;
+}
+
+function safeParseJson(value = "") {
+  if (!cleanText(value)) {
+    return null;
+  }
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function createWritePolicyRuntimeBucket() {
+  return {
+    sample_count: 0,
+    request_backed_sample_count: 0,
+    detached_sample_count: 0,
+    violation_count: 0,
+    block_count: 0,
+    allow_count: 0,
+    violation_types: {},
+    violation_reasons: {},
+    signals: {
+      scope_key_present_count: 0,
+      idempotency_key_present_count: 0,
+      confirmation_present_count: 0,
+      review_completed_count: 0,
+      review_required_active_count: 0,
+    },
+    latest_seen_at: null,
+  };
+}
+
+function recordWritePolicyRuntimeSample(bucket = null, row = {}) {
+  if (!bucket) {
+    return bucket;
+  }
+  const payload = safeParseJson(row?.payload_json) || {};
+  const policyEnforcement = payload?.policy_enforcement || {};
+  const signals = policyEnforcement?.signals || {};
+
+  bucket.sample_count += 1;
+  if (cleanText(row?.pathname)) {
+    bucket.request_backed_sample_count += 1;
+  } else {
+    bucket.detached_sample_count += 1;
+  }
+  if (Number(policyEnforcement?.violation_count || 0) > 0) {
+    bucket.violation_count += 1;
+  }
+  if (policyEnforcement?.should_block === true) {
+    bucket.block_count += 1;
+  }
+  if (payload?.allow === true) {
+    bucket.allow_count += 1;
+  }
+
+  for (const type of Array.isArray(policyEnforcement?.violation_types) ? policyEnforcement.violation_types : []) {
+    const key = cleanText(type);
+    if (!key) {
+      continue;
+    }
+    bucket.violation_types[key] = Number(bucket.violation_types[key] || 0) + 1;
+  }
+  for (const reason of Array.isArray(policyEnforcement?.violation_reasons) ? policyEnforcement.violation_reasons : []) {
+    const key = cleanText(reason);
+    if (!key) {
+      continue;
+    }
+    bucket.violation_reasons[key] = Number(bucket.violation_reasons[key] || 0) + 1;
+  }
+
+  if (signals.scope_key_present === true) {
+    bucket.signals.scope_key_present_count += 1;
+  }
+  if (signals.idempotency_key_present === true) {
+    bucket.signals.idempotency_key_present_count += 1;
+  }
+  if (signals.confirmation_present === true) {
+    bucket.signals.confirmation_present_count += 1;
+  }
+  if (signals.review_completed === true) {
+    bucket.signals.review_completed_count += 1;
+  }
+  if (signals.review_required_active === true) {
+    bucket.signals.review_required_active_count += 1;
+  }
+
+  const latestSeenAt = cleanText(row?.created_at);
+  if (latestSeenAt && (!bucket.latest_seen_at || latestSeenAt > bucket.latest_seen_at)) {
+    bucket.latest_seen_at = latestSeenAt;
+  }
+  return bucket;
+}
+
+function finalizeWritePolicyRuntimeBucket(bucket = null) {
+  if (!bucket) {
+    return null;
+  }
+  const sampleCount = Number(bucket.sample_count || 0);
+  const rate = (count = 0) => (sampleCount > 0 ? Number((Number(count || 0) / sampleCount).toFixed(2)) : null);
+  return {
+    sample_count: sampleCount,
+    request_backed_sample_count: Number(bucket.request_backed_sample_count || 0),
+    detached_sample_count: Number(bucket.detached_sample_count || 0),
+    violation_count: Number(bucket.violation_count || 0),
+    violation_rate: rate(bucket.violation_count),
+    block_count: Number(bucket.block_count || 0),
+    block_rate: rate(bucket.block_count),
+    allow_count: Number(bucket.allow_count || 0),
+    allow_rate: rate(bucket.allow_count),
+    violation_types: Object.fromEntries(Object.entries(bucket.violation_types).sort(([left], [right]) => left.localeCompare(right))),
+    violation_reasons: Object.fromEntries(Object.entries(bucket.violation_reasons).sort(([left], [right]) => left.localeCompare(right))),
+    signal_coverage: {
+      scope_key_rate: rate(bucket.signals.scope_key_present_count),
+      idempotency_key_rate: rate(bucket.signals.idempotency_key_present_count),
+      confirmation_rate: rate(bucket.signals.confirmation_present_count),
+      review_completed_rate: rate(bucket.signals.review_completed_count),
+      review_required_active_rate: rate(bucket.signals.review_required_active_count),
+    },
+    latest_seen_at: bucket.latest_seen_at || null,
+  };
+}
+
+function buildWritePolicyRuntimeStats() {
+  const byPath = new Map();
+  const byAction = new Map();
+  let available = false;
+  let error = null;
+
+  try {
+    const rows = db.prepare(`
+      SELECT
+        e.payload_json,
+        e.created_at,
+        r.pathname
+      FROM http_request_trace_events e
+      LEFT JOIN http_request_monitor r
+        ON r.trace_id = e.trace_id
+      WHERE e.event = 'write_guard_decision'
+      ORDER BY e.id DESC
+      LIMIT ?
+    `).all(Math.max(1, WRITE_POLICY_RUNTIME_TRACE_LIMIT));
+    available = true;
+
+    for (const row of rows) {
+      const payload = safeParseJson(row?.payload_json) || {};
+      const action = cleanText(payload?.action);
+      const pathname = cleanText(row?.pathname);
+
+      if (!action) {
+        continue;
+      }
+
+      if (!byAction.has(action)) {
+        byAction.set(action, createWritePolicyRuntimeBucket());
+      }
+      recordWritePolicyRuntimeSample(byAction.get(action), row);
+
+      if (pathname) {
+        if (!byPath.has(pathname)) {
+          byPath.set(pathname, createWritePolicyRuntimeBucket());
+        }
+        recordWritePolicyRuntimeSample(byPath.get(pathname), row);
+      }
+    }
+  } catch (caughtError) {
+    available = false;
+    error = caughtError instanceof Error ? caughtError.message : String(caughtError);
+  }
+
+  return {
+    available,
+    source: "http_request_trace_events.write_guard_decision",
+    trace_limit: Math.max(1, WRITE_POLICY_RUNTIME_TRACE_LIMIT),
+    by_path: Object.fromEntries(
+      [...byPath.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, bucket]) => [key, finalizeWritePolicyRuntimeBucket(bucket)]),
+    ),
+    by_action: Object.fromEntries(
+      [...byAction.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, bucket]) => [key, finalizeWritePolicyRuntimeBucket(bucket)]),
+    ),
+    error,
+  };
+}
+
+function formatNamedRate(value) {
+  return value == null ? "unknown" : String(value);
+}
+
+function getWritePolicyPhase3TargetMode(action = "", currentMode = "") {
+  return WRITE_POLICY_PHASE3_TARGET_MODES[cleanText(action)] || cleanText(currentMode) || "observe";
+}
+
+function buildWriteRouteRuntimeStats({
+  pathname = "",
+  action = "",
+  runtimeStats = {},
+} = {}) {
+  const byPath = runtimeStats?.by_path?.[pathname] || null;
+  const byAction = runtimeStats?.by_action?.[action] || null;
+  const source = byPath
+    ? "request_trace"
+    : byAction
+      ? "action_trace"
+      : runtimeStats?.available === true
+        ? "no_samples"
+        : "unavailable";
+  const resolved = byPath || byAction || null;
+  return {
+    source,
+    sample_count: Number(resolved?.sample_count || 0),
+    request_backed_sample_count: Number(resolved?.request_backed_sample_count || 0),
+    detached_sample_count: Number(resolved?.detached_sample_count || 0),
+    violation_count: Number(resolved?.violation_count || 0),
+    violation_rate: resolved?.violation_rate ?? null,
+    block_count: Number(resolved?.block_count || 0),
+    block_rate: resolved?.block_rate ?? null,
+    allow_count: Number(resolved?.allow_count || 0),
+    allow_rate: resolved?.allow_rate ?? null,
+    scope_key_coverage_rate: resolved?.signal_coverage?.scope_key_rate ?? null,
+    idempotency_key_coverage_rate: resolved?.signal_coverage?.idempotency_key_rate ?? null,
+    confirmation_coverage_rate: resolved?.signal_coverage?.confirmation_rate ?? null,
+    review_completed_coverage_rate: resolved?.signal_coverage?.review_completed_rate ?? null,
+    review_required_active_rate: resolved?.signal_coverage?.review_required_active_rate ?? null,
+    violation_types: resolved?.violation_types || {},
+    violation_reasons: resolved?.violation_reasons || {},
+    latest_seen_at: resolved?.latest_seen_at || null,
+  };
+}
+
+function buildWriteRouteRolloutAdvice({
+  pathname = "",
+  action = "",
+  mode = "",
+  checks = {},
+  runtime = {},
+} = {}) {
+  const targetMode = getWritePolicyPhase3TargetMode(action, mode);
+  const confirmCoverageComplete = checks.confirm_required === true;
+  const reviewCoverageComplete = checks.review_required === true;
+  const coverageComplete = confirmCoverageComplete && reviewCoverageComplete;
+  const requestBackedSamples = Number(runtime.request_backed_sample_count || 0);
+  const violationRate = runtime.violation_rate;
+  const hasRuntimeEvidence = requestBackedSamples > 0;
+  const detachedOnly = !hasRuntimeEvidence && Number(runtime.sample_count || 0) > 0;
+  const result = {
+    target_mode: targetMode,
+    recommendation: "keep_current",
+    upgrade_ready: false,
+    high_risk: false,
+    risk_level: "low",
+    rationale: [],
+  };
+
+  if (action === "meeting_confirm_write") {
+    if (!coverageComplete) {
+      result.recommendation = "hold_warn";
+      result.high_risk = true;
+      result.risk_level = "high";
+      result.rationale.push("confirm_required/review_required coverage is incomplete.");
+      return result;
+    }
+    if (!hasRuntimeEvidence) {
+      result.recommendation = "hold_warn";
+      result.high_risk = true;
+      result.risk_level = "high";
+      result.rationale.push(detachedOnly
+        ? "Only detached write-guard samples are available; request-backed runtime evidence is still missing."
+        : "No request-backed runtime samples are available yet.");
+      result.rationale.push("Keep warn for now; fail-open fallback is available if enforce rollout needs emergency rollback.");
+      return result;
+    }
+    if (violationRate === 0) {
+      result.recommendation = mode === "enforce" ? "keep_enforce" : "upgrade_to_enforce";
+      result.upgrade_ready = mode !== "enforce";
+      result.risk_level = mode === "enforce" ? "low" : "medium";
+      result.rationale.push("confirm_required/review_required coverage is complete.");
+      result.rationale.push("request-backed violation rate is 0.");
+      return result;
+    }
+    result.recommendation = "hold_warn";
+    result.high_risk = true;
+    result.risk_level = "high";
+    result.rationale.push(`request-backed violation rate is ${formatNamedRate(violationRate)}.`);
+    result.rationale.push("If operators still want to trial enforce, enable fail-open fallback first.");
+    return result;
+  }
+
+  if (action === "document_comment_rewrite_apply") {
+    result.recommendation = mode === "warn" ? "keep_warn" : "upgrade_to_warn";
+    result.upgrade_ready = mode !== "warn";
+    result.risk_level = "medium";
+    result.rationale.push("warn rollout is additive and keeps apply fail-soft.");
+    result.rationale.push("warning logs now carry structured violation reasons and coverage signals.");
+    return result;
+  }
+
+  if (action === "drive_organize_apply" || action === "wiki_organize_apply") {
+    result.recommendation = "keep_observe_collect_stats";
+    result.risk_level = "medium";
+    result.rationale.push("This route stays in observe during Phase 3.");
+    result.rationale.push("Use runtime scope/idempotency coverage to judge future enforcement rollout.");
+    return result;
+  }
+
+  result.recommendation = mode === targetMode ? `keep_${mode || "current"}` : `align_to_${targetMode}`;
+  result.upgrade_ready = mode !== targetMode;
+  result.rationale.push("No additional Phase 3 rollout rule applies to this route.");
+  return result;
+}
+
+function buildWritePolicyRolloutRoutes({
+  routeChecks = [],
+  runtimeStats = {},
+} = {}) {
+  return routeChecks.map((route) => {
+    const runtime = buildWriteRouteRuntimeStats({
+      pathname: route.pathname,
+      action: route.action,
+      runtimeStats,
+    });
+    const rollout = buildWriteRouteRolloutAdvice({
+      pathname: route.pathname,
+      action: route.action,
+      mode: route.mode,
+      checks: route.checks,
+      runtime,
+    });
+    return {
+      pathname: route.pathname,
+      action: route.action,
+      mode: route.mode,
+      target_mode: rollout.target_mode,
+      checks: route.checks,
+      violation_rate: runtime.violation_rate,
+      runtime_source: runtime.source,
+      sample_count: runtime.sample_count,
+      request_backed_sample_count: runtime.request_backed_sample_count,
+      detached_sample_count: runtime.detached_sample_count,
+      violation_count: runtime.violation_count,
+      scope_key_coverage_rate: runtime.scope_key_coverage_rate,
+      idempotency_key_coverage_rate: runtime.idempotency_key_coverage_rate,
+      recommendation: rollout.recommendation,
+      upgrade_ready: rollout.upgrade_ready,
+      high_risk: rollout.high_risk,
+      risk_level: rollout.risk_level,
+      rationale: rollout.rationale,
+    };
+  });
+}
+
+function buildWritePolicyRolloutSummary(routes = []) {
+  return {
+    routes,
+    upgrade_ready_routes: routes
+      .filter((route) => route.upgrade_ready === true)
+      .map((route) => ({
+        pathname: route.pathname,
+        action: route.action,
+        current_mode: route.mode,
+        target_mode: route.target_mode,
+        recommendation: route.recommendation,
+      })),
+    high_risk_routes: routes
+      .filter((route) => route.high_risk === true)
+      .map((route) => ({
+        pathname: route.pathname,
+        action: route.action,
+        current_mode: route.mode,
+        target_mode: route.target_mode,
+        recommendation: route.recommendation,
+      })),
+  };
 }
 
 function countMatches(text = "", pattern) {
@@ -1131,6 +1518,12 @@ export async function buildWriteSummary() {
   });
   const writePolicyEnforcementModes = buildWritePolicyEnforcementModeSummary(writePolicyEnforcementRouteChecks);
   const writePolicyViolationTypeStats = buildWritePolicyViolationTypeStats(writePolicyEnforcementRouteChecks);
+  const writePolicyRuntimeStats = buildWritePolicyRuntimeStats();
+  const writePolicyRolloutRoutes = buildWritePolicyRolloutRoutes({
+    routeChecks: writePolicyEnforcementRouteChecks,
+    runtimeStats: writePolicyRuntimeStats,
+  });
+  const writePolicyRollout = buildWritePolicyRolloutSummary(writePolicyRolloutRoutes);
   const uniquePolicyActions = buildUniqueSorted(writePolicyRouteChecks.map((item) => item.action));
   const writePolicyLogReferences =
     countMatches(httpServerText, /write_policy:/g)
@@ -1258,6 +1651,8 @@ export async function buildWriteSummary() {
     enforcement_modes: writePolicyEnforcementModes,
     policy_coverage: writePolicyCoverage,
     violation_type_stats: writePolicyViolationTypeStats,
+    runtime_stats: writePolicyRuntimeStats,
+    rollout_advice: writePolicyRollout,
     create_guard_surfaces: [
       {
         file: FILES.httpServer,

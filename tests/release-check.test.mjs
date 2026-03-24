@@ -93,8 +93,8 @@ const PASS_WRITE_GOVERNANCE = {
   route_coverage_ratio: 1,
   mode_counts: {
     enforce: 2,
-    observe: 3,
-    warn: 2,
+    observe: 2,
+    warn: 3,
   },
   violation_type_stats: {
     missing_scope_key: 7,
@@ -102,6 +102,23 @@ const PASS_WRITE_GOVERNANCE = {
     confirm_required: 7,
     review_required: 4,
   },
+  upgrade_ready_routes: [],
+  high_risk_routes: [
+    {
+      pathname: "/api/meeting/confirm",
+      action: "meeting_confirm_write",
+      current_mode: "warn",
+      target_mode: "enforce",
+      recommendation: "hold_warn",
+    },
+    {
+      pathname: "/meeting/confirm",
+      action: "meeting_confirm_write",
+      current_mode: "warn",
+      target_mode: "enforce",
+      recommendation: "hold_warn",
+    },
+  ],
 };
 
 test("release-check report passes when self-check, routing, and planner are stable", async () => {
@@ -670,6 +687,7 @@ test("release-check human output stays minimal with drilldown line", () => {
       "能否放心合併/發布：先不要",
       "若不能，先修哪一條線：system regression",
       "下一步：inspect blocking_checks and representative_fail_case",
+      "write rollout：ready none | high_risk none",
     ].join("\n"),
   );
 });
@@ -687,6 +705,7 @@ test("release-check human output flags doc-boundary routing regressions", () => 
       "能否放心合併/發布：先不要",
       "若不能，先修哪一條線：routing regression",
       "下一步：這是 doc-boundary 類問題，優先檢查 intent guard；run routing-eval doc-boundary pack and inspect message-intent-utils / lane-executor guard",
+      "write rollout：ready none | high_risk none",
     ].join("\n"),
   );
 });
@@ -767,6 +786,7 @@ test("release-check CLI default output stays limited to three lines", async () =
     "能否放心合併/發布：可以",
     "若不能，先修哪一條線：無",
     "下一步：無",
+    "write rollout：ready none | high_risk meeting_confirm_write",
   ].join("\n"));
 });
 

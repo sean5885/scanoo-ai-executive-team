@@ -13,6 +13,12 @@ export const WRITE_POLICY_VIOLATION_TYPES = Object.freeze([
   "confirm_required",
   "review_required",
 ]);
+export const WRITE_POLICY_VIOLATION_REASONS = Object.freeze([
+  "scope_key_unset",
+  "idempotency_key_unset",
+  "missing_confirmation",
+  "missing_review_evidence",
+]);
 
 function normalizeMode(value = "") {
   const normalized = cleanText(value).toLowerCase();
@@ -93,7 +99,7 @@ const PHASE2_ROUTE_WRITE_POLICY_ENFORCEMENT = Object.freeze([
   buildEnforcementRecord({
     action: "document_comment_rewrite_apply",
     pathname: "/api/doc/rewrite-from-comments",
-    mode: "observe",
+    mode: "warn",
     checks: {
       scope_key: true,
       idempotency_key: false,
@@ -176,11 +182,15 @@ function buildViolation({
   type = "",
   field = "",
   message = "",
+  reason = "",
+  check = "",
 } = {}) {
   return {
     type: cleanText(type) || "policy_violation",
     field: cleanText(field) || null,
     message: cleanText(message) || null,
+    reason: cleanText(reason) || null,
+    check: cleanText(check) || null,
   };
 }
 
@@ -220,12 +230,21 @@ export function evaluateWritePolicyEnforcement({
   const reviewRequired = normalizeReviewRequired(writePolicy?.review_required);
   const requiresReview = reviewRequired === "always"
     || (reviewRequired === "conditional" && reviewRequirementActive === true);
+  const signals = {
+    scope_key_present: Boolean(resolvedScopeKey),
+    idempotency_key_present: Boolean(resolvedIdempotencyKey),
+    confirmation_present: confirmed === true,
+    review_completed: reviewCompleted === true,
+    review_required_active: requiresReview,
+  };
 
   if (checks.scope_key && !resolvedScopeKey) {
     violations.push(buildViolation({
       type: "missing_scope_key",
       field: "scope_key",
       message: "Write policy requires a stable scope_key before apply.",
+      reason: "scope_key_unset",
+      check: "scope_key",
     }));
   }
 
@@ -234,6 +253,8 @@ export function evaluateWritePolicyEnforcement({
       type: "missing_idempotency_key",
       field: "idempotency_key",
       message: "Write policy requires idempotency_key for this write route.",
+      reason: "idempotency_key_unset",
+      check: "idempotency_key",
     }));
   }
 
@@ -242,6 +263,8 @@ export function evaluateWritePolicyEnforcement({
       type: "confirm_required",
       field: "confirm_required",
       message: "Write policy requires explicit confirmation before apply.",
+      reason: "missing_confirmation",
+      check: "confirm_required",
     }));
   }
 
@@ -250,6 +273,8 @@ export function evaluateWritePolicyEnforcement({
       type: "review_required",
       field: "review_required",
       message: "Write policy requires review/verification evidence before apply.",
+      reason: "missing_review_evidence",
+      check: "review_required",
     }));
   }
 
@@ -268,8 +293,10 @@ export function evaluateWritePolicyEnforcement({
     mode,
     status,
     checks,
+    signals,
     violation_count: violations.length,
     violation_types: violations.map((item) => item.type),
+    violation_reasons: violations.map((item) => item.reason).filter(Boolean),
     violations,
     should_block: status === "block",
     should_warn: status === "warn",

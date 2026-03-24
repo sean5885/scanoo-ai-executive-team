@@ -102,9 +102,10 @@ test("system self-check returns unified routing and planner summaries", async ()
   assert.equal(result.write_summary.status, "pass");
   assert.deepEqual(result.write_summary.enforcement_modes.mode_counts, {
     enforce: 2,
-    observe: 3,
-    warn: 2,
+    observe: 2,
+    warn: 3,
   });
+  assert.equal(result.write_summary.rollout_advice.high_risk_routes.some((route) => route.action === "meeting_confirm_write"), true);
   assert.equal(result.routing_summary.status, "pass");
   assert.equal(result.routing_summary.doc_boundary_regression, false);
   assert.equal(result.routing_summary.compare.available, true);
@@ -326,7 +327,8 @@ test("self-check CLI renders concise guidance by default", async () => {
   assert.match(output, /System Self-Check/);
   assert.match(output, /現在系統能不能放心改：可以/);
   assert.match(output, /結論：core pass \| company-brain pass \| control pass \| write-policy pass \| routing pass \| planner pass \| regression no/);
-  assert.match(output, /write policy：coverage 7\/7 \| modes enforce:2,observe:3,warn:2/);
+  assert.match(output, /write policy：coverage 7\/7 \| modes enforce:2,observe:2,warn:3/);
+  assert.match(output, /write rollout：ready none \| high_risk meeting_confirm_write/);
   assert.match(output, /先看：none/);
   assert.match(output, /指引：可以開始改；改 control 後回看 control:diagnostics，改 routing 後回看 routing:diagnostics，改 planner 後回看 planner:diagnostics 與 self-check。/);
 });

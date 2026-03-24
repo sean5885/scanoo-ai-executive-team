@@ -74,21 +74,67 @@ function clonePolicyEnforcement(policyEnforcement = null) {
           review_required: policyEnforcement.checks.review_required === true,
         }
       : null,
+    signals: policyEnforcement.signals && typeof policyEnforcement.signals === "object"
+      ? {
+          scope_key_present: policyEnforcement.signals.scope_key_present === true,
+          idempotency_key_present: policyEnforcement.signals.idempotency_key_present === true,
+          confirmation_present: policyEnforcement.signals.confirmation_present === true,
+          review_completed: policyEnforcement.signals.review_completed === true,
+          review_required_active: policyEnforcement.signals.review_required_active === true,
+        }
+      : null,
     violation_count: Number(policyEnforcement.violation_count || 0),
     violation_types: Array.isArray(policyEnforcement.violation_types)
       ? policyEnforcement.violation_types.map((item) => cleanText(item)).filter(Boolean)
+      : [],
+    violation_reasons: Array.isArray(policyEnforcement.violation_reasons)
+      ? policyEnforcement.violation_reasons.map((item) => cleanText(item)).filter(Boolean)
       : [],
     violations: Array.isArray(policyEnforcement.violations)
       ? policyEnforcement.violations.map((item) => ({
           type: cleanText(item?.type) || null,
           field: cleanText(item?.field) || null,
           message: cleanText(item?.message) || null,
+          reason: cleanText(item?.reason) || null,
+          check: cleanText(item?.check) || null,
         }))
       : [],
     should_block: policyEnforcement.should_block === true,
     should_warn: policyEnforcement.should_warn === true,
     should_observe: policyEnforcement.should_observe === true,
+    fallback: policyEnforcement.fallback && typeof policyEnforcement.fallback === "object"
+      ? {
+          applied: policyEnforcement.fallback.applied === true,
+          mode: cleanText(policyEnforcement.fallback.mode) || null,
+          reason: cleanText(policyEnforcement.fallback.reason) || null,
+        }
+      : null,
     message: cleanText(policyEnforcement.message) || null,
+  };
+}
+
+function parseFailOpenActions(value = "") {
+  return new Set(
+    String(value || "")
+      .split(",")
+      .map((item) => cleanText(item))
+      .filter(Boolean),
+  );
+}
+
+function shouldFailOpenPolicyBlock({ action = "", pathname = "" } = {}) {
+  const configured = parseFailOpenActions(process.env.WRITE_POLICY_FAIL_OPEN_ACTIONS || "");
+  if (configured.size === 0) {
+    return false;
+  }
+  return configured.has(cleanText(action)) || configured.has(cleanText(pathname));
+}
+
+function buildFallbackPayload({ applied = false, reason = "" } = {}) {
+  return {
+    applied: applied === true,
+    mode: applied === true ? "fail_open_alert" : null,
+    reason: cleanText(reason) || null,
   };
 }
 
@@ -150,6 +196,36 @@ function emitWriteGuardDecisionLog({
     return;
   }
 
+  const policySummary = {
+    mode: cleanText(policyEnforcement.mode) || null,
+    status: cleanText(policyEnforcement.status) || null,
+    violation_count: Number(policyEnforcement.violation_count || 0),
+    violation_types: Array.isArray(policyEnforcement.violation_types) ? [...policyEnforcement.violation_types] : [],
+    violation_reasons: Array.isArray(policyEnforcement.violation_reasons) ? [...policyEnforcement.violation_reasons] : [],
+    signals: policyEnforcement.signals && typeof policyEnforcement.signals === "object"
+      ? { ...policyEnforcement.signals }
+      : null,
+    fallback: policyEnforcement.fallback && typeof policyEnforcement.fallback === "object"
+      ? { ...policyEnforcement.fallback }
+      : null,
+  };
+
+  if (policyEnforcement.fallback?.applied === true) {
+    const fallbackSink = typeof logger.warn === "function"
+      ? logger.warn.bind(logger)
+      : sink;
+    fallbackSink("write_policy_enforcement_fail_open", {
+      action: cleanText(operation) || "write_guard",
+      owner: cleanText(owner) || null,
+      workflow: cleanText(workflow) || null,
+      policy_enforcement: clonePolicyEnforcement(policyEnforcement),
+      policy_enforcement_summary: policySummary,
+      ...(cleanText(requestId) ? { request_id: cleanText(requestId) } : {}),
+      ...(cleanText(traceId) ? { trace_id: cleanText(traceId) } : {}),
+    });
+    return;
+  }
+
   if (policyEnforcement.should_warn) {
     const warningSink = typeof logger.warn === "function"
       ? logger.warn.bind(logger)
@@ -159,6 +235,7 @@ function emitWriteGuardDecisionLog({
       owner: cleanText(owner) || null,
       workflow: cleanText(workflow) || null,
       policy_enforcement: clonePolicyEnforcement(policyEnforcement),
+      policy_enforcement_summary: policySummary,
       ...(cleanText(requestId) ? { request_id: cleanText(requestId) } : {}),
       ...(cleanText(traceId) ? { trace_id: cleanText(traceId) } : {}),
     });
@@ -174,6 +251,7 @@ function emitWriteGuardDecisionLog({
       owner: cleanText(owner) || null,
       workflow: cleanText(workflow) || null,
       policy_enforcement: clonePolicyEnforcement(policyEnforcement),
+      policy_enforcement_summary: policySummary,
       ...(cleanText(requestId) ? { request_id: cleanText(requestId) } : {}),
       ...(cleanText(traceId) ? { trace_id: cleanText(traceId) } : {}),
     });
@@ -215,6 +293,16 @@ export function decideWriteGuard({
     scopeKey,
     idempotencyKey,
   });
+  if (policyEnforcement.should_block && shouldFailOpenPolicyBlock({ action: operation, pathname })) {
+    policyEnforcement.should_block = false;
+    policyEnforcement.should_warn = true;
+    policyEnforcement.should_observe = false;
+    policyEnforcement.status = "warn";
+    policyEnforcement.fallback = buildFallbackPayload({
+      applied: true,
+      reason: "policy_enforcement_fail_open_enabled",
+    });
+  }
   let decision = null;
 
   if (!external) {

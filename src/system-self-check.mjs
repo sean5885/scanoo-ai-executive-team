@@ -483,6 +483,10 @@ function compareStatusDirection(currentStatus = "", previousStatus = "") {
   return "unchanged";
 }
 
+function uniqLabels(values = []) {
+  return Array.from(new Set(values.map((value) => cleanText(value)).filter(Boolean)));
+}
+
 export function buildSystemSelfCheckCompareSummary({
   currentReport = {},
   previousReport = {},
@@ -525,12 +529,19 @@ export function renderSystemSelfCheckReport(result = {}) {
   const writeModes = Object.entries(writeSummary?.enforcement_modes?.mode_counts || {})
     .map(([mode, count]) => `${mode}:${count}`)
     .join(",");
+  const upgradeReady = Array.isArray(writeSummary?.rollout_advice?.upgrade_ready_routes)
+    ? uniqLabels(writeSummary.rollout_advice.upgrade_ready_routes.map((route) => cleanText(route?.action) || cleanText(route?.pathname)))
+    : [];
+  const highRisk = Array.isArray(writeSummary?.rollout_advice?.high_risk_routes)
+    ? uniqLabels(writeSummary.rollout_advice.high_risk_routes.map((route) => cleanText(route?.action) || cleanText(route?.pathname)))
+    : [];
 
   return [
     "System Self-Check",
     `現在系統能不能放心改：${systemSummary?.answer || "先不要"}`,
     `結論：core ${systemSummary?.core_checks || "fail"} | company-brain ${systemSummary?.company_brain_status || "fail"} | control ${systemSummary?.control_status || "fail"} | write-policy ${systemSummary?.write_policy_status || "fail"} | routing ${systemSummary?.routing_status || "fail"} | planner ${systemSummary?.planner_gate || "fail"} | regression ${systemSummary?.has_obvious_regression ? "yes" : "no"}`,
     `write policy：coverage ${Number(writeSummary?.policy_coverage?.enforced_route_count || 0)}/${Number(writeSummary?.policy_coverage?.metadata_route_count || 0)} | modes ${writeModes || "none"}`,
+    `write rollout：ready ${upgradeReady.length > 0 ? upgradeReady.join(",") : "none"} | high_risk ${highRisk.length > 0 ? highRisk.join(",") : "none"}`,
     `先看：${systemSummary?.review_priority || "base"}`,
     `指引：${systemSummary?.guidance || "先看 self-check 失敗項目。"}`
   ].join("\n");

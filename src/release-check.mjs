@@ -232,6 +232,12 @@ function buildWriteGovernanceSummary(selfCheckResult = {}) {
     route_coverage_ratio: Number(writeSummary?.policy_coverage?.route_coverage_ratio || 0),
     mode_counts: writeSummary?.enforcement_modes?.mode_counts || {},
     violation_type_stats: writeSummary?.violation_type_stats || {},
+    upgrade_ready_routes: Array.isArray(writeSummary?.rollout_advice?.upgrade_ready_routes)
+      ? writeSummary.rollout_advice.upgrade_ready_routes
+      : [],
+    high_risk_routes: Array.isArray(writeSummary?.rollout_advice?.high_risk_routes)
+      ? writeSummary.rollout_advice.high_risk_routes
+      : [],
   };
 }
 
@@ -695,11 +701,18 @@ export function renderReleaseCheckReport(report = {}) {
   const docBoundaryNote = report?.doc_boundary_regression === true && firstBlockingLine === BLOCKING_ROUTING_REGRESSION
     ? "這是 doc-boundary 類問題，優先檢查 intent guard；"
     : "";
+  const upgradeReady = Array.isArray(report?.write_governance?.upgrade_ready_routes)
+    ? uniqValues(report.write_governance.upgrade_ready_routes.map((route) => cleanText(route?.action) || cleanText(route?.pathname)))
+    : [];
+  const highRisk = Array.isArray(report?.write_governance?.high_risk_routes)
+    ? uniqValues(report.write_governance.high_risk_routes.map((route) => cleanText(route?.action) || cleanText(route?.pathname)))
+    : [];
 
   return [
     `能否放心合併/發布：${canMergeOrRelease}`,
     `若不能，先修哪一條線：${renderBlockingLineLabel(firstBlockingLine)}`,
     `下一步：${docBoundaryNote}${actionHint}`,
+    `write rollout：ready ${upgradeReady.length > 0 ? upgradeReady.join(",") : "none"} | high_risk ${highRisk.length > 0 ? highRisk.join(",") : "none"}`,
   ].join("\n");
 }
 
