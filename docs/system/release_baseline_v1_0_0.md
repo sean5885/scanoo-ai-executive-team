@@ -93,14 +93,14 @@ node scripts/check-auth.mjs
 
 Notes:
 
-- `npm run release-check` is the single operator-facing preflight for merge/release and only compresses self-check + routing status + planner gate into one verdict
+- `npm run release-check` is the single operator-facing preflight for merge/release and only compresses self-check + control status + routing status + planner gate into one verdict
 - `npm run release-check:ci` is the CI/pipeline entry for the same verdict; it emits only the minimal JSON report and exits `0` on `pass`, `1` on `fail`
 - both entries now archive each run into `.tmp/release-check-history/manifest.json` and `.tmp/release-check-history/snapshots/<run-id>.json`
 - both entries also support read-only compare against release-check history through `--compare-previous` and `--compare-snapshot <run-id|path>`
 - the current release history checkpoint is the snapshot + manifest + compare version over the same release-check gate
 - the current release decision layer checkpoint is the CI + triage complete version:
   - CI entry = `release-check:ci`
-  - triage classes = `system_regression` / `routing_regression` / `planner_contract_failure`
+  - triage classes = `system_regression` / `control_regression` / `routing_regression` / `planner_contract_failure`
   - `suggested_next_step` stays minimal but points to the first module family or file type to inspect
 - on this preflight line, `fail` means block merge/deploy; `pass` means this gate can release the next pipeline stage
 - recommended cadence:

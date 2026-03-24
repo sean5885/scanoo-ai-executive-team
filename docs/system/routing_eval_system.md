@@ -43,7 +43,7 @@ Thread 49 unified-self-check checkpoint 把既有 routing diagnostics latest sna
 
 Thread 51 release-check preflight checkpoint 把既有 unified `self-check` 的 routing line再壓成 merge/release 單一 preflight 入口的一部分；routing block 在這個入口下只分類成 `routing_regression`，且 next-step 只指向 routing rule 模組或 eval fixture 檔；它只讀最新 routing snapshot 與 compare 判讀，不重跑 eval、不改 routing，也不新增 fallback。fail 時會再從同一份 latest routing diagnostics/history 補最小 drilldown，只回傳 `failing_area`、1~2 個 `representative_fail_case`，以及 `drilldown_source`，不新增新的 diagnostics 系統。
 
-Thread 54 release drilldown checkpoint 把這個 fail drilldown 正式固定成 release-check checkpoint：release-check fail 時只額外指出先看哪類 case，並在 JSON 內保留最小 `failing_area` / `representative_fail_case` / `drilldown_source`；它仍只重用 latest routing diagnostics/history、planner diagnostics/history 與 release-check triage，不新增 gate、fallback、auto-fix 或新的 diagnostics path。
+Thread 54 release drilldown checkpoint 把這個 fail drilldown 正式固定成 release-check checkpoint：release-check fail 時只額外指出固定 `下一步`，並在 JSON 內保留最小 `failing_area` / `representative_fail_case` / `drilldown_source`；它仍只重用 control/routing/planner diagnostics history 與 release-check triage，不新增 gate、fallback、auto-fix 或新的 diagnostics path。
 
 Thread 56 daily status entry checkpoint 把既有 routing/self-check/release 判讀再壓成 daily operator 入口 `npm run daily-status`；routing 線在這個入口下仍只重用 latest routing diagnostics snapshot 與既有 unified self-check/release triage，不重跑 eval、不改 routing，也不新增 fallback。這個入口只額外回答今天是否能安心開發 / 合併 / 發布，以及若不能要先看 `routing` / `planner` / `release` 哪一條線。
 
@@ -275,10 +275,11 @@ node scripts/routing-eval-fixture-candidates.mjs --input /tmp/routing-eval.json 
 
 若 `npm run release-check` fail 且 `drilldown_source` 含 `routing-eval diagnostics/history`，固定順序是：
 
-1. 看 human-readable 第三行 `先看哪類 case`
-2. 再看 `npm run release-check -- --json` 的 `representative_fail_case`
-3. 用 case id 回到 latest routing snapshot 的 `top_miss_cases`
-4. 只在確認是 coverage 缺口時補 fixture；不要因為 release-check fail 就直接改 fallback 或重做 diagnostics
+1. 先看 human-readable 第三行 `下一步`
+2. 再看 `npm run release-check -- --json` 的 `failing_area`
+3. 再看 `npm run release-check -- --json` 的 `representative_fail_case`
+4. 用 case id 回到 latest routing snapshot 的 `top_miss_cases`
+5. 只在確認是 coverage 缺口時補 fixture；不要因為 release-check fail 就直接改 fallback 或重做 diagnostics
 
 若同時命中 `doc_boundary_regression = true`，release/self-check 的 operator hint 會先把人帶到 doc-boundary pack 與 intent guard；但實際排查順序固定是：
 
@@ -308,7 +309,7 @@ node scripts/routing-eval-fixture-candidates.mjs --input /tmp/routing-eval.json 
 - `npm run self-check -- --compare-previous`
 - `npm run self-check -- --compare-snapshot <run-id|path>`
 
-這兩條 compare path 只回答 unified `system` 變化、`routing` 是否 regression、以及 `planner` 是否 regression；不改 routing 邏輯、不改 fallback，也不做 auto-fix。
+這兩條 compare path 只回答 unified `system` 變化、`control` 是否 regression、`routing` 是否 regression、以及 `planner` 是否 regression；不改 routing 邏輯、不改 fallback，也不做 auto-fix。
 
 `npm run daily-status` 會再把這條 routing line 壓成 daily answer 的一部分，但不改 routing 判讀來源：
 

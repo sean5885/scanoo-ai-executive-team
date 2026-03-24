@@ -211,3 +211,22 @@ human-readable compare 使用固定方向標記：
 - company-brain formal approval flow
 
 它只是把 control / write / routing 三條既有證據線做最小彙總與可回溯化。
+
+## Gate Reuse
+
+Phase 4 起，這條 read-only diagnostics 線也會被既有 gate 直接重用，但仍不改 runtime：
+
+- `self-check` 直接重用目前 code truth 產生的 `control_summary`
+- `system_summary.safe_to_change` 必須同時滿足：
+  - `base`
+  - `control`
+  - `routing`
+  - `planner`
+- `release-check` 新增最小 blocking 類別 `control_regression`
+- `release-check` fail drilldown 若控制線先 block，會優先重用既有 control diagnostics snapshot/history，並把 `drilldown_source` 標成 `control diagnostics/history`
+
+這條接線仍維持 read-only：
+
+- 不會改 control runtime
+- 不會新增 fallback
+- 不會自動修正 control drift

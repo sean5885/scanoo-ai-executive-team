@@ -1,4 +1,7 @@
+import path from "node:path";
+
 import { cleanText } from "./message-intent-utils.mjs";
+import { resolveControlDiagnosticsSnapshot } from "./control-diagnostics-history.mjs";
 import { runPlannerContractConsistencyCheck } from "./planner-contract-consistency.mjs";
 import { archiveReleaseCheckSnapshot } from "./release-check-history.mjs";
 import { resolveRoutingDiagnosticsSnapshot } from "./routing-diagnostics-history.mjs";
@@ -6,6 +9,7 @@ import { detectDocBoundaryRoutingRegression } from "./routing-eval-diagnostics.m
 import { runSystemSelfCheck } from "./system-self-check.mjs";
 
 const BLOCKING_SYSTEM_REGRESSION = "system_regression";
+const BLOCKING_CONTROL_REGRESSION = "control_regression";
 const BLOCKING_ROUTING_REGRESSION = "routing_regression";
 const BLOCKING_PLANNER_CONTRACT_FAILURE = "planner_contract_failure";
 const FAILING_AREA_DOC = "doc";
@@ -13,6 +17,7 @@ const FAILING_AREA_MEETING = "meeting";
 const FAILING_AREA_RUNTIME = "runtime";
 const FAILING_AREA_MIXED = "mixed";
 const RELEASE_CHECK_TRIAGE_SOURCE = "release-check triage";
+const CONTROL_DRILLDOWN_SOURCE = "control diagnostics/history";
 const ROUTING_DRILLDOWN_SOURCE = "routing-eval diagnostics/history";
 const PLANNER_DRILLDOWN_SOURCE = "planner diagnostics/history";
 const DOC_BOUNDARY_ACTION_HINT = "run routing-eval doc-boundary pack and inspect message-intent-utils / lane-executor guard";
@@ -35,6 +40,21 @@ function normalizeServiceModule(modulePath = "") {
   return normalized.startsWith("./")
     ? `src/${normalized.slice(2)}`
     : normalized;
+}
+
+function normalizeRepoPath(filePath = "") {
+  const normalized = cleanText(filePath);
+  if (!normalized) {
+    return null;
+  }
+  if (normalized.startsWith("./")) {
+    return `src/${normalized.slice(2)}`;
+  }
+  const relativePath = path.relative(process.cwd(), normalized);
+  if (relativePath && !relativePath.startsWith("..")) {
+    return relativePath;
+  }
+  return normalized;
 }
 
 function buildSystemRegressionNextStep(selfCheckResult = {}) {
@@ -65,6 +85,10 @@ function buildSystemRegressionNextStep(selfCheckResult = {}) {
   }
 
   return "先看 system regression 的基礎模組：src/agent-registry.mjs、src/http-route-contracts.mjs、src/*-service.mjs。";
+}
+
+function buildControlRegressionNextStep() {
+  return "先看 control regression 的 control 模組：src/control-kernel.mjs 與 src/lane-executor.mjs。";
 }
 
 function buildRoutingRegressionNextStep(selfCheckResult = {}) {
@@ -166,7 +190,7 @@ function buildReleaseCheckActionHint({
   if (firstBlockingCheck === BLOCKING_PLANNER_CONTRACT_FAILURE) {
     return buildPlannerActionHint({ suggestedNextStep, drilldown });
   }
-  if (firstBlockingCheck === BLOCKING_SYSTEM_REGRESSION) {
+  if (firstBlockingCheck === BLOCKING_SYSTEM_REGRESSION || firstBlockingCheck === BLOCKING_CONTROL_REGRESSION) {
     return buildReleaseActionHint({ blockingChecks, drilldown });
   }
   return null;
@@ -177,6 +201,16 @@ function hasBlockingRoutingIssue(selfCheckResult = {}) {
     cleanText(selfCheckResult?.routing_summary?.status) !== "pass"
     || selfCheckResult?.routing_summary?.compare?.has_obvious_regression === true
   );
+}
+
+function hasBlockingControlIssue(selfCheckResult = {}) {
+  const controlStatus = cleanText(
+    selfCheckResult?.control_summary?.status || selfCheckResult?.system_summary?.control_status,
+  );
+  if (!controlStatus) {
+    return false;
+  }
+  return controlStatus !== "pass";
 }
 
 function hasBlockingPlannerIssue(selfCheckResult = {}) {
@@ -254,6 +288,9 @@ function inferAreaFromPathOrIdentifier(value = "") {
     || normalized.includes("db path")
     || normalized.includes("pid")
     || normalized.includes("cwd")
+    || normalized.includes("control-kernel")
+    || normalized.includes("lane-executor")
+    || normalized.includes("ownership")
   ) {
     return FAILING_AREA_RUNTIME;
   }
@@ -307,6 +344,32 @@ function buildRoutingDrilldown({ latestRoutingSnapshot = null, selfCheckResult =
       RELEASE_CHECK_TRIAGE_SOURCE,
       ROUTING_DRILLDOWN_SOURCE,
     ],
+  };
+}
+
+function formatControlRepresentativeIssue(issue = {}) {
+  const code = cleanText(issue?.code) || "control_issue";
+  const file = normalizeRepoPath(issue?.file);
+  return file ? `${code} via ${file}` : code;
+}
+
+function buildControlDrilldown({ controlSnapshot = null, selfCheckResult = {} } = {}) {
+  const controlSummary = controlSnapshot?.report?.control_summary || selfCheckResult?.control_summary || {};
+  const issues = Array.isArray(controlSummary?.issues)
+    ? controlSummary.issues.slice(0, 2)
+    : [];
+  const representativeFailCase = issues.map((issue) => formatControlRepresentativeIssue(issue));
+  const failingArea = coalesceFailingArea(issues.map((issue) => inferAreaFromPathOrIdentifier(issue?.file)))
+    || FAILING_AREA_RUNTIME;
+
+  return {
+    failing_area: failingArea,
+    representative_fail_case: representativeFailCase.length > 0
+      ? representativeFailCase
+      : ["control diagnostics found no representative issue"],
+    drilldown_source: controlSnapshot
+      ? [RELEASE_CHECK_TRIAGE_SOURCE, CONTROL_DRILLDOWN_SOURCE]
+      : [RELEASE_CHECK_TRIAGE_SOURCE],
   };
 }
 
@@ -429,6 +492,7 @@ function buildSystemDrilldown(selfCheckResult = {}) {
 
 export function buildReleaseCheckDrilldown({
   selfCheckResult = {},
+  controlSnapshot = null,
   latestRoutingSnapshot = null,
   plannerReport = null,
   blockingChecks = null,
@@ -437,6 +501,7 @@ export function buildReleaseCheckDrilldown({
     ? blockingChecks
     : [
         ...(cleanText(selfCheckResult?.system_summary?.core_checks) !== "pass" ? [BLOCKING_SYSTEM_REGRESSION] : []),
+        ...(hasBlockingControlIssue(selfCheckResult) ? [BLOCKING_CONTROL_REGRESSION] : []),
         ...(hasBlockingRoutingIssue(selfCheckResult) ? [BLOCKING_ROUTING_REGRESSION] : []),
         ...(hasBlockingPlannerIssue(selfCheckResult) ? [BLOCKING_PLANNER_CONTRACT_FAILURE] : []),
       ];
@@ -444,6 +509,9 @@ export function buildReleaseCheckDrilldown({
 
   if (firstBlockingCheck === BLOCKING_SYSTEM_REGRESSION) {
     return buildSystemDrilldown(selfCheckResult);
+  }
+  if (firstBlockingCheck === BLOCKING_CONTROL_REGRESSION) {
+    return buildControlDrilldown({ controlSnapshot, selfCheckResult });
   }
   if (firstBlockingCheck === BLOCKING_ROUTING_REGRESSION) {
     return buildRoutingDrilldown({ latestRoutingSnapshot, selfCheckResult });
@@ -465,6 +533,10 @@ export function buildReleaseCheckReport({ selfCheckResult = {}, drilldown = null
     blockingChecks.push(BLOCKING_SYSTEM_REGRESSION);
   }
 
+  if (hasBlockingControlIssue(selfCheckResult)) {
+    blockingChecks.push(BLOCKING_CONTROL_REGRESSION);
+  }
+
   if (hasBlockingRoutingIssue(selfCheckResult)) {
     blockingChecks.push(BLOCKING_ROUTING_REGRESSION);
   }
@@ -481,6 +553,8 @@ export function buildReleaseCheckReport({ selfCheckResult = {}, drilldown = null
   const firstBlockingCheck = blockingChecks[0] || null;
   const suggestedNextStep = firstBlockingCheck === BLOCKING_SYSTEM_REGRESSION
     ? buildSystemRegressionNextStep(selfCheckResult)
+    : firstBlockingCheck === BLOCKING_CONTROL_REGRESSION
+      ? buildControlRegressionNextStep(selfCheckResult)
     : firstBlockingCheck === BLOCKING_ROUTING_REGRESSION
       ? buildRoutingRegressionNextStep(selfCheckResult)
       : firstBlockingCheck === BLOCKING_PLANNER_CONTRACT_FAILURE
@@ -513,6 +587,9 @@ export function buildReleaseCheckReport({ selfCheckResult = {}, drilldown = null
 function renderBlockingLineLabel(blockingCheck = "") {
   if (blockingCheck === BLOCKING_SYSTEM_REGRESSION) {
     return "system regression";
+  }
+  if (blockingCheck === BLOCKING_CONTROL_REGRESSION) {
+    return "control regression";
   }
   if (blockingCheck === BLOCKING_ROUTING_REGRESSION) {
     return "routing regression";
@@ -587,8 +664,18 @@ export function buildReleaseCheckCompareSummary({
 
 export async function runReleaseCheck(options = {}) {
   const selfCheckResult = await runSystemSelfCheck(options);
+  let latestControlSnapshot = null;
   let latestRoutingSnapshot = null;
   let plannerReport = null;
+
+  try {
+    latestControlSnapshot = await resolveControlDiagnosticsSnapshot({
+      reference: "latest",
+      ...(options?.controlArchiveDir ? { baseDir: options.controlArchiveDir } : {}),
+    });
+  } catch {
+    latestControlSnapshot = null;
+  }
 
   try {
     latestRoutingSnapshot = await resolveRoutingDiagnosticsSnapshot({
@@ -620,6 +707,9 @@ export async function runReleaseCheck(options = {}) {
   if (cleanText(selfCheckResult?.system_summary?.core_checks) !== "pass") {
     blockingChecks.push(BLOCKING_SYSTEM_REGRESSION);
   }
+  if (hasBlockingControlIssue(selfCheckResult)) {
+    blockingChecks.push(BLOCKING_CONTROL_REGRESSION);
+  }
   if (hasBlockingRoutingIssue(selfCheckResult)) {
     blockingChecks.push(BLOCKING_ROUTING_REGRESSION);
   }
@@ -629,6 +719,7 @@ export async function runReleaseCheck(options = {}) {
   const firstBlockingCheck = blockingChecks[0] || null;
   const drilldown = buildReleaseCheckDrilldown({
     selfCheckResult,
+    controlSnapshot: latestControlSnapshot,
     latestRoutingSnapshot,
     plannerReport,
     blockingChecks,

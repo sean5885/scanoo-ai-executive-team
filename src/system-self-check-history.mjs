@@ -70,6 +70,7 @@ function buildManifestEntry({
     run_id: cleanText(runId) || null,
     timestamp,
     system_status: cleanText(report?.system_summary?.status) || "fail",
+    control_status: cleanText(report?.control_summary?.status || report?.system_summary?.control_status) || "fail",
     routing_status: cleanText(report?.routing_summary?.status) || "fail",
     planner_status: cleanText(report?.planner_summary?.gate) || "fail",
   };

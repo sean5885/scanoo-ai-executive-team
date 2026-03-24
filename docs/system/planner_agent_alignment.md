@@ -311,7 +311,7 @@ Thread 50 self-check history checkpoint:
 Thread 51 release-check preflight checkpoint:
 
 - keeps the same planner gate and compare semantics
-- adds `release-check` as the single merge/release preflight entry over the existing self-check, routing, and planner evidence
+- adds `release-check` as the single merge/release preflight entry over the existing self-check, control, routing, and planner evidence
 - keeps human output bounded to merge/release verdict, first repair line, plus one minimal `下一步`
 - classifies planner-side blocking output under the minimal `planner_contract_failure` triage line
 - keeps planner next-step guidance module-first: inspect planner registry / flow-route files before considering `docs/system/planner_contract.json`
@@ -330,7 +330,7 @@ Thread 54 release drilldown checkpoint:
   - `representative_fail_case`
   - `drilldown_source`
 - keeps human-readable output bounded to one extra line `下一步`
-- keeps the drilldown source bounded to existing release triage plus routing/planner diagnostics evidence only
+- keeps the drilldown source bounded to existing release triage plus control/routing/planner diagnostics evidence only
 - does not add fallback, auto-fix, or a new diagnostics subsystem
 
 Thread 56 daily status entry checkpoint:
@@ -480,6 +480,7 @@ Current daily-entry CLI:
   - `run_id`
   - `timestamp`
   - `system_status`
+  - `control_status`
   - `routing_status`
   - `planner_status`
 - unified self-check compare mode supports:
@@ -488,6 +489,7 @@ Current daily-entry CLI:
 - unified self-check result may now also carry top-level `doc_boundary_regression`, and `routing_summary.doc_boundary_regression` mirrors the same routing-only signal
 - unified self-check compare human output only covers:
   - `system` better / worse / unchanged
+  - whether `control` regressed
   - whether `routing` regressed
   - whether `planner` regressed
 - if `gate = fail`, the decision guidance is:
@@ -564,13 +566,13 @@ Daily-status reading order:
 1. run `npm run daily-status` or `npm run check:daily` first when you need the bounded daily answer
 2. if it says `routing`, move to `npm run routing:diagnostics` or `npm run check:routing`
 3. if it says `planner`, move to `npm run planner:diagnostics` or `npm run check:planner`
-4. if it says `release`, move to `npm run release-check` / `npm run check:release` or `npm run self-check` / `npm run check:self` depending on whether you need the minimal preflight or the fuller base/routing/planner breakdown
+4. if it says `release`, move to `npm run release-check` / `npm run check:release` or `npm run self-check` / `npm run check:self` depending on whether you need the minimal preflight or the fuller base/control/routing/planner breakdown
 5. `daily-status` does not replace the existing planner gate; it only points you at the first existing line to read
 
 Release-check fail -> drilldown order:
 
 1. run `npm run release-check`
-2. if output says `先看哪類 case：doc|meeting|runtime|mixed`, use that only as the first slice, not as a new gate
+2. read `report.failing_area` from `npm run release-check -- --json`; use `doc|meeting|runtime|mixed` only as the first slice, not as a new gate
 3. read `report.representative_fail_case` from `npm run release-check -- --json`
 4. if `drilldown_source` contains `routing-eval diagnostics/history`:
    - start from the listed routing eval case ids

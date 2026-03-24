@@ -21,6 +21,7 @@ const PLANNER_SELECTOR_CATEGORY = "selector_contract_mismatches";
 const ROUTING_REASON_HINTS = new Set(["doc", "meeting", "runtime", "mixed"]);
 const RELEASE_REASON_HINTS = new Set([
   "system_regression",
+  "control_regression",
   "routing_regression",
   "planner_contract_failure",
 ]);
@@ -90,7 +91,7 @@ function resolveFirstLineToCheck(releaseCheckResult = {}) {
   if (firstBlockingCheck === "planner_contract_failure") {
     return PLANNER_LINE;
   }
-  if (firstBlockingCheck === "system_regression") {
+  if (firstBlockingCheck === "system_regression" || firstBlockingCheck === "control_regression") {
     return RELEASE_LINE;
   }
 

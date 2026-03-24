@@ -14,6 +14,10 @@ import {
   renderReleaseCheckReport,
   runReleaseCheck,
 } from "../src/release-check.mjs";
+import {
+  archiveControlDiagnosticsSnapshot,
+  resolveControlDiagnosticsSnapshot,
+} from "../src/control-diagnostics-history.mjs";
 import { runPlannerContractConsistencyCheck } from "../src/planner-contract-consistency.mjs";
 import { archivePlannerDiagnosticsSnapshot } from "../src/planner-diagnostics-history.mjs";
 import { buildRoutingDiagnosticsSummary } from "../src/routing-eval-diagnostics.mjs";
@@ -215,6 +219,48 @@ test("release-check report classifies system regression and points to base modul
   });
 });
 
+test("release-check report classifies control regression and points to control modules", () => {
+  const report = buildReleaseCheckReport({
+    selfCheckResult: {
+      ok: false,
+      system_summary: {
+        core_checks: "pass",
+      },
+      control_summary: {
+        status: "fail",
+      },
+      routing_summary: {
+        status: "pass",
+        compare: {
+          has_obvious_regression: false,
+        },
+      },
+      planner_summary: {
+        gate: "pass",
+        compare: {
+          has_obvious_regression: false,
+        },
+      },
+    },
+    drilldown: {
+      failing_area: "runtime",
+      representative_fail_case: ["control_integration_missing:lane_executor_owner_assertions via src/lane-executor.mjs"],
+      drilldown_source: ["release-check triage", "control diagnostics/history"],
+    },
+  });
+
+  assert.deepEqual(report, {
+    overall_status: "fail",
+    blocking_checks: ["control_regression"],
+    doc_boundary_regression: false,
+    suggested_next_step: "先看 control regression 的 control 模組：src/control-kernel.mjs 與 src/lane-executor.mjs。",
+    action_hint: "inspect blocking_checks and representative_fail_case",
+    failing_area: "runtime",
+    representative_fail_case: ["control_integration_missing:lane_executor_owner_assertions via src/lane-executor.mjs"],
+    drilldown_source: ["release-check triage", "control diagnostics/history"],
+  });
+});
+
 test("release-check report points planner contract failure to planner registry first", () => {
   const report = buildReleaseCheckReport({
     selfCheckResult: {
@@ -399,6 +445,89 @@ test("release-check drilldown derives system representative cases from triage", 
     failing_area: "meeting",
     representative_fail_case: ["route_missing:/api/meeting/process"],
     drilldown_source: ["release-check triage"],
+  });
+});
+
+test("release-check drilldown derives control representative issues from diagnostics history", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "release-check-control-drilldown-"));
+  const controlArchiveDir = path.join(baseDir, "control");
+  await archiveControlDiagnosticsSnapshot({
+    baseDir: controlArchiveDir,
+    report: {
+      diagnostics_summary: {
+        overall_status: "fail",
+        control_status: "fail",
+        routing_status: "pass",
+        write_status: "pass",
+        control_issue_count: 2,
+        routing_issue_count: 0,
+        write_issue_count: 0,
+      },
+      control_summary: {
+        status: "fail",
+        issue_count: 2,
+        issues: [
+          {
+            code: "control_scenario_failed:active_executive_task_keeps_follow_up_ownership",
+            file: path.join(process.cwd(), "src/control-kernel.mjs"),
+          },
+          {
+            code: "control_integration_missing:lane_executor_owner_assertions",
+            file: path.join(process.cwd(), "src/lane-executor.mjs"),
+          },
+        ],
+      },
+      routing_summary: {
+        status: "pass",
+        compare: {
+          has_obvious_regression: false,
+        },
+      },
+      write_summary: {
+        status: "pass",
+      },
+      decision: {
+        action: "inspect_control_kernel",
+        line: "control",
+      },
+    },
+    timestamp: "2026-03-22T00:00:03.000Z",
+  });
+
+  const drilldown = buildReleaseCheckDrilldown({
+    selfCheckResult: {
+      system_summary: {
+        core_checks: "pass",
+      },
+      control_summary: {
+        status: "fail",
+      },
+      routing_summary: {
+        status: "pass",
+        compare: {
+          has_obvious_regression: false,
+        },
+      },
+      planner_summary: {
+        gate: "pass",
+        compare: {
+          has_obvious_regression: false,
+        },
+      },
+    },
+    controlSnapshot: await resolveControlDiagnosticsSnapshot({
+      reference: "latest",
+      baseDir: controlArchiveDir,
+    }),
+  });
+
+  assert.deepEqual(drilldown, {
+    failing_area: "runtime",
+    representative_fail_case: [
+      "control_scenario_failed:active_executive_task_keeps_follow_up_ownership via src/control-kernel.mjs",
+      "control_integration_missing:lane_executor_owner_assertions via src/lane-executor.mjs",
+    ],
+    drilldown_source: ["release-check triage", "control diagnostics/history"],
   });
 });
 

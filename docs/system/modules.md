@@ -539,7 +539,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
       - routing -> `doc` / `meeting` / `runtime` / `mixed`
       - planner -> `contract` / `selector`
       - release -> first `blocking_checks` type
-  - expose `release-check` as the single merge/release preflight entry over the same self-check, routing, and planner evidence
+  - expose `release-check` as the single merge/release preflight entry over the same self-check, control, routing, and planner evidence
   - archive every `release-check` / `release-check:ci` execution into snapshot-only release-check history
   - keep `release-check` human output bounded to three lines only:
     - `能否放心合併/發布`
@@ -554,13 +554,13 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
     - `failing_area`
     - `representative_fail_case`
     - `drilldown_source`
-  - classify `blocking_checks` only as `system_regression`, `routing_regression`, or `planner_contract_failure`
-  - keep `suggested_next_step` single-line but module-specific: base modules for system regression, routing rule/fixture files for routing regression, planner registry/flow modules before `planner_contract.json` for planner contract failure
+  - classify `blocking_checks` only as `system_regression`, `control_regression`, `routing_regression`, or `planner_contract_failure`
+  - keep `suggested_next_step` single-line but module-specific: base modules for system regression, control modules for control regression, routing rule/fixture files for routing regression, planner registry/flow modules before `planner_contract.json` for planner contract failure
   - when `doc_boundary_regression = true` and routing is the first blocking line, route the operator hint to the existing doc-boundary pack first, then `message-intent-utils.mjs`, then `lane-executor.mjs`; this is a hint-only overlay and does not change gate order
   - keep drilldown read-only and minimal:
     - `failing_area` only uses `doc` / `meeting` / `runtime` / `mixed`
     - `representative_fail_case` only carries 1~2 representative case strings
-    - `drilldown_source` only reuses `release-check triage`, `routing-eval diagnostics/history`, and `planner diagnostics/history`
+    - `drilldown_source` only reuses `release-check triage`, `control diagnostics/history`, `routing-eval diagnostics/history`, and `planner diagnostics/history`
   - expose `release-check:ci` as the CI/pipeline entry with the same minimal JSON report and strict `0/1` exit contract
   - expose a minimal `release-check` compare view through `--compare-previous` and `--compare-snapshot <run-id|path>`
   - keep release-check compare output bounded to:
@@ -572,7 +572,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - expose a minimal self-check compare view through `--compare-previous` and `--compare-snapshot <run-id|path>`
   - fail the planner contract gate only on undefined action, undefined preset, and selector-contract mismatch
   - emit a concise default human-readable verdict plus a JSON report via `self-check -- --json` without changing routing logic
-  - keep self-check compare output bounded to `system`, `routing regression`, and `planner regression`
+  - keep self-check compare output bounded to `system`, `control regression`, `routing regression`, and `planner regression`
   - archive each `planner:diagnostics` / `planner:contract-check` execution into snapshot-only planner diagnostics history without adding compare mode or changing the gate
   - keep a human-readable capability matrix and chain checklist in sync with code
 - Core path:

@@ -176,7 +176,7 @@ function withEnv(values = {}, callback) {
   }
 }
 
-async function buildControlSummary() {
+export async function buildControlSummary() {
   const laneExecutorText = await readText(FILES.laneExecutor);
   const sameScopeKey = buildCloudDocWorkflowScopeKey({ folderToken: "fld-control" });
   const otherScopeKey = buildCloudDocWorkflowScopeKey({ folderToken: "fld-other" });

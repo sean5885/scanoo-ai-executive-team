@@ -388,27 +388,33 @@ Thread 60 CLI shortcuts checkpoint:
 9. `release-check` then compresses the same evidence into one merge/release preflight answer:
    - human-readable output only answers:
      - `能否放心合併/發布：可以 / 先不要`
-     - `若不能，先修哪一條線：system regression / routing regression / planner contract failure / 無`
-     - `先看哪類 case：doc / meeting / runtime / mixed / 無`
+     - `若不能，先修哪一條線：system regression / control regression / routing regression / planner contract failure / 無`
+     - `下一步：<fixed action hint>`
    - `--json` output stays minimal:
      - `overall_status`
      - `blocking_checks`
+     - `doc_boundary_regression`
      - `suggested_next_step`
+     - `action_hint`
      - `failing_area`
      - `representative_fail_case`
      - `drilldown_source`
    - `blocking_checks` only emits first-level triage classes:
      - `system_regression`
+     - `control_regression`
      - `routing_regression`
      - `planner_contract_failure`
    - `suggested_next_step` stays single-line and points to the module family or file type to inspect first:
      - system regression -> `src/agent-registry.mjs`, `src/http-route-contracts.mjs`, or failing service modules
+     - control regression -> `src/control-kernel.mjs` and `src/lane-executor.mjs`
      - routing regression -> routing rule modules (`src/router.js`, `src/planner-*-flow.mjs`) or eval fixture files (`evals/routing-eval-set.mjs`, `tests/routing-eval*.test.mjs`)
      - planner contract failure -> planner registry / flow-route modules first, and `docs/system/planner_contract.json` only for intentional stable targets
    - CI output stays on the same minimal JSON shape:
      - `overall_status`
      - `blocking_checks`
+     - `doc_boundary_regression`
      - `suggested_next_step`
+     - `action_hint`
      - `failing_area`
      - `representative_fail_case`
      - `drilldown_source`

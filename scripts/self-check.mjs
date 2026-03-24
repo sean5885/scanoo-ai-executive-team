@@ -100,6 +100,7 @@ try {
   } else if (compareSummary) {
     console.log([
       `system: ${renderCompareValue(compareSummary.system_status)}`,
+      `control regression: ${renderRegressionValue(compareSummary.control_regression)}`,
       `routing regression: ${renderRegressionValue(compareSummary.routing_regression)}`,
       `planner regression: ${renderRegressionValue(compareSummary.planner_regression)}`,
     ].join("\n"));

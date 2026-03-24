@@ -83,9 +83,12 @@ test("system self-check returns unified routing and planner summaries", async ()
   assert.equal(result.system_summary.status, "pass");
   assert.equal(result.system_summary.safe_to_change, true);
   assert.equal(result.system_summary.core_checks, "pass");
+  assert.equal(result.system_summary.control_status, "pass");
   assert.equal(result.system_summary.routing_status, "pass");
   assert.equal(result.system_summary.planner_gate, "pass");
   assert.equal(result.system_summary.has_obvious_regression, false);
+  assert.equal(result.control_summary.status, "pass");
+  assert.equal(result.control_summary.issue_count, 0);
   assert.equal(result.routing_summary.status, "pass");
   assert.equal(result.routing_summary.doc_boundary_regression, false);
   assert.equal(result.routing_summary.compare.available, true);
@@ -114,12 +117,15 @@ test("system self-check returns unified routing and planner summaries", async ()
     run_id: result.self_check_archive.run_id,
     timestamp: result.self_check_archive.timestamp,
     system_status: "pass",
+    control_status: "pass",
     routing_status: "pass",
     planner_status: "pass",
   });
   assert.equal(snapshot.run_id, result.self_check_archive.run_id);
   assert.equal(snapshot.system_summary.status, "pass");
+  assert.equal(snapshot.system_summary.control_status, "pass");
   assert.equal(snapshot.doc_boundary_regression, false);
+  assert.equal(snapshot.control_summary.status, "pass");
   assert.equal(snapshot.routing_summary.status, "pass");
   assert.equal(snapshot.routing_summary.doc_boundary_regression, false);
   assert.equal(snapshot.planner_summary.gate, "pass");
@@ -225,9 +231,9 @@ test("self-check CLI renders concise guidance by default", async () => {
 
   assert.match(output, /System Self-Check/);
   assert.match(output, /現在系統能不能放心改：可以/);
-  assert.match(output, /結論：core pass \| routing pass \| planner pass \| regression no/);
+  assert.match(output, /結論：core pass \| control pass \| routing pass \| planner pass \| regression no/);
   assert.match(output, /先看：none/);
-  assert.match(output, /指引：可以開始改；改 routing 後回看 routing:diagnostics，改 planner 後回看 planner:diagnostics 與 self-check。/);
+  assert.match(output, /指引：可以開始改；改 control 後回看 control:diagnostics，改 routing 後回看 routing:diagnostics，改 planner 後回看 planner:diagnostics 與 self-check。/);
 });
 
 test("self-check CLI emits unified JSON report with --json", async () => {
@@ -251,12 +257,14 @@ test("self-check CLI emits unified JSON report with --json", async () => {
     safe_to_change: true,
     answer: "可以",
     core_checks: "pass",
+    control_status: "pass",
     routing_status: "pass",
     planner_gate: "pass",
     has_obvious_regression: false,
     review_priority: "none",
-    guidance: "可以開始改；改 routing 後回看 routing:diagnostics，改 planner 後回看 planner:diagnostics 與 self-check。",
+    guidance: "可以開始改；改 control 後回看 control:diagnostics，改 routing 後回看 routing:diagnostics，改 planner 後回看 planner:diagnostics 與 self-check。",
   });
+  assert.equal(parsed.control_summary.status, "pass");
   assert.equal(parsed.routing_summary.status, "pass");
   assert.equal(parsed.routing_summary.doc_boundary_regression, false);
   assert.equal(parsed.planner_summary.gate, "pass");
@@ -291,6 +299,7 @@ test("self-check CLI compare-previous prints the minimal compare view", async ()
 
   assert.equal(output.trim(), [
     "system: 無變化",
+    "control regression: 無",
     "routing regression: 無",
     "planner regression: 無",
   ].join("\n"));
@@ -348,6 +357,7 @@ test("self-check CLI json compare_summary stays minimal", async () => {
 
   assert.deepEqual(parsed.compare_summary, {
     system_status: "better",
+    control_regression: false,
     routing_regression: false,
     planner_regression: false,
   });

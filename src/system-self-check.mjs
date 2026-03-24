@@ -1,4 +1,5 @@
 import { listRegisteredAgents, knowledgeAgentSubcommands } from "./agent-registry.mjs";
+import { buildControlSummary } from "./control-diagnostics.mjs";
 import { getAllowedMethodsForPath } from "./http-route-contracts.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import {
@@ -341,46 +342,54 @@ async function buildPlannerSummary({ plannerArchiveDir } = {}) {
 
 function buildSystemSummary({
   baseOk = false,
+  controlSummary = {},
   routingSummary = {},
   plannerSummary = {},
 } = {}) {
+  const controlStatus = cleanText(controlSummary?.status) === "pass" ? "pass" : "fail";
   const routingStatus = routingSummary?.status || "fail";
   const plannerGate = plannerSummary?.gate || "fail";
   const hasObviousRegression = Boolean(
     routingSummary?.compare?.has_obvious_regression
     || plannerSummary?.compare?.has_obvious_regression
   );
-  const status = !baseOk || routingStatus === "fail" || plannerGate === "fail"
+  const status = !baseOk || controlStatus === "fail" || routingStatus === "fail" || plannerGate === "fail"
     ? "fail"
     : routingStatus === "degrade" || hasObviousRegression
       ? "degrade"
       : "pass";
   const safeToChange = baseOk
+    && controlStatus === "pass"
     && routingStatus === "pass"
     && plannerGate === "pass"
     && hasObviousRegression === false;
   const reviewPriority = !baseOk
     ? "base"
+    : controlStatus !== "pass"
+      ? "control"
     : routingStatus !== "pass" || routingSummary?.compare?.has_obvious_regression
       ? "routing"
       : plannerGate !== "pass" || plannerSummary?.compare?.has_obvious_regression
         ? "planner"
         : "none";
   const guidance = reviewPriority === "base"
-    ? "先修 self-check 基礎項目，再看 routing / planner。"
+    ? "先修 self-check 基礎項目，再看 control / routing / planner。"
+    : reviewPriority === "control"
+      ? "先看 control：優先檢查 src/control-kernel.mjs 與 src/lane-executor.mjs，先修 ownership / same-scope drift，再動 downstream workflow。"
     : reviewPriority === "routing"
       ? routingSummary?.doc_boundary_regression === true
         ? "這是 doc-boundary 類問題，優先檢查 intent guard；先看 src/message-intent-utils.mjs、src/lane-executor.mjs，再用 routing-eval doc-boundary pack 驗證。"
         : "先看 routing：latest snapshot 與 compare 決定是不是 regression；routing 穩定後再看 planner。"
       : reviewPriority === "planner"
         ? "先看 planner：gate fail 先修 implementation / contract drift；routing 只在 planner pass 後再看。"
-        : "可以開始改；改 routing 後回看 routing:diagnostics，改 planner 後回看 planner:diagnostics 與 self-check。";
+        : "可以開始改；改 control 後回看 control:diagnostics，改 routing 後回看 routing:diagnostics，改 planner 後回看 planner:diagnostics 與 self-check。";
 
   return {
     status,
     safe_to_change: safeToChange,
     answer: safeToChange ? "可以" : "先不要",
     core_checks: baseOk ? "pass" : "fail",
+    control_status: controlStatus,
     routing_status: routingStatus,
     planner_gate: plannerGate,
     has_obvious_regression: hasObviousRegression,
@@ -408,11 +417,12 @@ export function normalizeSystemSelfCheckStatus(report = {}) {
   }
 
   const baseOk = cleanText(report?.system_summary?.core_checks) === "pass";
+  const controlStatus = normalizePlannerStatus(report?.system_summary?.control_status || report?.control_summary?.status);
   const routingStatus = normalizeRoutingStatus(report?.system_summary?.routing_status || report?.routing_summary?.status);
   const plannerStatus = normalizePlannerStatus(report?.system_summary?.planner_gate || report?.planner_summary?.gate);
   const hasObviousRegression = Boolean(report?.system_summary?.has_obvious_regression);
 
-  if (!baseOk || routingStatus === "fail" || plannerStatus === "fail") {
+  if (!baseOk || controlStatus === "fail" || routingStatus === "fail" || plannerStatus === "fail") {
     return "fail";
   }
   if (routingStatus === "degrade" || hasObviousRegression) {
@@ -446,6 +456,12 @@ export function buildSystemSelfCheckCompareSummary({
   const previousRoutingStatus = normalizeRoutingStatus(
     previousReport?.routing_summary?.status || previousReport?.system_summary?.routing_status,
   );
+  const currentControlStatus = normalizePlannerStatus(
+    currentReport?.control_summary?.status || currentReport?.system_summary?.control_status,
+  );
+  const previousControlStatus = normalizePlannerStatus(
+    previousReport?.control_summary?.status || previousReport?.system_summary?.control_status,
+  );
   const currentPlannerStatus = normalizePlannerStatus(
     currentReport?.planner_summary?.gate || currentReport?.system_summary?.planner_gate,
   );
@@ -455,6 +471,8 @@ export function buildSystemSelfCheckCompareSummary({
 
   return {
     system_status: compareStatusDirection(currentSystemStatus, previousSystemStatus),
+    control_regression: Number(PLANNER_STATUS_ORDER[currentControlStatus] ?? PLANNER_STATUS_ORDER.fail)
+      < Number(PLANNER_STATUS_ORDER[previousControlStatus] ?? PLANNER_STATUS_ORDER.fail),
     routing_regression: Number(SYSTEM_STATUS_ORDER[currentRoutingStatus] ?? SYSTEM_STATUS_ORDER.fail)
       < Number(SYSTEM_STATUS_ORDER[previousRoutingStatus] ?? SYSTEM_STATUS_ORDER.fail),
     planner_regression: Number(PLANNER_STATUS_ORDER[currentPlannerStatus] ?? PLANNER_STATUS_ORDER.fail)
@@ -468,7 +486,7 @@ export function renderSystemSelfCheckReport(result = {}) {
   return [
     "System Self-Check",
     `現在系統能不能放心改：${systemSummary?.answer || "先不要"}`,
-    `結論：core ${systemSummary?.core_checks || "fail"} | routing ${systemSummary?.routing_status || "fail"} | planner ${systemSummary?.planner_gate || "fail"} | regression ${systemSummary?.has_obvious_regression ? "yes" : "no"}`,
+    `結論：core ${systemSummary?.core_checks || "fail"} | control ${systemSummary?.control_status || "fail"} | routing ${systemSummary?.routing_status || "fail"} | planner ${systemSummary?.planner_gate || "fail"} | regression ${systemSummary?.has_obvious_regression ? "yes" : "no"}`,
     `先看：${systemSummary?.review_priority || "base"}`,
     `指引：${systemSummary?.guidance || "先看 self-check 失敗項目。"}`
   ].join("\n");
@@ -519,8 +537,11 @@ export async function runSystemSelfCheck({ routingArchiveDir, plannerArchiveDir,
     }
   }
 
-  const plannerSummary = await buildPlannerSummary({ plannerArchiveDir });
-  const routingSummary = await buildRoutingSummary({ routingArchiveDir });
+  const [controlSummary, plannerSummary, routingSummary] = await Promise.all([
+    buildControlSummary(),
+    buildPlannerSummary({ plannerArchiveDir }),
+    buildRoutingSummary({ routingArchiveDir }),
+  ]);
   const baseOk = !hasBlockingBaseFailures({
     missingAgents,
     invalidContracts,
@@ -530,6 +551,7 @@ export async function runSystemSelfCheck({ routingArchiveDir, plannerArchiveDir,
   });
   const systemSummary = buildSystemSummary({
     baseOk,
+    controlSummary,
     routingSummary,
     plannerSummary,
   });
@@ -539,6 +561,7 @@ export async function runSystemSelfCheck({ routingArchiveDir, plannerArchiveDir,
     ok,
     doc_boundary_regression: routingSummary?.doc_boundary_regression === true,
     system_summary: systemSummary,
+    control_summary: controlSummary,
     routing_summary: routingSummary,
     planner_summary: {
       gate: plannerSummary.gate,
