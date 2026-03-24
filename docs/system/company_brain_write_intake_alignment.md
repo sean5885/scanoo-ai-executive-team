@@ -67,6 +67,7 @@ Partially grounded in code through:
 - controlled document creation exists
 - creation returns bounded success/failure shape
 - write path remains inside auth + route + adapter governance
+- when post-create initial content fails to write, the route now fail-soft returns the created document while surfacing the structured write failure separately; unconfirmed initial content is not mirrored into local `raw_text`
 - the current checked-in planner/runtime governance for `create_doc` is:
   - `external_write=true`
   - `confirm_required=true`

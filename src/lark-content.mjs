@@ -1085,10 +1085,12 @@ async function listAllDocumentBlocks(accessToken, documentId, tokenType = "user"
   return items;
 }
 
-function resolveDocumentRootBlock(blocks) {
+export function resolveDocumentWriteRootBlock(blocks) {
   return (
-    blocks.find((item) => !item?.parent_id) ||
+    // Descendant writes must target the writable page block, not the top-level
+    // container root that can also appear in brand-new blank documents.
     blocks.find((item) => item?.page) ||
+    blocks.find((item) => !item?.parent_id) ||
     blocks[0] ||
     null
   );
@@ -1123,7 +1125,7 @@ export async function updateDocument(accessToken, documentId, content, mode = "a
   }
 
   const blocks = await listAllDocumentBlocks(accessToken, documentId, tokenType);
-  const rootBlock = resolveDocumentRootBlock(blocks);
+  const rootBlock = resolveDocumentWriteRootBlock(blocks);
   if (!rootBlock?.block_id) {
     throw new Error("missing_document_root_block");
   }

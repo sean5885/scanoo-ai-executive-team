@@ -1104,6 +1104,8 @@ function buildDocumentCreateResult({
   permissionGrantSkipped,
   permissionGrantError,
   writeResult,
+  initialContentWriteFailed,
+  initialContentWriteError,
 }) {
   return {
     ...buildDocumentWriteAuthPayload(context, "document_create"),
@@ -1112,6 +1114,8 @@ function buildDocumentCreateResult({
     permission_grant_skipped: permissionGrantSkipped,
     permission_grant_error: permissionGrantError,
     write_result: writeResult,
+    initial_content_write_failed: initialContentWriteFailed,
+    initial_content_write_error: initialContentWriteError,
   };
 }
 
@@ -1238,6 +1242,23 @@ function logDocumentCreatePermissionGrantFailed(logger, context, created, permis
     code: permissionGrantError.platform_code,
     msg: permissionGrantError.platform_msg,
     log_id: permissionGrantError.log_id,
+  });
+}
+
+function logDocumentCreateInitialContentWriteFailed(
+  logger,
+  context,
+  created,
+  initialContentWriteError,
+) {
+  logger.warn("document_create_initial_content_write_failed", {
+    stage: "initial_content_write",
+    account_id: context.account.id,
+    document_id: created.document_id || null,
+    code: initialContentWriteError.platform_code,
+    msg: initialContentWriteError.platform_msg,
+    log_id: initialContentWriteError.log_id,
+    http_status: initialContentWriteError.http_status,
   });
 }
 
@@ -3023,14 +3044,34 @@ async function handleDocumentCreate(
     logger,
   });
   let writeResult = null;
+  let initialContentWriteFailed = false;
+  let initialContentWriteError = null;
+  let indexedContent = content || null;
   if (content && created.document_id) {
-    writeResult = await updateDocument(context.token, created.document_id, content, "replace");
+    try {
+      writeResult = await getHttpService("updateDocument", updateDocument)(
+        context.token,
+        created.document_id,
+        content,
+        "replace",
+      );
+    } catch (error) {
+      initialContentWriteFailed = true;
+      initialContentWriteError = extractHttpPlatformError(error);
+      indexedContent = null;
+      logDocumentCreateInitialContentWriteFailed(
+        logger,
+        context,
+        created,
+        initialContentWriteError,
+      );
+    }
   }
   await handleDocumentCreateIndexBoundary({
     context,
     created,
     folderToken,
-    content,
+    content: indexedContent,
     createdAt,
     logger,
   });
@@ -3038,6 +3079,7 @@ async function handleDocumentCreate(
     account_id: context.account.id,
     document_id: created.document_id || null,
     wrote_initial_content: Boolean(writeResult),
+    initial_content_write_failed: initialContentWriteFailed,
     permission_grant_failed: permissionGrantFailed,
     permission_grant_skipped: permissionGrantSkipped,
   });
@@ -3049,6 +3091,8 @@ async function handleDocumentCreate(
     permissionGrantSkipped,
     permissionGrantError,
     writeResult,
+    initialContentWriteFailed,
+    initialContentWriteError,
   }));
 }
 

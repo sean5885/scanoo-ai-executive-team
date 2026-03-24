@@ -588,6 +588,72 @@ test("document create redirects demo-like titles into sandbox folder", async (t)
   }]);
 });
 
+test("document create keeps 200 response when initial content write fails after create", async (t) => {
+  withEnv(t, {
+    ALLOW_LARK_WRITES: "true",
+  });
+  const documentId = `doc-create-content-write-fail-${Date.now()}`;
+  t.after(() => {
+    db.prepare("DELETE FROM company_brain_docs WHERE account_id = ? AND doc_id = ?").run("acct-1", documentId);
+    db.prepare("DELETE FROM lark_documents WHERE account_id = ? AND document_id = ?").run("acct-1", documentId);
+    db.prepare("DELETE FROM lark_sources WHERE account_id = ? AND external_id = ?").run("acct-1", documentId);
+  });
+  let updateCalls = 0;
+  const { server, calls } = await startTestServer(t, {
+    createDocument: async () => ({
+      document_id: documentId,
+      revision_id: "rev-create-content-write-fail-1",
+      title: "Post-create write fail-soft",
+      url: `https://larksuite.com/docx/${documentId}`,
+    }),
+    updateDocument: async () => {
+      updateCalls += 1;
+      const error = new Error("Failed to write Lark document content");
+      error.response = {
+        status: 400,
+        data: {
+          code: 99991663,
+          msg: "invalid block parent",
+          log_id: "log-post-create-write-400",
+        },
+      };
+      throw error;
+    },
+  });
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/doc/create`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      title: "Post-create write fail-soft",
+      content: "# Draft\n\nInitial content",
+      confirm: true,
+    }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.document_id, documentId);
+  assert.equal(updateCalls, 1);
+  assert.equal(payload.write_result, null);
+  assert.equal(payload.initial_content_write_failed, true);
+  assert.equal(payload.initial_content_write_error?.http_status, 400);
+  assert.equal(payload.initial_content_write_error?.platform_msg, "invalid block parent");
+
+  const lifecycleRow = db.prepare(
+    "SELECT raw_text, status, failure_reason FROM lark_documents WHERE account_id = ? AND document_id = ?",
+  ).get("acct-1", documentId);
+  assert.equal(lifecycleRow?.raw_text, null);
+  assert.equal(lifecycleRow?.status, "verified");
+  assert.equal(lifecycleRow?.failure_reason, null);
+
+  const writeFailureLog = calls.find((entry) => entry[1]?.event === "document_create_initial_content_write_failed");
+  assert.equal(writeFailureLog?.[1]?.document_id, documentId);
+  assert.equal(writeFailureLog?.[1]?.http_status, 400);
+});
+
 test("agent create_doc blocks when entry governance metadata is missing", async (t) => {
   withEnv(t, {
     ALLOW_LARK_WRITES: "true",
