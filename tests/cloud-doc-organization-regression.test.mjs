@@ -23,7 +23,15 @@ import { setupPlannerTaskLifecycleTestHarness } from "./helpers/planner-task-lif
 
 setupPlannerTaskLifecycleTestHarness();
 
-function seedIndexedDocument({ accountId, suffix, title, rawText, parentPath = "/", sourceType = "docx" }) {
+function seedIndexedDocument({
+  accountId,
+  suffix,
+  title,
+  rawText,
+  parentPath = "/",
+  sourceType = "docx",
+  metaJson = null,
+}) {
   upsertDocument({
     account_id: accountId,
     source_type: sourceType,
@@ -34,6 +42,7 @@ function seedIndexedDocument({ accountId, suffix, title, rawText, parentPath = "
     title,
     raw_text: rawText,
     parent_path: parentPath,
+    meta_json: metaJson,
     active: 1,
   });
 }
@@ -155,7 +164,7 @@ test("why reply explains pending confirmation docs in plain language", async () 
   assert.doesNotMatch(reply.text, /local_rule_fallback|local_default|信心/);
 });
 
-test("review reply renders concrete pending files with status reason and locator fields", async () => {
+test("review reply shows resolved cloud document names with concise pending checklist", async () => {
   const account = upsertAccount({
     open_id: `acct-review-locators-open-${Date.now()}`,
     name: "acct-review-locators",
@@ -163,9 +172,15 @@ test("review reply renders concrete pending files with status reason and locator
   seedIndexedDocument({
     accountId: account.id,
     suffix: "administrator-manual",
-    title: "Administrator Manual",
+    title: "",
     rawText: "manual",
     parentPath: "/shared/manuals",
+    metaJson: {
+      node_title: "Administrator Manual",
+      document_title: "Administrator Manual Draft",
+      file_name: "admin-manual.docx",
+      name: "admin manual",
+    },
   });
   seedIndexedDocument({
     accountId: account.id,
@@ -183,15 +198,19 @@ test("review reply renders concrete pending files with status reason and locator
   });
 
   assert.match(reply.text, /待人工確認：2 份/);
-  assert.match(reply.text, /文件：Administrator Manual｜狀態：待人工確認/);
-  assert.match(reply.text, /文件：Member Workspace Guide｜狀態：待人工確認/);
+  assert.match(reply.text, /摘要/);
+  assert.match(reply.text, /待處理清單/);
+  assert.match(reply.text, /1\. 文件名：Administrator Manual/);
+  assert.match(reply.text, /2\. 文件名：Member Workspace Guide/);
+  assert.match(reply.text, /狀態：待人工確認/);
   assert.match(reply.text, /原因：/);
-  assert.match(reply.text, /路徑：\/shared\/manuals/);
-  assert.match(reply.text, /路徑：\/shared\/onboarding/);
-  assert.match(reply.text, /document_id：doc_administrator-manual/);
-  assert.match(reply.text, /file_token：file_member-workspace-guide/);
-  assert.match(reply.text, /來源：wiki/);
-  assert.match(reply.text, /操作：標記完成/);
+  assert.match(reply.text, /操作：回覆「第一個標記完成」/);
+  assert.match(reply.text, /操作：回覆「第二個標記完成」/);
+  assert.doesNotMatch(reply.text, /文件：Administrator Manual｜狀態：待人工確認/);
+  assert.doesNotMatch(reply.text, /路徑：/);
+  assert.doesNotMatch(reply.text, /document_id：/);
+  assert.doesNotMatch(reply.text, /file_token：/);
+  assert.doesNotMatch(reply.text, /來源：/);
   assert.equal(Array.isArray(reply.pending_items), true);
   assert.equal(reply.pending_items[0]?.actions?.[0]?.type, "mark_resolved");
   assert.equal(reply.pending_items[0]?.actions?.[0]?.metadata?.action, "mark_resolved");
@@ -253,7 +272,7 @@ test("cloud doc pending item follow-up resolves one file via mark_resolved", asy
     sessionKey,
     forceReReview: false,
   });
-  assert.match(initialReply.text, /操作：標記完成/);
+  assert.match(initialReply.text, /操作：回覆「第一個標記完成」/);
   assert.equal(initialReply.pending_items.length, 2);
 
   const pendingScopeKey = buildCloudDocPendingActionScopeKey(buildCloudDocWorkflowScopeKey({ sessionKey }));
@@ -267,6 +286,7 @@ test("cloud doc pending item follow-up resolves one file via mark_resolved", asy
 
   assert.equal(followUp?.selected_action, "mark_resolved");
   assert.equal(followUp?.pending_item_action?.item_id != null, true);
+  const resolvedItem = initialReply.pending_items.find((item) => item.item_id === followUp.pending_item_action.item_id) || null;
 
   const actionResult = await handlePlannerPendingItemAction({
     itemId: followUp.pending_item_action.item_id,
@@ -285,6 +305,14 @@ test("cloud doc pending item follow-up resolves one file via mark_resolved", asy
 
   assert.equal(refreshedReply.pending_items.length, 1);
   assert.match(refreshedReply.text, /待人工確認：1 份/);
-  assert.doesNotMatch(refreshedReply.text, /Planner Intent Demo[\s\S]*操作：標記完成/);
-  assert.match(refreshedReply.text, /Planner Full Demo/);
+  if (resolvedItem?.label) {
+    const escapedResolvedLabel = resolvedItem.label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    assert.doesNotMatch(refreshedReply.text, new RegExp(escapedResolvedLabel));
+  }
+  const remainingLabel = refreshedReply.pending_items[0]?.label || "";
+  if (remainingLabel) {
+    const remainingTitle = remainingLabel.split("：").slice(1).join("：");
+    const escapedRemainingTitle = remainingTitle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    assert.match(refreshedReply.text, new RegExp(escapedRemainingTitle));
+  }
 });

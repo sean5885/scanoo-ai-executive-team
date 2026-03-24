@@ -1099,6 +1099,7 @@ export function listIndexedDocumentsForOrganization(accountId, limit = 400) {
       file_token,
       node_id,
       space_id,
+      meta_json,
       synced_at,
       updated_at_remote
     FROM lark_documents
