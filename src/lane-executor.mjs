@@ -1,5 +1,6 @@
 import { generateDocumentCommentSuggestionCard } from "./comment-suggestion-workflow.mjs";
 import {
+  buildPlannerPendingItemActionResult,
   buildPlannedUserInputEnvelope,
   executePlannedUserInput,
 } from "./executive-planner.mjs";
@@ -49,7 +50,9 @@ import {
   buildCloudOrganizationPreviewReply,
   buildCloudOrganizationReviewReplyCached,
   buildCloudOrganizationWhyReply,
+  buildCloudDocPendingActionScopeKey,
   buildCloudDocWorkflowScopeKey,
+  clearCloudOrganizationReviewCache,
   CLOUD_DOC_WORKFLOW,
   looksLikeCloudOrganizationExit,
   looksLikeCloudOrganizationPlainLanguageRequest,
@@ -65,6 +68,10 @@ import {
 import { ensureCloudDocWorkflowTask } from "./executive-orchestrator.mjs";
 import { formatIdentifierHint } from "./runtime-observability.mjs";
 import { ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
+import {
+  handlePlannerPendingItemAction,
+  maybeRunPlannerTaskLifecycleFollowUp,
+} from "./planner-task-lifecycle-v1.mjs";
 import { createMeetingCoordinator, parseMeetingCommand } from "./meeting-agent.mjs";
 import {
   getMeetingAudioCaptureStatus,
@@ -131,6 +138,10 @@ function previewStructuredValue(value) {
   } catch {
     return truncate(String(value), 42);
   }
+}
+
+function looksLikeExplicitMarkResolvedRequest(text = "") {
+  return /(標記完成|标记完成|標成完成|标成完成|mark resolved|mark_resolved)/i.test(cleanText(text));
 }
 
 function previewBitableRecords(items = []) {
@@ -1804,6 +1815,16 @@ async function executePersonalAssistant({ event, scope, logger = noopLogger }) {
     text,
     activeWorkflowMode,
   });
+  if (cloudOrganizationAction !== "none" || activeCloudDocTask?.id || activeWorkflowMode === CLOUD_DOC_ORGANIZATION_MODE) {
+    logger.info("cloud_doc_follow_up_route", {
+      workflow_hit: CLOUD_DOC_WORKFLOW,
+      cloud_organization_action: cleanText(cloudOrganizationAction) || "none",
+      active_workflow_mode: cleanText(activeWorkflowMode) || null,
+      active_cloud_doc_task: Boolean(activeCloudDocTask?.id),
+      scope_key: cleanText(cloudDocScopeKey) || null,
+      session_key: cleanText(sessionKey) || null,
+    });
+  }
 
   if (wantsDeleteMeetingDoc || wantsChatOnlyFailure) {
     const lines = ["結論"];
@@ -1865,6 +1886,100 @@ async function executePersonalAssistant({ event, scope, logger = noopLogger }) {
     };
   }
 
+  if (looksLikeExplicitMarkResolvedRequest(text) && (activeCloudDocTask?.id || activeWorkflowMode === CLOUD_DOC_ORGANIZATION_MODE)) {
+    const pendingScopeKey = buildCloudDocPendingActionScopeKey(cloudDocScopeKey);
+    let followUp = await maybeRunPlannerTaskLifecycleFollowUp({
+      userIntent: text,
+      logger,
+      scopeKey: pendingScopeKey,
+    });
+
+    if (!followUp && sessionKey) {
+      await buildCloudOrganizationReviewReplyCached({
+        accountId: context.account.id,
+        sessionKey,
+        forceReReview: false,
+        logger,
+      });
+      followUp = await maybeRunPlannerTaskLifecycleFollowUp({
+        userIntent: text,
+        logger,
+        scopeKey: pendingScopeKey,
+      });
+    }
+
+    logger.info("cloud_doc_pending_item_action_routed", {
+      workflow_hit: CLOUD_DOC_WORKFLOW,
+      selected_action: cleanText(followUp?.selected_action) || null,
+      scope_key: cleanText(pendingScopeKey) || null,
+      session_key: cleanText(sessionKey) || null,
+      has_pending_item_action: Boolean(followUp?.pending_item_action?.item_id),
+      has_execution_result: Boolean(followUp?.execution_result),
+    });
+
+    if (followUp?.execution_result) {
+      const normalized = normalizeUserResponse({
+        plannerEnvelope: {
+          ok: true,
+          action: "mark_resolved",
+          execution_result: followUp.execution_result,
+        },
+        logger,
+        traceId: cleanText(scope?.trace_id || event?.trace_id || ""),
+        handlerName: "executePersonalAssistant.cloudDocPendingItemCandidates",
+      });
+      return { text: renderUserResponseText(normalized) };
+    }
+
+    if (followUp?.pending_item_action?.item_id) {
+      const actionResult = await handlePlannerPendingItemAction({
+        itemId: followUp.pending_item_action.item_id,
+        action: "mark_resolved",
+        actor: "cloud_doc_pending_item_action",
+      });
+      if (actionResult?.ok) {
+        clearCloudOrganizationReviewCache(context.account.id, sessionKey);
+        await buildCloudOrganizationReviewReplyCached({
+          accountId: context.account.id,
+          sessionKey,
+          forceReReview: false,
+          logger,
+        });
+        await ensureCloudDocWorkflowTask({
+          accountId: context.account.id,
+          scope: {
+            session_key: sessionKey,
+            trace_id: cleanText(scope?.trace_id || event?.trace_id || ""),
+          },
+          event,
+          workflowState: "awaiting_review",
+          routingHint: "cloud_doc_pending_item_action",
+          objective: "cloud_doc_chat_scope",
+          scopeKey: cloudDocScopeKey,
+          meta: {
+            scope_type: "chat_scope",
+            last_action: "mark_resolved",
+          },
+        });
+        const normalized = normalizeUserResponse({
+          plannerEnvelope: {
+            ok: true,
+            action: "mark_resolved",
+            execution_result: buildPlannerPendingItemActionResult({
+              actionResult,
+              task: followUp.pending_item_action.task,
+              userIntent: text,
+            }),
+          },
+          logger,
+          traceId: cleanText(scope?.trace_id || event?.trace_id || ""),
+          handlerName: "executePersonalAssistant.cloudDocPendingItemAction",
+        });
+        return { text: renderUserResponseText(normalized) };
+      }
+    }
+  }
+
   if (cloudOrganizationAction !== "none") {
     writeSessionWorkflowMode(context.account.id, sessionKey, CLOUD_DOC_ORGANIZATION_MODE);
     await ensureCloudDocWorkflowTask({
@@ -1885,6 +2000,8 @@ async function executePersonalAssistant({ event, scope, logger = noopLogger }) {
     if (cloudOrganizationAction === "why") {
       const reply = await buildCloudOrganizationWhyReply({
         accountId: context.account.id,
+        sessionKey,
+        logger,
       });
       await ensureCloudDocWorkflowTask({
         accountId: context.account.id,
@@ -1909,6 +2026,7 @@ async function executePersonalAssistant({ event, scope, logger = noopLogger }) {
         accountId: context.account.id,
         sessionKey,
         forceReReview: cloudOrganizationAction === "rereview",
+        logger,
       });
       await ensureCloudDocWorkflowTask({
         accountId: context.account.id,
@@ -1930,6 +2048,7 @@ async function executePersonalAssistant({ event, scope, logger = noopLogger }) {
     }
     const reply = await buildCloudOrganizationPreviewReply({
       accountId: context.account.id,
+      logger,
     });
     await ensureCloudDocWorkflowTask({
       accountId: context.account.id,
@@ -1972,6 +2091,7 @@ async function executePersonalAssistant({ event, scope, logger = noopLogger }) {
       accountId: context.account.id,
       sessionKey,
       forceReReview: false,
+      logger,
     });
     await ensureCloudDocWorkflowTask({
       accountId: context.account.id,

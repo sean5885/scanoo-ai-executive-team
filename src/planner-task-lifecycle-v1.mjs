@@ -582,6 +582,64 @@ function buildScopeSnapshot({
   });
 }
 
+function createOrUpdateExternalPendingTask({
+  currentTask = null,
+  taskId = "",
+  scopeKey = "",
+  title = "",
+  theme = "",
+  traceId = "",
+  selectedAction = "",
+  sourceKind = "",
+  sourceDocId = "",
+  sourceTitle = "",
+  sourceMatchReason = "",
+  sourceSummary = "",
+  sourceStatus = "",
+} = {}) {
+  const normalizedTaskId = cleanText(taskId);
+  if (!normalizedTaskId) {
+    return null;
+  }
+
+  const timestamp = nowIso();
+  let task = normalizeTask({
+    ...currentTask,
+    id: normalizedTaskId,
+    scope_key: scopeKey,
+    title,
+    theme,
+    source_action: selectedAction,
+    source_kind: sourceKind,
+    source_trace_id: traceId,
+    source_doc_id: sourceDocId,
+    source_title: sourceTitle,
+    source_match_reason: sourceMatchReason,
+    source_summary: sourceSummary,
+    source_status: sourceStatus,
+    task_state: currentTask?.task_state || "planned",
+    state_history: currentTask?.state_history || [],
+    created_at: currentTask?.created_at || timestamp,
+    updated_at: timestamp,
+    last_suggested_at: timestamp,
+    suggestion_count: Number.isFinite(currentTask?.suggestion_count)
+      ? Number(currentTask.suggestion_count) + 1
+      : 1,
+  });
+
+  if (!currentTask) {
+    task = applyTaskTransition(task, "clarified", "external_pending_item_created");
+    task = applyTaskTransition(task, "planned", "external_pending_item_planned");
+  } else if (task.lifecycle_state === "created") {
+    task = applyTaskTransition(task, "clarified", "external_pending_item_reobserved");
+    task = applyTaskTransition(task, "planned", "external_pending_item_replanned");
+  } else if (task.lifecycle_state === "clarified") {
+    task = applyTaskTransition(task, "planned", "external_pending_item_replanned");
+  }
+
+  return normalizeTask(task);
+}
+
 export async function syncPlannerActionLayerTaskLifecycle({
   flow = null,
   context = {},
@@ -652,6 +710,77 @@ export async function syncPlannerActionLayerTaskLifecycle({
     scope: cloneValue(store.scopes[scopeKey]),
     tasks: currentTaskIds.map((taskId) => cloneValue(store.tasks[taskId])).filter(Boolean),
   };
+}
+
+export async function syncPlannerExternalPendingItems({
+  scopeKey = "",
+  theme = "",
+  sourceKind = "",
+  sourceDocId = "",
+  sourceTitle = "",
+  sourceMatchReason = "",
+  sourceSummary = "",
+  traceId = "",
+  items = [],
+} = {}) {
+  const normalizedScopeKey = cleanText(scopeKey);
+  const normalizedItems = Array.isArray(items)
+    ? items.filter((item) => cleanText(item?.item_id || item?.id) && cleanText(item?.label || item?.title))
+    : [];
+  if (!normalizedScopeKey || !normalizedItems.length) {
+    return null;
+  }
+
+  const store = await loadStore();
+  const currentTaskIds = [];
+  for (const item of normalizedItems) {
+    const taskId = cleanText(item?.item_id || item?.id);
+    const currentTask = taskId ? store.tasks?.[taskId] : null;
+    const task = createOrUpdateExternalPendingTask({
+      currentTask,
+      taskId,
+      scopeKey: normalizedScopeKey,
+      title: cleanText(item?.label || item?.title) || "未命名 pending item",
+      theme,
+      traceId,
+      selectedAction: "mark_resolved",
+      sourceKind,
+      sourceDocId,
+      sourceTitle,
+      sourceMatchReason,
+      sourceSummary,
+      sourceStatus: cleanText(item?.status || "pending") || "pending",
+    });
+    if (!task?.id) {
+      continue;
+    }
+    store.tasks[task.id] = task;
+    currentTaskIds.push(task.id);
+  }
+
+  if (!currentTaskIds.length) {
+    return null;
+  }
+
+  const existingScope = store.scopes?.[normalizedScopeKey] || null;
+  store.scopes[normalizedScopeKey] = normalizeScope({
+    ...existingScope,
+    scope_key: normalizedScopeKey,
+    theme,
+    selected_action: "mark_resolved",
+    user_intent: cleanText(sourceMatchReason) || cleanText(existingScope?.user_intent) || null,
+    trace_id: cleanText(traceId) || cleanText(existingScope?.trace_id) || null,
+    source_kind: cleanText(sourceKind) || cleanText(existingScope?.source_kind) || null,
+    source_doc_id: cleanText(sourceDocId) || cleanText(existingScope?.source_doc_id) || null,
+    source_title: cleanText(sourceTitle) || cleanText(existingScope?.source_title) || null,
+    source_match_reason: cleanText(sourceMatchReason) || cleanText(existingScope?.source_match_reason) || null,
+    current_task_ids: currentTaskIds,
+    last_active_task_id: cleanText(existingScope?.last_active_task_id) || currentTaskIds[0] || null,
+    created_at: existingScope?.created_at || nowIso(),
+    updated_at: nowIso(),
+  });
+  await saveStore(store);
+  return buildSnapshotFromStore(store, normalizedScopeKey);
 }
 
 export function buildPlannerLifecycleUnfinishedItems(snapshot = null) {
@@ -1686,6 +1815,7 @@ export async function maybeRunPlannerTaskLifecycleFollowUp({
   activeDoc = null,
   activeTheme = "",
   logger = console,
+  scopeKey = "",
 } = {}) {
   const intent = classifyTaskLifecycleIntent(userIntent);
   if (!intent?.selected_action) {
@@ -1693,13 +1823,12 @@ export async function maybeRunPlannerTaskLifecycleFollowUp({
   }
 
   const store = await loadStore();
-  const scopeSelection = resolveRelevantScope(store, {
+  const resolvedScopeKey = cleanText(scopeKey) || resolveRelevantScope(store, {
     activeDoc,
     activeTheme,
     userIntent,
-  });
-  const scopeKey = scopeSelection.scope_key;
-  const snapshot = buildSnapshotFromStore(store, scopeKey);
+  }).scope_key;
+  const snapshot = buildSnapshotFromStore(store, resolvedScopeKey);
   if (!snapshot?.tasks?.length) {
     return null;
   }
@@ -1736,7 +1865,7 @@ export async function maybeRunPlannerTaskLifecycleFollowUp({
       : pendingTargetResolution.candidates;
 
     if (pendingTargetResolution.mode !== "single") {
-      const traceId = buildTaskLifecycleTraceId(scopeKey, userIntent, "mark_resolved");
+      const traceId = buildTaskLifecycleTraceId(resolvedScopeKey, userIntent, "mark_resolved");
       const executionResult = {
         ok: true,
         action: "mark_resolved",
@@ -1841,7 +1970,7 @@ export async function maybeRunPlannerTaskLifecycleFollowUp({
     await saveStore(store);
   }
 
-  const refreshedSnapshot = buildSnapshotFromStore(store, scopeKey) || snapshot;
+  const refreshedSnapshot = buildSnapshotFromStore(store, resolvedScopeKey) || snapshot;
   const visibleTasks = targetResolution.mode === "all"
     ? refreshedSnapshot.tasks
     : targetResolution.mode === "single"
@@ -1849,7 +1978,7 @@ export async function maybeRunPlannerTaskLifecycleFollowUp({
           .map((task) => store.tasks?.[task.id] || task)
           .filter(Boolean)
       : targetResolution.candidates;
-  const traceId = buildTaskLifecycleTraceId(scopeKey, userIntent, intent.target_state);
+  const traceId = buildTaskLifecycleTraceId(resolvedScopeKey, userIntent, intent.target_state);
   const executionResult = {
     ok: true,
     action: intent.selected_action,

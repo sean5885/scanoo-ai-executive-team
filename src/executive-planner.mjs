@@ -1568,7 +1568,7 @@ function attachPlannerPendingItems({
   };
 }
 
-function buildPlannerPendingItemActionResult({
+export function buildPlannerPendingItemActionResult({
   actionResult = null,
   task = null,
   userIntent = "",

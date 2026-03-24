@@ -188,12 +188,19 @@ Minimum per-item fields:
 - document title or another recognizable file name
 - current pending status
 - reason for the pending state
+- one explicit action line when an item is locally actionable, for example `操作：標記完成`
 
 Recommended locator fields when available:
 
 - `parent_path`
 - `document_id` / `file_token` / `node_id`
 - source type
+
+When the reply exposes a local pending-item action, the machine-readable metadata should keep the action payload separate from the visible text and include at least:
+
+- `action=mark_resolved`
+- `document_id`
+- `file_token`
 
 ### 10. Next Step Section
 

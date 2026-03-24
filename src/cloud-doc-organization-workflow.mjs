@@ -1,10 +1,12 @@
 import { classifyDocumentsLocally, classifyDocumentsSemantically } from "./lark-drive-semantic-classifier.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
+import { syncPlannerExternalPendingItems } from "./planner-task-lifecycle-v1.mjs";
 import {
   getAccountPreference,
   listIndexedDocumentsForOrganization,
   setAccountPreference,
 } from "./rag-repository.mjs";
+import { sha256 } from "./text-utils.mjs";
 
 const sessionWorkflowModePrefix = "session_workflow_mode:";
 const sessionWorkflowReviewCachePrefix = "session_workflow_review_cache:";
@@ -210,7 +212,7 @@ function collectCloudOrganizationReviewReasons(item = {}, result = {}) {
   return reasons;
 }
 
-function formatCloudOrganizationPendingItem({
+function formatCloudOrganizationPendingItemText({
   item = {},
   status = "",
   reason = "",
@@ -254,6 +256,142 @@ function formatCloudOrganizationPendingItem({
   }
 
   return `- ${fields.join("｜")}`;
+}
+
+export function buildCloudDocPendingActionScopeKey(scopeKey = "") {
+  const normalizedScopeKey = cleanText(scopeKey);
+  return normalizedScopeKey ? `cloud_doc_pending:${normalizedScopeKey}` : "";
+}
+
+function buildCloudOrganizationPendingItemId(item = {}) {
+  const seed = [
+    cleanText(item?.document_id),
+    cleanText(item?.file_token),
+    cleanText(item?.node_id),
+    getCloudOrganizationDocumentTitle(item),
+  ].filter(Boolean).join("::");
+  return seed ? `cloud_doc_pending_${sha256(seed).slice(0, 16)}` : null;
+}
+
+function buildCloudOrganizationPendingItemAction(item = {}) {
+  return {
+    type: "mark_resolved",
+    label: "標記完成",
+    metadata: {
+      action: "mark_resolved",
+      document_id: cleanText(item?.document_id) || null,
+      file_token: cleanText(item?.file_token) || null,
+    },
+  };
+}
+
+function formatCloudOrganizationPendingItem({
+  item = {},
+  status = "",
+  reason = "",
+  stagingRole = "",
+  originalRole = "",
+  suggestedRole = "",
+} = {}) {
+  const resolvedStatus = cleanText(status) || "待人工確認";
+  const title = getCloudOrganizationDocumentTitle(item);
+  return {
+    type: "cloud_doc_pending_item",
+    item_id: buildCloudOrganizationPendingItemId(item),
+    label: `${resolvedStatus}：${title}`,
+    status: "pending",
+    text_line: formatCloudOrganizationPendingItemText({
+      item,
+      status,
+      reason,
+      stagingRole,
+      originalRole,
+      suggestedRole,
+    }),
+    action_line: "操作：標記完成",
+    actions: [buildCloudOrganizationPendingItemAction(item)],
+    metadata: {
+      action: "mark_resolved",
+      document_id: cleanText(item?.document_id) || null,
+      file_token: cleanText(item?.file_token) || null,
+    },
+  };
+}
+
+function renderCloudOrganizationPendingItems(items = []) {
+  const lines = [];
+  for (const item of Array.isArray(items) ? items : []) {
+    if (cleanText(item?.text_line)) {
+      lines.push(cleanText(item.text_line));
+    }
+    if (cleanText(item?.action_line)) {
+      lines.push(`  ${cleanText(item.action_line)}`);
+    }
+  }
+  return lines;
+}
+
+async function syncCloudOrganizationPendingItems({
+  sessionKey = "",
+  sourceKind = "",
+  sourceTitle = "",
+  sourceSummary = "",
+  sourceMatchReason = "",
+  pendingItems = [],
+} = {}) {
+  const normalizedPendingItems = Array.isArray(pendingItems)
+    ? pendingItems.filter((item) => cleanText(item?.item_id) && cleanText(item?.label))
+    : [];
+  if (!normalizedPendingItems.length) {
+    return [];
+  }
+
+  const workflowScopeKey = buildCloudDocWorkflowScopeKey({ sessionKey });
+  const pendingScopeKey = buildCloudDocPendingActionScopeKey(workflowScopeKey);
+  if (!pendingScopeKey) {
+    return normalizedPendingItems;
+  }
+
+  const snapshot = await syncPlannerExternalPendingItems({
+    scopeKey: pendingScopeKey,
+    theme: "cloud_doc",
+    sourceKind,
+    sourceTitle,
+    sourceSummary,
+    sourceMatchReason,
+    items: normalizedPendingItems,
+  });
+  const visibleTaskIds = new Set(
+    (Array.isArray(snapshot?.tasks) ? snapshot.tasks : [])
+      .filter((task) => cleanText(task?.pending_item_status || "pending") !== "resolved")
+      .map((task) => cleanText(task?.id))
+      .filter(Boolean),
+  );
+  if (!visibleTaskIds.size) {
+    return [];
+  }
+  return normalizedPendingItems.filter((item) => visibleTaskIds.has(cleanText(item?.item_id)));
+}
+
+function logCloudDocReplyTrace(logger, {
+  workflowHit = CLOUD_DOC_WORKFLOW,
+  replyBuilderName = "",
+  finalTextSourceFunction = "",
+  sessionKey = "",
+  forceReReview = null,
+  cacheHit = null,
+} = {}) {
+  if (!logger || typeof logger.info !== "function") {
+    return;
+  }
+  logger.info("cloud_doc_reply_trace", {
+    workflow_hit: cleanText(workflowHit) || CLOUD_DOC_WORKFLOW,
+    reply_builder_name: cleanText(replyBuilderName) || null,
+    final_text_source_function: cleanText(finalTextSourceFunction) || null,
+    session_key: cleanText(sessionKey) || null,
+    force_rereview: typeof forceReReview === "boolean" ? forceReReview : null,
+    cache_hit: typeof cacheHit === "boolean" ? cacheHit : null,
+  });
 }
 
 export function looksLikeCloudOrganizationRequest(text = "") {
@@ -494,9 +632,21 @@ function writeCloudOrganizationReviewCache(accountId, sessionKey = "", payload =
   );
 }
 
-export async function buildCloudOrganizationPreviewReply({ accountId }) {
+export function clearCloudOrganizationReviewCache(accountId, sessionKey = "") {
+  return writeCloudOrganizationReviewCache(accountId, sessionKey, null);
+}
+
+export async function buildCloudOrganizationPreviewReply({
+  accountId,
+  logger = null,
+  replyBuilderName = "buildCloudOrganizationPreviewReply",
+} = {}) {
   const indexedDocs = listIndexedDocumentsForOrganization(accountId, 240);
   if (!indexedDocs.length) {
+    logCloudDocReplyTrace(logger, {
+      replyBuilderName,
+      finalTextSourceFunction: "buildCloudOrganizationPreviewReply",
+    });
     return {
       text: [
         "結論",
@@ -538,6 +688,10 @@ export async function buildCloudOrganizationPreviewReply({ accountId }) {
   }
 
   const topBuckets = [...buckets.values()].sort((a, b) => b.count - a.count).slice(0, 8);
+  logCloudDocReplyTrace(logger, {
+    replyBuilderName,
+    finalTextSourceFunction: "buildCloudOrganizationPreviewReply",
+  });
   return {
     text: [
       "結論",
@@ -555,16 +709,45 @@ export async function buildCloudOrganizationPreviewReply({ accountId }) {
   };
 }
 
-export async function buildCloudOrganizationReviewReply({ accountId, sessionKey = "", forceReReview = false } = {}) {
+export async function buildCloudOrganizationReviewReply({
+  accountId,
+  sessionKey = "",
+  forceReReview = false,
+  logger = null,
+  replyBuilderName = "buildCloudOrganizationReviewReply",
+} = {}) {
   const cached = !forceReReview ? readCloudOrganizationReviewCache(accountId, sessionKey) : null;
   if (cached?.text) {
+    const cachedPendingItems = await syncCloudOrganizationPendingItems({
+      sessionKey,
+      sourceKind: forceReReview ? "cloud_doc_rereview" : "cloud_doc_review",
+      sourceTitle: forceReReview ? "Cloud Doc Rereview" : "Cloud Doc Review",
+      sourceSummary: cached.text,
+      sourceMatchReason: forceReReview ? "重新複審待人工確認文件" : "待人工確認文件",
+      pendingItems: Array.isArray(cached?.pending_items) ? cached.pending_items : [],
+    });
+    logCloudDocReplyTrace(logger, {
+      replyBuilderName,
+      finalTextSourceFunction: "readCloudOrganizationReviewCache",
+      sessionKey,
+      forceReReview,
+      cacheHit: true,
+    });
     return {
       text: cached.text,
+      pending_items: cachedPendingItems,
     };
   }
 
   const indexedDocs = listIndexedDocumentsForOrganization(accountId, 240);
   if (!indexedDocs.length) {
+    logCloudDocReplyTrace(logger, {
+      replyBuilderName,
+      finalTextSourceFunction: "buildCloudOrganizationReviewReply",
+      sessionKey,
+      forceReReview,
+      cacheHit: false,
+    });
     return {
       text: [
         "結論",
@@ -608,7 +791,22 @@ export async function buildCloudOrganizationReviewReply({ accountId, sessionKey 
         ),
       });
     });
+    const visibleUnresolved = await syncCloudOrganizationPendingItems({
+      sessionKey,
+      sourceKind: "cloud_doc_review",
+      sourceTitle: "Cloud Doc Review",
+      sourceSummary: `待人工確認：${unresolved.length} 份`,
+      sourceMatchReason: "待人工確認文件",
+      pendingItems: unresolved,
+    });
 
+    logCloudDocReplyTrace(logger, {
+      replyBuilderName,
+      finalTextSourceFunction: "buildCloudOrganizationReviewReply",
+      sessionKey,
+      forceReReview,
+      cacheHit: false,
+    });
     return {
       text: [
         "結論",
@@ -616,12 +814,13 @@ export async function buildCloudOrganizationReviewReply({ accountId, sessionKey 
         "",
         "重點",
         "- 這一輪先用本地分類結果快速整理，避免你每次追問都重新等一輪語義複審。",
-        `- 待人工確認：${unresolved.length} 份`,
-        ...unresolved,
+        `- 待人工確認：${visibleUnresolved.length} 份`,
+        ...renderCloudOrganizationPendingItems(visibleUnresolved),
         "",
         "下一步",
         "- 如果你要我真的重新複審並改派，直接說「重新分配這批待確認文件」或指定某個角色，我就會再跑第二輪語義複審。",
       ].join("\n"),
+      pending_items: visibleUnresolved,
     };
   }
 
@@ -705,7 +904,24 @@ export async function buildCloudOrganizationReviewReply({ accountId, sessionKey 
       );
     }
   }
+  const syncedRereviewItems = await syncCloudOrganizationPendingItems({
+    sessionKey,
+    sourceKind: "cloud_doc_rereview",
+    sourceTitle: "Cloud Doc Rereview",
+    sourceSummary: `待重新分配：${reassignments.length} 份；待人工確認：${unresolved.length} 份`,
+    sourceMatchReason: "待重新分配 / 待人工確認文件",
+    pendingItems: [...reassignments, ...unresolved],
+  });
+  const visibleReassignments = syncedRereviewItems.filter((item) => cleanText(item?.text_line).includes("狀態：待重新分配"));
+  const visibleUnresolved = syncedRereviewItems.filter((item) => cleanText(item?.text_line).includes("狀態：待人工確認"));
 
+  logCloudDocReplyTrace(logger, {
+    replyBuilderName,
+    finalTextSourceFunction: "buildCloudOrganizationReviewReply",
+    sessionKey,
+    forceReReview,
+    cacheHit: false,
+  });
   return {
     text: [
       "結論",
@@ -713,35 +929,56 @@ export async function buildCloudOrganizationReviewReply({ accountId, sessionKey 
       "",
       "重點",
       "- 審核方式：先本地分類，再對模糊文檔做 MiniMax 小批量語義複審。",
-      `- 待重新分配：${reassignments.length} 份`,
-      ...reassignments,
-      `- 待人工確認：${unresolved.length} 份`,
-      ...unresolved,
+      `- 待重新分配：${visibleReassignments.length} 份`,
+      ...renderCloudOrganizationPendingItems(visibleReassignments),
+      `- 待人工確認：${visibleUnresolved.length} 份`,
+      ...renderCloudOrganizationPendingItems(visibleUnresolved),
       "",
       "下一步",
       "- 你現在可以直接說哪些文檔要保留原分配、哪些要改派，或指定先只看某個角色的待重分配清單。",
     ].join("\n"),
+    pending_items: [
+      ...visibleReassignments,
+      ...visibleUnresolved,
+    ],
   };
 }
 
-export async function buildCloudOrganizationReviewReplyCached({ accountId, sessionKey = "", forceReReview = false } = {}) {
+export async function buildCloudOrganizationReviewReplyCached({
+  accountId,
+  sessionKey = "",
+  forceReReview = false,
+  logger = null,
+} = {}) {
   const reply = await buildCloudOrganizationReviewReply({
     accountId,
     sessionKey,
     forceReReview,
+    logger,
+    replyBuilderName: "buildCloudOrganizationReviewReplyCached",
   });
   if (reply?.text && sessionKey) {
     writeCloudOrganizationReviewCache(accountId, sessionKey, {
       text: reply.text,
       force_rereview: Boolean(forceReReview),
+      pending_items: Array.isArray(reply?.pending_items) ? reply.pending_items : [],
     });
   }
   return reply;
 }
 
-export async function buildCloudOrganizationWhyReply({ accountId }) {
+export async function buildCloudOrganizationWhyReply({
+  accountId,
+  sessionKey = "",
+  logger = null,
+  replyBuilderName = "buildCloudOrganizationWhyReply",
+} = {}) {
   const indexedDocs = listIndexedDocumentsForOrganization(accountId, 240);
   if (!indexedDocs.length) {
+    logCloudDocReplyTrace(logger, {
+      replyBuilderName,
+      finalTextSourceFunction: "buildCloudOrganizationWhyReply",
+    });
     return {
       text: [
         "結論",
@@ -775,6 +1012,10 @@ export async function buildCloudOrganizationWhyReply({ accountId }) {
     .slice(0, 24);
 
   if (!unresolved.length) {
+    logCloudDocReplyTrace(logger, {
+      replyBuilderName,
+      finalTextSourceFunction: "buildCloudOrganizationWhyReply",
+    });
     return {
       text: [
         "結論",
@@ -789,26 +1030,40 @@ export async function buildCloudOrganizationWhyReply({ accountId }) {
     };
   }
 
+  logCloudDocReplyTrace(logger, {
+    replyBuilderName,
+    finalTextSourceFunction: "buildCloudOrganizationWhyReply",
+  });
+  const visibleUnresolved = await syncCloudOrganizationPendingItems({
+    sessionKey,
+    sourceKind: "cloud_doc_why",
+    sourceTitle: "Cloud Doc Why Review",
+    sourceSummary: `待人工確認：${unresolved.length} 份`,
+    sourceMatchReason: "待人工確認文件原因",
+    pendingItems: unresolved.map((item) =>
+      formatCloudOrganizationPendingItem({
+        item: item.item,
+        status: "待人工確認",
+        stagingRole: item.role,
+        reason: summarizeCloudOrganizationReasons(
+          item.reasons,
+          "目前看起來還不能很有把握地直接分配。",
+        ),
+      })),
+  });
+
   return {
     text: [
       "結論",
       "這些文件不是完全不能分配，而是現在只靠標題或少量內容，還不能很有把握地判定它們只屬於單一角色，所以我先放進待人工確認。",
       "",
       "重點",
-      `- 待人工確認：${unresolved.length} 份`,
-      ...unresolved.map((item) =>
-        formatCloudOrganizationPendingItem({
-          item: item.item,
-          status: "待人工確認",
-          stagingRole: item.role,
-          reason: summarizeCloudOrganizationReasons(
-            item.reasons,
-            "目前看起來還不能很有把握地直接分配。",
-          ),
-        })),
+      `- 待人工確認：${visibleUnresolved.length} 份`,
+      ...renderCloudOrganizationPendingItems(visibleUnresolved),
       "",
       "下一步",
       "- 你可以直接告訴我哪些文件其實是法務、營運、HR 或知識管理，我就能幫你做第二次重新分配。",
     ].join("\n"),
+    pending_items: visibleUnresolved,
   };
 }

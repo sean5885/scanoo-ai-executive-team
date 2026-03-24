@@ -3,7 +3,10 @@ import assert from "node:assert/strict";
 
 import {
   buildCloudOrganizationWhyReply,
+  buildCloudDocPendingActionScopeKey,
+  buildCloudDocWorkflowScopeKey,
   buildCloudOrganizationReviewReplyCached,
+  clearCloudOrganizationReviewCache,
   CLOUD_DOC_ORGANIZATION_MODE,
   extractCloudOrganizationScopedSubject,
   looksLikeCloudOrganizationReReviewRequest,
@@ -11,7 +14,14 @@ import {
   readSessionWorkflowMode,
   writeSessionWorkflowMode,
 } from "../src/cloud-doc-organization-workflow.mjs";
+import {
+  handlePlannerPendingItemAction,
+  maybeRunPlannerTaskLifecycleFollowUp,
+} from "../src/planner-task-lifecycle-v1.mjs";
 import { upsertAccount, upsertDocument } from "../src/rag-repository.mjs";
+import { setupPlannerTaskLifecycleTestHarness } from "./helpers/planner-task-lifecycle-harness.mjs";
+
+setupPlannerTaskLifecycleTestHarness();
 
 function seedIndexedDocument({ accountId, suffix, title, rawText, parentPath = "/", sourceType = "docx" }) {
   upsertDocument({
@@ -181,6 +191,12 @@ test("review reply renders concrete pending files with status reason and locator
   assert.match(reply.text, /document_id：doc_administrator-manual/);
   assert.match(reply.text, /file_token：file_member-workspace-guide/);
   assert.match(reply.text, /來源：wiki/);
+  assert.match(reply.text, /操作：標記完成/);
+  assert.equal(Array.isArray(reply.pending_items), true);
+  assert.equal(reply.pending_items[0]?.actions?.[0]?.type, "mark_resolved");
+  assert.equal(reply.pending_items[0]?.actions?.[0]?.metadata?.action, "mark_resolved");
+  assert.match(reply.pending_items[0]?.actions?.[0]?.metadata?.document_id || "", /^doc_/);
+  assert.match(reply.pending_items[0]?.actions?.[0]?.metadata?.file_token || "", /^file_/);
 });
 
 test("generic review reply uses local fast summary instead of semantic rereview wording", async () => {
@@ -209,4 +225,66 @@ test("generic review reply uses local fast summary instead of semantic rereview 
 
   assert.match(reply.text, /先用目前已索引的/);
   assert.doesNotMatch(reply.text, /MiniMax 小批量語義複審/);
+});
+
+test("cloud doc pending item follow-up resolves one file via mark_resolved", async () => {
+  const account = upsertAccount({
+    open_id: `acct-review-action-open-${Date.now()}`,
+    name: "acct-review-action",
+  });
+  const sessionKey = `session-review-action-${Date.now()}`;
+  seedIndexedDocument({
+    accountId: account.id,
+    suffix: "planner-intent-demo",
+    title: "Planner Intent Demo",
+    rawText: "manual",
+    parentPath: "/06_知識庫歸檔",
+  });
+  seedIndexedDocument({
+    accountId: account.id,
+    suffix: "planner-full-demo",
+    title: "Planner Full Demo",
+    rawText: "workspace guide",
+    parentPath: "/06_知識庫歸檔",
+  });
+
+  const initialReply = await buildCloudOrganizationReviewReplyCached({
+    accountId: account.id,
+    sessionKey,
+    forceReReview: false,
+  });
+  assert.match(initialReply.text, /操作：標記完成/);
+  assert.equal(initialReply.pending_items.length, 2);
+
+  const pendingScopeKey = buildCloudDocPendingActionScopeKey(buildCloudDocWorkflowScopeKey({ sessionKey }));
+  const followUp = await maybeRunPlannerTaskLifecycleFollowUp({
+    userIntent: "第一個標記完成",
+    scopeKey: pendingScopeKey,
+    logger: {
+      debug() {},
+    },
+  });
+
+  assert.equal(followUp?.selected_action, "mark_resolved");
+  assert.equal(followUp?.pending_item_action?.item_id != null, true);
+
+  const actionResult = await handlePlannerPendingItemAction({
+    itemId: followUp.pending_item_action.item_id,
+    action: "mark_resolved",
+    actor: "cloud_doc_pending_item_action_test",
+  });
+  assert.equal(actionResult.ok, true);
+  assert.equal(actionResult.action, "mark_resolved");
+
+  clearCloudOrganizationReviewCache(account.id, sessionKey);
+  const refreshedReply = await buildCloudOrganizationReviewReplyCached({
+    accountId: account.id,
+    sessionKey,
+    forceReReview: false,
+  });
+
+  assert.equal(refreshedReply.pending_items.length, 1);
+  assert.match(refreshedReply.text, /待人工確認：1 份/);
+  assert.doesNotMatch(refreshedReply.text, /Planner Intent Demo[\s\S]*操作：標記完成/);
+  assert.match(refreshedReply.text, /Planner Full Demo/);
 });
