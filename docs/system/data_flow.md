@@ -240,7 +240,7 @@ This request-flow mirror now reflects the current fail-closed routing baseline.
    - slash-agent messages that include images first call the Nano Banana-oriented image adapter, then only pass compact structured image fields into the text model
    - DM requests like "把我的雲文檔做分類 指派給對應的角色" now enter a chat-scoped cloud-doc organization workflow mode inside the personal lane
    - while that mode is active, follow-up turns about learning, unrelated docs, and reassignment stay on the same organization preview path instead of falling back to meeting/private-chat boilerplate
-   - a second-pass role-review branch can now take those follow-up turns and run a small MiniMax semantic re-review only on ambiguous documents, returning reassignment candidates and manual-review candidates instead of only top-level category counts
+   - a second-pass role-review branch can now take those follow-up turns and run a small MiniMax semantic re-review only on ambiguous documents, returning reassignment candidates and manual-review candidates with concrete document titles plus locator fields instead of only top-level category counts
    - if the user says the second-pass output is hard to understand, that same workflow now stays in mode and returns a plain-language version instead of leaking internal classifier reasons such as `local_rule_fallback`
    - follow-up questions like `這些待人工確認的文件，為什麼不能直接分配？` now force the cloud-doc organization workflow back into a reason-explainer branch, even if the earlier workflow mode was not successfully resumed
    - once the cloud-doc organization workflow mode is active, generic follow-ups like `還有什麼內容需要我二次確認` now stay in second-pass review instead of dropping back to the first-pass category overview

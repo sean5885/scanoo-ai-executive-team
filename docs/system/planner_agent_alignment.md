@@ -199,9 +199,14 @@ This path is bounded by the checked-in planner contract:
 
 - `action` must exist in `planner_contract.json` (`actions` or `presets`)
 - wrapped / non-JSON model output is rejected as `{ "error": "planner_failed" }`
+- strict user-input validation now also applies a small deterministic hardening layer before contract/semantic checks:
+  - obvious wrong paths such as `get_company_brain_doc_detail` without `doc_id` are downgraded to conservative `search_company_brain_docs`
+  - explicit single-step intents (`list`, `search`, `runtime`, plain `create_doc`) now collapse over-eager presets / multi-step outputs back to the safer single action
+  - explicit `doc_id` on `search_and_detail_doc` now collapses to single-step `get_company_brain_doc_detail`
 - unmatched routing still fails closed internally as `ROUTING_NO_MATCH` instead of silently falling through selector/default-reply paths; the public `runPlannerToolFlow(...)` fallback surface normalizes that no-match case to `business_error` while preserving the internal routing reason in structured detail
 - `semantic_mismatch` on strict user-input planning now attempts one bounded reroute through `runPlannerToolFlow(...)` before surfacing a user-facing fallback
 - no heuristic or free-text fallback is used on this strict user-input planning path
+- bounded `agent_execution` lane inference now also keeps company-brain learning actions (`ingest_learning_doc`, `update_learning_state`) on the checked-in `doc` lane instead of falling through `fallback_agent`
 
 ## Contract Consistency Check
 

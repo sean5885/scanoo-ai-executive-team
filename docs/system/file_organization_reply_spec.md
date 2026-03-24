@@ -181,6 +181,20 @@ If items cannot be confidently grouped, place them in:
 
 Do not pretend everything is confidently classified.
 
+When rendering any pending item list such as `待人工確認`, `待重新分配`, or `待覆核`, the user-facing reply must include concrete document locators instead of only a total count or a generic summary.
+
+Minimum per-item fields:
+
+- document title or another recognizable file name
+- current pending status
+- reason for the pending state
+
+Recommended locator fields when available:
+
+- `parent_path`
+- `document_id` / `file_token` / `node_id`
+- source type
+
 ### 10. Next Step Section
 
 Always end with one clear next step prompt.
