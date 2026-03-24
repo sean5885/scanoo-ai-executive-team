@@ -8,3 +8,4 @@ npm-debug.log*
 *.swo
 .DS_Store
 RUN_THREAD*.txt
+.codex-artifacts/
