@@ -829,6 +829,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - downgrade non-essential writes back to preview when the soft write budget limit is reached
   - block all non-whitelisted writes when the hard write budget limit is reached
   - record blocked budget decisions and same-session / same-doc duplicate suppression into a local budget log
+  - when `LARK_WRITE_BUDGET_STORE` is unset and the runtime is `node --test`, keep that local budget log in a process-scoped temp file instead of repo `.data`, so one test file cannot exhaust the shared write budget for later test files
   - allow internal writes such as company-brain mirror ingest to stay on the existing internal path
   - guard doc create, doc update, doc-rewrite apply, meeting confirm write, and drive/wiki organize apply without changing their surrounding workflow contracts more than necessary
   - guard public HTTP write surfaces for messages, calendar events, tasks, bitable writes, spreadsheet writes, task comments, and message reactions through the same executor boundary

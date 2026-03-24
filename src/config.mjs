@@ -49,6 +49,20 @@ function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
+function isNodeTestRuntime() {
+  return process.execArgv.some((arg) => arg === "--test" || arg.startsWith("--test-"));
+}
+
+function resolveWriteBudgetStorePath() {
+  if (process.env.LARK_WRITE_BUDGET_STORE) {
+    return process.env.LARK_WRITE_BUDGET_STORE;
+  }
+  if (isNodeTestRuntime()) {
+    return path.join(os.tmpdir(), `playground-node-test-${process.pid}-lark-write-budget.json`);
+  }
+  return path.resolve(process.cwd(), ".data/lark-write-budget.json");
+}
+
 export const baseConfig = {
   appId: process.env.LARK_APP_ID,
   appSecret: process.env.LARK_APP_SECRET,
@@ -80,9 +94,7 @@ export const sessionScopeStorePath =
 export const docUpdateConfirmationStorePath =
   process.env.LARK_DOC_UPDATE_CONFIRMATION_STORE ||
   path.resolve(process.cwd(), ".data/doc-update-confirmations.json");
-export const larkWriteBudgetStorePath =
-  process.env.LARK_WRITE_BUDGET_STORE ||
-  path.resolve(process.cwd(), ".data/lark-write-budget.json");
+export const larkWriteBudgetStorePath = resolveWriteBudgetStorePath();
 export const larkWriteBudgetWindowMs = Number.parseInt(
   process.env.LARK_WRITE_BUDGET_WINDOW_MS || String(24 * 60 * 60 * 1000),
   10,
