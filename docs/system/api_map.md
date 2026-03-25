@@ -318,7 +318,7 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Handler: `handleDocumentRewriteFromComments`
   - Purpose: preview comment-driven patch plan, then confirm before apply
   - Input note: target doc can be supplied as `document_id` / `doc_token`, a doc URL field, or a nested `target_document.url`
-  - Side effect note: preview path also returns a rewrite summary card; apply path depends on a temporary confirmation artifact, enters the shared `executeLarkWrite(...)` path, carries a patch plan, and may resolve comments after write
+  - Side effect note: preview path also returns a rewrite summary card; apply path depends on a temporary confirmation artifact, enters the shared `executeLarkWrite(...)` path, carries a patch plan, and may resolve comments after write; direct internal helper apply is disabled so this route is the only supported writeback entry
   - Budget note: confirmed apply now also checks the local Lark write-budget / duplicate guard before replacing the doc
 
 - `GET /api/messages`

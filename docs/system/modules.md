@@ -691,7 +691,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - generate rewrite preview
   - XML-governed rewrite prompt with anti-hallucination rules
   - keep rewrite-specific checkpoint state and use focused excerpts instead of full raw document when possible
-  - optionally write back and resolve comments
+  - internal helper now stays preview-only; direct `apply:true` writeback is disabled and the real write path must go through `POST /api/doc/rewrite-from-comments` preview/confirm/apply
   - emit controlled rewrite workflow state for `awaiting_review` and `applying`
   - build minimal structured rewrite result with patch plan, before/after excerpts, and structure-preservation flag for verifier use
 - Core path:
@@ -937,7 +937,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 
 - `/Users/seanhan/Documents/Playground/src/doc-comment-rewrite.mjs`
   - comment-to-doc patch-plan workflow
-  - now prefers focused excerpts, compact comment summaries, doc-specific checkpoints, and XML-governed anti-hallucination prompt rules over full-doc replay
+  - now prefers focused excerpts, compact comment summaries, doc-specific checkpoints, and XML-governed anti-hallucination prompt rules over full-doc replay; preview generation stays local, while final apply must go through the HTTP rewrite confirmation route instead of `rewriteDocumentFromComments(..., { apply: true })`
 
 - `/Users/seanhan/Documents/Playground/src/doc-update-confirmations.mjs`
   - preview / confirm state store for safe doc create, doc overwrite, meeting writeback, and patch-plan apply

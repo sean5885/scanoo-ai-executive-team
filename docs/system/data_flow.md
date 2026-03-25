@@ -108,6 +108,7 @@ This request-flow mirror now reflects the current fail-closed routing baseline.
    - change summary
    - revised full document content
 6. preview mode returns proposal only plus one confirmation artifact
+7. direct internal `rewriteDocumentFromComments(..., { apply: true })` writeback is disabled; the only supported apply path is the HTTP preview/confirm/apply route
 7. apply mode replaces doc content only after explicit confirmation
 8. optional comment resolution marks comments as solved only after the write succeeds
 9. rewrite checkpoint is updated externally after preview/apply

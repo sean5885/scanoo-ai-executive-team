@@ -29,7 +29,10 @@ async function startTestServer(t, options = {}) {
     ...options,
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => server.close());
+  t.after(() => {
+    server.closeAllConnections?.();
+    return new Promise((resolve) => server.close(resolve));
+  });
   return server;
 }
 
@@ -107,10 +110,17 @@ test("http server records timed out requests in monitoring store", async (t) => 
     },
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => server.close());
+  t.after(() => {
+    server.closeAllConnections?.();
+    return new Promise((resolve) => server.close(resolve));
+  });
 
   const { port } = server.address();
-  const response = await fetch(`http://127.0.0.1:${port}/answer?q=${encodeURIComponent("查 runtime info")}`);
+  const response = await fetch(`http://127.0.0.1:${port}/answer?q=${encodeURIComponent("查 runtime info")}`, {
+    headers: {
+      connection: "close",
+    },
+  });
   const payload = await response.json();
   const traceId = response.headers.get("x-trace-id");
 
@@ -175,7 +185,7 @@ test("answer route converts planner errors into natural-language fallback withou
     },
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => server.close());
+  t.after(() => new Promise((resolve) => server.close(resolve)));
 
   const { port } = server.address();
   const response = await fetch(`http://127.0.0.1:${port}/answer?q=${encodeURIComponent("幫我看看")}`);
