@@ -202,7 +202,7 @@ test("http route returns oauth_reauth_required only when refresh cannot recover"
     },
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => server.close());
+  t.after(() => new Promise((resolve) => server.close(resolve)));
 
   const { port } = server.address();
   const response = await fetch(`http://127.0.0.1:${port}/api/drive/list`);

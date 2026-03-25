@@ -153,7 +153,7 @@ async function startTestServer(t, serviceOverrides) {
     serviceOverrides: createAuthorizedOverrides(serviceOverrides),
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => server.close());
+  t.after(() => new Promise((resolve) => server.close(resolve)));
   return { server, calls: sink.calls };
 }
 

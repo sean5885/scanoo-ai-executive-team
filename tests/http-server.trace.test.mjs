@@ -20,7 +20,7 @@ test("http server attaches trace_id and emits request logs", async (t) => {
 
   const server = startHttpServer({ listen: false, logger });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => server.close());
+  t.after(() => new Promise((resolve) => server.close(resolve)));
 
   const address = server.address();
   const response = await fetch(`http://127.0.0.1:${address.port}/health`);
@@ -49,7 +49,7 @@ test("http server preserves incoming x-request-id in request logs and response h
 
   const server = startHttpServer({ listen: false, logger });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => server.close());
+  t.after(() => new Promise((resolve) => server.close(resolve)));
 
   const address = server.address();
   const response = await fetch(`http://127.0.0.1:${address.port}/health`, {
@@ -79,7 +79,7 @@ test("http server emits child route logs for auth route", async (t) => {
 
   const server = startHttpServer({ listen: false, logger });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => server.close());
+  t.after(() => new Promise((resolve) => server.close(resolve)));
 
   const address = server.address();
   const response = await fetch(`http://127.0.0.1:${address.port}/api/auth/status`);
@@ -109,7 +109,7 @@ test("http server emits child route logs for drive list route", async (t) => {
 
   const server = startHttpServer({ listen: false, logger });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => server.close());
+  t.after(() => new Promise((resolve) => server.close(resolve)));
 
   const address = server.address();
   const response = await fetch(`http://127.0.0.1:${address.port}/api/drive/list`);
@@ -138,7 +138,7 @@ test("http server emits child route logs for tasks list route", async (t) => {
 
   const server = startHttpServer({ listen: false, logger });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => server.close());
+  t.after(() => new Promise((resolve) => server.close(resolve)));
 
   const address = server.address();
   const response = await fetch(`http://127.0.0.1:${address.port}/api/tasks`);
@@ -167,7 +167,7 @@ test("http server threads child logger into drive organize handler", async (t) =
 
   const server = startHttpServer({ listen: false, logger });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => server.close());
+  t.after(() => new Promise((resolve) => server.close(resolve)));
 
   const address = server.address();
   const response = await fetch(`http://127.0.0.1:${address.port}/api/drive/organize/preview`, {
@@ -201,7 +201,7 @@ test("http server threads child logger into calendar freebusy handler", async (t
 
   const server = startHttpServer({ listen: false, logger });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => server.close());
+  t.after(() => new Promise((resolve) => server.close(resolve)));
 
   const address = server.address();
   const response = await fetch(`http://127.0.0.1:${address.port}/api/calendar/freebusy`, {
@@ -235,7 +235,7 @@ test("http server threads child logger into wiki organize handler", async (t) =>
 
   const server = startHttpServer({ listen: false, logger });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => server.close());
+  t.after(() => new Promise((resolve) => server.close(resolve)));
 
   const address = server.address();
   const response = await fetch(`http://127.0.0.1:${address.port}/api/wiki/organize/preview`, {
@@ -269,7 +269,7 @@ test("http server emits child route logs for bitable records list route", async 
 
   const server = startHttpServer({ listen: false, logger });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => server.close());
+  t.after(() => new Promise((resolve) => server.close(resolve)));
 
   const address = server.address();
   const response = await fetch(`http://127.0.0.1:${address.port}/api/bitable/apps/app-1/tables/tbl-1/records`);
@@ -299,7 +299,7 @@ test("http server emits child route logs for bitable records search route", asyn
 
   const server = startHttpServer({ listen: false, logger });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => server.close());
+  t.after(() => new Promise((resolve) => server.close(resolve)));
 
   const address = server.address();
   const response = await fetch(`http://127.0.0.1:${address.port}/api/bitable/apps/app-1/tables/tbl-1/records/search`, {
@@ -333,7 +333,7 @@ test("http server emits child route logs for task comments list route", async (t
 
   const server = startHttpServer({ listen: false, logger });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => server.close());
+  t.after(() => new Promise((resolve) => server.close(resolve)));
 
   const address = server.address();
   const response = await fetch(`http://127.0.0.1:${address.port}/api/tasks/task-1/comments`);
@@ -363,7 +363,7 @@ test("http server emits child route logs for task comment create route", async (
 
   const server = startHttpServer({ listen: false, logger });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => server.close());
+  t.after(() => new Promise((resolve) => server.close(resolve)));
 
   const address = server.address();
   const response = await fetch(`http://127.0.0.1:${address.port}/api/tasks/task-1/comments`, {
