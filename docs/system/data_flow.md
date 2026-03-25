@@ -144,25 +144,26 @@ This request-flow mirror now reflects the current fail-closed routing baseline.
 1. `http-server.mjs` creates a per-request `trace_id`
 2. the HTTP layer echoes that trace through JSON `trace_id` payload injection when the response is an object, and through the `X-Trace-Id` header for every response
 3. when the response finishes, the runtime writes one compact row into SQLite `http_request_monitor` with request identity, status, outcome, error summary, and duration
-4. request-scoped trace events now also carry bounded traffic provenance:
+4. if the shared SQLite connection has already been closed during teardown, monitoring persistence/query now fails soft and skips that late write/read instead of surfacing a runtime error
+5. request-scoped trace events now also carry bounded traffic provenance:
    - `traffic_source = real|test|replay`
    - `request_backed = true`
    - source can be forced by explicit request hint, otherwise obvious synthetic clients are downgraded to `test`
-5. high-risk routes use route-level child loggers (`route_started` / `route_succeeded` / `route_failed`)
-6. high-risk handlers emit step logs for start, validation failure, and completion
-7. current high-risk coverage includes:
+6. high-risk routes use route-level child loggers (`route_started` / `route_succeeded` / `route_failed`)
+7. high-risk handlers emit step logs for start, validation failure, and completion
+8. current high-risk coverage includes:
    - drive organize preview/apply
    - wiki organize preview/apply
    - bitable records list/search/create/get/update/delete
    - calendar event create/freebusy
    - task get/create/comments list/create/update/delete
-8. `/api/monitoring/requests`, `/api/monitoring/errors`, `/api/monitoring/errors/latest`, and `/api/monitoring/metrics` query that persisted request-monitor table; equal `finished_at` ties now break by SQLite insertion order (`rowid`) and then `trace_id` so "latest error" stays stable under same-millisecond finishes
-9. `/monitoring` renders a simple server-side HTML dashboard from the same monitoring snapshot, showing success rate, error rate, recent errors, and recent requests
-10. `tool_execution` events now also persist into `http_request_trace_events`, including `duration_ms`, so later analysis can measure per-tool success rate and latency without scraping console logs
-11. `/api/monitoring/learning` and `scripts/monitoring-cli.mjs learning ...` derive a review-first learning summary from recent request rows plus trace events
-12. `POST /agent/improvements/learning/generate` converts that summary into `pending_approval` improvement proposals instead of auto-applying routing/tool changes
-13. success-path smoke fixtures verify these routes can initialize and return shaped JSON with `trace_id`
-14. self-check verifies both preview/read and apply/write route-contract presence for these high-risk HTTP families
+9. `/api/monitoring/requests`, `/api/monitoring/errors`, `/api/monitoring/errors/latest`, and `/api/monitoring/metrics` query that persisted request-monitor table; equal `finished_at` ties now break by SQLite insertion order (`rowid`) and then `trace_id` so "latest error" stays stable under same-millisecond finishes
+10. `/monitoring` renders a simple server-side HTML dashboard from the same monitoring snapshot, showing success rate, error rate, recent errors, and recent requests
+11. `tool_execution` events now also persist into `http_request_trace_events`, including `duration_ms`, so later analysis can measure per-tool success rate and latency without scraping console logs
+12. `/api/monitoring/learning` and `scripts/monitoring-cli.mjs learning ...` derive a review-first learning summary from recent request rows plus trace events
+13. `POST /agent/improvements/learning/generate` converts that summary into `pending_approval` improvement proposals instead of auto-applying routing/tool changes
+14. success-path smoke fixtures verify these routes can initialize and return shaped JSON with `trace_id`
+15. self-check verifies both preview/read and apply/write route-contract presence for these high-risk HTTP families
 
 ### Meeting Flow
 

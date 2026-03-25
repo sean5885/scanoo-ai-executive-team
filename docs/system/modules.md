@@ -128,6 +128,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - `trace_id` injection into JSON responses for easier cross-log correlation
   - `X-Trace-Id` response-header echo for every request
   - response-finish persistence into SQLite `http_request_monitor`
+  - request-monitor persistence/query now fail soft when tests or teardown have already closed the shared SQLite connection; late request/trace writes are skipped instead of surfacing `database connection is not open`
   - read-only monitoring routes for recent requests, recent errors, latest error, and aggregate request metrics
   - serve a simple local `/monitoring` HTML dashboard with success/error rates plus recent error/request tables
   - key route child-log coverage for `auth_status`, `doc_create`, `doc_update`, `meeting_process`, `meeting_confirm`, `messages_list`, `message_reply`, `knowledge_search`, `knowledge_answer`, `drive_*`, `wiki_*`, `bitable_*`, `calendar_*`, and `tasks_*`

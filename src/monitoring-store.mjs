@@ -197,6 +197,10 @@ function normalizeMessage(value) {
   return normalizeText(value) || null;
 }
 
+function isClosedDbError(error) {
+  return /database connection is not open/i.test(String(error?.message || ""));
+}
+
 function safeJsonParse(value) {
   if (!normalizeText(value)) {
     return null;
@@ -468,16 +472,36 @@ export function recordHttpRequest({
     started_at: startedAt,
     finished_at: finishedAt,
   });
-  upsertRequestStmt.run(row);
+  try {
+    upsertRequestStmt.run(row);
+  } catch (error) {
+    if (!isClosedDbError(error)) {
+      throw error;
+    }
+  }
   return toRequestRecord(row);
 }
 
 export function listRecentRequests({ limit = DEFAULT_RECENT_LIMIT } = {}) {
-  return listRecentRequestsStmt.all(clampLimit(limit, DEFAULT_RECENT_LIMIT)).map(toRequestRecord);
+  try {
+    return listRecentRequestsStmt.all(clampLimit(limit, DEFAULT_RECENT_LIMIT)).map(toRequestRecord);
+  } catch (error) {
+    if (isClosedDbError(error)) {
+      return [];
+    }
+    throw error;
+  }
 }
 
 export function listRecentErrors({ limit = DEFAULT_ERROR_LIMIT } = {}) {
-  return listRecentErrorsStmt.all(clampLimit(limit, DEFAULT_ERROR_LIMIT)).map(toRequestRecord);
+  try {
+    return listRecentErrorsStmt.all(clampLimit(limit, DEFAULT_ERROR_LIMIT)).map(toRequestRecord);
+  } catch (error) {
+    if (isClosedDbError(error)) {
+      return [];
+    }
+    throw error;
+  }
 }
 
 export function getRequestByTraceId(traceId) {
@@ -485,8 +509,15 @@ export function getRequestByTraceId(traceId) {
   if (!normalizedTraceId) {
     return null;
   }
-  const row = getRequestByTraceIdStmt.get(normalizedTraceId);
-  return row ? toRequestRecord(row) : null;
+  try {
+    const row = getRequestByTraceIdStmt.get(normalizedTraceId);
+    return row ? toRequestRecord(row) : null;
+  } catch (error) {
+    if (isClosedDbError(error)) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 export function recordTraceEvent({
@@ -510,11 +541,18 @@ export function recordTraceEvent({
   if (!row.trace_id || !row.event) {
     return null;
   }
-  const info = insertTraceEventStmt.run(row);
-  return toTraceEventRecord({
-    ...row,
-    id: Number.isFinite(Number(info?.lastInsertRowid)) ? Number(info.lastInsertRowid) : null,
-  });
+  try {
+    const info = insertTraceEventStmt.run(row);
+    return toTraceEventRecord({
+      ...row,
+      id: Number.isFinite(Number(info?.lastInsertRowid)) ? Number(info.lastInsertRowid) : null,
+    });
+  } catch (error) {
+    if (isClosedDbError(error)) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 export function listTraceEvents({ traceId, limit = DEFAULT_TRACE_EVENT_LIMIT } = {}) {
@@ -522,7 +560,14 @@ export function listTraceEvents({ traceId, limit = DEFAULT_TRACE_EVENT_LIMIT } =
   if (!normalizedTraceId) {
     return [];
   }
-  return listTraceEventsStmt.all(normalizedTraceId, clampTraceEventLimit(limit)).map(toTraceEventRecord);
+  try {
+    return listTraceEventsStmt.all(normalizedTraceId, clampTraceEventLimit(limit)).map(toTraceEventRecord);
+  } catch (error) {
+    if (isClosedDbError(error)) {
+      return [];
+    }
+    throw error;
+  }
 }
 
 export function getTraceDebugSnapshot(traceId, { limit = DEFAULT_TRACE_EVENT_LIMIT } = {}) {
@@ -555,7 +600,14 @@ export function getLatestError() {
 }
 
 export function getRequestMetrics() {
-  const row = metricsStmt.get() || {};
+  let row = {};
+  try {
+    row = metricsStmt.get() || {};
+  } catch (error) {
+    if (!isClosedDbError(error)) {
+      throw error;
+    }
+  }
   const totalRequests = Number(row.total_requests || 0);
   const successCount = Number(row.success_count || 0);
   const errorCount = Number(row.error_count || 0);
