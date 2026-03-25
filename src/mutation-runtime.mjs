@@ -4,27 +4,22 @@ export async function runMutation(input) {
   const { action, payload, context } = input;
 
   // 1. policy
-  // TODO: evaluate policy
+  // TODO
 
   // 2. guard
-  // TODO: enforce guard
+  // TODO
 
   // 3. evidence
-  // TODO: attach evidence
+  // TODO
 
   // 4. verifier
-  // TODO: run verifier
+  // TODO
 
   // 5. admission
-  // TODO: final gate
+  // TODO
 
   void payload;
   void context;
 
-  // TEMP: passthrough (no-op)
-  return {
-    ok: true,
-    action,
-    note: "mutation runtime skeleton (no enforcement yet)",
-  };
+  return { ok: true, action, note: "mutation runtime skeleton" };
 }
