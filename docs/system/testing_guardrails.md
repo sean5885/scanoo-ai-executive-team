@@ -19,7 +19,8 @@
    - Avoid cross-file coupling through a single shared DB/proxy
    - Prefer isolated DB lifecycle per test file or explicit reset/setup/teardown boundaries
    - Closed DB should fail soft in monitoring/read paths, but this is not a substitute for isolation
+   - `tests/utils/test-db-factory.mjs` now provides a minimal in-memory SQLite factory with an explicit `close()` teardown helper for test-owned DB lifecycles
 
 ## Follow-up
 
-- Rule 4 is not yet fully enforced in runtime/tests and remains a cleanup item.
+- Rule 4 is not yet fully enforced in runtime/tests and remains a cleanup item; several suites still import the shared `src/db.mjs` singleton directly and need follow-up migration onto isolated test-owned DB setup.
