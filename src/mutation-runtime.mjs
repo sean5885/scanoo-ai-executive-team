@@ -1,7 +1,7 @@
 // Unified Mutation Runtime (skeleton)
 
 export async function runMutation(input) {
-  const { action, payload, context } = input;
+  const { action, payload, context, execute } = input;
 
   // 1. policy
   // TODO
@@ -17,6 +17,14 @@ export async function runMutation(input) {
 
   // 5. admission
   // TODO
+
+  if (typeof execute === "function") {
+    return execute({
+      action,
+      payload,
+      context,
+    });
+  }
 
   void payload;
   void context;

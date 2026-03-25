@@ -198,6 +198,7 @@ import { listResolvedSessions } from "./session-scope-store.mjs";
 import { createMeetingCoordinator } from "./meeting-agent.mjs";
 import { cleanText, extractDocumentId } from "./message-intent-utils.mjs";
 import { executeLarkWrite } from "./execute-lark-write.mjs";
+import { runMutation } from "./mutation-runtime.mjs";
 import {
   buildHttpIdempotencyScopeKey,
   getHttpIdempotencyRecord,
@@ -3563,146 +3564,168 @@ async function handleDocumentCreate(
     write_policy: resolvedWritePolicy,
     write_policy_enforcement: writePolicyEnforcement,
   });
-  const execution = await executeLarkWrite({
-    apiName: "create_doc",
+  const execution = await runMutation({
     action: "create_doc",
-    pathname,
-    accountId: context.account.id,
-    accessToken: context.token,
-    traceId: res.__trace_id || null,
-    logger,
-    confirmation: {
-      kind: "document_create",
-      requireConfirm: true,
-      requireConfirmationId: true,
-      confirm: effectiveConfirm,
-      confirmationId: effectiveConfirmationId,
-      pending: pendingCreateConfirmation,
-      consume: async () => consumeDocumentCreateConfirmation({
-        confirmationId: effectiveConfirmationId,
-        accountId: context.account.id,
-        title,
-        requestedFolderToken,
-        resolvedFolderToken: folderToken,
-        content,
-      }),
-    },
-    budget: {
-      sessionKey: context.account.id,
-      scopeKey: resolvedWritePolicy.scope_key,
-      targetDocumentId: folderToken || null,
+    payload: {
+      title,
+      folder_token: folderToken || null,
+      requested_folder_token: requestedFolderToken || null,
       content,
-      payload: {
-        title,
-        folder_token: folderToken || null,
-        requested_folder_token: requestedFolderToken || null,
-        source: source || "api_doc_create",
-        owner: owner || null,
-        intent: intent || null,
-        type: type || null,
-      },
-      idempotencyKey,
+      confirmation_id: effectiveConfirmationId,
+      confirm: effectiveConfirm === true,
+      source: source || "api_doc_create",
+      owner: owner || null,
+      intent: intent || null,
+      type: type || null,
     },
-    performWrite: async ({ accessToken }) => {
-      let created;
-      try {
-        created = await getHttpService("createDocument", createDocument)(
-          accessToken,
+    context: {
+      pathname,
+      account_id: context.account.id,
+      trace_id: res.__trace_id || null,
+      canonical_request: canonicalRequest,
+      write_policy: resolvedWritePolicy,
+    },
+    execute: async () => executeLarkWrite({
+      apiName: "create_doc",
+      action: "create_doc",
+      pathname,
+      accountId: context.account.id,
+      accessToken: context.token,
+      traceId: res.__trace_id || null,
+      logger,
+      confirmation: {
+        kind: "document_create",
+        requireConfirm: true,
+        requireConfirmationId: true,
+        confirm: effectiveConfirm,
+        confirmationId: effectiveConfirmationId,
+        pending: pendingCreateConfirmation,
+        consume: async () => consumeDocumentCreateConfirmation({
+          confirmationId: effectiveConfirmationId,
+          accountId: context.account.id,
           title,
-          folderToken,
-          "user",
-          { source: source || "api_doc_create" },
-        );
-      } catch (error) {
-        await persistCreateFailedLifecycleRecord({
-          account: context.account,
-          res,
+          requestedFolderToken,
+          resolvedFolderToken: folderToken,
+          content,
+        }),
+      },
+      budget: {
+        sessionKey: context.account.id,
+        scopeKey: resolvedWritePolicy.scope_key,
+        targetDocumentId: folderToken || null,
+        content,
+        payload: {
           title,
-          folderToken,
-          logger,
-          error,
-        });
-        throw error;
-      }
-
-      const createdAt = nowIso();
-      await persistCreatedLifecycleSeed({
-        account: context.account,
-        created,
-        folderToken,
-        createdAt,
-        logger,
-      });
-      logger.info("document_create_create_succeeded", {
-        account_id: context.account.id,
-        document_id: created.document_id || null,
-        folder_token: folderToken || null,
-      });
-
-      const {
-        permissionGrantFailed,
-        permissionGrantSkipped,
-        permissionGrantError,
-      } = await applyDocumentManagerPermissionGrant({
-        context,
-        created,
-        logger,
-      });
-
-      let writeResult = null;
-      let initialContentWriteFailed = false;
-      let initialContentWriteError = null;
-      let indexedContent = content || null;
-      if (content && created.document_id) {
+          folder_token: folderToken || null,
+          requested_folder_token: requestedFolderToken || null,
+          source: source || "api_doc_create",
+          owner: owner || null,
+          intent: intent || null,
+          type: type || null,
+        },
+        idempotencyKey,
+      },
+      performWrite: async ({ accessToken }) => {
+        let created;
         try {
-          writeResult = await getHttpService("updateDocument", updateDocument)(
+          created = await getHttpService("createDocument", createDocument)(
             accessToken,
-            created.document_id,
-            content,
-            "replace",
+            title,
+            folderToken,
+            "user",
+            { source: source || "api_doc_create" },
           );
         } catch (error) {
-          initialContentWriteFailed = true;
-          initialContentWriteError = extractHttpPlatformError(error);
-          indexedContent = null;
-          logDocumentCreateInitialContentWriteFailed(
+          await persistCreateFailedLifecycleRecord({
+            account: context.account,
+            res,
+            title,
+            folderToken,
             logger,
-            context,
-            created,
-            initialContentWriteError,
-          );
+            error,
+          });
+          throw error;
         }
-      }
 
-      await handleDocumentCreateIndexBoundary({
-        context,
-        created,
-        folderToken,
-        content: indexedContent,
-        createdAt,
-        logger,
-      });
-      logger.info("document_create_completed", {
-        account_id: context.account.id,
-        document_id: created.document_id || null,
-        wrote_initial_content: Boolean(writeResult),
-        initial_content_write_failed: initialContentWriteFailed,
-        permission_grant_failed: permissionGrantFailed,
-        permission_grant_skipped: permissionGrantSkipped,
-        write_policy: resolvedWritePolicy,
-        write_policy_enforcement: writePolicyEnforcement,
-      });
+        const createdAt = nowIso();
+        await persistCreatedLifecycleSeed({
+          account: context.account,
+          created,
+          folderToken,
+          createdAt,
+          logger,
+        });
+        logger.info("document_create_create_succeeded", {
+          account_id: context.account.id,
+          document_id: created.document_id || null,
+          folder_token: folderToken || null,
+        });
 
-      return {
-        created,
-        permissionGrantFailed,
-        permissionGrantSkipped,
-        permissionGrantError,
-        writeResult,
-        initialContentWriteFailed,
-        initialContentWriteError,
-      };
-    },
+        const {
+          permissionGrantFailed,
+          permissionGrantSkipped,
+          permissionGrantError,
+        } = await applyDocumentManagerPermissionGrant({
+          context,
+          created,
+          logger,
+        });
+
+        let writeResult = null;
+        let initialContentWriteFailed = false;
+        let initialContentWriteError = null;
+        let indexedContent = content || null;
+        if (content && created.document_id) {
+          try {
+            writeResult = await getHttpService("updateDocument", updateDocument)(
+              accessToken,
+              created.document_id,
+              content,
+              "replace",
+            );
+          } catch (error) {
+            initialContentWriteFailed = true;
+            initialContentWriteError = extractHttpPlatformError(error);
+            indexedContent = null;
+            logDocumentCreateInitialContentWriteFailed(
+              logger,
+              context,
+              created,
+              initialContentWriteError,
+            );
+          }
+        }
+
+        await handleDocumentCreateIndexBoundary({
+          context,
+          created,
+          folderToken,
+          content: indexedContent,
+          createdAt,
+          logger,
+        });
+        logger.info("document_create_completed", {
+          account_id: context.account.id,
+          document_id: created.document_id || null,
+          wrote_initial_content: Boolean(writeResult),
+          initial_content_write_failed: initialContentWriteFailed,
+          permission_grant_failed: permissionGrantFailed,
+          permission_grant_skipped: permissionGrantSkipped,
+          write_policy: resolvedWritePolicy,
+          write_policy_enforcement: writePolicyEnforcement,
+        });
+
+        return {
+          created,
+          permissionGrantFailed,
+          permissionGrantSkipped,
+          permissionGrantError,
+          writeResult,
+          initialContentWriteFailed,
+          initialContentWriteError,
+        };
+      },
+    }),
   });
   if (!execution.ok) {
     respondWriteExecutionFailure(res, execution);

@@ -15,7 +15,7 @@ It is intentionally design-first:
 
 It does **not** claim that the repo already has one unified write-governance runtime today.
 
-The repo now also carries an unwired skeleton module at `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`, but that file is only a placeholder scaffold. Current checked-in enforcement and admission behavior still lives in the existing route-local governance, `executeLarkWrite(...)`, `decideWriteGuard(...)`, and `src/mutation-admission.mjs` paths.
+The repo now also carries a still-limited skeleton module at `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`. The current checked-in usage is intentionally narrow: the `create_doc` HTTP execute path now passes through `runMutation(...)`, but that wrapper is still passthrough-only and does not yet own policy, guard, verifier, admission, or route-specific business decisions. Real checked-in enforcement and admission behavior still lives in the existing route-local governance, `executeLarkWrite(...)`, `decideWriteGuard(...)`, and `src/mutation-admission.mjs` paths.
 
 ## Current Grounded Files
 
