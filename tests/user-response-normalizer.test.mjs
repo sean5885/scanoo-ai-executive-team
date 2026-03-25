@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
-import { normalizeUserResponse, renderUserResponseText } from "../src/user-response-normalizer.mjs";
+const testDb = await createTestDbHarness();
+const { normalizeUserResponse, renderUserResponseText } = await import("../src/user-response-normalizer.mjs");
+
+test.after(() => {
+  testDb.close();
+});
 
 test("chat reply for the exact scanooo rereview query renders natural language without planner trace leakage", () => {
   const exactQuery = "你把我的雲端文件再看一遍，把不屬於 scanooo 的內容摘出去讓我確認";

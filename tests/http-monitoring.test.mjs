@@ -2,10 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { createTestDb } from "./utils/test-db-factory.mjs";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
-const testDb = createTestDb();
-process.env.RAG_SQLITE_PATH = testDb.dbPath;
+const testDb = await createTestDbHarness();
 
 const [
   { startHttpServer },
@@ -15,23 +14,16 @@ const [
     recordHttpRequest,
     recordTraceEvent,
   },
-  { closeDbForTests },
 ] = await Promise.all([
   import("../src/http-server.mjs"),
   import("../src/monitoring-store.mjs"),
-  import("../src/db.mjs"),
 ]);
 
 const execFileAsync = promisify(execFile);
-const testEnv = {
-  ...process.env,
-  RAG_SQLITE_PATH: testDb.dbPath,
-};
+const testEnv = testDb.env;
 
 test.after(() => {
-  closeDbForTests();
   testDb.close();
-  delete process.env.RAG_SQLITE_PATH;
 });
 
 function createLogger() {

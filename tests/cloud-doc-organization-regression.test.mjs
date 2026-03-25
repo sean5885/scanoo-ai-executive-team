@@ -1,28 +1,39 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-
-import {
-  buildCloudOrganizationWhyReply,
-  buildCloudDocPendingActionScopeKey,
-  buildCloudDocWorkflowScopeKey,
-  buildCloudOrganizationReviewReplyCached,
-  clearCloudOrganizationReviewCache,
-  CLOUD_DOC_ORGANIZATION_MODE,
-  extractCloudOrganizationScopedSubject,
-  isCloudOrganizationTestResidualTitle,
-  looksLikeCloudOrganizationReReviewRequest,
-  resolveCloudOrganizationAction,
-  readSessionWorkflowMode,
-  writeSessionWorkflowMode,
-} from "../src/cloud-doc-organization-workflow.mjs";
-import {
-  handlePlannerPendingItemAction,
-  maybeRunPlannerTaskLifecycleFollowUp,
-} from "../src/planner-task-lifecycle-v1.mjs";
-import { upsertAccount, upsertDocument, upsertSource } from "../src/rag-repository.mjs";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 import { setupPlannerTaskLifecycleTestHarness } from "./helpers/planner-task-lifecycle-harness.mjs";
 
+const testDb = await createTestDbHarness();
+const [
+  {
+    buildCloudOrganizationWhyReply,
+    buildCloudDocPendingActionScopeKey,
+    buildCloudDocWorkflowScopeKey,
+    buildCloudOrganizationReviewReplyCached,
+    clearCloudOrganizationReviewCache,
+    CLOUD_DOC_ORGANIZATION_MODE,
+    extractCloudOrganizationScopedSubject,
+    isCloudOrganizationTestResidualTitle,
+    looksLikeCloudOrganizationReReviewRequest,
+    resolveCloudOrganizationAction,
+    readSessionWorkflowMode,
+    writeSessionWorkflowMode,
+  },
+  {
+    handlePlannerPendingItemAction,
+    maybeRunPlannerTaskLifecycleFollowUp,
+  },
+  { upsertAccount, upsertDocument, upsertSource },
+] = await Promise.all([
+  import("../src/cloud-doc-organization-workflow.mjs"),
+  import("../src/planner-task-lifecycle-v1.mjs"),
+  import("../src/rag-repository.mjs"),
+]);
+
 setupPlannerTaskLifecycleTestHarness();
+test.after(() => {
+  testDb.close();
+});
 
 function seedIndexedDocument({
   accountId,

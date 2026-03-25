@@ -1,12 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-
-import { createRuntimeLogger, createTraceId } from "../src/runtime-observability.mjs";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
+const testDb = await createTestDbHarness();
+const { createRuntimeLogger, createTraceId } = await import("../src/runtime-observability.mjs");
 import { decideWriteGuard } from "../src/write-guard.mjs";
 import {
   buildDriveOrganizeApplyWritePolicy,
   buildMeetingConfirmWritePolicy,
 } from "../src/write-policy-contract.mjs";
+
+test.after(() => {
+  testDb.close();
+});
 
 test("unconfirmed external write is denied", () => {
   const result = decideWriteGuard({

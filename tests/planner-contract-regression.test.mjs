@@ -1,19 +1,29 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-
-import {
-  buildPlannedUserInputEnvelope,
-  executePlannedUserInput,
-  resetPlannerRuntimeContext,
-  runPlannerToolFlow,
-} from "../src/executive-planner.mjs";
-import { resolveDocQueryRoute } from "../src/planner-doc-query-flow.mjs";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
+const testDb = await createTestDbHarness();
+const [
+  {
+    buildPlannedUserInputEnvelope,
+    executePlannedUserInput,
+    resetPlannerRuntimeContext,
+    runPlannerToolFlow,
+  },
+  { resolveDocQueryRoute },
+] = await Promise.all([
+  import("../src/executive-planner.mjs"),
+  import("../src/planner-doc-query-flow.mjs"),
+]);
 import { route } from "../src/router.js";
 
 const plannerContract = JSON.parse(
   readFileSync(new URL("../docs/system/planner_contract.json", import.meta.url), "utf8"),
 );
+
+test.after(() => {
+  testDb.close();
+});
 
 const quietLogger = {
   debug() {},

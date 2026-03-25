@@ -3,13 +3,19 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
 const tempDir = mkdtempSync(path.join(tmpdir(), "playground-governance-test-"));
 process.env.AGENT_WORKFLOW_CHECKPOINT_STORE = path.join(tempDir, "workflow-checkpoints.json");
+const testDb = await createTestDbHarness();
 
 const { getWorkflowCheckpoint, updateWorkflowCheckpoint } = await import("../src/agent-workflow-state.mjs");
 const { buildKnowledgeAnswerPrompt } = await import("../src/answer-service.mjs");
 const { buildRewritePromptInput } = await import("../src/doc-comment-rewrite.mjs");
+
+test.after(() => {
+  testDb.close();
+});
 
 function buildKnowledgeItems() {
   return [

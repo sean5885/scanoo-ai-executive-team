@@ -4,14 +4,24 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-
-import { buildRoutingEvalDecisionAdvice } from "../src/routing-eval-fixture-candidates.mjs";
-import { runRoutingEval } from "../src/routing-eval.mjs";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
+const testDb = await createTestDbHarness();
+const [
+  { buildRoutingEvalDecisionAdvice },
+  { runRoutingEval },
+] = await Promise.all([
+  import("../src/routing-eval-fixture-candidates.mjs"),
+  import("../src/routing-eval.mjs"),
+]);
 import {
   FALLBACK_DISABLED,
   INVALID_ACTION,
   ROUTING_NO_MATCH,
 } from "../src/planner-error-codes.mjs";
+
+test.after(() => {
+  testDb.close();
+});
 
 function buildRun({
   accuracyRatio = 1,

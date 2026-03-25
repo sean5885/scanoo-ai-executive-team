@@ -1,20 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
-import { createTestDb } from "./utils/test-db-factory.mjs";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
-const testDb = createTestDb();
-process.env.RAG_SQLITE_PATH = testDb.dbPath;
+const testDb = await createTestDbHarness();
+const { db } = testDb;
 
 const [
-  { default: db, closeDbForTests },
   { getHttpIdempotencyRecord },
   { startHttpServer },
   { docUpdateConfirmationStorePath, executiveImprovementStorePath },
   { setupExecutiveTaskStateTestHarness },
   { EXPLICIT_USER_AUTH_HEADERS },
 ] = await Promise.all([
-  import("../src/db.mjs"),
   import("../src/http-idempotency-store.mjs"),
   import("../src/http-server.mjs"),
   import("../src/config.mjs"),
@@ -25,9 +23,7 @@ const [
 setupExecutiveTaskStateTestHarness();
 
 test.after(() => {
-  closeDbForTests();
   testDb.close();
-  delete process.env.RAG_SQLITE_PATH;
 });
 
 function createLoggerSink() {

@@ -5,23 +5,40 @@ import os from "node:os";
 import path from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
 import { mkdtemp } from "node:fs/promises";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
-import {
-  buildDailyStatusCompareSummary,
-  buildDailyStatusHumanSummary,
-  buildDailyStatusReport,
-  buildDailyStatusTrendSummary,
-  renderDailyStatusTrendReport,
-  renderDailyStatusCompareReport,
-  renderDailyStatusReport,
-} from "../src/daily-status.mjs";
-import { runPlannerContractConsistencyCheck } from "../src/planner-contract-consistency.mjs";
-import { archivePlannerDiagnosticsSnapshot } from "../src/planner-diagnostics-history.mjs";
-import { buildRoutingDiagnosticsSummary } from "../src/routing-eval-diagnostics.mjs";
-import { archiveRoutingDiagnosticsSnapshot } from "../src/routing-diagnostics-history.mjs";
-import { archiveReleaseCheckSnapshot } from "../src/release-check-history.mjs";
-import { runRoutingEval } from "../src/routing-eval.mjs";
-import { archiveSystemSelfCheckSnapshot } from "../src/system-self-check-history.mjs";
+const testDb = await createTestDbHarness();
+const [
+  {
+    buildDailyStatusCompareSummary,
+    buildDailyStatusHumanSummary,
+    buildDailyStatusReport,
+    buildDailyStatusTrendSummary,
+    renderDailyStatusTrendReport,
+    renderDailyStatusCompareReport,
+    renderDailyStatusReport,
+  },
+  { runPlannerContractConsistencyCheck },
+  { archivePlannerDiagnosticsSnapshot },
+  { buildRoutingDiagnosticsSummary },
+  { archiveRoutingDiagnosticsSnapshot },
+  { archiveReleaseCheckSnapshot },
+  { runRoutingEval },
+  { archiveSystemSelfCheckSnapshot },
+] = await Promise.all([
+  import("../src/daily-status.mjs"),
+  import("../src/planner-contract-consistency.mjs"),
+  import("../src/planner-diagnostics-history.mjs"),
+  import("../src/routing-eval-diagnostics.mjs"),
+  import("../src/routing-diagnostics-history.mjs"),
+  import("../src/release-check-history.mjs"),
+  import("../src/routing-eval.mjs"),
+  import("../src/system-self-check-history.mjs"),
+]);
+
+test.after(() => {
+  testDb.close();
+});
 
 async function readJson(filePath) {
   return JSON.parse(await readFile(filePath, "utf8"));

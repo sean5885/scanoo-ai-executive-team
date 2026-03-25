@@ -1,11 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-
-import { executeDocumentReviewWorkflow } from "../src/executive-orchestrator.mjs";
-import { getActiveExecutiveTask } from "../src/executive-task-state.mjs";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 import { setupExecutiveTaskStateTestHarness } from "./helpers/executive-task-state-harness.mjs";
 
+const testDb = await createTestDbHarness();
+const [
+  { executeDocumentReviewWorkflow },
+  { getActiveExecutiveTask },
+] = await Promise.all([
+  import("../src/executive-orchestrator.mjs"),
+  import("../src/executive-task-state.mjs"),
+]);
+
 setupExecutiveTaskStateTestHarness();
+test.after(() => {
+  testDb.close();
+});
 
 test("document review workflow executes end-to-end with evidence-first triage output", async () => {
   const seed = `document-review-${Date.now()}`;

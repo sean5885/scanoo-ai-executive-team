@@ -1,16 +1,26 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-
-import {
-  loadRoutingEvalSet,
-  runRoutingEval,
-} from "../src/routing-eval.mjs";
-import {
-  buildRoutingEvalConversionInput,
-  prepareRoutingEvalFixtureCandidates,
-} from "../src/routing-eval-fixture-candidates.mjs";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
+const testDb = await createTestDbHarness();
+const [
+  {
+    loadRoutingEvalSet,
+    runRoutingEval,
+  },
+  {
+    buildRoutingEvalConversionInput,
+    prepareRoutingEvalFixtureCandidates,
+  },
+] = await Promise.all([
+  import("../src/routing-eval.mjs"),
+  import("../src/routing-eval-fixture-candidates.mjs"),
+]);
 import { ROUTING_NO_MATCH } from "../src/planner-error-codes.mjs";
+
+test.after(() => {
+  testDb.close();
+});
 
 function hasRoutingErrorCode(result = {}, code = "") {
   const values = [

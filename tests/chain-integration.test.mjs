@@ -1,17 +1,24 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-
-import { createMeetingCoordinator } from "../src/meeting-agent.mjs";
-import { executeRegisteredAgent } from "../src/agent-dispatcher.mjs";
-import { getRegisteredAgent } from "../src/agent-registry.mjs";
-import { closeDbForTests } from "../src/db.mjs";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 import { disposeLarkContentClientForTests } from "../src/lark-content.mjs";
 import { setupExecutiveTaskStateTestHarness } from "./helpers/executive-task-state-harness.mjs";
+
+const testDb = await createTestDbHarness();
+const [
+  { createMeetingCoordinator },
+  { executeRegisteredAgent },
+  { getRegisteredAgent },
+] = await Promise.all([
+  import("../src/meeting-agent.mjs"),
+  import("../src/agent-dispatcher.mjs"),
+  import("../src/agent-registry.mjs"),
+]);
 
 setupExecutiveTaskStateTestHarness();
 test.after(() => {
   disposeLarkContentClientForTests();
-  closeDbForTests();
+  testDb.close();
 });
 
 function createMeetingHarness() {

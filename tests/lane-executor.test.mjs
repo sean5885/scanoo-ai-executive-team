@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-
-import {
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
+const testDb = await createTestDbHarness();
+const {
   assertRoutingDecisionFinalOwner,
   assertRoutingDecisionOwner,
   looksLikeChatOnlyFailurePreference,
@@ -17,8 +18,12 @@ import {
   resolveLaneExecutionPlan,
   shouldPreferActiveExecutiveTask,
   shouldFallbackImageTaskToTextLane,
-} from "../src/lane-executor.mjs";
+} = await import("../src/lane-executor.mjs");
 import { buildVisibleMessageText } from "../src/message-intent-utils.mjs";
+
+test.after(() => {
+  testDb.close();
+});
 
 test("pickCalendarMeetingEvent prefers the currently active meeting with meeting_url", () => {
   const selected = pickCalendarMeetingEvent(

@@ -1,18 +1,24 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
-import {
+const testDb = await createTestDbHarness();
+const {
   buildPlannerDiagnosticsDecision,
   buildPlannerDiagnosticsSummary,
   buildPlannerContractGate,
   renderPlannerContractConsistencyReport,
   runPlannerContractConsistencyCheck,
-} from "../src/planner-contract-consistency.mjs";
+} = await import("../src/planner-contract-consistency.mjs");
 
 const plannerContract = JSON.parse(
   readFileSync(new URL("../docs/system/planner_contract.json", import.meta.url), "utf8"),
 );
+
+test.after(() => {
+  testDb.close();
+});
 
 test("planner contract consistency report surfaces selector kind drift without inventing undefined targets", () => {
   const report = runPlannerContractConsistencyCheck();

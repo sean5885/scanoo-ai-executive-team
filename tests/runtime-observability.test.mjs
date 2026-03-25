@@ -1,18 +1,29 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
-import { listTraceEvents } from "../src/monitoring-store.mjs";
-import {
-  buildToolExecutionLog,
-  createRequestId,
-  createRuntimeLogger,
-  createTraceId,
-  emitRateLimitedAlert,
-  emitToolExecutionLog,
-  formatIdentifierHint,
-  resetRuntimeAlertsForTests,
-  summarizeLarkEvent,
-} from "../src/runtime-observability.mjs";
+const testDb = await createTestDbHarness();
+const [
+  { listTraceEvents },
+  {
+    buildToolExecutionLog,
+    createRequestId,
+    createRuntimeLogger,
+    createTraceId,
+    emitRateLimitedAlert,
+    emitToolExecutionLog,
+    formatIdentifierHint,
+    resetRuntimeAlertsForTests,
+    summarizeLarkEvent,
+  },
+] = await Promise.all([
+  import("../src/monitoring-store.mjs"),
+  import("../src/runtime-observability.mjs"),
+]);
+
+test.after(() => {
+  testDb.close();
+});
 
 test("formatIdentifierHint 會縮短較長識別碼", () => {
   assert.equal(formatIdentifierHint("om_1234567890abcdef"), "om_123...cdef");

@@ -5,13 +5,19 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
-import {
+const testDb = await createTestDbHarness();
+const {
   buildDiagnosticsReportingSummary,
   buildWritePolicyRuntimeStatsFromRows,
   buildWriteRouteRolloutAdvice,
   runControlDiagnostics,
-} from "../src/control-diagnostics.mjs";
+} = await import("../src/control-diagnostics.mjs");
+
+test.after(() => {
+  testDb.close();
+});
 
 function readJson(filePath) {
   return JSON.parse(readFileSync(filePath, "utf8"));

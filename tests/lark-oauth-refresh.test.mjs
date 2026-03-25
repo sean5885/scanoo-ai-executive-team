@@ -1,13 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
-import { createTestDb } from "./utils/test-db-factory.mjs";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
-const testDb = createTestDb();
-process.env.RAG_SQLITE_PATH = testDb.dbPath;
+const testDb = await createTestDbHarness();
+const { db } = testDb;
 
 const [
-  { default: db, closeDbForTests },
   { startHttpServer },
   {
     exchangeCodeForUserToken,
@@ -16,7 +15,6 @@ const [
   { resolveLarkRequestAuth },
   { getTokenForAccount, saveToken, upsertAccount },
 ] = await Promise.all([
-  import("../src/db.mjs"),
   import("../src/http-server.mjs"),
   import("../src/lark-user-auth.mjs"),
   import("../src/lark-request-auth.mjs"),
@@ -25,9 +23,7 @@ const [
 
 test.after(() => {
   setLarkAuthServiceOverridesForTests({});
-  closeDbForTests();
   testDb.close();
-  delete process.env.RAG_SQLITE_PATH;
 });
 
 function nowSeconds() {
@@ -164,7 +160,7 @@ test("request auth still refreshes persisted oauth after db reopen", async (t) =
     refresh_expires_at: nowSeconds() + 7200,
   });
 
-  closeDbForTests();
+  testDb.closeRuntimeDb();
 
   setLarkAuthServiceOverridesForTests({
     postAuthenJson: async (pathname, payload) => {
@@ -188,7 +184,6 @@ test("request auth still refreshes persisted oauth after db reopen", async (t) =
   t.after(() => {
     setLarkAuthServiceOverridesForTests({});
     cleanupAccount(account.id);
-    closeDbForTests();
   });
 
   const auth = await resolveLarkRequestAuth({ account_id: account.id });

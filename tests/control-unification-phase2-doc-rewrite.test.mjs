@@ -1,16 +1,27 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-
-import {
-  ensureDocRewriteWorkflowTask,
-  finalizeDocRewriteWorkflowTask,
-  markDocRewriteApplying,
-} from "../src/executive-orchestrator.mjs";
-import { clearActiveExecutiveTask, getActiveExecutiveTask } from "../src/executive-task-state.mjs";
-import { buildDocRewriteStructuredResult } from "../src/doc-comment-rewrite.mjs";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 import { setupExecutiveTaskStateTestHarness } from "./helpers/executive-task-state-harness.mjs";
 
+const testDb = await createTestDbHarness();
+const [
+  {
+    ensureDocRewriteWorkflowTask,
+    finalizeDocRewriteWorkflowTask,
+    markDocRewriteApplying,
+  },
+  { clearActiveExecutiveTask, getActiveExecutiveTask },
+  { buildDocRewriteStructuredResult },
+] = await Promise.all([
+  import("../src/executive-orchestrator.mjs"),
+  import("../src/executive-task-state.mjs"),
+  import("../src/doc-comment-rewrite.mjs"),
+]);
+
 setupExecutiveTaskStateTestHarness();
+test.after(() => {
+  testDb.close();
+});
 
 function createRewriteScope(seed) {
   return {

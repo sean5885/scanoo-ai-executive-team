@@ -5,8 +5,9 @@ import { readFileSync } from "node:fs";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-
-import {
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
+const testDb = await createTestDbHarness();
+const {
   buildRoutingTrendReport,
   formatRoutingTrendReport,
   formatRoutingEvalReport,
@@ -16,12 +17,16 @@ import {
   runRoutingEval,
   summarizeRoutingEval,
   validateRoutingEvalSet,
-} from "../src/routing-eval.mjs";
+} = await import("../src/routing-eval.mjs");
 import {
   FALLBACK_DISABLED,
   INVALID_ACTION,
   ROUTING_NO_MATCH,
 } from "../src/planner-error-codes.mjs";
+
+test.after(() => {
+  testDb.close();
+});
 
 function readJson(filePath) {
   return JSON.parse(readFileSync(filePath, "utf8"));

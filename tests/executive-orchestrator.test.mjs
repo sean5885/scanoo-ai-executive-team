@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 import { FALLBACK_DISABLED } from "../src/planner-error-codes.mjs";
-import {
+
+const testDb = await createTestDbHarness();
+const {
   buildExecutiveBrief,
   buildSupportingContext,
   buildVisibleSupportingOutputs,
@@ -10,7 +12,11 @@ import {
   executeExecutiveTurn,
   executeWorkItemsSequentially,
   normalizeWorkPlan,
-} from "../src/executive-orchestrator.mjs";
+} = await import("../src/executive-orchestrator.mjs");
+
+test.after(() => {
+  testDb.close();
+});
 
 test("normalizeWorkPlan keeps at most three roles and reserves the merge agent slot", () => {
   const plan = normalizeWorkPlan(

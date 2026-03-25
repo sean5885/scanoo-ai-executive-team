@@ -2,13 +2,19 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
-import {
+const testDb = await createTestDbHarness();
+const {
   recordHttpRequest,
   recordTraceEvent,
-} from "../src/monitoring-store.mjs";
+} = await import("../src/monitoring-store.mjs");
 
 const execFileAsync = promisify(execFile);
+
+test.after(() => {
+  testDb.close();
+});
 
 function runDebugTrace(traceId) {
   return execFileAsync(process.execPath, ["scripts/debug-trace.mjs", traceId], {

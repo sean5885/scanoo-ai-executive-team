@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
-import { resolveCompanyBrainWriteIntake } from "../src/company-brain-write-intake.mjs";
+const testDb = await createTestDbHarness();
+const { resolveCompanyBrainWriteIntake } = await import("../src/company-brain-write-intake.mjs");
+
+test.after(() => {
+  testDb.close();
+});
 
 test("verified mirror ingest without overlap stays direct intake", () => {
   const result = resolveCompanyBrainWriteIntake({

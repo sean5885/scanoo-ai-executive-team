@@ -1,12 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
-import db from "../src/db.mjs";
-import { updateLearningStateAction } from "../src/company-brain-learning.mjs";
-import {
-  getCompanyBrainDocDetailAction,
-  searchCompanyBrainDocsAction,
-} from "../src/company-brain-query.mjs";
+const testDb = await createTestDbHarness();
+const { db } = testDb;
+const [
+  { updateLearningStateAction },
+  {
+    getCompanyBrainDocDetailAction,
+    searchCompanyBrainDocsAction,
+  },
+] = await Promise.all([
+  import("../src/company-brain-learning.mjs"),
+  import("../src/company-brain-query.mjs"),
+]);
+
+test.after(() => {
+  testDb.close();
+});
 
 function ensureTestAccount(accountId) {
   const timestamp = new Date().toISOString();

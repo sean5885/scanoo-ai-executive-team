@@ -5,18 +5,33 @@ import { readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { mkdtemp } from "node:fs/promises";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
-import {
-  buildPlannerContractGate,
-  buildPlannerDiagnosticsDecision,
-  buildPlannerDiagnosticsSummary,
-  runPlannerContractConsistencyCheck,
-} from "../src/planner-contract-consistency.mjs";
-import { archivePlannerDiagnosticsSnapshot } from "../src/planner-diagnostics-history.mjs";
-import { buildRoutingDiagnosticsSummary } from "../src/routing-eval-diagnostics.mjs";
-import { archiveRoutingDiagnosticsSnapshot } from "../src/routing-diagnostics-history.mjs";
-import { runRoutingEval, summarizeRoutingEval } from "../src/routing-eval.mjs";
-import { runSystemSelfCheck } from "../src/system-self-check.mjs";
+const testDb = await createTestDbHarness();
+const [
+  {
+    buildPlannerContractGate,
+    buildPlannerDiagnosticsDecision,
+    buildPlannerDiagnosticsSummary,
+    runPlannerContractConsistencyCheck,
+  },
+  { archivePlannerDiagnosticsSnapshot },
+  { buildRoutingDiagnosticsSummary },
+  { archiveRoutingDiagnosticsSnapshot },
+  { runRoutingEval, summarizeRoutingEval },
+  { runSystemSelfCheck },
+] = await Promise.all([
+  import("../src/planner-contract-consistency.mjs"),
+  import("../src/planner-diagnostics-history.mjs"),
+  import("../src/routing-eval-diagnostics.mjs"),
+  import("../src/routing-diagnostics-history.mjs"),
+  import("../src/routing-eval.mjs"),
+  import("../src/system-self-check.mjs"),
+]);
+
+test.after(() => {
+  testDb.close();
+});
 
 async function seedSelfCheckArchives() {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "system-self-check-"));

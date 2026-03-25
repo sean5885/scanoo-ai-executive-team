@@ -1,13 +1,25 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
 import { executiveImprovementStorePath } from "../src/config.mjs";
-import {
-  buildAgentLearningSummary,
-  generateLearningLoopImprovementProposals,
-} from "../src/agent-learning-loop.mjs";
-import { recordHttpRequest, recordTraceEvent } from "../src/monitoring-store.mjs";
+
+const testDb = await createTestDbHarness();
+const [
+  {
+    buildAgentLearningSummary,
+    generateLearningLoopImprovementProposals,
+  },
+  { recordHttpRequest, recordTraceEvent },
+] = await Promise.all([
+  import("../src/agent-learning-loop.mjs"),
+  import("../src/monitoring-store.mjs"),
+]);
+
+test.after(() => {
+  testDb.close();
+});
 
 async function snapshotFile(filePath) {
   try {

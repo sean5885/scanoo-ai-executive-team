@@ -1,20 +1,31 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-
-import {
-  ensureCloudDocWorkflowTask,
-  finalizeCloudDocWorkflowTask,
-  markCloudDocApplying,
-} from "../src/executive-orchestrator.mjs";
-import { clearActiveExecutiveTask, getActiveExecutiveTask } from "../src/executive-task-state.mjs";
-import {
-  buildCloudDocStructuredResult,
-  buildCloudDocWorkflowScopeKey,
-  matchesCloudDocWorkflowScope,
-} from "../src/cloud-doc-organization-workflow.mjs";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 import { setupExecutiveTaskStateTestHarness } from "./helpers/executive-task-state-harness.mjs";
 
+const testDb = await createTestDbHarness();
+const [
+  {
+    ensureCloudDocWorkflowTask,
+    finalizeCloudDocWorkflowTask,
+    markCloudDocApplying,
+  },
+  { clearActiveExecutiveTask, getActiveExecutiveTask },
+  {
+    buildCloudDocStructuredResult,
+    buildCloudDocWorkflowScopeKey,
+    matchesCloudDocWorkflowScope,
+  },
+] = await Promise.all([
+  import("../src/executive-orchestrator.mjs"),
+  import("../src/executive-task-state.mjs"),
+  import("../src/cloud-doc-organization-workflow.mjs"),
+]);
+
 setupExecutiveTaskStateTestHarness();
+test.after(() => {
+  testDb.close();
+});
 
 function createCloudDocScope(seed) {
   const scopeKey = `drive:fld-${seed}`;

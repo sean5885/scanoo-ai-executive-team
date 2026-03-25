@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
-import db from "../src/db.mjs";
-import {
+const testDb = await createTestDbHarness();
+const { db } = testDb;
+const {
   appendMeetingCaptureEntry,
   attachMeetingCaptureAudio,
   attachMeetingCaptureDocument,
@@ -11,7 +13,11 @@ import {
   listMeetingCaptureEntries,
   startMeetingCaptureSession,
   stopMeetingCaptureSession,
-} from "../src/meeting-capture-store.mjs";
+} = await import("../src/meeting-capture-store.mjs");
+
+test.after(() => {
+  testDb.close();
+});
 
 function cleanup(accountId, chatId) {
   const sessions = db

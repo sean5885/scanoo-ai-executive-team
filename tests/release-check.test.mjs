@@ -5,24 +5,40 @@ import { readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { mkdtemp, mkdir } from "node:fs/promises";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
-import {
-  buildReleaseCheckCompareSummary,
-  buildReleaseCheckDrilldown,
-  buildReleaseCheckReport,
-  getReleaseCheckExitCode,
-  renderReleaseCheckReport,
-  runReleaseCheck,
-} from "../src/release-check.mjs";
-import {
-  archiveControlDiagnosticsSnapshot,
-  resolveControlDiagnosticsSnapshot,
-} from "../src/control-diagnostics-history.mjs";
-import { runPlannerContractConsistencyCheck } from "../src/planner-contract-consistency.mjs";
-import { archivePlannerDiagnosticsSnapshot } from "../src/planner-diagnostics-history.mjs";
-import { buildRoutingDiagnosticsSummary } from "../src/routing-eval-diagnostics.mjs";
-import { archiveRoutingDiagnosticsSnapshot } from "../src/routing-diagnostics-history.mjs";
-import { runRoutingEval } from "../src/routing-eval.mjs";
+const testDb = await createTestDbHarness();
+const [
+  {
+    buildReleaseCheckCompareSummary,
+    buildReleaseCheckDrilldown,
+    buildReleaseCheckReport,
+    getReleaseCheckExitCode,
+    renderReleaseCheckReport,
+    runReleaseCheck,
+  },
+  {
+    archiveControlDiagnosticsSnapshot,
+    resolveControlDiagnosticsSnapshot,
+  },
+  { runPlannerContractConsistencyCheck },
+  { archivePlannerDiagnosticsSnapshot },
+  { buildRoutingDiagnosticsSummary },
+  { archiveRoutingDiagnosticsSnapshot },
+  { runRoutingEval },
+] = await Promise.all([
+  import("../src/release-check.mjs"),
+  import("../src/control-diagnostics-history.mjs"),
+  import("../src/planner-contract-consistency.mjs"),
+  import("../src/planner-diagnostics-history.mjs"),
+  import("../src/routing-eval-diagnostics.mjs"),
+  import("../src/routing-diagnostics-history.mjs"),
+  import("../src/routing-eval.mjs"),
+]);
+
+test.after(() => {
+  testDb.close();
+});
 
 async function seedReleaseCheckArchives() {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "release-check-"));

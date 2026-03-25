@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
+import { disposeLarkContentClientForTests } from "../src/lark-content.mjs";
+import { setupExecutiveTaskStateTestHarness } from "./helpers/executive-task-state-harness.mjs";
 
-import {
+const testDb = await createTestDbHarness();
+const {
   buildMeetingConfirmationCard,
   buildMeetingGroupMessage,
   buildMeetingStructuredResult,
@@ -10,15 +14,12 @@ import {
   formatGeneralMeeting,
   formatWeeklyMeeting,
   parseMeetingCommand,
-} from "../src/meeting-agent.mjs";
-import { closeDbForTests } from "../src/db.mjs";
-import { disposeLarkContentClientForTests } from "../src/lark-content.mjs";
-import { setupExecutiveTaskStateTestHarness } from "./helpers/executive-task-state-harness.mjs";
+} = await import("../src/meeting-agent.mjs");
 
 setupExecutiveTaskStateTestHarness();
 test.after(() => {
   disposeLarkContentClientForTests();
-  closeDbForTests();
+  testDb.close();
 });
 
 function createCoordinatorHarness() {

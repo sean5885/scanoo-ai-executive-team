@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
-import { analyzeImageTask, buildStructuredImageContext } from "../src/image-understanding-service.mjs";
+const testDb = await createTestDbHarness();
+const { analyzeImageTask, buildStructuredImageContext } = await import("../src/image-understanding-service.mjs");
+
+test.after(() => {
+  testDb.close();
+});
 
 test("buildStructuredImageContext compacts structured image result", () => {
   const context = buildStructuredImageContext({

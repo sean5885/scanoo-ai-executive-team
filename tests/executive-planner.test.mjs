@@ -4,50 +4,68 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
-import {
-  buildPlannedUserInputEnvelope,
-  buildPlannedUserInputUserFacingReply,
-  compactPlannerConversationMemory,
-  dispatchPlannerTool,
-  executePlannedUserInput,
-  getPlannerConversationMemory,
-  looksLikeExecutiveExit,
-  looksLikeExecutiveStart,
-  planExecutiveTurn,
-  planUserInputAction,
-  resetPlannerRuntimeContext,
-  runPlannerMultiStep,
-  runPlannerPreset,
-  runPlannerToolFlow,
-  validateInput,
-  validateOutput,
-  validatePresetOutput,
-  normalizeError,
-} from "../src/executive-planner.mjs";
 import { EXPLICIT_USER_AUTH_HEADERS } from "../src/explicit-user-auth.mjs";
 import { resetPlannerConversationMemory } from "../src/planner-conversation-memory.mjs";
-import {
-  getLatestPlannerTaskLifecycleSnapshot,
-  replacePlannerTaskLifecycleStoreForTests,
-} from "../src/planner-task-lifecycle-v1.mjs";
-import { plannerBdFlow } from "../src/planner-bd-flow.mjs";
-import { plannerDeliveryFlow } from "../src/planner-delivery-flow.mjs";
-import {
-  buildDocQueryPayload,
-  getPlannerDocQueryContext,
-  hydratePlannerDocQueryRuntimeContext,
-  plannerDocQueryFlow,
-  resetPlannerDocQueryRuntimeContext,
-} from "../src/planner-doc-query-flow.mjs";
-import { plannerOkrFlow } from "../src/planner-okr-flow.mjs";
-import { plannerRuntimeInfoFlow } from "../src/planner-runtime-info-flow.mjs";
-import { getPlannerFlowForAction, resolvePlannerFlowRoute } from "../src/planner-flow-runtime.mjs";
 import { route } from "../src/router.js";
-import { normalizeUserResponse, renderUserResponseText } from "../src/user-response-normalizer.mjs";
 import { setupPlannerTaskLifecycleTestHarness } from "./helpers/planner-task-lifecycle-harness.mjs";
 
+const testDb = await createTestDbHarness();
+const [
+  {
+    buildPlannedUserInputEnvelope,
+    buildPlannedUserInputUserFacingReply,
+    compactPlannerConversationMemory,
+    dispatchPlannerTool,
+    executePlannedUserInput,
+    getPlannerConversationMemory,
+    looksLikeExecutiveExit,
+    looksLikeExecutiveStart,
+    planExecutiveTurn,
+    planUserInputAction,
+    resetPlannerRuntimeContext,
+    runPlannerMultiStep,
+    runPlannerPreset,
+    runPlannerToolFlow,
+    validateInput,
+    validateOutput,
+    validatePresetOutput,
+    normalizeError,
+  },
+  {
+    getLatestPlannerTaskLifecycleSnapshot,
+    replacePlannerTaskLifecycleStoreForTests,
+  },
+  { plannerBdFlow },
+  { plannerDeliveryFlow },
+  {
+    buildDocQueryPayload,
+    getPlannerDocQueryContext,
+    hydratePlannerDocQueryRuntimeContext,
+    plannerDocQueryFlow,
+    resetPlannerDocQueryRuntimeContext,
+  },
+  { plannerOkrFlow },
+  { plannerRuntimeInfoFlow },
+  { getPlannerFlowForAction, resolvePlannerFlowRoute },
+  { normalizeUserResponse, renderUserResponseText },
+] = await Promise.all([
+  import("../src/executive-planner.mjs"),
+  import("../src/planner-task-lifecycle-v1.mjs"),
+  import("../src/planner-bd-flow.mjs"),
+  import("../src/planner-delivery-flow.mjs"),
+  import("../src/planner-doc-query-flow.mjs"),
+  import("../src/planner-okr-flow.mjs"),
+  import("../src/planner-runtime-info-flow.mjs"),
+  import("../src/planner-flow-runtime.mjs"),
+  import("../src/user-response-normalizer.mjs"),
+]);
+
 setupPlannerTaskLifecycleTestHarness();
+test.after(() => {
+  testDb.close();
+});
 
 test("looksLikeExecutiveStart recognizes slash and executive-team requests", () => {
   assert.equal(looksLikeExecutiveStart("/ceo 幫我整理決策"), true);

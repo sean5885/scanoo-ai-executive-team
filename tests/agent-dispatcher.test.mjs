@@ -1,12 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
-import {
-  buildRegisteredAgentPrompt,
-  dispatchRegisteredAgentCommand,
-  executeRegisteredAgent,
-} from "../src/agent-dispatcher.mjs";
-import { getRegisteredAgent } from "../src/agent-registry.mjs";
+const testDb = await createTestDbHarness();
+const [
+  {
+    buildRegisteredAgentPrompt,
+    dispatchRegisteredAgentCommand,
+    executeRegisteredAgent,
+  },
+  { getRegisteredAgent },
+] = await Promise.all([
+  import("../src/agent-dispatcher.mjs"),
+  import("../src/agent-registry.mjs"),
+]);
+
+test.after(() => {
+  testDb.close();
+});
 
 test("buildRegisteredAgentPrompt keeps persona goal, image context, and retrieval context compact", () => {
   const result = buildRegisteredAgentPrompt({

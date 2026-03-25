@@ -1,8 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
-import { buildCloudDocWorkflowScopeKey } from "../src/cloud-doc-organization-workflow.mjs";
-import { decideIntent } from "../src/control-kernel.mjs";
+const testDb = await createTestDbHarness();
+const [
+  { buildCloudDocWorkflowScopeKey },
+  { decideIntent },
+] = await Promise.all([
+  import("../src/cloud-doc-organization-workflow.mjs"),
+  import("../src/control-kernel.mjs"),
+]);
+
+test.after(() => {
+  testDb.close();
+});
 
 test("same_session precedence keeps active doc rewrite on doc editor owner", () => {
   const decision = decideIntent({

@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
-import { buildRewritePromptInput } from "../src/doc-comment-rewrite.mjs";
+const testDb = await createTestDbHarness();
+const { buildRewritePromptInput } = await import("../src/doc-comment-rewrite.mjs");
+
+test.after(() => {
+  testDb.close();
+});
 
 test("buildRewritePromptInput favors focused excerpts over full raw document", () => {
   const document = {

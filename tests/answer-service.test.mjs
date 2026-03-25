@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
-import { buildKnowledgeAnswerPrompt } from "../src/answer-service.mjs";
+const testDb = await createTestDbHarness();
+const { buildKnowledgeAnswerPrompt } = await import("../src/answer-service.mjs");
+
+test.after(() => {
+  testDb.close();
+});
 
 test("buildKnowledgeAnswerPrompt uses checkpoint and trimmed retrieval snippets", () => {
   const items = [

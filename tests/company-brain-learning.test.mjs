@@ -1,16 +1,28 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
-import db from "../src/db.mjs";
-import {
-  ingestLearningDocAction,
-  updateLearningStateAction,
-} from "../src/company-brain-learning.mjs";
-import { searchCompanyBrainDocsAction } from "../src/company-brain-query.mjs";
-import {
-  resetPlannerRuntimeContext,
-  runPlannerToolFlow,
-} from "../src/executive-planner.mjs";
+const testDb = await createTestDbHarness();
+const { db } = testDb;
+const [
+  {
+    ingestLearningDocAction,
+    updateLearningStateAction,
+  },
+  { searchCompanyBrainDocsAction },
+  {
+    resetPlannerRuntimeContext,
+    runPlannerToolFlow,
+  },
+] = await Promise.all([
+  import("../src/company-brain-learning.mjs"),
+  import("../src/company-brain-query.mjs"),
+  import("../src/executive-planner.mjs"),
+]);
+
+test.after(() => {
+  testDb.close();
+});
 
 function ensureTestAccount(accountId) {
   const timestamp = new Date().toISOString();

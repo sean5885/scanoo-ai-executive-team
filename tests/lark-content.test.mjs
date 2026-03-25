@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
-import { resolveDocumentWriteRootBlock } from "../src/lark-content.mjs";
+const testDb = await createTestDbHarness();
+const { resolveDocumentWriteRootBlock } = await import("../src/lark-content.mjs");
+
+test.after(() => {
+  testDb.close();
+});
 
 test("resolveDocumentWriteRootBlock prefers page blocks over container roots", () => {
   const root = resolveDocumentWriteRootBlock([

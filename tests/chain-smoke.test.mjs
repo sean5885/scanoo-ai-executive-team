@@ -1,9 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
-import { parseRegisteredAgentCommand } from "../src/agent-registry.mjs";
-import { executeRegisteredAgent } from "../src/agent-dispatcher.mjs";
-import { getRegisteredAgent } from "../src/agent-registry.mjs";
+const testDb = await createTestDbHarness();
+const [
+  { parseRegisteredAgentCommand, getRegisteredAgent },
+  { executeRegisteredAgent },
+] = await Promise.all([
+  import("../src/agent-registry.mjs"),
+  import("../src/agent-dispatcher.mjs"),
+]);
+
+test.after(() => {
+  testDb.close();
+});
 
 const PERSONA_CASES = [
   ["/generalist", "generalist"],

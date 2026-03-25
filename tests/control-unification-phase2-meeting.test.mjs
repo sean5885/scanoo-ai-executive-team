@@ -1,12 +1,27 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-
-import { finalizeMeetingWorkflowTask, ensureMeetingWorkflowTask, markMeetingWorkflowWritingBack } from "../src/executive-orchestrator.mjs";
-import { getActiveExecutiveTask, clearActiveExecutiveTask } from "../src/executive-task-state.mjs";
-import { buildMeetingStructuredResult } from "../src/meeting-agent.mjs";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 import { setupExecutiveTaskStateTestHarness } from "./helpers/executive-task-state-harness.mjs";
 
+const testDb = await createTestDbHarness();
+const [
+  {
+    finalizeMeetingWorkflowTask,
+    ensureMeetingWorkflowTask,
+    markMeetingWorkflowWritingBack,
+  },
+  { getActiveExecutiveTask, clearActiveExecutiveTask },
+  { buildMeetingStructuredResult },
+] = await Promise.all([
+  import("../src/executive-orchestrator.mjs"),
+  import("../src/executive-task-state.mjs"),
+  import("../src/meeting-agent.mjs"),
+]);
+
 setupExecutiveTaskStateTestHarness();
+test.after(() => {
+  testDb.close();
+});
 
 function createMeetingScope(seed) {
   return {

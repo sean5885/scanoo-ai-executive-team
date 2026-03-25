@@ -1,11 +1,24 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
-import { resolveVerificationOutcome } from "../src/executive-closed-loop.mjs";
-import { EVIDENCE_TYPES, verifyTaskCompletion } from "../src/executive-verifier.mjs";
-import { executeWorkItemsSequentially } from "../src/executive-orchestrator.mjs";
-import { shouldPreferActiveExecutiveTask } from "../src/lane-executor.mjs";
+const testDb = await createTestDbHarness();
+const [
+  { resolveVerificationOutcome },
+  { EVIDENCE_TYPES, verifyTaskCompletion },
+  { executeWorkItemsSequentially },
+  { shouldPreferActiveExecutiveTask },
+] = await Promise.all([
+  import("../src/executive-closed-loop.mjs"),
+  import("../src/executive-verifier.mjs"),
+  import("../src/executive-orchestrator.mjs"),
+  import("../src/lane-executor.mjs"),
+]);
+
+test.after(() => {
+  testDb.close();
+});
 
 test("verifier fail does not resolve to completed", () => {
   const outcome = resolveVerificationOutcome({
