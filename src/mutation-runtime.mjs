@@ -1,7 +1,6 @@
 // Unified Mutation Runtime (skeleton)
 
-export async function runMutation(input) {
-  const { action, payload, context, execute } = input;
+export async function runMutation({ action, payload, context, execute }) {
 
   // 1. policy
   // TODO
@@ -26,22 +25,25 @@ export async function runMutation(input) {
   }
 
   const mode = context?.execution_mode || "passthrough";
+  const start = Date.now();
 
   let result;
-  if (mode === "controlled") {
-    // controlled（暫時仍走原 execute，之後再接管）
+  try {
     result = await execute({
       action,
       payload,
       context,
     });
-  } else {
-    // passthrough
-    result = await execute({
+  } catch {
+    return {
+      ok: false,
       action,
-      payload,
-      context,
-    });
+      error: "execution_failed",
+      meta: {
+        execution_mode: mode,
+        duration_ms: Date.now() - start,
+      },
+    };
   }
 
   return {
@@ -50,6 +52,7 @@ export async function runMutation(input) {
     result,
     meta: {
       execution_mode: mode,
+      duration_ms: Date.now() - start,
     },
   };
 }
