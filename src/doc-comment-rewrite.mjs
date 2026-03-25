@@ -20,7 +20,6 @@ import {
 } from "./agent-token-governance.mjs";
 import { getWorkflowCheckpoint, updateWorkflowCheckpoint } from "./agent-workflow-state.mjs";
 import { getDocument, listDocumentComments, resolveDocumentComment, updateDocument } from "./lark-content.mjs";
-import { executeLarkWrite } from "./execute-lark-write.mjs";
 
 function normalizeText(value) {
   return String(value || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
@@ -384,47 +383,7 @@ export async function rewriteDocumentFromComments(
   let resolvedComments = [];
 
   if (apply) {
-    const execution = await executeLarkWrite({
-      apiName: "document_comment_rewrite_apply",
-      action: "document_comment_rewrite_apply",
-      pathname: "/internal/doc-comment-rewrite/apply",
-      accessToken,
-      budget: {
-        sessionKey: workflowStateKey,
-        scopeKey: workflowStateKey,
-        documentId,
-        targetDocumentId: documentId,
-        content: patchedContent,
-        payload: {
-          comment_ids: selectedComments.map((item) => item.comment_id).filter(Boolean),
-          resolve_comments: Boolean(resolveComments),
-        },
-        essential: true,
-      },
-      performWrite: async ({ accessToken: resolvedAccessToken }) => {
-        const nextUpdateResult = await updateDocument(resolvedAccessToken, documentId, patchedContent, "replace");
-        const nextResolvedComments = resolveComments
-          ? await Promise.all(
-              selectedComments
-                .map((item) => item.comment_id)
-                .filter(Boolean)
-                .map((commentId) => resolveDocumentComment(resolvedAccessToken, documentId, commentId, true, "docx")),
-            )
-          : [];
-        return {
-          updateResult: nextUpdateResult,
-          resolvedComments: nextResolvedComments,
-        };
-      },
-    });
-    if (!execution.ok) {
-      const error = new Error(execution.message || execution.error || "document_comment_rewrite_apply_blocked");
-      error.code = execution.error || "write_guard_denied";
-      error.write_guard = execution.write_guard || null;
-      throw error;
-    }
-    updateResult = execution.result?.updateResult || null;
-    resolvedComments = Array.isArray(execution.result?.resolvedComments) ? execution.result.resolvedComments : [];
+    throw new Error("internal_direct_apply_disabled_use_http_apply_route");
   }
 
   await updateWorkflowCheckpoint(workflowStateKey, {
