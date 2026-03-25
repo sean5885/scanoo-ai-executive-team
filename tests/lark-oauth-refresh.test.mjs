@@ -1,15 +1,34 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+import { createTestDb } from "./utils/test-db-factory.mjs";
 
-import db, { closeDbForTests } from "../src/db.mjs";
-import { startHttpServer } from "../src/http-server.mjs";
-import {
-  exchangeCodeForUserToken,
-  setLarkAuthServiceOverridesForTests,
-} from "../src/lark-user-auth.mjs";
-import { resolveLarkRequestAuth } from "../src/lark-request-auth.mjs";
-import { getTokenForAccount, saveToken, upsertAccount } from "../src/rag-repository.mjs";
+const testDb = createTestDb();
+process.env.RAG_SQLITE_PATH = testDb.dbPath;
+
+const [
+  { default: db, closeDbForTests },
+  { startHttpServer },
+  {
+    exchangeCodeForUserToken,
+    setLarkAuthServiceOverridesForTests,
+  },
+  { resolveLarkRequestAuth },
+  { getTokenForAccount, saveToken, upsertAccount },
+] = await Promise.all([
+  import("../src/db.mjs"),
+  import("../src/http-server.mjs"),
+  import("../src/lark-user-auth.mjs"),
+  import("../src/lark-request-auth.mjs"),
+  import("../src/rag-repository.mjs"),
+]);
+
+test.after(() => {
+  setLarkAuthServiceOverridesForTests({});
+  closeDbForTests();
+  testDb.close();
+  delete process.env.RAG_SQLITE_PATH;
+});
 
 function nowSeconds() {
   return Math.floor(Date.now() / 1000);
@@ -202,7 +221,10 @@ test("http route returns oauth_reauth_required only when refresh cannot recover"
     },
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => new Promise((resolve) => server.close(resolve)));
+  t.after(() => {
+    server.closeAllConnections?.();
+    return new Promise((resolve) => server.close(resolve));
+  });
 
   const { port } = server.address();
   const response = await fetch(`http://127.0.0.1:${port}/api/drive/list`);
