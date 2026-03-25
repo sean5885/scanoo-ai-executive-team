@@ -102,6 +102,12 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - Comment-driven doc rewrite
   - `/Users/seanhan/Documents/Playground/src/doc-comment-rewrite.mjs`
 
+- Mutation governance
+  - `/Users/seanhan/Documents/Playground/src/mutation-admission.mjs`
+  - `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`
+  - `mutation-admission.mjs` is the current checked-in admission adapter path for the Phase 1 routes.
+  - `mutation-runtime.mjs` currently exists only as an unwired unified-runtime skeleton and does not yet replace route-local guards, verifiers, or execute paths.
+
 - Local knowledge helpers
   - `/Users/seanhan/Documents/Playground/src/knowledge/doc-index.mjs`
   - `/Users/seanhan/Documents/Playground/src/knowledge/doc-loader.mjs`

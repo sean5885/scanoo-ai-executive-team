@@ -15,6 +15,8 @@ It is intentionally design-first:
 
 It does **not** claim that the repo already has one unified write-governance runtime today.
 
+The repo now also carries an unwired skeleton module at `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`, but that file is only a placeholder scaffold. Current checked-in enforcement and admission behavior still lives in the existing route-local governance, `executeLarkWrite(...)`, `decideWriteGuard(...)`, and `src/mutation-admission.mjs` paths.
+
 ## Current Grounded Files
 
 Current code truth for this design is grounded in:
@@ -31,6 +33,8 @@ Current code truth for this design is grounded in:
 - `/Users/seanhan/Documents/Playground/src/cloud-doc-organization-workflow.mjs`
 - `/Users/seanhan/Documents/Playground/src/company-brain-write-intake.mjs`
 - `/Users/seanhan/Documents/Playground/src/company-brain-lifecycle-contract.mjs`
+- `/Users/seanhan/Documents/Playground/src/mutation-admission.mjs`
+- `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`
 - `/Users/seanhan/Documents/Playground/docs/system/planner_contract.json`
 
 ## Boundary
