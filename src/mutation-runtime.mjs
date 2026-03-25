@@ -25,18 +25,31 @@ export async function runMutation(input) {
     return { ok: false, error: "missing_execute" };
   }
 
-  const result = await execute({
-    action,
-    payload,
-    context,
-  });
+  const mode = context?.execution_mode || "passthrough";
+
+  let result;
+  if (mode === "controlled") {
+    // controlled（暫時仍走原 execute，之後再接管）
+    result = await execute({
+      action,
+      payload,
+      context,
+    });
+  } else {
+    // passthrough
+    result = await execute({
+      action,
+      payload,
+      context,
+    });
+  }
 
   return {
     ok: true,
     action,
     result,
     meta: {
-      execution_mode: "passthrough",
+      execution_mode: mode,
     },
   };
 }
