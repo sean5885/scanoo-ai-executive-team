@@ -155,7 +155,7 @@ This request-flow mirror now reflects the current fail-closed routing baseline.
    - bitable records list/search/create/get/update/delete
    - calendar event create/freebusy
    - task get/create/comments list/create/update/delete
-8. `/api/monitoring/requests`, `/api/monitoring/errors`, `/api/monitoring/errors/latest`, and `/api/monitoring/metrics` query that persisted request-monitor table
+8. `/api/monitoring/requests`, `/api/monitoring/errors`, `/api/monitoring/errors/latest`, and `/api/monitoring/metrics` query that persisted request-monitor table; equal `finished_at` ties now break by SQLite insertion order (`rowid`) and then `trace_id` so "latest error" stays stable under same-millisecond finishes
 9. `/monitoring` renders a simple server-side HTML dashboard from the same monitoring snapshot, showing success rate, error rate, recent errors, and recent requests
 10. `tool_execution` events now also persist into `http_request_trace_events`, including `duration_ms`, so later analysis can measure per-tool success rate and latency without scraping console logs
 11. `/api/monitoring/learning` and `scripts/monitoring-cli.mjs learning ...` derive a review-first learning summary from recent request rows plus trace events

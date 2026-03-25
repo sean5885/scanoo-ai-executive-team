@@ -83,7 +83,7 @@ const listRecentRequestsStmt = db.prepare(`
     started_at,
     finished_at
   FROM http_request_monitor
-  ORDER BY finished_at DESC
+  ORDER BY finished_at DESC, rowid DESC, trace_id DESC
   LIMIT ?
 `);
 
@@ -103,7 +103,7 @@ const listRecentErrorsStmt = db.prepare(`
     finished_at
   FROM http_request_monitor
   WHERE error_code IS NOT NULL OR COALESCE(status_code, 0) >= 400
-  ORDER BY finished_at DESC
+  ORDER BY finished_at DESC, rowid DESC, trace_id DESC
   LIMIT ?
 `);
 

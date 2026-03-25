@@ -200,6 +200,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - normalize request outcome fields (`status_code`, `ok`, `error_code`, `error_message`, `duration_ms`)
   - persist timeout/cancel outcomes as normal request-monitor rows so operators can query `request_timeout` / `request_cancelled` the same way as other failures
   - expose recent-request, recent-error, latest-error, success/error-rate, dashboard-snapshot, and per-trace reconstruction queries
+  - recent-request and recent-error queries now break equal `finished_at` ties by SQLite insertion order (`rowid`), then `trace_id`, so `/api/monitoring/errors/latest` stays deterministic when multiple requests finish within the same millisecond
   - derive monitoring-backed learning summaries over recent requests/traces, including routing failure-rate hotspots, per-tool success-rate/latency summaries, and human-reviewable improvement drafts
   - learning summaries now rank equal-score routing/tool buckets by latest sampled request recency so top-N output does not let older buckets squeeze out fresher regression samples; when multiple sampled requests land in the same millisecond, the learning path uses SQLite insertion order as the stable recency tie-breaker instead of trace-id lexical order
   - the same learning summary path now keeps `generated_at` and proposal ids deterministic for a fixed sampled request set, so CLI/test regression output is reproducible
