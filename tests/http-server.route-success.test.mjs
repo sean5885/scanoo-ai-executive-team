@@ -1,15 +1,34 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import { createTestDb } from "./utils/test-db-factory.mjs";
 
-import db from "../src/db.mjs";
-import { getHttpIdempotencyRecord } from "../src/http-idempotency-store.mjs";
-import { startHttpServer } from "../src/http-server.mjs";
-import { docUpdateConfirmationStorePath, executiveImprovementStorePath } from "../src/config.mjs";
-import { setupExecutiveTaskStateTestHarness } from "./helpers/executive-task-state-harness.mjs";
-import { EXPLICIT_USER_AUTH_HEADERS } from "../src/explicit-user-auth.mjs";
+const testDb = createTestDb();
+process.env.RAG_SQLITE_PATH = testDb.dbPath;
+
+const [
+  { default: db, closeDbForTests },
+  { getHttpIdempotencyRecord },
+  { startHttpServer },
+  { docUpdateConfirmationStorePath, executiveImprovementStorePath },
+  { setupExecutiveTaskStateTestHarness },
+  { EXPLICIT_USER_AUTH_HEADERS },
+] = await Promise.all([
+  import("../src/db.mjs"),
+  import("../src/http-idempotency-store.mjs"),
+  import("../src/http-server.mjs"),
+  import("../src/config.mjs"),
+  import("./helpers/executive-task-state-harness.mjs"),
+  import("../src/explicit-user-auth.mjs"),
+]);
 
 setupExecutiveTaskStateTestHarness();
+
+test.after(() => {
+  closeDbForTests();
+  testDb.close();
+  delete process.env.RAG_SQLITE_PATH;
+});
 
 function createLoggerSink() {
   const calls = [];
@@ -153,7 +172,10 @@ async function startTestServer(t, serviceOverrides) {
     serviceOverrides: createAuthorizedOverrides(serviceOverrides),
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => new Promise((resolve) => server.close(resolve)));
+  t.after(() => {
+    server.closeAllConnections?.();
+    return new Promise((resolve) => server.close(resolve));
+  });
   return { server, calls: sink.calls };
 }
 

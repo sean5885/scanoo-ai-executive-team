@@ -1,7 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDb } from "./utils/test-db-factory.mjs";
 
-import { startHttpServer } from "../src/http-server.mjs";
+const testDb = createTestDb();
+process.env.RAG_SQLITE_PATH = testDb.dbPath;
+
+const [
+  { startHttpServer },
+  { closeDbForTests },
+] = await Promise.all([
+  import("../src/http-server.mjs"),
+  import("../src/db.mjs"),
+]);
+
+test.after(() => {
+  closeDbForTests();
+  testDb.close();
+  delete process.env.RAG_SQLITE_PATH;
+});
 
 test("http server attaches trace_id and emits request logs", async (t) => {
   const calls = [];

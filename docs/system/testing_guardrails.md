@@ -23,4 +23,4 @@
 
 ## Follow-up
 
-- Rule 4 is not yet fully enforced in runtime/tests and remains a cleanup item; `tests/http-monitoring.test.mjs` and `tests/lark-oauth-refresh.test.mjs` now use file-scoped temp SQLite paths plus teardown close, but several other suites still import the shared `src/db.mjs` singleton directly and need follow-up migration onto isolated test-owned DB setup.
+- Rule 4 is not yet fully enforced in runtime/tests and remains a cleanup item; `tests/http-monitoring.test.mjs`, `tests/lark-oauth-refresh.test.mjs`, `tests/http-server.route-success.test.mjs`, `tests/http-server.trace.test.mjs`, and `tests/lobster-security-bridge.integration.test.mjs` now use file-scoped temp SQLite paths plus teardown close, but several other suites still import the shared `src/db.mjs` singleton directly and need follow-up migration onto isolated test-owned DB setup.

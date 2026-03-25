@@ -1,7 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDb } from "./utils/test-db-factory.mjs";
 
-import { startHttpServer } from "../src/http-server.mjs";
+const testDb = createTestDb();
+process.env.RAG_SQLITE_PATH = testDb.dbPath;
+
+const [
+  { startHttpServer },
+  { closeDbForTests },
+] = await Promise.all([
+  import("../src/http-server.mjs"),
+  import("../src/db.mjs"),
+]);
+
+test.after(() => {
+  closeDbForTests();
+  testDb.close();
+  delete process.env.RAG_SQLITE_PATH;
+});
 
 function createSilentLogger() {
   return {
@@ -19,7 +35,10 @@ async function startSecurityTestServer(t, serviceOverrides = {}) {
     serviceOverrides,
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => new Promise((resolve) => server.close(resolve)));
+  t.after(() => {
+    server.closeAllConnections?.();
+    return new Promise((resolve) => server.close(resolve));
+  });
   return server;
 }
 
