@@ -15,7 +15,7 @@ It is intentionally design-first:
 
 It does **not** claim that the repo already has one unified write-governance runtime today.
 
-The repo now also carries a still-limited skeleton module at `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`. The current checked-in usage is intentionally narrow: the `create_doc` HTTP execute path now passes through `runMutation(...)`, but that wrapper is still passthrough-only and does not yet own policy, guard, verifier, admission, or route-specific business decisions. Real checked-in enforcement and admission behavior still lives in the existing route-local governance, `executeLarkWrite(...)`, `decideWriteGuard(...)`, and `src/mutation-admission.mjs` paths.
+The repo now also carries a still-limited skeleton module at `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`. The current checked-in usage is intentionally narrow: the `create_doc` HTTP execute path now passes through `runMutation(...)`, but that wrapper is still passthrough-only and does not yet own policy, guard, verifier, admission, or route-specific business decisions. The current checked-in contract returns `{ ok: false, error: "missing_execute" }` when no executor is supplied, and otherwise wraps the downstream executor result together with passthrough execution metadata. The current `create_doc` route explicitly unwraps that nested write-execution envelope before building the HTTP response so the external response shape stays stable. Real checked-in enforcement and admission behavior still lives in the existing route-local governance, `executeLarkWrite(...)`, `decideWriteGuard(...)`, and `src/mutation-admission.mjs` paths.
 
 ## Current Grounded Files
 

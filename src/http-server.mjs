@@ -3564,7 +3564,7 @@ async function handleDocumentCreate(
     write_policy: resolvedWritePolicy,
     write_policy_enforcement: writePolicyEnforcement,
   });
-  const execution = await runMutation({
+  const mutationExecution = await runMutation({
     action: "create_doc",
     payload: {
       title,
@@ -3727,7 +3727,16 @@ async function handleDocumentCreate(
       },
     }),
   });
-  if (!execution.ok) {
+  if (!mutationExecution.ok) {
+    jsonResponse(res, 500, {
+      ok: false,
+      error: mutationExecution.error || "mutation_runtime_error",
+    });
+    return;
+  }
+
+  const execution = mutationExecution.result;
+  if (!execution?.ok) {
     respondWriteExecutionFailure(res, execution);
     return;
   }

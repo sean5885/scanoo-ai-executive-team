@@ -18,16 +18,25 @@ export async function runMutation(input) {
   // 5. admission
   // TODO
 
-  if (typeof execute === "function") {
-    return execute({
-      action,
-      payload,
-      context,
-    });
+  if (typeof execute !== "function") {
+    void payload;
+    void context;
+
+    return { ok: false, error: "missing_execute" };
   }
 
-  void payload;
-  void context;
+  const result = await execute({
+    action,
+    payload,
+    context,
+  });
 
-  return { ok: true, action, note: "mutation runtime skeleton" };
+  return {
+    ok: true,
+    action,
+    result,
+    meta: {
+      execution_mode: "passthrough",
+    },
+  };
 }

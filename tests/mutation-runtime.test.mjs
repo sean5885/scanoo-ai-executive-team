@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { runMutation } from "../src/mutation-runtime.mjs";
 
-test("runMutation keeps skeleton response when no execute callback is provided", async () => {
+test("runMutation returns a stable error when no execute callback is provided", async () => {
   const result = await runMutation({
     action: "create_doc",
     payload: { title: "demo" },
@@ -11,9 +11,8 @@ test("runMutation keeps skeleton response when no execute callback is provided",
   });
 
   assert.deepEqual(result, {
-    ok: true,
-    action: "create_doc",
-    note: "mutation runtime skeleton",
+    ok: false,
+    error: "missing_execute",
   });
 });
 
@@ -50,6 +49,13 @@ test("runMutation passes through to execute without changing create_doc inputs",
   assert.deepEqual(result, {
     ok: true,
     action: "create_doc",
-    passthrough: true,
+    result: {
+      ok: true,
+      action: "create_doc",
+      passthrough: true,
+    },
+    meta: {
+      execution_mode: "passthrough",
+    },
   });
 });
