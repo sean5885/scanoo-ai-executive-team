@@ -2,16 +2,37 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { createTestDb } from "./utils/test-db-factory.mjs";
 
-import { startHttpServer } from "../src/http-server.mjs";
-import {
-  getRequestMetrics,
-  listRecentRequests,
-  recordHttpRequest,
-  recordTraceEvent,
-} from "../src/monitoring-store.mjs";
+const testDb = createTestDb();
+process.env.RAG_SQLITE_PATH = testDb.dbPath;
+
+const [
+  { startHttpServer },
+  {
+    getRequestMetrics,
+    listRecentRequests,
+    recordHttpRequest,
+    recordTraceEvent,
+  },
+  { closeDbForTests },
+] = await Promise.all([
+  import("../src/http-server.mjs"),
+  import("../src/monitoring-store.mjs"),
+  import("../src/db.mjs"),
+]);
 
 const execFileAsync = promisify(execFile);
+const testEnv = {
+  ...process.env,
+  RAG_SQLITE_PATH: testDb.dbPath,
+};
+
+test.after(() => {
+  closeDbForTests();
+  testDb.close();
+  delete process.env.RAG_SQLITE_PATH;
+});
 
 function createLogger() {
   return {
@@ -215,7 +236,7 @@ test("monitoring CLI reports recent requests and metrics", async () => {
 
   const recentResult = await execFileAsync(process.execPath, ["scripts/monitoring-cli.mjs", "recent", "200"], {
     cwd: process.cwd(),
-    env: process.env,
+    env: testEnv,
   });
   const recentPayload = JSON.parse(recentResult.stdout);
 
@@ -225,7 +246,7 @@ test("monitoring CLI reports recent requests and metrics", async () => {
 
   const metricsResult = await execFileAsync(process.execPath, ["scripts/monitoring-cli.mjs", "metrics"], {
     cwd: process.cwd(),
-    env: process.env,
+    env: testEnv,
   });
   const metricsPayload = JSON.parse(metricsResult.stdout);
 
@@ -365,11 +386,11 @@ test("monitoring CLI learning command returns draft proposals", async () => {
 
   const result = await execFileAsync(process.execPath, ["scripts/monitoring-cli.mjs", "learning", "1", "1"], {
     cwd: process.cwd(),
-    env: process.env,
+    env: testEnv,
   });
   const repeated = await execFileAsync(process.execPath, ["scripts/monitoring-cli.mjs", "learning", "1", "1"], {
     cwd: process.cwd(),
-    env: process.env,
+    env: testEnv,
   });
   const payload = JSON.parse(result.stdout);
   const repeatedPayload = JSON.parse(repeated.stdout);
@@ -491,7 +512,7 @@ test("monitoring CLI dashboard prints rates plus recent errors and requests", as
 
   const result = await execFileAsync(process.execPath, ["scripts/monitoring-cli.mjs", "dashboard", "200", "200"], {
     cwd: process.cwd(),
-    env: process.env,
+    env: testEnv,
   });
 
   assert.match(result.stdout, /Lobster Monitoring Dashboard/);
