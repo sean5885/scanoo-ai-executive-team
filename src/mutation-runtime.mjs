@@ -29,11 +29,22 @@ export async function runMutation({ action, payload, context, execute }) {
 
   let result;
   try {
-    result = await execute({
-      action,
-      payload,
-      context,
-    });
+    if (mode === "controlled") {
+      // controlled: 明確走 runtime 控制入口（目前仍調 execute，但已分流）
+      result = await execute({
+        action,
+        payload,
+        context,
+        controlled: true,
+      });
+    } else {
+      // passthrough
+      result = await execute({
+        action,
+        payload,
+        context,
+      });
+    }
   } catch {
     return {
       ok: false,

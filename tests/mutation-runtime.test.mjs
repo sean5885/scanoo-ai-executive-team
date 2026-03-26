@@ -69,6 +69,57 @@ test("runMutation passes through to execute without changing create_doc inputs",
   }
 });
 
+test("runMutation marks controlled execution input when execution_mode is controlled", async () => {
+  const payload = { title: "demo" };
+  const context = {
+    pathname: "/api/doc/create",
+    execution_mode: "controlled",
+  };
+  const calls = [];
+  const originalNow = Date.now;
+  const times = [3000, 3017];
+
+  Date.now = () => times.shift() ?? 3017;
+
+  try {
+    const result = await runMutation({
+      action: "create_doc",
+      payload,
+      context,
+      async execute(input) {
+        calls.push(input);
+        return {
+          ok: true,
+          action: input.action,
+          controlled: input.controlled === true,
+        };
+      },
+    });
+
+    assert.deepEqual(calls, [{
+      action: "create_doc",
+      payload,
+      context,
+      controlled: true,
+    }]);
+    assert.deepEqual(result, {
+      ok: true,
+      action: "create_doc",
+      result: {
+        ok: true,
+        action: "create_doc",
+        controlled: true,
+      },
+      meta: {
+        execution_mode: "controlled",
+        duration_ms: 17,
+      },
+    });
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
 test("runMutation returns a stable execution_failed boundary with timing when execute throws", async () => {
   const originalNow = Date.now;
   const times = [2000, 2035];
