@@ -2,6 +2,7 @@ import {
   admitMutation,
   assertCanonicalMutationRequestSchema,
 } from "./mutation-admission.mjs";
+import { runMutationVerification } from "./mutation-verifier.mjs";
 
 function cleanText(value) {
   return String(value || "").trim();
@@ -78,6 +79,22 @@ function logMutationAdmission(logger, event, {
   logger.info(event, payload);
 }
 
+function buildMutationVerifierFailure({
+  action = "",
+  verification = null,
+} = {}) {
+  return {
+    ok: false,
+    action,
+    statusCode: 409,
+    error: "mutation_verifier_blocked",
+    message: cleanText(verification?.message) || "Mutation write is blocked until verification evidence is complete.",
+    verifier: verification && typeof verification === "object"
+      ? { ...verification }
+      : null,
+  };
+}
+
 function buildAdmissionFailure({ action = "", admission = null } = {}) {
   const writeGuard = buildWriteGuardFromAdmission(admission);
   const policyEnforcement = writeGuard.policy_enforcement || null;
@@ -128,6 +145,13 @@ export async function runMutation({ action, payload, context, execute }) {
   }
 
   const mode = context?.execution_mode || "passthrough";
+  const verifierProfile = cleanText(context?.verifier_profile ?? context?.verifierProfile);
+  const verifierInput =
+    context?.verifier_input && typeof context.verifier_input === "object" && !Array.isArray(context.verifier_input)
+      ? { ...context.verifier_input }
+      : context?.verifierInput && typeof context.verifierInput === "object" && !Array.isArray(context.verifierInput)
+        ? { ...context.verifierInput }
+        : null;
   const start = Date.now();
   const journal = {
     action,
@@ -165,6 +189,29 @@ export async function runMutation({ action, payload, context, execute }) {
     }
   }
 
+  const preVerification = runMutationVerification({
+    phase: "pre",
+    profile: verifierProfile,
+    canonicalRequest,
+    verifierInput,
+  });
+  if (preVerification && preVerification.pass !== true) {
+    return {
+      ...buildMutationVerifierFailure({
+        action,
+        verification: preVerification,
+      }),
+      meta: {
+        execution_mode: mode,
+        duration_ms: Date.now() - start,
+        journal,
+        verification: {
+          pre: preVerification,
+        },
+      },
+    };
+  }
+
   let result;
   try {
     if (mode === "controlled") {
@@ -196,6 +243,40 @@ export async function runMutation({ action, payload, context, execute }) {
         execution_mode: mode,
         duration_ms: Date.now() - start,
         journal,
+        ...(preVerification
+          ? {
+              verification: {
+                pre: preVerification,
+              },
+            }
+          : {}),
+      },
+    };
+  }
+
+  const postVerification = runMutationVerification({
+    phase: "post",
+    profile: verifierProfile,
+    canonicalRequest,
+    verifierInput,
+    executeResult: result,
+  });
+  if (postVerification && postVerification.pass !== true) {
+    journal.status = "failed";
+    journal.error = cleanText(postVerification.reason) || "mutation_verifier_blocked";
+    return {
+      ...buildMutationVerifierFailure({
+        action,
+        verification: postVerification,
+      }),
+      meta: {
+        execution_mode: mode,
+        duration_ms: Date.now() - start,
+        journal,
+        verification: {
+          ...(preVerification ? { pre: preVerification } : {}),
+          post: postVerification,
+        },
       },
     };
   }
@@ -208,6 +289,14 @@ export async function runMutation({ action, payload, context, execute }) {
       execution_mode: mode,
       duration_ms: Date.now() - start,
       journal,
+      ...((preVerification || postVerification)
+        ? {
+            verification: {
+              ...(preVerification ? { pre: preVerification } : {}),
+              ...(postVerification ? { post: postVerification } : {}),
+            },
+          }
+        : {}),
     },
   };
 }

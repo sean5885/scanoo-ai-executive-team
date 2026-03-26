@@ -2,7 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { runMutation } from "../src/mutation-runtime.mjs";
-import { buildMeetingConfirmWriteCanonicalRequest } from "../src/mutation-admission.mjs";
+import {
+  buildDriveOrganizeApplyCanonicalRequest,
+  buildMeetingConfirmWriteCanonicalRequest,
+} from "../src/mutation-admission.mjs";
 
 test("runMutation returns a stable error when no execute callback is provided", async () => {
   const result = await runMutation({
@@ -204,4 +207,101 @@ test("runMutation denies execute when canonical mutation admission blocks the wr
   assert.equal(result.write_guard?.reason, "confirmation_required");
   assert.equal(result.admission?.allowed, false);
   assert.equal(result.message, "External write requires explicit confirmation before apply.");
+});
+
+test("runMutation blocks cloud-doc apply before execute when preview evidence is missing", async () => {
+  const canonicalRequest = buildDriveOrganizeApplyCanonicalRequest({
+    pathname: "/api/drive/organize/apply",
+    folderToken: "fld-1",
+    actor: {
+      accountId: "acct-1",
+    },
+    context: {
+      confirmed: true,
+      verifierCompleted: true,
+      reviewRequiredActive: true,
+    },
+  });
+  let called = false;
+
+  const result = await runMutation({
+    action: "drive_organize_apply",
+    payload: {
+      folder_token: "fld-1",
+    },
+    context: {
+      account_id: "acct-1",
+      pathname: "/api/drive/organize/apply",
+      canonical_request: canonicalRequest,
+      verifier_profile: "cloud_doc_v1",
+      verifier_input: {
+        scope_key: "drive:fld-1",
+      },
+    },
+    async execute() {
+      called = true;
+      return { ok: true, result: { moved: 1 } };
+    },
+  });
+
+  assert.equal(called, false);
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "mutation_verifier_blocked");
+  assert.equal(result.verifier?.phase, "pre");
+  assert.equal(result.verifier?.reason, "missing_preview_plan");
+});
+
+test("runMutation blocks cloud-doc apply after execute when apply evidence is missing", async () => {
+  const canonicalRequest = buildDriveOrganizeApplyCanonicalRequest({
+    pathname: "/api/drive/organize/apply",
+    folderToken: "fld-1",
+    actor: {
+      accountId: "acct-1",
+    },
+    context: {
+      confirmed: true,
+      verifierCompleted: true,
+      reviewRequiredActive: true,
+    },
+  });
+
+  const result = await runMutation({
+    action: "drive_organize_apply",
+    payload: {
+      folder_token: "fld-1",
+    },
+    context: {
+      account_id: "acct-1",
+      pathname: "/api/drive/organize/apply",
+      canonical_request: canonicalRequest,
+      verifier_profile: "cloud_doc_v1",
+      verifier_input: {
+        scope_key: "drive:fld-1",
+        scope_type: "drive_folder",
+        preview_plan: {
+          target_folders: [{ name: "Ops" }],
+          moves: [{ file_token: "doc-1", target_folder_name: "Ops" }],
+        },
+        evidence: [],
+      },
+    },
+    async execute() {
+      return {
+        ok: true,
+        result: {
+          moved: 1,
+          preview_plan: {
+            target_folders: [{ name: "Ops" }],
+            moves: [{ file_token: "doc-1", target_folder_name: "Ops" }],
+          },
+          moves: [{ file_token: "doc-1", status: "moved" }],
+        },
+      };
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "mutation_verifier_blocked");
+  assert.equal(result.verifier?.phase, "post");
+  assert.equal(result.verifier?.reason, "insufficient_evidence");
 });

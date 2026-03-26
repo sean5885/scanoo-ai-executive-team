@@ -2846,6 +2846,7 @@ async function handleDriveOrganize(res, requestUrl, body, apply, logger = noopHt
     include_folders: options.includeFolders,
   });
   let applyingTask = null;
+  let canonicalRequest = null;
   if (!apply) {
     await ensureCloudDocWorkflowTask({
       accountId: context.account.id,
@@ -2870,7 +2871,7 @@ async function handleDriveOrganize(res, requestUrl, body, apply, logger = noopHt
       );
       return;
     }
-    const canonicalRequest = buildDriveOrganizeApplyCanonicalRequest({
+    canonicalRequest = buildDriveOrganizeApplyCanonicalRequest({
       pathname: "/api/drive/organize/apply",
       method: "POST",
       folderToken,
@@ -2883,58 +2884,74 @@ async function handleDriveOrganize(res, requestUrl, body, apply, logger = noopHt
       },
       originalRequest: body,
     });
-    const admission = admitRouteMutation({
-      logger,
-      traceId: res.__trace_id || null,
-      accountId: context.account.id,
-      canonicalRequest,
-      operation: "drive_organize_apply",
-    });
-    if (!admission.allowed) {
-      respondCloudDocPreviewRequired(res, buildWriteGuardMessage(buildLegacyWriteGuardFromAdmission(admission)));
-      return;
-    }
   }
-  const execution = apply
-    ? await executeLarkWrite({
-        apiName: "drive_organize_apply",
+  const mutationExecution = apply
+    ? await runMutation({
         action: "drive_organize_apply",
-        pathname: "/api/drive/organize/apply",
-        accountId: context.account.id,
-        accessToken: context.token,
-        canonicalRequest: buildDriveOrganizeApplyCanonicalRequest({
-          pathname: "/api/drive/organize/apply",
-          method: "POST",
-          folderToken,
-          context: {
-            scopeKey,
-            idempotencyKey: getRequestIdempotencyKey(body),
-            confirmed: true,
-            verifierCompleted: hasCloudDocPreviewPlan(applyingTask?.meta?.preview_plan),
-            reviewRequiredActive: true,
-          },
-          originalRequest: body,
-        }),
-        budget: {
-          sessionKey: context.account.id,
-          scopeKey,
-          targetDocumentId: folderToken,
-          payload: {
-            folder_token: folderToken,
-            recursive: options.recursive,
-            include_folders: options.includeFolders,
-          },
-          previewPlan: applyingTask?.meta?.preview_plan || null,
+        payload: {
+          folder_token: folderToken,
+          recursive: options.recursive,
+          include_folders: options.includeFolders,
         },
-        performWrite: async ({ accessToken }) => getHttpService("applyDriveOrganization", applyDriveOrganization)(
-          accessToken,
-          folderToken,
-          options,
-        ),
+        context: {
+          pathname: "/api/drive/organize/apply",
+          account_id: context.account.id,
+          trace_id: res.__trace_id || null,
+          logger,
+          canonical_request: canonicalRequest,
+          verifier_profile: "cloud_doc_v1",
+          verifier_input: {
+            scope_key: scopeKey,
+            scope_type: "drive_folder",
+            preview_plan: applyingTask?.meta?.preview_plan || null,
+            evidence: [
+              {
+                type: "file_updated",
+                summary: `drive_scope:${folderToken}`,
+              },
+              {
+                type: "API_call_success",
+                summary: "drive_organize_apply_succeeded",
+              },
+            ],
+          },
+        },
+        execute: async () => executeLarkWrite({
+          apiName: "drive_organize_apply",
+          action: "drive_organize_apply",
+          pathname: "/api/drive/organize/apply",
+          accountId: context.account.id,
+          accessToken: context.token,
+          canonicalRequest,
+          budget: {
+            sessionKey: context.account.id,
+            scopeKey,
+            targetDocumentId: folderToken,
+            payload: {
+              folder_token: folderToken,
+              recursive: options.recursive,
+              include_folders: options.includeFolders,
+            },
+            previewPlan: applyingTask?.meta?.preview_plan || null,
+          },
+          performWrite: async ({ accessToken }) => getHttpService("applyDriveOrganization", applyDriveOrganization)(
+            accessToken,
+            folderToken,
+            options,
+          ),
+        }),
       })
     : null;
-  if (apply && !execution.ok) {
-    respondCloudDocPreviewRequired(res, execution.message || "Drive organize apply is blocked by write policy.");
+  if (apply && !mutationExecution.ok) {
+    respondCloudDocPreviewRequired(
+      res,
+      mutationExecution.message || "Drive organize apply is blocked by write policy.",
+    );
+    return;
+  }
+  const execution = apply ? mutationExecution.result : null;
+  if (apply && !execution?.ok) {
+    respondCloudDocPreviewRequired(res, execution?.message || "Drive organize apply is blocked by write policy.");
     return;
   }
   const result = apply
@@ -3146,6 +3163,7 @@ async function handleWikiOrganize(res, requestUrl, body, apply, logger = noopHtt
     recursive: options.recursive,
   });
   let applyingTask = null;
+  let canonicalRequest = null;
   if (!apply) {
     await ensureCloudDocWorkflowTask({
       accountId: context.account.id,
@@ -3170,7 +3188,7 @@ async function handleWikiOrganize(res, requestUrl, body, apply, logger = noopHtt
       );
       return;
     }
-    const canonicalRequest = buildWikiOrganizeApplyCanonicalRequest({
+    canonicalRequest = buildWikiOrganizeApplyCanonicalRequest({
       pathname: "/api/wiki/organize/apply",
       method: "POST",
       resourceId: options.spaceId || options.parentNodeToken || options.spaceName || "",
@@ -3183,59 +3201,77 @@ async function handleWikiOrganize(res, requestUrl, body, apply, logger = noopHtt
       },
       originalRequest: body,
     });
-    const admission = admitRouteMutation({
-      logger,
-      traceId: res.__trace_id || null,
-      accountId: context.account.id,
-      canonicalRequest,
-      operation: "wiki_organize_apply",
-    });
-    if (!admission.allowed) {
-      respondCloudDocPreviewRequired(res, buildWriteGuardMessage(buildLegacyWriteGuardFromAdmission(admission)));
-      return;
-    }
   }
-  const execution = apply
-    ? await executeLarkWrite({
-        apiName: "wiki_organize_apply",
+  const mutationExecution = apply
+    ? await runMutation({
         action: "wiki_organize_apply",
-        pathname: "/api/wiki/organize/apply",
-        accountId: context.account.id,
-        accessToken: context.token,
-        canonicalRequest: buildWikiOrganizeApplyCanonicalRequest({
-          pathname: "/api/wiki/organize/apply",
-          method: "POST",
-          resourceId: options.spaceId || options.parentNodeToken || options.spaceName || "",
-          context: {
-            scopeKey,
-            idempotencyKey: getRequestIdempotencyKey(body),
-            confirmed: true,
-            verifierCompleted: hasCloudDocPreviewPlan(applyingTask?.meta?.preview_plan),
-            reviewRequiredActive: true,
-          },
-          originalRequest: body,
-        }),
-        budget: {
-          sessionKey: context.account.id,
-          scopeKey,
-          targetDocumentId: options.parentNodeToken || options.spaceId || null,
-          payload: {
-            space_id: options.spaceId || null,
-            space_name: options.spaceName || null,
-            parent_node_token: options.parentNodeToken || null,
-            recursive: options.recursive,
-            include_containers: options.includeContainers,
-          },
-          previewPlan: applyingTask?.meta?.preview_plan || null,
+        payload: {
+          space_id: options.spaceId || null,
+          space_name: options.spaceName || null,
+          parent_node_token: options.parentNodeToken || null,
+          recursive: options.recursive,
+          include_containers: options.includeContainers,
         },
-        performWrite: async ({ accessToken }) => getHttpService("applyWikiOrganization", applyWikiOrganization)(
-          accessToken,
-          options,
-        ),
+        context: {
+          pathname: "/api/wiki/organize/apply",
+          account_id: context.account.id,
+          trace_id: res.__trace_id || null,
+          logger,
+          canonical_request: canonicalRequest,
+          verifier_profile: "cloud_doc_v1",
+          verifier_input: {
+            scope_key: scopeKey,
+            scope_type: "wiki_scope",
+            preview_plan: applyingTask?.meta?.preview_plan || null,
+            evidence: [
+              {
+                type: "file_updated",
+                summary: `wiki_scope:${options.parentNodeToken || options.spaceId || "root"}`,
+              },
+              {
+                type: "API_call_success",
+                summary: "wiki_organize_apply_succeeded",
+              },
+            ],
+          },
+        },
+        execute: async () => executeLarkWrite({
+          apiName: "wiki_organize_apply",
+          action: "wiki_organize_apply",
+          pathname: "/api/wiki/organize/apply",
+          accountId: context.account.id,
+          accessToken: context.token,
+          canonicalRequest,
+          budget: {
+            sessionKey: context.account.id,
+            scopeKey,
+            targetDocumentId: options.parentNodeToken || options.spaceId || null,
+            payload: {
+              space_id: options.spaceId || null,
+              space_name: options.spaceName || null,
+              parent_node_token: options.parentNodeToken || null,
+              recursive: options.recursive,
+              include_containers: options.includeContainers,
+            },
+            previewPlan: applyingTask?.meta?.preview_plan || null,
+          },
+          performWrite: async ({ accessToken }) => getHttpService("applyWikiOrganization", applyWikiOrganization)(
+            accessToken,
+            options,
+          ),
+        }),
       })
     : null;
-  if (apply && !execution.ok) {
-    respondCloudDocPreviewRequired(res, execution.message || "Wiki organize apply is blocked by write policy.");
+  if (apply && !mutationExecution.ok) {
+    respondCloudDocPreviewRequired(
+      res,
+      mutationExecution.message || "Wiki organize apply is blocked by write policy.",
+    );
+    return;
+  }
+  const execution = apply ? mutationExecution.result : null;
+  if (apply && !execution?.ok) {
+    respondCloudDocPreviewRequired(res, execution?.message || "Wiki organize apply is blocked by write policy.");
     return;
   }
   const result = apply
