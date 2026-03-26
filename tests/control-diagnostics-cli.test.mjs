@@ -67,7 +67,7 @@ test("control diagnostics CLI renders the fixed single-view summary", async () =
   assert.match(output, /summary: overall=pass \| control=pass \| routing=pass \| write=pass/);
   assert.match(output, /control_summary: issues=0 \| decisions=3 \| owners=3 \| integrations=3/);
   assert.match(output, /routing_summary: status=pass \| accuracy=1 \| compare=unavailable \| doc_boundary_regression=false/);
-  assert.match(output, /write_summary: issues=0 \| guarded_operations=7 \| policy_actions=6 \| enforced_routes=8 \| modes=enforce:2,observe:2,warn:4/);
+  assert.match(output, /write_summary: issues=0 \| guarded_operations=13 \| policy_actions=6 \| enforced_routes=8 \| modes=enforce:2,observe:2,warn:4/);
   assert.match(output, /reporting_summary: error_code_groups=0 \| failure_groups=0 \| top_regressions=0/);
   assert.match(output, /top_regressions: none/);
   assert.match(output, /write_route: \/api\/doc\/rewrite-from-comments \| action=document_comment_rewrite_apply \| mode=warn/);

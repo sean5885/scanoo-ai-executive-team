@@ -18,6 +18,7 @@ Current runtime anchor points:
 
 - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
 - `/Users/seanhan/Documents/Playground/src/company-brain-learning.mjs`
+- `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`
 - `/Users/seanhan/Documents/Playground/src/company-brain-query.mjs`
 - `/Users/seanhan/Documents/Playground/src/rag-repository.mjs`
 - `/Users/seanhan/Documents/Playground/src/db.mjs`
@@ -54,6 +55,7 @@ This means `company_brain_agent` currently maps to a narrow read-oriented route/
 - derive planner-safe structured summaries from mirrored document text
 - ingest a mirrored document into a simplified learning sidecar
 - update simplified per-document learning state
+- route learning writes through the shared mutation runtime instead of direct route-local persistence
 - provide bounded read results back to planner/runtime callers
 
 ## In Scope

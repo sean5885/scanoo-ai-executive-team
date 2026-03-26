@@ -103,20 +103,20 @@ function writeJson(filePath, payload) {
 }
 
 const CURRENT_WRITE_GOVERNANCE = {
-  status: "fail",
-  metadata_route_count: 7,
-  enforced_route_count: 7,
+  status: "pass",
+  metadata_route_count: 8,
+  enforced_route_count: 8,
   route_coverage_ratio: 1,
   mode_counts: {
     enforce: 2,
     observe: 2,
-    warn: 3,
+    warn: 4,
   },
   violation_type_stats: {
-    missing_scope_key: 7,
+    missing_scope_key: 8,
     missing_idempotency_key: 2,
     confirm_required: 7,
-    review_required: 4,
+    review_required: 5,
   },
   rollout_rules: {
     evidence_source: "real_request_backed",

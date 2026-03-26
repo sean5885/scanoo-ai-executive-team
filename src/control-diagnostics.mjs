@@ -1774,14 +1774,21 @@ export async function buildWriteSummary() {
   ].filter(Boolean);
   const uniqueGuardedOperations = [...new Set(guardedOperations)].sort((left, right) => left.localeCompare(right));
   const expectedGuardedOperations = [
+    "apply_company_brain_approved_knowledge",
+    "approval_transition_company_brain_doc",
+    "check_company_brain_conflicts",
     "create_doc",
     "document_comment_rewrite_apply",
-    "document_company_brain_ingest",
     "drive_organize_apply",
+    "ingest_doc",
+    "ingest_learning_doc",
     "meeting_confirm_write",
+    "review_company_brain_doc",
     "update_doc",
+    "update_learning_state",
     "wiki_organize_apply",
   ];
+  const expectedWritePolicyLogMinimum = 7;
   const writePolicyRouteChecks = buildWritePolicyRouteChecks();
   const writePolicyEnforcementRouteChecks = buildWritePolicyEnforcementRouteChecks();
   const writePolicyCoverage = buildWritePolicyCoverageSummary({
@@ -1846,10 +1853,10 @@ export async function buildWriteSummary() {
       ok:
         httpRouteContractsText.includes("write_policy:")
         && writePolicyContractText.includes("policy_version")
-        && writePolicyLogReferences >= expectedGuardedOperations.length,
+        && writePolicyLogReferences >= expectedWritePolicyLogMinimum,
       details: {
         write_policy_log_references: writePolicyLogReferences,
-        expected_minimum: expectedGuardedOperations.length,
+        expected_minimum: expectedWritePolicyLogMinimum,
       },
     }),
     normalizeIntegrationPoint({

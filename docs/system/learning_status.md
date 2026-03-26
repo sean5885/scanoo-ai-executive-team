@@ -27,6 +27,7 @@ What does exist:
 - synced document knowledge in SQLite
 - semantic classification cache for drive organization
 - simplified learned-document sidecar state for company-brain docs
+- agent-facing `learning/ingest` and `learning/state` routes now send their final write hop through `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs` with `knowledge_write_v1` verification
 
 ## Which Agents Have Not Learned Documents
 
@@ -50,6 +51,7 @@ Observed risks:
 - comment rewrite replaces full document content, which can amplify prompt or instruction errors
 - no canonical knowledge layer exists to separate stable knowledge from raw synced docs
 - learning state is not approval-governed memory admission; it is only a planner/query-side sidecar and must not be described as approved company-brain knowledge
+- runtime verification on learning writes only proves the sidecar row was durably written; it does not upgrade that row into approved knowledge
 
 ## Completion Criteria
 

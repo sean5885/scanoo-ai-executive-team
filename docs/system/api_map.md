@@ -243,6 +243,7 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Purpose: run the explicit bounded conflict-check step before approval/apply
   - Input note: accepts `doc_id`, optional `title`, optional `action`, optional `target_stage`, and bounded overlap hints
   - Response note: success returns `conflict_state=none|possible|confirmed`, `conflict_items`, and the current review/approval state envelope
+  - Runtime note: the route now builds a canonical mutation request and passes through `mutation-runtime`; `knowledge_write_v1` only requires durable review-state evidence when conflict-check actually stages a review-state mutation
 
 - `POST /agent/company-brain/approval-transition`
   - Handler: `handleAgentCompanyBrainApprovalTransition`
@@ -268,6 +269,7 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Purpose: update one mirrored doc's simplified learning state
   - Response shape: `{ ok, action, data, trace_id }`, where `data` keeps a unified `{ success, data, error }` envelope
   - Input note: accepts `doc_id` plus optional `status`, `notes`, `tags`, and `key_concepts`
+  - Runtime note: the route now builds a canonical mutation request and routes the final sidecar write through `mutation-runtime` with `knowledge_write_v1` durable-write verification
   - Boundary note: this stays outside approval-governed company-brain memory admission
 
 - `POST /api/doc/lifecycle/retry`
