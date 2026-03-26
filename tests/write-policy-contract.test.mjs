@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 
 import { getRouteContract } from "../src/http-route-contracts.mjs";
 import {
+  buildCompanyBrainApprovalTransitionWritePolicy,
+  buildCompanyBrainApplyWritePolicy,
+  buildCompanyBrainLearningIngestWritePolicy,
+  buildCompanyBrainReviewWritePolicy,
   buildCreateDocWritePolicy,
   buildDocumentCommentRewriteApplyWritePolicy,
   buildDriveOrganizeApplyWritePolicy,
@@ -40,6 +44,18 @@ test("write policy builders normalize phase1 metadata with stable contract field
     documentId: "doc_update",
     idempotencyKey: "idem-update",
   });
+  const reviewPolicy = buildCompanyBrainReviewWritePolicy({
+    docId: "cb_doc",
+  });
+  const approvalTransitionPolicy = buildCompanyBrainApprovalTransitionWritePolicy({
+    docId: "cb_doc",
+  });
+  const applyPolicy = buildCompanyBrainApplyWritePolicy({
+    docId: "cb_doc",
+  });
+  const learningIngestPolicy = buildCompanyBrainLearningIngestWritePolicy({
+    docId: "cb_doc",
+  });
 
   assert.deepEqual(createPolicy, {
     policy_version: WRITE_POLICY_VERSION,
@@ -65,6 +81,11 @@ test("write policy builders normalize phase1 metadata with stable contract field
   assert.equal(updatePolicy.scope_key, "document:doc_update");
   assert.equal(updatePolicy.action_type, "update");
   assert.equal(updatePolicy.idempotency_key, "idem-update");
+  assert.equal(reviewPolicy.action_type, "review");
+  assert.equal(reviewPolicy.scope_key, "company-brain:cb_doc");
+  assert.equal(approvalTransitionPolicy.action_type, "approval_transition");
+  assert.equal(applyPolicy.action_type, "apply");
+  assert.equal(learningIngestPolicy.action_type, "ingest");
   assert.deepEqual(collectWritePolicyMissingFields(meetingPolicy), []);
 });
 

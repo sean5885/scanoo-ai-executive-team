@@ -276,6 +276,57 @@ export function buildCompanyBrainApplyWritePolicy({
   });
 }
 
+export function buildCompanyBrainReviewWritePolicy({
+  docId = "",
+  idempotencyKey = null,
+} = {}) {
+  return buildWritePolicyRecord({
+    source: "company_brain_review",
+    owner: "company_brain_review_runtime",
+    intent: "review_company_brain_doc",
+    actionType: "review",
+    externalWrite: false,
+    confirmRequired: false,
+    reviewRequired: "always",
+    scopeKey: cleanText(docId) ? `company-brain:${cleanText(docId)}` : null,
+    idempotencyKey,
+  });
+}
+
+export function buildCompanyBrainApprovalTransitionWritePolicy({
+  docId = "",
+  idempotencyKey = null,
+} = {}) {
+  return buildWritePolicyRecord({
+    source: "company_brain_approval_transition",
+    owner: "company_brain_review_runtime",
+    intent: "approval_transition_company_brain_doc",
+    actionType: "approval_transition",
+    externalWrite: false,
+    confirmRequired: false,
+    reviewRequired: "always",
+    scopeKey: cleanText(docId) ? `company-brain:${cleanText(docId)}` : null,
+    idempotencyKey,
+  });
+}
+
+export function buildCompanyBrainLearningIngestWritePolicy({
+  docId = "",
+  idempotencyKey = null,
+} = {}) {
+  return buildWritePolicyRecord({
+    source: "company_brain_learning_ingest",
+    owner: "company_brain_learning_runtime",
+    intent: "ingest_learning_doc",
+    actionType: "ingest",
+    externalWrite: false,
+    confirmRequired: false,
+    reviewRequired: "never",
+    scopeKey: cleanText(docId) ? `company-brain:${cleanText(docId)}` : null,
+    idempotencyKey,
+  });
+}
+
 const PHASE1_ROUTE_WRITE_POLICY_FIXTURES = Object.freeze([
   Object.freeze({
     pathname: "/api/doc/create",

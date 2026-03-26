@@ -69,6 +69,10 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
       - explicit approved-knowledge apply
     - promotes only `approved` review results into `company_brain_approved_knowledge`
     - keeps approval storage separate from both mirror and learning sidecar
+  - `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`
+    - is now the shared write entry for agent-facing company-brain review / approval-transition / apply / learning-ingest writes
+    - runs `knowledge_write_v1` pre/post verification around those internal writes
+    - confirms review/apply/learning writes by checking durable SQLite state after execute
   - `/Users/seanhan/Documents/Playground/src/company-brain-query.mjs`
     - now also exposes approved-knowledge list/search/detail actions that only read from `company_brain_approved_knowledge`
     - keeps the existing mirror read-side actions unchanged and separate
@@ -78,7 +82,8 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - Minimal only.
 - It stores a verified-doc mirror, not a canonical memory graph or approval-governed knowledge layer.
 - the learning sidecar is also minimal; it is not approved long-term memory
-- a minimal agent-facing review/conflict/approval/apply runtime now exists, but there is still no company-brain-owned verifier, human review UI, or semantic conflict resolver
+- a minimal agent-facing review/conflict/approval/apply runtime now exists, and its current internal write gating is routed through mutation-runtime rather than route-local allow/deny
+- there is still no standalone company-brain-owned verifier, human review UI, or semantic conflict resolver
 - Public list/detail/search routes only return:
   - `doc_id`
   - `title`

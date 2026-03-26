@@ -18,6 +18,8 @@ Current grounded runtime anchor points:
 
 - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
 - `/Users/seanhan/Documents/Playground/src/company-brain-review.mjs`
+- `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`
+- `/Users/seanhan/Documents/Playground/src/mutation-verifier.mjs`
 - `/Users/seanhan/Documents/Playground/src/company-brain-write-intake.mjs`
 - `/Users/seanhan/Documents/Playground/src/company-brain-query.mjs`
 - `/Users/seanhan/Documents/Playground/src/rag-repository.mjs`
@@ -32,6 +34,8 @@ Current company-brain review/conflict/approval/apply slice now exists through:
 - `GET /agent/company-brain/approved/docs`
 - `GET /agent/company-brain/approved/search`
 - `GET /agent/company-brain/approved/docs/:doc_id`
+
+For the currently checked-in write path, those write routes now only build canonical mutation requests and call `runMutation(...)`; `knowledge_write_v1` owns the minimum runtime-side pre/post verification for review-state and approved-knowledge writes. Post verification confirms durable SQLite evidence instead of trusting route-local success claims.
 
 Neighboring grounded runtime behavior remains:
 
@@ -117,7 +121,7 @@ Grounded as a direct agent-facing decision transition plus a separate apply step
   - persists `review_status=approved|rejected`
   - keeps that decision separate from final apply
 - `POST /agent/company-brain/docs/:doc_id/apply`
-  - only succeeds when `review_status=approved`
+  - is pre-gated by runtime-side apply verification and only succeeds when `review_status=approved`
   - promotes the doc into `company_brain_approved_knowledge`
 - approved-only reads now exist through:
   - `GET /agent/company-brain/approved/docs`
@@ -140,6 +144,7 @@ Grounded as a direct agent-facing decision transition plus a separate apply step
 ### what it is not
 
 - not a company-brain-owned verifier
+- route-local admission/allow-deny is no longer the authoritative write gate; runtime verification is
 - not a complete long-term memory governance system
 - not a human approval UI
 - not a semantic approval/conflict resolution workflow

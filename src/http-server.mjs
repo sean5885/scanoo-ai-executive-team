@@ -109,9 +109,6 @@ import {
   reviewCompanyBrainDocAction,
   stageCompanyBrainReviewState,
 } from "./company-brain-review.mjs";
-import {
-  evaluateCompanyBrainApplyGate,
-} from "./company-brain-lifecycle-contract.mjs";
 import { resolveCompanyBrainWriteIntake } from "./company-brain-write-intake.mjs";
 import { applyRewrittenDocument, rewriteDocumentFromComments } from "./doc-comment-rewrite.mjs";
 import {
@@ -171,11 +168,13 @@ import {
   generateLearningLoopImprovementProposals,
 } from "./agent-learning-loop.mjs";
 import {
-  admitMutation,
+  buildCompanyBrainApprovalTransitionCanonicalRequest,
   buildCompanyBrainApplyCanonicalRequest,
+  buildCompanyBrainReviewCanonicalRequest,
   buildCreateDocCanonicalRequest,
   buildDocumentCommentRewriteApplyCanonicalRequest,
   buildDriveOrganizeApplyCanonicalRequest,
+  buildIngestLearningDocCanonicalRequest,
   buildMeetingConfirmWriteCanonicalRequest,
   buildUpdateDocCanonicalRequest,
   buildWikiOrganizeApplyCanonicalRequest,
@@ -912,6 +911,23 @@ function getCompanyBrainAgentStatusCode(result = {}) {
     return 409;
   }
   return 400;
+}
+
+function buildCompanyBrainRuntimeBlockedResult({
+  docId = "",
+  error = "mutation_verifier_blocked",
+  approvalState = null,
+  reviewState = null,
+} = {}) {
+  return {
+    success: false,
+    data: {
+      doc_id: cleanText(docId) || null,
+      review_state: reviewState || approvalState?.review_state || null,
+      approval_state: approvalState || null,
+    },
+    error: cleanText(error) || "mutation_verifier_blocked",
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1900,78 +1916,6 @@ function getWriteGuardStatusCode(guard = {}) {
     return 409;
   }
   return 409;
-}
-
-function buildLegacyWriteGuardFromAdmission(admission = {}) {
-  const guardResult =
-    admission?.guard_result && typeof admission.guard_result === "object" && !Array.isArray(admission.guard_result)
-      ? admission.guard_result
-      : {};
-
-  return {
-    decision: cleanText(guardResult.decision) || (admission?.allowed === true ? "allow" : "deny"),
-    allow: admission?.allowed === true,
-    external_write: admission?.policy_snapshot?.external_write === true,
-    require_confirmation: cleanText(guardResult.reason) === "confirmation_required",
-    reason: cleanText(guardResult.reason) || cleanText(admission?.reason) || null,
-    error_code: cleanText(guardResult.error_code) || null,
-    policy_enforcement:
-      guardResult.policy_enforcement && typeof guardResult.policy_enforcement === "object" && !Array.isArray(guardResult.policy_enforcement)
-        ? { ...guardResult.policy_enforcement }
-        : null,
-  };
-}
-
-function logMutationAdmissionRoute(logger, event, {
-  accountId = null,
-  canonicalRequest = null,
-  admission = null,
-} = {}) {
-  if (!logger || typeof logger.info !== "function") {
-    return;
-  }
-
-  const payload = {
-    stage: "mutation_admission",
-    account_id: cleanText(accountId) || null,
-    pathname: cleanText(canonicalRequest?.context?.pathname) || null,
-    action_type: cleanText(canonicalRequest?.action_type) || null,
-    resource_type: cleanText(canonicalRequest?.resource_type) || null,
-  };
-  if (cleanText(canonicalRequest?.resource_id)) {
-    payload.resource_id = cleanText(canonicalRequest.resource_id);
-  }
-  if (admission && typeof admission === "object") {
-    payload.allowed = admission.allowed === true;
-    payload.reason = cleanText(admission.reason) || null;
-  }
-
-  logger.info(event, payload);
-}
-
-function admitRouteMutation({
-  logger = noopHttpLogger,
-  traceId = null,
-  accountId = null,
-  canonicalRequest = null,
-  operation = null,
-} = {}) {
-  logMutationAdmissionRoute(logger, "mutation_admission_started", {
-    accountId,
-    canonicalRequest,
-  });
-  const admission = admitMutation({
-    canonicalRequest,
-    logger,
-    traceId,
-  });
-  logMutationAdmissionRoute(logger, "mutation_admission_decision", {
-    accountId,
-    canonicalRequest,
-    admission,
-  });
-  void operation;
-  return admission;
 }
 
 function buildCloudDocOrganizeResponse({
@@ -4139,17 +4083,57 @@ async function handleAgentReviewCompanyBrainDoc(res, requestUrl, body, logger = 
   }
 
   const docId = parseCompanyBrainDocId(requestUrl, body);
-  const result = reviewCompanyBrainDocAction({
-    accountId: context.account.id,
+  const canonicalRequest = buildCompanyBrainReviewCanonicalRequest({
+    pathname: "/agent/company-brain/review",
+    method: "POST",
     docId,
-    title: body?.title ?? body?.candidate?.title,
-    action: body?.action,
-    targetStage: body?.target_stage,
-    limit: parseCompanyBrainLimit(requestUrl, body, 6),
-    overlapSignal: body?.overlap_signal === true || body?.candidate?.overlap_signal === true,
-    replacesExisting: body?.replaces_existing === true || body?.candidate?.replaces_existing === true,
+    actor: {
+      accountId: context.account.id,
+    },
+    context: {
+      idempotencyKey: getRequestIdempotencyKey(body),
+      confirmed: true,
+      verifierCompleted: true,
+      reviewRequiredActive: true,
+    },
+    originalRequest: body,
   });
-  const statusCode = getCompanyBrainAgentStatusCode(result);
+  const mutationExecution = await runMutation({
+    action: "review_company_brain_doc",
+    payload: body,
+    context: {
+      pathname: "/agent/company-brain/review",
+      account_id: context.account.id,
+      trace_id: res.__trace_id || null,
+      logger,
+      canonical_request: canonicalRequest,
+      verifier_profile: "knowledge_write_v1",
+      verifier_input: {
+        account_id: context.account.id,
+        doc_id: docId,
+        expected_write: "review_state",
+      },
+    },
+    execute: async () => reviewCompanyBrainDocAction({
+      accountId: context.account.id,
+      docId,
+      title: body?.title ?? body?.candidate?.title,
+      action: body?.action,
+      targetStage: body?.target_stage,
+      limit: parseCompanyBrainLimit(requestUrl, body, 6),
+      overlapSignal: body?.overlap_signal === true || body?.candidate?.overlap_signal === true,
+      replacesExisting: body?.replaces_existing === true || body?.candidate?.replaces_existing === true,
+    }),
+  });
+  const result = mutationExecution.ok
+    ? mutationExecution.result
+    : buildCompanyBrainRuntimeBlockedResult({
+        docId,
+        error: mutationExecution.error,
+      });
+  const statusCode = mutationExecution.ok
+    ? getCompanyBrainAgentStatusCode(result)
+    : 409;
 
   logger.info("company_brain_review", {
     stage: "company_brain_review",
@@ -4204,14 +4188,55 @@ async function handleAgentCompanyBrainApprovalTransition(res, requestUrl, body, 
   }
 
   const docId = parseCompanyBrainDocId(requestUrl, body);
-  const result = approvalTransitionCompanyBrainDocAction({
-    accountId: context.account.id,
+  const canonicalRequest = buildCompanyBrainApprovalTransitionCanonicalRequest({
+    pathname: "/agent/company-brain/approval-transition",
+    method: "POST",
     docId,
-    decision: body?.decision,
-    notes: body?.notes,
-    actor: body?.actor,
+    actor: {
+      accountId: context.account.id,
+    },
+    context: {
+      idempotencyKey: getRequestIdempotencyKey(body),
+      confirmed: true,
+      verifierCompleted: true,
+      reviewRequiredActive: true,
+    },
+    originalRequest: body,
   });
-  const statusCode = getCompanyBrainAgentStatusCode(result);
+  const mutationExecution = await runMutation({
+    action: "approval_transition_company_brain_doc",
+    payload: body,
+    context: {
+      pathname: "/agent/company-brain/approval-transition",
+      account_id: context.account.id,
+      trace_id: res.__trace_id || null,
+      logger,
+      canonical_request: canonicalRequest,
+      verifier_profile: "knowledge_write_v1",
+      verifier_input: {
+        account_id: context.account.id,
+        doc_id: docId,
+        expected_write: "review_state",
+        expected_status: cleanText(body?.decision).toLowerCase() === "approve" ? "approved" : "rejected",
+      },
+    },
+    execute: async () => approvalTransitionCompanyBrainDocAction({
+      accountId: context.account.id,
+      docId,
+      decision: body?.decision,
+      notes: body?.notes,
+      actor: body?.actor,
+    }),
+  });
+  const result = mutationExecution.ok
+    ? mutationExecution.result
+    : buildCompanyBrainRuntimeBlockedResult({
+        docId,
+        error: mutationExecution.error,
+      });
+  const statusCode = mutationExecution.ok
+    ? getCompanyBrainAgentStatusCode(result)
+    : 409;
 
   logger.info("company_brain_approval_transition", {
     stage: "company_brain_approval_transition",
@@ -4241,54 +4266,55 @@ async function handleAgentApplyApprovedCompanyBrainKnowledge(res, requestUrl, bo
     review_state: null,
     approval: null,
   };
-  const applyGate = evaluateCompanyBrainApplyGate({
-    approvalState,
-  });
-  if (applyGate.can_apply === true) {
-    const canonicalRequest = buildCompanyBrainApplyCanonicalRequest({
-      pathname: "/agent/company-brain/docs/:doc_id/apply",
-      method: "POST",
-      docId,
-      context: {
-        idempotencyKey: getRequestIdempotencyKey(body),
-        externalWrite: false,
-        confirmed: true,
-        verifierCompleted: true,
-        reviewRequiredActive: true,
-      },
-      originalRequest: body,
-    });
-    const admission = admitRouteMutation({
-      logger,
-      traceId: res.__trace_id || null,
-      accountId: context.account.id,
-      canonicalRequest,
-    });
-    if (!admission.allowed) {
-      const blockedResult = {
-        success: false,
-        data: {
-          doc_id: docId,
-          review_state: approvalState.review_state,
-          approval_state: approvalState,
-        },
-        error: admission.guard_result?.error_code || "approval_apply_failed",
-      };
-      jsonResponse(
-        res,
-        400,
-        buildCompanyBrainAgentResult(res, "apply_company_brain_approved_knowledge", blockedResult),
-      );
-      return;
-    }
-  }
-  const result = applyApprovedCompanyBrainKnowledgeAction({
-    accountId: context.account.id,
+  const canonicalRequest = buildCompanyBrainApplyCanonicalRequest({
+    pathname: "/agent/company-brain/docs/:doc_id/apply",
+    method: "POST",
     docId,
-    actor: body?.actor,
-    sourceStage: body?.source_stage,
+    actor: {
+      accountId: context.account.id,
+    },
+    context: {
+      idempotencyKey: getRequestIdempotencyKey(body),
+      externalWrite: false,
+      confirmed: true,
+      verifierCompleted: true,
+      reviewRequiredActive: true,
+    },
+    originalRequest: body,
   });
-  const statusCode = getCompanyBrainAgentStatusCode(result);
+  const mutationExecution = await runMutation({
+    action: "apply_company_brain_approved_knowledge",
+    payload: body,
+    context: {
+      pathname: "/agent/company-brain/docs/:doc_id/apply",
+      account_id: context.account.id,
+      trace_id: res.__trace_id || null,
+      logger,
+      canonical_request: canonicalRequest,
+      verifier_profile: "knowledge_write_v1",
+      verifier_input: {
+        account_id: context.account.id,
+        doc_id: docId,
+        expected_write: "approved_knowledge",
+      },
+    },
+    execute: async () => applyApprovedCompanyBrainKnowledgeAction({
+      accountId: context.account.id,
+      docId,
+      actor: body?.actor,
+      sourceStage: body?.source_stage,
+    }),
+  });
+  const result = mutationExecution.ok
+    ? mutationExecution.result
+    : buildCompanyBrainRuntimeBlockedResult({
+        docId,
+        error: mutationExecution.error,
+        approvalState,
+      });
+  const statusCode = mutationExecution.ok
+    ? getCompanyBrainAgentStatusCode(result)
+    : 409;
 
   logger.info("company_brain_apply", {
     stage: "company_brain_apply",
@@ -4310,15 +4336,57 @@ async function handleAgentIngestLearningDoc(res, requestUrl, body, logger = noop
   }
 
   const docId = parseCompanyBrainDocId(requestUrl, body);
-  const result = ingestLearningDocAction({
-    accountId: context.account.id,
+  const canonicalRequest = buildIngestLearningDocCanonicalRequest({
+    pathname: "/agent/company-brain/learning/ingest",
+    method: "POST",
     docId,
+    actor: {
+      accountId: context.account.id,
+    },
+    context: {
+      idempotencyKey: getRequestIdempotencyKey(body),
+      confirmed: true,
+      verifierCompleted: true,
+      reviewRequiredActive: false,
+    },
+    originalRequest: body,
   });
-  const statusCode = result.success === true
-    ? 200
-    : result.error === "not_found"
-      ? 404
-      : 400;
+  const mutationExecution = await runMutation({
+    action: "ingest_learning_doc",
+    payload: body,
+    context: {
+      pathname: "/agent/company-brain/learning/ingest",
+      account_id: context.account.id,
+      trace_id: res.__trace_id || null,
+      logger,
+      canonical_request: canonicalRequest,
+      verifier_profile: "knowledge_write_v1",
+      verifier_input: {
+        account_id: context.account.id,
+        doc_id: docId,
+        expected_write: "learning_state",
+      },
+    },
+    execute: async () => ingestLearningDocAction({
+      accountId: context.account.id,
+      docId,
+    }),
+  });
+  const result = mutationExecution.ok
+    ? mutationExecution.result
+    : buildCompanyBrainRuntimeBlockedResult({
+        docId,
+        error: mutationExecution.error,
+      });
+  const statusCode = mutationExecution.ok
+    ? (
+        result.success === true
+          ? 200
+          : result.error === "not_found"
+            ? 404
+            : 400
+      )
+    : 409;
 
   logger.info("company_brain_learning", {
     stage: "company_brain_learning",

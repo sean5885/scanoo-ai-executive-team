@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 
 import { runMutation } from "../src/mutation-runtime.mjs";
 import {
+  buildCompanyBrainApplyCanonicalRequest,
   buildDriveOrganizeApplyCanonicalRequest,
+  buildIngestLearningDocCanonicalRequest,
   buildMeetingConfirmWriteCanonicalRequest,
 } from "../src/mutation-admission.mjs";
 
@@ -304,4 +306,98 @@ test("runMutation blocks cloud-doc apply after execute when apply evidence is mi
   assert.equal(result.error, "mutation_verifier_blocked");
   assert.equal(result.verifier?.phase, "post");
   assert.equal(result.verifier?.reason, "insufficient_evidence");
+});
+
+test("runMutation blocks company-brain apply before execute when lifecycle gate is not satisfied", async () => {
+  const canonicalRequest = buildCompanyBrainApplyCanonicalRequest({
+    pathname: "/agent/company-brain/docs/:doc_id/apply",
+    docId: "doc-apply-1",
+    actor: {
+      accountId: "acct-1",
+    },
+    context: {
+      externalWrite: false,
+      confirmed: true,
+      verifierCompleted: true,
+      reviewRequiredActive: true,
+    },
+  });
+  let called = false;
+
+  const result = await runMutation({
+    action: "apply_company_brain_approved_knowledge",
+    payload: {
+      doc_id: "doc-apply-1",
+    },
+    context: {
+      account_id: "acct-1",
+      pathname: "/agent/company-brain/docs/:doc_id/apply",
+      canonical_request: canonicalRequest,
+      verifier_profile: "knowledge_write_v1",
+      verifier_input: {
+        account_id: "acct-1",
+        doc_id: "doc-apply-1",
+        expected_write: "approved_knowledge",
+      },
+    },
+    async execute() {
+      called = true;
+      return { success: true, data: { doc_id: "doc-apply-1" }, error: null };
+    },
+  });
+
+  assert.equal(called, false);
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "mutation_verifier_blocked");
+  assert.equal(result.verifier?.phase, "pre");
+});
+
+test("runMutation blocks knowledge write after execute when durable db evidence is missing", async () => {
+  const canonicalRequest = buildIngestLearningDocCanonicalRequest({
+    docId: "doc-learning-1",
+    actor: {
+      accountId: "acct-1",
+    },
+    context: {
+      confirmed: true,
+      verifierCompleted: true,
+    },
+  });
+
+  const result = await runMutation({
+    action: "ingest_learning_doc",
+    payload: {
+      doc_id: "doc-learning-1",
+    },
+    context: {
+      account_id: "acct-1",
+      pathname: "/agent/company-brain/learning/ingest",
+      canonical_request: canonicalRequest,
+      verifier_profile: "knowledge_write_v1",
+      verifier_input: {
+        account_id: "acct-1",
+        doc_id: "doc-learning-1",
+        expected_write: "learning_state",
+      },
+    },
+    async execute() {
+      return {
+        success: true,
+        data: {
+          doc: {
+            doc_id: "doc-learning-1",
+          },
+          learning_state: {
+            status: "learned",
+          },
+        },
+        error: null,
+      };
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "mutation_verifier_blocked");
+  assert.equal(result.verifier?.phase, "post");
+  assert.equal(result.verifier?.reason, "db_write_missing");
 });

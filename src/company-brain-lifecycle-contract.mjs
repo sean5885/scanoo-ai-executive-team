@@ -1,5 +1,10 @@
 import { cleanText } from "./message-intent-utils.mjs";
-import { buildCompanyBrainApplyWritePolicy, cloneWritePolicyRecord } from "./write-policy-contract.mjs";
+import {
+  buildCompanyBrainApplyWritePolicy,
+  buildCompanyBrainApprovalTransitionWritePolicy,
+  buildCompanyBrainReviewWritePolicy,
+  cloneWritePolicyRecord,
+} from "./write-policy-contract.mjs";
 
 export const COMPANY_BRAIN_LIFECYCLE_STATES = Object.freeze([
   "mirror_only",
@@ -30,6 +35,9 @@ const COMPANY_BRAIN_ROUTE_CONTRACT_FIXTURES = Object.freeze([
   {
     pathname: "/agent/company-brain/review",
     action: "review_company_brain_doc",
+    write_policy: Object.freeze(buildCompanyBrainReviewWritePolicy({
+      docId: "test-doc",
+    })),
     governance: Object.freeze({
       external_write: false,
       confirm_required: false,
@@ -54,6 +62,9 @@ const COMPANY_BRAIN_ROUTE_CONTRACT_FIXTURES = Object.freeze([
   {
     pathname: "/agent/company-brain/approval-transition",
     action: "approval_transition_company_brain_doc",
+    write_policy: Object.freeze(buildCompanyBrainApprovalTransitionWritePolicy({
+      docId: "test-doc",
+    })),
     governance: Object.freeze({
       external_write: false,
       confirm_required: false,
