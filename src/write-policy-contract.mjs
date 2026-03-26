@@ -158,6 +158,26 @@ export function buildCreateDocWritePolicy({
   });
 }
 
+export function buildUpdateDocWritePolicy({
+  scopeKey = null,
+  documentId = "",
+  actionType = "update",
+  confirmRequired = false,
+  idempotencyKey = null,
+} = {}) {
+  return buildWritePolicyRecord({
+    source: "update_doc",
+    owner: "document_http_route",
+    intent: "update_doc",
+    actionType,
+    externalWrite: true,
+    confirmRequired: confirmRequired === true,
+    reviewRequired: "conditional",
+    scopeKey: normalizeNullableText(scopeKey) || (cleanText(documentId) ? `document:${cleanText(documentId)}` : null),
+    idempotencyKey,
+  });
+}
+
 export function buildDriveOrganizeApplyWritePolicy({
   scopeKey = null,
   folderToken = "",
@@ -266,6 +286,11 @@ const PHASE1_ROUTE_WRITE_POLICY_FIXTURES = Object.freeze([
     pathname: "/agent/docs/create",
     action: "create_doc",
     write_policy: buildCreateDocWritePolicy(),
+  }),
+  Object.freeze({
+    pathname: "/api/doc/update",
+    action: "update_doc",
+    write_policy: buildUpdateDocWritePolicy(),
   }),
   Object.freeze({
     pathname: "/api/drive/organize/apply",

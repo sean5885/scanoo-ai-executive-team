@@ -1,7 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 import { shouldAllowWrite, recordCall } from "./lark-write-budget-guard.mjs";
-import { admitMutation } from "./mutation-admission.mjs";
 
 const writeExecutionStorage = new AsyncLocalStorage();
 
@@ -14,26 +13,6 @@ function normalizeLogger(logger = null) {
     return logger;
   }
   return null;
-}
-
-function buildWriteGuardFromAdmission(admission = {}) {
-  const guardResult =
-    admission?.guard_result && typeof admission.guard_result === "object" && !Array.isArray(admission.guard_result)
-      ? admission.guard_result
-      : {};
-
-  return {
-    decision: cleanText(guardResult.decision) || (admission?.allowed === true ? "allow" : "deny"),
-    allow: admission?.allowed === true,
-    external_write: admission?.policy_snapshot?.external_write === true,
-    require_confirmation: cleanText(guardResult.reason) === "confirmation_required",
-    reason: cleanText(guardResult.reason) || cleanText(admission?.reason) || null,
-    error_code: cleanText(guardResult.error_code) || null,
-    policy_enforcement:
-      guardResult.policy_enforcement && typeof guardResult.policy_enforcement === "object" && !Array.isArray(guardResult.policy_enforcement)
-        ? { ...guardResult.policy_enforcement }
-        : null,
-  };
 }
 
 function buildBudgetWriteGuard(decision = {}) {
@@ -103,7 +82,6 @@ export async function executeLarkWrite({
   accessToken = null,
   traceId = null,
   logger = null,
-  canonicalRequest = null,
   confirmation = {},
   budget = {},
   performWrite = null,
@@ -204,31 +182,6 @@ export async function executeLarkWrite({
     }
   }
 
-  let admission = null;
-  if (canonicalRequest) {
-    admission = admitMutation({
-      canonicalRequest,
-      logger: resolvedLogger,
-      traceId,
-    });
-    if (!admission.allowed) {
-      return buildFailure({
-        statusCode: 409,
-        error: "write_guard_denied",
-        message: cleanText(admission.guard_result?.policy_enforcement?.message)
-          || cleanText(admission.guard_result?.reason)
-          || "External write is blocked by write guard.",
-        writeGuard: buildWriteGuardFromAdmission(admission),
-        admission,
-        confirmation: {
-          checked: true,
-          consumed: false,
-          kind: cleanText(resolvedConfirmation.kind) || null,
-        },
-      });
-    }
-  }
-
   const budgetMetadata = {
     action: cleanText(action) || cleanText(apiName) || null,
     account_id: accountId || null,
@@ -247,9 +200,8 @@ export async function executeLarkWrite({
     whitelist: resolvedBudget.whitelist === true,
     idempotency_key:
       cleanText(resolvedBudget.idempotencyKey ?? resolvedBudget.idempotency_key)
-      || cleanText(canonicalRequest?.context?.idempotency_key ?? canonicalRequest?.context?.idempotencyKey)
       || null,
-    pathname: cleanText(pathname) || cleanText(canonicalRequest?.context?.pathname) || null,
+    pathname: cleanText(pathname) || null,
   };
 
   const budgetDecision = await shouldAllowWrite(apiName, {
@@ -307,7 +259,6 @@ export async function executeLarkWrite({
     confirmation: consumedConfirmation,
     pendingConfirmation,
     budgetDecision,
-    admission,
   }));
 
   await recordCall(apiName, {
@@ -325,7 +276,6 @@ export async function executeLarkWrite({
       confirmation: consumedConfirmation,
       pendingConfirmation,
       budgetDecision,
-      admission,
       accessToken,
     });
   }
@@ -335,7 +285,6 @@ export async function executeLarkWrite({
     statusCode: 200,
     result,
     budget: budgetDecision,
-    admission,
     confirmation: {
       checked: true,
       consumed: typeof resolvedConfirmation.consume === "function",

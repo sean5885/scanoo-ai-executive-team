@@ -7,6 +7,7 @@ import {
   buildDocumentCommentRewriteApplyWritePolicy,
   buildDriveOrganizeApplyWritePolicy,
   buildMeetingConfirmWritePolicy,
+  buildUpdateDocWritePolicy,
   buildWikiOrganizeApplyWritePolicy,
   collectWritePolicyMissingFields,
   listPhase1RouteWritePolicyFixtures,
@@ -35,6 +36,10 @@ test("write policy builders normalize phase1 metadata with stable contract field
     confirmationId: "confirm_123",
     targetDocumentId: "doc_meeting",
   });
+  const updatePolicy = buildUpdateDocWritePolicy({
+    documentId: "doc_update",
+    idempotencyKey: "idem-update",
+  });
 
   assert.deepEqual(createPolicy, {
     policy_version: WRITE_POLICY_VERSION,
@@ -57,6 +62,9 @@ test("write policy builders normalize phase1 metadata with stable contract field
   assert.equal(rewritePolicy.action_type, "replace");
   assert.equal(meetingPolicy.scope_key, "doc:doc_meeting");
   assert.equal(meetingPolicy.action_type, "writeback");
+  assert.equal(updatePolicy.scope_key, "document:doc_update");
+  assert.equal(updatePolicy.action_type, "update");
+  assert.equal(updatePolicy.idempotency_key, "idem-update");
   assert.deepEqual(collectWritePolicyMissingFields(meetingPolicy), []);
 });
 
@@ -70,8 +78,8 @@ test("phase1 route contracts expose complete write policy metadata for each wire
   const fixtures = listPhase1RouteWritePolicyFixtures();
   const enforcementFixtures = listWritePolicyEnforcementFixtures();
 
-  assert.equal(fixtures.length, 7);
-  assert.equal(enforcementFixtures.length, 7);
+  assert.equal(fixtures.length, 8);
+  assert.equal(enforcementFixtures.length, 8);
 
   for (const fixture of fixtures) {
     const routeContract = getRouteContract(fixture.pathname);

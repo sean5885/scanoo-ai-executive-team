@@ -33,9 +33,9 @@ import {
 import { registerKnowledgeWriteback } from "./executive-closed-loop.mjs";
 import { EVIDENCE_TYPES, verifyMeetingWorkflowCompletion } from "./executive-verifier.mjs";
 import { normalizeText, nowIso } from "./text-utils.mjs";
-import { decideWriteGuard } from "./write-guard.mjs";
-import { buildMeetingConfirmWritePolicy } from "./write-policy-contract.mjs";
 import { executeLarkWrite } from "./execute-lark-write.mjs";
+import { buildMeetingConfirmWriteCanonicalRequest } from "./mutation-admission.mjs";
+import { runMutation } from "./mutation-runtime.mjs";
 
 const WEEKLY_PROGRESS_KEYWORDS = ["進展", "推进", "推進", "完成度", "完成", "達成", "okr", "kr", "目標", "objective"];
 const WEEKLY_ISSUE_KEYWORDS = ["卡點", "阻塞", "問題", "风险", "風險", "瓶頸"];
@@ -43,21 +43,6 @@ const WEEKLY_SOLUTION_KEYWORDS = ["解法", "方案", "決定", "處理", "修�
 const WEEKLY_TODO_KEYWORDS = ["todo", "待辦", "待办", "owner", "下週", "本週", "跟進", "跟进", "action item"];
 const GENERAL_CONCLUSION_KEYWORDS = ["結論", "结论", "決定", "决定", "共識", "共识", "確認", "确认"];
 
-function buildWriteGuardMessage(guard = {}) {
-  if (guard.reason === "policy_enforcement_blocked") {
-    return normalizeText(guard?.policy_enforcement?.message) || "External write is blocked by write policy enforcement.";
-  }
-  if (guard.reason === "confirmation_required") {
-    return "External write requires explicit confirmation before apply.";
-  }
-  if (guard.reason === "preview_write_blocked") {
-    return "Preview mode cannot execute external writes.";
-  }
-  if (guard.reason === "verifier_incomplete") {
-    return "External write is blocked until preview/review verification is complete.";
-  }
-  return "External write is blocked by write guard.";
-}
 const DONE_KEYWORDS = ["完成", "已完成", "done", "結案", "close"];
 const MEETING_WAKE_WORDS = ["會議", "会议", "meeting"];
 const MEETING_TOPIC_SIGNALS = ["會議", "会议", "meeting", "週會", "周会", "例會", "例会"];
@@ -1546,6 +1531,9 @@ export function createMeetingCoordinator(overrides = {}) {
     accessToken,
     confirmationId,
     logger = deps.logger,
+    canonicalRequest = null,
+    traceId = null,
+    pathname = "/api/meeting/confirm",
   }) {
     const pendingConfirmation = await deps.peekConfirmation({
       confirmationId,
@@ -1555,203 +1543,207 @@ export function createMeetingCoordinator(overrides = {}) {
       return null;
     }
 
-    const writePolicy = buildMeetingConfirmWritePolicy({
+    const resolvedCanonicalRequest = canonicalRequest || buildMeetingConfirmWriteCanonicalRequest({
+      pathname,
+      method: pathname === "/meeting/confirm" ? "GET" : "POST",
       confirmationId,
       targetDocumentId: pendingConfirmation.target_document_id,
-    });
-    const writeGuard = decideWriteGuard({
-      externalWrite: true,
-      confirmed: Boolean(confirmationId),
-      verifierCompleted: Boolean(
-        normalizeText(pendingConfirmation.summary_content)
-        && normalizeText(pendingConfirmation.doc_entry_content),
-      ),
-      pathname: "/api/meeting/confirm",
-      writePolicy,
-      scopeKey: writePolicy.scope_key,
-      logger,
-      owner: "meeting_agent",
-      workflow: "meeting",
-      operation: "meeting_confirm_write",
-      details: {
-        account_id: accountId,
-        confirmation_id: confirmationId || null,
-        project_key: pendingConfirmation.project_key || null,
-        target_document_id: pendingConfirmation.target_document_id || null,
-        write_policy: writePolicy,
+      actor: {
+        accountId,
+      },
+      context: {
+        confirmed: true,
+        verifierCompleted: Boolean(
+          normalizeText(pendingConfirmation.summary_content)
+          && normalizeText(pendingConfirmation.doc_entry_content),
+        ),
+        reviewRequiredActive: false,
       },
     });
-    if (!writeGuard.allow) {
+    const mutationExecution = await runMutation({
+      action: "meeting_confirm_write",
+      payload: {
+        confirmation_id: confirmationId,
+        project_key: pendingConfirmation.project_key || null,
+        meeting_type: pendingConfirmation.meeting_type || null,
+        source_meeting_id: pendingConfirmation.source_meeting_id || null,
+      },
+      context: {
+        pathname,
+        account_id: accountId,
+        trace_id: traceId,
+        logger,
+        canonical_request: resolvedCanonicalRequest,
+      },
+      execute: async () => executeLarkWrite({
+        apiName: "meeting_confirm_write",
+        action: "meeting_confirm_write",
+        pathname,
+        accountId,
+        accessToken,
+        logger,
+        traceId,
+        confirmation: {
+          kind: "meeting_write",
+          requireConfirm: true,
+          confirm: Boolean(confirmationId),
+          requireConfirmationId: true,
+          confirmationId,
+          pending: pendingConfirmation,
+          consume: async () => deps.consumeConfirmation({
+            confirmationId,
+            accountId,
+          }),
+          invalidMessage: "Meeting confirmation is missing, expired, or no longer matches this account.",
+        },
+        budget: {
+          accountId,
+          sessionKey: pendingConfirmation.chat_id || accountId,
+          scopeKey: resolvedCanonicalRequest.context.scope_key,
+          documentId: pendingConfirmation.target_document_id || null,
+          targetDocumentId: pendingConfirmation.target_document_id || null,
+          content: pendingConfirmation.doc_entry_content || "",
+          payload: {
+            confirmation_id: confirmationId,
+            project_key: pendingConfirmation.project_key || null,
+            meeting_type: pendingConfirmation.meeting_type || null,
+            source_meeting_id: pendingConfirmation.source_meeting_id || null,
+          },
+          essential: true,
+          blockedMessage: "Meeting write is blocked by Lark write budget or duplicate suppression.",
+        },
+        performWrite: async ({ confirmation }) => {
+          const targetDoc = confirmation.target_document_id
+            ? {
+                document_id: confirmation.target_document_id,
+                title: confirmation.target_document_title || buildMeetingDocTitle(confirmation.project_name, confirmation.meeting_type),
+              }
+            : await ensureMeetingDocument({
+                accessToken,
+                accountId,
+                accountOpenId,
+                projectKey: confirmation.project_key,
+                projectName: confirmation.project_name,
+                meetingType: confirmation.meeting_type,
+                chatId: confirmation.chat_id,
+              });
+
+          const writeResult = await prependMeetingEntry({
+            accessToken,
+            documentId: targetDoc.document_id,
+            content: confirmation.doc_entry_content,
+          });
+
+          deps.saveMeetingDocumentMapping({
+            accountId,
+            projectKey: confirmation.project_key,
+            projectName: confirmation.project_name,
+            meetingType: confirmation.meeting_type,
+            documentId: targetDoc.document_id,
+            title: targetDoc.title,
+            chatId: confirmation.chat_id,
+          });
+
+          let trackerUpdates = [];
+          if (confirmation.meeting_type === "weekly" && Array.isArray(confirmation.weekly_todos)) {
+            trackerUpdates = await updateWeeklyTodoTracker(
+              {
+                todos: confirmation.weekly_todos.map((item) => ({
+                  title: item.title,
+                  owner: item.owner,
+                  objective: item.objective,
+                  kr: item.kr,
+                })),
+              },
+              {
+                projectKey: confirmation.project_key,
+                accountId,
+                sourceDate: confirmation.source_date,
+                sourceMeetingId: confirmation.source_meeting_id,
+                transcriptText: confirmation.summary_content,
+              },
+            );
+          }
+
+          const structuredResult = buildMeetingStructuredResult({
+            summary: confirmation.meeting_type === "weekly"
+              ? sanitizeWeeklySummary({
+                  todos: confirmation.weekly_todos,
+                }, confirmation.summary_content, {
+                  date: confirmation.source_date,
+                })
+              : sanitizeGeneralSummary({}, confirmation.summary_content, {
+                  date: confirmation.source_date,
+                }),
+            classification: {
+              meeting_type: confirmation.meeting_type,
+            },
+            transcriptText: confirmation.summary_content,
+            metadata: {
+              date: confirmation.source_date,
+            },
+            projectName: confirmation.project_name,
+          });
+          const proposalRecords = await registerKnowledgeWriteback({
+            accountId,
+            sessionKey: confirmation.chat_id || accountId,
+            taskId: confirmationId,
+            writeback: structuredResult.knowledge_writeback,
+          });
+          structuredResult.knowledge_writeback.proposal_ids = proposalRecords.map((item) => item.id).filter(Boolean);
+          const verification = buildMeetingVerification({
+            structuredResult,
+            summaryContent: confirmation.summary_content,
+            extraEvidence: [
+              {
+                type: EVIDENCE_TYPES.file_updated,
+                summary: `document:${targetDoc.document_id}`,
+              },
+              {
+                type: EVIDENCE_TYPES.DB_write_confirmed,
+                summary: "meeting_document_mapping_saved",
+              },
+              ...(proposalRecords.length
+                ? [
+                    {
+                      type: EVIDENCE_TYPES.knowledge_proposal_created,
+                      summary: `knowledge_proposals:${proposalRecords.length}`,
+                    },
+                  ]
+                : []),
+            ],
+          });
+
+          return {
+            confirmation_id: confirmationId,
+            meeting_type: confirmation.meeting_type,
+            project_name: confirmation.project_name,
+            project_key: confirmation.project_key,
+            target_document: {
+              document_id: targetDoc.document_id,
+              title: targetDoc.title,
+            },
+            write_result: writeResult,
+            tracker_updates: trackerUpdates,
+            structured_result: structuredResult,
+            knowledge_proposals: proposalRecords,
+            verification,
+            workflow_state: "writing_back",
+          };
+        },
+      }),
+    });
+
+    if (!mutationExecution.ok) {
       return {
         ok: false,
-        error: "write_guard_denied",
-        message: buildWriteGuardMessage(writeGuard),
-        write_guard: writeGuard,
+        error: mutationExecution.error,
+        message: mutationExecution.message,
+        write_guard: mutationExecution.write_guard || null,
       };
     }
-    const execution = await executeLarkWrite({
-      apiName: "meeting_confirm_write",
-      action: "meeting_confirm_write",
-      pathname: "/api/meeting/confirm",
-      accountId,
-      accessToken,
-      logger,
-      confirmation: {
-        kind: "meeting_write",
-        requireConfirm: true,
-        confirm: Boolean(confirmationId),
-        requireConfirmationId: true,
-        confirmationId,
-        pending: pendingConfirmation,
-        consume: async () => deps.consumeConfirmation({
-          confirmationId,
-          accountId,
-        }),
-        invalidMessage: "Meeting confirmation is missing, expired, or no longer matches this account.",
-      },
-      budget: {
-        accountId,
-        sessionKey: pendingConfirmation.chat_id || accountId,
-        scopeKey: writePolicy.scope_key,
-        documentId: pendingConfirmation.target_document_id || null,
-        targetDocumentId: pendingConfirmation.target_document_id || null,
-        content: pendingConfirmation.doc_entry_content || "",
-        payload: {
-          confirmation_id: confirmationId,
-          project_key: pendingConfirmation.project_key || null,
-          meeting_type: pendingConfirmation.meeting_type || null,
-          source_meeting_id: pendingConfirmation.source_meeting_id || null,
-        },
-        essential: true,
-        blockedMessage: buildWriteGuardMessage({
-          reason: "policy_enforcement_blocked",
-          policy_enforcement: {
-            message: "Meeting write is blocked by Lark write budget or duplicate suppression.",
-          },
-        }),
-      },
-      performWrite: async ({ confirmation }) => {
-        const targetDoc = confirmation.target_document_id
-          ? {
-              document_id: confirmation.target_document_id,
-              title: confirmation.target_document_title || buildMeetingDocTitle(confirmation.project_name, confirmation.meeting_type),
-            }
-          : await ensureMeetingDocument({
-              accessToken,
-              accountId,
-              accountOpenId,
-              projectKey: confirmation.project_key,
-              projectName: confirmation.project_name,
-              meetingType: confirmation.meeting_type,
-              chatId: confirmation.chat_id,
-            });
-
-        const writeResult = await prependMeetingEntry({
-          accessToken,
-          documentId: targetDoc.document_id,
-          content: confirmation.doc_entry_content,
-        });
-
-        deps.saveMeetingDocumentMapping({
-          accountId,
-          projectKey: confirmation.project_key,
-          projectName: confirmation.project_name,
-          meetingType: confirmation.meeting_type,
-          documentId: targetDoc.document_id,
-          title: targetDoc.title,
-          chatId: confirmation.chat_id,
-        });
-
-        let trackerUpdates = [];
-        if (confirmation.meeting_type === "weekly" && Array.isArray(confirmation.weekly_todos)) {
-          trackerUpdates = await updateWeeklyTodoTracker(
-            {
-              todos: confirmation.weekly_todos.map((item) => ({
-                title: item.title,
-                owner: item.owner,
-                objective: item.objective,
-                kr: item.kr,
-              })),
-            },
-            {
-              projectKey: confirmation.project_key,
-              accountId,
-              sourceDate: confirmation.source_date,
-              sourceMeetingId: confirmation.source_meeting_id,
-              transcriptText: confirmation.summary_content,
-            },
-          );
-        }
-
-        const structuredResult = buildMeetingStructuredResult({
-          summary: confirmation.meeting_type === "weekly"
-            ? sanitizeWeeklySummary({
-                todos: confirmation.weekly_todos,
-              }, confirmation.summary_content, {
-                date: confirmation.source_date,
-              })
-            : sanitizeGeneralSummary({}, confirmation.summary_content, {
-                date: confirmation.source_date,
-              }),
-          classification: {
-            meeting_type: confirmation.meeting_type,
-          },
-          transcriptText: confirmation.summary_content,
-          metadata: {
-            date: confirmation.source_date,
-          },
-          projectName: confirmation.project_name,
-        });
-        const proposalRecords = await registerKnowledgeWriteback({
-          accountId,
-          sessionKey: confirmation.chat_id || accountId,
-          taskId: confirmationId,
-          writeback: structuredResult.knowledge_writeback,
-        });
-        structuredResult.knowledge_writeback.proposal_ids = proposalRecords.map((item) => item.id).filter(Boolean);
-        const verification = buildMeetingVerification({
-          structuredResult,
-          summaryContent: confirmation.summary_content,
-          extraEvidence: [
-            {
-              type: EVIDENCE_TYPES.file_updated,
-              summary: `document:${targetDoc.document_id}`,
-            },
-            {
-              type: EVIDENCE_TYPES.DB_write_confirmed,
-              summary: "meeting_document_mapping_saved",
-            },
-            ...(proposalRecords.length
-              ? [
-                  {
-                    type: EVIDENCE_TYPES.knowledge_proposal_created,
-                    summary: `knowledge_proposals:${proposalRecords.length}`,
-                  },
-                ]
-              : []),
-          ],
-        });
-
-        return {
-          confirmation_id: confirmationId,
-          meeting_type: confirmation.meeting_type,
-          project_name: confirmation.project_name,
-          project_key: confirmation.project_key,
-          target_document: {
-            document_id: targetDoc.document_id,
-            title: targetDoc.title,
-          },
-          write_result: writeResult,
-          tracker_updates: trackerUpdates,
-          structured_result: structuredResult,
-          knowledge_proposals: proposalRecords,
-          verification,
-          workflow_state: "writing_back",
-        };
-      },
-    });
-
-    if (!execution.ok) {
+    const execution = mutationExecution.result;
+    if (!execution?.ok) {
       return {
         ok: false,
         error: execution.error,

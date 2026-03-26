@@ -75,6 +75,17 @@ const PHASE2_ROUTE_WRITE_POLICY_ENFORCEMENT = Object.freeze([
     },
   }),
   buildEnforcementRecord({
+    action: "update_doc",
+    pathname: "/api/doc/update",
+    mode: "warn",
+    checks: {
+      scope_key: true,
+      idempotency_key: false,
+      confirm_required: true,
+      review_required: true,
+    },
+  }),
+  buildEnforcementRecord({
     action: "drive_organize_apply",
     pathname: "/api/drive/organize/apply",
     mode: "observe",

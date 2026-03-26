@@ -8,6 +8,7 @@ import {
   buildDocumentCommentRewriteApplyWritePolicy,
   buildDriveOrganizeApplyWritePolicy,
   buildMeetingConfirmWritePolicy,
+  buildUpdateDocWritePolicy,
   buildWikiOrganizeApplyWritePolicy,
   buildWritePolicyRecord,
   cloneWritePolicyRecord,
@@ -16,6 +17,7 @@ import {
 export const MUTATION_ADMISSION_CONTRACT_VERSION = "mutation_admission_contract_v1";
 export const MUTATION_ADMISSION_ACTION_TYPES = Object.freeze([
   "create_doc",
+  "update_doc",
   "meeting_confirm_write",
   "rewrite_apply",
   "organize_apply",
@@ -45,6 +47,14 @@ const MUTATION_ADMISSION_READY_ROUTE_FIXTURES = Object.freeze([
     builder: "buildCreateDocCanonicalRequest",
     action_type: "create_doc",
     resource_type: "doc_container",
+  }),
+  Object.freeze({
+    route_id: "update_doc",
+    pathname: "/api/doc/update",
+    method: "POST",
+    builder: "buildUpdateDocCanonicalRequest",
+    action_type: "update_doc",
+    resource_type: "doc",
   }),
   Object.freeze({
     route_id: "meeting_confirm_api",
@@ -202,6 +212,12 @@ function buildPolicySnapshotFromCanonicalRequest(canonicalRequest = null) {
     basePolicy = buildCreateDocWritePolicy({
       scopeKey,
       folderToken: resourceId || "",
+      idempotencyKey,
+    });
+  } else if (actionType === "update_doc") {
+    basePolicy = buildUpdateDocWritePolicy({
+      scopeKey,
+      documentId: resourceId || "",
       idempotencyKey,
     });
   } else if (actionType === "meeting_confirm_write") {
@@ -390,6 +406,44 @@ export function buildCreateDocCanonicalRequest({
     actionType: "create_doc",
     resourceType: "doc_container",
     resourceId: folderToken,
+    actor: {
+      source: actor.source || writePolicy.source,
+      owner: actor.owner || writePolicy.owner,
+      accountId: actor.accountId ?? actor.account_id ?? null,
+    },
+    context: {
+      pathname,
+      method,
+      scopeKey: context.scopeKey ?? context.scope_key ?? writePolicy.scope_key,
+      idempotencyKey: context.idempotencyKey ?? context.idempotency_key ?? writePolicy.idempotency_key,
+      externalWrite: context.externalWrite ?? context.external_write ?? writePolicy.external_write,
+      confirmed: context.confirmed,
+      verifierCompleted: context.verifierCompleted ?? context.verifier_completed,
+      reviewRequiredActive: context.reviewRequiredActive ?? context.review_required_active,
+    },
+    originalRequest,
+  });
+}
+
+export function buildUpdateDocCanonicalRequest({
+  pathname = "/api/doc/update",
+  method = "POST",
+  documentId = "",
+  actor = {},
+  context = {},
+  originalRequest = null,
+} = {}) {
+  const writePolicy = buildUpdateDocWritePolicy({
+    scopeKey: context.scopeKey ?? context.scope_key,
+    documentId,
+    actionType: context.actionType ?? context.action_type ?? "update",
+    confirmRequired: (context.confirmRequired ?? context.confirm_required) === true,
+    idempotencyKey: context.idempotencyKey ?? context.idempotency_key,
+  });
+  return buildCanonicalMutationRequest({
+    actionType: "update_doc",
+    resourceType: "doc",
+    resourceId: documentId,
     actor: {
       source: actor.source || writePolicy.source,
       owner: actor.owner || writePolicy.owner,

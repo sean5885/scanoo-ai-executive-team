@@ -8,13 +8,14 @@ import {
   buildDocumentCommentRewriteApplyCanonicalRequest,
   buildDriveOrganizeApplyCanonicalRequest,
   buildMeetingConfirmWriteCanonicalRequest,
+  buildUpdateDocCanonicalRequest,
   buildWikiOrganizeApplyCanonicalRequest,
   collectCanonicalMutationRequestSchemaIssues,
   collectMutationAdmissionOutputSchemaIssues,
   listMutationAdmissionReadyRoutes,
 } from "../src/mutation-admission.mjs";
 
-test("canonical mutation builders emit the fixed request schema for the six Step 2 route families", () => {
+test("canonical mutation builders emit the fixed request schema for the current Step 2 route families", () => {
   const createDoc = buildCreateDocCanonicalRequest({
     pathname: "/api/doc/create",
     folderToken: "fld-1",
@@ -39,6 +40,16 @@ test("canonical mutation builders emit the fixed request schema for the six Step
   });
   const rewrite = buildDocumentCommentRewriteApplyCanonicalRequest({
     documentId: "doc-2",
+    actor: {
+      accountId: "acct-1",
+    },
+    context: {
+      confirmed: true,
+      verifierCompleted: true,
+    },
+  });
+  const updateDoc = buildUpdateDocCanonicalRequest({
+    documentId: "doc-update-1",
     actor: {
       accountId: "acct-1",
     },
@@ -82,7 +93,7 @@ test("canonical mutation builders emit the fixed request schema for the six Step
     },
   });
 
-  for (const request of [createDoc, meeting, rewrite, drive, wiki, companyBrain]) {
+  for (const request of [createDoc, meeting, rewrite, updateDoc, drive, wiki, companyBrain]) {
     assert.deepEqual(collectCanonicalMutationRequestSchemaIssues(request), []);
   }
 
@@ -91,6 +102,8 @@ test("canonical mutation builders emit the fixed request schema for the six Step
   assert.equal(meeting.action_type, "meeting_confirm_write");
   assert.equal(meeting.resource_type, "doc");
   assert.equal(rewrite.action_type, "rewrite_apply");
+  assert.equal(updateDoc.action_type, "update_doc");
+  assert.equal(updateDoc.resource_type, "doc");
   assert.equal(drive.resource_type, "drive_folder");
   assert.equal(wiki.resource_type, "wiki_space");
   assert.equal(companyBrain.action_type, "company_brain_apply");
@@ -169,9 +182,10 @@ test("ready route list stays builder-only and covers the current Step 2 surfaces
   const routes = listMutationAdmissionReadyRoutes();
   const pathnames = routes.map((entry) => entry.pathname);
 
-  assert.equal(routes.length, 8);
+  assert.equal(routes.length, 9);
   assert.equal(pathnames.includes("/api/doc/create"), true);
   assert.equal(pathnames.includes("/agent/docs/create"), true);
+  assert.equal(pathnames.includes("/api/doc/update"), true);
   assert.equal(pathnames.includes("/api/meeting/confirm"), true);
   assert.equal(pathnames.includes("/meeting/confirm"), true);
   assert.equal(pathnames.includes("/api/doc/rewrite-from-comments"), true);

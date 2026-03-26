@@ -27,8 +27,8 @@ Phase 1 的 unified admission adapter 可以收斂成一個非常窄的 contract
 
 ```json
 {
-  "action_type": "create_doc | meeting_confirm | rewrite_apply | organize_apply | company_brain_apply",
-  "resource_type": "doc | drive_folder | wiki_space | company_brain_doc",
+  "action_type": "create_doc | update_doc | meeting_confirm_write | rewrite_apply | organize_apply | company_brain_apply",
+  "resource_type": "doc | doc_container | drive_folder | wiki_space | company_brain_doc",
   "resource_id": "string | null",
   "actor": {
     "source": "string",
@@ -122,11 +122,16 @@ Phase 1 只需要這樣收斂：
 
 - `create_doc`
   - `action_type = create_doc`
-  - `resource_type = drive_folder`
+  - `resource_type = doc_container`
   - `resource_id = folder_token || null`
 
+- `update_doc`
+  - `action_type = update_doc`
+  - `resource_type = doc`
+  - `resource_id = document_id`
+
 - `meeting_confirm_write`
-  - `action_type = meeting_confirm`
+  - `action_type = meeting_confirm_write`
   - `resource_type = doc`
   - `resource_id = target_document_id || null`
 

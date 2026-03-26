@@ -496,14 +496,14 @@ test("meeting confirmation deny path logs write observability fields", async () 
   assert.equal(denied?.ok, false);
   assert.equal(denied?.error, "write_guard_denied");
   assert.equal(denied?.write_guard?.error_code, "write_guard_verifier_incomplete");
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0][0], "write_guard_decision");
-  assert.equal(calls[0][1].owner, "meeting_agent");
-  assert.equal(calls[0][1].workflow, "meeting");
-  assert.equal(calls[0][1].status, "deny");
-  assert.equal(calls[0][1].allow, false);
-  assert.equal(calls[0][1].reason, "verifier_incomplete");
-  assert.equal(calls[0][1].error_code, "write_guard_verifier_incomplete");
+  const decisionLog = calls.find((entry) => entry[0] === "write_guard_decision");
+  assert.ok(decisionLog);
+  assert.equal(decisionLog[1].owner, "meeting_agent");
+  assert.equal(decisionLog[1].workflow, "mutation_admission_adapter");
+  assert.equal(decisionLog[1].status, "deny");
+  assert.equal(decisionLog[1].allow, false);
+  assert.equal(decisionLog[1].reason, "verifier_incomplete");
+  assert.equal(decisionLog[1].error_code, "write_guard_verifier_incomplete");
 });
 
 test("prependMeetingEntry deduplicates repeated meeting content", async () => {

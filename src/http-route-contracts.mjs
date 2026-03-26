@@ -124,6 +124,10 @@ const EXACT_ROUTE_CONTRACTS = new Map([
     governance: getDocumentCreateGovernanceContract(),
     write_policy: getPhase1RouteWritePolicyFixture("/agent/docs/create")?.write_policy,
   }],
+  ["/api/doc/update", {
+    action: "update_doc",
+    write_policy: getPhase1RouteWritePolicyFixture("/api/doc/update")?.write_policy,
+  }],
   ["/api/drive/organize/apply", {
     action: "drive_organize_apply",
     write_policy: getPhase1RouteWritePolicyFixture("/api/drive/organize/apply")?.write_policy,

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { runMutation } from "../src/mutation-runtime.mjs";
+import { buildMeetingConfirmWriteCanonicalRequest } from "../src/mutation-admission.mjs";
 
 test("runMutation returns a stable error when no execute callback is provided", async () => {
   const result = await runMutation({
@@ -164,4 +165,43 @@ test("runMutation returns a stable execution_failed boundary with timing when ex
   } finally {
     Date.now = originalNow;
   }
+});
+
+test("runMutation denies execute when canonical mutation admission blocks the write", async () => {
+  const canonicalRequest = buildMeetingConfirmWriteCanonicalRequest({
+    pathname: "/api/meeting/confirm",
+    targetDocumentId: "doc-1",
+    actor: {
+      accountId: "acct-1",
+    },
+    context: {
+      confirmed: false,
+      verifierCompleted: true,
+    },
+  });
+  let called = false;
+
+  const result = await runMutation({
+    action: "meeting_confirm_write",
+    payload: {
+      confirmation_id: "confirm-1",
+    },
+    context: {
+      account_id: "acct-1",
+      pathname: "/api/meeting/confirm",
+      canonical_request: canonicalRequest,
+    },
+    async execute() {
+      called = true;
+      return { ok: true };
+    },
+  });
+
+  assert.equal(called, false);
+  assert.equal(result.ok, false);
+  assert.equal(result.action, "meeting_confirm_write");
+  assert.equal(result.error, "write_guard_denied");
+  assert.equal(result.write_guard?.reason, "confirmation_required");
+  assert.equal(result.admission?.allowed, false);
+  assert.equal(result.message, "External write requires explicit confirmation before apply.");
 });

@@ -986,6 +986,11 @@ function extractOperationNames(text = "") {
   return [...new Set(matches.map((match) => cleanText(match[1])).filter(Boolean))].sort((left, right) => left.localeCompare(right));
 }
 
+function extractMutationRuntimeActions(text = "") {
+  const matches = [...String(text || "").matchAll(/runMutation\(\{[\s\S]{0,400}?action:\s*"([^"]+)"/g)];
+  return [...new Set(matches.map((match) => cleanText(match[1])).filter(Boolean))].sort((left, right) => left.localeCompare(right));
+}
+
 function buildUniqueSorted(items = []) {
   return [...new Set(items.map((item) => cleanText(item)).filter(Boolean))].sort((left, right) => left.localeCompare(right));
 }
@@ -1764,13 +1769,17 @@ export async function buildWriteSummary() {
   const guardedOperations = [
     ...extractOperationNames(httpServerText),
     ...extractOperationNames(meetingAgentText),
+    ...extractMutationRuntimeActions(httpServerText),
+    ...extractMutationRuntimeActions(meetingAgentText),
   ].filter(Boolean);
   const uniqueGuardedOperations = [...new Set(guardedOperations)].sort((left, right) => left.localeCompare(right));
   const expectedGuardedOperations = [
+    "create_doc",
     "document_comment_rewrite_apply",
     "document_company_brain_ingest",
     "drive_organize_apply",
     "meeting_confirm_write",
+    "update_doc",
     "wiki_organize_apply",
   ];
   const writePolicyRouteChecks = buildWritePolicyRouteChecks();
@@ -1812,9 +1821,15 @@ export async function buildWriteSummary() {
     normalizeIntegrationPoint({
       name: "meeting_agent_guarded_confirm_write",
       file: FILES.meetingAgent,
-      ok: meetingAgentText.includes("operation: \"meeting_confirm_write\""),
+      ok:
+        meetingAgentText.includes("runMutation({")
+        && meetingAgentText.includes("action: \"meeting_confirm_write\"")
+        && meetingAgentText.includes("canonical_request: resolvedCanonicalRequest"),
       details: {
-        guarded_operations: extractOperationNames(meetingAgentText),
+        guarded_operations: buildUniqueSorted([
+          ...extractOperationNames(meetingAgentText),
+          ...extractMutationRuntimeActions(meetingAgentText),
+        ]),
       },
     }),
     normalizeIntegrationPoint({
@@ -1851,8 +1866,8 @@ export async function buildWriteSummary() {
       ok:
         writeGuardText.includes("write_policy_enforcement_warning")
         && writeGuardText.includes("write_policy_enforcement_observed")
-        && httpServerText.includes("evaluateWritePolicyEnforcement(")
-        && meetingAgentText.includes("pathname: \"/api/meeting/confirm\""),
+        && httpServerText.includes("canonical_request: canonicalRequest")
+        && meetingAgentText.includes("canonical_request: resolvedCanonicalRequest"),
       details: {
         enforcement_warning_logs: countMatches(writeGuardText, /write_policy_enforcement_warning/g),
         enforcement_observe_logs: countMatches(writeGuardText, /write_policy_enforcement_observed/g),

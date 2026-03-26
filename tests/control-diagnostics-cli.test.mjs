@@ -62,17 +62,18 @@ test("control diagnostics CLI renders the fixed single-view summary", async () =
     ROUTING_DIAGNOSTICS_ARCHIVE_DIR: routingArchiveDir,
   });
 
-  assert.equal(status, 1);
+  assert.equal(status, 0);
   assert.match(output, /Control Diagnostics/);
-  assert.match(output, /summary: overall=fail \| control=pass \| routing=pass \| write=fail/);
+  assert.match(output, /summary: overall=pass \| control=pass \| routing=pass \| write=pass/);
   assert.match(output, /control_summary: issues=0 \| decisions=3 \| owners=3 \| integrations=3/);
   assert.match(output, /routing_summary: status=pass \| accuracy=1 \| compare=unavailable \| doc_boundary_regression=false/);
-  assert.match(output, /write_summary: issues=1 \| guarded_operations=5 \| policy_actions=5 \| enforced_routes=7 \| modes=enforce:2,observe:2,warn:3/);
-  assert.match(output, /reporting_summary: error_code_groups=1 \| failure_groups=1 \| top_regressions=1/);
-  assert.match(output, /top_regressions: write_integration_missing:http_server_guarded_operations/);
+  assert.match(output, /write_summary: issues=0 \| guarded_operations=7 \| policy_actions=6 \| enforced_routes=8 \| modes=enforce:2,observe:2,warn:4/);
+  assert.match(output, /reporting_summary: error_code_groups=0 \| failure_groups=0 \| top_regressions=0/);
+  assert.match(output, /top_regressions: none/);
   assert.match(output, /write_route: \/api\/doc\/rewrite-from-comments \| action=document_comment_rewrite_apply \| mode=warn/);
-  assert.match(output, /write_route: \/api\/meeting\/confirm \| action=meeting_confirm_write \| mode=warn .* recommendation=hold_warn/);
-  assert.match(output, /decision: inspect_write_guard \| line write/);
+  assert.match(output, /write_route: \/api\/meeting\/confirm \| action=meeting_confirm_write \| mode=warn .* violation_rate=unknown .* recommendation=hold_warn/);
+  assert.match(output, /write_route: \/api\/doc\/update \| action=update_doc \| mode=warn .* violation_rate=unknown .* recommendation=keep_warn/);
+  assert.match(output, /decision: observe_only \| line none/);
 });
 
 test("control diagnostics CLI archives the full JSON report into snapshot history", async () => {
@@ -90,18 +91,18 @@ test("control diagnostics CLI archives the full JSON report into snapshot histor
   const latestEntry = manifest.snapshots[0];
   const snapshot = readJson(path.join(controlArchiveDir, "snapshots", `${manifest.latest_run_id}.json`));
 
-  assert.equal(status, 1);
+  assert.equal(status, 0);
   assert.equal(manifest.latest_run_id, latestEntry.run_id);
   assert.deepEqual(latestEntry, {
     run_id: manifest.latest_run_id,
     timestamp: latestEntry.timestamp,
-    overall_status: "fail",
+    overall_status: "pass",
     control_status: "pass",
     routing_status: "pass",
-    write_status: "fail",
+    write_status: "pass",
     control_issue_count: 0,
     routing_issue_count: 0,
-    write_issue_count: 1,
+    write_issue_count: 0,
   });
   assert.deepEqual(snapshot, parsed);
 });
@@ -246,87 +247,56 @@ test("control diagnostics reporting emits stable top regression cases without ch
     routingArchiveDir,
   });
 
-  assert.equal(report.ok, false);
+  assert.equal(report.ok, true);
   assert.deepEqual(report.diagnostics_summary, {
-    overall_status: "fail",
+    overall_status: "pass",
     control_status: "pass",
     routing_status: "pass",
-    write_status: "fail",
+    write_status: "pass",
     control_issue_count: 0,
     routing_issue_count: 0,
-    write_issue_count: 1,
+    write_issue_count: 0,
   });
-  assert.equal(report.decision.action, "inspect_write_guard");
-  assert.equal(report.decision.line, "write");
+  assert.equal(report.decision.action, "observe_only");
+  assert.equal(report.decision.line, "none");
   assert.deepEqual(report.reporting_summary, {
-    error_code_class_count: 1,
-    failure_group_count: 1,
-    top_regression_case_count: 1,
-    error_code_classes: [
-      {
-        class_key: "write_integration_missing",
-        line: "write",
-        status: "fail",
-        count: 1,
-        source_types: ["issue"],
-        sample_codes: ["write_integration_missing:http_server_guarded_operations"],
-      },
-    ],
-    failure_groups: [
-      {
-        group_key: "write:integration_surface",
-        line: "write",
-        status: "fail",
-        count: 1,
-        error_code_classes: ["write_integration_missing"],
-        sample_cases: ["write_integration_missing:http_server_guarded_operations"],
-        files: [path.join(process.cwd(), "src/http-server.mjs")],
-      },
-    ],
-    top_regression_cases: [
-      {
-        rank: 1,
-        line: "write",
-        status: "fail",
-        source: "issue",
-        case_id: "write_integration_missing:http_server_guarded_operations",
-        code: "write_integration_missing:http_server_guarded_operations",
-        summary: "Write guard integration missing: http_server_guarded_operations",
-        file: path.join(process.cwd(), "src/http-server.mjs"),
-        error_code_class: "write_integration_missing",
-        failure_group: "write:integration_surface",
-      },
-    ],
+    error_code_class_count: 0,
+    failure_group_count: 0,
+    top_regression_case_count: 0,
+    error_code_classes: [],
+    failure_groups: [],
+    top_regression_cases: [],
   });
   assert.deepEqual(report.write_summary.policy_actions, [
     "create_doc",
     "document_comment_rewrite_apply",
     "drive_organize_apply",
     "meeting_confirm_write",
+    "update_doc",
     "wiki_organize_apply",
   ]);
-  assert.equal(report.write_summary.policy_route_checks.length, 7);
+  assert.equal(report.write_summary.policy_route_checks.length, 8);
   assert.equal(report.write_summary.policy_route_checks.every((item) => item.ok), true);
-  assert.equal(report.write_summary.enforcement_route_checks.length, 7);
+  assert.equal(report.write_summary.enforcement_route_checks.length, 8);
   assert.equal(report.write_summary.enforcement_route_checks.every((item) => item.ok), true);
   assert.deepEqual(report.write_summary.policy_coverage, {
-    metadata_route_count: 7,
-    enforced_route_count: 7,
-    metadata_action_count: 5,
-    enforced_action_count: 5,
+    metadata_route_count: 8,
+    enforced_route_count: 8,
+    metadata_action_count: 6,
+    enforced_action_count: 6,
     route_coverage_ratio: 1,
     action_coverage_ratio: 1,
   });
   assert.deepEqual(report.write_summary.enforcement_modes.mode_counts, {
     enforce: 2,
     observe: 2,
-    warn: 3,
+    warn: 4,
   });
   assert.deepEqual(report.write_summary.violation_type_stats, {
-    missing_scope_key: 7,
+    missing_scope_key: 8,
     missing_idempotency_key: 2,
     confirm_required: 7,
-    review_required: 4,
+    review_required: 5,
   });
   assert.equal(report.write_summary.rollout_advice.upgrade_ready_routes.some((route) => route.action === "document_comment_rewrite_apply"), false);
   assert.equal(report.write_summary.rollout_advice.high_risk_routes.some((route) => route.action === "meeting_confirm_write"), true);
@@ -536,7 +506,7 @@ test("control diagnostics CLI renders compare-previous with directional markers"
     CONTROL_DIAGNOSTICS_ARCHIVE_DIR: controlArchiveDir,
     ROUTING_DIAGNOSTICS_ARCHIVE_DIR: routingArchiveDir,
   });
-  assert.equal(initial.status, 1);
+  assert.equal(initial.status, 0);
 
   const manifestPath = path.join(controlArchiveDir, "manifest.json");
   const manifest = readJson(manifestPath);
@@ -565,17 +535,17 @@ test("control diagnostics CLI renders compare-previous with directional markers"
     ROUTING_DIAGNOSTICS_ARCHIVE_DIR: routingArchiveDir,
   });
 
-  assert.equal(status, 1);
+  assert.equal(status, 0);
   assert.match(output, /Control Diagnostics Compare/);
   assert.match(output, /Current: snapshot:control-diagnostics-/);
   assert.match(output, new RegExp(`Compare: snapshot:${firstRunId}`));
-  assert.match(output, /= overall_status: fail/);
+  assert.match(output, /↓ overall_status: fail -> pass/);
   assert.match(output, /↓ control_status: fail -> pass/);
   assert.match(output, /= routing_status: pass/);
-  assert.match(output, /= write_status: fail/);
+  assert.match(output, /↓ write_status: fail -> pass/);
   assert.match(output, /↓ control_issue_count: 2 -> 0 \(-2\)/);
   assert.match(output, /= routing_issue_count: 0/);
-  assert.match(output, /= write_issue_count: 1/);
+  assert.match(output, /↓ write_issue_count: 1 -> 0 \(-1\)/);
   assert.match(output, /Manifest:/);
 });
 
@@ -589,7 +559,7 @@ test("control diagnostics CLI json compare_summary only includes changed fields"
     CONTROL_DIAGNOSTICS_ARCHIVE_DIR: controlArchiveDir,
     ROUTING_DIAGNOSTICS_ARCHIVE_DIR: routingArchiveDir,
   });
-  assert.equal(initial.status, 1);
+  assert.equal(initial.status, 0);
 
   const manifestPath = path.join(controlArchiveDir, "manifest.json");
   const manifest = readJson(manifestPath);
@@ -617,12 +587,12 @@ test("control diagnostics CLI json compare_summary only includes changed fields"
   const updatedManifest = readJson(manifestPath);
   const latestSnapshot = readJson(path.join(controlArchiveDir, "snapshots", `${updatedManifest.latest_run_id}.json`));
 
-  assert.equal(status, 1);
+  assert.equal(status, 0);
   assert.deepEqual(parsed.compare_summary, {
     overall_status: {
       previous: "degrade",
-      current: "fail",
-      status: "worse",
+      current: "pass",
+      status: "better",
     },
     routing_status: {
       previous: "degrade",

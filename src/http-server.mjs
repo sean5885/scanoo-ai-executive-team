@@ -167,9 +167,6 @@ import {
   buildCreateDocWritePolicy,
 } from "./write-policy-contract.mjs";
 import {
-  evaluateWritePolicyEnforcement,
-} from "./write-policy-enforcement.mjs";
-import {
   buildAgentLearningSummary,
   generateLearningLoopImprovementProposals,
 } from "./agent-learning-loop.mjs";
@@ -180,6 +177,7 @@ import {
   buildDocumentCommentRewriteApplyCanonicalRequest,
   buildDriveOrganizeApplyCanonicalRequest,
   buildMeetingConfirmWriteCanonicalRequest,
+  buildUpdateDocCanonicalRequest,
   buildWikiOrganizeApplyCanonicalRequest,
 } from "./mutation-admission.mjs";
 import {
@@ -1132,6 +1130,7 @@ function respondWriteExecutionFailure(res, execution, fallbackStatusCode = 409) 
     error: execution?.error || "write_guard_denied",
     ...(execution?.message ? { message: execution.message } : {}),
     write_guard: execution?.write_guard || null,
+    ...(Array.isArray(execution?.violation_types) ? { violation_types: execution.violation_types } : {}),
   });
 }
 
@@ -3502,58 +3501,6 @@ async function handleDocumentCreate(
     },
     originalRequest: body,
   });
-  const admission = admitRouteMutation({
-    logger,
-    traceId: res.__trace_id || null,
-    accountId: context.account.id,
-    canonicalRequest,
-    operation: "create_doc",
-  });
-  if (!admission.allowed) {
-    const legacyWriteGuard = buildLegacyWriteGuardFromAdmission(admission);
-    if (legacyWriteGuard.reason === "policy_enforcement_blocked") {
-      logger.warn("document_create_blocked_by_write_policy_enforcement", {
-        account_id: context.account.id,
-        write_policy: resolvedWritePolicy,
-        write_policy_enforcement: legacyWriteGuard.policy_enforcement,
-      });
-      respondDocumentWriteFailure(res, 409, "write_policy_enforcement_blocked", {
-        message: legacyWriteGuard.policy_enforcement?.message || buildWriteGuardMessage(legacyWriteGuard),
-        violation_types: Array.isArray(legacyWriteGuard.policy_enforcement?.violation_types)
-          ? legacyWriteGuard.policy_enforcement.violation_types
-          : [],
-      });
-      return;
-    }
-    respondDocumentWriteFailure(res, getWriteGuardStatusCode(legacyWriteGuard), "write_guard_denied", {
-      message: buildWriteGuardMessage(legacyWriteGuard),
-      write_guard: legacyWriteGuard,
-    });
-    return;
-  }
-  const writePolicyEnforcement = evaluateWritePolicyEnforcement({
-    action: "create_doc",
-    pathname,
-    writePolicy: resolvedWritePolicy,
-    confirmed: effectiveConfirm === true,
-    reviewCompleted: true,
-    reviewRequirementActive: false,
-    scopeKey: resolvedWritePolicy.scope_key,
-    idempotencyKey,
-  });
-  if (writePolicyEnforcement.should_block) {
-    logger.warn("document_create_blocked_by_write_policy_enforcement", {
-      account_id: context.account.id,
-      write_policy: resolvedWritePolicy,
-      write_policy_enforcement: writePolicyEnforcement,
-    });
-    respondDocumentWriteFailure(res, 409, "write_policy_enforcement_blocked", {
-      message: writePolicyEnforcement.message,
-      violation_types: writePolicyEnforcement.violation_types,
-    });
-    return;
-  }
-
   logger.info("document_create_started", {
     account_id: context.account.id,
     has_folder_token: Boolean(folderToken),
@@ -3562,7 +3509,6 @@ async function handleDocumentCreate(
     has_initial_content: Boolean(content),
     demo_like: createGuard.classification?.demo_like === true,
     write_policy: resolvedWritePolicy,
-    write_policy_enforcement: writePolicyEnforcement,
   });
   const mutationExecution = await runMutation({
     action: "create_doc",
@@ -3582,6 +3528,7 @@ async function handleDocumentCreate(
       pathname,
       account_id: context.account.id,
       trace_id: res.__trace_id || null,
+      logger,
       canonical_request: canonicalRequest,
       write_policy: resolvedWritePolicy,
     },
@@ -3712,7 +3659,6 @@ async function handleDocumentCreate(
           permission_grant_failed: permissionGrantFailed,
           permission_grant_skipped: permissionGrantSkipped,
           write_policy: resolvedWritePolicy,
-          write_policy_enforcement: writePolicyEnforcement,
         });
 
         return {
@@ -3728,10 +3674,20 @@ async function handleDocumentCreate(
     }),
   });
   if (!mutationExecution.ok) {
-    jsonResponse(res, 500, {
-      ok: false,
-      error: mutationExecution.error || "mutation_runtime_error",
-    });
+    if (mutationExecution.error === "write_policy_enforcement_blocked") {
+      respondDocumentWriteFailure(res, 409, "write_policy_enforcement_blocked", {
+        message: mutationExecution.message,
+        violation_types: Array.isArray(mutationExecution.violation_types)
+          ? mutationExecution.violation_types
+          : [],
+      });
+      return;
+    }
+    respondWriteExecutionFailure(
+      res,
+      mutationExecution,
+      mutationExecution.error === "execution_failed" ? 500 : 409,
+    );
     return;
   }
 
@@ -4789,62 +4745,106 @@ async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogg
     mode: resolvedMode,
     target_heading: targetHeading || null,
   });
-  const execution = await executeLarkWrite({
-    apiName: "document_update",
-    action: targeting
-      ? "document_update_targeted_apply"
-      : resolvedMode === "replace"
-        ? "document_update_replace_apply"
-        : "document_update",
+  const canonicalRequest = buildUpdateDocCanonicalRequest({
     pathname: "/api/doc/update",
-    accountId: context.account.id,
-    accessToken: context.token,
-    traceId: res.__trace_id || null,
-    logger,
-    confirmation: resolvedMode === "replace"
-      ? {
-          kind: "document_replace",
-          requireConfirm: true,
-          confirm,
-          requireConfirmationId: true,
-          confirmationId,
-          pending: pendingReplaceConfirmation,
-          consume: async () => consumeDocumentReplaceConfirmation({
-            confirmationId,
-            accountId: context.account.id,
-            documentId: finalDocumentId,
-            proposedContent: resolvedContent,
-          }),
-        }
-      : {
-          kind: "document_update",
-          requireConfirm: false,
-          confirm,
-        },
-    budget: {
-      sessionKey: context.account.id,
-      scopeKey: `document:${finalDocumentId}`,
-      documentId: finalDocumentId,
-      targetDocumentId: finalDocumentId,
-      content: resolvedContent,
-      payload: {
-        mode: resolvedMode,
-        target_heading: targetHeading || null,
-        target_position: targetPosition || null,
-      },
+    method: "POST",
+    documentId: finalDocumentId,
+    actor: {
+      accountId: context.account.id,
     },
-    performWrite: async ({ accessToken }) => getHttpService("updateDocument", updateDocument)(
-      accessToken,
-      finalDocumentId,
-      resolvedContent,
-      resolvedMode,
-    ),
+    context: {
+      actionType: resolvedMode === "replace" ? "replace" : "update",
+      confirmRequired: resolvedMode === "replace",
+      idempotencyKey: getRequestIdempotencyKey(body),
+      confirmed: resolvedMode === "replace"
+        ? confirm === true && Boolean(confirmationId)
+        : true,
+      verifierCompleted: true,
+      reviewRequiredActive: false,
+    },
+    originalRequest: body,
   });
-  if (!execution.ok) {
-    respondDocumentWriteFailure(res, getWriteGuardStatusCode(execution.write_guard), execution.error, {
-      message: execution.message,
-      write_guard: execution.write_guard || null,
-    });
+  const mutationExecution = await runMutation({
+    action: "update_doc",
+    payload: {
+      document_id: finalDocumentId,
+      content: resolvedContent,
+      mode: resolvedMode,
+      target_heading: targetHeading || null,
+      target_position: targetPosition || null,
+      confirmation_id: confirmationId || null,
+      confirm: confirm === true,
+    },
+    context: {
+      pathname: "/api/doc/update",
+      account_id: context.account.id,
+      trace_id: res.__trace_id || null,
+      logger,
+      canonical_request: canonicalRequest,
+    },
+    execute: async () => executeLarkWrite({
+      apiName: "document_update",
+      action: targeting
+        ? "document_update_targeted_apply"
+        : resolvedMode === "replace"
+          ? "document_update_replace_apply"
+          : "document_update",
+      pathname: "/api/doc/update",
+      accountId: context.account.id,
+      accessToken: context.token,
+      traceId: res.__trace_id || null,
+      logger,
+      confirmation: resolvedMode === "replace"
+        ? {
+            kind: "document_replace",
+            requireConfirm: true,
+            confirm,
+            requireConfirmationId: true,
+            confirmationId,
+            pending: pendingReplaceConfirmation,
+            consume: async () => consumeDocumentReplaceConfirmation({
+              confirmationId,
+              accountId: context.account.id,
+              documentId: finalDocumentId,
+              proposedContent: resolvedContent,
+            }),
+          }
+        : {
+            kind: "document_update",
+            requireConfirm: false,
+            confirm,
+          },
+      budget: {
+        sessionKey: context.account.id,
+        scopeKey: `document:${finalDocumentId}`,
+        documentId: finalDocumentId,
+        targetDocumentId: finalDocumentId,
+        content: resolvedContent,
+        payload: {
+          mode: resolvedMode,
+          target_heading: targetHeading || null,
+          target_position: targetPosition || null,
+        },
+      },
+      performWrite: async ({ accessToken }) => getHttpService("updateDocument", updateDocument)(
+        accessToken,
+        finalDocumentId,
+        resolvedContent,
+        resolvedMode,
+      ),
+    }),
+  });
+  if (!mutationExecution.ok) {
+    respondWriteExecutionFailure(
+      res,
+      mutationExecution,
+      mutationExecution.error === "execution_failed" ? 500 : 409,
+    );
+    return;
+  }
+  const execution = mutationExecution.result;
+  if (!execution?.ok) {
+    respondWriteExecutionFailure(res, execution, execution.error === "execution_failed" ? 500 : 409);
     return;
   }
   const result = execution.result;
@@ -5072,6 +5072,9 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
     pathname: "/api/doc/rewrite-from-comments",
     method: "POST",
     documentId,
+    actor: {
+      accountId: context.account.id,
+    },
     context: {
       idempotencyKey: getRequestIdempotencyKey(body),
       confirmed: confirm === true && Boolean(confirmationId),
@@ -5083,66 +5086,97 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
     },
     originalRequest: body,
   });
-  const execution = await executeLarkWrite({
-    apiName: "document_comment_rewrite_apply",
+  const mutationExecution = await runMutation({
     action: "document_comment_rewrite_apply",
-    pathname: "/api/doc/rewrite-from-comments",
-    accountId: context.account.id,
-    accessToken: context.token,
-    traceId: res.__trace_id || null,
-    logger,
-    canonicalRequest,
-    confirmation: {
-      kind: "comment_rewrite",
-      requireConfirm: true,
-      confirm,
-      requireConfirmationId: true,
-      confirmationId,
-      pending: pendingConfirmation,
-      consume: async () => consumeCommentRewriteConfirmation({
+    payload: {
+      document_id: documentId,
+      confirmation_id: confirmationId,
+      comment_ids: pendingConfirmation.comment_ids || [],
+      resolve_comments: pendingConfirmation.resolve_comments === true,
+    },
+    context: {
+      pathname: "/api/doc/rewrite-from-comments",
+      account_id: context.account.id,
+      trace_id: res.__trace_id || null,
+      logger,
+      canonical_request: canonicalRequest,
+    },
+    execute: async () => executeLarkWrite({
+      apiName: "document_comment_rewrite_apply",
+      action: "document_comment_rewrite_apply",
+      pathname: "/api/doc/rewrite-from-comments",
+      accountId: context.account.id,
+      accessToken: context.token,
+      traceId: res.__trace_id || null,
+      logger,
+      confirmation: {
+        kind: "comment_rewrite",
+        requireConfirm: true,
+        confirm,
+        requireConfirmationId: true,
         confirmationId,
-        accountId: context.account.id,
-        documentId,
-      }),
-      invalidMessage: "The rewrite confirmation is missing or expired. Generate a fresh preview first.",
-    },
-    budget: {
-      sessionKey: context.account.id,
-      scopeKey: workflowScope,
-      documentId,
-      targetDocumentId: documentId,
-      content: pendingConfirmation.rewritten_content || "",
-      payload: {
-        confirmation_id: confirmationId,
-        comment_ids: pendingConfirmation.comment_ids || [],
-        resolve_comments: pendingConfirmation.resolve_comments === true,
-      },
-      essential: true,
-    },
-    performWrite: async ({ accessToken, confirmation }) => {
-      await markDocRewriteApplying({
-        accountId: context.account.id,
-        scope: workflowScope,
-        meta: buildDocumentRewriteTaskMeta("document_rewrite_from_comments_apply", {
-          confirmation_id: confirmationId,
+        pending: pendingConfirmation,
+        consume: async () => consumeCommentRewriteConfirmation({
+          confirmationId,
+          accountId: context.account.id,
+          documentId,
         }),
-      });
-
-      return applyRewrittenDocument(
-        accessToken,
+        invalidMessage: "The rewrite confirmation is missing or expired. Generate a fresh preview first.",
+      },
+      budget: {
+        sessionKey: context.account.id,
+        scopeKey: workflowScope,
         documentId,
-        confirmation.rewritten_content,
-        {
-          patchPlan: confirmation.patch_plan || [],
-          resolveCommentIds: confirmation.resolve_comments ? confirmation.comment_ids : [],
+        targetDocumentId: documentId,
+        content: pendingConfirmation.rewritten_content || "",
+        payload: {
+          confirmation_id: confirmationId,
+          comment_ids: pendingConfirmation.comment_ids || [],
+          resolve_comments: pendingConfirmation.resolve_comments === true,
         },
-      );
-    },
+        essential: true,
+      },
+      performWrite: async ({ accessToken, confirmation }) => {
+        await markDocRewriteApplying({
+          accountId: context.account.id,
+          scope: workflowScope,
+          meta: buildDocumentRewriteTaskMeta("document_rewrite_from_comments_apply", {
+            confirmation_id: confirmationId,
+          }),
+        });
+
+        return applyRewrittenDocument(
+          accessToken,
+          documentId,
+          confirmation.rewritten_content,
+          {
+            patchPlan: confirmation.patch_plan || [],
+            resolveCommentIds: confirmation.resolve_comments ? confirmation.comment_ids : [],
+          },
+        );
+      },
+    }),
   });
-  if (!execution.ok) {
+  if (!mutationExecution.ok) {
     respondDocumentRewriteFailure(
       res,
-      getWriteGuardStatusCode(execution.write_guard),
+      Number(mutationExecution.statusCode || (mutationExecution.error === "execution_failed" ? 500 : 409)),
+      mutationExecution.error,
+      mutationExecution.message,
+      {
+        write_guard: mutationExecution.write_guard || null,
+        ...(Array.isArray(mutationExecution.violation_types)
+          ? { violation_types: mutationExecution.violation_types }
+          : {}),
+      },
+    );
+    return;
+  }
+  const execution = mutationExecution.result;
+  if (!execution?.ok) {
+    respondDocumentRewriteFailure(
+      res,
+      Number(execution.statusCode || (execution.error === "execution_failed" ? 500 : 409)),
       execution.error,
       execution.message,
       { write_guard: execution.write_guard || null },
@@ -5276,45 +5310,27 @@ async function handleMeetingConfirm(res, requestUrl, body, logger = noopHttpLogg
     confirmationId,
     accountId: context.account.id,
   });
-  if (pendingConfirmation) {
-    const canonicalRequest = buildMeetingConfirmWriteCanonicalRequest({
-      pathname: "/api/meeting/confirm",
-      method: "POST",
-      confirmationId,
-      targetDocumentId: pendingConfirmation.target_document_id,
-      context: {
-        idempotencyKey: getRequestIdempotencyKey(body),
-        confirmed: true,
-        verifierCompleted: Boolean(
-          normalizeText(pendingConfirmation.summary_content)
-          && normalizeText(pendingConfirmation.doc_entry_content),
-        ),
-        reviewRequiredActive: false,
-      },
-      originalRequest: body,
-    });
-    const admission = admitRouteMutation({
-      logger,
-      traceId: res.__trace_id || null,
-      accountId: context.account.id,
-      canonicalRequest,
-    });
-    if (!admission.allowed) {
-      const legacyWriteGuard = buildLegacyWriteGuardFromAdmission(admission);
-      logger.warn("meeting_confirm_blocked_by_write_guard", {
-        account_id: context.account.id,
-        confirmation_id: confirmationId,
-        write_guard: legacyWriteGuard,
-      });
-      jsonResponse(res, getWriteGuardStatusCode(legacyWriteGuard), {
-        ok: false,
-        error: "write_guard_denied",
-        message: buildWriteGuardMessage(legacyWriteGuard),
-        write_guard: legacyWriteGuard,
-      });
-      return;
-    }
-  }
+  const canonicalRequest = pendingConfirmation
+    ? buildMeetingConfirmWriteCanonicalRequest({
+        pathname: "/api/meeting/confirm",
+        method: "POST",
+        confirmationId,
+        targetDocumentId: pendingConfirmation.target_document_id,
+        actor: {
+          accountId: context.account.id,
+        },
+        context: {
+          idempotencyKey: getRequestIdempotencyKey(body),
+          confirmed: true,
+          verifierCompleted: Boolean(
+            normalizeText(pendingConfirmation.summary_content)
+            && normalizeText(pendingConfirmation.doc_entry_content),
+          ),
+          reviewRequiredActive: false,
+        },
+        originalRequest: body,
+      })
+    : null;
 
   logger.info("meeting_confirm_started", {
     account_id: context.account.id,
@@ -5325,6 +5341,9 @@ async function handleMeetingConfirm(res, requestUrl, body, logger = noopHttpLogg
     accessToken: context.token,
     confirmationId,
     logger,
+    canonicalRequest,
+    traceId: res.__trace_id || null,
+    pathname: "/api/meeting/confirm",
   });
   if (!result) {
     logger.warn("meeting_confirm_invalid_or_expired", {
@@ -5338,7 +5357,10 @@ async function handleMeetingConfirm(res, requestUrl, body, logger = noopHttpLogg
     });
     return;
   }
-  if (result.ok === false && result.error === "write_guard_denied") {
+  if (
+    result.ok === false
+    && (result.error === "write_guard_denied" || result.error === "write_policy_enforcement_blocked")
+  ) {
     logger.warn("meeting_confirm_blocked_by_write_guard", {
       account_id: context.account.id,
       confirmation_id: confirmationId,
@@ -5392,46 +5414,37 @@ async function handleMeetingConfirmPage(res, requestUrl, body, logger = noopHttp
     confirmationId,
     accountId: context.account.id,
   });
-  if (pendingConfirmation) {
-    const canonicalRequest = buildMeetingConfirmWriteCanonicalRequest({
-      pathname: "/meeting/confirm",
-      method: "GET",
-      confirmationId,
-      targetDocumentId: pendingConfirmation.target_document_id,
-      context: {
-        confirmed: true,
-        verifierCompleted: Boolean(
-          normalizeText(pendingConfirmation.summary_content)
-          && normalizeText(pendingConfirmation.doc_entry_content),
-        ),
-        reviewRequiredActive: false,
-      },
-      originalRequest: {
-        account_id: context.account.id,
-        confirmation_id: confirmationId,
-      },
-    });
-    const admission = admitRouteMutation({
-      logger,
-      traceId: res.__trace_id || null,
-      accountId: context.account.id,
-      canonicalRequest,
-    });
-    if (!admission.allowed) {
-      const legacyWriteGuard = buildLegacyWriteGuardFromAdmission(admission);
-      htmlResponse(
-        res,
-        getWriteGuardStatusCode(legacyWriteGuard),
-        `<h1>外部寫入被阻擋</h1><p>${buildWriteGuardMessage(legacyWriteGuard)}</p>`,
-      );
-      return;
-    }
-  }
+  const canonicalRequest = pendingConfirmation
+    ? buildMeetingConfirmWriteCanonicalRequest({
+        pathname: "/meeting/confirm",
+        method: "GET",
+        confirmationId,
+        targetDocumentId: pendingConfirmation.target_document_id,
+        actor: {
+          accountId: context.account.id,
+        },
+        context: {
+          confirmed: true,
+          verifierCompleted: Boolean(
+            normalizeText(pendingConfirmation.summary_content)
+            && normalizeText(pendingConfirmation.doc_entry_content),
+          ),
+          reviewRequiredActive: false,
+        },
+        originalRequest: {
+          account_id: context.account.id,
+          confirmation_id: confirmationId,
+        },
+      })
+    : null;
 
   const result = await meetingCoordinator.confirmMeetingWrite({
     accountId: context.account.id,
     accessToken: context.token,
     confirmationId,
+    canonicalRequest,
+    traceId: res.__trace_id || null,
+    pathname: "/meeting/confirm",
   });
 
   if (!result) {
@@ -5442,7 +5455,10 @@ async function handleMeetingConfirmPage(res, requestUrl, body, logger = noopHttp
     );
     return;
   }
-  if (result.ok === false && result.error === "write_guard_denied") {
+  if (
+    result.ok === false
+    && (result.error === "write_guard_denied" || result.error === "write_policy_enforcement_blocked")
+  ) {
     htmlResponse(
       res,
       getWriteGuardStatusCode(result.write_guard),
