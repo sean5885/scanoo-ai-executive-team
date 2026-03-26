@@ -62,6 +62,11 @@ test("runMutation passes through to execute without changing create_doc inputs",
       meta: {
         execution_mode: "passthrough",
         duration_ms: 42,
+        journal: {
+          action: "create_doc",
+          status: "success",
+          started_at: 1000,
+        },
       },
     });
   } finally {
@@ -113,6 +118,11 @@ test("runMutation marks controlled execution input when execution_mode is contro
       meta: {
         execution_mode: "controlled",
         duration_ms: 17,
+        journal: {
+          action: "create_doc",
+          status: "success",
+          started_at: 3000,
+        },
       },
     });
   } finally {
@@ -143,6 +153,12 @@ test("runMutation returns a stable execution_failed boundary with timing when ex
       meta: {
         execution_mode: "controlled",
         duration_ms: 35,
+        journal: {
+          action: "create_doc",
+          status: "failed",
+          started_at: 2000,
+          error: "boom",
+        },
       },
     });
   } finally {

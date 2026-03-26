@@ -26,6 +26,11 @@ export async function runMutation({ action, payload, context, execute }) {
 
   const mode = context?.execution_mode || "passthrough";
   const start = Date.now();
+  const journal = {
+    action,
+    status: "started",
+    started_at: start,
+  };
 
   let result;
   try {
@@ -45,7 +50,11 @@ export async function runMutation({ action, payload, context, execute }) {
         context,
       });
     }
-  } catch {
+    journal.status = "success";
+  } catch (err) {
+    journal.status = "failed";
+    journal.error = err?.message || "execution_failed";
+
     return {
       ok: false,
       action,
@@ -53,6 +62,7 @@ export async function runMutation({ action, payload, context, execute }) {
       meta: {
         execution_mode: mode,
         duration_ms: Date.now() - start,
+        journal,
       },
     };
   }
@@ -64,6 +74,7 @@ export async function runMutation({ action, payload, context, execute }) {
     meta: {
       execution_mode: mode,
       duration_ms: Date.now() - start,
+      journal,
     },
   };
 }
