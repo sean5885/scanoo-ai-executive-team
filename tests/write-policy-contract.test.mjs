@@ -5,6 +5,7 @@ import { getRouteContract } from "../src/http-route-contracts.mjs";
 import {
   buildCompanyBrainApprovalTransitionWritePolicy,
   buildCompanyBrainApplyWritePolicy,
+  buildCompanyBrainIngestWritePolicy,
   buildCompanyBrainLearningIngestWritePolicy,
   buildCompanyBrainReviewWritePolicy,
   buildCreateDocWritePolicy,
@@ -56,6 +57,9 @@ test("write policy builders normalize phase1 metadata with stable contract field
   const learningIngestPolicy = buildCompanyBrainLearningIngestWritePolicy({
     docId: "cb_doc",
   });
+  const mirrorIngestPolicy = buildCompanyBrainIngestWritePolicy({
+    docId: "cb_doc",
+  });
 
   assert.deepEqual(createPolicy, {
     policy_version: WRITE_POLICY_VERSION,
@@ -86,6 +90,8 @@ test("write policy builders normalize phase1 metadata with stable contract field
   assert.equal(approvalTransitionPolicy.action_type, "approval_transition");
   assert.equal(applyPolicy.action_type, "apply");
   assert.equal(learningIngestPolicy.action_type, "ingest");
+  assert.equal(mirrorIngestPolicy.action_type, "ingest");
+  assert.equal(mirrorIngestPolicy.review_required, "conditional");
   assert.deepEqual(collectWritePolicyMissingFields(meetingPolicy), []);
 });
 

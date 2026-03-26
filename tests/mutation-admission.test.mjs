@@ -9,6 +9,7 @@ import {
   buildCreateDocCanonicalRequest,
   buildDocumentCommentRewriteApplyCanonicalRequest,
   buildDriveOrganizeApplyCanonicalRequest,
+  buildIngestCompanyBrainDocCanonicalRequest,
   buildIngestLearningDocCanonicalRequest,
   buildMeetingConfirmWriteCanonicalRequest,
   buildUpdateDocCanonicalRequest,
@@ -127,6 +128,16 @@ test("canonical mutation builders emit the fixed request schema for the current 
       verifierCompleted: true,
     },
   });
+  const mirrorIngest = buildIngestCompanyBrainDocCanonicalRequest({
+    docId: "cb-mirror-1",
+    actor: {
+      accountId: "acct-1",
+    },
+    context: {
+      confirmed: true,
+      verifierCompleted: true,
+    },
+  });
 
   for (const request of [
     createDoc,
@@ -138,6 +149,7 @@ test("canonical mutation builders emit the fixed request schema for the current 
     companyBrain,
     companyBrainReview,
     companyBrainApproval,
+    mirrorIngest,
     learningIngest,
   ]) {
     assert.deepEqual(collectCanonicalMutationRequestSchemaIssues(request), []);
@@ -156,6 +168,7 @@ test("canonical mutation builders emit the fixed request schema for the current 
   assert.equal(companyBrain.resource_type, "company_brain_doc");
   assert.equal(companyBrainReview.action_type, "review_company_brain_doc");
   assert.equal(companyBrainApproval.action_type, "approval_transition_company_brain_doc");
+  assert.equal(mirrorIngest.action_type, "ingest_doc");
   assert.equal(learningIngest.action_type, "ingest_learning_doc");
 });
 

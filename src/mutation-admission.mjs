@@ -5,6 +5,7 @@ import { decideWriteGuard } from "./write-guard.mjs";
 import {
   buildCompanyBrainApprovalTransitionWritePolicy,
   buildCompanyBrainApplyWritePolicy,
+  buildCompanyBrainIngestWritePolicy,
   buildCompanyBrainLearningIngestWritePolicy,
   buildCompanyBrainReviewWritePolicy,
   buildCreateDocWritePolicy,
@@ -27,6 +28,7 @@ export const MUTATION_ADMISSION_ACTION_TYPES = Object.freeze([
   "review_company_brain_doc",
   "approval_transition_company_brain_doc",
   "company_brain_apply",
+  "ingest_doc",
   "ingest_learning_doc",
 ]);
 export const MUTATION_ADMISSION_RESOURCE_TYPES = Object.freeze([
@@ -289,6 +291,11 @@ function buildPolicySnapshotFromCanonicalRequest(canonicalRequest = null) {
     });
   } else if (actionType === "ingest_learning_doc") {
     basePolicy = buildCompanyBrainLearningIngestWritePolicy({
+      docId: resourceId || "",
+      idempotencyKey,
+    });
+  } else if (actionType === "ingest_doc") {
+    basePolicy = buildCompanyBrainIngestWritePolicy({
       docId: resourceId || "",
       idempotencyKey,
     });
@@ -771,6 +778,41 @@ export function buildIngestLearningDocCanonicalRequest({
   });
   return buildCanonicalMutationRequest({
     actionType: "ingest_learning_doc",
+    resourceType: "company_brain_doc",
+    resourceId: docId,
+    actor: {
+      source: actor.source || writePolicy.source,
+      owner: actor.owner || writePolicy.owner,
+      accountId: actor.accountId ?? actor.account_id ?? null,
+    },
+    context: {
+      pathname,
+      method,
+      scopeKey: context.scopeKey ?? context.scope_key ?? writePolicy.scope_key,
+      idempotencyKey: context.idempotencyKey ?? context.idempotency_key ?? writePolicy.idempotency_key,
+      externalWrite: context.externalWrite ?? context.external_write ?? writePolicy.external_write,
+      confirmed: context.confirmed,
+      verifierCompleted: context.verifierCompleted ?? context.verifier_completed,
+      reviewRequiredActive: context.reviewRequiredActive ?? context.review_required_active,
+    },
+    originalRequest,
+  });
+}
+
+export function buildIngestCompanyBrainDocCanonicalRequest({
+  pathname = "internal:company-brain/verified-ingest",
+  method = "INTERNAL",
+  docId = "",
+  actor = {},
+  context = {},
+  originalRequest = null,
+} = {}) {
+  const writePolicy = buildCompanyBrainIngestWritePolicy({
+    docId,
+    idempotencyKey: context.idempotencyKey ?? context.idempotency_key,
+  });
+  return buildCanonicalMutationRequest({
+    actionType: "ingest_doc",
     resourceType: "company_brain_doc",
     resourceId: docId,
     actor: {

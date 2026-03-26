@@ -159,7 +159,6 @@ import {
   planDocumentCreateGuard,
   validateDocumentCreateEntryGovernance,
 } from "./lark-write-guard.mjs";
-import { decideWriteGuard } from "./write-guard.mjs";
 import {
   buildCreateDocWritePolicy,
 } from "./write-policy-contract.mjs";
@@ -174,6 +173,7 @@ import {
   buildCreateDocCanonicalRequest,
   buildDocumentCommentRewriteApplyCanonicalRequest,
   buildDriveOrganizeApplyCanonicalRequest,
+  buildIngestCompanyBrainDocCanonicalRequest,
   buildIngestLearningDocCanonicalRequest,
   buildMeetingConfirmWriteCanonicalRequest,
   buildUpdateDocCanonicalRequest,
@@ -939,30 +939,6 @@ function ingestVerifiedDocumentToCompanyBrain({ account, row, logger = noopHttpL
     return null;
   }
 
-  const writeGuard = decideWriteGuard({
-    externalWrite: false,
-    confirmed: true,
-    verifierCompleted: true,
-    logger,
-    owner: "company_brain_write_intake",
-    workflow: "company_brain_mirror_ingest",
-    operation: "document_company_brain_ingest",
-    details: {
-      account_id: account.id,
-      document_id: row.document_id,
-      traffic_source: "real",
-      request_backed: false,
-    },
-  });
-  if (!writeGuard.allow) {
-    logger.warn("document_company_brain_ingest_blocked_by_write_guard", {
-      account_id: account.id,
-      doc_id: row.document_id,
-      write_guard: writeGuard,
-    });
-    return null;
-  }
-
   let metadata = null;
   try {
     metadata = row.meta_json ? JSON.parse(row.meta_json) : null;
@@ -971,77 +947,140 @@ function ingestVerifiedDocumentToCompanyBrain({ account, row, logger = noopHttpL
   }
 
   const payload = buildCompanyBrainPayload(row, metadata);
-  const intakeBoundary = resolveCompanyBrainWriteIntake({
-    accountId: account.id,
-    action: "ingest_doc",
-    targetStage: "mirror",
-    candidate: payload,
-  });
-  try {
-    const ingested = upsertCompanyBrainDoc({
-      account_id: account.id,
-      ...payload,
-    });
-    logger.info("document_company_brain_intake_classified", {
-      stage: "company_brain_intake_boundary",
-      account_id: account.id,
-      doc_id: payload.doc_id,
-      intake_state: intakeBoundary.intake_state,
-      review_status: intakeBoundary.review_status,
-      direct_intake_allowed: intakeBoundary.direct_intake_allowed,
-      review_required: intakeBoundary.review_required,
-      conflict_check_required: intakeBoundary.conflict_check_required,
-      approval_required_for_formal_source: intakeBoundary.approval_required_for_formal_source,
-      matched_docs: intakeBoundary.matched_docs.map((item) => ({
-        doc_id: item.doc_id,
-        title: item.title,
-        match_type: item.match_type,
-      })),
-    });
-    if (intakeBoundary.review_status) {
-      const stagedReview = stageCompanyBrainReviewState({
-        accountId: account.id,
-        docId: payload.doc_id,
-        sourceStage: intakeBoundary.target_stage,
-        proposedAction: intakeBoundary.action,
-        reviewStatus: intakeBoundary.review_status,
-        conflictItems: intakeBoundary.matched_docs,
-        reviewNotes: intakeBoundary.review_status === "conflict_detected"
-          ? "conflict evidence detected during verified mirror ingest"
-          : "",
-      });
-      if (stagedReview.success === true) {
-        logger.info("document_company_brain_review_staged", {
-          stage: "company_brain_review_state",
-          account_id: account.id,
-          doc_id: payload.doc_id,
-          review_status: stagedReview.data.review_state?.status || intakeBoundary.review_status,
-        });
-      } else {
-        logger.warn("document_company_brain_review_stage_failed", {
-          stage: "company_brain_review_state",
-          account_id: account.id,
-          doc_id: payload.doc_id,
-          error: stagedReview.error,
-        });
-      }
-    }
-    logger.info("document_company_brain_ingested", {
-      stage: "company_brain_ingest",
-      account_id: account.id,
+  const canonicalRequest = buildIngestCompanyBrainDocCanonicalRequest({
+    docId: payload.doc_id,
+    actor: {
+      accountId: account.id,
+    },
+    context: {
+      confirmed: true,
+      verifierCompleted: true,
+      reviewRequiredActive: false,
+    },
+    originalRequest: {
       doc_id: payload.doc_id,
       source: payload.source,
-    });
-    return ingested;
-  } catch (error) {
-    logger.warn("document_company_brain_ingest_failed", {
-      stage: "company_brain_ingest",
+    },
+  });
+
+  return runMutation({
+    action: "ingest_doc",
+    payload,
+    context: {
+      pathname: "internal:company-brain/verified-ingest",
       account_id: account.id,
-      doc_id: payload.doc_id,
-      error: logger.compactError(error),
-    });
-    return null;
-  }
+      logger,
+      canonical_request: canonicalRequest,
+      verifier_profile: "knowledge_write_v1",
+      verifier_input: {
+        account_id: account.id,
+        doc_id: payload.doc_id,
+        expected_write: "mirror_doc",
+      },
+    },
+    execute: async () => {
+      const intakeBoundary = resolveCompanyBrainWriteIntake({
+        accountId: account.id,
+        action: "ingest_doc",
+        targetStage: "mirror",
+        candidate: payload,
+      });
+      try {
+        const ingested = upsertCompanyBrainDoc({
+          account_id: account.id,
+          ...payload,
+        });
+        logger.info("document_company_brain_intake_classified", {
+          stage: "company_brain_intake_boundary",
+          account_id: account.id,
+          doc_id: payload.doc_id,
+          intake_state: intakeBoundary.intake_state,
+          review_status: intakeBoundary.review_status,
+          direct_intake_allowed: intakeBoundary.direct_intake_allowed,
+          review_required: intakeBoundary.review_required,
+          conflict_check_required: intakeBoundary.conflict_check_required,
+          approval_required_for_formal_source: intakeBoundary.approval_required_for_formal_source,
+          matched_docs: intakeBoundary.matched_docs.map((item) => ({
+            doc_id: item.doc_id,
+            title: item.title,
+            match_type: item.match_type,
+          })),
+        });
+        if (intakeBoundary.review_status) {
+          const stagedReview = stageCompanyBrainReviewState({
+            accountId: account.id,
+            docId: payload.doc_id,
+            sourceStage: intakeBoundary.target_stage,
+            proposedAction: intakeBoundary.action,
+            reviewStatus: intakeBoundary.review_status,
+            conflictItems: intakeBoundary.matched_docs,
+            reviewNotes: intakeBoundary.review_status === "conflict_detected"
+              ? "conflict evidence detected during verified mirror ingest"
+              : "",
+          });
+          if (stagedReview.success === true) {
+            logger.info("document_company_brain_review_staged", {
+              stage: "company_brain_review_state",
+              account_id: account.id,
+              doc_id: payload.doc_id,
+              review_status: stagedReview.data.review_state?.status || intakeBoundary.review_status,
+            });
+          } else {
+            logger.warn("document_company_brain_review_stage_failed", {
+              stage: "company_brain_review_state",
+              account_id: account.id,
+              doc_id: payload.doc_id,
+              error: stagedReview.error,
+            });
+          }
+        }
+        logger.info("document_company_brain_ingested", {
+          stage: "company_brain_ingest",
+          account_id: account.id,
+          doc_id: payload.doc_id,
+          source: payload.source,
+        });
+        return {
+          success: true,
+          data: {
+            doc_id: payload.doc_id,
+            ingested,
+          },
+          error: null,
+        };
+      } catch (error) {
+        logger.warn("document_company_brain_ingest_failed", {
+          stage: "company_brain_ingest",
+          account_id: account.id,
+          doc_id: payload.doc_id,
+          error: logger.compactError(error),
+        });
+        return {
+          success: false,
+          data: {
+            doc_id: payload.doc_id,
+          },
+          error: "mirror_ingest_failed",
+        };
+      }
+    },
+  }).then((mutationExecution) => {
+    if (!mutationExecution?.ok) {
+      logger.warn("document_company_brain_ingest_blocked_by_runtime", {
+        stage: "company_brain_ingest",
+        account_id: account.id,
+        doc_id: payload.doc_id,
+        error: mutationExecution?.error || "mutation_verifier_blocked",
+        verifier: mutationExecution?.verifier || null,
+      });
+      return null;
+    }
+    const result = mutationExecution.result;
+    if (result?.success !== true) {
+      return null;
+    }
+    return result.data?.ingested || null;
+  });
 }
 
 // ---------------------------------------------------------------------------

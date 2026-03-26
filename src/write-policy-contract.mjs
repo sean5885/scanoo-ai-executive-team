@@ -327,6 +327,23 @@ export function buildCompanyBrainLearningIngestWritePolicy({
   });
 }
 
+export function buildCompanyBrainIngestWritePolicy({
+  docId = "",
+  idempotencyKey = null,
+} = {}) {
+  return buildWritePolicyRecord({
+    source: "company_brain_verified_ingest",
+    owner: "company_brain_write_intake",
+    intent: "ingest_doc",
+    actionType: "ingest",
+    externalWrite: false,
+    confirmRequired: false,
+    reviewRequired: "conditional",
+    scopeKey: cleanText(docId) ? `company-brain:${cleanText(docId)}` : null,
+    idempotencyKey,
+  });
+}
+
 const PHASE1_ROUTE_WRITE_POLICY_FIXTURES = Object.freeze([
   Object.freeze({
     pathname: "/api/doc/create",

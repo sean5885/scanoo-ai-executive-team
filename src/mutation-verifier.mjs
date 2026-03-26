@@ -4,6 +4,7 @@ import { EVIDENCE_TYPES, verifyTaskCompletion } from "./executive-verifier.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import {
   getCompanyBrainApprovedKnowledge,
+  getCompanyBrainDoc,
   getCompanyBrainLearningState,
   getCompanyBrainReviewState,
 } from "./rag-repository.mjs";
@@ -144,6 +145,9 @@ function deriveKnowledgeWriteExpectation({
   if (actionType === "company_brain_apply") {
     return "approved_knowledge";
   }
+  if (actionType === "ingest_doc") {
+    return "mirror_doc";
+  }
   if (actionType === "ingest_learning_doc") {
     return "learning_state";
   }
@@ -258,6 +262,16 @@ function verifyKnowledgeWritePost({
       evidence.push({
         type: EVIDENCE_TYPES.DB_write_confirmed,
         summary: `company_brain_approved_knowledge:${docId}`,
+      });
+    }
+  } else if (expectedWrite === "mirror_doc") {
+    const mirroredDoc = getCompanyBrainDoc(accountId, docId);
+    if (!mirroredDoc?.doc_id) {
+      issues.push("db_write_missing");
+    } else {
+      evidence.push({
+        type: EVIDENCE_TYPES.DB_write_confirmed,
+        summary: `company_brain_docs:${docId}`,
       });
     }
   } else if (expectedWrite === "learning_state") {

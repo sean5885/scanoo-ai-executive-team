@@ -18,6 +18,8 @@ Current grounded runtime anchor points:
 
 - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
 - `/Users/seanhan/Documents/Playground/src/company-brain-write-intake.mjs`
+- `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`
+- `/Users/seanhan/Documents/Playground/src/mutation-verifier.mjs`
 - `/Users/seanhan/Documents/Playground/src/lark-content.mjs`
 - `/Users/seanhan/Documents/Playground/src/rag-repository.mjs`
 - `/Users/seanhan/Documents/Playground/src/db.mjs`
@@ -114,11 +116,13 @@ Partially grounded in code through:
 - verified lifecycle transition writing into `company_brain_docs`
 - `stage=company_brain_ingest` logging
 - `stage=company_brain_intake_boundary` logging
+- runtime-side `knowledge_write_v1` post verification that confirms the mirror row is actually present in `company_brain_docs`
 
 ### what is already grounded
 
 - verified documents can be mirrored into `company_brain_docs`
 - ingest is non-blocking relative to lifecycle success
+- verified mirror ingest now enters through `runMutation(...)`; the helper no longer performs its own route-local/internal allow-deny
 - verified ingest now resolves a minimum intake boundary before mirror upsert:
   - no overlap signal -> `direct_intake_allowed=true`
   - overlap signal -> `review_required=true` and `conflict_check_required=true`

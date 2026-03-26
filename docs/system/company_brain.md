@@ -13,6 +13,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `company_brain_review_state`
   - `company_brain_approved_knowledge`
 - This table is only populated by verified API-created documents from `/Users/seanhan/Documents/Playground/src/http-server.mjs`.
+- Verified mirror ingest now also passes through `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs` before the `company_brain_docs` upsert is accepted.
 
 ## Storage Location
 
