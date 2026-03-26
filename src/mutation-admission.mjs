@@ -5,8 +5,10 @@ import { decideWriteGuard } from "./write-guard.mjs";
 import {
   buildCompanyBrainApprovalTransitionWritePolicy,
   buildCompanyBrainApplyWritePolicy,
+  buildCompanyBrainConflictWritePolicy,
   buildCompanyBrainIngestWritePolicy,
   buildCompanyBrainLearningIngestWritePolicy,
+  buildCompanyBrainLearningUpdateWritePolicy,
   buildCompanyBrainReviewWritePolicy,
   buildCreateDocWritePolicy,
   buildDocumentCommentRewriteApplyWritePolicy,
@@ -26,10 +28,12 @@ export const MUTATION_ADMISSION_ACTION_TYPES = Object.freeze([
   "rewrite_apply",
   "organize_apply",
   "review_company_brain_doc",
+  "check_company_brain_conflicts",
   "approval_transition_company_brain_doc",
   "company_brain_apply",
   "ingest_doc",
   "ingest_learning_doc",
+  "update_learning_state",
 ]);
 export const MUTATION_ADMISSION_RESOURCE_TYPES = Object.freeze([
   "doc_container",
@@ -113,6 +117,14 @@ const MUTATION_ADMISSION_READY_ROUTE_FIXTURES = Object.freeze([
     resource_type: "company_brain_doc",
   }),
   Object.freeze({
+    route_id: "company_brain_conflicts",
+    pathname: "/agent/company-brain/conflicts",
+    method: "POST",
+    builder: "buildCompanyBrainConflictCanonicalRequest",
+    action_type: "check_company_brain_conflicts",
+    resource_type: "company_brain_doc",
+  }),
+  Object.freeze({
     route_id: "company_brain_approval_transition",
     pathname: "/agent/company-brain/approval-transition",
     method: "POST",
@@ -135,6 +147,14 @@ const MUTATION_ADMISSION_READY_ROUTE_FIXTURES = Object.freeze([
     method: "POST",
     builder: "buildIngestLearningDocCanonicalRequest",
     action_type: "ingest_learning_doc",
+    resource_type: "company_brain_doc",
+  }),
+  Object.freeze({
+    route_id: "company_brain_learning_update",
+    pathname: "/agent/company-brain/learning/state",
+    method: "POST",
+    builder: "buildUpdateLearningStateCanonicalRequest",
+    action_type: "update_learning_state",
     resource_type: "company_brain_doc",
   }),
 ]);
@@ -284,6 +304,11 @@ function buildPolicySnapshotFromCanonicalRequest(canonicalRequest = null) {
       docId: resourceId || "",
       idempotencyKey,
     });
+  } else if (actionType === "check_company_brain_conflicts") {
+    basePolicy = buildCompanyBrainConflictWritePolicy({
+      docId: resourceId || "",
+      idempotencyKey,
+    });
   } else if (actionType === "approval_transition_company_brain_doc") {
     basePolicy = buildCompanyBrainApprovalTransitionWritePolicy({
       docId: resourceId || "",
@@ -291,6 +316,11 @@ function buildPolicySnapshotFromCanonicalRequest(canonicalRequest = null) {
     });
   } else if (actionType === "ingest_learning_doc") {
     basePolicy = buildCompanyBrainLearningIngestWritePolicy({
+      docId: resourceId || "",
+      idempotencyKey,
+    });
+  } else if (actionType === "update_learning_state") {
+    basePolicy = buildCompanyBrainLearningUpdateWritePolicy({
       docId: resourceId || "",
       idempotencyKey,
     });
@@ -729,6 +759,41 @@ export function buildCompanyBrainReviewCanonicalRequest({
   });
 }
 
+export function buildCompanyBrainConflictCanonicalRequest({
+  pathname = "/agent/company-brain/conflicts",
+  method = "POST",
+  docId = "",
+  actor = {},
+  context = {},
+  originalRequest = null,
+} = {}) {
+  const writePolicy = buildCompanyBrainConflictWritePolicy({
+    docId,
+    idempotencyKey: context.idempotencyKey ?? context.idempotency_key,
+  });
+  return buildCanonicalMutationRequest({
+    actionType: "check_company_brain_conflicts",
+    resourceType: "company_brain_doc",
+    resourceId: docId,
+    actor: {
+      source: actor.source || writePolicy.source,
+      owner: actor.owner || writePolicy.owner,
+      accountId: actor.accountId ?? actor.account_id ?? null,
+    },
+    context: {
+      pathname,
+      method,
+      scopeKey: context.scopeKey ?? context.scope_key ?? writePolicy.scope_key,
+      idempotencyKey: context.idempotencyKey ?? context.idempotency_key ?? writePolicy.idempotency_key,
+      externalWrite: context.externalWrite ?? context.external_write ?? writePolicy.external_write,
+      confirmed: context.confirmed,
+      verifierCompleted: context.verifierCompleted ?? context.verifier_completed,
+      reviewRequiredActive: context.reviewRequiredActive ?? context.review_required_active,
+    },
+    originalRequest,
+  });
+}
+
 export function buildCompanyBrainApprovalTransitionCanonicalRequest({
   pathname = "/agent/company-brain/approval-transition",
   method = "POST",
@@ -778,6 +843,41 @@ export function buildIngestLearningDocCanonicalRequest({
   });
   return buildCanonicalMutationRequest({
     actionType: "ingest_learning_doc",
+    resourceType: "company_brain_doc",
+    resourceId: docId,
+    actor: {
+      source: actor.source || writePolicy.source,
+      owner: actor.owner || writePolicy.owner,
+      accountId: actor.accountId ?? actor.account_id ?? null,
+    },
+    context: {
+      pathname,
+      method,
+      scopeKey: context.scopeKey ?? context.scope_key ?? writePolicy.scope_key,
+      idempotencyKey: context.idempotencyKey ?? context.idempotency_key ?? writePolicy.idempotency_key,
+      externalWrite: context.externalWrite ?? context.external_write ?? writePolicy.external_write,
+      confirmed: context.confirmed,
+      verifierCompleted: context.verifierCompleted ?? context.verifier_completed,
+      reviewRequiredActive: context.reviewRequiredActive ?? context.review_required_active,
+    },
+    originalRequest,
+  });
+}
+
+export function buildUpdateLearningStateCanonicalRequest({
+  pathname = "/agent/company-brain/learning/state",
+  method = "POST",
+  docId = "",
+  actor = {},
+  context = {},
+  originalRequest = null,
+} = {}) {
+  const writePolicy = buildCompanyBrainLearningUpdateWritePolicy({
+    docId,
+    idempotencyKey: context.idempotencyKey ?? context.idempotency_key,
+  });
+  return buildCanonicalMutationRequest({
+    actionType: "update_learning_state",
     resourceType: "company_brain_doc",
     resourceId: docId,
     actor: {

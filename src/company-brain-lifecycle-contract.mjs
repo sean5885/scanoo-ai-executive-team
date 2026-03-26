@@ -2,6 +2,7 @@ import { cleanText } from "./message-intent-utils.mjs";
 import {
   buildCompanyBrainApplyWritePolicy,
   buildCompanyBrainApprovalTransitionWritePolicy,
+  buildCompanyBrainConflictWritePolicy,
   buildCompanyBrainReviewWritePolicy,
   cloneWritePolicyRecord,
 } from "./write-policy-contract.mjs";
@@ -50,6 +51,9 @@ const COMPANY_BRAIN_ROUTE_CONTRACT_FIXTURES = Object.freeze([
   {
     pathname: "/agent/company-brain/conflicts",
     action: "check_company_brain_conflicts",
+    write_policy: Object.freeze(buildCompanyBrainConflictWritePolicy({
+      docId: "test-doc",
+    })),
     governance: Object.freeze({
       external_write: false,
       confirm_required: false,

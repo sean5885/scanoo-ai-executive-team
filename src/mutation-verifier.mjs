@@ -142,6 +142,9 @@ function deriveKnowledgeWriteExpectation({
   if (actionType === "review_company_brain_doc" || actionType === "approval_transition_company_brain_doc") {
     return "review_state";
   }
+  if (actionType === "check_company_brain_conflicts") {
+    return "review_state_optional";
+  }
   if (actionType === "company_brain_apply") {
     return "approved_knowledge";
   }
@@ -149,6 +152,9 @@ function deriveKnowledgeWriteExpectation({
     return "mirror_doc";
   }
   if (actionType === "ingest_learning_doc") {
+    return "learning_state";
+  }
+  if (actionType === "update_learning_state") {
     return "learning_state";
   }
   return "";
@@ -240,10 +246,19 @@ function verifyKnowledgeWritePost({
   const issues = [];
   let evidence = [];
 
-  if (expectedWrite === "review_state") {
+  if (expectedWrite === "review_state" || expectedWrite === "review_state_optional") {
     const reviewState = getCompanyBrainReviewState(accountId, docId);
     const expectedStatus = cleanText(execution?.data?.review_state?.status || input.expected_status);
     const actualStatus = cleanText(reviewState?.review_status);
+    if (expectedWrite === "review_state_optional" && !expectedStatus) {
+      return buildVerifierResult({
+        phase: "post",
+        profile: "knowledge_write_v1",
+        pass: true,
+        skipped: true,
+        reason: "no_mutation_required",
+      });
+    }
     if (!reviewState) {
       issues.push("db_write_missing");
     } else if (expectedStatus && actualStatus !== expectedStatus) {

@@ -3,6 +3,7 @@ import {
 } from "./company-brain-lifecycle-contract.mjs";
 import { getDocumentCreateGovernanceContract } from "./lark-write-guard.mjs";
 import {
+  buildCompanyBrainLearningUpdateWritePolicy,
   buildCompanyBrainLearningIngestWritePolicy,
   cloneWritePolicyRecord,
   getPhase1RouteWritePolicyFixture,
@@ -152,6 +153,10 @@ const EXACT_ROUTE_CONTRACTS = new Map([
   ["/agent/company-brain/learning/ingest", {
     action: "ingest_learning_doc",
     write_policy: buildCompanyBrainLearningIngestWritePolicy(),
+  }],
+  ["/agent/company-brain/learning/state", {
+    action: "update_learning_state",
+    write_policy: buildCompanyBrainLearningUpdateWritePolicy(),
   }],
 ]);
 

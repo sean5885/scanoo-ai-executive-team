@@ -293,6 +293,23 @@ export function buildCompanyBrainReviewWritePolicy({
   });
 }
 
+export function buildCompanyBrainConflictWritePolicy({
+  docId = "",
+  idempotencyKey = null,
+} = {}) {
+  return buildWritePolicyRecord({
+    source: "company_brain_conflicts",
+    owner: "company_brain_review_runtime",
+    intent: "check_company_brain_conflicts",
+    actionType: "review",
+    externalWrite: false,
+    confirmRequired: false,
+    reviewRequired: "conditional",
+    scopeKey: cleanText(docId) ? `company-brain:${cleanText(docId)}` : null,
+    idempotencyKey,
+  });
+}
+
 export function buildCompanyBrainApprovalTransitionWritePolicy({
   docId = "",
   idempotencyKey = null,
@@ -319,6 +336,23 @@ export function buildCompanyBrainLearningIngestWritePolicy({
     owner: "company_brain_learning_runtime",
     intent: "ingest_learning_doc",
     actionType: "ingest",
+    externalWrite: false,
+    confirmRequired: false,
+    reviewRequired: "never",
+    scopeKey: cleanText(docId) ? `company-brain:${cleanText(docId)}` : null,
+    idempotencyKey,
+  });
+}
+
+export function buildCompanyBrainLearningUpdateWritePolicy({
+  docId = "",
+  idempotencyKey = null,
+} = {}) {
+  return buildWritePolicyRecord({
+    source: "company_brain_learning_update",
+    owner: "company_brain_learning_runtime",
+    intent: "update_learning_state",
+    actionType: "upsert",
     externalWrite: false,
     confirmRequired: false,
     reviewRequired: "never",

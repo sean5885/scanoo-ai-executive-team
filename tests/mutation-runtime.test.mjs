@@ -1,13 +1,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
 import { runMutation } from "../src/mutation-runtime.mjs";
 import {
   buildCompanyBrainApplyCanonicalRequest,
+  buildCompanyBrainConflictCanonicalRequest,
   buildDriveOrganizeApplyCanonicalRequest,
   buildIngestLearningDocCanonicalRequest,
   buildMeetingConfirmWriteCanonicalRequest,
+  buildUpdateLearningStateCanonicalRequest,
 } from "../src/mutation-admission.mjs";
+
+const testDb = await createTestDbHarness();
+
+test.after(() => {
+  testDb.close();
+});
 
 test("runMutation returns a stable error when no execute callback is provided", async () => {
   const result = await runMutation({
@@ -386,6 +395,105 @@ test("runMutation blocks knowledge write after execute when durable db evidence 
         data: {
           doc: {
             doc_id: "doc-learning-1",
+          },
+          learning_state: {
+            status: "learned",
+          },
+        },
+        error: null,
+      };
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "mutation_verifier_blocked");
+  assert.equal(result.verifier?.phase, "post");
+  assert.equal(result.verifier?.reason, "db_write_missing");
+});
+
+test("runMutation allows optional company-brain conflict verification to skip when no review-state mutation is needed", async () => {
+  const canonicalRequest = buildCompanyBrainConflictCanonicalRequest({
+    docId: "doc-conflict-1",
+    actor: {
+      accountId: "acct-1",
+    },
+    context: {
+      confirmed: true,
+      verifierCompleted: true,
+      reviewRequiredActive: true,
+    },
+  });
+
+  const result = await runMutation({
+    action: "check_company_brain_conflicts",
+    payload: {
+      doc_id: "doc-conflict-1",
+    },
+    context: {
+      account_id: "acct-1",
+      pathname: "/agent/company-brain/conflicts",
+      canonical_request: canonicalRequest,
+      verifier_profile: "knowledge_write_v1",
+      verifier_input: {
+        account_id: "acct-1",
+        doc_id: "doc-conflict-1",
+        expected_write: "review_state_optional",
+      },
+    },
+    async execute() {
+      return {
+        success: true,
+        data: {
+          doc_id: "doc-conflict-1",
+          conflict_state: "none",
+          review_state: null,
+        },
+        error: null,
+      };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.meta?.verification?.post?.pass, true);
+  assert.equal(result.meta?.verification?.post?.skipped, true);
+  assert.equal(result.meta?.verification?.post?.reason, "no_mutation_required");
+});
+
+test("runMutation blocks learning-state update when durable db evidence is missing after execute", async () => {
+  const canonicalRequest = buildUpdateLearningStateCanonicalRequest({
+    docId: "doc-learning-update-1",
+    actor: {
+      accountId: "acct-1",
+    },
+    context: {
+      confirmed: true,
+      verifierCompleted: true,
+    },
+  });
+
+  const result = await runMutation({
+    action: "update_learning_state",
+    payload: {
+      doc_id: "doc-learning-update-1",
+      status: "learned",
+    },
+    context: {
+      account_id: "acct-1",
+      pathname: "/agent/company-brain/learning/state",
+      canonical_request: canonicalRequest,
+      verifier_profile: "knowledge_write_v1",
+      verifier_input: {
+        account_id: "acct-1",
+        doc_id: "doc-learning-update-1",
+        expected_write: "learning_state",
+      },
+    },
+    async execute() {
+      return {
+        success: true,
+        data: {
+          doc: {
+            doc_id: "doc-learning-update-1",
           },
           learning_state: {
             status: "learned",

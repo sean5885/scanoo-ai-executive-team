@@ -1004,6 +1004,51 @@ test("agent company-brain review conflict approval apply slice is end-to-end ver
   assert.equal(approvedDetailPayload.data.data.knowledge_state.stage, "approved");
 });
 
+test("agent company-brain learning state update routes through the runtime and persists learning metadata", async (t) => {
+  const docId = `doc-agent-company-brain-learning-${Date.now()}`;
+  insertCompanyBrainFixture({
+    docId,
+    title: "Learning Route Fixture",
+    rawText: [
+      "# Learning Route Fixture",
+      "## Notes",
+      "Planner-side learning metadata should persist through the shared mutation runtime.",
+    ].join("\n"),
+  });
+  t.after(() => {
+    db.prepare("DELETE FROM company_brain_learning_state WHERE account_id = ? AND doc_id = ?").run("acct-1", docId);
+    db.prepare("DELETE FROM company_brain_docs WHERE account_id = ? AND doc_id = ?").run("acct-1", docId);
+    db.prepare("DELETE FROM lark_documents WHERE account_id = ? AND document_id = ?").run("acct-1", docId);
+  });
+
+  const { server } = await startTestServer(t, {});
+  const { port } = server.address();
+
+  const response = await fetch(`http://127.0.0.1:${port}/agent/company-brain/learning/state`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...createExplicitPlannerAuthHeaders(),
+    },
+    body: JSON.stringify({
+      doc_id: docId,
+      status: "learned",
+      tags: ["runtime-route-tag"],
+      key_concepts: ["shared mutation runtime"],
+      notes: "Persisted through the runtime.",
+    }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.action, "update_learning_state");
+  assert.equal(payload.data.data.doc.doc_id, docId);
+  assert.equal(payload.data.data.learning_state.status, "learned");
+  assert.equal(payload.data.data.learning_state.tags.includes("runtime-route-tag"), true);
+  assert.equal(payload.data.data.learning_state.key_concepts.includes("shared mutation runtime"), true);
+});
+
 test("cloud doc apply route requires prior preview and cannot bypass verifier path", async (t) => {
   const { server } = await startTestServer(t, {
     resolveDriveRootFolderToken: async () => "fld-root",

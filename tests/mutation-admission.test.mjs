@@ -5,6 +5,7 @@ import {
   admitMutation,
   buildCompanyBrainApprovalTransitionCanonicalRequest,
   buildCompanyBrainApplyCanonicalRequest,
+  buildCompanyBrainConflictCanonicalRequest,
   buildCompanyBrainReviewCanonicalRequest,
   buildCreateDocCanonicalRequest,
   buildDocumentCommentRewriteApplyCanonicalRequest,
@@ -12,6 +13,7 @@ import {
   buildIngestCompanyBrainDocCanonicalRequest,
   buildIngestLearningDocCanonicalRequest,
   buildMeetingConfirmWriteCanonicalRequest,
+  buildUpdateLearningStateCanonicalRequest,
   buildUpdateDocCanonicalRequest,
   buildWikiOrganizeApplyCanonicalRequest,
   collectCanonicalMutationRequestSchemaIssues,
@@ -118,8 +120,29 @@ test("canonical mutation builders emit the fixed request schema for the current 
       reviewRequiredActive: true,
     },
   });
+  const companyBrainConflict = buildCompanyBrainConflictCanonicalRequest({
+    docId: "cb-conflict-1",
+    actor: {
+      accountId: "acct-1",
+    },
+    context: {
+      confirmed: true,
+      verifierCompleted: true,
+      reviewRequiredActive: true,
+    },
+  });
   const learningIngest = buildIngestLearningDocCanonicalRequest({
     docId: "cb-learning-1",
+    actor: {
+      accountId: "acct-1",
+    },
+    context: {
+      confirmed: true,
+      verifierCompleted: true,
+    },
+  });
+  const learningUpdate = buildUpdateLearningStateCanonicalRequest({
+    docId: "cb-learning-update-1",
     actor: {
       accountId: "acct-1",
     },
@@ -148,9 +171,11 @@ test("canonical mutation builders emit the fixed request schema for the current 
     wiki,
     companyBrain,
     companyBrainReview,
+    companyBrainConflict,
     companyBrainApproval,
     mirrorIngest,
     learningIngest,
+    learningUpdate,
   ]) {
     assert.deepEqual(collectCanonicalMutationRequestSchemaIssues(request), []);
   }
@@ -167,9 +192,11 @@ test("canonical mutation builders emit the fixed request schema for the current 
   assert.equal(companyBrain.action_type, "company_brain_apply");
   assert.equal(companyBrain.resource_type, "company_brain_doc");
   assert.equal(companyBrainReview.action_type, "review_company_brain_doc");
+  assert.equal(companyBrainConflict.action_type, "check_company_brain_conflicts");
   assert.equal(companyBrainApproval.action_type, "approval_transition_company_brain_doc");
   assert.equal(mirrorIngest.action_type, "ingest_doc");
   assert.equal(learningIngest.action_type, "ingest_learning_doc");
+  assert.equal(learningUpdate.action_type, "update_learning_state");
 });
 
 test("mutation admission adapter returns the fixed output schema and aligns to write_guard", () => {
@@ -244,7 +271,7 @@ test("ready route list stays builder-only and covers the current Step 2 surfaces
   const routes = listMutationAdmissionReadyRoutes();
   const pathnames = routes.map((entry) => entry.pathname);
 
-  assert.equal(routes.length, 12);
+  assert.equal(routes.length, 14);
   assert.equal(pathnames.includes("/api/doc/create"), true);
   assert.equal(pathnames.includes("/agent/docs/create"), true);
   assert.equal(pathnames.includes("/api/doc/update"), true);
@@ -254,9 +281,11 @@ test("ready route list stays builder-only and covers the current Step 2 surfaces
   assert.equal(pathnames.includes("/api/drive/organize/apply"), true);
   assert.equal(pathnames.includes("/api/wiki/organize/apply"), true);
   assert.equal(pathnames.includes("/agent/company-brain/review"), true);
+  assert.equal(pathnames.includes("/agent/company-brain/conflicts"), true);
   assert.equal(pathnames.includes("/agent/company-brain/approval-transition"), true);
   assert.equal(pathnames.includes("/agent/company-brain/docs/:doc_id/apply"), true);
   assert.equal(pathnames.includes("/agent/company-brain/learning/ingest"), true);
+  assert.equal(pathnames.includes("/agent/company-brain/learning/state"), true);
   assert.equal(
     routes.find((entry) => entry.pathname === "/agent/company-brain/docs/:doc_id/apply")?.ordering,
     "lifecycle_first_adapter_second",

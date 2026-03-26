@@ -107,9 +107,7 @@ import {
   checkCompanyBrainConflictAction,
   getCompanyBrainApprovalState,
   reviewCompanyBrainDocAction,
-  stageCompanyBrainReviewState,
 } from "./company-brain-review.mjs";
-import { resolveCompanyBrainWriteIntake } from "./company-brain-write-intake.mjs";
 import { applyRewrittenDocument, rewriteDocumentFromComments } from "./doc-comment-rewrite.mjs";
 import {
   buildPlannedUserInputEnvelope,
@@ -169,12 +167,14 @@ import {
 import {
   buildCompanyBrainApprovalTransitionCanonicalRequest,
   buildCompanyBrainApplyCanonicalRequest,
+  buildCompanyBrainConflictCanonicalRequest,
   buildCompanyBrainReviewCanonicalRequest,
   buildCreateDocCanonicalRequest,
   buildDocumentCommentRewriteApplyCanonicalRequest,
   buildDriveOrganizeApplyCanonicalRequest,
   buildIngestCompanyBrainDocCanonicalRequest,
   buildIngestLearningDocCanonicalRequest,
+  buildUpdateLearningStateCanonicalRequest,
   buildMeetingConfirmWriteCanonicalRequest,
   buildUpdateDocCanonicalRequest,
   buildWikiOrganizeApplyCanonicalRequest,
@@ -930,6 +930,76 @@ function buildCompanyBrainRuntimeBlockedResult({
   };
 }
 
+async function runCompanyBrainReviewSyncMutation({
+  accountId = "",
+  docId = "",
+  title = "",
+  action = "ingest_doc",
+  targetStage = "mirror",
+  overlapSignal = false,
+  replacesExisting = false,
+  pathname = "internal:company-brain/review-sync",
+  method = "INTERNAL",
+  traceId = null,
+  logger = noopHttpLogger,
+} = {}) {
+  const canonicalRequest = buildCompanyBrainReviewCanonicalRequest({
+    pathname,
+    method,
+    docId,
+    actor: {
+      accountId,
+    },
+    context: {
+      confirmed: true,
+      verifierCompleted: true,
+      reviewRequiredActive: true,
+    },
+    originalRequest: {
+      doc_id: docId,
+      title: cleanText(title) || null,
+      action,
+      target_stage: targetStage,
+      overlap_signal: overlapSignal === true,
+      replaces_existing: replacesExisting === true,
+    },
+  });
+
+  return runMutation({
+    action: "review_company_brain_doc",
+    payload: {
+      doc_id: docId,
+      title,
+      action,
+      target_stage: targetStage,
+      overlap_signal: overlapSignal === true,
+      replaces_existing: replacesExisting === true,
+    },
+    context: {
+      pathname,
+      account_id: accountId,
+      trace_id: traceId,
+      logger,
+      canonical_request: canonicalRequest,
+      verifier_profile: "knowledge_write_v1",
+      verifier_input: {
+        account_id: accountId,
+        doc_id: docId,
+        expected_write: "review_state_optional",
+      },
+    },
+    execute: async () => reviewCompanyBrainDocAction({
+      accountId,
+      docId,
+      title,
+      action,
+      targetStage,
+      overlapSignal,
+      replacesExisting,
+    }),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Company-brain approval-adjacent mirror-ingest helper
 // ---------------------------------------------------------------------------
@@ -979,61 +1049,11 @@ function ingestVerifiedDocumentToCompanyBrain({ account, row, logger = noopHttpL
       },
     },
     execute: async () => {
-      const intakeBoundary = resolveCompanyBrainWriteIntake({
-        accountId: account.id,
-        action: "ingest_doc",
-        targetStage: "mirror",
-        candidate: payload,
-      });
       try {
         const ingested = upsertCompanyBrainDoc({
           account_id: account.id,
           ...payload,
         });
-        logger.info("document_company_brain_intake_classified", {
-          stage: "company_brain_intake_boundary",
-          account_id: account.id,
-          doc_id: payload.doc_id,
-          intake_state: intakeBoundary.intake_state,
-          review_status: intakeBoundary.review_status,
-          direct_intake_allowed: intakeBoundary.direct_intake_allowed,
-          review_required: intakeBoundary.review_required,
-          conflict_check_required: intakeBoundary.conflict_check_required,
-          approval_required_for_formal_source: intakeBoundary.approval_required_for_formal_source,
-          matched_docs: intakeBoundary.matched_docs.map((item) => ({
-            doc_id: item.doc_id,
-            title: item.title,
-            match_type: item.match_type,
-          })),
-        });
-        if (intakeBoundary.review_status) {
-          const stagedReview = stageCompanyBrainReviewState({
-            accountId: account.id,
-            docId: payload.doc_id,
-            sourceStage: intakeBoundary.target_stage,
-            proposedAction: intakeBoundary.action,
-            reviewStatus: intakeBoundary.review_status,
-            conflictItems: intakeBoundary.matched_docs,
-            reviewNotes: intakeBoundary.review_status === "conflict_detected"
-              ? "conflict evidence detected during verified mirror ingest"
-              : "",
-          });
-          if (stagedReview.success === true) {
-            logger.info("document_company_brain_review_staged", {
-              stage: "company_brain_review_state",
-              account_id: account.id,
-              doc_id: payload.doc_id,
-              review_status: stagedReview.data.review_state?.status || intakeBoundary.review_status,
-            });
-          } else {
-            logger.warn("document_company_brain_review_stage_failed", {
-              stage: "company_brain_review_state",
-              account_id: account.id,
-              doc_id: payload.doc_id,
-              error: stagedReview.error,
-            });
-          }
-        }
         logger.info("document_company_brain_ingested", {
           stage: "company_brain_ingest",
           account_id: account.id,
@@ -1064,7 +1084,7 @@ function ingestVerifiedDocumentToCompanyBrain({ account, row, logger = noopHttpL
         };
       }
     },
-  }).then((mutationExecution) => {
+  }).then(async (mutationExecution) => {
     if (!mutationExecution?.ok) {
       logger.warn("document_company_brain_ingest_blocked_by_runtime", {
         stage: "company_brain_ingest",
@@ -1078,6 +1098,53 @@ function ingestVerifiedDocumentToCompanyBrain({ account, row, logger = noopHttpL
     const result = mutationExecution.result;
     if (result?.success !== true) {
       return null;
+    }
+    const reviewSyncExecution = await runCompanyBrainReviewSyncMutation({
+      accountId: account.id,
+      docId: payload.doc_id,
+      title: payload.title,
+      action: "ingest_doc",
+      targetStage: "mirror",
+      pathname: "internal:company-brain/verified-ingest/review",
+      logger,
+    });
+    if (reviewSyncExecution?.ok) {
+      const reviewResult = reviewSyncExecution.result;
+      const intakeBoundary = reviewResult?.data?.intake_boundary || null;
+      logger.info("document_company_brain_intake_classified", {
+        stage: "company_brain_intake_boundary",
+        account_id: account.id,
+        doc_id: payload.doc_id,
+        intake_state: intakeBoundary?.intake_state || null,
+        review_status: intakeBoundary?.review_status || null,
+        direct_intake_allowed: intakeBoundary?.direct_intake_allowed === true,
+        review_required: intakeBoundary?.review_required === true,
+        conflict_check_required: intakeBoundary?.conflict_check_required === true,
+        approval_required_for_formal_source: intakeBoundary?.approval_required_for_formal_source === true,
+        matched_docs: Array.isArray(intakeBoundary?.matched_docs)
+          ? intakeBoundary.matched_docs.map((item) => ({
+              doc_id: item.doc_id,
+              title: item.title,
+              match_type: item.match_type,
+            }))
+          : [],
+      });
+      if (reviewResult?.data?.review_state?.status) {
+        logger.info("document_company_brain_review_staged", {
+          stage: "company_brain_review_state",
+          account_id: account.id,
+          doc_id: payload.doc_id,
+          review_status: reviewResult.data.review_state.status,
+        });
+      }
+    } else {
+      logger.warn("document_company_brain_review_sync_blocked", {
+        stage: "company_brain_review_state",
+        account_id: account.id,
+        doc_id: payload.doc_id,
+        error: reviewSyncExecution?.error || "mutation_verifier_blocked",
+        verifier: reviewSyncExecution?.verifier || null,
+      });
     }
     return result.data?.ingested || null;
   });
@@ -4194,17 +4261,57 @@ async function handleAgentCheckCompanyBrainConflicts(res, requestUrl, body, logg
   }
 
   const docId = parseCompanyBrainDocId(requestUrl, body);
-  const result = checkCompanyBrainConflictAction({
-    accountId: context.account.id,
+  const canonicalRequest = buildCompanyBrainConflictCanonicalRequest({
+    pathname: "/agent/company-brain/conflicts",
+    method: "POST",
     docId,
-    title: body?.title ?? body?.candidate?.title,
-    action: body?.action,
-    targetStage: body?.target_stage,
-    limit: parseCompanyBrainLimit(requestUrl, body, 6),
-    overlapSignal: body?.overlap_signal === true || body?.candidate?.overlap_signal === true,
-    replacesExisting: body?.replaces_existing === true || body?.candidate?.replaces_existing === true,
+    actor: {
+      accountId: context.account.id,
+    },
+    context: {
+      idempotencyKey: getRequestIdempotencyKey(body),
+      confirmed: true,
+      verifierCompleted: true,
+      reviewRequiredActive: true,
+    },
+    originalRequest: body,
   });
-  const statusCode = getCompanyBrainAgentStatusCode(result);
+  const mutationExecution = await runMutation({
+    action: "check_company_brain_conflicts",
+    payload: body,
+    context: {
+      pathname: "/agent/company-brain/conflicts",
+      account_id: context.account.id,
+      trace_id: res.__trace_id || null,
+      logger,
+      canonical_request: canonicalRequest,
+      verifier_profile: "knowledge_write_v1",
+      verifier_input: {
+        account_id: context.account.id,
+        doc_id: docId,
+        expected_write: "review_state_optional",
+      },
+    },
+    execute: async () => checkCompanyBrainConflictAction({
+      accountId: context.account.id,
+      docId,
+      title: body?.title ?? body?.candidate?.title,
+      action: body?.action,
+      targetStage: body?.target_stage,
+      limit: parseCompanyBrainLimit(requestUrl, body, 6),
+      overlapSignal: body?.overlap_signal === true || body?.candidate?.overlap_signal === true,
+      replacesExisting: body?.replaces_existing === true || body?.candidate?.replaces_existing === true,
+    }),
+  });
+  const result = mutationExecution.ok
+    ? mutationExecution.result
+    : buildCompanyBrainRuntimeBlockedResult({
+        docId,
+        error: mutationExecution.error,
+      });
+  const statusCode = mutationExecution.ok
+    ? getCompanyBrainAgentStatusCode(result)
+    : 409;
 
   logger.info("company_brain_conflict_check", {
     stage: "company_brain_conflict_check",
@@ -4446,19 +4553,61 @@ async function handleAgentUpdateLearningState(res, requestUrl, body, logger = no
   }
 
   const docId = parseCompanyBrainDocId(requestUrl, body);
-  const result = updateLearningStateAction({
-    accountId: context.account.id,
+  const canonicalRequest = buildUpdateLearningStateCanonicalRequest({
+    pathname: "/agent/company-brain/learning/state",
+    method: "POST",
     docId,
-    status: body?.status,
-    notes: body?.notes,
-    tags: Array.isArray(body?.tags) ? body.tags : null,
-    key_concepts: Array.isArray(body?.key_concepts) ? body.key_concepts : null,
+    actor: {
+      accountId: context.account.id,
+    },
+    context: {
+      idempotencyKey: getRequestIdempotencyKey(body),
+      confirmed: true,
+      verifierCompleted: true,
+      reviewRequiredActive: false,
+    },
+    originalRequest: body,
   });
-  const statusCode = result.success === true
-    ? 200
-    : result.error === "not_found"
-      ? 404
-      : 400;
+  const mutationExecution = await runMutation({
+    action: "update_learning_state",
+    payload: body,
+    context: {
+      pathname: "/agent/company-brain/learning/state",
+      account_id: context.account.id,
+      trace_id: res.__trace_id || null,
+      logger,
+      canonical_request: canonicalRequest,
+      verifier_profile: "knowledge_write_v1",
+      verifier_input: {
+        account_id: context.account.id,
+        doc_id: docId,
+        expected_write: "learning_state",
+      },
+    },
+    execute: async () => updateLearningStateAction({
+      accountId: context.account.id,
+      docId,
+      status: body?.status,
+      notes: body?.notes,
+      tags: Array.isArray(body?.tags) ? body.tags : null,
+      key_concepts: Array.isArray(body?.key_concepts) ? body.key_concepts : null,
+    }),
+  });
+  const result = mutationExecution.ok
+    ? mutationExecution.result
+    : buildCompanyBrainRuntimeBlockedResult({
+        docId,
+        error: mutationExecution.error,
+      });
+  const statusCode = mutationExecution.ok
+    ? (
+        result.success === true
+          ? 200
+          : result.error === "not_found"
+            ? 404
+            : 400
+      )
+    : 409;
 
   logger.info("company_brain_learning", {
     stage: "company_brain_learning",
@@ -4997,46 +5146,38 @@ async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogg
     mode: resolvedMode,
     target_heading: targetHeading || null,
   });
-  const intakeBoundary = resolveCompanyBrainWriteIntake({
+  const reviewSyncExecution = await runCompanyBrainReviewSyncMutation({
     accountId: context.account.id,
+    docId: finalDocumentId,
+    title: currentDocument?.title || null,
     action: "update_doc",
     targetStage: "mirror",
-    candidate: {
+    pathname: "internal:company-brain/update-doc-review",
+    logger,
+    traceId: res.__trace_id || null,
+  });
+  if (reviewSyncExecution?.ok) {
+    const reviewResult = reviewSyncExecution.result;
+    const intakeBoundary = reviewResult?.data?.intake_boundary || null;
+    logger.info("document_company_brain_update_boundary", {
+      stage: "company_brain_write_intake_boundary",
+      account_id: context.account.id,
       doc_id: finalDocumentId,
-      title: currentDocument?.title || null,
-    },
-  });
-  logger.info("document_company_brain_update_boundary", {
-    stage: "company_brain_write_intake_boundary",
-    account_id: context.account.id,
-    doc_id: finalDocumentId,
-    intake_state: intakeBoundary.intake_state,
-    review_status: intakeBoundary.review_status,
-    review_required: intakeBoundary.review_required,
-    conflict_check_required: intakeBoundary.conflict_check_required,
-    approval_required_for_formal_source: intakeBoundary.approval_required_for_formal_source,
-    target_stage: intakeBoundary.target_stage,
-  });
-  if (intakeBoundary.review_status) {
-    const stagedReview = stageCompanyBrainReviewState({
-      accountId: context.account.id,
-      docId: finalDocumentId,
-      sourceStage: intakeBoundary.target_stage,
-      proposedAction: intakeBoundary.action,
-      reviewStatus: intakeBoundary.review_status,
-      conflictItems: intakeBoundary.matched_docs,
-      reviewNotes: intakeBoundary.review_status === "conflict_detected"
-        ? "conflict evidence detected during document update"
-        : "",
+      intake_state: intakeBoundary?.intake_state || null,
+      review_status: intakeBoundary?.review_status || null,
+      review_required: intakeBoundary?.review_required === true,
+      conflict_check_required: intakeBoundary?.conflict_check_required === true,
+      approval_required_for_formal_source: intakeBoundary?.approval_required_for_formal_source === true,
+      target_stage: intakeBoundary?.target_stage || null,
     });
-    if (stagedReview.success !== true) {
-      logger.warn("document_company_brain_update_review_stage_failed", {
-        stage: "company_brain_review_state",
-        account_id: context.account.id,
-        doc_id: finalDocumentId,
-        error: stagedReview.error,
-      });
-    }
+  } else {
+    logger.warn("document_company_brain_update_review_stage_failed", {
+      stage: "company_brain_review_state",
+      account_id: context.account.id,
+      doc_id: finalDocumentId,
+      error: reviewSyncExecution?.error || "mutation_verifier_blocked",
+      verifier: reviewSyncExecution?.verifier || null,
+    });
   }
   respondDocumentWriteSuccess(res, 200, buildDocumentUpdateResult({
     context,
