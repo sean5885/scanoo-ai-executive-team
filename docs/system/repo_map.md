@@ -123,6 +123,9 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `/Users/seanhan/Documents/Playground/src/memory-write-guard.mjs`
   - Small wrapper that normalizes process-local memory writes before delegating to `company-brain-memory-authority.mjs`.
   - Also not wired into `read-runtime.mjs`, `mutation-runtime.mjs`, SQLite persistence, planner routing, or company-brain approval/governance paths.
+  - `/Users/seanhan/Documents/Playground/src/memory-write-detector.mjs`
+  - Dev-time warning helper that monkey-patches `Map.prototype.set`, but only emits warnings for direct writes targeting `globalThis.__company_brain_memory__` outside the authority helper stack.
+  - Installed from `/Users/seanhan/Documents/Playground/src/http-server.mjs` during non-production HTTP bootstrap.
   - Current local helper callers also include `/Users/seanhan/Documents/Playground/src/session-scope-store.mjs` and `/Users/seanhan/Documents/Playground/src/executive-memory.mjs` as process-local authority-first writes plus read-through caches over their existing file-backed stores.
 
 - OpenClaw tool layer

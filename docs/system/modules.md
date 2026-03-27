@@ -120,6 +120,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - auth checks
   - HTTP endpoint handling
   - response shaping
+  - install a non-production dev-time detector that warns on direct writes to the process-local company-brain memory map outside the authority helper
   - internal planner/company-brain bridge routes now fail closed unless the current request carries an explicit user auth header set; they no longer silently rehydrate document-search auth from unrelated stored OAuth state
   - optional explicit request-body idempotency for JSON `POST` / `PUT` / `PATCH` routes via `idempotency_key`
   - replay the first persisted JSON result for repeated keyed requests instead of re-running the handler

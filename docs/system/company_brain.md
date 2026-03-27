@@ -102,6 +102,10 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `/Users/seanhan/Documents/Playground/src/memory-write-guard.mjs`
     - exposes `guardedMemorySet(...)` as a tiny wrapper over the process-local memory authority
     - currently normalizes key/source and is used only by local process-memory helper paths
+  - `/Users/seanhan/Documents/Playground/src/memory-write-detector.mjs`
+    - exposes a dev-time `installMemoryWriteDetector()` helper that monkey-patches `Map.prototype.set`
+    - only warns when direct writes target the current `globalThis.__company_brain_memory__` map outside `company-brain-memory-authority.mjs`
+    - is installed from `/Users/seanhan/Documents/Playground/src/http-server.mjs` during non-production HTTP bootstrap and is not a runtime write-policy enforcement layer
   - `/Users/seanhan/Documents/Playground/src/company-brain-query.mjs`
     - now also exposes approved-knowledge list/search/detail actions that only read from `company_brain_approved_knowledge`
     - keeps the existing mirror read-side actions unchanged and separate
@@ -115,6 +119,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - the simplified learning sidecar write routes now also use that same runtime boundary instead of direct route-local persistence
 - the process-local `company-brain-memory-authority.mjs` helper is not a canonical memory authority, not durable storage, and not part of the approval-governed company-brain path
 - `memory-write-guard.mjs` only wraps process-local cache writes; it does not replace SQLite learning-state persistence, review/apply flows, or approved-knowledge admission
+- `memory-write-detector.mjs` is only a development-time warning surface for direct writes to the process-local map; it does not block writes, replace approval/runtime policy, or change durable storage semantics
 - the same helper may now receive authority-first session explicit-auth snapshots and executive memory rows in-process, but those readers still fall back to their original file-backed stores and do not turn company-brain memory into a durable source of truth
 - there is still no standalone company-brain-owned verifier, human review UI, or semantic conflict resolver
 - Public list/detail/search routes only return:

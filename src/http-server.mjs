@@ -7,6 +7,7 @@ import {
   oauthPort,
   searchTopK,
 } from "./config.mjs";
+import { installMemoryWriteDetector } from "./memory-write-detector.mjs";
 import {
   ingestLearningDocAction,
   updateLearningStateAction,
@@ -205,6 +206,8 @@ import {
   sanitizeTracePayload,
 } from "./monitoring-store.mjs";
 import { normalizeUserResponse } from "./user-response-normalizer.mjs";
+
+installMemoryWriteDetector();
 
 const pendingOauthStates = new Map();
 const meetingCoordinator = createMeetingCoordinator({
