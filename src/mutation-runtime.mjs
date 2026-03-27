@@ -146,6 +146,36 @@ export async function runMutation({ action, payload, context, execute }) {
     return { ok: false, error: "missing_execute" };
   }
 
+  const writePolicy =
+    context?.write_policy && typeof context.write_policy === "object" && !Array.isArray(context.write_policy)
+      ? { ...context.write_policy }
+      : null;
+  const allowedActions = Array.isArray(writePolicy?.allowed_actions)
+    ? writePolicy.allowed_actions
+      .map((entry) => cleanText(entry))
+      .filter(Boolean)
+    : null;
+
+  if (allowedActions && !allowedActions.includes(cleanText(action))) {
+    return {
+      ok: false,
+      action,
+      error: "write_policy_violation",
+      message: `action "${cleanText(action) || "unknown"}" is not allowed`,
+      meta: {
+        execution_mode: context?.execution_mode || "passthrough",
+        duration_ms: 0,
+        journal: {
+          action,
+          status: "blocked",
+          started_at: Date.now(),
+          error: "write_policy_violation",
+        },
+        write_policy: writePolicy,
+      },
+    };
+  }
+
   const idempotencyKey = cleanText(context?.idempotency_key) || null;
   if (idempotencyKey) {
     const store = getMutationIdempotencyStore();
@@ -357,6 +387,7 @@ export async function runMutation({ action, payload, context, execute }) {
       execution_mode: mode,
       duration_ms: Date.now() - start,
       journal,
+      write_policy: writePolicy,
       ...((preVerification || postVerification)
         ? {
             verification: {

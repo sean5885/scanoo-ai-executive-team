@@ -272,6 +272,7 @@ Every write action should be able to emit the same bounded policy object:
 2. A path is only considered policy-aligned when the same write action can produce this object deterministically from checked-in code.
 3. Existing confirmation IDs and preview artifacts remain valid; they do not need to be replaced by `idempotency_key`.
 4. Generic HTTP idempotency already exists for `POST|PUT|PATCH` when `idempotency_key` is provided; this remained the Phase 1 baseline intent, but current checked-in code now also carries a narrower in-process replay cache inside `mutation-runtime.mjs`.
+5. `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs` also accepts an optional runtime-only `context.write_policy.allowed_actions` array; when present, the runtime fail-soft blocks any action not in that allowlist with `write_policy_violation` before idempotency/admission/execute, and successful executions echo the provided `write_policy` snapshot in `meta.write_policy`.
 
 ## C. Gap Analysis
 

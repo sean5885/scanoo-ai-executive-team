@@ -82,6 +82,7 @@ test("runMutation passes through to execute without changing create_doc inputs",
           status: "success",
           started_at: 1000,
         },
+        write_policy: null,
       },
     });
   } finally {
@@ -138,11 +139,75 @@ test("runMutation marks controlled execution input when execution_mode is contro
           status: "success",
           started_at: 3000,
         },
+        write_policy: null,
       },
     });
   } finally {
     Date.now = originalNow;
   }
+});
+
+test("runMutation blocks execute when context write_policy.allowed_actions excludes the action", async () => {
+  let called = false;
+
+  const result = await runMutation({
+    action: "create_doc",
+    payload: { title: "demo" },
+    context: {
+      write_policy: {
+        allowed_actions: ["update_doc"],
+        source: "test_policy",
+      },
+    },
+    async execute() {
+      called = true;
+      return { ok: true };
+    },
+  });
+
+  assert.equal(called, false);
+  assert.deepEqual(result, {
+    ok: false,
+    action: "create_doc",
+    error: "write_policy_violation",
+    message: 'action "create_doc" is not allowed',
+    meta: {
+      execution_mode: "passthrough",
+      duration_ms: 0,
+      journal: {
+        action: "create_doc",
+        status: "blocked",
+        started_at: result.meta.journal.started_at,
+        error: "write_policy_violation",
+      },
+      write_policy: {
+        allowed_actions: ["update_doc"],
+        source: "test_policy",
+      },
+    },
+  });
+  assert.equal(typeof result.meta?.journal?.started_at, "number");
+});
+
+test("runMutation exposes context write_policy in success meta", async () => {
+  const writePolicy = {
+    allowed_actions: ["create_doc"],
+    source: "test_policy",
+  };
+
+  const result = await runMutation({
+    action: "create_doc",
+    payload: { title: "demo" },
+    context: {
+      write_policy: writePolicy,
+    },
+    async execute() {
+      return { ok: true, created: true };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.meta?.write_policy, writePolicy);
 });
 
 test("runMutation replays the first successful response when context idempotency_key repeats", async () => {
@@ -202,6 +267,7 @@ test("runMutation replays the first successful response when context idempotency
           status: "success",
           started_at: 6000,
         },
+        write_policy: null,
       },
     });
     assert.deepEqual(secondResult, firstResult);
