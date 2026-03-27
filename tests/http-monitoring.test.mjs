@@ -155,6 +155,22 @@ test("http server records timed out requests in monitoring store", async (t) => 
 test("answer route normalizes the exact leaking runtime query into natural-language output", async (t) => {
   const server = await startTestServer(t, {
     requestTimeoutMs: 180000,
+    serviceOverrides: {
+      executePlannedUserInput: async () => ({
+        ok: true,
+        action: "get_runtime_info",
+        params: {},
+        execution_result: {
+          ok: true,
+          kind: "runtime_info",
+          db_path: "/tmp/test-runtime.sqlite",
+          node_pid: 4321,
+          cwd: "/tmp/test-runtime",
+          service_start_time: "2026-03-27T15:00:00.000Z",
+        },
+        trace_id: "trace_runtime_info_test",
+      }),
+    },
   });
   const { port } = server.address();
 
