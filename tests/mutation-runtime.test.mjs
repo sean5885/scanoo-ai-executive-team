@@ -184,6 +184,101 @@ test("runMutation returns a stable execution_failed boundary with timing when ex
   }
 });
 
+test("runMutation executes rollback hook and records success when execute throws", async () => {
+  const calls = [];
+  const originalNow = Date.now;
+  const times = [4000, 4031];
+
+  Date.now = () => times.shift() ?? 4031;
+
+  try {
+    const result = await runMutation({
+      action: "create_doc",
+      payload: { title: "demo" },
+      context: {
+        execution_mode: "controlled",
+        rollback(input) {
+          calls.push(input);
+        },
+      },
+      async execute() {
+        throw new Error("boom");
+      },
+    });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].action, "create_doc");
+    assert.equal(calls[0].payload.title, "demo");
+    assert.equal(calls[0].context.execution_mode, "controlled");
+    assert.equal(calls[0].error?.message, "boom");
+    assert.deepEqual(result, {
+      ok: false,
+      action: "create_doc",
+      error: "execution_failed",
+      meta: {
+        execution_mode: "controlled",
+        duration_ms: 31,
+        journal: {
+          action: "create_doc",
+          status: "failed",
+          started_at: 4000,
+          error: "boom",
+          rollback: {
+            status: "success",
+          },
+        },
+      },
+    });
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test("runMutation keeps execution failure shape when rollback hook also fails", async () => {
+  const originalNow = Date.now;
+  const times = [5000, 5044];
+
+  Date.now = () => times.shift() ?? 5044;
+
+  try {
+    const result = await runMutation({
+      action: "create_doc",
+      payload: { title: "demo" },
+      context: {
+        execution_mode: "controlled",
+        async rollback() {
+          throw new Error("rollback_boom");
+        },
+      },
+      async execute() {
+        throw new Error("boom");
+      },
+    });
+
+    assert.deepEqual(result, {
+      ok: false,
+      action: "create_doc",
+      error: "execution_failed",
+      meta: {
+        execution_mode: "controlled",
+        duration_ms: 44,
+        journal: {
+          action: "create_doc",
+          status: "failed",
+          started_at: 5000,
+          error: "boom",
+          rollback: {
+            status: "failed",
+            error: "rollback_boom",
+          },
+        },
+      },
+    });
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
 test("runMutation denies execute when canonical mutation admission blocks the write", async () => {
   const canonicalRequest = buildMeetingConfirmWriteCanonicalRequest({
     pathname: "/api/meeting/confirm",

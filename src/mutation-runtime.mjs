@@ -158,6 +158,7 @@ export async function runMutation({ action, payload, context, execute }) {
     status: "started",
     started_at: start,
   };
+  const rollback = context?.rollback;
 
   if (canonicalRequest) {
     logMutationAdmission(resolvedLogger, "mutation_admission_started", {
@@ -234,9 +235,28 @@ export async function runMutation({ action, payload, context, execute }) {
   } catch (err) {
     journal.status = "failed";
     journal.error = err?.message || "execution_failed";
-    journal.rollback = {
-      status: "pending",
-    };
+    if (typeof rollback === "function") {
+      try {
+        await rollback({
+          action,
+          payload,
+          context,
+          error: err,
+        });
+        journal.rollback = {
+          status: "success",
+        };
+      } catch (rollbackErr) {
+        journal.rollback = {
+          status: "failed",
+          error: rollbackErr?.message || "rollback_failed",
+        };
+      }
+    } else {
+      journal.rollback = {
+        status: "pending",
+      };
+    }
 
     return {
       ok: false,
