@@ -263,6 +263,7 @@ Every write action should be able to emit the same bounded policy object:
 - `idempotency_key`
   - request-level dedupe key when the same write may be retried or replayed
   - only explicit caller-provided keys participate in idempotency replay / duplicate detection; internal request fingerprints stay separate fallback dedupe evidence
+  - current checked-in runtime also has a process-local replay path in `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs` keyed by `context.idempotency_key`; it replays the first successful response and does not survive restart
   - may be `null` for one-shot confirmation-token paths
 
 ### Contract rules
@@ -270,7 +271,7 @@ Every write action should be able to emit the same bounded policy object:
 1. This contract is metadata first, not a new public response shape.
 2. A path is only considered policy-aligned when the same write action can produce this object deterministically from checked-in code.
 3. Existing confirmation IDs and preview artifacts remain valid; they do not need to be replaced by `idempotency_key`.
-4. Generic HTTP idempotency already exists for `POST|PUT|PATCH` when `idempotency_key` is provided; Phase 1 should reuse that instead of inventing a second store.
+4. Generic HTTP idempotency already exists for `POST|PUT|PATCH` when `idempotency_key` is provided; this remained the Phase 1 baseline intent, but current checked-in code now also carries a narrower in-process replay cache inside `mutation-runtime.mjs`.
 
 ## C. Gap Analysis
 
@@ -312,7 +313,7 @@ Current runtime is split across three partially overlapping governance shapes:
    - planner governance metadata
    - write-guard prerequisite behavior
    - company-brain lifecycle rules
-5. `idempotency_key` exists at generic HTTP level, but is not yet classified per action.
+5. `idempotency_key` exists at generic HTTP level and now also has a narrow in-process replay path in `mutation-runtime.mjs`, but it is not yet classified per action and the two layers do not yet share one canonical scope contract.
 
 ## Phase 1 Grounded Status
 

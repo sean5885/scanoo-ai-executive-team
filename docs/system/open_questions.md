@@ -190,6 +190,17 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
      - `/Users/seanhan/Documents/Playground/src/read-runtime.mjs`
      - `/Users/seanhan/Documents/Playground/src/derived-read-authority.mjs`
 
+22. `mutation-runtime.mjs` now has its own in-process idempotency replay cache in addition to the persisted HTTP idempotency layer.
+   - Why it matters:
+     - runtime writes can now short-circuit on repeated `context.idempotency_key` without re-running admission, verification, or execute
+     - the cache is process-local and keyed only by the explicit context key, so it does not yet share the wider HTTP scope contract of `method + pathname + account_id + idempotency_key`
+     - later contributors need an explicit keep / narrow / replace decision instead of assuming runtime idempotency still only means the persisted HTTP layer
+   - Current code truth:
+     - `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`
+   - Related mirror docs:
+     - `/Users/seanhan/Documents/Playground/docs/system/api_map.md`
+     - `/Users/seanhan/Documents/Playground/docs/system/write_policy_unification.md`
+
 ## Cannot Be Confirmed From Code Alone
 
 - whether any hosted deployment exists outside the local machine

@@ -145,6 +145,72 @@ test("runMutation marks controlled execution input when execution_mode is contro
   }
 });
 
+test("runMutation replays the first successful response when context idempotency_key repeats", async () => {
+  const payload = { title: "demo" };
+  const context = {
+    pathname: "/api/doc/create",
+    idempotency_key: "mutation-runtime-idem-test",
+  };
+  const calls = [];
+  const originalNow = Date.now;
+  const times = [6000, 6025, 7000, 7040];
+
+  Date.now = () => times.shift() ?? 7040;
+
+  try {
+    delete globalThis.__mutation_idempotency_store__;
+
+    const firstResult = await runMutation({
+      action: "create_doc",
+      payload,
+      context,
+      async execute(input) {
+        calls.push(input);
+        return {
+          ok: true,
+          created: true,
+        };
+      },
+    });
+
+    const secondResult = await runMutation({
+      action: "create_doc",
+      payload,
+      context,
+      async execute(input) {
+        calls.push(input);
+        return {
+          ok: true,
+          created: false,
+        };
+      },
+    });
+
+    assert.equal(calls.length, 1);
+    assert.deepEqual(firstResult, {
+      ok: true,
+      action: "create_doc",
+      result: {
+        ok: true,
+        created: true,
+      },
+      meta: {
+        execution_mode: "passthrough",
+        duration_ms: 25,
+        journal: {
+          action: "create_doc",
+          status: "success",
+          started_at: 6000,
+        },
+      },
+    });
+    assert.deepEqual(secondResult, firstResult);
+  } finally {
+    Date.now = originalNow;
+    delete globalThis.__mutation_idempotency_store__;
+  }
+});
+
 test("runMutation returns a stable execution_failed boundary with timing when execute throws", async () => {
   const originalNow = Date.now;
   const times = [2000, 2035];

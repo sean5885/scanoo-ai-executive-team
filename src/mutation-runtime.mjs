@@ -128,6 +128,17 @@ export async function runMutation({ action, payload, context, execute }) {
     return { ok: false, error: "missing_execute" };
   }
 
+  const idempotencyKey = cleanText(context?.idempotency_key) || null;
+  if (idempotencyKey) {
+    globalThis.__mutation_idempotency_store__ =
+      globalThis.__mutation_idempotency_store__ || new Map();
+
+    const store = globalThis.__mutation_idempotency_store__;
+    if (store.has(idempotencyKey)) {
+      return store.get(idempotencyKey);
+    }
+  }
+
   const resolvedLogger = normalizeLogger(context?.logger);
   const canonicalRequestInput = context?.canonical_request ?? context?.canonicalRequest ?? null;
   let canonicalRequest = null;
@@ -304,7 +315,7 @@ export async function runMutation({ action, payload, context, execute }) {
     };
   }
 
-  return {
+  const response = {
     ok: true,
     action,
     result,
@@ -322,4 +333,10 @@ export async function runMutation({ action, payload, context, execute }) {
         : {}),
     },
   };
+
+  if (idempotencyKey) {
+    globalThis.__mutation_idempotency_store__.set(idempotencyKey, response);
+  }
+
+  return response;
 }
