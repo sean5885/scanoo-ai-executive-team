@@ -1,11 +1,15 @@
 import {
-  getApprovedCompanyBrainKnowledgeDetailAction,
   getCompanyBrainDocDetailAction,
-  listApprovedCompanyBrainKnowledgeAction,
   listCompanyBrainDocsAction,
-  searchApprovedCompanyBrainKnowledgeAction,
   searchCompanyBrainDocsAction,
 } from "./company-brain-query.mjs";
+import {
+  getApprovedCompanyBrainKnowledgeDetailDerivedAction,
+  getCompanyBrainLearningStateDetailAction,
+  listApprovedCompanyBrainKnowledgeDerivedAction,
+  listCompanyBrainLearningStateAction,
+  searchApprovedCompanyBrainKnowledgeDerivedAction,
+} from "./derived-read-authority.mjs";
 import { searchKnowledgeBaseIndexAction } from "./index-read-authority.mjs";
 import {
   getDocument,
@@ -16,6 +20,7 @@ import { cleanText } from "./message-intent-utils.mjs";
 const INDEX_AUTHORITY = "index";
 const MIRROR_AUTHORITY = "mirror";
 const LIVE_AUTHORITY = "live";
+const DERIVED_AUTHORITY = "derived";
 const LIVE_REQUIRED_FRESHNESS = "live_required";
 
 const INDEX_READERS = new Map([
@@ -45,18 +50,29 @@ const MIRROR_READERS = new Map([
     accountId,
     docId: payload.doc_id,
   })],
-  ["list_approved_company_brain_knowledge", ({ accountId, payload }) => listApprovedCompanyBrainKnowledgeAction({
+]);
+
+const DERIVED_READERS = new Map([
+  ["list_approved_company_brain_knowledge", ({ accountId, payload }) => listApprovedCompanyBrainKnowledgeDerivedAction({
     accountId,
     limit: payload.limit,
   })],
-  ["search_approved_company_brain_knowledge", ({ accountId, payload }) => searchApprovedCompanyBrainKnowledgeAction({
+  ["search_approved_company_brain_knowledge", ({ accountId, payload }) => searchApprovedCompanyBrainKnowledgeDerivedAction({
     accountId,
     q: payload.q,
     limit: payload.limit,
     top_k: payload.top_k,
     ranking_weights: payload.ranking_weights,
   })],
-  ["get_approved_company_brain_knowledge_detail", ({ accountId, payload }) => getApprovedCompanyBrainKnowledgeDetailAction({
+  ["get_approved_company_brain_knowledge_detail", ({ accountId, payload }) => getApprovedCompanyBrainKnowledgeDetailDerivedAction({
+    accountId,
+    docId: payload.doc_id,
+  })],
+  ["list_company_brain_learning_state", ({ accountId, payload }) => listCompanyBrainLearningStateAction({
+    accountId,
+    limit: payload.limit,
+  })],
+  ["get_company_brain_learning_state_detail", ({ accountId, payload }) => getCompanyBrainLearningStateDetailAction({
     accountId,
     docId: payload.doc_id,
   })],
@@ -128,6 +144,10 @@ function normalizeReaderOverrides(overrides = null) {
       overrides.mirror && typeof overrides.mirror === "object" && !Array.isArray(overrides.mirror)
         ? { ...overrides.mirror }
         : null,
+    derived:
+      overrides.derived && typeof overrides.derived === "object" && !Array.isArray(overrides.derived)
+        ? { ...overrides.derived }
+        : null,
   };
 }
 
@@ -152,6 +172,9 @@ function resolveAuthorityForAction(action = "") {
   if (MIRROR_READERS.has(action)) {
     return MIRROR_AUTHORITY;
   }
+  if (DERIVED_READERS.has(action)) {
+    return DERIVED_AUTHORITY;
+  }
   if (LIVE_READERS.has(action)) {
     return LIVE_AUTHORITY;
   }
@@ -174,6 +197,14 @@ function resolveReaderForRequest(request = {}) {
       return override;
     }
     return LIVE_READERS.get(request.action) || null;
+  }
+
+  if (request.primary_authority === DERIVED_AUTHORITY) {
+    const override = overrides?.derived?.[request.action];
+    if (typeof override === "function") {
+      return override;
+    }
+    return DERIVED_READERS.get(request.action) || null;
   }
 
   const override = overrides?.mirror?.[request.action];
@@ -337,6 +368,29 @@ function buildIndexReadCanonicalRequest({
   };
 }
 
+function buildDerivedReadCanonicalRequest({
+  action = "",
+  accountId = "",
+  payload = {},
+  pathname = "",
+  readerOverrides = null,
+} = {}) {
+  return {
+    action,
+    account_id: cleanText(accountId) || "",
+    payload: payload && typeof payload === "object" && !Array.isArray(payload)
+      ? { ...payload }
+      : {},
+    context: {
+      pathname: cleanText(pathname) || null,
+      primary_authority: DERIVED_AUTHORITY,
+      reader_overrides: readerOverrides && typeof readerOverrides === "object" && !Array.isArray(readerOverrides)
+        ? { ...readerOverrides }
+        : undefined,
+    },
+  };
+}
+
 export async function readDocumentFromRuntime({
   accountId = "",
   accessToken = "",
@@ -408,6 +462,50 @@ export async function listDocumentCommentsFromRuntime({
         include_solved: includeSolved === true,
         page_token: cleanText(pageToken) || "",
         page_size: pageSize,
+      },
+      pathname,
+      readerOverrides,
+    }),
+    logger,
+  });
+  return unwrapReadExecution(readExecution);
+}
+
+export async function getApprovedCompanyBrainKnowledgeDetailFromRuntime({
+  accountId = "",
+  docId = "",
+  pathname = "internal:get_approved_company_brain_knowledge_detail",
+  logger = null,
+  readerOverrides = null,
+} = {}) {
+  const readExecution = await runRead({
+    canonicalRequest: buildDerivedReadCanonicalRequest({
+      action: "get_approved_company_brain_knowledge_detail",
+      accountId,
+      payload: {
+        doc_id: docId,
+      },
+      pathname,
+      readerOverrides,
+    }),
+    logger,
+  });
+  return unwrapReadExecution(readExecution);
+}
+
+export async function getCompanyBrainLearningStateFromRuntime({
+  accountId = "",
+  docId = "",
+  pathname = "internal:get_company_brain_learning_state_detail",
+  logger = null,
+  readerOverrides = null,
+} = {}) {
+  const readExecution = await runRead({
+    canonicalRequest: buildDerivedReadCanonicalRequest({
+      action: "get_company_brain_learning_state_detail",
+      accountId,
+      payload: {
+        doc_id: docId,
       },
       pathname,
       readerOverrides,

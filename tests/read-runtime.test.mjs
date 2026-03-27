@@ -265,10 +265,80 @@ test("runRead keeps approved mirror detail on the same canonical result shape", 
     });
 
     assert.equal(result.ok, true);
-    assert.equal(result.primary_authority, "mirror");
+    assert.equal(result.primary_authority, "derived");
+    assert.deepEqual(result.authorities_attempted, ["derived"]);
     assert.equal(result.result.success, true);
     assert.equal(result.result.data.doc.doc_id, "doc_read_runtime_approved_1");
     assert.equal(result.result.data.knowledge_state.stage, "approved");
+  } finally {
+    cleanupAccountFixtures(accountId);
+  }
+});
+
+test("runRead routes learning-state detail through derived authority only", async () => {
+  const accountId = `acct_read_runtime_learning_${Date.now()}`;
+  ensureTestAccount(accountId);
+  insertDocFixture({
+    accountId,
+    docId: "doc_read_runtime_learning_1",
+    title: "Learning Runtime Guide",
+    rawText: "learning runtime owner deadline",
+  });
+
+  db.prepare(`
+    INSERT INTO company_brain_learning_state (
+      account_id, doc_id, learning_status, structured_summary_json, key_concepts_json, tags_json,
+      notes, learned_at, created_at, updated_at
+    ) VALUES (
+      @account_id, @doc_id, @learning_status, @structured_summary_json, @key_concepts_json, @tags_json,
+      @notes, @learned_at, @created_at, @updated_at
+    )
+    ON CONFLICT(account_id, doc_id) DO UPDATE SET
+      learning_status = excluded.learning_status,
+      structured_summary_json = excluded.structured_summary_json,
+      key_concepts_json = excluded.key_concepts_json,
+      tags_json = excluded.tags_json,
+      notes = excluded.notes,
+      learned_at = excluded.learned_at,
+      updated_at = excluded.updated_at
+  `).run({
+    account_id: accountId,
+    doc_id: "doc_read_runtime_learning_1",
+    learning_status: "learned",
+    structured_summary_json: JSON.stringify({
+      overview: "Learning Runtime Guide",
+      headings: ["Learning Runtime Guide"],
+      highlights: ["learning runtime owner deadline"],
+      snippet: "learning runtime owner deadline",
+      content_length: 31,
+    }),
+    key_concepts_json: JSON.stringify(["derived authority"]),
+    tags_json: JSON.stringify(["runtime-derived"]),
+    notes: "stored in learning state",
+    learned_at: new Date().toISOString(),
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  });
+
+  try {
+    const result = await runRead({
+      canonicalRequest: {
+        action: "get_company_brain_learning_state_detail",
+        account_id: accountId,
+        payload: {
+          doc_id: "doc_read_runtime_learning_1",
+        },
+      },
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.primary_authority, "derived");
+    assert.deepEqual(result.authorities_attempted, ["derived"]);
+    assert.equal(result.fallback_used, false);
+    assert.equal(result.result.success, true);
+    assert.equal(result.result.data.doc.doc_id, "doc_read_runtime_learning_1");
+    assert.equal(result.result.data.learning_state.status, "learned");
+    assert.equal(result.result.data.derived_state.stage, "learning_state");
   } finally {
     cleanupAccountFixtures(accountId);
   }
