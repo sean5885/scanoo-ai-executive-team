@@ -1342,6 +1342,7 @@ export async function replyMessage(
   { replyInThread = false, cardTitle, cardPayload } = {},
 ) {
   assertLarkWriteAllowed();
+  assertLarkWriteExecutionAllowed("replyMessage");
   ({ accessToken } = await resolveContentAuth(accessToken));
   const normalized = String(content || "").trim();
   if (!normalized && !cardPayload) {
@@ -1387,6 +1388,7 @@ export async function sendMessage(
   { receiveIdType = "chat", cardTitle, cardPayload } = {},
 ) {
   assertLarkWriteAllowed();
+  assertLarkWriteExecutionAllowed("sendMessage");
   ({ accessToken } = await resolveContentAuth(accessToken));
   const normalized = String(content || "").trim();
   if (!normalized && !cardPayload) {

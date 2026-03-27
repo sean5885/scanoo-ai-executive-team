@@ -339,6 +339,14 @@ export const EXTERNAL_MUTATION_SPECS = Object.freeze([
     ],
   }),
   buildSpec({
+    action: "message_send",
+    source: "runtime_message_sender",
+    owner: "runtime_message_sender",
+    intent: "message_send",
+    policyActionType: "reply",
+    resourceType: "message",
+  }),
+  buildSpec({
     action: "message_reply",
     source: "message_http_route",
     owner: "message_http_route",

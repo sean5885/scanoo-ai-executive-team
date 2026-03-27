@@ -27,14 +27,16 @@ import {
   createManagedDocument,
   ensureDocumentManagerPermission,
   getDocument,
-  sendMessage,
   updateDocument,
 } from "./lark-content.mjs";
 import { registerKnowledgeWriteback } from "./executive-closed-loop.mjs";
 import { EVIDENCE_TYPES, verifyMeetingWorkflowCompletion } from "./executive-verifier.mjs";
 import { normalizeText, nowIso } from "./text-utils.mjs";
 import { buildMeetingConfirmWriteCanonicalRequest } from "./mutation-admission.mjs";
-import { runCanonicalLarkMutation } from "./lark-mutation-runtime.mjs";
+import {
+  executeCanonicalLarkMessageSend,
+  runCanonicalLarkMutation,
+} from "./lark-mutation-runtime.mjs";
 
 const WEEKLY_PROGRESS_KEYWORDS = ["進展", "推进", "推進", "完成度", "完成", "達成", "okr", "kr", "目標", "objective"];
 const WEEKLY_ISSUE_KEYWORDS = ["卡點", "阻塞", "問題", "风险", "風險", "瓶頸"];
@@ -1209,7 +1211,7 @@ function buildWeeklyTrackerPayload(summary, {
 
 function defaultCoordinatorDeps() {
   return {
-    sendMessage,
+    executeMessageSend: executeCanonicalLarkMessageSend,
     getDocument,
     createDocument: createManagedDocument,
     updateDocument,
@@ -1228,10 +1230,31 @@ function defaultCoordinatorDeps() {
 }
 
 export function createMeetingCoordinator(overrides = {}) {
+  const legacyMessageWriter = typeof overrides.sendMessage === "function"
+    ? overrides.sendMessage
+    : null;
   const deps = {
     ...defaultCoordinatorDeps(),
     ...overrides,
   };
+  if (
+    typeof overrides.executeMessageSend !== "function"
+    && legacyMessageWriter
+  ) {
+    deps.executeMessageSend = async ({
+      accessToken,
+      receiveId,
+      content,
+      receiveIdType = "chat",
+      cardPayload = null,
+    } = {}) => ({
+      ok: true,
+      result: await legacyMessageWriter(accessToken, receiveId, content, {
+        receiveIdType,
+        cardPayload,
+      }),
+    });
+  }
 
   async function resolveMeetingDocumentTarget({ accountId, projectKey, projectName, meetingType, chatId }) {
     const mapped = deps.getMappedMeetingDocument(accountId, projectKey, meetingType);
@@ -1423,8 +1446,14 @@ export function createMeetingCoordinator(overrides = {}) {
       sourceDate: summary.time,
       weeklyTodos,
     });
-    const sent = await deps.sendMessage(accessToken, targetGroupId, summaryContent, {
+    const messageSendInput = {
+      pathname: "/runtime/meeting/process-preview",
+      accountId,
+      accessToken,
+      logger: deps.logger,
+      receiveId: targetGroupId,
       receiveIdType: "chat",
+      content: summaryContent,
       cardPayload: buildMeetingConfirmationCard({
         meetingType: classification.meeting_type,
         summaryContent,
@@ -1432,7 +1461,17 @@ export function createMeetingCoordinator(overrides = {}) {
         accountId,
         projectName: identity.project_name,
       }),
-    });
+    };
+    const sentExecution = await deps.executeMessageSend(messageSendInput);
+    if (!sentExecution.ok) {
+      return {
+        ok: false,
+        error: sentExecution.error,
+        message: sentExecution.message,
+        write_guard: sentExecution.write_guard || null,
+      };
+    }
+    const sent = sentExecution.result;
     const verification = buildMeetingVerification({
       structuredResult,
       summaryContent,

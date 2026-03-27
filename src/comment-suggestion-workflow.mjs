@@ -1,7 +1,8 @@
-import { getDocument, listDocumentComments, replyMessage } from "./lark-content.mjs";
+import { getDocument, listDocumentComments } from "./lark-content.mjs";
 import { rewriteDocumentFromComments } from "./doc-comment-rewrite.mjs";
 import { listUnseenDocumentComments, markDocumentCommentsSeen } from "./comment-watch-store.mjs";
 import { createCommentRewriteConfirmation } from "./doc-update-confirmations.mjs";
+import { executeCanonicalLarkMessageReply } from "./lark-mutation-runtime.mjs";
 
 async function listAllUnresolvedDocumentComments(accessToken, documentId) {
   const items = [];
@@ -80,15 +81,19 @@ export async function generateDocumentCommentSuggestionCard({
 
   let notification = null;
   if (String(messageId || "").trim()) {
-    notification = await replyMessage(
+    const execution = await executeCanonicalLarkMessageReply({
+      pathname: "/runtime/comment-suggestion/reply-preview-card",
+      accountId,
       accessToken,
-      String(messageId).trim(),
-      confirmation.preview_card.content,
-      {
-        replyInThread: Boolean(replyInThread),
-        cardTitle: confirmation.preview_card.title,
-      },
-    );
+      messageId: String(messageId).trim(),
+      content: confirmation.preview_card.content,
+      replyInThread: Boolean(replyInThread),
+      cardTitle: confirmation.preview_card.title,
+    });
+    if (execution.ok !== true) {
+      throw new Error(execution.message || execution.error || "comment_suggestion_reply_failed");
+    }
+    notification = execution.result;
   }
 
   return {

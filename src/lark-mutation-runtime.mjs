@@ -1,5 +1,6 @@
 import { executeLarkWrite } from "./execute-lark-write.mjs";
 import { getExternalMutationSpec } from "./external-mutation-registry.mjs";
+import { replyMessage, sendMessage } from "./lark-content.mjs";
 import { buildCanonicalMutationRequest } from "./mutation-admission.mjs";
 import { runMutation } from "./mutation-runtime.mjs";
 import { buildExternalWritePolicy } from "./write-policy-contract.mjs";
@@ -157,4 +158,133 @@ export async function executeCanonicalLarkMutation(options = {}) {
   return mutationExecution?.ok === true
     ? mutationExecution.result
     : mutationExecution;
+}
+
+function buildMessageScopeKey({ receiveIdType = "", receiveId = "" } = {}) {
+  const normalizedType = cleanText(receiveIdType) || "message";
+  const normalizedId = cleanText(receiveId);
+  return normalizedId
+    ? `${normalizedType}:${normalizedId}`
+    : null;
+}
+
+export async function executeCanonicalLarkMessageReply({
+  pathname = "/runtime/messages/reply",
+  accountId = null,
+  accessToken = null,
+  logger = null,
+  traceId = null,
+  messageId = "",
+  content = "",
+  replyInThread = false,
+  cardTitle = "",
+  cardPayload = null,
+  originalRequest = null,
+  idempotencyKey = null,
+} = {}) {
+  const normalizedMessageId = cleanText(messageId);
+  const scopeKey = buildMessageScopeKey({
+    receiveIdType: "message",
+    receiveId: normalizedMessageId,
+  });
+
+  return executeCanonicalLarkMutation({
+    action: "message_reply",
+    pathname,
+    accountId,
+    accessToken,
+    logger,
+    traceId,
+    resourceId: normalizedMessageId || null,
+    scopeKey,
+    idempotencyKey,
+    payload: {
+      message_id: normalizedMessageId || null,
+      reply_in_thread: replyInThread === true,
+      has_card: Boolean(cardTitle || cardPayload),
+    },
+    originalRequest,
+    budget: {
+      sessionKey: accountId || scopeKey,
+      scopeKey,
+      targetDocumentId: normalizedMessageId || null,
+      payload: {
+        message_id: normalizedMessageId || null,
+        reply_in_thread: replyInThread === true,
+        has_card: Boolean(cardTitle || cardPayload),
+      },
+      ...(cleanText(idempotencyKey) ? { idempotencyKey: cleanText(idempotencyKey) } : {}),
+    },
+    performWrite: async ({ accessToken: runtimeAccessToken }) => replyMessage(
+      runtimeAccessToken,
+      normalizedMessageId,
+      content,
+      {
+        replyInThread,
+        cardTitle,
+        cardPayload,
+      },
+    ),
+  });
+}
+
+export async function executeCanonicalLarkMessageSend({
+  pathname = "/runtime/messages/send",
+  accountId = null,
+  accessToken = null,
+  logger = null,
+  traceId = null,
+  receiveId = "",
+  receiveIdType = "chat",
+  content = "",
+  cardTitle = "",
+  cardPayload = null,
+  originalRequest = null,
+  idempotencyKey = null,
+} = {}) {
+  const normalizedReceiveId = cleanText(receiveId);
+  const normalizedReceiveIdType = cleanText(receiveIdType) || "chat";
+  const scopeKey = buildMessageScopeKey({
+    receiveIdType: normalizedReceiveIdType,
+    receiveId: normalizedReceiveId,
+  });
+
+  return executeCanonicalLarkMutation({
+    action: "message_send",
+    pathname,
+    accountId,
+    accessToken,
+    logger,
+    traceId,
+    resourceId: normalizedReceiveId || null,
+    scopeKey,
+    idempotencyKey,
+    payload: {
+      receive_id: normalizedReceiveId || null,
+      receive_id_type: normalizedReceiveIdType,
+      has_card: Boolean(cardTitle || cardPayload),
+    },
+    originalRequest,
+    budget: {
+      sessionKey: accountId || scopeKey,
+      scopeKey,
+      targetDocumentId: normalizedReceiveId || null,
+      payload: {
+        receive_id: normalizedReceiveId || null,
+        receive_id_type: normalizedReceiveIdType,
+        has_card: Boolean(cardTitle || cardPayload),
+      },
+      ...(cleanText(idempotencyKey) ? { idempotencyKey: cleanText(idempotencyKey) } : {}),
+    },
+    performWrite: async ({ accessToken: runtimeAccessToken }) => sendMessage(
+      runtimeAccessToken,
+      normalizedReceiveId,
+      content,
+      {
+        receiveIdType: normalizedReceiveIdType,
+        cardTitle,
+        cardPayload,
+      },
+    ),
+  });
 }

@@ -4,47 +4,58 @@ import { resolveLarkBindingRuntime } from "./binding-runtime.mjs";
 import { startCommentSuggestionPoller } from "./comment-suggestion-poller.mjs";
 import { buildLaneFailureReply } from "./capability-lane.mjs";
 import { executeCapabilityLane } from "./lane-executor.mjs";
-import { replyMessage } from "./lark-content.mjs";
+import {
+  executeCanonicalLarkMessageReply,
+  executeCanonicalLarkMessageSend,
+} from "./lark-mutation-runtime.mjs";
 import { createRuntimeLogger, createTraceId, summarizeLarkEvent } from "./runtime-observability.mjs";
 import { startHttpServer } from "./http-server.mjs";
 import { enforceSingleLarkResponderRuntime } from "./runtime-conflict-guard.mjs";
 import { createMessageEventDeduper } from "./runtime-message-deduper.mjs";
 import { touchResolvedSession } from "./session-scope-store.mjs";
 
-const client = new Lark.Client(baseConfig);
 const runtimeLogger = createRuntimeLogger({ logger: console, component: "long_connection" });
 const messageEventDeduper = createMessageEventDeduper();
-
-async function replyToChat(chatId, text) {
-  return client.im.v1.message.create({
-    params: {
-      receive_id_type: "chat_id",
-    },
-    data: {
-      receive_id: chatId,
-      msg_type: "text",
-      content: JSON.stringify({ text }),
-    },
-  });
-}
 
 async function sendLaneReply(event, reply = {}) {
   const chatId = event?.message?.chat_id;
   const messageId = event?.message?.message_id;
   const text = String(reply.text || "").trim();
+  const accountId = event?.sender?.sender_id?.open_id || event?.sender?.sender_id?.union_id || chatId || null;
+  const eventLogger = runtimeLogger.child("message_runtime", {
+    action: "lane_reply",
+    chat_id: chatId || null,
+    message_id: messageId || null,
+  });
 
   if (!chatId || !text) {
     return null;
   }
 
   if (reply.replyMode === "card" && messageId && reply.accessToken) {
-    return replyMessage(reply.accessToken, messageId, text, {
+    const execution = await executeCanonicalLarkMessageReply({
+      pathname: "/runtime/index/lane-reply-card",
+      accountId,
+      accessToken: reply.accessToken,
+      logger: eventLogger,
+      messageId,
+      content: text,
       replyInThread: true,
       cardTitle: reply.cardTitle || botName,
     });
+    return execution.ok === true ? execution.result : execution;
   }
 
-  return replyToChat(chatId, text);
+  const execution = await executeCanonicalLarkMessageSend({
+    pathname: "/runtime/index/lane-reply",
+    accountId,
+    accessToken: reply.accessToken,
+    logger: eventLogger,
+    receiveId: chatId,
+    receiveIdType: "chat_id",
+    content: text,
+  });
+  return execution.ok === true ? execution.result : execution;
 }
 
 const eventDispatcher = new Lark.EventDispatcher({}).register({
@@ -102,7 +113,10 @@ const eventDispatcher = new Lark.EventDispatcher({}).register({
         eventLogger.warn("lane_returned_empty_reply", {
           capability_lane: scope.capability_lane,
         });
-        await replyToChat(chatId, `${botName} 已連上長連接，之後我會按對話 scope 自動分到對應能力模式。`);
+        await sendLaneReply(data, {
+          text: `${botName} 已連上長連接，之後我會按對話 scope 自動分到對應能力模式。`,
+          accessToken: scope?.accessToken || null,
+        });
         return;
       }
 
@@ -123,7 +137,10 @@ const eventDispatcher = new Lark.EventDispatcher({}).register({
       }
 
       try {
-        await replyToChat(chatId, buildLaneFailureReply(scope, scope));
+        await sendLaneReply(data, {
+          text: buildLaneFailureReply(scope, scope),
+          accessToken: scope?.accessToken || null,
+        });
         eventLogger.warn("error_reply_sent", {
           capability_lane: scope?.capability_lane || null,
         });

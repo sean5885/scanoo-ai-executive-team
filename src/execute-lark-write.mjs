@@ -60,10 +60,6 @@ export function withLarkWriteExecutionContext(metadata = {}, fn) {
 }
 
 export function assertLarkWriteExecutionAllowed(operation = "unknown_write") {
-  if (cleanText(process.env.NODE_ENV).toLowerCase() !== "development") {
-    return;
-  }
-
   const current = writeExecutionStorage.getStore();
   if (current?.active === true) {
     return;
