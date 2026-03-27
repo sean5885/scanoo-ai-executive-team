@@ -54,9 +54,10 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
     - returns unified `{ success, data, error }` payloads
     - keeps results as structured summaries instead of raw full text
   - `/Users/seanhan/Documents/Playground/src/read-runtime.mjs`
-    - is now the first unified read-runtime entry for company-brain reads
+    - is now the unified read-runtime entry for single-authority reads
     - accepts canonical read requests `{ action, account_id, payload, context }`
-    - fixes `primary_authority = "mirror"` for the current batch
+    - keeps company-brain actions on `primary_authority = "mirror"` for the current batch
+    - also exposes a separate `primary_authority = "live"` branch for direct doc/comment reads backed by `lark-content.mjs`, but only when `freshness = "live_required"`
     - delegates mirror list/search/detail plus approved list/search/detail to `company-brain-query.mjs`
     - returns one canonical runtime envelope and does not mix mirror with live fallback in the same read
   - `/Users/seanhan/Documents/Playground/src/company-brain-learning.mjs`

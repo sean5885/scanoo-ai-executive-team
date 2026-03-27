@@ -1,21 +1,28 @@
-import { getDocument, listDocumentComments } from "./lark-content.mjs";
 import { rewriteDocumentFromComments } from "./doc-comment-rewrite.mjs";
 import { listUnseenDocumentComments, markDocumentCommentsSeen } from "./comment-watch-store.mjs";
 import { createCommentRewriteConfirmation } from "./doc-update-confirmations.mjs";
 import { executeCanonicalLarkMessageReply } from "./lark-mutation-runtime.mjs";
+import {
+  listDocumentCommentsFromRuntime,
+  readDocumentFromRuntime,
+} from "./read-runtime.mjs";
 
 async function listAllUnresolvedDocumentComments(accessToken, documentId) {
+  const accountId = `token:${String(accessToken || "").trim() || "unknown"}`;
   const items = [];
-  let pageToken = undefined;
+  let pageToken = "";
 
   while (true) {
-    const page = await listDocumentComments(accessToken, documentId, {
-      fileType: "docx",
-      isSolved: false,
+    const page = await listDocumentCommentsFromRuntime({
+      accountId,
+      accessToken,
+      documentId,
+      includeSolved: false,
       pageToken,
+      pathname: "internal:comment_suggestion/list_comments",
     });
     items.push(...(Array.isArray(page.items) ? page.items : []));
-    if (!page.has_more || !page.page_token) {
+    if (!page.has_more || !page.page_token || pageToken === page.page_token) {
       break;
     }
     pageToken = page.page_token;
@@ -49,7 +56,12 @@ export async function generateDocumentCommentSuggestionCard({
     };
   }
 
-  const current = await getDocument(accessToken, documentId);
+  const current = await readDocumentFromRuntime({
+    accountId,
+    accessToken,
+    documentId,
+    pathname: "internal:comment_suggestion/read_document",
+  });
   const result = await rewriteDocumentFromComments(accessToken, documentId, {
     commentIds: unseenComments.map((item) => item.comment_id).filter(Boolean),
     apply: false,

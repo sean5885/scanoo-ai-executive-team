@@ -19,24 +19,36 @@ import {
   trimTextForBudget,
 } from "./agent-token-governance.mjs";
 import { getWorkflowCheckpoint, updateWorkflowCheckpoint } from "./agent-workflow-state.mjs";
-import { getDocument, listDocumentComments, resolveDocumentComment, updateDocument } from "./lark-content.mjs";
+import { resolveDocumentComment, updateDocument } from "./lark-content.mjs";
+import {
+  listDocumentCommentsFromRuntime,
+  readDocumentFromRuntime,
+} from "./read-runtime.mjs";
 
 function normalizeText(value) {
   return String(value || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
 }
 
+function buildReadRuntimeAccountId(accessToken) {
+  return `token:${String(accessToken || "").trim() || "unknown"}`;
+}
+
 async function collectDocumentComments(accessToken, documentId, { includeSolved = false } = {}) {
+  const accountId = buildReadRuntimeAccountId(accessToken);
   const items = [];
-  let pageToken = undefined;
+  let pageToken = "";
 
   while (true) {
-    const page = await listDocumentComments(accessToken, documentId, {
-      fileType: "docx",
-      isSolved: includeSolved ? undefined : false,
+    const page = await listDocumentCommentsFromRuntime({
+      accountId,
+      accessToken,
+      documentId,
+      includeSolved,
       pageToken,
+      pathname: "internal:doc_comment_rewrite/list_comments",
     });
     items.push(...page.items);
-    if (!page.has_more || !page.page_token) {
+    if (!page.has_more || !page.page_token || pageToken === page.page_token) {
       break;
     }
     pageToken = page.page_token;
@@ -357,7 +369,12 @@ export async function rewriteDocumentFromComments(
     resolveComments = false,
   } = {},
 ) {
-  const document = await getDocument(accessToken, documentId);
+  const document = await readDocumentFromRuntime({
+    accountId: buildReadRuntimeAccountId(accessToken),
+    accessToken,
+    documentId,
+    pathname: "internal:doc_comment_rewrite/read_document",
+  });
   const workflowStateKey = `doc-rewrite:${documentId}`;
   const checkpoint = await getWorkflowCheckpoint(workflowStateKey);
   const allComments = await collectDocumentComments(accessToken, documentId, { includeSolved });
@@ -449,7 +466,12 @@ export async function applyRewrittenDocument(
   rewrittenContent,
   { resolveCommentIds = [], patchPlan = [] } = {},
 ) {
-  const currentDocument = await getDocument(accessToken, documentId);
+  const currentDocument = await readDocumentFromRuntime({
+    accountId: buildReadRuntimeAccountId(accessToken),
+    accessToken,
+    documentId,
+    pathname: "internal:doc_comment_rewrite/read_before_apply",
+  });
   const nextContent = patchPlan.length
     ? applyParagraphPatchPlan(currentDocument.content, patchPlan)
     : rewrittenContent;

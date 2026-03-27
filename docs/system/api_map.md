@@ -152,6 +152,7 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Handler: `handleDocumentRead`
   - Purpose: read one docx document
   - Input note: accepts `document_id` / `doc_token`, and also doc URLs passed as `document_url` / `document_link` / `doc_link`
+  - Read note: the route now enters `read-runtime.mjs` with `primary_authority=live` and `freshness=live_required`; it does not supplement live reads with mirror fallback
 
 - `GET /api/doc/lifecycle`
   - Handler: `handleDocumentLifecycleList`
@@ -303,6 +304,7 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Handler: `handleDocumentComments`
   - Purpose: list doc comments
   - Input note: target doc can be supplied as `document_id` / `doc_token`, or as a doc URL via `document_url` / `document_link` / `doc_link`
+  - Read note: the route now enters `read-runtime.mjs` with `primary_authority=live` and `freshness=live_required`; it does not supplement live reads with mirror fallback
 
 - `POST /api/doc/comments/suggestion-card`
   - Handler: `handleDocumentCommentSuggestionCard`
@@ -320,6 +322,7 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Handler: `handleDocumentRewriteFromComments`
   - Purpose: preview comment-driven patch plan, then confirm before apply
   - Input note: target doc can be supplied as `document_id` / `doc_token`, a doc URL field, or a nested `target_document.url`
+  - Read note: preview-time source reads and apply-time stale-confirmation verification reads now enter `read-runtime.mjs` with `primary_authority=live`; mirror and live are not mixed inside the same rewrite flow
   - Side effect note: preview path also returns a rewrite summary card; apply path depends on a temporary confirmation artifact, enters the shared `executeLarkWrite(...)` path, carries a patch plan, and may resolve comments after write; direct internal helper apply is disabled so this route is the only supported writeback entry
   - Budget note: confirmed apply now also checks the local Lark write-budget / duplicate guard before replacing the doc
 

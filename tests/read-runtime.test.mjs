@@ -108,7 +108,7 @@ function cleanupAccountFixtures(accountId) {
   db.prepare("DELETE FROM lark_accounts WHERE id = ?").run(accountId);
 }
 
-test("runRead routes canonical company-brain search through mirror authority only", () => {
+test("runRead routes canonical company-brain search through mirror authority only", async () => {
   const accountId = `acct_read_runtime_${Date.now()}`;
   ensureTestAccount(accountId);
   insertDocFixture({
@@ -119,7 +119,7 @@ test("runRead routes canonical company-brain search through mirror authority onl
   });
 
   try {
-    const result = runRead({
+    const result = await runRead({
       canonicalRequest: {
         action: "search_company_brain_docs",
         account_id: accountId,
@@ -141,7 +141,7 @@ test("runRead routes canonical company-brain search through mirror authority onl
   }
 });
 
-test("runRead keeps approved mirror detail on the same canonical result shape", () => {
+test("runRead keeps approved mirror detail on the same canonical result shape", async () => {
   const accountId = `acct_read_runtime_approved_${Date.now()}`;
   ensureTestAccount(accountId);
   insertDocFixture({
@@ -173,7 +173,7 @@ test("runRead keeps approved mirror detail on the same canonical result shape", 
   });
 
   try {
-    const result = runRead({
+    const result = await runRead({
       canonicalRequest: {
         action: "get_approved_company_brain_knowledge_detail",
         account_id: accountId,
@@ -191,4 +191,63 @@ test("runRead keeps approved mirror detail on the same canonical result shape", 
   } finally {
     cleanupAccountFixtures(accountId);
   }
+});
+
+test("runRead routes live document reads only when freshness is live_required", async () => {
+  const result = await runRead({
+    canonicalRequest: {
+      action: "read_document",
+      account_id: "acct_live_runtime",
+      payload: {
+        doc_id: "doc_live_runtime_1",
+      },
+      context: {
+        primary_authority: "live",
+        freshness: "live_required",
+        access_token: "token-live-runtime",
+        reader_overrides: {
+          live: {
+            read_document: async ({ payload }) => ({
+              success: true,
+              data: {
+                document_id: payload.doc_id,
+                title: "Live Runtime Doc",
+                content: "# live",
+                revision_id: "rev-live-1",
+              },
+              error: null,
+            }),
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.primary_authority, "live");
+  assert.deepEqual(result.authorities_attempted, ["live"]);
+  assert.equal(result.fallback_used, false);
+  assert.equal(result.result.success, true);
+  assert.equal(result.result.data.document_id, "doc_live_runtime_1");
+});
+
+test("runRead rejects live document reads without live_required freshness", async () => {
+  const result = await runRead({
+    canonicalRequest: {
+      action: "read_document",
+      account_id: "acct_live_runtime_invalid",
+      payload: {
+        doc_id: "doc_live_runtime_invalid",
+      },
+      context: {
+        primary_authority: "live",
+        access_token: "token-live-runtime",
+      },
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.primary_authority, null);
+  assert.deepEqual(result.authorities_attempted, []);
+  assert.equal(result.error, "invalid_canonical_read_request");
 });

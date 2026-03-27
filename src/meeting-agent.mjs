@@ -26,9 +26,9 @@ import { callOpenClawTextGeneration } from "./openclaw-text-service.mjs";
 import {
   createManagedDocument,
   ensureDocumentManagerPermission,
-  getDocument,
   updateDocument,
 } from "./lark-content.mjs";
+import { readDocumentFromRuntime } from "./read-runtime.mjs";
 import { registerKnowledgeWriteback } from "./executive-closed-loop.mjs";
 import { EVIDENCE_TYPES, verifyMeetingWorkflowCompletion } from "./executive-verifier.mjs";
 import { normalizeText, nowIso } from "./text-utils.mjs";
@@ -1212,7 +1212,12 @@ function buildWeeklyTrackerPayload(summary, {
 function defaultCoordinatorDeps() {
   return {
     executeMessageSend: executeCanonicalLarkMessageSend,
-    getDocument,
+    readDocument: async ({ accountId, accessToken, documentId }) => readDocumentFromRuntime({
+      accountId,
+      accessToken,
+      documentId,
+      pathname: "internal:meeting/read_document",
+    }),
     createDocument: createManagedDocument,
     updateDocument,
     buildMeetingSummary,
@@ -1232,6 +1237,9 @@ function defaultCoordinatorDeps() {
 export function createMeetingCoordinator(overrides = {}) {
   const legacyMessageWriter = typeof overrides.sendMessage === "function"
     ? overrides.sendMessage
+    : null;
+  const legacyDocumentReader = typeof overrides.getDocument === "function"
+    ? overrides.getDocument
     : null;
   const deps = {
     ...defaultCoordinatorDeps(),
@@ -1254,6 +1262,11 @@ export function createMeetingCoordinator(overrides = {}) {
         cardPayload,
       }),
     });
+  }
+  if (typeof overrides.readDocument !== "function" && legacyDocumentReader) {
+    deps.readDocument = async ({ accountId: _accountId, accessToken, documentId }) => (
+      legacyDocumentReader(accessToken, documentId)
+    );
   }
 
   async function resolveMeetingDocumentTarget({ accountId, projectKey, projectName, meetingType, chatId }) {
@@ -1339,8 +1352,8 @@ export function createMeetingCoordinator(overrides = {}) {
     };
   }
 
-  async function prependMeetingEntry({ accessToken, documentId, content }) {
-    const current = await deps.getDocument(accessToken, documentId);
+  async function prependMeetingEntry({ accountId, accessToken, documentId, content }) {
+    const current = await deps.readDocument({ accountId, accessToken, documentId });
     const normalizedCurrent = normalizeText(current.content || "");
     const normalizedIncoming = normalizeText(content);
     if (normalizedCurrent.includes(normalizedIncoming)) {
@@ -1658,6 +1671,7 @@ export function createMeetingCoordinator(overrides = {}) {
               });
 
           const writeResult = await prependMeetingEntry({
+            accountId,
             accessToken,
             documentId: targetDoc.document_id,
             content: confirmation.doc_entry_content,

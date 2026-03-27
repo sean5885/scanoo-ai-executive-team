@@ -46,6 +46,27 @@ function createLoggerSink() {
 }
 
 function createAuthorizedOverrides(overrides = {}) {
+  const normalizedOverrides = { ...overrides };
+  if (typeof overrides.readDocumentFromRuntime !== "function" && typeof overrides.getDocument === "function") {
+    normalizedOverrides.readDocumentFromRuntime = async ({ accessToken, documentId }) => (
+      overrides.getDocument(accessToken, documentId)
+    );
+  }
+  if (
+    typeof overrides.listDocumentCommentsFromRuntime !== "function"
+    && typeof overrides.listDocumentComments === "function"
+  ) {
+    normalizedOverrides.listDocumentCommentsFromRuntime = async ({
+      accessToken,
+      documentId,
+      includeSolved,
+    }) => (
+      overrides.listDocumentComments(accessToken, documentId, {
+        fileType: "docx",
+        isSolved: includeSolved ? undefined : false,
+      })
+    );
+  }
   return {
     getValidUserTokenState: async () => ({
       status: "valid",
@@ -55,7 +76,7 @@ function createAuthorizedOverrides(overrides = {}) {
       error: null,
     }),
     getStoredAccountContext: async () => ({ account: { id: "acct-1" } }),
-    ...overrides,
+    ...normalizedOverrides,
   };
 }
 

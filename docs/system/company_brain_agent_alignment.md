@@ -24,7 +24,7 @@ Current runtime anchor points:
 - `/Users/seanhan/Documents/Playground/src/rag-repository.mjs`
 - `/Users/seanhan/Documents/Playground/src/db.mjs`
 
-Current read-side company-brain runtime now enters through `/Users/seanhan/Documents/Playground/src/read-runtime.mjs`, which accepts a canonical read request, fixes `primary_authority = "mirror"` for the first batch, and delegates every company-brain read to `/Users/seanhan/Documents/Playground/src/company-brain-query.mjs` as the only mirror reader.
+Current read-side company-brain runtime now enters through `/Users/seanhan/Documents/Playground/src/read-runtime.mjs`, which accepts a canonical read request and keeps company-brain actions on one fixed primary authority: `primary_authority = "mirror"` for the current batch, delegated to `/Users/seanhan/Documents/Playground/src/company-brain-query.mjs` as the only mirror reader. The same runtime now also exposes a separate live branch for direct doc/comment reads backed by `/Users/seanhan/Documents/Playground/src/lark-content.mjs`, but that branch is only allowed when `freshness = "live_required"` and still keeps one single primary authority per read.
 
 The current route surfaces are:
 

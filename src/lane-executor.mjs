@@ -17,7 +17,6 @@ import {
   ensureDocumentManagerPermission,
   getBitableApp,
   getPrimaryCalendar,
-  getDocument,
   getMessage,
   listBitableRecords,
   listBitableTables,
@@ -26,6 +25,7 @@ import {
   listTasks,
   updateDocument,
 } from "./lark-content.mjs";
+import { readDocumentFromRuntime } from "./read-runtime.mjs";
 import {
   extractBitableReference,
   buildMessageText,
@@ -1782,7 +1782,12 @@ async function executeMeetingCommand({ event, scope, logger = noopLogger }) {
   let transcriptText = command.content;
   let referencedDocument = null;
   if (documentRef.documentId) {
-    referencedDocument = await getDocument(context.token, documentRef.documentId);
+    referencedDocument = await readDocumentFromRuntime({
+      accountId: context.account.id,
+      accessToken: context.token,
+      documentId: documentRef.documentId,
+      pathname: "internal:lane_executor/meeting_referenced_document",
+    });
     transcriptText = referencedDocument.content || transcriptText;
   }
 
@@ -1991,7 +1996,12 @@ async function executeDocEditor({ event, scope, logger = noopLogger }) {
     };
   }
 
-  const document = await getDocument(context.token, documentId);
+  const document = await readDocumentFromRuntime({
+    accountId: context.account.id,
+    accessToken: context.token,
+    documentId,
+    pathname: "internal:lane_executor/doc_read",
+  });
   return {
     text: [
       "結論",

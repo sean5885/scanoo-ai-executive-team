@@ -11,7 +11,11 @@ import {
   ingestLearningDocAction,
   updateLearningStateAction,
 } from "./company-brain-learning.mjs";
-import { runRead } from "./read-runtime.mjs";
+import {
+  listDocumentCommentsFromRuntime,
+  readDocumentFromRuntime,
+  runRead,
+} from "./read-runtime.mjs";
 import { resolveLarkBindingRuntime } from "./binding-runtime.mjs";
 import {
   buildAuthorizeUrl,
@@ -58,7 +62,6 @@ import {
   getSpreadsheetSheet,
   getTask,
   getTaskComment,
-  getDocument,
   listDriveFolder,
   listDriveRoot,
   listCalendarEvents,
@@ -88,7 +91,6 @@ import {
   updateDocument,
   updateSpreadsheet,
   updateTaskComment,
-  listDocumentComments,
 } from "./lark-content.mjs";
 import { searchKnowledgeBase } from "./answer-service.mjs";
 import {
@@ -910,7 +912,7 @@ function getCompanyBrainReadResult(readExecution = null) {
   };
 }
 
-function runCompanyBrainRead({
+async function runCompanyBrainRead({
   action = "",
   context = null,
   payload = {},
@@ -3411,7 +3413,13 @@ async function handleDocumentRead(res, requestUrl, body) {
     return;
   }
 
-  const result = await getHttpService("getDocument", getDocument)(context.token, documentId);
+  const result = await getHttpService("readDocumentFromRuntime", readDocumentFromRuntime)({
+    accountId: context.account.id,
+    accessToken: context.token,
+    documentId,
+    pathname: requestUrl?.pathname || "/api/doc/read",
+    logger: null,
+  });
   jsonResponse(res, 200, {
     ok: true,
     account_id: context.account.id,
@@ -3903,7 +3911,7 @@ async function handleAgentListCompanyBrainDocs(res, requestUrl, body, logger = n
   }
 
   const limit = parseCompanyBrainLimit(requestUrl, body);
-  const readExecution = runCompanyBrainRead({
+  const readExecution = await runCompanyBrainRead({
     action: "list_company_brain_docs",
     context,
     payload: { limit },
@@ -3936,7 +3944,7 @@ async function handleAgentSearchCompanyBrainDocs(res, requestUrl, body, logger =
 
   const q = parseCompanyBrainSearchQuery(requestUrl, body);
   const topK = parseCompanyBrainLimit(requestUrl, body, 5);
-  const readExecution = runCompanyBrainRead({
+  const readExecution = await runCompanyBrainRead({
     action: "search_company_brain_docs",
     context,
     payload: {
@@ -3972,7 +3980,7 @@ async function handleAgentGetCompanyBrainDocDetail(res, requestUrl, body, logger
   }
 
   const docId = parseCompanyBrainDocId(requestUrl, body);
-  const readExecution = runCompanyBrainRead({
+  const readExecution = await runCompanyBrainRead({
     action: "get_company_brain_doc_detail",
     context,
     payload: { doc_id: docId },
@@ -4010,7 +4018,7 @@ async function handleAgentListApprovedCompanyBrainKnowledge(res, requestUrl, bod
   }
 
   const limit = parseCompanyBrainLimit(requestUrl, body);
-  const readExecution = runCompanyBrainRead({
+  const readExecution = await runCompanyBrainRead({
     action: "list_approved_company_brain_knowledge",
     context,
     payload: { limit },
@@ -4047,7 +4055,7 @@ async function handleAgentSearchApprovedCompanyBrainKnowledge(res, requestUrl, b
 
   const q = parseCompanyBrainSearchQuery(requestUrl, body);
   const topK = parseCompanyBrainLimit(requestUrl, body, 5);
-  const readExecution = runCompanyBrainRead({
+  const readExecution = await runCompanyBrainRead({
     action: "search_approved_company_brain_knowledge",
     context,
     payload: {
@@ -4087,7 +4095,7 @@ async function handleAgentGetApprovedCompanyBrainKnowledgeDetail(res, requestUrl
   }
 
   const docId = parseCompanyBrainDocId(requestUrl, body);
-  const readExecution = runCompanyBrainRead({
+  const readExecution = await runCompanyBrainRead({
     action: "get_approved_company_brain_knowledge_detail",
     context,
     payload: { doc_id: docId },
@@ -4573,7 +4581,7 @@ async function handleCompanyBrainDocsList(res, requestUrl, body, logger = noopHt
   }
 
   const limit = parseCompanyBrainLimit(requestUrl, body);
-  const readExecution = runCompanyBrainRead({
+  const readExecution = await runCompanyBrainRead({
     action: "list_company_brain_docs",
     context,
     payload: { limit },
@@ -4607,7 +4615,7 @@ async function handleCompanyBrainDocDetail(res, requestUrl, body, logger = noopH
   }
 
   const docId = parseCompanyBrainDocId(requestUrl, body);
-  const readExecution = runCompanyBrainRead({
+  const readExecution = await runCompanyBrainRead({
     action: "get_company_brain_doc_detail",
     context,
     payload: { doc_id: docId },
@@ -4643,7 +4651,7 @@ async function handleCompanyBrainSearch(res, requestUrl, body, logger = noopHttp
 
   const q = parseCompanyBrainSearchQuery(requestUrl, body);
   const topK = parseCompanyBrainLimit(requestUrl, body, 5);
-  const readExecution = runCompanyBrainRead({
+  const readExecution = await runCompanyBrainRead({
     action: "search_company_brain_docs",
     context,
     payload: {
@@ -4856,7 +4864,13 @@ async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogg
 
   if (targetHeading) {
     try {
-      currentDocument = await getHttpService("getDocument", getDocument)(context.token, documentId);
+      currentDocument = await getHttpService("readDocumentFromRuntime", readDocumentFromRuntime)({
+        accountId: context.account.id,
+        accessToken: context.token,
+        documentId,
+        pathname: requestUrl?.pathname || "/api/doc/update",
+        logger: null,
+      });
       const targeted = applyHeadingTargetedInsert(currentDocument.content, content, {
         heading: targetHeading,
         position: targetPosition,
@@ -4888,7 +4902,13 @@ async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogg
       target_heading: targetHeading || null,
     });
     const current = currentDocument
-      || await getHttpService("getDocument", getDocument)(context.token, documentId);
+      || await getHttpService("readDocumentFromRuntime", readDocumentFromRuntime)({
+        accountId: context.account.id,
+        accessToken: context.token,
+        documentId,
+        pathname: requestUrl?.pathname || "/api/doc/update",
+        logger: null,
+      });
     currentDocument = current;
 
     if (!confirm) {
@@ -5146,12 +5166,13 @@ async function handleDocumentComments(res, requestUrl, body) {
   }
 
   const includeSolved = String(requestUrl.searchParams.get("include_solved") || body.include_solved || "").trim();
-  const result = await getHttpService("listDocumentComments", listDocumentComments)(context.token, documentId, {
-    fileType: "docx",
-    isSolved:
-      includeSolved === "true"
-        ? undefined
-        : false,
+  const result = await getHttpService("listDocumentCommentsFromRuntime", listDocumentCommentsFromRuntime)({
+    accountId: context.account.id,
+    accessToken: context.token,
+    documentId,
+    includeSolved: includeSolved === "true",
+    pathname: requestUrl?.pathname || "/api/doc/comments",
+    logger: null,
   });
 
   jsonResponse(res, 200, {
@@ -5185,7 +5206,13 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
   const workflowScope = buildDocumentRewriteWorkflowScope(documentId);
 
   if (!apply) {
-    const current = await getHttpService("getDocument", getDocument)(context.token, documentId);
+    const current = await getHttpService("readDocumentFromRuntime", readDocumentFromRuntime)({
+      accountId: context.account.id,
+      accessToken: context.token,
+      documentId,
+      pathname: requestUrl?.pathname || "/api/doc/rewrite-from-comments",
+      logger: null,
+    });
     await ensureDocRewriteWorkflowTask({
       accountId: context.account.id,
       documentId,
@@ -5299,7 +5326,13 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
         documentId,
       }),
       validate: async ({ confirmation }) => {
-        const current = await getHttpService("getDocument", getDocument)(context.token, documentId);
+        const current = await getHttpService("readDocumentFromRuntime", readDocumentFromRuntime)({
+          accountId: context.account.id,
+          accessToken: context.token,
+          documentId,
+          pathname: requestUrl?.pathname || "/api/doc/rewrite-from-comments",
+          logger: null,
+        });
         if (
           confirmation?.current_revision_id
           && current?.revision_id

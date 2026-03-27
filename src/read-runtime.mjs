@@ -6,9 +6,15 @@ import {
   searchApprovedCompanyBrainKnowledgeAction,
   searchCompanyBrainDocsAction,
 } from "./company-brain-query.mjs";
+import {
+  getDocument,
+  listDocumentComments,
+} from "./lark-content.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 
 const MIRROR_AUTHORITY = "mirror";
+const LIVE_AUTHORITY = "live";
+const LIVE_REQUIRED_FRESHNESS = "live_required";
 
 const MIRROR_READERS = new Map([
   ["list_company_brain_docs", ({ accountId, payload }) => listCompanyBrainDocsAction({
@@ -43,6 +49,27 @@ const MIRROR_READERS = new Map([
   })],
 ]);
 
+const LIVE_READERS = new Map([
+  ["read_document", async ({ payload, context }) => ({
+    success: true,
+    data: await getDocument(context.access_token, payload.doc_id),
+    error: null,
+  })],
+  ["list_document_comments", async ({ payload, context }) => ({
+    success: true,
+    data: await listDocumentComments(context.access_token, payload.doc_id, {
+      fileType: "docx",
+      isSolved:
+        payload.include_solved === true
+          ? undefined
+          : false,
+      pageToken: payload.page_token || undefined,
+      pageSize: Number.isFinite(Number(payload.page_size)) ? Number(payload.page_size) : undefined,
+    }),
+    error: null,
+  })],
+]);
+
 function buildFailSoftQueryResult(error = "runtime_exception") {
   return {
     success: false,
@@ -61,11 +88,71 @@ function normalizeReadPayload(payload = {}) {
     doc_id: cleanText(payload.doc_id) || cleanText(payload.docId) || "",
     limit: payload.limit ?? null,
     top_k: payload.top_k ?? payload.topK ?? null,
+    include_solved: payload.include_solved === true,
+    page_token: cleanText(payload.page_token || payload.pageToken) || "",
+    page_size: payload.page_size ?? payload.pageSize ?? null,
     ranking_weights:
       payload.ranking_weights && typeof payload.ranking_weights === "object" && !Array.isArray(payload.ranking_weights)
         ? { ...payload.ranking_weights }
         : null,
   };
+}
+
+function normalizeReaderOverrides(overrides = null) {
+  if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) {
+    return null;
+  }
+  return {
+    live:
+      overrides.live && typeof overrides.live === "object" && !Array.isArray(overrides.live)
+        ? { ...overrides.live }
+        : null,
+    mirror:
+      overrides.mirror && typeof overrides.mirror === "object" && !Array.isArray(overrides.mirror)
+        ? { ...overrides.mirror }
+        : null,
+  };
+}
+
+function normalizeReadContext(context = {}) {
+  if (!context || typeof context !== "object" || Array.isArray(context)) {
+    return {};
+  }
+
+  return {
+    pathname: cleanText(context.pathname) || null,
+    freshness: cleanText(context.freshness),
+    primary_authority: cleanText(context.primary_authority || context.primaryAuthority),
+    access_token: cleanText(context.access_token || context.accessToken),
+    reader_overrides: normalizeReaderOverrides(context.reader_overrides || context.readerOverrides),
+  };
+}
+
+function resolveAuthorityForAction(action = "") {
+  if (MIRROR_READERS.has(action)) {
+    return MIRROR_AUTHORITY;
+  }
+  if (LIVE_READERS.has(action)) {
+    return LIVE_AUTHORITY;
+  }
+  return null;
+}
+
+function resolveReaderForRequest(request = {}) {
+  const overrides = request.context?.reader_overrides;
+  if (request.primary_authority === LIVE_AUTHORITY) {
+    const override = overrides?.live?.[request.action];
+    if (typeof override === "function") {
+      return override;
+    }
+    return LIVE_READERS.get(request.action) || null;
+  }
+
+  const override = overrides?.mirror?.[request.action];
+  if (typeof override === "function") {
+    return override;
+  }
+  return MIRROR_READERS.get(request.action) || null;
 }
 
 export function assertCanonicalReadRequestSchema(request = {}) {
@@ -75,18 +162,29 @@ export function assertCanonicalReadRequestSchema(request = {}) {
 
   const action = cleanText(request.action || request.action_type);
   const accountId = cleanText(request.account_id || request.accountId);
-  if (!action || !MIRROR_READERS.has(action) || !accountId) {
+  const authority = resolveAuthorityForAction(action);
+  const context = normalizeReadContext(request.context);
+
+  if (!action || !authority || !accountId) {
     throw new Error("invalid_canonical_read_request");
+  }
+
+  if (context.primary_authority && context.primary_authority !== authority) {
+    throw new Error("invalid_canonical_read_request");
+  }
+
+  if (authority === LIVE_AUTHORITY) {
+    if (context.freshness !== LIVE_REQUIRED_FRESHNESS || !context.access_token) {
+      throw new Error("invalid_canonical_read_request");
+    }
   }
 
   return {
     action,
+    primary_authority: authority,
     account_id: accountId,
     payload: normalizeReadPayload(request.payload),
-    context:
-      request.context && typeof request.context === "object" && !Array.isArray(request.context)
-        ? { ...request.context }
-        : {},
+    context,
   };
 }
 
@@ -94,7 +192,7 @@ function logReadRuntime(logger = null, event = {}) {
   logger?.debug?.("read_runtime", event);
 }
 
-export function runRead({ canonicalRequest, logger = null } = {}) {
+export async function runRead({ canonicalRequest, logger = null } = {}) {
   let request = null;
   try {
     request = assertCanonicalReadRequestSchema(canonicalRequest);
@@ -110,10 +208,21 @@ export function runRead({ canonicalRequest, logger = null } = {}) {
     };
   }
 
-  const reader = MIRROR_READERS.get(request.action);
+  const reader = resolveReaderForRequest(request);
+  if (typeof reader !== "function") {
+    return {
+      ok: false,
+      action: request.action,
+      primary_authority: request.primary_authority,
+      authorities_attempted: [request.primary_authority],
+      fallback_used: false,
+      result: buildFailSoftQueryResult("runtime_exception"),
+      error: "runtime_exception",
+    };
+  }
   let result = null;
   try {
-    result = reader({
+    result = await reader({
       accountId: request.account_id,
       payload: request.payload,
       context: request.context,
@@ -126,7 +235,7 @@ export function runRead({ canonicalRequest, logger = null } = {}) {
     stage: "read_runtime",
     action: request.action,
     account_id: request.account_id,
-    primary_authority: MIRROR_AUTHORITY,
+    primary_authority: request.primary_authority,
     ok: result?.success === true,
     error: result?.success === true ? null : cleanText(result?.error) || "runtime_exception",
   });
@@ -134,12 +243,99 @@ export function runRead({ canonicalRequest, logger = null } = {}) {
   return {
     ok: result?.success === true,
     action: request.action,
-    primary_authority: MIRROR_AUTHORITY,
-    authorities_attempted: [MIRROR_AUTHORITY],
+    primary_authority: request.primary_authority,
+    authorities_attempted: [request.primary_authority],
     fallback_used: false,
     result: result && typeof result === "object" && !Array.isArray(result)
       ? result
       : buildFailSoftQueryResult("runtime_exception"),
     error: result?.success === true ? null : cleanText(result?.error) || "runtime_exception",
   };
+}
+
+function buildLiveReadCanonicalRequest({
+  action = "",
+  accountId = "",
+  accessToken = "",
+  payload = {},
+  pathname = "",
+  readerOverrides = null,
+} = {}) {
+  return {
+    action,
+    account_id: cleanText(accountId) || "",
+    payload: payload && typeof payload === "object" && !Array.isArray(payload)
+      ? { ...payload }
+      : {},
+    context: {
+      pathname: cleanText(pathname) || null,
+      primary_authority: LIVE_AUTHORITY,
+      freshness: LIVE_REQUIRED_FRESHNESS,
+      access_token: cleanText(accessToken) || "",
+      reader_overrides: readerOverrides && typeof readerOverrides === "object" && !Array.isArray(readerOverrides)
+        ? { ...readerOverrides }
+        : undefined,
+    },
+  };
+}
+
+async function unwrapLiveReadExecution(readExecution = null) {
+  if (readExecution?.result?.success === true) {
+    return readExecution.result.data;
+  }
+  throw new Error(cleanText(readExecution?.error || readExecution?.result?.error) || "runtime_exception");
+}
+
+export async function readDocumentFromRuntime({
+  accountId = "",
+  accessToken = "",
+  documentId = "",
+  pathname = "internal:read_document",
+  logger = null,
+  readerOverrides = null,
+} = {}) {
+  const readExecution = await runRead({
+    canonicalRequest: buildLiveReadCanonicalRequest({
+      action: "read_document",
+      accountId,
+      accessToken,
+      payload: {
+        doc_id: documentId,
+      },
+      pathname,
+      readerOverrides,
+    }),
+    logger,
+  });
+  return unwrapLiveReadExecution(readExecution);
+}
+
+export async function listDocumentCommentsFromRuntime({
+  accountId = "",
+  accessToken = "",
+  documentId = "",
+  includeSolved = false,
+  pageToken = "",
+  pageSize = null,
+  pathname = "internal:list_document_comments",
+  logger = null,
+  readerOverrides = null,
+} = {}) {
+  const readExecution = await runRead({
+    canonicalRequest: buildLiveReadCanonicalRequest({
+      action: "list_document_comments",
+      accountId,
+      accessToken,
+      payload: {
+        doc_id: documentId,
+        include_solved: includeSolved === true,
+        page_token: cleanText(pageToken) || "",
+        page_size: pageSize,
+      },
+      pathname,
+      readerOverrides,
+    }),
+    logger,
+  });
+  return unwrapLiveReadExecution(readExecution);
 }
