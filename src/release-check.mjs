@@ -10,6 +10,7 @@ import { runSystemSelfCheck } from "./system-self-check.mjs";
 
 const BLOCKING_SYSTEM_REGRESSION = "system_regression";
 const BLOCKING_CONTROL_REGRESSION = "control_regression";
+const BLOCKING_WRITE_POLICY_FAILURE = "write_policy_failure";
 const BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE = "company_brain_lifecycle_failure";
 const BLOCKING_ROUTING_REGRESSION = "routing_regression";
 const BLOCKING_PLANNER_CONTRACT_FAILURE = "planner_contract_failure";
@@ -95,6 +96,10 @@ function buildControlRegressionNextStep() {
 
 function buildCompanyBrainRegressionNextStep() {
   return "先看 company-brain lifecycle contract：src/company-brain-lifecycle-contract.mjs、src/http-route-contracts.mjs、src/system-self-check.mjs；不要改 runtime write path。";
+}
+
+function buildWritePolicyRegressionNextStep() {
+  return "先看 write governance：src/http-server.mjs、src/meeting-agent.mjs、src/lane-executor.mjs、src/lark-mutation-runtime.mjs、src/http-route-contracts.mjs、src/control-diagnostics.mjs。";
 }
 
 function buildRoutingRegressionNextStep(selfCheckResult = {}) {
@@ -211,6 +216,9 @@ function buildReleaseCheckActionHint({
   if (firstBlockingCheck === BLOCKING_ROUTING_REGRESSION) {
     return buildRoutingActionHint(drilldown, { docBoundaryRegression });
   }
+  if (firstBlockingCheck === BLOCKING_WRITE_POLICY_FAILURE) {
+    return "inspect write governance runtime and route coverage";
+  }
   if (firstBlockingCheck === BLOCKING_PLANNER_CONTRACT_FAILURE) {
     return buildPlannerActionHint({ suggestedNextStep, drilldown });
   }
@@ -259,6 +267,16 @@ function hasBlockingControlIssue(selfCheckResult = {}) {
     return false;
   }
   return controlStatus !== "pass";
+}
+
+function hasBlockingWritePolicyIssue(selfCheckResult = {}) {
+  const writePolicyStatus = cleanText(
+    selfCheckResult?.write_summary?.status || selfCheckResult?.system_summary?.write_policy_status,
+  );
+  if (!writePolicyStatus) {
+    return false;
+  }
+  return writePolicyStatus !== "pass";
 }
 
 function hasBlockingCompanyBrainIssue(selfCheckResult = {}) {
@@ -624,6 +642,10 @@ export function buildReleaseCheckReport({ selfCheckResult = {}, drilldown = null
     blockingChecks.push(BLOCKING_CONTROL_REGRESSION);
   }
 
+  if (hasBlockingWritePolicyIssue(selfCheckResult)) {
+    blockingChecks.push(BLOCKING_WRITE_POLICY_FAILURE);
+  }
+
   if (hasBlockingCompanyBrainIssue(selfCheckResult)) {
     blockingChecks.push(BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE);
   }
@@ -646,6 +668,8 @@ export function buildReleaseCheckReport({ selfCheckResult = {}, drilldown = null
     ? buildSystemRegressionNextStep(selfCheckResult)
     : firstBlockingCheck === BLOCKING_CONTROL_REGRESSION
       ? buildControlRegressionNextStep(selfCheckResult)
+    : firstBlockingCheck === BLOCKING_WRITE_POLICY_FAILURE
+      ? buildWritePolicyRegressionNextStep(selfCheckResult)
     : firstBlockingCheck === BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE
       ? buildCompanyBrainRegressionNextStep(selfCheckResult)
     : firstBlockingCheck === BLOCKING_ROUTING_REGRESSION
@@ -826,6 +850,9 @@ export async function runReleaseCheck(options = {}) {
   }
   if (hasBlockingControlIssue(selfCheckResult)) {
     blockingChecks.push(BLOCKING_CONTROL_REGRESSION);
+  }
+  if (hasBlockingWritePolicyIssue(selfCheckResult)) {
+    blockingChecks.push(BLOCKING_WRITE_POLICY_FAILURE);
   }
   if (hasBlockingCompanyBrainIssue(selfCheckResult)) {
     blockingChecks.push(BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE);

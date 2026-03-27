@@ -381,6 +381,7 @@ function buildSystemSummary({
   const status = !baseOk
     || companyBrainStatus === "fail"
     || controlStatus === "fail"
+    || cleanText(writeSummary?.status) !== "pass"
     || routingStatus === "fail"
     || plannerGate === "fail"
     ? "fail"
@@ -390,6 +391,7 @@ function buildSystemSummary({
   const safeToChange = baseOk
     && companyBrainStatus === "pass"
     && controlStatus === "pass"
+    && cleanText(writeSummary?.status) === "pass"
     && routingStatus === "pass"
     && plannerGate === "pass"
     && hasObviousRegression === false;
@@ -399,6 +401,8 @@ function buildSystemSummary({
       ? "company_brain"
     : controlStatus !== "pass"
       ? "control"
+    : cleanText(writeSummary?.status) !== "pass"
+      ? "write_policy"
     : routingStatus !== "pass" || routingSummary?.compare?.has_obvious_regression
       ? "routing"
       : plannerGate !== "pass" || plannerSummary?.compare?.has_obvious_regression
@@ -410,6 +414,8 @@ function buildSystemSummary({
       ? "先看 company-brain lifecycle contract：確認 review / conflict / approval / apply 與 route contract、自檢案例一致；不要改 runtime write path。"
     : reviewPriority === "control"
       ? "先看 control：優先檢查 src/control-kernel.mjs 與 src/lane-executor.mjs，先修 ownership / same-scope drift，再動 downstream workflow。"
+    : reviewPriority === "write_policy"
+      ? "先看 write governance：external write 必須統一走 canonical request -> runtime；先修 src/http-server.mjs、src/meeting-agent.mjs、src/lane-executor.mjs、src/lark-mutation-runtime.mjs 與對應 route contract/diagnostics。"
     : reviewPriority === "routing"
       ? routingSummary?.doc_boundary_regression === true
         ? "這是 doc-boundary 類問題，優先檢查 intent guard；先看 src/message-intent-utils.mjs、src/lane-executor.mjs，再用 routing-eval doc-boundary pack 驗證。"
@@ -462,6 +468,9 @@ export function normalizeSystemSelfCheckStatus(report = {}) {
   const hasObviousRegression = Boolean(report?.system_summary?.has_obvious_regression);
 
   if (!baseOk || companyBrainStatus === "fail" || controlStatus === "fail" || routingStatus === "fail" || plannerStatus === "fail") {
+    return "fail";
+  }
+  if (cleanText(report?.system_summary?.write_policy_status || report?.write_summary?.status) !== "pass") {
     return "fail";
   }
   if (routingStatus === "degrade" || hasObviousRegression) {

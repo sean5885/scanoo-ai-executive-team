@@ -67,7 +67,7 @@ test("control diagnostics CLI renders the fixed single-view summary", async () =
   assert.match(output, /summary: overall=pass \| control=pass \| routing=pass \| write=pass/);
   assert.match(output, /control_summary: issues=0 \| decisions=3 \| owners=3 \| integrations=3/);
   assert.match(output, /routing_summary: status=pass \| accuracy=1 \| compare=unavailable \| doc_boundary_regression=false/);
-  assert.match(output, /write_summary: issues=0 \| guarded_operations=13 \| policy_actions=6 \| enforced_routes=8 \| modes=enforce:2,observe:2,warn:4/);
+  assert.match(output, /write_summary: issues=0 \| guarded_operations=40 \| policy_actions=30 \| enforced_routes=33 \| modes=enforce:27,observe:2,warn:4/);
   assert.match(output, /reporting_summary: error_code_groups=0 \| failure_groups=0 \| top_regressions=0/);
   assert.match(output, /top_regressions: none/);
   assert.match(output, /write_route: \/api\/doc\/rewrite-from-comments \| action=document_comment_rewrite_apply \| mode=warn/);
@@ -268,32 +268,56 @@ test("control diagnostics reporting emits stable top regression cases without ch
     top_regression_cases: [],
   });
   assert.deepEqual(report.write_summary.policy_actions, [
+    "bitable_app_create",
+    "bitable_app_update",
+    "bitable_record_create",
+    "bitable_record_delete",
+    "bitable_record_update",
+    "bitable_records_bulk_upsert",
+    "bitable_table_create",
+    "calendar_create_event",
     "create_doc",
+    "create_drive_folder",
+    "create_wiki_node",
+    "delete_drive_item",
     "document_comment_rewrite_apply",
     "drive_organize_apply",
     "meeting_confirm_write",
+    "message_reaction_create",
+    "message_reaction_delete",
+    "message_reply",
+    "move_drive_item",
+    "move_wiki_node",
+    "spreadsheet_create",
+    "spreadsheet_replace",
+    "spreadsheet_replace_batch",
+    "spreadsheet_update",
+    "task_comment_create",
+    "task_comment_delete",
+    "task_comment_update",
+    "task_create",
     "update_doc",
     "wiki_organize_apply",
   ]);
-  assert.equal(report.write_summary.policy_route_checks.length, 8);
+  assert.equal(report.write_summary.policy_route_checks.length, 33);
   assert.equal(report.write_summary.policy_route_checks.every((item) => item.ok), true);
-  assert.equal(report.write_summary.enforcement_route_checks.length, 8);
+  assert.equal(report.write_summary.enforcement_route_checks.length, 33);
   assert.equal(report.write_summary.enforcement_route_checks.every((item) => item.ok), true);
   assert.deepEqual(report.write_summary.policy_coverage, {
-    metadata_route_count: 8,
-    enforced_route_count: 8,
-    metadata_action_count: 6,
-    enforced_action_count: 6,
+    metadata_route_count: 33,
+    enforced_route_count: 33,
+    metadata_action_count: 30,
+    enforced_action_count: 30,
     route_coverage_ratio: 1,
     action_coverage_ratio: 1,
   });
   assert.deepEqual(report.write_summary.enforcement_modes.mode_counts, {
-    enforce: 2,
+    enforce: 27,
     observe: 2,
     warn: 4,
   });
   assert.deepEqual(report.write_summary.violation_type_stats, {
-    missing_scope_key: 8,
+    missing_scope_key: 33,
     missing_idempotency_key: 2,
     confirm_required: 7,
     review_required: 5,

@@ -105,12 +105,14 @@ test("phase1 route contracts expose complete write policy metadata for each wire
   const fixtures = listPhase1RouteWritePolicyFixtures();
   const enforcementFixtures = listWritePolicyEnforcementFixtures();
 
-  assert.equal(fixtures.length, 8);
-  assert.equal(enforcementFixtures.length, 8);
+  assert.equal(fixtures.length, 33);
+  assert.equal(enforcementFixtures.length, 33);
 
   for (const fixture of fixtures) {
-    const routeContract = getRouteContract(fixture.pathname);
-    const enforcementFixture = enforcementFixtures.find((item) => item.pathname === fixture.pathname);
+    const routeContract = getRouteContract(fixture.pathname, fixture.method);
+    const enforcementFixture = enforcementFixtures.find((item) => (
+      item.pathname === fixture.pathname && item.method === fixture.method
+    ));
 
     assert.equal(routeContract?.action, fixture.action);
     assert.deepEqual(collectWritePolicyMissingFields(routeContract?.write_policy), []);

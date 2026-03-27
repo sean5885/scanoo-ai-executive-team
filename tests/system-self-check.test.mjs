@@ -116,7 +116,7 @@ test("system self-check returns unified routing and planner summaries", async ()
   assert.equal(result.control_summary.issue_count, 0);
   assert.equal(result.write_summary.status, "pass");
   assert.deepEqual(result.write_summary.enforcement_modes.mode_counts, {
-    enforce: 2,
+    enforce: 27,
     observe: 2,
     warn: 4,
   });
@@ -342,7 +342,7 @@ test("self-check CLI renders concise guidance by default", async () => {
   assert.match(output, /System Self-Check/);
   assert.match(output, /現在系統能不能放心改：可以/);
   assert.match(output, /結論：core pass \| company-brain pass \| control pass \| write-policy pass \| routing pass \| planner pass \| regression no/);
-  assert.match(output, /write policy：coverage 8\/8 \| modes enforce:2,observe:2,warn:4/);
+  assert.match(output, /write policy：coverage 33\/33 \| modes enforce:27,observe:2,warn:4/);
   assert.match(output, /write evidence：real_only_violation meeting_confirm_write=unknown \| rollout_basis 0\/1 ready/);
   assert.match(output, /write rollout：ready none \| high_risk meeting_confirm_write/);
   assert.match(output, /先看：none/);

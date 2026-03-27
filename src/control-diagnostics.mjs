@@ -68,6 +68,7 @@ const FILES = {
   httpServer: path.join(SRC_DIR, "http-server.mjs"),
   httpRouteContracts: path.join(SRC_DIR, "http-route-contracts.mjs"),
   meetingAgent: path.join(SRC_DIR, "meeting-agent.mjs"),
+  larkMutationRuntime: path.join(SRC_DIR, "lark-mutation-runtime.mjs"),
   larkContent: path.join(SRC_DIR, "lark-content.mjs"),
   writePolicyContract: path.join(SRC_DIR, "write-policy-contract.mjs"),
 };
@@ -189,12 +190,13 @@ async function readText(filePath = "") {
 
 function buildWritePolicyRouteChecks() {
   return listPhase1RouteWritePolicyFixtures().map((fixture) => {
-    const routeContract = getRouteContract(fixture.pathname);
+    const routeContract = getRouteContract(fixture.pathname, fixture.method);
     const actualPolicy = routeContract?.write_policy || null;
     const missingFields = collectWritePolicyMissingFields(actualPolicy);
     const actionMatches = cleanText(routeContract?.action) === cleanText(fixture.action);
     return {
       pathname: fixture.pathname,
+      method: fixture.method,
       action: fixture.action,
       ok: actionMatches && missingFields.length === 0,
       missing_fields: missingFields,
@@ -206,7 +208,7 @@ function buildWritePolicyRouteChecks() {
 
 function buildWritePolicyEnforcementRouteChecks() {
   return listWritePolicyEnforcementFixtures().map((fixture) => {
-    const routeContract = getRouteContract(fixture.pathname);
+    const routeContract = getRouteContract(fixture.pathname, fixture.method);
     const actual = routeContract?.write_policy_enforcement || null;
     const expectedChecks = fixture.checks || {};
     const actualChecks = actual?.checks || {};
@@ -218,6 +220,7 @@ function buildWritePolicyEnforcementRouteChecks() {
     );
     return {
       pathname: fixture.pathname,
+      method: fixture.method,
       action: fixture.action,
       ok: cleanText(actual?.mode) === cleanText(fixture.mode) && checksMatch,
       mode: cleanText(actual?.mode) || null,
@@ -986,8 +989,13 @@ function extractOperationNames(text = "") {
   return [...new Set(matches.map((match) => cleanText(match[1])).filter(Boolean))].sort((left, right) => left.localeCompare(right));
 }
 
+function extractLaneWriteActions(text = "") {
+  const matches = [...String(text || "").matchAll(/executeLaneLarkWrite\(\{[\s\S]{0,400}?action:\s*"([^"]+)"/g)];
+  return [...new Set(matches.map((match) => cleanText(match[1])).filter(Boolean))].sort((left, right) => left.localeCompare(right));
+}
+
 function extractMutationRuntimeActions(text = "") {
-  const matches = [...String(text || "").matchAll(/runMutation\(\{[\s\S]{0,400}?action:\s*"([^"]+)"/g)];
+  const matches = [...String(text || "").matchAll(/(?:runMutation|runCanonicalLarkMutation|executeCanonicalLarkMutation)\(\{[\s\S]{0,400}?action:\s*"([^"]+)"/g)];
   return [...new Set(matches.map((match) => cleanText(match[1])).filter(Boolean))].sort((left, right) => left.localeCompare(right));
 }
 
@@ -1753,9 +1761,11 @@ function buildLarkCreateGuardScenarios() {
 
 export async function buildWriteSummary() {
   const writeGuardText = await readText(FILES.writeGuard);
+  const laneExecutorText = await readText(FILES.laneExecutor);
   const httpServerText = await readText(FILES.httpServer);
   const httpRouteContractsText = await readText(FILES.httpRouteContracts);
   const meetingAgentText = await readText(FILES.meetingAgent);
+  const larkMutationRuntimeText = await readText(FILES.larkMutationRuntime);
   const larkContentText = await readText(FILES.larkContent);
   const writePolicyContractText = await readText(FILES.writePolicyContract);
 
@@ -1768,25 +1778,26 @@ export async function buildWriteSummary() {
 
   const guardedOperations = [
     ...extractOperationNames(httpServerText),
+    ...extractOperationNames(laneExecutorText),
     ...extractOperationNames(meetingAgentText),
+    ...extractLaneWriteActions(laneExecutorText),
+    ...extractMutationRuntimeActions(laneExecutorText),
     ...extractMutationRuntimeActions(httpServerText),
     ...extractMutationRuntimeActions(meetingAgentText),
   ].filter(Boolean);
   const uniqueGuardedOperations = [...new Set(guardedOperations)].sort((left, right) => left.localeCompare(right));
   const expectedGuardedOperations = [
+    ...buildUniqueSorted(listPhase1RouteWritePolicyFixtures().map((item) => item.action)),
     "apply_company_brain_approved_knowledge",
     "approval_transition_company_brain_doc",
     "check_company_brain_conflicts",
-    "create_doc",
-    "document_comment_rewrite_apply",
-    "drive_organize_apply",
     "ingest_doc",
     "ingest_learning_doc",
-    "meeting_confirm_write",
+    "meeting_capture_create_document",
+    "meeting_capture_document_delete",
+    "meeting_capture_document_update",
     "review_company_brain_doc",
-    "update_doc",
     "update_learning_state",
-    "wiki_organize_apply",
   ];
   const expectedWritePolicyLogMinimum = 7;
   const writePolicyRouteChecks = buildWritePolicyRouteChecks();
@@ -1806,7 +1817,8 @@ export async function buildWriteSummary() {
   const uniquePolicyActions = buildUniqueSorted(writePolicyRouteChecks.map((item) => item.action));
   const writePolicyLogReferences =
     countMatches(httpServerText, /write_policy:/g)
-    + countMatches(meetingAgentText, /write_policy:/g);
+    + countMatches(meetingAgentText, /write_policy:/g)
+    + countMatches(larkMutationRuntimeText, /write_policy:/g);
 
   const integrationPoints = [
     normalizeIntegrationPoint({
@@ -1829,14 +1841,30 @@ export async function buildWriteSummary() {
       name: "meeting_agent_guarded_confirm_write",
       file: FILES.meetingAgent,
       ok:
-        meetingAgentText.includes("runMutation({")
+        meetingAgentText.includes("runCanonicalLarkMutation({")
         && meetingAgentText.includes("action: \"meeting_confirm_write\"")
-        && meetingAgentText.includes("canonical_request: resolvedCanonicalRequest"),
+        && meetingAgentText.includes("canonicalRequest: resolvedCanonicalRequest"),
       details: {
         guarded_operations: buildUniqueSorted([
           ...extractOperationNames(meetingAgentText),
           ...extractMutationRuntimeActions(meetingAgentText),
         ]),
+      },
+    }),
+    normalizeIntegrationPoint({
+      name: "single_write_authority_runtime_only",
+      file: FILES.httpServer,
+      ok:
+        !httpServerText.includes("executeLarkWrite({")
+        && !meetingAgentText.includes("executeLarkWrite({")
+        && !laneExecutorText.includes("executeLarkWrite({")
+        && httpServerText.includes("executeCanonicalLarkMutation({")
+        && meetingAgentText.includes("runCanonicalLarkMutation({")
+        && laneExecutorText.includes("runCanonicalLarkMutation({"),
+      details: {
+        http_execute_lark_write_calls: countMatches(httpServerText, /executeLarkWrite\(\{/g),
+        meeting_execute_lark_write_calls: countMatches(meetingAgentText, /executeLarkWrite\(\{/g),
+        lane_execute_lark_write_calls: countMatches(laneExecutorText, /executeLarkWrite\(\{/g),
       },
     }),
     normalizeIntegrationPoint({
@@ -1873,8 +1901,8 @@ export async function buildWriteSummary() {
       ok:
         writeGuardText.includes("write_policy_enforcement_warning")
         && writeGuardText.includes("write_policy_enforcement_observed")
-        && httpServerText.includes("canonical_request: canonicalRequest")
-        && meetingAgentText.includes("canonical_request: resolvedCanonicalRequest"),
+        && httpServerText.includes("canonicalRequest")
+        && meetingAgentText.includes("canonicalRequest: resolvedCanonicalRequest"),
       details: {
         enforcement_warning_logs: countMatches(writeGuardText, /write_policy_enforcement_warning/g),
         enforcement_observe_logs: countMatches(writeGuardText, /write_policy_enforcement_observed/g),
