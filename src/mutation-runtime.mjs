@@ -234,6 +234,9 @@ export async function runMutation({ action, payload, context, execute }) {
   } catch (err) {
     journal.status = "failed";
     journal.error = err?.message || "execution_failed";
+    journal.rollback = {
+      status: "pending",
+    };
 
     return {
       ok: false,

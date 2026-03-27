@@ -173,6 +173,9 @@ test("runMutation returns a stable execution_failed boundary with timing when ex
           status: "failed",
           started_at: 2000,
           error: "boom",
+          rollback: {
+            status: "pending",
+          },
         },
       },
     });
