@@ -106,7 +106,7 @@ import {
   setResolvedSessionExplicitAuth,
 } from "./session-scope-store.mjs";
 import { normalizeUserResponse, renderUserResponseText } from "./user-response-normalizer.mjs";
-import { executeLarkWrite } from "./execute-lark-write.mjs";
+import { runCanonicalLarkMutation } from "./lark-mutation-runtime.mjs";
 
 function incomingText(event) {
   return buildVisibleMessageText(event);
@@ -518,13 +518,17 @@ async function executeLaneLarkWrite({
   essential = true,
   performWrite,
 } = {}) {
-  const execution = await executeLarkWrite({
+  const execution = await runCanonicalLarkMutation({
     apiName,
     action,
     pathname,
     accountId,
     accessToken,
     logger,
+    resourceId: cleanText(documentId) || cleanText(targetDocumentId) || null,
+    scopeKey,
+    payload,
+    originalRequest: payload,
     budget: {
       sessionKey: cleanText(sessionKey) || cleanText(scopeKey) || accountId || null,
       scopeKey,

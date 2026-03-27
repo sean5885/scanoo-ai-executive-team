@@ -1,4 +1,8 @@
 import { cleanText } from "./message-intent-utils.mjs";
+import {
+  getExternalMutationSpec,
+  listExternalMutationRouteFixtures,
+} from "./external-mutation-registry.mjs";
 
 export const WRITE_POLICY_VERSION = "write_policy_v1";
 export const WRITE_POLICY_REVIEW_REQUIRED_VALUES = Object.freeze([
@@ -43,6 +47,7 @@ function normalizeActionType(value = "") {
 function cloneRouteFixture(entry = {}) {
   return {
     pathname: cleanText(entry.pathname) || null,
+    method: cleanText(entry.method).toUpperCase() || "POST",
     action: cleanText(entry.action) || null,
     write_policy: cloneWritePolicyRecord(entry.write_policy),
   };
@@ -70,6 +75,30 @@ export function buildWritePolicyRecord({
     review_required: normalizeReviewRequired(reviewRequired),
     scope_key: normalizeNullableText(scopeKey),
     idempotency_key: normalizeNullableText(idempotencyKey),
+  });
+}
+
+export function buildExternalWritePolicy(action = "", {
+  scopeKey = null,
+  idempotencyKey = null,
+  confirmRequired = null,
+  reviewRequired = null,
+} = {}) {
+  const spec = getExternalMutationSpec(action);
+  if (!spec) {
+    return null;
+  }
+
+  return buildWritePolicyRecord({
+    source: spec.source,
+    owner: spec.owner,
+    intent: spec.intent,
+    actionType: spec.policy_action_type,
+    externalWrite: true,
+    confirmRequired: typeof confirmRequired === "boolean" ? confirmRequired : spec.confirm_required === true,
+    reviewRequired: cleanText(reviewRequired) || spec.review_required || "never",
+    scopeKey,
+    idempotencyKey,
   });
 }
 
@@ -145,14 +174,7 @@ export function buildCreateDocWritePolicy({
   folderToken = "",
   idempotencyKey = null,
 } = {}) {
-  return buildWritePolicyRecord({
-    source: "create_doc",
-    owner: "document_http_route",
-    intent: "create_doc",
-    actionType: "create",
-    externalWrite: true,
-    confirmRequired: true,
-    reviewRequired: "conditional",
+  return buildExternalWritePolicy("create_doc", {
     scopeKey: normalizeNullableText(scopeKey) || (cleanText(folderToken) ? `drive:${cleanText(folderToken)}` : "drive:root"),
     idempotencyKey,
   });
@@ -165,16 +187,25 @@ export function buildUpdateDocWritePolicy({
   confirmRequired = false,
   idempotencyKey = null,
 } = {}) {
-  return buildWritePolicyRecord({
-    source: "update_doc",
-    owner: "document_http_route",
-    intent: "update_doc",
-    actionType,
-    externalWrite: true,
-    confirmRequired: confirmRequired === true,
-    reviewRequired: "conditional",
+  const basePolicy = buildExternalWritePolicy("update_doc", {
     scopeKey: normalizeNullableText(scopeKey) || (cleanText(documentId) ? `document:${cleanText(documentId)}` : null),
     idempotencyKey,
+    confirmRequired: confirmRequired === true,
+    reviewRequired: "conditional",
+  });
+  if (!basePolicy) {
+    return null;
+  }
+  return buildWritePolicyRecord({
+    source: basePolicy.source,
+    owner: basePolicy.owner,
+    intent: basePolicy.intent,
+    actionType: normalizeActionType(actionType),
+    externalWrite: basePolicy.external_write === true,
+    confirmRequired: basePolicy.confirm_required === true,
+    reviewRequired: basePolicy.review_required,
+    scopeKey: basePolicy.scope_key,
+    idempotencyKey: basePolicy.idempotency_key,
   });
 }
 
@@ -183,14 +214,7 @@ export function buildDriveOrganizeApplyWritePolicy({
   folderToken = "",
   idempotencyKey = null,
 } = {}) {
-  return buildWritePolicyRecord({
-    source: "cloud_doc_workflow",
-    owner: "cloud_doc_workflow",
-    intent: "drive_organize_apply",
-    actionType: "move",
-    externalWrite: true,
-    confirmRequired: true,
-    reviewRequired: "always",
+  return buildExternalWritePolicy("drive_organize_apply", {
     scopeKey: normalizeNullableText(scopeKey) || (cleanText(folderToken) ? `drive:${cleanText(folderToken)}` : null),
     idempotencyKey,
   });
@@ -207,14 +231,7 @@ export function buildWikiOrganizeApplyWritePolicy({
     cleanText(spaceId)
     || cleanText(parentNodeToken)
     || cleanText(spaceName);
-  return buildWritePolicyRecord({
-    source: "cloud_doc_workflow",
-    owner: "cloud_doc_workflow",
-    intent: "wiki_organize_apply",
-    actionType: "move",
-    externalWrite: true,
-    confirmRequired: true,
-    reviewRequired: "always",
+  return buildExternalWritePolicy("wiki_organize_apply", {
     scopeKey: normalizeNullableText(scopeKey) || (fallbackScope ? `wiki:${fallbackScope}` : null),
     idempotencyKey,
   });
@@ -224,14 +241,7 @@ export function buildDocumentCommentRewriteApplyWritePolicy({
   documentId = "",
   idempotencyKey = null,
 } = {}) {
-  return buildWritePolicyRecord({
-    source: "doc_comment_rewrite",
-    owner: "doc_rewrite_workflow",
-    intent: "rewrite_apply",
-    actionType: "replace",
-    externalWrite: true,
-    confirmRequired: true,
-    reviewRequired: "never",
+  return buildExternalWritePolicy("document_comment_rewrite_apply", {
     scopeKey: cleanText(documentId) ? `doc-rewrite:${cleanText(documentId)}` : null,
     idempotencyKey,
   });
@@ -242,14 +252,7 @@ export function buildMeetingConfirmWritePolicy({
   targetDocumentId = "",
   idempotencyKey = null,
 } = {}) {
-  return buildWritePolicyRecord({
-    source: "meeting_confirm",
-    owner: "meeting_agent",
-    intent: "meeting_writeback",
-    actionType: "writeback",
-    externalWrite: true,
-    confirmRequired: true,
-    reviewRequired: "never",
+  return buildExternalWritePolicy("meeting_confirm_write", {
     scopeKey: cleanText(targetDocumentId)
       ? `doc:${cleanText(targetDocumentId)}`
       : cleanText(confirmationId)
@@ -378,58 +381,31 @@ export function buildCompanyBrainIngestWritePolicy({
   });
 }
 
-const PHASE1_ROUTE_WRITE_POLICY_FIXTURES = Object.freeze([
-  Object.freeze({
-    pathname: "/api/doc/create",
-    action: "create_doc",
-    write_policy: buildCreateDocWritePolicy(),
-  }),
-  Object.freeze({
-    pathname: "/agent/docs/create",
-    action: "create_doc",
-    write_policy: buildCreateDocWritePolicy(),
-  }),
-  Object.freeze({
-    pathname: "/api/doc/update",
-    action: "update_doc",
-    write_policy: buildUpdateDocWritePolicy(),
-  }),
-  Object.freeze({
-    pathname: "/api/drive/organize/apply",
-    action: "drive_organize_apply",
-    write_policy: buildDriveOrganizeApplyWritePolicy(),
-  }),
-  Object.freeze({
-    pathname: "/api/wiki/organize/apply",
-    action: "wiki_organize_apply",
-    write_policy: buildWikiOrganizeApplyWritePolicy(),
-  }),
-  Object.freeze({
-    pathname: "/api/doc/rewrite-from-comments",
-    action: "document_comment_rewrite_apply",
-    write_policy: buildDocumentCommentRewriteApplyWritePolicy(),
-  }),
-  Object.freeze({
-    pathname: "/api/meeting/confirm",
-    action: "meeting_confirm_write",
-    write_policy: buildMeetingConfirmWritePolicy(),
-  }),
-  Object.freeze({
-    pathname: "/meeting/confirm",
-    action: "meeting_confirm_write",
-    write_policy: buildMeetingConfirmWritePolicy(),
-  }),
-]);
+const PHASE1_ROUTE_WRITE_POLICY_FIXTURES = Object.freeze(
+  listExternalMutationRouteFixtures().map((fixture) => Object.freeze({
+    pathname: fixture.pathname,
+    method: fixture.method,
+    action: fixture.action,
+    write_policy: buildExternalWritePolicy(fixture.action, {
+      scopeKey: fixture.fixture_scope_key,
+      idempotencyKey: fixture.fixture_idempotency_key,
+    }),
+  })),
+);
 
 export function listPhase1RouteWritePolicyFixtures() {
   return PHASE1_ROUTE_WRITE_POLICY_FIXTURES.map((entry) => cloneRouteFixture(entry));
 }
 
-export function getPhase1RouteWritePolicyFixture(pathname = "") {
+export function getPhase1RouteWritePolicyFixture(pathname = "", method = "") {
   const normalizedPathname = cleanText(pathname);
+  const normalizedMethod = cleanText(method).toUpperCase();
   if (!normalizedPathname) {
     return null;
   }
-  const matched = PHASE1_ROUTE_WRITE_POLICY_FIXTURES.find((entry) => entry.pathname === normalizedPathname);
+  const matched = PHASE1_ROUTE_WRITE_POLICY_FIXTURES.find((entry) => (
+    entry.pathname === normalizedPathname
+    && (!normalizedMethod || (cleanText(entry.method).toUpperCase() || "POST") === normalizedMethod)
+  ));
   return matched ? cloneRouteFixture(matched) : null;
 }

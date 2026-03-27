@@ -33,9 +33,8 @@ import {
 import { registerKnowledgeWriteback } from "./executive-closed-loop.mjs";
 import { EVIDENCE_TYPES, verifyMeetingWorkflowCompletion } from "./executive-verifier.mjs";
 import { normalizeText, nowIso } from "./text-utils.mjs";
-import { executeLarkWrite } from "./execute-lark-write.mjs";
 import { buildMeetingConfirmWriteCanonicalRequest } from "./mutation-admission.mjs";
-import { runMutation } from "./mutation-runtime.mjs";
+import { runCanonicalLarkMutation } from "./lark-mutation-runtime.mjs";
 
 const WEEKLY_PROGRESS_KEYWORDS = ["進展", "推进", "推進", "完成度", "完成", "達成", "okr", "kr", "目標", "objective"];
 const WEEKLY_ISSUE_KEYWORDS = ["卡點", "阻塞", "問題", "风险", "風險", "瓶頸"];
@@ -1560,59 +1559,50 @@ export function createMeetingCoordinator(overrides = {}) {
         reviewRequiredActive: false,
       },
     });
-    const mutationExecution = await runMutation({
+    const mutationExecution = await runCanonicalLarkMutation({
       action: "meeting_confirm_write",
+      pathname,
+      accountId,
+      accessToken,
+      logger,
+      traceId,
+      canonicalRequest: resolvedCanonicalRequest,
       payload: {
         confirmation_id: confirmationId,
         project_key: pendingConfirmation.project_key || null,
         meeting_type: pendingConfirmation.meeting_type || null,
         source_meeting_id: pendingConfirmation.source_meeting_id || null,
       },
-      context: {
-        pathname,
-        account_id: accountId,
-        trace_id: traceId,
-        logger,
-        canonical_request: resolvedCanonicalRequest,
-      },
-      execute: async () => executeLarkWrite({
-        apiName: "meeting_confirm_write",
-        action: "meeting_confirm_write",
-        pathname,
-        accountId,
-        accessToken,
-        logger,
-        traceId,
-        confirmation: {
-          kind: "meeting_write",
-          requireConfirm: true,
-          confirm: Boolean(confirmationId),
-          requireConfirmationId: true,
+      confirmation: {
+        kind: "meeting_write",
+        requireConfirm: true,
+        confirm: Boolean(confirmationId),
+        requireConfirmationId: true,
+        confirmationId,
+        pending: pendingConfirmation,
+        consume: async () => deps.consumeConfirmation({
           confirmationId,
-          pending: pendingConfirmation,
-          consume: async () => deps.consumeConfirmation({
-            confirmationId,
-            accountId,
-          }),
-          invalidMessage: "Meeting confirmation is missing, expired, or no longer matches this account.",
-        },
-        budget: {
           accountId,
-          sessionKey: pendingConfirmation.chat_id || accountId,
-          scopeKey: resolvedCanonicalRequest.context.scope_key,
-          documentId: pendingConfirmation.target_document_id || null,
-          targetDocumentId: pendingConfirmation.target_document_id || null,
-          content: pendingConfirmation.doc_entry_content || "",
-          payload: {
-            confirmation_id: confirmationId,
-            project_key: pendingConfirmation.project_key || null,
-            meeting_type: pendingConfirmation.meeting_type || null,
-            source_meeting_id: pendingConfirmation.source_meeting_id || null,
-          },
-          essential: true,
-          blockedMessage: "Meeting write is blocked by Lark write budget or duplicate suppression.",
+        }),
+        invalidMessage: "Meeting confirmation is missing, expired, or no longer matches this account.",
+      },
+      budget: {
+        accountId,
+        sessionKey: pendingConfirmation.chat_id || accountId,
+        scopeKey: resolvedCanonicalRequest.context.scope_key,
+        documentId: pendingConfirmation.target_document_id || null,
+        targetDocumentId: pendingConfirmation.target_document_id || null,
+        content: pendingConfirmation.doc_entry_content || "",
+        payload: {
+          confirmation_id: confirmationId,
+          project_key: pendingConfirmation.project_key || null,
+          meeting_type: pendingConfirmation.meeting_type || null,
+          source_meeting_id: pendingConfirmation.source_meeting_id || null,
         },
-        performWrite: async ({ confirmation }) => {
+        essential: true,
+        blockedMessage: "Meeting write is blocked by Lark write budget or duplicate suppression.",
+      },
+      performWrite: async ({ confirmation }) => {
           const targetDoc = confirmation.target_document_id
             ? {
                 document_id: confirmation.target_document_id,
@@ -1731,7 +1721,6 @@ export function createMeetingCoordinator(overrides = {}) {
             workflow_state: "writing_back",
           };
         },
-      }),
     });
 
     if (!mutationExecution.ok) {

@@ -1,4 +1,5 @@
 import { cleanText } from "./message-intent-utils.mjs";
+import { listExternalMutationRouteFixtures } from "./external-mutation-registry.mjs";
 
 export const WRITE_POLICY_ENFORCEMENT_VERSION = "write_policy_enforcement_v1";
 export const WRITE_POLICY_ENFORCEMENT_MODES = Object.freeze([
@@ -39,6 +40,7 @@ function cloneChecks(checks = {}) {
 function buildEnforcementRecord({
   action = "",
   pathname = "",
+  method = "POST",
   mode = DEFAULT_WRITE_POLICY_ENFORCEMENT_MODE,
   checks = {},
 } = {}) {
@@ -46,101 +48,21 @@ function buildEnforcementRecord({
     enforcement_version: WRITE_POLICY_ENFORCEMENT_VERSION,
     action: cleanText(action) || null,
     pathname: cleanText(pathname) || null,
+    method: cleanText(method).toUpperCase() || "POST",
     mode: normalizeMode(mode),
     checks: cloneChecks(checks),
   });
 }
 
-const PHASE2_ROUTE_WRITE_POLICY_ENFORCEMENT = Object.freeze([
-  buildEnforcementRecord({
-    action: "create_doc",
-    pathname: "/api/doc/create",
-    mode: "enforce",
-    checks: {
-      scope_key: true,
-      idempotency_key: false,
-      confirm_required: true,
-      review_required: true,
-    },
-  }),
-  buildEnforcementRecord({
-    action: "create_doc",
-    pathname: "/agent/docs/create",
-    mode: "enforce",
-    checks: {
-      scope_key: true,
-      idempotency_key: false,
-      confirm_required: true,
-      review_required: true,
-    },
-  }),
-  buildEnforcementRecord({
-    action: "update_doc",
-    pathname: "/api/doc/update",
-    mode: "warn",
-    checks: {
-      scope_key: true,
-      idempotency_key: false,
-      confirm_required: true,
-      review_required: true,
-    },
-  }),
-  buildEnforcementRecord({
-    action: "drive_organize_apply",
-    pathname: "/api/drive/organize/apply",
-    mode: "observe",
-    checks: {
-      scope_key: true,
-      idempotency_key: true,
-      confirm_required: true,
-      review_required: true,
-    },
-  }),
-  buildEnforcementRecord({
-    action: "wiki_organize_apply",
-    pathname: "/api/wiki/organize/apply",
-    mode: "observe",
-    checks: {
-      scope_key: true,
-      idempotency_key: true,
-      confirm_required: true,
-      review_required: true,
-    },
-  }),
-  buildEnforcementRecord({
-    action: "document_comment_rewrite_apply",
-    pathname: "/api/doc/rewrite-from-comments",
-    mode: "warn",
-    checks: {
-      scope_key: true,
-      idempotency_key: false,
-      confirm_required: true,
-      review_required: true,
-    },
-  }),
-  buildEnforcementRecord({
-    action: "meeting_confirm_write",
-    pathname: "/api/meeting/confirm",
-    mode: "warn",
-    checks: {
-      scope_key: true,
-      idempotency_key: false,
-      confirm_required: true,
-      review_required: true,
-    },
-  }),
-  buildEnforcementRecord({
-    action: "meeting_confirm_write",
-    pathname: "/meeting/confirm",
-    mode: "warn",
-    checks: {
-      scope_key: true,
-      idempotency_key: false,
-      confirm_required: true,
-      review_required: true,
-    },
-  }),
-]);
+const PHASE2_ROUTE_WRITE_POLICY_ENFORCEMENT = Object.freeze(
+  listExternalMutationRouteFixtures().map((fixture) => buildEnforcementRecord({
+    action: fixture.action,
+    pathname: fixture.pathname,
+    method: fixture.method,
+    mode: fixture.mode,
+    checks: fixture.checks,
+  })),
+);
 
 function cloneEnforcementRecord(record = null) {
   if (!record || typeof record !== "object" || Array.isArray(record)) {
@@ -149,6 +71,7 @@ function cloneEnforcementRecord(record = null) {
   return buildEnforcementRecord({
     action: record.action,
     pathname: record.pathname,
+    method: record.method,
     mode: record.mode,
     checks: record.checks,
   });
@@ -158,24 +81,33 @@ export function listWritePolicyEnforcementFixtures() {
   return PHASE2_ROUTE_WRITE_POLICY_ENFORCEMENT.map((record) => cloneEnforcementRecord(record));
 }
 
-export function getWritePolicyEnforcementFixture(pathname = "") {
+export function getWritePolicyEnforcementFixture(pathname = "", method = "") {
   const normalizedPathname = cleanText(pathname);
+  const normalizedMethod = cleanText(method).toUpperCase();
   if (!normalizedPathname) {
     return null;
   }
-  const matched = PHASE2_ROUTE_WRITE_POLICY_ENFORCEMENT.find((record) => record.pathname === normalizedPathname);
+  const matched = PHASE2_ROUTE_WRITE_POLICY_ENFORCEMENT.find((record) => (
+    record.pathname === normalizedPathname
+    && (!normalizedMethod || cleanText(record.method).toUpperCase() === normalizedMethod)
+  ));
   return cloneEnforcementRecord(matched || null);
 }
 
 export function getWritePolicyEnforcementProfile({
   action = "",
   pathname = "",
+  method = "",
 } = {}) {
   const normalizedPathname = cleanText(pathname);
+  const normalizedMethod = cleanText(method).toUpperCase();
   const normalizedAction = cleanText(action);
 
   if (normalizedPathname) {
-    const matchedPath = PHASE2_ROUTE_WRITE_POLICY_ENFORCEMENT.find((record) => record.pathname === normalizedPathname);
+    const matchedPath = PHASE2_ROUTE_WRITE_POLICY_ENFORCEMENT.find((record) => (
+      record.pathname === normalizedPathname
+      && (!normalizedMethod || cleanText(record.method).toUpperCase() === normalizedMethod)
+    ));
     if (matchedPath) {
       return cloneEnforcementRecord(matchedPath);
     }

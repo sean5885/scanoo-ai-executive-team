@@ -194,7 +194,10 @@ import { getAllowedMethodsForPath } from "./http-route-contracts.mjs";
 import { listResolvedSessions } from "./session-scope-store.mjs";
 import { createMeetingCoordinator } from "./meeting-agent.mjs";
 import { cleanText, extractDocumentId } from "./message-intent-utils.mjs";
-import { executeLarkWrite } from "./execute-lark-write.mjs";
+import {
+  executeCanonicalLarkMutation,
+  runCanonicalLarkMutation,
+} from "./lark-mutation-runtime.mjs";
 import { runMutation } from "./mutation-runtime.mjs";
 import {
   buildHttpIdempotencyScopeKey,
@@ -2694,12 +2697,18 @@ async function handleDriveCreateFolder(res, requestUrl, body) {
     return;
   }
 
-  const execution = await executeLarkWrite({
-    apiName: "create_drive_folder",
+  const execution = await executeCanonicalLarkMutation({
     action: "create_drive_folder",
     pathname: "/api/drive/create-folder",
     accountId: context.account.id,
     accessToken: context.token,
+    resourceId: folderToken,
+    scopeKey: `drive:${folderToken}`,
+    payload: {
+      folder_token: folderToken,
+      name,
+    },
+    originalRequest: body,
     budget: {
       sessionKey: context.account.id,
       scopeKey: `drive:${folderToken}`,
@@ -2744,12 +2753,19 @@ async function handleDriveMove(res, requestUrl, body) {
     return;
   }
 
-  const execution = await executeLarkWrite({
-    apiName: "move_drive_item",
+  const execution = await executeCanonicalLarkMutation({
     action: "move_drive_item",
     pathname: "/api/drive/move",
     accountId: context.account.id,
     accessToken: context.token,
+    resourceId: fileToken,
+    scopeKey: `drive:${folderToken}`,
+    payload: {
+      file_token: fileToken,
+      type,
+      folder_token: folderToken,
+    },
+    originalRequest: body,
     budget: {
       sessionKey: context.account.id,
       scopeKey: `drive:${folderToken}`,
@@ -2818,12 +2834,18 @@ async function handleDriveDelete(res, requestUrl, body) {
     return;
   }
 
-  const execution = await executeLarkWrite({
-    apiName: "delete_drive_item",
+  const execution = await executeCanonicalLarkMutation({
     action: "delete_drive_item",
     pathname: "/api/drive/delete",
     accountId: context.account.id,
     accessToken: context.token,
+    resourceId: fileToken,
+    scopeKey: `drive:${fileToken}`,
+    payload: {
+      file_token: fileToken,
+      type,
+    },
+    originalRequest: body,
     budget: {
       sessionKey: context.account.id,
       scopeKey: `drive:${fileToken}`,
@@ -2936,60 +2958,51 @@ async function handleDriveOrganize(res, requestUrl, body, apply, logger = noopHt
     });
   }
   const mutationExecution = apply
-    ? await runMutation({
+    ? await runCanonicalLarkMutation({
         action: "drive_organize_apply",
+        pathname: "/api/drive/organize/apply",
+        accountId: context.account.id,
+        accessToken: context.token,
+        logger,
+        traceId: res.__trace_id || null,
+        canonicalRequest,
         payload: {
           folder_token: folderToken,
           recursive: options.recursive,
           include_folders: options.includeFolders,
         },
-        context: {
-          pathname: "/api/drive/organize/apply",
-          account_id: context.account.id,
-          trace_id: res.__trace_id || null,
-          logger,
-          canonical_request: canonicalRequest,
-          verifier_profile: "cloud_doc_v1",
-          verifier_input: {
-            scope_key: scopeKey,
-            scope_type: "drive_folder",
-            preview_plan: applyingTask?.meta?.preview_plan || null,
-            evidence: [
-              {
-                type: "file_updated",
-                summary: `drive_scope:${folderToken}`,
-              },
-              {
-                type: "API_call_success",
-                summary: "drive_organize_apply_succeeded",
-              },
-            ],
-          },
-        },
-        execute: async () => executeLarkWrite({
-          apiName: "drive_organize_apply",
-          action: "drive_organize_apply",
-          pathname: "/api/drive/organize/apply",
-          accountId: context.account.id,
-          accessToken: context.token,
-          canonicalRequest,
-          budget: {
-            sessionKey: context.account.id,
-            scopeKey,
-            targetDocumentId: folderToken,
-            payload: {
-              folder_token: folderToken,
-              recursive: options.recursive,
-              include_folders: options.includeFolders,
+        verifierProfile: "cloud_doc_v1",
+        verifierInput: {
+          scope_key: scopeKey,
+          scope_type: "drive_folder",
+          preview_plan: applyingTask?.meta?.preview_plan || null,
+          evidence: [
+            {
+              type: "file_updated",
+              summary: `drive_scope:${folderToken}`,
             },
-            previewPlan: applyingTask?.meta?.preview_plan || null,
+            {
+              type: "API_call_success",
+              summary: "drive_organize_apply_succeeded",
+            },
+          ],
+        },
+        budget: {
+          sessionKey: context.account.id,
+          scopeKey,
+          targetDocumentId: folderToken,
+          payload: {
+            folder_token: folderToken,
+            recursive: options.recursive,
+            include_folders: options.includeFolders,
           },
-          performWrite: async ({ accessToken }) => getHttpService("applyDriveOrganization", applyDriveOrganization)(
-            accessToken,
-            folderToken,
-            options,
-          ),
-        }),
+          previewPlan: applyingTask?.meta?.preview_plan || null,
+        },
+        performWrite: async ({ accessToken }) => getHttpService("applyDriveOrganization", applyDriveOrganization)(
+          accessToken,
+          folderToken,
+          options,
+        ),
       })
     : null;
   if (apply && !mutationExecution.ok) {
@@ -3078,12 +3091,19 @@ async function handleWikiCreateNode(res, requestUrl, body) {
     return;
   }
 
-  const execution = await executeLarkWrite({
-    apiName: "create_wiki_node",
+  const execution = await executeCanonicalLarkMutation({
     action: "create_wiki_node",
     pathname: "/api/wiki/create-node",
     accountId: context.account.id,
     accessToken: context.token,
+    resourceId: parentNodeToken || spaceId,
+    scopeKey: `wiki:${spaceId}:${parentNodeToken || "root"}`,
+    payload: {
+      space_id: spaceId,
+      title,
+      parent_node_token: parentNodeToken || null,
+    },
+    originalRequest: body,
     budget: {
       sessionKey: context.account.id,
       scopeKey: `wiki:${spaceId}:${parentNodeToken || "root"}`,
@@ -3131,12 +3151,20 @@ async function handleWikiMove(res, requestUrl, body) {
     return;
   }
 
-  const execution = await executeLarkWrite({
-    apiName: "move_wiki_node",
+  const execution = await executeCanonicalLarkMutation({
     action: "move_wiki_node",
     pathname: "/api/wiki/move",
     accountId: context.account.id,
     accessToken: context.token,
+    resourceId: nodeToken,
+    scopeKey: `wiki:${spaceId}:${targetParentToken}`,
+    payload: {
+      space_id: spaceId,
+      node_token: nodeToken,
+      target_parent_token: targetParentToken,
+      target_space_id: targetSpaceId || null,
+    },
+    originalRequest: body,
     budget: {
       sessionKey: context.account.id,
       scopeKey: `wiki:${spaceId}:${targetParentToken}`,
@@ -3253,8 +3281,14 @@ async function handleWikiOrganize(res, requestUrl, body, apply, logger = noopHtt
     });
   }
   const mutationExecution = apply
-    ? await runMutation({
+    ? await runCanonicalLarkMutation({
         action: "wiki_organize_apply",
+        pathname: "/api/wiki/organize/apply",
+        accountId: context.account.id,
+        accessToken: context.token,
+        logger,
+        traceId: res.__trace_id || null,
+        canonicalRequest,
         payload: {
           space_id: options.spaceId || null,
           space_name: options.spaceName || null,
@@ -3262,54 +3296,39 @@ async function handleWikiOrganize(res, requestUrl, body, apply, logger = noopHtt
           recursive: options.recursive,
           include_containers: options.includeContainers,
         },
-        context: {
-          pathname: "/api/wiki/organize/apply",
-          account_id: context.account.id,
-          trace_id: res.__trace_id || null,
-          logger,
-          canonical_request: canonicalRequest,
-          verifier_profile: "cloud_doc_v1",
-          verifier_input: {
-            scope_key: scopeKey,
-            scope_type: "wiki_scope",
-            preview_plan: applyingTask?.meta?.preview_plan || null,
-            evidence: [
-              {
-                type: "file_updated",
-                summary: `wiki_scope:${options.parentNodeToken || options.spaceId || "root"}`,
-              },
-              {
-                type: "API_call_success",
-                summary: "wiki_organize_apply_succeeded",
-              },
-            ],
-          },
-        },
-        execute: async () => executeLarkWrite({
-          apiName: "wiki_organize_apply",
-          action: "wiki_organize_apply",
-          pathname: "/api/wiki/organize/apply",
-          accountId: context.account.id,
-          accessToken: context.token,
-          canonicalRequest,
-          budget: {
-            sessionKey: context.account.id,
-            scopeKey,
-            targetDocumentId: options.parentNodeToken || options.spaceId || null,
-            payload: {
-              space_id: options.spaceId || null,
-              space_name: options.spaceName || null,
-              parent_node_token: options.parentNodeToken || null,
-              recursive: options.recursive,
-              include_containers: options.includeContainers,
+        verifierProfile: "cloud_doc_v1",
+        verifierInput: {
+          scope_key: scopeKey,
+          scope_type: "wiki_scope",
+          preview_plan: applyingTask?.meta?.preview_plan || null,
+          evidence: [
+            {
+              type: "file_updated",
+              summary: `wiki_scope:${options.parentNodeToken || options.spaceId || "root"}`,
             },
-            previewPlan: applyingTask?.meta?.preview_plan || null,
+            {
+              type: "API_call_success",
+              summary: "wiki_organize_apply_succeeded",
+            },
+          ],
+        },
+        budget: {
+          sessionKey: context.account.id,
+          scopeKey,
+          targetDocumentId: options.parentNodeToken || options.spaceId || null,
+          payload: {
+            space_id: options.spaceId || null,
+            space_name: options.spaceName || null,
+            parent_node_token: options.parentNodeToken || null,
+            recursive: options.recursive,
+            include_containers: options.includeContainers,
           },
-          performWrite: async ({ accessToken }) => getHttpService("applyWikiOrganization", applyWikiOrganization)(
-            accessToken,
-            options,
-          ),
-        }),
+          previewPlan: applyingTask?.meta?.preview_plan || null,
+        },
+        performWrite: async ({ accessToken }) => getHttpService("applyWikiOrganization", applyWikiOrganization)(
+          accessToken,
+          options,
+        ),
       })
     : null;
   if (apply && !mutationExecution.ok) {
@@ -3596,8 +3615,14 @@ async function handleDocumentCreate(
     demo_like: createGuard.classification?.demo_like === true,
     write_policy: resolvedWritePolicy,
   });
-  const mutationExecution = await runMutation({
+  const mutationExecution = await runCanonicalLarkMutation({
     action: "create_doc",
+    pathname,
+    accountId: context.account.id,
+    accessToken: context.token,
+    logger,
+    traceId: res.__trace_id || null,
+    canonicalRequest,
     payload: {
       title,
       folder_token: folderToken || null,
@@ -3610,55 +3635,39 @@ async function handleDocumentCreate(
       intent: intent || null,
       type: type || null,
     },
-    context: {
-      pathname,
-      account_id: context.account.id,
-      trace_id: res.__trace_id || null,
-      logger,
-      canonical_request: canonicalRequest,
-      write_policy: resolvedWritePolicy,
-    },
-    execute: async () => executeLarkWrite({
-      apiName: "create_doc",
-      action: "create_doc",
-      pathname,
-      accountId: context.account.id,
-      accessToken: context.token,
-      traceId: res.__trace_id || null,
-      logger,
-      confirmation: {
-        kind: "document_create",
-        requireConfirm: true,
-        requireConfirmationId: true,
-        confirm: effectiveConfirm,
+    confirmation: {
+      kind: "document_create",
+      requireConfirm: true,
+      requireConfirmationId: true,
+      confirm: effectiveConfirm,
+      confirmationId: effectiveConfirmationId,
+      pending: pendingCreateConfirmation,
+      consume: async () => consumeDocumentCreateConfirmation({
         confirmationId: effectiveConfirmationId,
-        pending: pendingCreateConfirmation,
-        consume: async () => consumeDocumentCreateConfirmation({
-          confirmationId: effectiveConfirmationId,
-          accountId: context.account.id,
-          title,
-          requestedFolderToken,
-          resolvedFolderToken: folderToken,
-          content,
-        }),
-      },
-      budget: {
-        sessionKey: context.account.id,
-        scopeKey: resolvedWritePolicy.scope_key,
-        targetDocumentId: folderToken || null,
+        accountId: context.account.id,
+        title,
+        requestedFolderToken,
+        resolvedFolderToken: folderToken,
         content,
-        payload: {
-          title,
-          folder_token: folderToken || null,
-          requested_folder_token: requestedFolderToken || null,
-          source: source || "api_doc_create",
-          owner: owner || null,
-          intent: intent || null,
-          type: type || null,
-        },
-        idempotencyKey,
+      }),
+    },
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: resolvedWritePolicy.scope_key,
+      targetDocumentId: folderToken || null,
+      content,
+      payload: {
+        title,
+        folder_token: folderToken || null,
+        requested_folder_token: requestedFolderToken || null,
+        source: source || "api_doc_create",
+        owner: owner || null,
+        intent: intent || null,
+        type: type || null,
       },
-      performWrite: async ({ accessToken }) => {
+      idempotencyKey,
+    },
+    performWrite: async ({ accessToken }) => {
         let created;
         try {
           created = await getHttpService("createDocument", createDocument)(
@@ -3757,7 +3766,6 @@ async function handleDocumentCreate(
           initialContentWriteError,
         };
       },
-    }),
   });
   if (!mutationExecution.ok) {
     if (mutationExecution.error === "write_policy_enforcement_blocked") {
@@ -5056,8 +5064,14 @@ async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogg
     },
     originalRequest: body,
   });
-  const mutationExecution = await runMutation({
+  const mutationExecution = await runCanonicalLarkMutation({
     action: "update_doc",
+    pathname: "/api/doc/update",
+    accountId: context.account.id,
+    accessToken: context.token,
+    logger,
+    traceId: res.__trace_id || null,
+    canonicalRequest,
     payload: {
       document_id: finalDocumentId,
       content: resolvedContent,
@@ -5067,64 +5081,44 @@ async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogg
       confirmation_id: confirmationId || null,
       confirm: confirm === true,
     },
-    context: {
-      pathname: "/api/doc/update",
-      account_id: context.account.id,
-      trace_id: res.__trace_id || null,
-      logger,
-      canonical_request: canonicalRequest,
-    },
-    execute: async () => executeLarkWrite({
-      apiName: "document_update",
-      action: targeting
-        ? "document_update_targeted_apply"
-        : resolvedMode === "replace"
-          ? "document_update_replace_apply"
-          : "document_update",
-      pathname: "/api/doc/update",
-      accountId: context.account.id,
-      accessToken: context.token,
-      traceId: res.__trace_id || null,
-      logger,
-      confirmation: resolvedMode === "replace"
-        ? {
-            kind: "document_replace",
-            requireConfirm: true,
-            confirm,
-            requireConfirmationId: true,
+    confirmation: resolvedMode === "replace"
+      ? {
+          kind: "document_replace",
+          requireConfirm: true,
+          confirm,
+          requireConfirmationId: true,
+          confirmationId,
+          pending: pendingReplaceConfirmation,
+          consume: async () => consumeDocumentReplaceConfirmation({
             confirmationId,
-            pending: pendingReplaceConfirmation,
-            consume: async () => consumeDocumentReplaceConfirmation({
-              confirmationId,
-              accountId: context.account.id,
-              documentId: finalDocumentId,
-              proposedContent: resolvedContent,
-            }),
-          }
-        : {
-            kind: "document_update",
-            requireConfirm: false,
-            confirm,
-          },
-      budget: {
-        sessionKey: context.account.id,
-        scopeKey: `document:${finalDocumentId}`,
-        documentId: finalDocumentId,
-        targetDocumentId: finalDocumentId,
-        content: resolvedContent,
-        payload: {
-          mode: resolvedMode,
-          target_heading: targetHeading || null,
-          target_position: targetPosition || null,
+            accountId: context.account.id,
+            documentId: finalDocumentId,
+            proposedContent: resolvedContent,
+          }),
+        }
+      : {
+          kind: "document_update",
+          requireConfirm: false,
+          confirm,
         },
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: `document:${finalDocumentId}`,
+      documentId: finalDocumentId,
+      targetDocumentId: finalDocumentId,
+      content: resolvedContent,
+      payload: {
+        mode: resolvedMode,
+        target_heading: targetHeading || null,
+        target_position: targetPosition || null,
       },
-      performWrite: async ({ accessToken }) => getHttpService("updateDocument", updateDocument)(
-        accessToken,
-        finalDocumentId,
-        resolvedContent,
-        resolvedMode,
-      ),
-    }),
+    },
+    performWrite: async ({ accessToken }) => getHttpService("updateDocument", updateDocument)(
+      accessToken,
+      finalDocumentId,
+      resolvedContent,
+      resolvedMode,
+    ),
   });
   if (!mutationExecution.ok) {
     respondWriteExecutionFailure(
@@ -5370,57 +5364,48 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
     },
     originalRequest: body,
   });
-  const mutationExecution = await runMutation({
+  const mutationExecution = await runCanonicalLarkMutation({
     action: "document_comment_rewrite_apply",
+    pathname: "/api/doc/rewrite-from-comments",
+    accountId: context.account.id,
+    accessToken: context.token,
+    logger,
+    traceId: res.__trace_id || null,
+    canonicalRequest,
     payload: {
       document_id: documentId,
       confirmation_id: confirmationId,
       comment_ids: pendingConfirmation.comment_ids || [],
       resolve_comments: pendingConfirmation.resolve_comments === true,
     },
-    context: {
-      pathname: "/api/doc/rewrite-from-comments",
-      account_id: context.account.id,
-      trace_id: res.__trace_id || null,
-      logger,
-      canonical_request: canonicalRequest,
-    },
-    execute: async () => executeLarkWrite({
-      apiName: "document_comment_rewrite_apply",
-      action: "document_comment_rewrite_apply",
-      pathname: "/api/doc/rewrite-from-comments",
-      accountId: context.account.id,
-      accessToken: context.token,
-      traceId: res.__trace_id || null,
-      logger,
-      confirmation: {
-        kind: "comment_rewrite",
-        requireConfirm: true,
-        confirm,
-        requireConfirmationId: true,
+    confirmation: {
+      kind: "comment_rewrite",
+      requireConfirm: true,
+      confirm,
+      requireConfirmationId: true,
+      confirmationId,
+      pending: pendingConfirmation,
+      consume: async () => consumeCommentRewriteConfirmation({
         confirmationId,
-        pending: pendingConfirmation,
-        consume: async () => consumeCommentRewriteConfirmation({
-          confirmationId,
-          accountId: context.account.id,
-          documentId,
-        }),
-        invalidMessage: "The rewrite confirmation is missing or expired. Generate a fresh preview first.",
-      },
-      budget: {
-        sessionKey: context.account.id,
-        scopeKey: workflowScope,
+        accountId: context.account.id,
         documentId,
-        targetDocumentId: documentId,
-        content: pendingConfirmation.rewritten_content || "",
-        payload: {
-          confirmation_id: confirmationId,
-          comment_ids: pendingConfirmation.comment_ids || [],
-          resolve_comments: pendingConfirmation.resolve_comments === true,
-        },
-        essential: true,
+      }),
+      invalidMessage: "The rewrite confirmation is missing or expired. Generate a fresh preview first.",
+    },
+    budget: {
+      sessionKey: context.account.id,
+      scopeKey: workflowScope,
+      documentId,
+      targetDocumentId: documentId,
+      content: pendingConfirmation.rewritten_content || "",
+      payload: {
+        confirmation_id: confirmationId,
+        comment_ids: pendingConfirmation.comment_ids || [],
+        resolve_comments: pendingConfirmation.resolve_comments === true,
       },
-      performWrite: async ({ accessToken, confirmation }) => {
+      essential: true,
+    },
+    performWrite: async ({ accessToken, confirmation }) => {
         await markDocRewriteApplying({
           accountId: context.account.id,
           scope: workflowScope,
@@ -5439,7 +5424,6 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
           },
         );
       },
-    }),
   });
   if (!mutationExecution.ok) {
     respondDocumentRewriteFailure(
@@ -5883,13 +5867,22 @@ async function handleMessageReply(res, requestUrl, body, logger = noopHttpLogger
     reply_in_thread: replyInThread,
     as_card: Boolean(cardTitle),
   });
-  const execution = await executeLarkWrite({
-    apiName: "message_reply",
+  const execution = await executeCanonicalLarkMutation({
     action: "message_reply",
     pathname: requestUrl.pathname,
     accountId: context.account.id,
     accessToken: context.token,
     logger,
+    resourceId: messageId,
+    scopeKey: `message:${messageId}`,
+    idempotencyKey: getRequestIdempotencyKey(body),
+    payload: {
+      message_id: messageId,
+      content,
+      reply_in_thread: replyInThread,
+      card_title: cardTitle || null,
+    },
+    originalRequest: body,
     budget: {
       sessionKey: context.account.id,
       scopeKey: `message:${messageId}`,
@@ -6035,13 +6028,20 @@ async function handleCalendarCreateEvent(res, requestUrl, body, logger = noopHtt
     timezone: typeof body.timezone === "string" && body.timezone.trim() ? body.timezone.trim() : "Asia/Taipei",
     reminders,
   };
-  const execution = await executeLarkWrite({
-    apiName: "calendar_create_event",
+  const execution = await executeCanonicalLarkMutation({
     action: "calendar_create_event",
     pathname: requestUrl.pathname,
     accountId: context.account.id,
     accessToken: context.token,
     logger,
+    resourceId: calendarId,
+    scopeKey: `calendar:${calendarId}`,
+    idempotencyKey: getRequestIdempotencyKey(body),
+    payload: {
+      calendar_id: calendarId,
+      ...eventPayload,
+    },
+    originalRequest: body,
     budget: {
       sessionKey: context.account.id,
       scopeKey: `calendar:${calendarId}`,
@@ -6163,13 +6163,17 @@ async function handleTaskCreate(res, requestUrl, body, logger = noopHttpLogger) 
     linkUrl: typeof body.link_url === "string" ? body.link_url.trim() : undefined,
     linkTitle: typeof body.link_title === "string" ? body.link_title.trim() : undefined,
   };
-  const execution = await executeLarkWrite({
-    apiName: "task_create",
+  const execution = await executeCanonicalLarkMutation({
     action: "task_create",
     pathname: requestUrl.pathname,
     accountId: context.account.id,
     accessToken: context.token,
     logger,
+    resourceId: context.account.id,
+    scopeKey: `task:create:${context.account.id}`,
+    idempotencyKey: getRequestIdempotencyKey(body),
+    payload: taskPayload,
+    originalRequest: body,
     budget: {
       sessionKey: context.account.id,
       scopeKey: `task:create:${context.account.id}`,
@@ -6217,12 +6221,16 @@ async function handleBitableAppCreate(res, requestUrl, body) {
     copyTypes: Array.isArray(body.copy_types) ? body.copy_types : undefined,
     apiType: typeof body.api_type === "string" ? body.api_type.trim() : undefined,
   };
-  const execution = await executeLarkWrite({
-    apiName: "bitable_app_create",
+  const execution = await executeCanonicalLarkMutation({
     action: "bitable_app_create",
     pathname: requestUrl.pathname,
     accountId: context.account.id,
     accessToken: context.token,
+    resourceId: appPayload.folderToken || context.account.id,
+    scopeKey: `bitable_app:${appPayload.folderToken || "root"}`,
+    idempotencyKey: getRequestIdempotencyKey(body),
+    payload: appPayload,
+    originalRequest: body,
     budget: {
       sessionKey: context.account.id,
       scopeKey: `bitable_app:${appPayload.folderToken || "root"}`,
@@ -6270,12 +6278,19 @@ async function handleBitableAppUpdate(res, requestUrl, body, appToken) {
     name: typeof body.name === "string" ? body.name.trim() : undefined,
     isAdvanced: typeof body.is_advanced === "boolean" ? body.is_advanced : undefined,
   };
-  const execution = await executeLarkWrite({
-    apiName: "bitable_app_update",
+  const execution = await executeCanonicalLarkMutation({
     action: "bitable_app_update",
     pathname: requestUrl.pathname,
     accountId: context.account.id,
     accessToken: context.token,
+    resourceId: appToken,
+    scopeKey: `bitable_app:${appToken}`,
+    idempotencyKey: getRequestIdempotencyKey(body),
+    payload: {
+      app_token: appToken,
+      ...appPayload,
+    },
+    originalRequest: body,
     budget: {
       sessionKey: context.account.id,
       scopeKey: `bitable_app:${appToken}`,
@@ -6343,12 +6358,19 @@ async function handleBitableTableCreate(res, requestUrl, body, appToken) {
     defaultViewName: typeof body.default_view_name === "string" ? body.default_view_name.trim() : undefined,
     fields: Array.isArray(body.fields) ? body.fields : [],
   };
-  const execution = await executeLarkWrite({
-    apiName: "bitable_table_create",
+  const execution = await executeCanonicalLarkMutation({
     action: "bitable_table_create",
     pathname: requestUrl.pathname,
     accountId: context.account.id,
     accessToken: context.token,
+    resourceId: appToken,
+    scopeKey: `bitable_table:${appToken}`,
+    idempotencyKey: getRequestIdempotencyKey(body),
+    payload: {
+      app_token: appToken,
+      ...tablePayload,
+    },
+    originalRequest: body,
     budget: {
       sessionKey: context.account.id,
       scopeKey: `bitable_table:${appToken}`,
@@ -6491,13 +6513,21 @@ async function handleBitableRecordCreate(res, requestUrl, body, appToken, tableI
     clientToken: typeof body.client_token === "string" ? body.client_token.trim() : undefined,
     ignoreConsistencyCheck: body.ignore_consistency_check === true,
   };
-  const execution = await executeLarkWrite({
-    apiName: "bitable_record_create",
+  const execution = await executeCanonicalLarkMutation({
     action: "bitable_record_create",
     pathname: requestUrl.pathname,
     accountId: context.account.id,
     accessToken: context.token,
     logger,
+    resourceId: tableId,
+    scopeKey: `bitable_record:${appToken}:${tableId}`,
+    idempotencyKey: getRequestIdempotencyKey(body),
+    payload: {
+      app_token: appToken,
+      table_id: tableId,
+      ...recordPayload,
+    },
+    originalRequest: body,
     budget: {
       sessionKey: context.account.id,
       scopeKey: `bitable_record:${appToken}:${tableId}`,
@@ -6600,13 +6630,22 @@ async function handleBitableRecordUpdate(res, requestUrl, body, appToken, tableI
     fields: body.fields,
     userIdType: typeof body.user_id_type === "string" ? body.user_id_type.trim() : undefined,
   };
-  const execution = await executeLarkWrite({
-    apiName: "bitable_record_update",
+  const execution = await executeCanonicalLarkMutation({
     action: "bitable_record_update",
     pathname: requestUrl.pathname,
     accountId: context.account.id,
     accessToken: context.token,
     logger,
+    resourceId: recordId,
+    scopeKey: `bitable_record:${appToken}:${tableId}`,
+    idempotencyKey: getRequestIdempotencyKey(body),
+    payload: {
+      app_token: appToken,
+      table_id: tableId,
+      record_id: recordId,
+      ...recordPayload,
+    },
+    originalRequest: body,
     budget: {
       sessionKey: context.account.id,
       scopeKey: `bitable_record:${appToken}:${tableId}`,
@@ -6660,13 +6699,21 @@ async function handleBitableRecordDelete(res, requestUrl, body, appToken, tableI
     table_id: tableId,
     record_id: recordId,
   });
-  const execution = await executeLarkWrite({
-    apiName: "bitable_record_delete",
+  const execution = await executeCanonicalLarkMutation({
     action: "bitable_record_delete",
     pathname: requestUrl.pathname,
     accountId: context.account.id,
     accessToken: context.token,
     logger,
+    resourceId: recordId,
+    scopeKey: `bitable_record:${appToken}:${tableId}`,
+    idempotencyKey: getRequestIdempotencyKey(body),
+    payload: {
+      app_token: appToken,
+      table_id: tableId,
+      record_id: recordId,
+    },
+    originalRequest: body,
     budget: {
       sessionKey: context.account.id,
       scopeKey: `bitable_record:${appToken}:${tableId}`,
@@ -6730,13 +6777,21 @@ async function handleBitableRecordsBulkUpsert(res, requestUrl, body, appToken, t
     records: body.records,
     userIdType: body.user_id_type,
   };
-  const execution = await executeLarkWrite({
-    apiName: "bitable_records_bulk_upsert",
+  const execution = await executeCanonicalLarkMutation({
     action: "bitable_records_bulk_upsert",
     pathname: requestUrl.pathname,
     accountId: context.account.id,
     accessToken: context.token,
     logger,
+    resourceId: tableId,
+    scopeKey: `bitable_record:${appToken}:${tableId}`,
+    idempotencyKey: getRequestIdempotencyKey(body),
+    payload: {
+      app_token: appToken,
+      table_id: tableId,
+      ...bulkPayload,
+    },
+    originalRequest: body,
     budget: {
       sessionKey: context.account.id,
       scopeKey: `bitable_record:${appToken}:${tableId}`,
@@ -6791,12 +6846,16 @@ async function handleSpreadsheetCreate(res, requestUrl, body) {
     title,
     folderToken: typeof body.folder_token === "string" ? body.folder_token.trim() : undefined,
   };
-  const execution = await executeLarkWrite({
-    apiName: "spreadsheet_create",
+  const execution = await executeCanonicalLarkMutation({
     action: "spreadsheet_create",
     pathname: requestUrl.pathname,
     accountId: context.account.id,
     accessToken: context.token,
+    resourceId: spreadsheetPayload.folderToken || context.account.id,
+    scopeKey: `spreadsheet:create:${spreadsheetPayload.folderToken || "root"}`,
+    idempotencyKey: getRequestIdempotencyKey(body),
+    payload: spreadsheetPayload,
+    originalRequest: body,
     budget: {
       sessionKey: context.account.id,
       scopeKey: `spreadsheet:create:${spreadsheetPayload.folderToken || "root"}`,
@@ -6850,12 +6909,19 @@ async function handleSpreadsheetUpdate(res, requestUrl, body, spreadsheetToken) 
   }
 
   const spreadsheetPayload = { title };
-  const execution = await executeLarkWrite({
-    apiName: "spreadsheet_update",
+  const execution = await executeCanonicalLarkMutation({
     action: "spreadsheet_update",
     pathname: requestUrl.pathname,
     accountId: context.account.id,
     accessToken: context.token,
+    resourceId: spreadsheetToken,
+    scopeKey: `spreadsheet:${spreadsheetToken}`,
+    idempotencyKey: getRequestIdempotencyKey(body),
+    payload: {
+      spreadsheet_token: spreadsheetToken,
+      ...spreadsheetPayload,
+    },
+    originalRequest: body,
     budget: {
       sessionKey: context.account.id,
       scopeKey: `spreadsheet:${spreadsheetToken}`,
@@ -6937,12 +7003,20 @@ async function handleSpreadsheetReplace(res, requestUrl, body, spreadsheetToken,
     searchByRegex: body.search_by_regex === true,
     includeFormulas: body.include_formulas === true,
   };
-  const execution = await executeLarkWrite({
-    apiName: "spreadsheet_replace",
+  const execution = await executeCanonicalLarkMutation({
     action: "spreadsheet_replace",
     pathname: requestUrl.pathname,
     accountId: context.account.id,
     accessToken: context.token,
+    resourceId: sheetId,
+    scopeKey: `spreadsheet:${spreadsheetToken}:${sheetId}`,
+    idempotencyKey: getRequestIdempotencyKey(body),
+    payload: {
+      spreadsheet_token: spreadsheetToken,
+      sheet_id: sheetId,
+      ...replacePayload,
+    },
+    originalRequest: body,
     budget: {
       sessionKey: context.account.id,
       scopeKey: `spreadsheet:${spreadsheetToken}:${sheetId}`,
@@ -6987,12 +7061,20 @@ async function handleSpreadsheetReplaceBatch(res, requestUrl, body, spreadsheetT
   }
 
   const batchPayload = { replacements: body.replacements };
-  const execution = await executeLarkWrite({
-    apiName: "spreadsheet_replace_batch",
+  const execution = await executeCanonicalLarkMutation({
     action: "spreadsheet_replace_batch",
     pathname: requestUrl.pathname,
     accountId: context.account.id,
     accessToken: context.token,
+    resourceId: sheetId,
+    scopeKey: `spreadsheet:${spreadsheetToken}:${sheetId}`,
+    idempotencyKey: getRequestIdempotencyKey(body),
+    payload: {
+      spreadsheet_token: spreadsheetToken,
+      sheet_id: sheetId,
+      ...batchPayload,
+    },
+    originalRequest: body,
     budget: {
       sessionKey: context.account.id,
       scopeKey: `spreadsheet:${spreadsheetToken}:${sheetId}`,
@@ -7132,13 +7214,20 @@ async function handleTaskCommentCreate(res, requestUrl, body, taskId, logger = n
     parentId: typeof body.parent_id === "string" ? body.parent_id.trim() : undefined,
     userIdType: typeof body.user_id_type === "string" ? body.user_id_type.trim() : undefined,
   };
-  const execution = await executeLarkWrite({
-    apiName: "task_comment_create",
+  const execution = await executeCanonicalLarkMutation({
     action: "task_comment_create",
     pathname: requestUrl.pathname,
     accountId: context.account.id,
     accessToken: context.token,
     logger,
+    resourceId: taskId,
+    scopeKey: `task_comment:${taskId}`,
+    idempotencyKey: getRequestIdempotencyKey(body),
+    payload: {
+      task_id: taskId,
+      ...commentPayload,
+    },
+    originalRequest: body,
     budget: {
       sessionKey: context.account.id,
       scopeKey: `task_comment:${taskId}`,
@@ -7228,13 +7317,21 @@ async function handleTaskCommentUpdate(res, requestUrl, body, taskId, commentId,
     richContent: typeof body.rich_content === "string" ? body.rich_content.trim() : undefined,
     userIdType: typeof body.user_id_type === "string" ? body.user_id_type.trim() : undefined,
   };
-  const execution = await executeLarkWrite({
-    apiName: "task_comment_update",
+  const execution = await executeCanonicalLarkMutation({
     action: "task_comment_update",
     pathname: requestUrl.pathname,
     accountId: context.account.id,
     accessToken: context.token,
     logger,
+    resourceId: commentId,
+    scopeKey: `task_comment:${taskId}`,
+    idempotencyKey: getRequestIdempotencyKey(body),
+    payload: {
+      task_id: taskId,
+      comment_id: commentId,
+      ...commentPayload,
+    },
+    originalRequest: body,
     budget: {
       sessionKey: context.account.id,
       scopeKey: `task_comment:${taskId}`,
@@ -7284,13 +7381,20 @@ async function handleTaskCommentDelete(res, requestUrl, body, taskId, commentId,
     task_id: taskId,
     comment_id: commentId,
   });
-  const execution = await executeLarkWrite({
-    apiName: "task_comment_delete",
+  const execution = await executeCanonicalLarkMutation({
     action: "task_comment_delete",
     pathname: requestUrl.pathname,
     accountId: context.account.id,
     accessToken: context.token,
     logger,
+    resourceId: commentId,
+    scopeKey: `task_comment:${taskId}`,
+    idempotencyKey: getRequestIdempotencyKey(body),
+    payload: {
+      task_id: taskId,
+      comment_id: commentId,
+    },
+    originalRequest: body,
     budget: {
       sessionKey: context.account.id,
       scopeKey: `task_comment:${taskId}`,
@@ -7359,12 +7463,19 @@ async function handleMessageReactionCreate(res, requestUrl, body, messageId) {
     return;
   }
 
-  const execution = await executeLarkWrite({
-    apiName: "message_reaction_create",
+  const execution = await executeCanonicalLarkMutation({
     action: "message_reaction_create",
     pathname: requestUrl.pathname,
     accountId: context.account.id,
     accessToken: context.token,
+    resourceId: messageId,
+    scopeKey: `message_reaction:${messageId}`,
+    idempotencyKey: getRequestIdempotencyKey(body),
+    payload: {
+      message_id: messageId,
+      emoji_type: emojiType,
+    },
+    originalRequest: body,
     budget: {
       sessionKey: context.account.id,
       scopeKey: `message_reaction:${messageId}`,
@@ -7401,12 +7512,19 @@ async function handleMessageReactionDelete(res, requestUrl, body, messageId, rea
   const context = await requireUserContext(res, getAccountId(requestUrl, body));
   if (!context) return;
 
-  const execution = await executeLarkWrite({
-    apiName: "message_reaction_delete",
+  const execution = await executeCanonicalLarkMutation({
     action: "message_reaction_delete",
     pathname: requestUrl.pathname,
     accountId: context.account.id,
     accessToken: context.token,
+    resourceId: reactionId,
+    scopeKey: `message_reaction:${messageId}`,
+    idempotencyKey: getRequestIdempotencyKey(body),
+    payload: {
+      message_id: messageId,
+      reaction_id: reactionId,
+    },
+    originalRequest: body,
     budget: {
       sessionKey: context.account.id,
       scopeKey: `message_reaction:${messageId}`,

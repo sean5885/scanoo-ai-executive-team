@@ -3,6 +3,9 @@ import { createHash } from "node:crypto";
 import { cleanText } from "./message-intent-utils.mjs";
 import { decideWriteGuard } from "./write-guard.mjs";
 import {
+  listExternalMutationSpecs,
+} from "./external-mutation-registry.mjs";
+import {
   buildCompanyBrainApprovalTransitionWritePolicy,
   buildCompanyBrainApplyWritePolicy,
   buildCompanyBrainConflictWritePolicy,
@@ -13,6 +16,7 @@ import {
   buildCreateDocWritePolicy,
   buildDocumentCommentRewriteApplyWritePolicy,
   buildDriveOrganizeApplyWritePolicy,
+  buildExternalWritePolicy,
   buildMeetingConfirmWritePolicy,
   buildUpdateDocWritePolicy,
   buildWikiOrganizeApplyWritePolicy,
@@ -21,26 +25,28 @@ import {
 } from "./write-policy-contract.mjs";
 
 export const MUTATION_ADMISSION_CONTRACT_VERSION = "mutation_admission_contract_v1";
+const EXTERNAL_MUTATION_ACTION_TYPES = listExternalMutationSpecs().map((spec) => spec.action).filter(Boolean);
+const EXTERNAL_MUTATION_RESOURCE_TYPES = listExternalMutationSpecs().map((spec) => spec.resource_type).filter(Boolean);
+
 export const MUTATION_ADMISSION_ACTION_TYPES = Object.freeze([
-  "create_doc",
-  "update_doc",
-  "meeting_confirm_write",
-  "rewrite_apply",
-  "organize_apply",
-  "review_company_brain_doc",
-  "check_company_brain_conflicts",
-  "approval_transition_company_brain_doc",
-  "company_brain_apply",
-  "ingest_doc",
-  "ingest_learning_doc",
-  "update_learning_state",
+  ...new Set([
+    ...EXTERNAL_MUTATION_ACTION_TYPES,
+    "rewrite_apply",
+    "organize_apply",
+    "review_company_brain_doc",
+    "check_company_brain_conflicts",
+    "approval_transition_company_brain_doc",
+    "company_brain_apply",
+    "ingest_doc",
+    "ingest_learning_doc",
+    "update_learning_state",
+  ]),
 ]);
 export const MUTATION_ADMISSION_RESOURCE_TYPES = Object.freeze([
-  "doc_container",
-  "doc",
-  "drive_folder",
-  "wiki_space",
-  "company_brain_doc",
+  ...new Set([
+    ...EXTERNAL_MUTATION_RESOURCE_TYPES,
+    "company_brain_doc",
+  ]),
 ]);
 
 const MUTATION_ADMISSION_READY_ROUTE_FIXTURES = Object.freeze([
@@ -330,7 +336,10 @@ function buildPolicySnapshotFromCanonicalRequest(canonicalRequest = null) {
       idempotencyKey,
     });
   } else {
-    basePolicy = buildWritePolicyRecord({
+    basePolicy = buildExternalWritePolicy(actionType, {
+      scopeKey,
+      idempotencyKey,
+    }) || buildWritePolicyRecord({
       source: request?.actor?.source || "",
       owner: request?.actor?.owner || "",
       intent: actionType || "",
