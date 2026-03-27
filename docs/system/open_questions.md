@@ -176,6 +176,20 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
      - `/Users/seanhan/Documents/Playground/src/monitoring-store.mjs`
      - `/Users/seanhan/Documents/Playground/src/runtime-observability.mjs`
 
+21. Read-runtime final audit still has a small set of intentional bypass callers outside the public read route surface.
+   - Why it matters:
+     - public company-brain, approved-company-brain, live doc/comment, and index search reads now route through `read-runtime.mjs`
+     - but mutation-side review/verification helpers and local checked-in `docs/system` knowledge helpers still read state directly, so final audit needs an explicit keep-vs-unify decision instead of assuming full repo-wide read unification already exists
+   - Confirmed remaining bypass callers:
+     - `/Users/seanhan/Documents/Playground/src/company-brain-review.mjs`
+     - `/Users/seanhan/Documents/Playground/src/company-brain-learning.mjs`
+     - `/Users/seanhan/Documents/Playground/src/mutation-verifier.mjs`
+     - `/Users/seanhan/Documents/Playground/src/knowledge/knowledge-service.mjs`
+     - `/Users/seanhan/Documents/Playground/src/planner/knowledge-bridge.mjs`
+   - Current code truth:
+     - `/Users/seanhan/Documents/Playground/src/read-runtime.mjs`
+     - `/Users/seanhan/Documents/Playground/src/derived-read-authority.mjs`
+
 ## Cannot Be Confirmed From Code Alone
 
 - whether any hosted deployment exists outside the local machine

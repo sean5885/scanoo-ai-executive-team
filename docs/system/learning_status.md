@@ -28,6 +28,7 @@ What does exist:
 - semantic classification cache for drive organization
 - simplified learned-document sidecar state for company-brain docs
 - agent-facing `learning/ingest` and `learning/state` routes now send their final write hop through `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs` with `knowledge_write_v1` verification
+- `read-runtime.mjs` now also has a derived-authority internal read helper path for learning-state detail/list reads through `/Users/seanhan/Documents/Playground/src/derived-read-authority.mjs`
 
 ## Which Agents Have Not Learned Documents
 

@@ -220,18 +220,21 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Purpose: list only explicitly applied approved company-brain knowledge
   - Response shape: `{ ok, action, data, trace_id }`, with the same unified `{ success, data, error }` envelope
   - Data note: items include `knowledge_state.stage=approved` and still avoid raw full text
+  - Read-authority note: the route now enters `read-runtime.mjs` with `primary_authority=derived`
 
 - `GET /agent/company-brain/approved/search?q=...`
   - Handler: `handleAgentSearchApprovedCompanyBrainKnowledge`
   - Purpose: search only approved company-brain knowledge after review and apply have completed
   - Response shape: `{ ok, action, data, trace_id }`, with the same unified `{ success, data, error }` envelope
   - Data note: search items include `knowledge_state`, `match`, `summary`, and `learning_state`
+  - Read-authority note: the route now enters `read-runtime.mjs` with `primary_authority=derived`
 
 - `GET /agent/company-brain/approved/docs/:doc_id`
   - Handler: `handleAgentGetApprovedCompanyBrainKnowledgeDetail`
   - Purpose: fetch one explicitly approved company-brain doc
   - Response shape: `{ ok, action, data, trace_id }`, with the same unified `{ success, data, error }` envelope
   - Data note: detail result returns `{ doc, summary, learning_state, knowledge_state }`
+  - Read-authority note: the route now enters `read-runtime.mjs` with `primary_authority=derived`
 
 - `POST /agent/company-brain/review`
   - Handler: `handleAgentReviewCompanyBrainDoc`

@@ -24,7 +24,7 @@ Current runtime anchor points:
 - `/Users/seanhan/Documents/Playground/src/rag-repository.mjs`
 - `/Users/seanhan/Documents/Playground/src/db.mjs`
 
-Current read-side company-brain runtime now enters through `/Users/seanhan/Documents/Playground/src/read-runtime.mjs`, which accepts a canonical read request and keeps company-brain actions on one fixed primary authority: `primary_authority = "mirror"` for the current batch, delegated to `/Users/seanhan/Documents/Playground/src/company-brain-query.mjs` as the only mirror reader. The same runtime now also exposes a separate live branch for direct doc/comment reads backed by `/Users/seanhan/Documents/Playground/src/lark-content.mjs`, but that branch is only allowed when `freshness = "live_required"` and still keeps one single primary authority per read.
+Current read-side company-brain runtime now enters through `/Users/seanhan/Documents/Playground/src/read-runtime.mjs`, which accepts a canonical read request and keeps each read on one fixed primary authority. Verified-doc list/search/detail stay on `primary_authority = "mirror"` and delegate to `/Users/seanhan/Documents/Playground/src/company-brain-query.mjs`; approved company-brain reads plus the current internal learning-state reads stay on `primary_authority = "derived"` and delegate to `/Users/seanhan/Documents/Playground/src/derived-read-authority.mjs`. The same runtime also exposes a separate live branch for direct doc/comment reads backed by `/Users/seanhan/Documents/Playground/src/lark-content.mjs`, but that branch is only allowed when `freshness = "live_required"` and still keeps one single primary authority per read.
 
 The current route surfaces are:
 
@@ -58,7 +58,8 @@ This means `company_brain_agent` currently maps to a narrow read-oriented route/
 - list verified document mirrors from `company_brain_docs`
 - search company-brain records by `title` / `doc_id` with a composite ranking pass over keyword match, semantic-lite similarity, learning tags/key concepts, and recency
 - fetch detail for one mirrored document by `doc_id`
-- read approved company-brain rows through the same mirror-backed runtime envelope
+- read approved company-brain rows through the same runtime envelope while fixing `primary_authority = "derived"`
+- expose internal-only derived learning-state list/detail readers through the same runtime
 - derive planner-safe structured summaries from mirrored document text
 - ingest a mirrored document into a simplified learning sidecar
 - update simplified per-document learning state
@@ -73,6 +74,7 @@ Already in scope today:
 - company-brain doc detail
 - company-brain search
 - approved company-brain list/search/detail
+- internal learning-state list/detail via derived authority
 - planner-facing structured summary shaping
 - planner-facing unified query envelope `{ success, data, error }`
 - read-only access to verified mirror records

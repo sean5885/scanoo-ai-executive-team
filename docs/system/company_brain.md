@@ -57,11 +57,18 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
     - is now the unified read-runtime entry for single-authority reads
     - accepts canonical read requests `{ action, account_id, payload, context }`
     - also exposes a separate `primary_authority = "index"` branch for retrieval/search-hit reads backed by `/Users/seanhan/Documents/Playground/src/index-read-authority.mjs`
-    - keeps company-brain actions on `primary_authority = "mirror"` for the current batch
+    - keeps verified-doc mirror list/search/detail on `primary_authority = "mirror"`
+    - now exposes a separate `primary_authority = "derived"` branch for approved knowledge and learning-state reads backed by `/Users/seanhan/Documents/Playground/src/derived-read-authority.mjs`
     - also exposes a separate `primary_authority = "live"` branch for direct doc/comment reads backed by `lark-content.mjs`, but only when `freshness = "live_required"`
     - routes `/search` plus answer-service retrieval through the index branch while still keeping one single primary authority per read
-    - delegates mirror list/search/detail plus approved list/search/detail to `company-brain-query.mjs`
-    - returns one canonical runtime envelope and does not mix index, mirror, or live fallback in the same read
+    - delegates mirror list/search/detail to `company-brain-query.mjs`
+    - delegates approved list/search/detail plus internal learning-state detail/list reads to `derived-read-authority.mjs`
+    - returns one canonical runtime envelope and does not mix index, mirror, live, or derived fallback in the same read
+  - `/Users/seanhan/Documents/Playground/src/derived-read-authority.mjs`
+    - owns the current derived readers for:
+      - approved company-brain list/search/detail
+      - internal learning-state list/detail
+    - keeps the derived branch on one fixed `primary_authority = "derived"`
   - `/Users/seanhan/Documents/Playground/src/company-brain-learning.mjs`
     - derives deterministic `structured_summary`, `key_concepts`, and `tags`
     - writes simplified per-doc `learning_state`
@@ -107,8 +114,28 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `learning_state`
   - search-time `match` metadata including composite `score` plus simplified `ranking_basis`
   - no raw full-text body
+- approved company-brain routes now return through the same canonical envelope, but their read authority is `derived` rather than `mirror`
 - planner doc formatting now also stays mirror-only for the same read and no longer supplements company-brain detail reads with `/api/doc/read`
 - approved knowledge is now stored separately and can only be queried through approved-only agent/query routes after explicit review approval plus apply
+
+## Final Audit Prep
+
+Current remaining bypass callers that still read state without entering `read-runtime.mjs`:
+
+- mutation-side company-brain lifecycle helpers:
+  - `/Users/seanhan/Documents/Playground/src/company-brain-review.mjs`
+  - `/Users/seanhan/Documents/Playground/src/company-brain-learning.mjs`
+  - `/Users/seanhan/Documents/Playground/src/mutation-verifier.mjs`
+- local checked-in docs/system knowledge helpers:
+  - `/Users/seanhan/Documents/Playground/src/knowledge/knowledge-service.mjs`
+  - `/Users/seanhan/Documents/Playground/src/planner/knowledge-bridge.mjs`
+
+Current read paths still outside `read-runtime.mjs`:
+
+- mutation-side repository lookups used for review gates, learning writes, and durable-write verification
+- local `docs/system` keyword/snippet reads used by the planner-side knowledge helper path
+
+No remaining public company-brain list/search/detail route was found bypassing `read-runtime.mjs` in this scan.
 
 ## Knowledge Sources That Do Exist
 
