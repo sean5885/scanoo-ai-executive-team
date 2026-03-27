@@ -176,6 +176,30 @@ export async function runMutation({ action, payload, context, execute }) {
     };
   }
 
+  const requiredAuthority = cleanText(writePolicy?.authority) || null;
+  const currentAuthority = cleanText(context?.authority) || null;
+
+  if (requiredAuthority && currentAuthority !== requiredAuthority) {
+    return {
+      ok: false,
+      action,
+      error: "authority_mismatch",
+      message: `requires authority "${requiredAuthority}" but got "${currentAuthority}"`,
+      meta: {
+        execution_mode: context?.execution_mode || "passthrough",
+        duration_ms: 0,
+        journal: {
+          action,
+          status: "blocked",
+          started_at: Date.now(),
+          error: "authority_mismatch",
+        },
+        write_policy: writePolicy,
+        authority: currentAuthority,
+      },
+    };
+  }
+
   const idempotencyKey = cleanText(context?.idempotency_key) || null;
   if (idempotencyKey) {
     const store = getMutationIdempotencyStore();
@@ -388,6 +412,7 @@ export async function runMutation({ action, payload, context, execute }) {
       duration_ms: Date.now() - start,
       journal,
       write_policy: writePolicy,
+      authority: currentAuthority,
       ...((preVerification || postVerification)
         ? {
             verification: {

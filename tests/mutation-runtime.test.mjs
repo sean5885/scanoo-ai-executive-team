@@ -83,6 +83,7 @@ test("runMutation passes through to execute without changing create_doc inputs",
           started_at: 1000,
         },
         write_policy: null,
+        authority: null,
       },
     });
   } finally {
@@ -140,6 +141,7 @@ test("runMutation marks controlled execution input when execution_mode is contro
           started_at: 3000,
         },
         write_policy: null,
+        authority: null,
       },
     });
   } finally {
@@ -210,6 +212,73 @@ test("runMutation exposes context write_policy in success meta", async () => {
   assert.deepEqual(result.meta?.write_policy, writePolicy);
 });
 
+test("runMutation blocks execute when context authority does not match write_policy authority", async () => {
+  let called = false;
+
+  const result = await runMutation({
+    action: "create_doc",
+    payload: { title: "demo" },
+    context: {
+      authority: "mirror",
+      write_policy: {
+        allowed_actions: ["create_doc"],
+        authority: "derived",
+        source: "test_policy",
+      },
+    },
+    async execute() {
+      called = true;
+      return { ok: true };
+    },
+  });
+
+  assert.equal(called, false);
+  assert.deepEqual(result, {
+    ok: false,
+    action: "create_doc",
+    error: "authority_mismatch",
+    message: 'requires authority "derived" but got "mirror"',
+    meta: {
+      execution_mode: "passthrough",
+      duration_ms: 0,
+      journal: {
+        action: "create_doc",
+        status: "blocked",
+        started_at: result.meta.journal.started_at,
+        error: "authority_mismatch",
+      },
+      write_policy: {
+        allowed_actions: ["create_doc"],
+        authority: "derived",
+        source: "test_policy",
+      },
+      authority: "mirror",
+    },
+  });
+  assert.equal(typeof result.meta?.journal?.started_at, "number");
+});
+
+test("runMutation exposes context authority in success meta", async () => {
+  const result = await runMutation({
+    action: "create_doc",
+    payload: { title: "demo" },
+    context: {
+      authority: "derived",
+      write_policy: {
+        allowed_actions: ["create_doc"],
+        authority: "derived",
+        source: "test_policy",
+      },
+    },
+    async execute() {
+      return { ok: true, created: true };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.meta?.authority, "derived");
+});
+
 test("runMutation replays the first successful response when context idempotency_key repeats", async () => {
   const payload = { title: "demo" };
   const context = {
@@ -268,6 +337,7 @@ test("runMutation replays the first successful response when context idempotency
           started_at: 6000,
         },
         write_policy: null,
+        authority: null,
       },
     });
     assert.deepEqual(secondResult, firstResult);
