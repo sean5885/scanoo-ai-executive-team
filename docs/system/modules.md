@@ -996,6 +996,12 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - also exposes synchronous `queryKnowledgeWithContext(keyword)` as a filtered contextual preview helper that first prioritizes a small checked-in alias set for common ASCII topic terms (`okr`, `bd`, `sop`, `delivery`, `onboarding`), then fail-soft expands matching Chinese normalization terms (`交付`, `流程`, `設計`, `商機`, `管理`, `系統`, `穩不穩`, `運行情況`), but now suppresses generated generic `business` variants for explicit BD / 商機 phrasing unless `business` was explicitly typed; only after that does it fall back to any ASCII tokens and the raw full query so mixed-language and runtime-health lookups can reuse alternate terms without letting brand-like wording fill the bounded preview too early; each variant still keeps only snippets that contain that active query term, excludes `oauth` snippets unless the active query itself is `oauth`, deduplicates by `id`, and then round-robins across those per-query result buckets before removing very short fragments, table-row-like snippets, bare path/path-like labels, heading-only/runbook-like titles, and dangling metadata fragments from the bounded rows returned to planner-side callers
   - not connected to sync ingestion, SQLite persistence, planner routes, or company-brain approval/governance paths
 
+- `/Users/seanhan/Documents/Playground/src/company-brain-memory-authority.mjs`
+  - local process-only company-brain memory helper
+  - exposes `writeMemory({ key, value, source })` plus `readMemory({ key })`
+  - stores entries in `globalThis.__company_brain_memory__`
+  - not connected to `read-runtime.mjs`, `mutation-runtime.mjs`, SQLite persistence, planner routes, or company-brain approval/governance paths
+
 - `/Users/seanhan/Documents/Playground/src/config/tech-terms.mjs`
   - shared planner-side technical-term registry
   - exports `TECH_TERMS`, the checked-in deterministic allowlist used before LLM keyword extraction for local documentation lookup helpers

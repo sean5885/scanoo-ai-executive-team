@@ -116,6 +116,11 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `/Users/seanhan/Documents/Playground/src/knowledge/rank-results.mjs`
   - `/Users/seanhan/Documents/Playground/src/knowledge/knowledge-service.mjs`
 
+- Local company-brain memory helper
+  - `/Users/seanhan/Documents/Playground/src/company-brain-memory-authority.mjs`
+  - Process-local `Map`-backed read/write helper for experimental company-brain memory entries.
+  - Not wired into `read-runtime.mjs`, `mutation-runtime.mjs`, SQLite persistence, planner routing, or company-brain approval/governance paths.
+
 - OpenClaw tool layer
   - `/Users/seanhan/Documents/Playground/openclaw-plugin/lark-kb/index.ts`
 
