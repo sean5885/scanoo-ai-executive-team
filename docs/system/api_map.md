@@ -10,8 +10,8 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - runtime scope is `method + pathname + explicit account_id when provided + idempotency_key`
   - repeated requests with the same scope do not re-run the handler; they replay the first persisted JSON result
   - first-response persistence lives in SQLite `http_request_idempotency`
-  - mutation-runtime now also keeps a narrower in-process replay cache when callers pass `context.idempotency_key` into `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`
-  - the runtime-local cache is keyed only by that explicit context key, only stores the first successful runtime response, and is cleared when the Node process restarts
+  - mutation-runtime now also keeps a narrower in-process idempotency state entry when callers pass `context.idempotency_key` into `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`
+  - the runtime-local entry is keyed only by that explicit context key, moves through `pending -> done`, returns `idempotency_in_progress` for overlapping retries, only stores the first successful runtime response, clears pending state on non-success, and is cleared when the Node process restarts
 
 ## Core HTTP Routes
 

@@ -193,6 +193,8 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 22. `mutation-runtime.mjs` now has its own in-process idempotency replay cache in addition to the persisted HTTP idempotency layer.
    - Why it matters:
      - runtime writes can now short-circuit on repeated `context.idempotency_key` without re-running admission, verification, or execute
+     - overlapping retries now receive fail-soft `idempotency_in_progress` while the first call is still running, and only completed successes are replayed afterwards
+     - non-success runtime paths clear the temporary pending marker, so retry safety now depends on both state transitions and the still-separate persisted HTTP layer
      - the cache is process-local and keyed only by the explicit context key, so it does not yet share the wider HTTP scope contract of `method + pathname + account_id + idempotency_key`
      - later contributors need an explicit keep / narrow / replace decision instead of assuming runtime idempotency still only means the persisted HTTP layer
    - Current code truth:

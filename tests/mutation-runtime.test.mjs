@@ -211,6 +211,102 @@ test("runMutation replays the first successful response when context idempotency
   }
 });
 
+test("runMutation returns idempotency_in_progress while the same context idempotency_key is still executing", async () => {
+  const payload = { title: "demo" };
+  const context = {
+    pathname: "/api/doc/create",
+    idempotency_key: "mutation-runtime-pending-test",
+  };
+  let releaseExecution;
+
+  delete globalThis.__mutation_idempotency_store__;
+
+  const firstRun = runMutation({
+    action: "create_doc",
+    payload,
+    context,
+    async execute() {
+      await new Promise((resolve) => {
+        releaseExecution = resolve;
+      });
+      return {
+        ok: true,
+        created: true,
+      };
+    },
+  });
+
+  const secondResult = await runMutation({
+    action: "create_doc",
+    payload,
+    context,
+    async execute() {
+      return {
+        ok: true,
+        created: false,
+      };
+    },
+  });
+
+  assert.deepEqual(secondResult, {
+    ok: false,
+    error: "idempotency_in_progress",
+  });
+
+  releaseExecution();
+  const firstResult = await firstRun;
+
+  assert.equal(firstResult.ok, true);
+  assert.equal(
+    globalThis.__mutation_idempotency_store__.get(context.idempotency_key).__status,
+    "done",
+  );
+
+  delete globalThis.__mutation_idempotency_store__;
+});
+
+test("runMutation clears pending idempotency state after execution failure", async () => {
+  const payload = { title: "demo" };
+  const context = {
+    pathname: "/api/doc/create",
+    idempotency_key: "mutation-runtime-failure-test",
+  };
+
+  delete globalThis.__mutation_idempotency_store__;
+
+  const failedResult = await runMutation({
+    action: "create_doc",
+    payload,
+    context,
+    async execute() {
+      throw new Error("boom");
+    },
+  });
+
+  assert.equal(failedResult.ok, false);
+  assert.equal(failedResult.error, "execution_failed");
+  assert.equal(
+    globalThis.__mutation_idempotency_store__?.has(context.idempotency_key),
+    false,
+  );
+
+  const retriedResult = await runMutation({
+    action: "create_doc",
+    payload,
+    context,
+    async execute() {
+      return {
+        ok: true,
+        created: true,
+      };
+    },
+  });
+
+  assert.equal(retriedResult.ok, true);
+
+  delete globalThis.__mutation_idempotency_store__;
+});
+
 test("runMutation returns a stable execution_failed boundary with timing when execute throws", async () => {
   const originalNow = Date.now;
   const times = [2000, 2035];

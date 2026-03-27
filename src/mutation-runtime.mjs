@@ -15,6 +15,24 @@ function normalizeLogger(logger = null) {
   return null;
 }
 
+function getMutationIdempotencyStore() {
+  globalThis.__mutation_idempotency_store__ =
+    globalThis.__mutation_idempotency_store__ || new Map();
+
+  return globalThis.__mutation_idempotency_store__;
+}
+
+function clearPendingMutationIdempotency(idempotencyKey) {
+  if (!idempotencyKey) {
+    return;
+  }
+
+  const entry = globalThis.__mutation_idempotency_store__?.get(idempotencyKey);
+  if (entry?.__status === "pending") {
+    globalThis.__mutation_idempotency_store__.delete(idempotencyKey);
+  }
+}
+
 function buildWriteGuardFromAdmission(admission = {}) {
   const guardResult =
     admission?.guard_result && typeof admission.guard_result === "object" && !Array.isArray(admission.guard_result)
@@ -130,14 +148,30 @@ export async function runMutation({ action, payload, context, execute }) {
 
   const idempotencyKey = cleanText(context?.idempotency_key) || null;
   if (idempotencyKey) {
-    globalThis.__mutation_idempotency_store__ =
-      globalThis.__mutation_idempotency_store__ || new Map();
+    const store = getMutationIdempotencyStore();
+    const existing = store.get(idempotencyKey);
 
-    const store = globalThis.__mutation_idempotency_store__;
-    if (store.has(idempotencyKey)) {
-      return store.get(idempotencyKey);
+    if (existing) {
+      if (existing.__status === "pending") {
+        return {
+          ok: false,
+          error: "idempotency_in_progress",
+        };
+      }
+      return existing.__status === "done" && existing.response
+        ? existing.response
+        : existing;
     }
+
+    store.set(idempotencyKey, {
+      __status: "pending",
+    });
   }
+
+  const failSoft = (failure) => {
+    clearPendingMutationIdempotency(idempotencyKey);
+    return failure;
+  };
 
   const resolvedLogger = normalizeLogger(context?.logger);
   const canonicalRequestInput = context?.canonical_request ?? context?.canonicalRequest ?? null;
@@ -147,11 +181,11 @@ export async function runMutation({ action, payload, context, execute }) {
     try {
       canonicalRequest = assertCanonicalMutationRequestSchema(canonicalRequestInput);
     } catch {
-      return {
+      return failSoft({
         ok: false,
         action,
         error: "invalid_canonical_request",
-      };
+      });
     }
   }
 
@@ -187,7 +221,7 @@ export async function runMutation({ action, payload, context, execute }) {
       admission,
     });
     if (!admission.allowed) {
-      return {
+      return failSoft({
         ...buildAdmissionFailure({
           action,
           admission,
@@ -197,7 +231,7 @@ export async function runMutation({ action, payload, context, execute }) {
           duration_ms: Date.now() - start,
           journal,
         },
-      };
+      });
     }
   }
 
@@ -208,7 +242,7 @@ export async function runMutation({ action, payload, context, execute }) {
     verifierInput,
   });
   if (preVerification && preVerification.pass !== true) {
-    return {
+    return failSoft({
       ...buildMutationVerifierFailure({
         action,
         verification: preVerification,
@@ -221,7 +255,7 @@ export async function runMutation({ action, payload, context, execute }) {
           pre: preVerification,
         },
       },
-    };
+    });
   }
 
   let result;
@@ -269,7 +303,7 @@ export async function runMutation({ action, payload, context, execute }) {
       };
     }
 
-    return {
+    return failSoft({
       ok: false,
       action,
       error: "execution_failed",
@@ -285,7 +319,7 @@ export async function runMutation({ action, payload, context, execute }) {
             }
           : {}),
       },
-    };
+    });
   }
 
   const postVerification = runMutationVerification({
@@ -298,7 +332,7 @@ export async function runMutation({ action, payload, context, execute }) {
   if (postVerification && postVerification.pass !== true) {
     journal.status = "failed";
     journal.error = cleanText(postVerification.reason) || "mutation_verifier_blocked";
-    return {
+    return failSoft({
       ...buildMutationVerifierFailure({
         action,
         verification: postVerification,
@@ -312,7 +346,7 @@ export async function runMutation({ action, payload, context, execute }) {
           post: postVerification,
         },
       },
-    };
+    });
   }
 
   const response = {
@@ -335,7 +369,10 @@ export async function runMutation({ action, payload, context, execute }) {
   };
 
   if (idempotencyKey) {
-    globalThis.__mutation_idempotency_store__.set(idempotencyKey, response);
+    getMutationIdempotencyStore().set(idempotencyKey, {
+      __status: "done",
+      response,
+    });
   }
 
   return response;

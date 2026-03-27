@@ -263,7 +263,7 @@ Every write action should be able to emit the same bounded policy object:
 - `idempotency_key`
   - request-level dedupe key when the same write may be retried or replayed
   - only explicit caller-provided keys participate in idempotency replay / duplicate detection; internal request fingerprints stay separate fallback dedupe evidence
-  - current checked-in runtime also has a process-local replay path in `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs` keyed by `context.idempotency_key`; it replays the first successful response and does not survive restart
+  - current checked-in runtime also has a process-local stateful path in `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs` keyed by `context.idempotency_key`; it marks the first in-flight call as `pending`, returns `idempotency_in_progress` for overlapping retries, stores the first successful response as `done`, clears pending state on non-success, and does not survive restart
   - may be `null` for one-shot confirmation-token paths
 
 ### Contract rules
