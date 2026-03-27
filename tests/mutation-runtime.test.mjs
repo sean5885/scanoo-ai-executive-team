@@ -31,6 +31,21 @@ test("runMutation returns a stable error when no execute callback is provided", 
   });
 });
 
+test("runMutation rejects a non-function executor with a stable contract error", async () => {
+  const result = await runMutation({
+    action: "create_doc",
+    payload: { title: "demo" },
+    context: { pathname: "/api/doc/create" },
+    execute: "not-a-function",
+  });
+
+  assert.deepEqual(result, {
+    ok: false,
+    error: "invalid_executor",
+    message: "execute must be a function",
+  });
+});
+
 test("runMutation passes through to execute without changing create_doc inputs", async () => {
   const payload = {
     title: "demo",

@@ -139,11 +139,22 @@ function buildAdmissionFailure({ action = "", admission = null } = {}) {
 }
 
 export async function runMutation({ action, payload, context, execute }) {
-  if (typeof execute !== "function") {
+  if (!execute) {
     void payload;
     void context;
 
     return { ok: false, error: "missing_execute" };
+  }
+
+  if (typeof execute !== "function") {
+    void payload;
+    void context;
+
+    return {
+      ok: false,
+      error: "invalid_executor",
+      message: "execute must be a function",
+    };
   }
 
   const writePolicy =
