@@ -22,6 +22,32 @@ function buildSessionExplicitAuthMemoryKey(sessionKey = "") {
   return normalizedSessionKey ? `${SESSION_EXPLICIT_AUTH_MEMORY_PREFIX}${normalizedSessionKey}` : "";
 }
 
+function buildResolvedSessionExplicitAuth(auth = null) {
+  const accessToken = typeof auth?.access_token === "string" ? auth.access_token.trim() : "";
+  if (!accessToken) {
+    return null;
+  }
+
+  const updatedAt = new Date().toISOString();
+  const accountId = typeof auth?.account_id === "string" ? auth.account_id.trim() || null : null;
+  const source = typeof auth?.source === "string" ? auth.source.trim() || "session_user_access_token" : "session_user_access_token";
+
+  return {
+    decrypted: {
+      account_id: accountId,
+      access_token: accessToken,
+      source,
+      updated_at: updatedAt,
+    },
+    persisted: {
+      account_id: accountId,
+      access_token: encryptSecretValue(accessToken, tokenEncryptionSecret),
+      source,
+      updated_at: updatedAt,
+    },
+  };
+}
+
 function sanitizeSessionAuth(auth = null) {
   if (!auth || typeof auth !== "object" || Array.isArray(auth)) {
     return null;
@@ -88,30 +114,24 @@ export async function touchResolvedSession(scope) {
 
 export async function setResolvedSessionExplicitAuth(sessionKey, auth = null) {
   const normalizedSessionKey = typeof sessionKey === "string" ? sessionKey.trim() : "";
-  const accessToken = typeof auth?.access_token === "string" ? auth.access_token.trim() : "";
-  if (!normalizedSessionKey || !accessToken) {
+  const resolvedAuth = buildResolvedSessionExplicitAuth(auth);
+  if (!normalizedSessionKey || !resolvedAuth) {
     return null;
   }
+
+  guardedMemorySet({
+    key: buildSessionExplicitAuthMemoryKey(normalizedSessionKey),
+    value: resolvedAuth.decrypted,
+    source: "session-scope-store",
+  });
+
   const store = await loadStore();
   const existing = store.sessions[normalizedSessionKey] || { session_key: normalizedSessionKey };
-  existing.explicit_auth = {
-    account_id: typeof auth?.account_id === "string" ? auth.account_id.trim() || null : null,
-    access_token: encryptSecretValue(accessToken, tokenEncryptionSecret),
-    source: typeof auth?.source === "string" ? auth.source.trim() || "session_user_access_token" : "session_user_access_token",
-    updated_at: new Date().toISOString(),
-  };
-  existing.updated_at = new Date().toISOString();
+  existing.explicit_auth = resolvedAuth.persisted;
+  existing.updated_at = resolvedAuth.decrypted.updated_at;
   store.sessions[normalizedSessionKey] = existing;
   await writeJsonFile(sessionScopeStorePath, store);
-  const decrypted = decryptSessionAuth(existing.explicit_auth);
-  if (decrypted) {
-    guardedMemorySet({
-      key: buildSessionExplicitAuthMemoryKey(normalizedSessionKey),
-      value: decrypted,
-      source: "session-scope-store",
-    });
-  }
-  return decrypted;
+  return resolvedAuth.decrypted;
 }
 
 export async function getResolvedSessionExplicitAuth(sessionKey) {

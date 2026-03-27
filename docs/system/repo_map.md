@@ -123,7 +123,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `/Users/seanhan/Documents/Playground/src/memory-write-guard.mjs`
   - Small wrapper that normalizes process-local memory writes before delegating to `company-brain-memory-authority.mjs`.
   - Also not wired into `read-runtime.mjs`, `mutation-runtime.mjs`, SQLite persistence, planner routing, or company-brain approval/governance paths.
-  - Current local helper callers also include `/Users/seanhan/Documents/Playground/src/session-scope-store.mjs` and `/Users/seanhan/Documents/Playground/src/executive-memory.mjs` as process-local read-through caches over their existing file-backed stores.
+  - Current local helper callers also include `/Users/seanhan/Documents/Playground/src/session-scope-store.mjs` and `/Users/seanhan/Documents/Playground/src/executive-memory.mjs` as process-local authority-first writes plus read-through caches over their existing file-backed stores.
 
 - OpenClaw tool layer
   - `/Users/seanhan/Documents/Playground/openclaw-plugin/lark-kb/index.ts`

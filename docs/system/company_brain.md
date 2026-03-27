@@ -97,7 +97,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `/Users/seanhan/Documents/Playground/src/company-brain-memory-authority.mjs`
     - exposes a tiny process-local `{ writeMemory, readMemory, listMemoryByPrefix }` helper backed by `globalThis.__company_brain_memory__`
     - no checked-in runtime route, planner flow, read-runtime branch, or mutation-runtime path depends on it as a canonical authority
-    - local helper callers now also include `/Users/seanhan/Documents/Playground/src/session-scope-store.mjs` and `/Users/seanhan/Documents/Playground/src/executive-memory.mjs` for process-local read-through caching over their existing file-backed stores
+    - local helper callers now also include `/Users/seanhan/Documents/Playground/src/session-scope-store.mjs` and `/Users/seanhan/Documents/Playground/src/executive-memory.mjs` for process-local authority-first writes plus read-through caching over their existing file-backed stores
     - its contents are lost on process restart and it is not part of the current SQLite-backed company-brain persistence boundary
   - `/Users/seanhan/Documents/Playground/src/memory-write-guard.mjs`
     - exposes `guardedMemorySet(...)` as a tiny wrapper over the process-local memory authority
@@ -115,7 +115,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - the simplified learning sidecar write routes now also use that same runtime boundary instead of direct route-local persistence
 - the process-local `company-brain-memory-authority.mjs` helper is not a canonical memory authority, not durable storage, and not part of the approval-governed company-brain path
 - `memory-write-guard.mjs` only wraps process-local cache writes; it does not replace SQLite learning-state persistence, review/apply flows, or approved-knowledge admission
-- the same helper may now cache session explicit-auth snapshots and executive memory rows in-process, but those readers still fall back to their original file-backed stores and do not turn company-brain memory into a durable source of truth
+- the same helper may now receive authority-first session explicit-auth snapshots and executive memory rows in-process, but those readers still fall back to their original file-backed stores and do not turn company-brain memory into a durable source of truth
 - there is still no standalone company-brain-owned verifier, human review UI, or semantic conflict resolver
 - Public list/detail/search routes only return:
   - `doc_id`

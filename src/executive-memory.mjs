@@ -84,6 +84,18 @@ function mergeMemoryEntries(authorityItems = [], persistedItems = []) {
   return Array.from(merged.values());
 }
 
+async function persistExecutiveMirrorItem({
+  filePath,
+  fallbackFactory,
+  item,
+  limit,
+}) {
+  const store = await loadStore(filePath, fallbackFactory);
+  store.items = [...store.items, item].slice(-Math.max(1, limit));
+  await writeJsonFile(filePath, store);
+  return item;
+}
+
 function normalizeEntry(entry = {}) {
   return {
     id: cleanText(entry.id) || crypto.randomUUID(),
@@ -103,18 +115,18 @@ function normalizeEntry(entry = {}) {
 }
 
 export async function appendSessionMemory(entry = {}) {
-  const store = await loadStore(executiveSessionMemoryStorePath, createSessionStore);
-  store.items = [...store.items, normalizeEntry(entry)].slice(-200);
-  await writeJsonFile(executiveSessionMemoryStorePath, store);
-  const item = store.items.at(-1) || null;
-  if (item) {
-    guardedMemorySet({
-      key: buildExecutiveMemoryKey(EXECUTIVE_SESSION_MEMORY_PREFIX, item.id),
-      value: item,
-      source: "executive-memory",
-    });
-  }
-  return item;
+  const item = normalizeEntry(entry);
+  guardedMemorySet({
+    key: buildExecutiveMemoryKey(EXECUTIVE_SESSION_MEMORY_PREFIX, item.id),
+    value: item,
+    source: "executive-memory",
+  });
+  return persistExecutiveMirrorItem({
+    filePath: executiveSessionMemoryStorePath,
+    fallbackFactory: createSessionStore,
+    item,
+    limit: 200,
+  });
 }
 
 export async function listSessionMemory({ accountId = "", sessionKey = "", limit = 8 } = {}) {
@@ -131,37 +143,41 @@ export async function listSessionMemory({ accountId = "", sessionKey = "", limit
 }
 
 export async function createPendingKnowledgeProposal(entry = {}) {
-  const store = await loadStore(executivePendingProposalStorePath, createProposalStore);
   const item = normalizeEntry({
     ...entry,
     status: entry.status || "pending_review",
     requires_approval: entry.requires_approval !== false,
   });
-  store.items = [...store.items, item].slice(-300);
-  await writeJsonFile(executivePendingProposalStorePath, store);
   guardedMemorySet({
     key: buildExecutiveMemoryKey(EXECUTIVE_PENDING_PROPOSAL_PREFIX, item.id),
     value: item,
     source: "executive-memory",
   });
-  return item;
+  return persistExecutiveMirrorItem({
+    filePath: executivePendingProposalStorePath,
+    fallbackFactory: createProposalStore,
+    item,
+    limit: 300,
+  });
 }
 
 export async function appendApprovedMemory(entry = {}) {
-  const store = await loadStore(executiveApprovedMemoryStorePath, createApprovedStore);
   const item = normalizeEntry({
     ...entry,
     status: "approved",
     requires_approval: false,
   });
-  store.items = [...store.items, item].slice(-500);
-  await writeJsonFile(executiveApprovedMemoryStorePath, store);
   guardedMemorySet({
     key: buildExecutiveMemoryKey(EXECUTIVE_APPROVED_MEMORY_PREFIX, item.id),
     value: item,
     source: "executive-memory",
   });
-  return item;
+  return persistExecutiveMirrorItem({
+    filePath: executiveApprovedMemoryStorePath,
+    fallbackFactory: createApprovedStore,
+    item,
+    limit: 500,
+  });
 }
 
 export async function listPendingKnowledgeProposals({ accountId = "", limit = 20 } = {}) {
