@@ -372,7 +372,7 @@ export async function executeRegisteredAgent({
   const effectiveQuestion = [agent.retrievalQueryPrefix, requestText]
     .filter(Boolean)
     .join(" ");
-  const { items = [] } = searchFn(accountId, effectiveQuestion, searchTopK);
+  const { items = [] } = await searchFn(accountId, effectiveQuestion, searchTopK);
   logger.info("registered_agent_search_completed", {
     agent_id: agent.id,
     result_count: items.length,

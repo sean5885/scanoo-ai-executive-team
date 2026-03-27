@@ -4,8 +4,12 @@ import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
 const testDb = await createTestDbHarness();
 const { db } = testDb;
-const [{ runRead }] = await Promise.all([
+const [
+  { runRead },
+  { replaceDocumentChunks, saveToken, upsertDocument },
+] = await Promise.all([
   import("../src/read-runtime.mjs"),
+  import("../src/rag-repository.mjs"),
 ]);
 
 test.after(() => {
@@ -101,11 +105,55 @@ function insertDocFixture({
 }
 
 function cleanupAccountFixtures(accountId) {
+  db.prepare("DELETE FROM lark_chunk_embeddings WHERE account_id = ?").run(accountId);
+  db.prepare("DELETE FROM lark_chunks_fts WHERE account_id = ?").run(accountId);
+  db.prepare("DELETE FROM lark_chunks WHERE account_id = ?").run(accountId);
+  db.prepare("DELETE FROM lark_tokens WHERE account_id = ?").run(accountId);
   db.prepare("DELETE FROM company_brain_approved_knowledge WHERE account_id = ?").run(accountId);
   db.prepare("DELETE FROM company_brain_learning_state WHERE account_id = ?").run(accountId);
   db.prepare("DELETE FROM company_brain_docs WHERE account_id = ?").run(accountId);
   db.prepare("DELETE FROM lark_documents WHERE account_id = ?").run(accountId);
   db.prepare("DELETE FROM lark_accounts WHERE id = ?").run(accountId);
+}
+
+function insertIndexedFixture({
+  accountId,
+  docId,
+  title,
+  rawText,
+}) {
+  saveToken(accountId, {
+    access_token: `token_${docId}`,
+    refresh_token: `refresh_${docId}`,
+    token_type: "Bearer",
+    scope: "docs:read",
+    expires_at: new Date(Date.now() + 60_000).toISOString(),
+    refresh_expires_at: new Date(Date.now() + 120_000).toISOString(),
+  });
+
+  const document = upsertDocument({
+    account_id: accountId,
+    source_type: "docx",
+    external_key: `ext_${docId}`,
+    external_id: docId,
+    document_id: docId,
+    title,
+    url: `https://larksuite.com/docx/${docId}`,
+    parent_path: "/",
+    raw_text: rawText,
+    active: 1,
+    status: "verified",
+  });
+
+  replaceDocumentChunks(document, [
+    {
+      chunk_index: 0,
+      content: rawText,
+      content_norm: rawText,
+      char_count: rawText.length,
+      chunk_hash: `chunk_hash_${docId}`,
+    },
+  ]);
 }
 
 test("runRead routes canonical company-brain search through mirror authority only", async () => {
@@ -136,6 +184,39 @@ test("runRead routes canonical company-brain search through mirror authority onl
     assert.equal(result.fallback_used, false);
     assert.equal(result.result.success, true);
     assert.equal(result.result.data.items[0].doc_id, "doc_read_runtime_1");
+  } finally {
+    cleanupAccountFixtures(accountId);
+  }
+});
+
+test("runRead routes canonical knowledge search through index authority only", async () => {
+  const accountId = `acct_read_runtime_index_${Date.now()}`;
+  ensureTestAccount(accountId);
+  insertIndexedFixture({
+    accountId,
+    docId: "doc_read_runtime_index_1",
+    title: "Index Launch Notes",
+    rawText: "launch checklist owner timeline",
+  });
+
+  try {
+    const result = await runRead({
+      canonicalRequest: {
+        action: "search_knowledge_base",
+        account_id: accountId,
+        payload: {
+          q: "launch checklist",
+          top_k: 5,
+        },
+      },
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.primary_authority, "index");
+    assert.deepEqual(result.authorities_attempted, ["index"]);
+    assert.equal(result.fallback_used, false);
+    assert.equal(result.result.success, true);
+    assert.equal(result.result.data.items[0].title, "Index Launch Notes");
   } finally {
     cleanupAccountFixtures(accountId);
   }
@@ -242,6 +323,26 @@ test("runRead rejects live document reads without live_required freshness", asyn
       context: {
         primary_authority: "live",
         access_token: "token-live-runtime",
+      },
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.primary_authority, null);
+  assert.deepEqual(result.authorities_attempted, []);
+  assert.equal(result.error, "invalid_canonical_read_request");
+});
+
+test("runRead rejects index search when the requested primary authority does not match index", async () => {
+  const result = await runRead({
+    canonicalRequest: {
+      action: "search_knowledge_base",
+      account_id: "acct_index_runtime_invalid",
+      payload: {
+        q: "launch checklist",
+      },
+      context: {
+        primary_authority: "mirror",
       },
     },
   });

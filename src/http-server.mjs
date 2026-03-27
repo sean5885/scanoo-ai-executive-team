@@ -7542,7 +7542,9 @@ async function handleSearch(res, requestUrl, body, logger = noopHttpLogger) {
       q_len: q.trim().length,
       k,
     });
-    const { account, items } = searchKnowledgeBase(accountId, q, k);
+    const { account, items } = await getHttpService("searchKnowledgeBase", searchKnowledgeBase)(accountId, q, k, {
+      pathname: requestUrl?.pathname || "/search",
+    });
     logger.info("knowledge_search_completed", {
       account_id: account.id,
       total: items.length,

@@ -466,10 +466,12 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
 - `GET /search`
   - Handler: `handleSearch`
   - Purpose: hybrid retrieval search
+  - Read note: the route now enters `read-runtime.mjs` with `primary_authority=index`; the index branch is backed by `/Users/seanhan/Documents/Playground/src/index-read-authority.mjs` over the existing `rag-repository.mjs` chunk search helpers, and it does not mix index results with mirror/live fallback in the same read
 
 - `GET /answer`
   - Handler: `handleAnswer`
   - Purpose: force user text through planner decision before any execution
+  - Read note: answer generation remains in `/Users/seanhan/Documents/Playground/src/answer-service.mjs`, but its retrieval stage now also enters `read-runtime.mjs` with `primary_authority=index` before any answer synthesis happens
   - Response note: planner must first emit strict legacy `{ action, params }` or bounded multi-step `{ steps: [{ action, params }] }`; wrapped/non-JSON output is rejected as `error=planner_failed`
   - Response note: both success and controlled failure now pass through a final `normalizeUserResponse()` boundary
   - Response note: the outward body is always natural-language JSON shaped as `{ ok, answer, sources, limitations }`

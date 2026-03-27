@@ -6,15 +6,28 @@ import {
   searchApprovedCompanyBrainKnowledgeAction,
   searchCompanyBrainDocsAction,
 } from "./company-brain-query.mjs";
+import { searchKnowledgeBaseIndexAction } from "./index-read-authority.mjs";
 import {
   getDocument,
   listDocumentComments,
 } from "./lark-content.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 
+const INDEX_AUTHORITY = "index";
 const MIRROR_AUTHORITY = "mirror";
 const LIVE_AUTHORITY = "live";
 const LIVE_REQUIRED_FRESHNESS = "live_required";
+
+const INDEX_READERS = new Map([
+  ["search_knowledge_base", ({ accountId, payload }) => searchKnowledgeBaseIndexAction({
+    accountId,
+    payload: {
+      q: payload.q,
+      limit: payload.limit,
+      top_k: payload.top_k,
+    },
+  })],
+]);
 
 const MIRROR_READERS = new Map([
   ["list_company_brain_docs", ({ accountId, payload }) => listCompanyBrainDocsAction({
@@ -107,6 +120,10 @@ function normalizeReaderOverrides(overrides = null) {
       overrides.live && typeof overrides.live === "object" && !Array.isArray(overrides.live)
         ? { ...overrides.live }
         : null,
+    index:
+      overrides.index && typeof overrides.index === "object" && !Array.isArray(overrides.index)
+        ? { ...overrides.index }
+        : null,
     mirror:
       overrides.mirror && typeof overrides.mirror === "object" && !Array.isArray(overrides.mirror)
         ? { ...overrides.mirror }
@@ -129,6 +146,9 @@ function normalizeReadContext(context = {}) {
 }
 
 function resolveAuthorityForAction(action = "") {
+  if (INDEX_READERS.has(action)) {
+    return INDEX_AUTHORITY;
+  }
   if (MIRROR_READERS.has(action)) {
     return MIRROR_AUTHORITY;
   }
@@ -140,6 +160,14 @@ function resolveAuthorityForAction(action = "") {
 
 function resolveReaderForRequest(request = {}) {
   const overrides = request.context?.reader_overrides;
+  if (request.primary_authority === INDEX_AUTHORITY) {
+    const override = overrides?.index?.[request.action];
+    if (typeof override === "function") {
+      return override;
+    }
+    return INDEX_READERS.get(request.action) || null;
+  }
+
   if (request.primary_authority === LIVE_AUTHORITY) {
     const override = overrides?.live?.[request.action];
     if (typeof override === "function") {
@@ -279,11 +307,34 @@ function buildLiveReadCanonicalRequest({
   };
 }
 
-async function unwrapLiveReadExecution(readExecution = null) {
+async function unwrapReadExecution(readExecution = null) {
   if (readExecution?.result?.success === true) {
     return readExecution.result.data;
   }
   throw new Error(cleanText(readExecution?.error || readExecution?.result?.error) || "runtime_exception");
+}
+
+function buildIndexReadCanonicalRequest({
+  action = "",
+  accountId = "",
+  payload = {},
+  pathname = "",
+  readerOverrides = null,
+} = {}) {
+  return {
+    action,
+    account_id: cleanText(accountId) || "",
+    payload: payload && typeof payload === "object" && !Array.isArray(payload)
+      ? { ...payload }
+      : {},
+    context: {
+      pathname: cleanText(pathname) || null,
+      primary_authority: INDEX_AUTHORITY,
+      reader_overrides: readerOverrides && typeof readerOverrides === "object" && !Array.isArray(readerOverrides)
+        ? { ...readerOverrides }
+        : undefined,
+    },
+  };
 }
 
 export async function readDocumentFromRuntime({
@@ -307,7 +358,33 @@ export async function readDocumentFromRuntime({
     }),
     logger,
   });
-  return unwrapLiveReadExecution(readExecution);
+  return unwrapReadExecution(readExecution);
+}
+
+export async function searchKnowledgeBaseFromRuntime({
+  accountId = "",
+  query = "",
+  limit = null,
+  pathname = "internal:search_knowledge_base",
+  logger = null,
+  readerOverrides = null,
+} = {}) {
+  const readExecution = await runRead({
+    canonicalRequest: buildIndexReadCanonicalRequest({
+      action: "search_knowledge_base",
+      accountId,
+      payload: {
+        q: cleanText(query) || "",
+        limit,
+        top_k: limit,
+      },
+      pathname,
+      readerOverrides,
+    }),
+    logger,
+  });
+
+  return unwrapReadExecution(readExecution);
 }
 
 export async function listDocumentCommentsFromRuntime({
@@ -337,5 +414,5 @@ export async function listDocumentCommentsFromRuntime({
     }),
     logger,
   });
-  return unwrapLiveReadExecution(readExecution);
+  return unwrapReadExecution(readExecution);
 }

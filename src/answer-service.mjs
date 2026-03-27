@@ -7,7 +7,6 @@ import {
   agentPromptEmergencyRatio,
   agentPromptLightRatio,
   agentPromptRollingRatio,
-  embeddingSearchTopK,
   llmApiKey,
   llmBaseUrl,
   llmModel,
@@ -22,9 +21,9 @@ import {
   trimTextForBudget,
 } from "./agent-token-governance.mjs";
 import { getWorkflowCheckpoint, updateWorkflowCheckpoint } from "./agent-workflow-state.mjs";
-import { getAccountContext, searchChunks, searchChunksBySemantic, searchChunksBySubstring } from "./rag-repository.mjs";
+import { searchKnowledgeBaseFromRuntime } from "./read-runtime.mjs";
 import { callOpenClawTextGeneration } from "./openclaw-text-service.mjs";
-import { normalizeText, toSearchMatchQuery } from "./text-utils.mjs";
+import { normalizeText } from "./text-utils.mjs";
 
 export const ANSWER_SYSTEM_PROMPT = buildCompactSystemPrompt("你是 Lark 知識問答助手。", [
   "先直接回答使用者問題，再補來源與待確認項。",
@@ -34,57 +33,13 @@ export const ANSWER_SYSTEM_PROMPT = buildCompactSystemPrompt("你是 Lark 知識
   "回答格式保持穩定：答案、來源、待確認。",
 ]);
 
-function buildSearchCandidates(query) {
-  const normalized = normalizeText(query).replace(/[?？!！。]+$/g, "");
-  const reduced = normalized
-    .replace(/(是什麼|是什么|是啥|有什麼|有什么|有哪些|如何|怎麼|怎么)$/u, "")
-    .trim();
-
-  return [...new Set([normalized, reduced].filter(Boolean))];
-}
-
-export function searchKnowledgeBase(accountId, query, limit = searchTopK) {
-  const accountContext = getAccountContext(accountId);
-  if (!accountContext) {
-    throw new Error("No authorized Lark account found. Complete OAuth first.");
-  }
-
-  const candidates = buildSearchCandidates(query);
-  let items = [];
-  const merged = new Map();
-
-  for (const candidate of candidates) {
-    const ftsItems = searchChunks(accountContext.account.id, toSearchMatchQuery(candidate), limit);
-    if (ftsItems.length) {
-      for (const item of ftsItems) {
-        merged.set(item.id, item);
-      }
-      break;
-    }
-  }
-
-  if (!merged.size) {
-    for (const candidate of candidates) {
-      const semanticItems = searchChunksBySemantic(accountContext.account.id, candidate, embeddingSearchTopK);
-      for (const item of semanticItems) {
-        merged.set(item.id, item);
-      }
-      const substringItems = searchChunksBySubstring(accountContext.account.id, candidate, limit);
-      if (substringItems.length) {
-        for (const item of substringItems) {
-          merged.set(item.id, item);
-        }
-        break;
-      }
-    }
-  }
-
-  items = [...merged.values()].slice(0, limit);
-
-  return {
-    account: accountContext.account,
-    items,
-  };
+export async function searchKnowledgeBase(accountId, query, limit = searchTopK, { pathname = "internal:answer_service_search" } = {}) {
+  return searchKnowledgeBaseFromRuntime({
+    accountId,
+    query,
+    limit,
+    pathname,
+  });
 }
 
 function buildExtractiveAnswer(question, items) {
@@ -242,7 +197,9 @@ async function callChatModel(question, items, { checkpoint = null } = {}) {
 }
 
 export async function answerQuestion(accountId, question, limit = searchTopK, { workflowStateKey = "" } = {}) {
-  const { account, items } = searchKnowledgeBase(accountId, question, limit);
+  const { account, items } = await searchKnowledgeBase(accountId, question, limit, {
+    pathname: "internal:answer_question_search",
+  });
   const checkpoint = workflowStateKey ? await getWorkflowCheckpoint(workflowStateKey) : null;
 
   if (!items.length) {

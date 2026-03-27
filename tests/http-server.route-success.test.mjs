@@ -12,12 +12,14 @@ const [
   { docUpdateConfirmationStorePath, executiveImprovementStorePath },
   { setupExecutiveTaskStateTestHarness },
   { EXPLICIT_USER_AUTH_HEADERS },
+  { replaceDocumentChunks, saveToken, upsertDocument },
 ] = await Promise.all([
   import("../src/http-idempotency-store.mjs"),
   import("../src/http-server.mjs"),
   import("../src/config.mjs"),
   import("./helpers/executive-task-state-harness.mjs"),
   import("../src/explicit-user-auth.mjs"),
+  import("../src/rag-repository.mjs"),
 ]);
 
 setupExecutiveTaskStateTestHarness();
@@ -178,6 +180,46 @@ function insertCompanyBrainFixture({
     }),
     updated_at: timestamp,
   });
+}
+
+function insertIndexedSearchFixture({
+  accountId = "acct-1",
+  docId,
+  title,
+  rawText,
+}) {
+  saveToken(accountId, {
+    access_token: `token_${docId}`,
+    refresh_token: `refresh_${docId}`,
+    token_type: "Bearer",
+    scope: "docs:read",
+    expires_at: new Date(Date.now() + 60_000).toISOString(),
+    refresh_expires_at: new Date(Date.now() + 120_000).toISOString(),
+  });
+
+  const document = upsertDocument({
+    account_id: accountId,
+    source_type: "docx",
+    external_key: `route_index_ext_${docId}`,
+    external_id: docId,
+    document_id: docId,
+    title,
+    url: `https://larksuite.com/docx/${docId}`,
+    parent_path: "/",
+    raw_text: rawText,
+    active: 1,
+    status: "verified",
+  });
+
+  replaceDocumentChunks(document, [
+    {
+      chunk_index: 0,
+      content: rawText,
+      content_norm: rawText,
+      char_count: rawText.length,
+      chunk_hash: `route_index_chunk_${docId}`,
+    },
+  ]);
 }
 
 async function startTestServer(t, serviceOverrides) {
@@ -822,6 +864,36 @@ test("agent create_doc succeeds when entry governance metadata is present", asyn
   assert.equal(payload.ok, true);
   assert.equal(payload.action, "create_doc");
   assert.equal(payload.data.document_id, documentId);
+});
+
+test("/search returns index retrieval hits through the unified read runtime", async (t) => {
+  const docId = `doc-route-index-${Date.now()}`;
+  insertIndexedSearchFixture({
+    docId,
+    title: "Index Runtime Search Guide",
+    rawText: "launch checklist owner timeline from indexed retrieval",
+  });
+  t.after(() => {
+    db.prepare("DELETE FROM lark_chunk_embeddings WHERE account_id = ?").run("acct-1");
+    db.prepare("DELETE FROM lark_chunks_fts WHERE account_id = ?").run("acct-1");
+    db.prepare("DELETE FROM lark_chunks WHERE account_id = ?").run("acct-1");
+    db.prepare("DELETE FROM lark_documents WHERE account_id = ? AND document_id = ?").run("acct-1", docId);
+    db.prepare("DELETE FROM lark_tokens WHERE account_id = ?").run("acct-1");
+  });
+
+  const { server } = await startTestServer(t, {});
+  const { port } = server.address();
+
+  const response = await fetch(
+    `http://127.0.0.1:${port}/search?q=launch%20checklist&account_id=acct-1`,
+  );
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.account_id, "acct-1");
+  assert.equal(payload.total, 1);
+  assert.equal(payload.items[0].title, "Index Runtime Search Guide");
 });
 
 test("agent company-brain search and detail routes return structured summaries for planner use", async (t) => {
