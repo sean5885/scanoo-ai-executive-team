@@ -1,12 +1,18 @@
 import crypto from "node:crypto";
 
+import { listMemoryByPrefix } from "./company-brain-memory-authority.mjs";
 import {
   executiveApprovedMemoryStorePath,
   executivePendingProposalStorePath,
   executiveSessionMemoryStorePath,
 } from "./config.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
+import { guardedMemorySet } from "./memory-write-guard.mjs";
 import { readJsonFile, writeJsonFile } from "./token-store.mjs";
+
+const EXECUTIVE_SESSION_MEMORY_PREFIX = "executive_session_memory:";
+const EXECUTIVE_PENDING_PROPOSAL_PREFIX = "executive_pending_proposal:";
+const EXECUTIVE_APPROVED_MEMORY_PREFIX = "executive_approved_memory:";
 
 function createSessionStore() {
   return { items: [] };
@@ -26,6 +32,56 @@ async function loadStore(filePath, fallbackFactory) {
     return fallbackFactory();
   }
   return raw;
+}
+
+function buildExecutiveMemoryKey(prefix = "", id = "") {
+  const normalizedPrefix = cleanText(prefix);
+  const normalizedId = cleanText(id);
+  if (!normalizedPrefix || !normalizedId) {
+    return "";
+  }
+  return `${normalizedPrefix}${normalizedId}`;
+}
+
+function hydrateAuthorityEntries(items = [], prefix = "", source = "executive-memory") {
+  for (const item of Array.isArray(items) ? items : []) {
+    const key = buildExecutiveMemoryKey(prefix, item?.id);
+    if (!key) {
+      continue;
+    }
+    guardedMemorySet({
+      key,
+      value: item,
+      source,
+    });
+  }
+}
+
+function listAuthorityEntries(prefix = "") {
+  const rows = listMemoryByPrefix({ prefix });
+  if (rows.ok !== true || !Array.isArray(rows.data)) {
+    return [];
+  }
+  return rows.data
+    .map((row) => row?.value)
+    .filter((item) => item && typeof item === "object" && !Array.isArray(item));
+}
+
+function mergeMemoryEntries(authorityItems = [], persistedItems = []) {
+  const merged = new Map();
+  for (const item of Array.isArray(persistedItems) ? persistedItems : []) {
+    if (!cleanText(item?.id)) {
+      continue;
+    }
+    merged.set(item.id, item);
+  }
+  for (const item of Array.isArray(authorityItems) ? authorityItems : []) {
+    if (!cleanText(item?.id)) {
+      continue;
+    }
+    merged.set(item.id, item);
+  }
+  return Array.from(merged.values());
 }
 
 function normalizeEntry(entry = {}) {
@@ -50,12 +106,24 @@ export async function appendSessionMemory(entry = {}) {
   const store = await loadStore(executiveSessionMemoryStorePath, createSessionStore);
   store.items = [...store.items, normalizeEntry(entry)].slice(-200);
   await writeJsonFile(executiveSessionMemoryStorePath, store);
-  return store.items.at(-1) || null;
+  const item = store.items.at(-1) || null;
+  if (item) {
+    guardedMemorySet({
+      key: buildExecutiveMemoryKey(EXECUTIVE_SESSION_MEMORY_PREFIX, item.id),
+      value: item,
+      source: "executive-memory",
+    });
+  }
+  return item;
 }
 
 export async function listSessionMemory({ accountId = "", sessionKey = "", limit = 8 } = {}) {
+  const authorityItems = listAuthorityEntries(EXECUTIVE_SESSION_MEMORY_PREFIX);
   const store = await loadStore(executiveSessionMemoryStorePath, createSessionStore);
-  return store.items
+  const persistedItems = Array.isArray(store.items) ? store.items : [];
+  hydrateAuthorityEntries(persistedItems, EXECUTIVE_SESSION_MEMORY_PREFIX);
+  const items = mergeMemoryEntries(authorityItems, persistedItems);
+  return items
     .filter((item) =>
       (!accountId || item.account_id === cleanText(accountId)) &&
       (!sessionKey || item.session_key === cleanText(sessionKey)))
@@ -71,6 +139,11 @@ export async function createPendingKnowledgeProposal(entry = {}) {
   });
   store.items = [...store.items, item].slice(-300);
   await writeJsonFile(executivePendingProposalStorePath, store);
+  guardedMemorySet({
+    key: buildExecutiveMemoryKey(EXECUTIVE_PENDING_PROPOSAL_PREFIX, item.id),
+    value: item,
+    source: "executive-memory",
+  });
   return item;
 }
 
@@ -83,12 +156,21 @@ export async function appendApprovedMemory(entry = {}) {
   });
   store.items = [...store.items, item].slice(-500);
   await writeJsonFile(executiveApprovedMemoryStorePath, store);
+  guardedMemorySet({
+    key: buildExecutiveMemoryKey(EXECUTIVE_APPROVED_MEMORY_PREFIX, item.id),
+    value: item,
+    source: "executive-memory",
+  });
   return item;
 }
 
 export async function listPendingKnowledgeProposals({ accountId = "", limit = 20 } = {}) {
+  const authorityItems = listAuthorityEntries(EXECUTIVE_PENDING_PROPOSAL_PREFIX);
   const store = await loadStore(executivePendingProposalStorePath, createProposalStore);
-  return store.items
+  const persistedItems = Array.isArray(store.items) ? store.items : [];
+  hydrateAuthorityEntries(persistedItems, EXECUTIVE_PENDING_PROPOSAL_PREFIX);
+  const items = mergeMemoryEntries(authorityItems, persistedItems);
+  return items
     .filter((item) => !accountId || item.account_id === cleanText(accountId))
     .slice(-Math.max(1, limit));
 }

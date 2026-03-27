@@ -118,11 +118,12 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 - Local company-brain memory helper
   - `/Users/seanhan/Documents/Playground/src/company-brain-memory-authority.mjs`
-  - Process-local `Map`-backed read/write helper for experimental company-brain memory entries.
+  - Process-local `Map`-backed read/write/prefix-list helper for experimental company-brain memory entries.
   - Not wired into `read-runtime.mjs`, `mutation-runtime.mjs`, SQLite persistence, planner routing, or company-brain approval/governance paths.
   - `/Users/seanhan/Documents/Playground/src/memory-write-guard.mjs`
   - Small wrapper that normalizes process-local memory writes before delegating to `company-brain-memory-authority.mjs`.
   - Also not wired into `read-runtime.mjs`, `mutation-runtime.mjs`, SQLite persistence, planner routing, or company-brain approval/governance paths.
+  - Current local helper callers also include `/Users/seanhan/Documents/Playground/src/session-scope-store.mjs` and `/Users/seanhan/Documents/Playground/src/executive-memory.mjs` as process-local read-through caches over their existing file-backed stores.
 
 - OpenClaw tool layer
   - `/Users/seanhan/Documents/Playground/openclaw-plugin/lark-kb/index.ts`

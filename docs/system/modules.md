@@ -95,6 +95,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - resolve Lark peer identity into binding/session/workspace/sandbox keys
   - persist latest peer-scoped session touches
   - persist a session-scoped explicit `user_access_token` snapshot when the inbound event provides one
+  - prefer a process-local authority cache for explicit session auth reads, while falling back to the encrypted JSON-backed session store
   - provide capability-lane routing keys for downstream execution
 - Main entry:
   - `resolveLarkBindingRuntime()`
@@ -461,6 +462,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - route verification failure back to `executing`, `blocked`, or `escalated` instead of silently treating a reply as completed
   - generate reflection records and improvement proposals
   - maintain session / approved / proposal memory stores
+  - mirror session / proposal / approved entries into the process-local memory authority and let list readers prefer that in-process cache before falling back to the persisted JSON stores
   - persist reflection records and improvement proposals into dedicated stores
   - improvement workflow proposal records now retain structured `context` payloads so later review, filtering, and learning-loop regression checks can still see source metadata such as `tool_name`, routing keys, and sampled traces
   - expose approve / reject / apply workflow for improvement proposals
@@ -999,8 +1001,9 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 
 - `/Users/seanhan/Documents/Playground/src/company-brain-memory-authority.mjs`
   - local process-only company-brain memory helper
-  - exposes `writeMemory({ key, value, source })` plus `readMemory({ key })`
+  - exposes `writeMemory({ key, value, source })`, `readMemory({ key })`, and `listMemoryByPrefix({ prefix })`
   - stores entries in `globalThis.__company_brain_memory__`
+  - now also serves small local read-through cache helpers in `session-scope-store.mjs` and `executive-memory.mjs`
   - not connected to `read-runtime.mjs`, `mutation-runtime.mjs`, SQLite persistence, planner routes, or company-brain approval/governance paths
 
 - `/Users/seanhan/Documents/Playground/src/memory-write-guard.mjs`

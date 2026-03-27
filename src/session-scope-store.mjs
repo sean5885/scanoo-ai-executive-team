@@ -1,6 +1,10 @@
 import { sessionScopeStorePath, tokenEncryptionSecret } from "./config.mjs";
+import { readMemory } from "./company-brain-memory-authority.mjs";
+import { guardedMemorySet } from "./memory-write-guard.mjs";
 import { decryptSecretValue, encryptSecretValue } from "./secret-crypto.mjs";
 import { readJsonFile, writeJsonFile } from "./token-store.mjs";
+
+const SESSION_EXPLICIT_AUTH_MEMORY_PREFIX = "session_explicit_auth:";
 
 function normalizeStore(payload) {
   if (!payload || typeof payload !== "object" || typeof payload.sessions !== "object") {
@@ -11,6 +15,11 @@ function normalizeStore(payload) {
 
 async function loadStore() {
   return normalizeStore(await readJsonFile(sessionScopeStorePath));
+}
+
+function buildSessionExplicitAuthMemoryKey(sessionKey = "") {
+  const normalizedSessionKey = typeof sessionKey === "string" ? sessionKey.trim() : "";
+  return normalizedSessionKey ? `${SESSION_EXPLICIT_AUTH_MEMORY_PREFIX}${normalizedSessionKey}` : "";
 }
 
 function sanitizeSessionAuth(auth = null) {
@@ -94,7 +103,15 @@ export async function setResolvedSessionExplicitAuth(sessionKey, auth = null) {
   existing.updated_at = new Date().toISOString();
   store.sessions[normalizedSessionKey] = existing;
   await writeJsonFile(sessionScopeStorePath, store);
-  return decryptSessionAuth(existing.explicit_auth);
+  const decrypted = decryptSessionAuth(existing.explicit_auth);
+  if (decrypted) {
+    guardedMemorySet({
+      key: buildSessionExplicitAuthMemoryKey(normalizedSessionKey),
+      value: decrypted,
+      source: "session-scope-store",
+    });
+  }
+  return decrypted;
 }
 
 export async function getResolvedSessionExplicitAuth(sessionKey) {
@@ -102,8 +119,22 @@ export async function getResolvedSessionExplicitAuth(sessionKey) {
   if (!normalizedSessionKey) {
     return null;
   }
+  const memory = readMemory({
+    key: buildSessionExplicitAuthMemoryKey(normalizedSessionKey),
+  });
+  if (memory.ok === true && memory.data?.value) {
+    return memory.data.value;
+  }
   const store = await loadStore();
-  return decryptSessionAuth(store.sessions[normalizedSessionKey]?.explicit_auth || null);
+  const decrypted = decryptSessionAuth(store.sessions[normalizedSessionKey]?.explicit_auth || null);
+  if (decrypted) {
+    guardedMemorySet({
+      key: buildSessionExplicitAuthMemoryKey(normalizedSessionKey),
+      value: decrypted,
+      source: "session-scope-store",
+    });
+  }
+  return decrypted;
 }
 
 export async function listResolvedSessions() {
