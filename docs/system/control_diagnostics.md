@@ -77,10 +77,13 @@ routing summary 不會重跑 routing runtime，也不新增新的 routing diagno
 
 write summary 目前重用：
 
+- `/Users/seanhan/Documents/Playground/src/external-mutation-registry.mjs`
+- `/Users/seanhan/Documents/Playground/src/lark-mutation-runtime.mjs`
 - `/Users/seanhan/Documents/Playground/src/write-policy-contract.mjs`
 - `/Users/seanhan/Documents/Playground/src/write-guard.mjs`
 - `/Users/seanhan/Documents/Playground/src/lark-write-guard.mjs`
 - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
+- `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
 - `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`
 - `/Users/seanhan/Documents/Playground/src/lark-content.mjs`
 
@@ -103,26 +106,23 @@ write summary 目前重用：
 
 目前固定檢查的 guarded runtime surface 包含：
 
-- `document_company_brain_ingest`
-- `drive_organize_apply`
-- `wiki_organize_apply`
-- `meeting_confirm_write`
-- `document_comment_rewrite_apply`
+- high-risk doc / meeting apply family 經 `runCanonicalLarkMutation(...)`
+- public HTTP external writes 經 `executeCanonicalLarkMutation(...)`
+- lane-executor 外部寫入經 `runCanonicalLarkMutation(...)`
+- `http-server.mjs` / `meeting-agent.mjs` / `lane-executor.mjs` 不再直接呼叫 `executeLarkWrite(...)`
 - `planDocumentCreateGuard(...)`
 - `assertDocumentCreateAllowed(...)`
 
-目前固定檢查的 Phase 1 write-policy action family 包含：
+目前固定檢查的 Phase 1 write-policy family 已擴成 registry-backed external action coverage：
 
-- `create_doc`
-- `drive_organize_apply`
-- `wiki_organize_apply`
-- `document_comment_rewrite_apply`
-- `meeting_confirm_write`
+- Doc / Drive / Wiki / Message / Calendar / Task / Bitable / Sheet 的 30 個 external actions
+- 對應 33 條 checked-in route fixtures
 
-這一層只驗證 checked-in metadata 是否存在於：
+這一層驗證 checked-in metadata 是否存在於：
 
-- route contract
-- existing create/write decision log surface
+- registry-backed route contract
+- registry-backed write-policy enforcement fixture
+- centralized runtime-only write bridge
 - shared write-policy contract module
 
 ## CLI
@@ -213,11 +213,14 @@ npm run control:diagnostics -- --compare-snapshot <run-id|path>
     - `high_risk_routes`
     - `basis_summary`
 
-目前 checked-in 初始 enforcement mode 是：
+目前 checked-in enforcement mode 分佈是：
 
-- `create_doc`
-  - `enforce`
-- `meeting_confirm_write`
+- `enforce`
+  - 27 routes
+- `warn`
+  - 4 routes
+- `observe`
+  - 2 routes
   - `warn`
 - `drive_organize_apply`
   - `observe`

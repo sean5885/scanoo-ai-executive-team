@@ -14,11 +14,11 @@ This document is the unified admission contract baseline for Phase 1 Mutation Go
 
 ## Step 2 Revised
 
-Phase 1 的 unified admission adapter 可以收斂成一個非常窄的 contract，核心原則是：
+Phase 1 的 unified admission adapter 仍維持一個非常窄的 contract，核心原則是：
 
 - 所有 route 在進 execute 前，先被轉成同一個 request shape
 - adapter 不判斷業務，只做 orchestration
-- route-specific prereq 仍留在 route 自己那層
+- route/workflow-specific prereq 若還存在，必須在 canonical request 建立前完成，adapter 不直接讀 route-local payload 判斷
 - `company-brain` 的 lifecycle gate 不進 adapter
 
 ## Fixed Input Schema
@@ -118,7 +118,12 @@ adapter 不可做：
 
 ## Route-to-Canonical Mapping
 
-Phase 1 只需要這樣收斂：
+目前 checked-in canonical mapping 已不只六條 route，而是分成兩層：
+
+1. explicit builders for high-risk doc / meeting / company-brain paths
+2. registry-backed external write mapping from `/Users/seanhan/Documents/Playground/src/external-mutation-registry.mjs`
+
+高風險路徑仍維持 explicit builder：
 
 - `create_doc`
   - `action_type = create_doc`
@@ -154,6 +159,46 @@ Phase 1 只需要這樣收斂：
   - `action_type = company_brain_apply`
   - `resource_type = company_brain_doc`
   - `resource_id = doc_id`
+
+registry-backed external write families 目前已納入 canonical admission surface：
+
+- Drive
+  - `create_drive_folder`
+  - `move_drive_item`
+  - `delete_drive_item`
+- Wiki
+  - `create_wiki_node`
+  - `move_wiki_node`
+- Message
+  - `message_reply`
+  - `message_reaction_create`
+  - `message_reaction_delete`
+- Calendar
+  - `calendar_create_event`
+- Task
+  - `task_create`
+  - `task_comment_create`
+  - `task_comment_update`
+  - `task_comment_delete`
+- Bitable
+  - `bitable_app_create`
+  - `bitable_app_update`
+  - `bitable_table_create`
+  - `bitable_record_create`
+  - `bitable_record_update`
+  - `bitable_record_delete`
+  - `bitable_records_bulk_upsert`
+- Sheet
+  - `spreadsheet_create`
+  - `spreadsheet_update`
+  - `spreadsheet_replace`
+  - `spreadsheet_replace_batch`
+- lane-executor meeting capture writes
+  - `meeting_capture_create_document`
+  - `meeting_capture_document_update`
+  - `meeting_capture_document_delete`
+
+這些 action 的 `action_type / resource_type / write-policy snapshot fallback` 目前都由 admission layer 透過 registry 解析，不再依賴每條 route 各自維護一份 partial allowlist。
 
 ## Adapter vs Lifecycle Gate
 

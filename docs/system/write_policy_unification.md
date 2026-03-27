@@ -4,18 +4,63 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 ## Purpose
 
-This document defines the next checked-in design step for unifying write governance across external mutation paths.
+This document defines the checked-in write-governance convergence state for external mutation paths.
 
-It is intentionally design-first:
+It now serves two purposes:
 
-- it inventories the write actions that already exist in code
-- it proposes one shared write-policy contract
-- it marks which paths are already partially aligned
-- it proposes a minimum Phase 1 rollout that does not rewrite the runtime
+- inventory the external/internal write actions that exist in code
+- describe the shared policy/runtime surface that those writes are expected to use today
 
-It does **not** claim that the repo already has one unified write-governance runtime today.
+The repo now carries two shared runtime layers for this path:
 
-The repo now also carries a still-limited shared module at `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`. The current checked-in usage is still intentionally small, but it is no longer create-only: `create_doc`, `update_doc`, `document_comment_rewrite_apply`, `meeting_confirm_write`, the cloud-doc `drive/wiki organize apply` family, and the currently checked-in company-brain write slice (`review_company_brain_doc`, `check_company_brain_conflicts`, `approval_transition_company_brain_doc`, `apply_company_brain_approved_knowledge`, `ingest_doc`, `ingest_learning_doc`, `update_learning_state`) now pass their final write hop through `runMutation(...)`. That wrapper now owns the minimum shared chain of canonical-request normalization plus admission before execute, and it also supports profile-scoped `pre` / `post` mutation verification. The currently checked-in verifier profiles are `cloud_doc_v1` and `knowledge_write_v1`: `cloud_doc_v1` blocks apply when the runtime is missing `preview_plan` evidence before execute or `apply_evidence` after execute, while `knowledge_write_v1` blocks company-brain writes when durable SQLite evidence is missing after execute, pre-gates company-brain apply from the same runtime boundary, and now supports optional post-verifier skipping for conflict/review sync paths when no review-state mutation was actually required. The wrapper still returns `{ ok: false, error: "missing_execute" }` when no executor is supplied, derives `meta.execution_mode` from `context.execution_mode` with a default of `passthrough`, records `meta.duration_ms` around the downstream executor call, and attaches a small `meta.journal` with `action / status / started_at` plus `error` on failure. In the `controlled` branch it still forwards the same write request with an added `controlled: true` marker into the downstream executor. It still fail-soft returns `{ ok: false, action, error: "execution_failed", meta }` if the executor throws. For the current landing, route/workflow layers build canonical request input and optional verifier input, then hand the final allow/deny plus evidence verification to mutation-runtime, while `executeLarkWrite(...)` or the company-brain persistence adapters stay focused on the actual write.
+- `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`
+  - owns canonical admission, shared allow/deny, and verifier `pre` / `post` execution checks
+- `/Users/seanhan/Documents/Playground/src/lark-mutation-runtime.mjs`
+  - owns the external-write bridge `canonical request -> runMutation(...) -> executeLarkWrite(...)`
+
+Current checked-in external writes now route their final external mutation through that shared bridge:
+
+- Doc:
+  - `create_doc`
+  - `update_doc`
+  - `document_comment_rewrite_apply`
+- Drive / Wiki:
+  - `drive_organize_apply`
+  - `wiki_organize_apply`
+  - `create_drive_folder`
+  - `move_drive_item`
+  - `delete_drive_item`
+  - `create_wiki_node`
+  - `move_wiki_node`
+- Message / Calendar / Task:
+  - `message_reply`
+  - `message_reaction_create`
+  - `message_reaction_delete`
+  - `calendar_create_event`
+  - `task_create`
+  - `task_comment_create`
+  - `task_comment_update`
+  - `task_comment_delete`
+- Bitable / Sheet:
+  - `bitable_app_create`
+  - `bitable_app_update`
+  - `bitable_table_create`
+  - `bitable_record_create`
+  - `bitable_record_update`
+  - `bitable_record_delete`
+  - `bitable_records_bulk_upsert`
+  - `spreadsheet_create`
+  - `spreadsheet_update`
+  - `spreadsheet_replace`
+  - `spreadsheet_replace_batch`
+- meeting capture lane writes:
+  - `meeting_capture_create_document`
+  - `meeting_capture_document_update`
+  - `meeting_capture_document_delete`
+
+The current external action inventory and route-level enforcement fixtures are registry-backed by `/Users/seanhan/Documents/Playground/src/external-mutation-registry.mjs`; `/Users/seanhan/Documents/Playground/src/write-policy-contract.mjs` and `/Users/seanhan/Documents/Playground/src/write-policy-enforcement.mjs` now derive their external route/action coverage from that registry instead of a hand-maintained partial list.
+
+For the checked-in code truth today, direct `executeLarkWrite(...)` calls no longer exist in `/Users/seanhan/Documents/Playground/src/http-server.mjs`, `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`, or `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`; the only remaining `executeLarkWrite(...)` callsite is the centralized bridge in `/Users/seanhan/Documents/Playground/src/lark-mutation-runtime.mjs`.
 
 ## Current Grounded Files
 
@@ -25,10 +70,13 @@ Current code truth for this design is grounded in:
 - `/Users/seanhan/Documents/Playground/src/write-guard.mjs`
 - `/Users/seanhan/Documents/Playground/src/lark-write-guard.mjs`
 - `/Users/seanhan/Documents/Playground/src/http-route-contracts.mjs`
+- `/Users/seanhan/Documents/Playground/src/external-mutation-registry.mjs`
 - `/Users/seanhan/Documents/Playground/src/write-policy-contract.mjs`
+- `/Users/seanhan/Documents/Playground/src/write-policy-enforcement.mjs`
 - `/Users/seanhan/Documents/Playground/src/http-idempotency-store.mjs`
 - `/Users/seanhan/Documents/Playground/src/lark-write-budget-guard.mjs`
 - `/Users/seanhan/Documents/Playground/src/execute-lark-write.mjs`
+- `/Users/seanhan/Documents/Playground/src/lark-mutation-runtime.mjs`
 - `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`
 - `/Users/seanhan/Documents/Playground/src/cloud-doc-organization-workflow.mjs`
 - `/Users/seanhan/Documents/Playground/src/company-brain-write-intake.mjs`
@@ -71,7 +119,7 @@ These are the write actions that should define the first shared policy vocabular
 
 ### Other grounded external mutation routes
 
-These are real external write actions in code, but they are not yet part of one shared write-policy model:
+These external write actions are now part of the same registry-backed external write-policy/runtime family:
 
 - Drive:
   - `create_folder`
@@ -106,7 +154,7 @@ These are real external write actions in code, but they are not yet part of one 
   - `spreadsheet_replace`
   - `spreadsheet_replace_batch`
 
-These public HTTP write surfaces now also route their final external mutation through `executeLarkWrite(...)` so they share the same budget / dedupe boundary as the high-risk doc and meeting write family, even though they do not introduce a new preview/confirmation contract.
+These public HTTP write surfaces now route their final external mutation through `/Users/seanhan/Documents/Playground/src/lark-mutation-runtime.mjs`, so they share the same canonical admission, write-policy snapshot, and budget / dedupe boundary as the higher-risk doc and meeting write family even though they do not introduce new preview/confirmation artifacts.
 
 ### Other grounded internal mutation routes
 

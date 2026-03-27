@@ -100,8 +100,15 @@ Notes:
 - the current release history checkpoint is the snapshot + manifest + compare version over the same release-check gate
 - the current release decision layer checkpoint is the CI + triage complete version:
   - CI entry = `release-check:ci`
-  - triage classes = `system_regression` / `control_regression` / `routing_regression` / `planner_contract_failure`
+  - triage classes = `system_regression` / `control_regression` / `write_policy_failure` / `routing_regression` / `planner_contract_failure`
   - `suggested_next_step` stays minimal but points to the first module family or file type to inspect
+- `npm run self-check` and `npm run release-check` now both treat write governance as a blocking gate:
+  - self-check blocks `safe_to_change` when `write_summary.status !== "pass"`
+  - release-check blocks merge/release when write governance reports `write_policy_failure`
+  - the checked-in baseline summary for this gate is:
+    - 33 metadata routes
+    - 33 enforced routes
+    - enforcement mode split `enforce:27 / observe:2 / warn:4`
 - on this preflight line, `fail` means block merge/deploy; `pass` means this gate can release the next pipeline stage
 - recommended cadence:
   - local development: `npm run release-check`
