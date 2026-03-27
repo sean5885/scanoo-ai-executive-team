@@ -8,17 +8,10 @@ import {
   searchTopK,
 } from "./config.mjs";
 import {
-  getApprovedCompanyBrainKnowledgeDetailAction,
-  getCompanyBrainDocDetailAction,
-  listApprovedCompanyBrainKnowledgeAction,
-  listCompanyBrainDocsAction,
-  searchApprovedCompanyBrainKnowledgeAction,
-  searchCompanyBrainDocsAction,
-} from "./company-brain-query.mjs";
-import {
   ingestLearningDocAction,
   updateLearningStateAction,
 } from "./company-brain-learning.mjs";
+import { runRead } from "./read-runtime.mjs";
 import { resolveLarkBindingRuntime } from "./binding-runtime.mjs";
 import {
   buildAuthorizeUrl,
@@ -31,13 +24,10 @@ import {
 } from "./lark-user-auth.mjs";
 import { isOAuthReauthRequiredError } from "./lark-request-auth.mjs";
 import {
-  getCompanyBrainDoc,
   getDocumentByDocumentId,
   getDocumentByExternalKey,
-  listCompanyBrainDocs,
   listDocumentsByStatus,
   runRepositoryTransaction,
-  searchCompanyBrainDocs,
   summarizeDocumentLifecycle,
   upsertCompanyBrainDoc,
   upsertDocument,
@@ -700,7 +690,11 @@ function buildCompanyBrainDocView(row) {
     open_id: null,
   };
   try {
-    const parsed = row?.creator_json ? JSON.parse(row.creator_json) : null;
+    const parsed = row?.creator && typeof row.creator === "object"
+      ? row.creator
+      : row?.creator_json
+        ? JSON.parse(row.creator_json)
+        : null;
     if (parsed && typeof parsed === "object") {
       creator = {
         account_id: parsed.account_id || null,
@@ -845,31 +839,6 @@ function respondCompanyBrainReadFailure(res, statusCode, error) {
   });
 }
 
-function respondCompanyBrainReadMissingDocId(res) {
-  respondCompanyBrainReadFailure(res, 400, "missing_doc_id");
-}
-
-function respondCompanyBrainReadInvalidQuery(res) {
-  respondCompanyBrainReadFailure(res, 400, "invalid_query");
-}
-
-function respondCompanyBrainReadNotFound(res) {
-  respondCompanyBrainReadFailure(res, 404, "not_found");
-}
-
-function readCompanyBrainListItems(accountId, limit) {
-  return listCompanyBrainDocs(accountId, limit).map(buildCompanyBrainDocView);
-}
-
-function readCompanyBrainDetailItem(accountId, docId) {
-  const row = getCompanyBrainDoc(accountId, docId);
-  return row ? buildCompanyBrainDocView(row) : null;
-}
-
-function readCompanyBrainSearchItems(accountId, query, limit) {
-  return searchCompanyBrainDocs(accountId, query, limit).map(buildCompanyBrainDocView);
-}
-
 function buildCompanyBrainCollectionResult(context, action, payload) {
   return {
     ...buildCompanyBrainReadAuthPayload(context, action),
@@ -910,6 +879,53 @@ function getCompanyBrainAgentStatusCode(result = {}) {
     return 409;
   }
   return 400;
+}
+
+function buildCompanyBrainReadCanonicalRequest({
+  action = "",
+  context = null,
+  payload = {},
+  pathname = "",
+} = {}) {
+  return {
+    action,
+    account_id: cleanText(context?.account?.id) || "",
+    payload: payload && typeof payload === "object" && !Array.isArray(payload)
+      ? { ...payload }
+      : {},
+    context: {
+      pathname: cleanText(pathname) || null,
+    },
+  };
+}
+
+function getCompanyBrainReadResult(readExecution = null) {
+  if (readExecution?.result && typeof readExecution.result === "object" && !Array.isArray(readExecution.result)) {
+    return readExecution.result;
+  }
+  return {
+    success: false,
+    data: {},
+    error: cleanText(readExecution?.error) || "runtime_exception",
+  };
+}
+
+function runCompanyBrainRead({
+  action = "",
+  context = null,
+  payload = {},
+  pathname = "",
+  logger = noopHttpLogger,
+} = {}) {
+  return runRead({
+    canonicalRequest: buildCompanyBrainReadCanonicalRequest({
+      action,
+      context,
+      payload,
+      pathname,
+    }),
+    logger,
+  });
 }
 
 function buildCompanyBrainRuntimeBlockedResult({
@@ -3887,10 +3903,14 @@ async function handleAgentListCompanyBrainDocs(res, requestUrl, body, logger = n
   }
 
   const limit = parseCompanyBrainLimit(requestUrl, body);
-  const result = listCompanyBrainDocsAction({
-    accountId: context.account.id,
-    limit,
+  const readExecution = runCompanyBrainRead({
+    action: "list_company_brain_docs",
+    context,
+    payload: { limit },
+    pathname: requestUrl?.pathname || "/agent/company-brain/docs",
+    logger,
   });
+  const result = getCompanyBrainReadResult(readExecution);
 
   logCompanyBrainCollectionRead(logger, "company_brain_list", {
     accountId: context.account.id,
@@ -3916,11 +3936,17 @@ async function handleAgentSearchCompanyBrainDocs(res, requestUrl, body, logger =
 
   const q = parseCompanyBrainSearchQuery(requestUrl, body);
   const topK = parseCompanyBrainLimit(requestUrl, body, 5);
-  const result = searchCompanyBrainDocsAction({
-    accountId: context.account.id,
-    q,
-    top_k: topK,
+  const readExecution = runCompanyBrainRead({
+    action: "search_company_brain_docs",
+    context,
+    payload: {
+      q,
+      top_k: topK,
+    },
+    pathname: requestUrl?.pathname || "/agent/company-brain/search",
+    logger,
   });
+  const result = getCompanyBrainReadResult(readExecution);
 
   logCompanyBrainCollectionRead(logger, "company_brain_search", {
     accountId: context.account.id,
@@ -3946,10 +3972,14 @@ async function handleAgentGetCompanyBrainDocDetail(res, requestUrl, body, logger
   }
 
   const docId = parseCompanyBrainDocId(requestUrl, body);
-  const result = getCompanyBrainDocDetailAction({
-    accountId: context.account.id,
-    docId,
+  const readExecution = runCompanyBrainRead({
+    action: "get_company_brain_doc_detail",
+    context,
+    payload: { doc_id: docId },
+    pathname: requestUrl?.pathname || "/agent/company-brain/docs/:doc_id",
+    logger,
   });
+  const result = getCompanyBrainReadResult(readExecution);
 
   logCompanyBrainDetailRead(logger, {
     accountId: context.account.id,
@@ -3980,10 +4010,14 @@ async function handleAgentListApprovedCompanyBrainKnowledge(res, requestUrl, bod
   }
 
   const limit = parseCompanyBrainLimit(requestUrl, body);
-  const result = listApprovedCompanyBrainKnowledgeAction({
-    accountId: context.account.id,
-    limit,
+  const readExecution = runCompanyBrainRead({
+    action: "list_approved_company_brain_knowledge",
+    context,
+    payload: { limit },
+    pathname: requestUrl?.pathname || "/agent/company-brain/approved/docs",
+    logger,
   });
+  const result = getCompanyBrainReadResult(readExecution);
 
   logCompanyBrainCollectionRead(logger, "company_brain_approved_list", {
     accountId: context.account.id,
@@ -4013,11 +4047,17 @@ async function handleAgentSearchApprovedCompanyBrainKnowledge(res, requestUrl, b
 
   const q = parseCompanyBrainSearchQuery(requestUrl, body);
   const topK = parseCompanyBrainLimit(requestUrl, body, 5);
-  const result = searchApprovedCompanyBrainKnowledgeAction({
-    accountId: context.account.id,
-    q,
-    top_k: topK,
+  const readExecution = runCompanyBrainRead({
+    action: "search_approved_company_brain_knowledge",
+    context,
+    payload: {
+      q,
+      top_k: topK,
+    },
+    pathname: requestUrl?.pathname || "/agent/company-brain/approved/search",
+    logger,
   });
+  const result = getCompanyBrainReadResult(readExecution);
 
   logCompanyBrainCollectionRead(logger, "company_brain_approved_search", {
     accountId: context.account.id,
@@ -4047,10 +4087,14 @@ async function handleAgentGetApprovedCompanyBrainKnowledgeDetail(res, requestUrl
   }
 
   const docId = parseCompanyBrainDocId(requestUrl, body);
-  const result = getApprovedCompanyBrainKnowledgeDetailAction({
-    accountId: context.account.id,
-    docId,
+  const readExecution = runCompanyBrainRead({
+    action: "get_approved_company_brain_knowledge_detail",
+    context,
+    payload: { doc_id: docId },
+    pathname: requestUrl?.pathname || "/agent/company-brain/approved/docs/:doc_id",
+    logger,
   });
+  const result = getCompanyBrainReadResult(readExecution);
   const statusCode = getCompanyBrainAgentStatusCode(result);
 
   logCompanyBrainDetailRead(logger, {
@@ -4529,17 +4573,29 @@ async function handleCompanyBrainDocsList(res, requestUrl, body, logger = noopHt
   }
 
   const limit = parseCompanyBrainLimit(requestUrl, body);
-  const items = readCompanyBrainListItems(context.account.id, limit);
+  const readExecution = runCompanyBrainRead({
+    action: "list_company_brain_docs",
+    context,
+    payload: { limit },
+    pathname: requestUrl?.pathname || "/api/company-brain/docs",
+    logger,
+  });
+  const result = getCompanyBrainReadResult(readExecution);
+  if (result.success !== true) {
+    respondCompanyBrainReadFailure(res, getCompanyBrainAgentStatusCode(result), result.error || "business_error");
+    return;
+  }
+  const items = Array.isArray(result?.data?.items) ? result.data.items.map(buildCompanyBrainDocView) : [];
 
   logCompanyBrainCollectionRead(logger, "company_brain_list", {
     accountId: context.account.id,
     limit,
-    total: items.length,
+    total: Number(result?.data?.total || items.length),
   });
 
   respondCompanyBrainReadSuccess(res, 200, buildCompanyBrainCollectionResult(context, "company_brain_docs_list", {
     limit,
-    total: items.length,
+    total: Number(result?.data?.total || items.length),
     items,
   }));
 }
@@ -4551,21 +4607,24 @@ async function handleCompanyBrainDocDetail(res, requestUrl, body, logger = noopH
   }
 
   const docId = parseCompanyBrainDocId(requestUrl, body);
-  if (!docId) {
-    respondCompanyBrainReadMissingDocId(res);
-    return;
-  }
-
-  const item = readCompanyBrainDetailItem(context.account.id, docId);
-  if (!item) {
+  const readExecution = runCompanyBrainRead({
+    action: "get_company_brain_doc_detail",
+    context,
+    payload: { doc_id: docId },
+    pathname: requestUrl?.pathname || "/api/company-brain/docs/:doc_id",
+    logger,
+  });
+  const result = getCompanyBrainReadResult(readExecution);
+  if (result.success !== true) {
     logCompanyBrainDetailRead(logger, {
       accountId: context.account.id,
       docId,
       found: false,
     });
-    respondCompanyBrainReadNotFound(res);
+    respondCompanyBrainReadFailure(res, getCompanyBrainAgentStatusCode(result), result.error || "business_error");
     return;
   }
+  const item = buildCompanyBrainDocView(result?.data?.doc || null);
 
   logCompanyBrainDetailRead(logger, {
     accountId: context.account.id,
@@ -4583,25 +4642,35 @@ async function handleCompanyBrainSearch(res, requestUrl, body, logger = noopHttp
   }
 
   const q = parseCompanyBrainSearchQuery(requestUrl, body);
-  if (!q) {
-    respondCompanyBrainReadInvalidQuery(res);
+  const topK = parseCompanyBrainLimit(requestUrl, body, 5);
+  const readExecution = runCompanyBrainRead({
+    action: "search_company_brain_docs",
+    context,
+    payload: {
+      q,
+      top_k: topK,
+    },
+    pathname: requestUrl?.pathname || "/api/company-brain/search",
+    logger,
+  });
+  const result = getCompanyBrainReadResult(readExecution);
+  if (result.success !== true) {
+    respondCompanyBrainReadFailure(res, getCompanyBrainAgentStatusCode(result), result.error || "business_error");
     return;
   }
-
-  const topK = parseCompanyBrainLimit(requestUrl, body, 5);
-  const items = readCompanyBrainSearchItems(context.account.id, q, topK);
+  const items = Array.isArray(result?.data?.items) ? result.data.items.map(buildCompanyBrainDocView) : [];
 
   logCompanyBrainCollectionRead(logger, "company_brain_search", {
     accountId: context.account.id,
     q,
     limit: topK,
-    total: items.length,
+    total: Number(result?.data?.total || items.length),
   });
 
   respondCompanyBrainReadSuccess(res, 200, buildCompanyBrainCollectionResult(context, "company_brain_docs_search", {
     q,
     limit: topK,
-    total: items.length,
+    total: Number(result?.data?.total || items.length),
     items,
   }));
 }

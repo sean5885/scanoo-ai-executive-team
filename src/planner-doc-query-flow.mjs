@@ -1,5 +1,4 @@
 import { extractCloudOrganizationScopedSubject } from "./cloud-doc-organization-workflow.mjs";
-import { oauthBaseUrl } from "./config.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import { ROUTING_NO_MATCH, isRoutingNoMatch } from "./planner-error-codes.mjs";
 import { createPlannerFlow } from "./planner-flow-runtime.mjs";
@@ -216,45 +215,8 @@ function buildPlannerNotFoundReason(query = "") {
   return "目前沒有找到可直接對應的已索引文件。";
 }
 
-function parsePlannerDocQueryReadResponse(rawText = "") {
-  try {
-    return JSON.parse(rawText);
-  } catch {
-    return {
-      ok: false,
-      error: "invalid_json",
-      raw_text: rawText,
-    };
-  }
-}
-
-async function readPlannerDocumentContent({
-  docId = "",
-  baseUrl = oauthBaseUrl,
-} = {}) {
-  const normalizedDocId = cleanText(docId);
-  if (!normalizedDocId) {
-    return null;
-  }
-
-  const requestUrl = new URL("/api/doc/read", baseUrl);
-  requestUrl.searchParams.set("document_id", normalizedDocId);
-
-  try {
-    const response = await fetch(requestUrl, { method: "GET" });
-    const rawText = await response.text();
-    const data = parsePlannerDocQueryReadResponse(rawText);
-    if (!data?.ok) {
-      return null;
-    }
-    return {
-      title: cleanText(data.title) || null,
-      content: cleanText(data.content) || "",
-      trace_id: data.trace_id || null,
-    };
-  } catch {
-    return null;
-  }
+async function readPlannerDocumentContent() {
+  return null;
 }
 
 function extractCompanyBrainEnvelope(executionResult = null) {
@@ -507,7 +469,7 @@ export async function formatDocQueryExecutionResult({
   executionResult = null,
   userIntent = "",
   payload = {},
-  baseUrl = oauthBaseUrl,
+  baseUrl = null,
   contentReader = readPlannerDocumentContent,
   logger = console,
   sessionKey = "",
@@ -779,7 +741,7 @@ const plannerDocQueryFlow = createPlannerFlow({
     executionResult = null,
     userIntent = "",
     payload = {},
-    baseUrl = oauthBaseUrl,
+    baseUrl = null,
     contentReader,
     logger = console,
     sessionKey = "",

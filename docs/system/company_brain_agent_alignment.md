@@ -17,13 +17,16 @@ It is an alignment document:
 Current runtime anchor points:
 
 - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
+- `/Users/seanhan/Documents/Playground/src/read-runtime.mjs`
 - `/Users/seanhan/Documents/Playground/src/company-brain-learning.mjs`
 - `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`
 - `/Users/seanhan/Documents/Playground/src/company-brain-query.mjs`
 - `/Users/seanhan/Documents/Playground/src/rag-repository.mjs`
 - `/Users/seanhan/Documents/Playground/src/db.mjs`
 
-Current read-side company-brain runtime already exists through these routes:
+Current read-side company-brain runtime now enters through `/Users/seanhan/Documents/Playground/src/read-runtime.mjs`, which accepts a canonical read request, fixes `primary_authority = "mirror"` for the first batch, and delegates every company-brain read to `/Users/seanhan/Documents/Playground/src/company-brain-query.mjs` as the only mirror reader.
+
+The current route surfaces are:
 
 - `GET /api/company-brain/docs`
 - `GET /api/company-brain/docs/:doc_id`
@@ -31,6 +34,9 @@ Current read-side company-brain runtime already exists through these routes:
 - `GET /agent/company-brain/docs`
 - `GET /agent/company-brain/search`
 - `GET /agent/company-brain/docs/:doc_id`
+- `GET /agent/company-brain/approved/docs`
+- `GET /agent/company-brain/approved/search`
+- `GET /agent/company-brain/approved/docs/:doc_id`
 - `POST /agent/company-brain/learning/ingest`
 - `POST /agent/company-brain/learning/state`
 
@@ -52,11 +58,12 @@ This means `company_brain_agent` currently maps to a narrow read-oriented route/
 - list verified document mirrors from `company_brain_docs`
 - search company-brain records by `title` / `doc_id` with a composite ranking pass over keyword match, semantic-lite similarity, learning tags/key concepts, and recency
 - fetch detail for one mirrored document by `doc_id`
+- read approved company-brain rows through the same mirror-backed runtime envelope
 - derive planner-safe structured summaries from mirrored document text
 - ingest a mirrored document into a simplified learning sidecar
 - update simplified per-document learning state
 - route learning writes through the shared mutation runtime instead of direct route-local persistence
-- provide bounded read results back to planner/runtime callers
+- provide bounded read results back to planner/runtime callers without live fallback or multi-authority mixing
 
 ## In Scope
 
@@ -65,6 +72,7 @@ Already in scope today:
 - company-brain docs list
 - company-brain doc detail
 - company-brain search
+- approved company-brain list/search/detail
 - planner-facing structured summary shaping
 - planner-facing unified query envelope `{ success, data, error }`
 - read-only access to verified mirror records
@@ -89,7 +97,18 @@ Still out of scope for current runtime:
 
 ## Input Shape
 
-Current effective input shapes are:
+Public route inputs still stay list/detail/search shaped, but the checked-in internal read-runtime now normalizes them into:
+
+```json
+{
+  "action": "string",
+  "account_id": "string",
+  "payload": "object",
+  "context": "object"
+}
+```
+
+The current route-facing payload variants remain:
 
 ### list
 
@@ -118,6 +137,24 @@ Current effective input shapes are:
 ```
 
 ## Output Shape
+
+The internal read-runtime result now stays on one canonical envelope:
+
+```json
+{
+  "ok": "boolean",
+  "action": "string",
+  "primary_authority": "mirror",
+  "authorities_attempted": ["mirror"],
+  "fallback_used": false,
+  "result": {
+    "success": "boolean",
+    "data": "object",
+    "error": "string|null"
+  },
+  "error": "string|null"
+}
+```
 
 Public `/api/company-brain/*` outputs remain route-shaped, with the minimal item schema:
 

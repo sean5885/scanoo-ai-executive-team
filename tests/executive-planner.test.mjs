@@ -3413,6 +3413,76 @@ test("runPlannerToolFlow returns candidate list when search_and_detail_doc hits 
   resetPlannerRuntimeContext();
 });
 
+test("runPlannerToolFlow keeps mirror detail formatting on the same read without live fallback", async () => {
+  resetPlannerRuntimeContext();
+  const originalFetch = globalThis.fetch;
+  const fetchCalls = [];
+  globalThis.fetch = async (...args) => {
+    fetchCalls.push(args);
+    throw new Error("unexpected_live_read");
+  };
+
+  try {
+    const result = await runPlannerToolFlow({
+      userIntent: "讀這份 mirror 文件",
+      payload: { doc_id: "doc_mirror_only_1" },
+      logger: console,
+      forcedSelection: {
+        selected_action: "get_company_brain_doc_detail",
+        routing_reason: "forced_detail_for_mirror_runtime",
+      },
+      async dispatcher({ action, payload }) {
+        assert.equal(action, "get_company_brain_doc_detail");
+        assert.equal(payload.doc_id, "doc_mirror_only_1");
+        return {
+          ok: true,
+          action: "get_company_brain_doc_detail",
+          data: {
+            success: true,
+            data: {
+              doc: {
+                doc_id: "doc_mirror_only_1",
+                title: "Mirror Only SOP",
+                source: "api",
+                created_at: "2026-03-27T00:00:00.000Z",
+                creator: {
+                  account_id: "acct-1",
+                  open_id: "ou_test_acct-1",
+                },
+              },
+              summary: {
+                overview: "mirror summary only",
+                headings: ["Mirror Only SOP"],
+                highlights: ["owner", "deadline"],
+                snippet: "mirror summary only",
+                content_length: 42,
+              },
+              learning_state: {
+                status: "not_learned",
+                key_concepts: [],
+                tags: [],
+                notes: null,
+                learned_at: null,
+                updated_at: null,
+              },
+            },
+            error: null,
+          },
+          trace_id: "trace_mirror_only_detail",
+        };
+      },
+    });
+
+    assert.equal(fetchCalls.length, 0);
+    assert.equal(result.execution_result?.formatted_output?.kind, "detail");
+    assert.equal(result.execution_result?.formatted_output?.doc_id, "doc_mirror_only_1");
+    assert.equal(result.execution_result?.formatted_output?.content_summary, "mirror summary only");
+  } finally {
+    globalThis.fetch = originalFetch;
+    resetPlannerRuntimeContext();
+  }
+});
+
 test("runPlannerToolFlow returns explicit not-found output when search_and_detail_doc finds no files", async () => {
   resetPlannerRuntimeContext();
   const result = await runPlannerToolFlow({

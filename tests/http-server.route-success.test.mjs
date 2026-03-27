@@ -853,6 +853,51 @@ test("agent company-brain search and detail routes return structured summaries f
   ]);
 });
 
+test("api company-brain read routes stay on minimal mirror views", async (t) => {
+  const docId = `doc-api-company-brain-${Date.now()}`;
+  insertCompanyBrainFixture({
+    docId,
+    title: "API Mirror Runbook",
+    rawText: [
+      "# API Mirror Runbook",
+      "mirror owner checklist",
+    ].join("\n"),
+  });
+  t.after(() => {
+    db.prepare("DELETE FROM company_brain_docs WHERE account_id = ? AND doc_id = ?").run("acct-1", docId);
+    db.prepare("DELETE FROM lark_documents WHERE account_id = ? AND document_id = ?").run("acct-1", docId);
+  });
+
+  const { server } = await startTestServer(t, {});
+  const { port } = server.address();
+
+  const listResponse = await fetch(`http://127.0.0.1:${port}/api/company-brain/docs?limit=5`);
+  const listPayload = await listResponse.json();
+  assert.equal(listResponse.status, 200);
+  assert.equal(listPayload.ok, true);
+  assert.equal(listPayload.action, "company_brain_docs_list");
+  assert.equal(Array.isArray(listPayload.items), true);
+  assert.equal(listPayload.items.some((item) => item.doc_id === docId), true);
+
+  const searchResponse = await fetch(`http://127.0.0.1:${port}/api/company-brain/search?q=mirror%20owner`);
+  const searchPayload = await searchResponse.json();
+  assert.equal(searchResponse.status, 200);
+  assert.equal(searchPayload.ok, true);
+  assert.equal(searchPayload.action, "company_brain_docs_search");
+  assert.equal(searchPayload.items[0].doc_id, docId);
+  assert.equal(searchPayload.items[0].title, "API Mirror Runbook");
+  assert.equal(searchPayload.items[0].summary, undefined);
+
+  const detailResponse = await fetch(`http://127.0.0.1:${port}/api/company-brain/docs/${docId}`);
+  const detailPayload = await detailResponse.json();
+  assert.equal(detailResponse.status, 200);
+  assert.equal(detailPayload.ok, true);
+  assert.equal(detailPayload.action, "company_brain_doc_detail");
+  assert.equal(detailPayload.item.doc_id, docId);
+  assert.equal(detailPayload.item.title, "API Mirror Runbook");
+  assert.equal(detailPayload.item.summary, undefined);
+});
+
 test("agent company-brain search fails closed without explicit user token", async (t) => {
   const docId = `doc-agent-company-brain-auth-${Date.now()}`;
   insertCompanyBrainFixture({

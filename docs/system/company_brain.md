@@ -53,6 +53,12 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
     - supports `top_k` search limiting with a default of `5` while keeping `limit` as a compatibility alias
     - returns unified `{ success, data, error }` payloads
     - keeps results as structured summaries instead of raw full text
+  - `/Users/seanhan/Documents/Playground/src/read-runtime.mjs`
+    - is now the first unified read-runtime entry for company-brain reads
+    - accepts canonical read requests `{ action, account_id, payload, context }`
+    - fixes `primary_authority = "mirror"` for the current batch
+    - delegates mirror list/search/detail plus approved list/search/detail to `company-brain-query.mjs`
+    - returns one canonical runtime envelope and does not mix mirror with live fallback in the same read
   - `/Users/seanhan/Documents/Playground/src/company-brain-learning.mjs`
     - derives deterministic `structured_summary`, `key_concepts`, and `tags`
     - writes simplified per-doc `learning_state`
@@ -98,6 +104,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `learning_state`
   - search-time `match` metadata including composite `score` plus simplified `ranking_basis`
   - no raw full-text body
+- planner doc formatting now also stays mirror-only for the same read and no longer supplements company-brain detail reads with `/api/doc/read`
 - approved knowledge is now stored separately and can only be queried through approved-only agent/query routes after explicit review approval plus apply
 
 ## Knowledge Sources That Do Exist
