@@ -15,6 +15,12 @@ function normalizeLogger(logger = null) {
   return null;
 }
 
+function normalizeBudget(value = null) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? { ...value }
+    : {};
+}
+
 function buildBudgetWriteGuard(decision = {}) {
   return {
     decision: "deny",
@@ -89,7 +95,9 @@ export async function executeLarkWrite({
 
   const resolvedLogger = normalizeLogger(logger);
   const resolvedConfirmation = confirmation && typeof confirmation === "object" ? confirmation : {};
-  const resolvedBudget = budget && typeof budget === "object" ? budget : {};
+  const resolvedBudget = typeof budget === "function"
+    ? budget
+    : normalizeBudget(budget);
   const requireConfirm = resolvedConfirmation.requireConfirm === true;
   const requireConfirmationId = resolvedConfirmation.requireConfirmationId === true;
   const confirmed = resolvedConfirmation.confirm === true;
@@ -178,24 +186,38 @@ export async function executeLarkWrite({
     }
   }
 
+  const budgetInput = typeof resolvedBudget === "function"
+    ? normalizeBudget(await resolvedBudget({
+      action: cleanText(action) || cleanText(apiName) || null,
+      pathname: cleanText(pathname) || null,
+      accountId,
+      accessToken,
+      confirmationId,
+      confirmation: pendingConfirmation,
+      pendingConfirmation,
+      logger: resolvedLogger,
+      traceId,
+    }))
+    : resolvedBudget;
+
   const budgetMetadata = {
     action: cleanText(action) || cleanText(apiName) || null,
     account_id: accountId || null,
     session_key:
-      cleanText(resolvedBudget.sessionKey ?? resolvedBudget.session_key)
-      || cleanText(resolvedBudget.scopeKey ?? resolvedBudget.scope_key)
+      cleanText(budgetInput.sessionKey ?? budgetInput.session_key)
+      || cleanText(budgetInput.scopeKey ?? budgetInput.scope_key)
       || accountId
       || null,
-    scope_key: cleanText(resolvedBudget.scopeKey ?? resolvedBudget.scope_key) || null,
-    document_id: cleanText(resolvedBudget.documentId ?? resolvedBudget.document_id) || null,
-    target_document_id: cleanText(resolvedBudget.targetDocumentId ?? resolvedBudget.target_document_id) || null,
+    scope_key: cleanText(budgetInput.scopeKey ?? budgetInput.scope_key) || null,
+    document_id: cleanText(budgetInput.documentId ?? budgetInput.document_id) || null,
+    target_document_id: cleanText(budgetInput.targetDocumentId ?? budgetInput.target_document_id) || null,
     confirmation_id: confirmationId || null,
-    content: typeof resolvedBudget.content === "string" ? resolvedBudget.content : "",
-    payload: resolvedBudget.payload,
-    essential: resolvedBudget.essential === true,
-    whitelist: resolvedBudget.whitelist === true,
+    content: typeof budgetInput.content === "string" ? budgetInput.content : "",
+    payload: budgetInput.payload,
+    essential: budgetInput.essential === true,
+    whitelist: budgetInput.whitelist === true,
     idempotency_key:
-      cleanText(resolvedBudget.idempotencyKey ?? resolvedBudget.idempotency_key)
+      cleanText(budgetInput.idempotencyKey ?? budgetInput.idempotency_key)
       || null,
     pathname: cleanText(pathname) || null,
   };
@@ -208,7 +230,7 @@ export async function executeLarkWrite({
     return buildFailure({
       statusCode: 409,
       error: "write_guard_denied",
-      message: cleanText(resolvedBudget.blockedMessage)
+      message: cleanText(budgetInput.blockedMessage)
         || `External write is blocked by ${cleanText(budgetDecision.reason) || "write budget guard"}.`,
       writeGuard: buildBudgetWriteGuard(budgetDecision),
       budget: budgetDecision,

@@ -33,6 +33,7 @@ Current checked-in external writes now route their final external mutation throu
   - `create_wiki_node`
   - `move_wiki_node`
 - Message / Calendar / Task:
+  - `message_send`
   - `message_reply`
   - `message_reaction_create`
   - `message_reaction_delete`
@@ -60,13 +61,17 @@ Current checked-in external writes now route their final external mutation throu
 
 The current external action inventory and route-level enforcement fixtures are registry-backed by `/Users/seanhan/Documents/Playground/src/external-mutation-registry.mjs`; `/Users/seanhan/Documents/Playground/src/write-policy-contract.mjs` and `/Users/seanhan/Documents/Playground/src/write-policy-enforcement.mjs` now derive their external route/action coverage from that registry instead of a hand-maintained partial list.
 
-For the checked-in code truth today, direct `executeLarkWrite(...)` calls no longer exist in `/Users/seanhan/Documents/Playground/src/http-server.mjs`, `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`, or `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`; the only remaining `executeLarkWrite(...)` callsite is the centralized bridge in `/Users/seanhan/Documents/Playground/src/lark-mutation-runtime.mjs`.
+For the checked-in code truth today, direct `executeLarkWrite(...)` calls no longer exist in `/Users/seanhan/Documents/Playground/src/http-server.mjs`, `/Users/seanhan/Documents/Playground/src/index.mjs`, `/Users/seanhan/Documents/Playground/src/comment-suggestion-workflow.mjs`, `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`, or `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`; the only remaining `executeLarkWrite(...)` callsite is the centralized bridge in `/Users/seanhan/Documents/Playground/src/lark-mutation-runtime.mjs`.
+
+`/Users/seanhan/Documents/Playground/src/execute-lark-write.mjs` now enforces the `direct_lark_write_bypass` assertion for all environments, not only `development`, so any external Lark write must execute inside the centralized runtime context.
 
 ## Current Grounded Files
 
 Current code truth for this design is grounded in:
 
 - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
+- `/Users/seanhan/Documents/Playground/src/index.mjs`
+- `/Users/seanhan/Documents/Playground/src/comment-suggestion-workflow.mjs`
 - `/Users/seanhan/Documents/Playground/src/write-guard.mjs`
 - `/Users/seanhan/Documents/Playground/src/lark-write-guard.mjs`
 - `/Users/seanhan/Documents/Playground/src/http-route-contracts.mjs`
@@ -104,12 +109,12 @@ These are the write actions that should define the first shared policy vocabular
 
 | action key | current entry | target | current grounded governance |
 | --- | --- | --- | --- |
-| `create_doc` | `POST /api/doc/create`, `POST /agent/docs/create` | external Lark doc create, plus optional initial content write | explicit create guard in `lark-write-guard.mjs`; create is now preview-first via `document_create` confirmation artifacts and requires `confirm=true + confirmation_id` on apply; planner/agent governance in `planner_contract.json`; final external write now routes through `executeLarkWrite(...)` plus budget / duplicate guard; `external_write=true`; `review_required=conditional` |
+| `create_doc` | `POST /api/doc/create`, `POST /agent/docs/create` | external Lark doc create, plus optional initial content write | explicit create guard in `lark-write-guard.mjs`; preview confirmation, confirmation replay/consume, and guard resolution are now owned by `runDocumentCreateMutation(...)` in `lark-mutation-runtime.mjs` instead of route-local branching; planner/agent governance in `planner_contract.json`; final external write now routes through `executeLarkWrite(...)` plus budget / duplicate guard; `external_write=true`; `review_required=conditional` |
 | `update_doc` | `POST /api/doc/update` | external Lark doc update | replace/targeted modes use preview/confirm; append keeps existing direct-apply API shape; the final external write now routes through `runMutation(...) -> executeLarkWrite(...)`; downstream company-brain intake classifies update as review-gated |
-| `document_comment_rewrite_apply` | `POST /api/doc/rewrite-from-comments` with apply path | external Lark doc replace plus optional comment resolution | preview confirmation artifact, stale-revision prereq, and canonical request now feed `runMutation(...)`; verifier precondition is patch-plan plus rewritten content; budget / duplicate guard still runs in `executeLarkWrite(...)` before apply |
+| `document_comment_rewrite_apply` | `POST /api/doc/rewrite-from-comments` with apply path | external Lark doc replace plus optional comment resolution | preview confirmation artifact, confirmation peek/validate, stale-revision check, and canonical request now feed `runMutation(...)`; verifier precondition is patch-plan plus rewritten content; budget / duplicate guard still runs in `executeLarkWrite(...)` before apply |
 | `meeting_confirm_write` | `POST /api/meeting/confirm`, `GET /meeting/confirm` | external Lark meeting doc prepend/writeback | confirmation artifact plus canonical request now feed `meetingCoordinator.confirmMeetingWrite(...) -> runMutation(...)`; verifier precondition is summary/doc-entry completeness; budget / duplicate guard still runs before writeback |
-| `drive_organize_apply` | `POST /api/drive/organize/apply` | external Drive move task submission | same-scope preview/review prerequisite, executive task must already be `awaiting_review`, plus `decideWriteGuard(...)` and budget / duplicate guard |
-| `wiki_organize_apply` | `POST /api/wiki/organize/apply` | external Wiki move task submission | same-scope preview/review prerequisite, executive task must already be `awaiting_review`, plus `decideWriteGuard(...)` and budget / duplicate guard |
+| `drive_organize_apply` | `POST /api/drive/organize/apply` | external Drive move task submission | same-scope preview/review prerequisite is now enforced by canonical request + `cloud_doc_v1` verifier evidence inside runtime; the route may mark workflow state, but it no longer short-circuits the write path before runtime admission; budget / duplicate guard still runs in `executeLarkWrite(...)` |
+| `wiki_organize_apply` | `POST /api/wiki/organize/apply` | external Wiki move task submission | same-scope preview/review prerequisite is now enforced by canonical request + `cloud_doc_v1` verifier evidence inside runtime; the route may mark workflow state, but it no longer short-circuits the write path before runtime admission; budget / duplicate guard still runs in `executeLarkWrite(...)` |
 | `cloud_doc_apply` | cloud-doc workflow task layer above drive/wiki apply | workflow owner over external Drive/Wiki apply | scope-bound executive task, preview-plan evidence, verifier gate on completion |
 | `ingest_doc` | `ingestVerifiedDocumentToCompanyBrain(...)` internal path | internal mirror write into `company_brain_docs` | internal write guard allow, intake boundary classification, optional staged review state |
 | `review_company_brain_doc` | `POST /agent/company-brain/review` | internal review-state write | lifecycle contract exists in `company-brain-lifecycle-contract.mjs`; review route is explicit |
@@ -155,6 +160,15 @@ These external write actions are now part of the same registry-backed external w
   - `spreadsheet_replace_batch`
 
 These public HTTP write surfaces now route their final external mutation through `/Users/seanhan/Documents/Playground/src/lark-mutation-runtime.mjs`, so they share the same canonical admission, write-policy snapshot, and budget / dedupe boundary as the higher-risk doc and meeting write family even though they do not introduce new preview/confirmation artifacts.
+
+The same runtime bridge is now also the checked-in authority for non-HTTP message writers that previously bypassed route governance:
+
+- `/Users/seanhan/Documents/Playground/src/index.mjs`
+  - uses `executeCanonicalLarkMessageReply(...)` and `executeCanonicalLarkMessageSend(...)`
+- `/Users/seanhan/Documents/Playground/src/comment-suggestion-workflow.mjs`
+  - uses `executeCanonicalLarkMessageReply(...)` for preview cards
+- `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`
+  - uses `executeCanonicalLarkMessageSend(...)` for preview/confirmation cards
 
 ### Other grounded internal mutation routes
 

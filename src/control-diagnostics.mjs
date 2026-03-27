@@ -67,7 +67,9 @@ const FILES = {
   larkWriteGuard: path.join(SRC_DIR, "lark-write-guard.mjs"),
   httpServer: path.join(SRC_DIR, "http-server.mjs"),
   httpRouteContracts: path.join(SRC_DIR, "http-route-contracts.mjs"),
+  index: path.join(SRC_DIR, "index.mjs"),
   meetingAgent: path.join(SRC_DIR, "meeting-agent.mjs"),
+  commentSuggestionWorkflow: path.join(SRC_DIR, "comment-suggestion-workflow.mjs"),
   larkMutationRuntime: path.join(SRC_DIR, "lark-mutation-runtime.mjs"),
   larkContent: path.join(SRC_DIR, "lark-content.mjs"),
   writePolicyContract: path.join(SRC_DIR, "write-policy-contract.mjs"),
@@ -996,7 +998,11 @@ function extractLaneWriteActions(text = "") {
 
 function extractMutationRuntimeActions(text = "") {
   const matches = [...String(text || "").matchAll(/(?:runMutation|runCanonicalLarkMutation|executeCanonicalLarkMutation)\(\{[\s\S]{0,400}?action:\s*"([^"]+)"/g)];
-  return [...new Set(matches.map((match) => cleanText(match[1])).filter(Boolean))].sort((left, right) => left.localeCompare(right));
+  const actions = matches.map((match) => cleanText(match[1])).filter(Boolean);
+  if (String(text || "").includes("runDocumentCreateMutation({")) {
+    actions.push("create_doc");
+  }
+  return [...new Set(actions)].sort((left, right) => left.localeCompare(right));
 }
 
 function buildUniqueSorted(items = []) {
@@ -1764,7 +1770,9 @@ export async function buildWriteSummary() {
   const laneExecutorText = await readText(FILES.laneExecutor);
   const httpServerText = await readText(FILES.httpServer);
   const httpRouteContractsText = await readText(FILES.httpRouteContracts);
+  const indexText = await readText(FILES.index);
   const meetingAgentText = await readText(FILES.meetingAgent);
+  const commentSuggestionWorkflowText = await readText(FILES.commentSuggestionWorkflow);
   const larkMutationRuntimeText = await readText(FILES.larkMutationRuntime);
   const larkContentText = await readText(FILES.larkContent);
   const writePolicyContractText = await readText(FILES.writePolicyContract);
@@ -1856,15 +1864,58 @@ export async function buildWriteSummary() {
       file: FILES.httpServer,
       ok:
         !httpServerText.includes("executeLarkWrite({")
+        && !indexText.includes("executeLarkWrite({")
+        && !commentSuggestionWorkflowText.includes("executeLarkWrite({")
         && !meetingAgentText.includes("executeLarkWrite({")
         && !laneExecutorText.includes("executeLarkWrite({")
         && httpServerText.includes("executeCanonicalLarkMutation({")
+        && indexText.includes("executeCanonicalLarkMessage")
+        && commentSuggestionWorkflowText.includes("executeCanonicalLarkMessageReply({")
         && meetingAgentText.includes("runCanonicalLarkMutation({")
+        && meetingAgentText.includes("executeCanonicalLarkMessageSend")
         && laneExecutorText.includes("runCanonicalLarkMutation({"),
       details: {
         http_execute_lark_write_calls: countMatches(httpServerText, /executeLarkWrite\(\{/g),
+        index_execute_lark_write_calls: countMatches(indexText, /executeLarkWrite\(\{/g),
+        comment_suggestion_execute_lark_write_calls: countMatches(commentSuggestionWorkflowText, /executeLarkWrite\(\{/g),
         meeting_execute_lark_write_calls: countMatches(meetingAgentText, /executeLarkWrite\(\{/g),
         lane_execute_lark_write_calls: countMatches(laneExecutorText, /executeLarkWrite\(\{/g),
+      },
+    }),
+    normalizeIntegrationPoint({
+      name: "single_write_authority_bypass_callers_removed",
+      file: FILES.index,
+      ok:
+        !indexText.includes("client.im.v1.message.create(")
+        && !indexText.includes("replyMessage(")
+        && !indexText.includes("sendMessage(")
+        && !commentSuggestionWorkflowText.includes("replyMessage(")
+        && !commentSuggestionWorkflowText.includes("sendMessage(")
+        && !meetingAgentText.includes("replyMessage(")
+        && !meetingAgentText.includes("sendMessage("),
+      details: {
+        index_sdk_message_create_calls: countMatches(indexText, /client\.im\.v1\.message\.create\(/g),
+        index_reply_message_calls: countMatches(indexText, /replyMessage\(/g),
+        index_send_message_calls: countMatches(indexText, /sendMessage\(/g),
+        comment_suggestion_reply_message_calls: countMatches(commentSuggestionWorkflowText, /replyMessage\(/g),
+        comment_suggestion_send_message_calls: countMatches(commentSuggestionWorkflowText, /sendMessage\(/g),
+        meeting_reply_message_calls: countMatches(meetingAgentText, /replyMessage\(/g),
+        meeting_send_message_calls: countMatches(meetingAgentText, /sendMessage\(/g),
+      },
+    }),
+    normalizeIntegrationPoint({
+      name: "single_write_authority_message_runtime_callers",
+      file: FILES.index,
+      ok:
+        indexText.includes("executeCanonicalLarkMessageReply({")
+        && indexText.includes("executeCanonicalLarkMessageSend({")
+        && commentSuggestionWorkflowText.includes("executeCanonicalLarkMessageReply({")
+        && meetingAgentText.includes("executeCanonicalLarkMessageSend")
+        && meetingAgentText.includes("deps.executeMessageSend("),
+      details: {
+        index_message_runtime_calls: countMatches(indexText, /executeCanonicalLarkMessage(?:Reply|Send)\(/g),
+        comment_suggestion_message_runtime_calls: countMatches(commentSuggestionWorkflowText, /executeCanonicalLarkMessageReply\(/g),
+        meeting_message_runtime_calls: countMatches(meetingAgentText, /executeCanonicalLarkMessageSend|executeMessageSend\(/g),
       },
     }),
     normalizeIntegrationPoint({
@@ -1909,11 +1960,18 @@ export async function buildWriteSummary() {
       },
     }),
     normalizeIntegrationPoint({
-      name: "document_create_route_uses_plan_guard",
+      name: "document_create_runtime_gate",
       file: FILES.httpServer,
-      ok: httpServerText.includes("const createGuard = planDocumentCreateGuard({"),
+      ok:
+        httpServerText.includes("const createRuntime = await runDocumentCreateMutation({")
+        && !httpServerText.includes("const createGuard = planDocumentCreateGuard({")
+        && !httpServerText.includes("createDocumentCreateConfirmation({")
+        && !httpServerText.includes("peekDocumentCreateConfirmation({"),
       details: {
-        plan_guard_calls: countMatches(httpServerText, /planDocumentCreateGuard\(\{/g),
+        runtime_gate_calls: countMatches(httpServerText, /runDocumentCreateMutation\(\{/g),
+        route_plan_guard_calls: countMatches(httpServerText, /planDocumentCreateGuard\(\{/g),
+        route_create_confirmation_calls: countMatches(httpServerText, /createDocumentCreateConfirmation\(\{/g),
+        route_peek_confirmation_calls: countMatches(httpServerText, /peekDocumentCreateConfirmation\(\{/g),
       },
     }),
     normalizeIntegrationPoint({
@@ -1922,6 +1980,32 @@ export async function buildWriteSummary() {
       ok: larkContentText.includes("const createGuard = assertDocumentCreateAllowed({"),
       details: {
         assert_guard_calls: countMatches(larkContentText, /assertDocumentCreateAllowed\(\{/g),
+      },
+    }),
+    normalizeIntegrationPoint({
+      name: "comment_rewrite_apply_runtime_gate",
+      file: FILES.httpServer,
+      ok:
+        httpServerText.includes("peek: async () => peekCommentRewriteConfirmation({")
+        && httpServerText.includes("validate: async ({ confirmation }) => {")
+        && !httpServerText.includes("const pendingConfirmation = await peekCommentRewriteConfirmation({"),
+      details: {
+        runtime_peek_calls: countMatches(httpServerText, /peek:\s*async\s*\(\)\s*=>\s*peekCommentRewriteConfirmation\(\{/g),
+        runtime_validate_calls: countMatches(httpServerText, /validate:\s*async\s*\(\{\s*confirmation\s*\}\)\s*=>/g),
+        route_pending_confirmation_calls: countMatches(httpServerText, /const pendingConfirmation = await peekCommentRewriteConfirmation\(\{/g),
+      },
+    }),
+    normalizeIntegrationPoint({
+      name: "cloud_doc_apply_runtime_gate",
+      file: FILES.httpServer,
+      ok:
+        httpServerText.includes("applyingTask = await markCloudDocApplying({")
+        && !httpServerText.includes("Drive organize apply requires a prior preview/review step for the same folder scope.")
+        && !httpServerText.includes("Wiki organize apply requires a prior preview/review step for the same scope."),
+      details: {
+        mark_applying_calls: countMatches(httpServerText, /markCloudDocApplying\(\{/g),
+        drive_route_preview_gate_messages: countMatches(httpServerText, /Drive organize apply requires a prior preview\/review step/g),
+        wiki_route_preview_gate_messages: countMatches(httpServerText, /Wiki organize apply requires a prior preview\/review step/g),
       },
     }),
   ];
@@ -1952,10 +2036,10 @@ export async function buildWriteSummary() {
     issue_count: issues.length,
     summary: issues.length === 0
       ? "write guard and document-create guard paths are stable"
-      : "write guard or document-create guard drift detected",
+      : "write guard, runtime gate, or single-write-authority drift detected",
     guidance: issues.length === 0
-      ? "Keep `src/write-guard.mjs`, `src/lark-write-guard.mjs`, and write callsites aligned; no write repair is needed."
-      : "Inspect `src/write-guard.mjs`, `src/lark-write-guard.mjs`, and guarded callsites in `src/http-server.mjs`, `src/meeting-agent.mjs`, and `src/lark-content.mjs` before changing any write runtime.",
+      ? "Keep `src/write-guard.mjs`, `src/lark-write-guard.mjs`, `src/lark-mutation-runtime.mjs`, and message/doc write callsites aligned; no write repair is needed."
+      : "Inspect `src/write-guard.mjs`, `src/lark-write-guard.mjs`, `src/lark-mutation-runtime.mjs`, and guarded callsites in `src/http-server.mjs`, `src/index.mjs`, `src/comment-suggestion-workflow.mjs`, and `src/meeting-agent.mjs` before changing any write runtime.",
     scenario_results: scenarioResults,
     guarded_operations: uniqueGuardedOperations,
     policy_actions: uniquePolicyActions,
@@ -1969,7 +2053,7 @@ export async function buildWriteSummary() {
     create_guard_surfaces: [
       {
         file: FILES.httpServer,
-        surface: "planDocumentCreateGuard",
+        surface: "runDocumentCreateMutation",
       },
       {
         file: FILES.larkContent,

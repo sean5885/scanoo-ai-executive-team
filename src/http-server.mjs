@@ -125,15 +125,12 @@ import { runCommentSuggestionPollOnce } from "./comment-suggestion-poller.mjs";
 import { buildCloudDocStructuredResult, buildCloudDocWorkflowScopeKey } from "./cloud-doc-organization-workflow.mjs";
 import {
   consumeCommentRewriteConfirmation,
-  consumeDocumentCreateConfirmation,
   consumeDocumentReplaceConfirmation,
   consumeMeetingWriteConfirmation,
   createCommentRewriteConfirmation,
-  createDocumentCreateConfirmation,
   createDocumentReplaceConfirmation,
   createMeetingWriteConfirmation,
   peekCommentRewriteConfirmation,
-  peekDocumentCreateConfirmation,
   peekDocumentReplaceConfirmation,
   peekMeetingWriteConfirmation,
 } from "./doc-update-confirmations.mjs";
@@ -154,7 +151,6 @@ import {
 } from "./executive-improvement-workflow.mjs";
 import {
   assertLarkWriteAllowed,
-  planDocumentCreateGuard,
   validateDocumentCreateEntryGovernance,
 } from "./lark-write-guard.mjs";
 import {
@@ -169,7 +165,6 @@ import {
   buildCompanyBrainApplyCanonicalRequest,
   buildCompanyBrainConflictCanonicalRequest,
   buildCompanyBrainReviewCanonicalRequest,
-  buildCreateDocCanonicalRequest,
   buildDocumentCommentRewriteApplyCanonicalRequest,
   buildDriveOrganizeApplyCanonicalRequest,
   buildIngestCompanyBrainDocCanonicalRequest,
@@ -196,6 +191,7 @@ import { createMeetingCoordinator } from "./meeting-agent.mjs";
 import { cleanText, extractDocumentId } from "./message-intent-utils.mjs";
 import {
   executeCanonicalLarkMutation,
+  runDocumentCreateMutation,
   runCanonicalLarkMutation,
 } from "./lark-mutation-runtime.mjs";
 import { runMutation } from "./mutation-runtime.mjs";
@@ -2936,13 +2932,6 @@ async function handleDriveOrganize(res, requestUrl, body, apply, logger = noopHt
       scopeKey,
       meta: scopeMeta,
     });
-    if (!applyingTask || applyingTask.workflow_state !== "applying") {
-      respondCloudDocPreviewRequired(
-        res,
-        "Drive organize apply requires a prior preview/review step for the same folder scope.",
-      );
-      return;
-    }
     canonicalRequest = buildDriveOrganizeApplyCanonicalRequest({
       pathname: "/api/drive/organize/apply",
       method: "POST",
@@ -3259,13 +3248,6 @@ async function handleWikiOrganize(res, requestUrl, body, apply, logger = noopHtt
       scopeKey,
       meta: scopeMeta,
     });
-    if (!applyingTask || applyingTask.workflow_state !== "applying") {
-      respondCloudDocPreviewRequired(
-        res,
-        "Wiki organize apply requires a prior preview/review step for the same scope.",
-      );
-      return;
-    }
     canonicalRequest = buildWikiOrganizeApplyCanonicalRequest({
       pathname: "/api/wiki/organize/apply",
       method: "POST",
@@ -3485,189 +3467,27 @@ async function handleDocumentCreate(
     }
   }
 
-  const createGuard = planDocumentCreateGuard({
-    title,
-    source,
-    requestedFolderToken,
-    account: context.account,
-    requireConfirmation: false,
-    confirmed: confirm,
-  });
-  if (!createGuard.ok) {
-    logger.warn("document_create_guard_blocked", {
-      account_id: context.account.id,
-      tenant_key: context.account?.tenant_key || null,
-      error: createGuard.error,
-      requested_folder_token: createGuard.requested_folder_token,
-      resolved_folder_token: createGuard.resolved_folder_token,
-      demo_like: createGuard.classification?.demo_like === true,
-      write_policy: writePolicy,
-    });
-    respondDocumentWriteFailure(res, createGuard.statusCode, createGuard.error, {
-      message: createGuard.message,
-      requested_folder_token: createGuard.requested_folder_token,
-      resolved_folder_token: createGuard.resolved_folder_token,
-      demo_like: createGuard.classification?.demo_like === true,
-    });
-    return;
-  }
-  const folderToken = createGuard.resolved_folder_token || undefined;
-  const resolvedWritePolicy = buildCreateDocWritePolicy({
-    folderToken,
-    idempotencyKey,
-  });
   const autoConfirmLegacyAgentCreate = requireEntryGovernance === true && !confirmationId;
-  let effectiveConfirm = confirm;
-  let effectiveConfirmationId = confirmationId;
-  let pendingCreateConfirmation = null;
-
-  if (!confirm && !autoConfirmLegacyAgentCreate) {
-    const preview = await createDocumentCreateConfirmation({
-      accountId: context.account.id,
-      title,
-      requestedFolderToken,
-      resolvedFolderToken: folderToken,
-      content,
-      source,
-      owner,
-      intent,
-      type,
-    });
-    logger.info("document_create_preview_ready", {
-      account_id: context.account.id,
-      requested_folder_token: requestedFolderToken || null,
-      resolved_folder_token: folderToken || null,
-      confirmation_id: preview.confirmation_id,
-      has_initial_content: Boolean(content),
-      demo_like: createGuard.classification?.demo_like === true,
-      write_policy: resolvedWritePolicy,
-    });
-    respondDocumentWriteSuccess(res, 200, buildDocumentCreatePreviewResult({
-      context,
-      preview,
-    }));
-    return;
-  }
-  if (autoConfirmLegacyAgentCreate) {
-    const preview = await createDocumentCreateConfirmation({
-      accountId: context.account.id,
-      title,
-      requestedFolderToken,
-      resolvedFolderToken: folderToken,
-      content,
-      source,
-      owner,
-      intent,
-      type,
-    });
-    effectiveConfirm = true;
-    effectiveConfirmationId = preview.confirmation_id;
-    pendingCreateConfirmation = await peekDocumentCreateConfirmation({
-      confirmationId: effectiveConfirmationId,
-      accountId: context.account.id,
-    });
-    logger.info("document_create_agent_bridge_auto_confirmed", {
-      account_id: context.account.id,
-      requested_folder_token: requestedFolderToken || null,
-      resolved_folder_token: folderToken || null,
-      confirmation_id: effectiveConfirmationId,
-      has_initial_content: Boolean(content),
-      demo_like: createGuard.classification?.demo_like === true,
-      write_policy: resolvedWritePolicy,
-    });
-  }
-  if (!effectiveConfirmationId) {
-    respondDocumentWriteFailure(res, 400, "missing_confirmation_id", {
-      message: "A valid confirmation_id is required before document creation can proceed.",
-    });
-    return;
-  }
-  if (!pendingCreateConfirmation) {
-    pendingCreateConfirmation = await peekDocumentCreateConfirmation({
-      confirmationId: effectiveConfirmationId,
-      accountId: context.account.id,
-    });
-  }
-  if (!pendingCreateConfirmation) {
-    respondDocumentWriteFailure(res, 400, "invalid_or_expired_confirmation", {
-      message: "The document creation confirmation is missing or expired.",
-    });
-    return;
-  }
-  const canonicalRequest = buildCreateDocCanonicalRequest({
-    pathname,
-    method: "POST",
-    folderToken,
-    context: {
-      idempotencyKey,
-      confirmed: true,
-      verifierCompleted: true,
-      reviewRequiredActive: false,
-    },
-    originalRequest: body,
-  });
-  logger.info("document_create_started", {
-    account_id: context.account.id,
-    has_folder_token: Boolean(folderToken),
-    requested_folder_token: requestedFolderToken || null,
-    resolved_folder_token: folderToken || null,
-    has_initial_content: Boolean(content),
-    demo_like: createGuard.classification?.demo_like === true,
-    write_policy: resolvedWritePolicy,
-  });
-  const mutationExecution = await runCanonicalLarkMutation({
-    action: "create_doc",
+  const createRuntime = await runDocumentCreateMutation({
     pathname,
     accountId: context.account.id,
+    account: context.account,
     accessToken: context.token,
     logger,
     traceId: res.__trace_id || null,
-    canonicalRequest,
-    payload: {
-      title,
-      folder_token: folderToken || null,
-      requested_folder_token: requestedFolderToken || null,
-      content,
-      confirmation_id: effectiveConfirmationId,
-      confirm: effectiveConfirm === true,
-      source: source || "api_doc_create",
-      owner: owner || null,
-      intent: intent || null,
-      type: type || null,
-    },
-    confirmation: {
-      kind: "document_create",
-      requireConfirm: true,
-      requireConfirmationId: true,
-      confirm: effectiveConfirm,
-      confirmationId: effectiveConfirmationId,
-      pending: pendingCreateConfirmation,
-      consume: async () => consumeDocumentCreateConfirmation({
-        confirmationId: effectiveConfirmationId,
-        accountId: context.account.id,
-        title,
-        requestedFolderToken,
-        resolvedFolderToken: folderToken,
-        content,
-      }),
-    },
-    budget: {
-      sessionKey: context.account.id,
-      scopeKey: resolvedWritePolicy.scope_key,
-      targetDocumentId: folderToken || null,
-      content,
-      payload: {
-        title,
-        folder_token: folderToken || null,
-        requested_folder_token: requestedFolderToken || null,
-        source: source || "api_doc_create",
-        owner: owner || null,
-        intent: intent || null,
-        type: type || null,
-      },
-      idempotencyKey,
-    },
-    performWrite: async ({ accessToken }) => {
+    originalRequest: body,
+    title,
+    requestedFolderToken,
+    content,
+    source,
+    owner,
+    intent,
+    type,
+    confirm,
+    confirmationId,
+    idempotencyKey,
+    autoConfirmWithoutConfirmation: autoConfirmLegacyAgentCreate,
+    performWrite: async ({ accessToken, folderToken, createGuard, writePolicy }) => {
         let created;
         try {
           created = await getHttpService("createDocument", createDocument)(
@@ -3681,11 +3501,11 @@ async function handleDocumentCreate(
           await persistCreateFailedLifecycleRecord({
             account: context.account,
             res,
-            title,
-            folderToken,
-            logger,
-            error,
-          });
+          title,
+          folderToken,
+          logger,
+          error,
+        });
           throw error;
         }
 
@@ -3753,7 +3573,7 @@ async function handleDocumentCreate(
           initial_content_write_failed: initialContentWriteFailed,
           permission_grant_failed: permissionGrantFailed,
           permission_grant_skipped: permissionGrantSkipped,
-          write_policy: resolvedWritePolicy,
+          write_policy: writePolicy,
         });
 
         return {
@@ -3767,6 +3587,69 @@ async function handleDocumentCreate(
         };
       },
   });
+  const createGuard = createRuntime.create_guard || null;
+  const resolvedWritePolicy = createRuntime.write_policy || writePolicy;
+  const folderToken = createRuntime.resolved_folder_token || null;
+
+  if (createRuntime.stage === "guard_blocked") {
+    logger.warn("document_create_guard_blocked", {
+      account_id: context.account.id,
+      tenant_key: context.account?.tenant_key || null,
+      error: createRuntime.error,
+      requested_folder_token: createRuntime.requested_folder_token,
+      resolved_folder_token: createRuntime.resolved_folder_token,
+      demo_like: createGuard?.classification?.demo_like === true,
+      write_policy: resolvedWritePolicy,
+    });
+    respondDocumentWriteFailure(res, createRuntime.statusCode, createRuntime.error, {
+      message: createRuntime.message,
+      requested_folder_token: createRuntime.requested_folder_token,
+      resolved_folder_token: createRuntime.resolved_folder_token,
+      demo_like: createGuard?.classification?.demo_like === true,
+    });
+    return;
+  }
+
+  if (createRuntime.stage === "preview_ready") {
+    logger.info("document_create_preview_ready", {
+      account_id: context.account.id,
+      requested_folder_token: createRuntime.requested_folder_token,
+      resolved_folder_token: createRuntime.resolved_folder_token,
+      confirmation_id: createRuntime.preview?.confirmation_id || null,
+      has_initial_content: Boolean(content),
+      demo_like: createGuard?.classification?.demo_like === true,
+      write_policy: resolvedWritePolicy,
+    });
+    respondDocumentWriteSuccess(res, 200, buildDocumentCreatePreviewResult({
+      context,
+      preview: createRuntime.preview,
+    }));
+    return;
+  }
+
+  if (createRuntime.auto_confirmed) {
+    logger.info("document_create_agent_bridge_auto_confirmed", {
+      account_id: context.account.id,
+      requested_folder_token: createRuntime.requested_folder_token,
+      resolved_folder_token: createRuntime.resolved_folder_token,
+      confirmation_id: createRuntime.confirmation_id || null,
+      has_initial_content: Boolean(content),
+      demo_like: createGuard?.classification?.demo_like === true,
+      write_policy: resolvedWritePolicy,
+    });
+  }
+
+  logger.info("document_create_started", {
+    account_id: context.account.id,
+    has_folder_token: Boolean(folderToken),
+    requested_folder_token: createRuntime.requested_folder_token,
+    resolved_folder_token: createRuntime.resolved_folder_token,
+    has_initial_content: Boolean(content),
+    demo_like: createGuard?.classification?.demo_like === true,
+    write_policy: resolvedWritePolicy,
+  });
+
+  const mutationExecution = createRuntime.mutation_execution;
   if (!mutationExecution.ok) {
     if (mutationExecution.error === "write_policy_enforcement_blocked") {
       respondDocumentWriteFailure(res, 409, "write_policy_enforcement_blocked", {
@@ -5306,46 +5189,6 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
     return;
   }
 
-  if (!confirm || !confirmationId) {
-    respondDocumentRewriteFailure(
-      res,
-      400,
-      "missing_comment_rewrite_confirmation",
-      "Apply mode requires confirm=true and a valid confirmation_id from the preview step.",
-    );
-    return;
-  }
-
-  const current = await getHttpService("getDocument", getDocument)(context.token, documentId);
-  const pendingConfirmation = await peekCommentRewriteConfirmation({
-    confirmationId,
-    accountId: context.account.id,
-    documentId,
-  });
-  if (!pendingConfirmation) {
-    respondDocumentRewriteFailure(
-      res,
-      400,
-      "invalid_or_expired_confirmation",
-      "The rewrite confirmation is missing or expired. Generate a fresh preview first.",
-    );
-    return;
-  }
-  if (
-    pendingConfirmation.current_revision_id &&
-    current.revision_id &&
-    pendingConfirmation.current_revision_id !== current.revision_id
-  ) {
-    respondDocumentRewriteFailure(
-      res,
-      409,
-      "stale_confirmation",
-      "The document changed after preview. Generate a fresh rewrite preview first.",
-      { current_revision_id: current.revision_id },
-    );
-    return;
-  }
-
   const canonicalRequest = buildDocumentCommentRewriteApplyCanonicalRequest({
     pathname: "/api/doc/rewrite-from-comments",
     method: "POST",
@@ -5356,10 +5199,7 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
     context: {
       idempotencyKey: getRequestIdempotencyKey(body),
       confirmed: confirm === true && Boolean(confirmationId),
-      verifierCompleted:
-        Array.isArray(pendingConfirmation.patch_plan)
-          && typeof pendingConfirmation.rewritten_content === "string"
-          && pendingConfirmation.rewritten_content.trim().length > 0,
+      verifierCompleted: confirm === true && Boolean(confirmationId),
       reviewRequiredActive: false,
     },
     originalRequest: body,
@@ -5384,7 +5224,33 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
       confirm,
       requireConfirmationId: true,
       confirmationId,
-      pending: pendingConfirmation,
+      peek: async () => peekCommentRewriteConfirmation({
+        confirmationId,
+        accountId: context.account.id,
+        documentId,
+      }),
+      validate: async ({ confirmation }) => {
+        const current = await getHttpService("getDocument", getDocument)(context.token, documentId);
+        if (
+          confirmation?.current_revision_id
+          && current?.revision_id
+          && confirmation.current_revision_id !== current.revision_id
+        ) {
+          return {
+            ok: false,
+            statusCode: 409,
+            error: "stale_confirmation",
+            message: "The document changed after preview. Generate a fresh rewrite preview first.",
+            extra: {
+              current_revision_id: current.revision_id,
+            },
+          };
+        }
+        return {
+          ok: true,
+          confirmation,
+        };
+      },
       consume: async () => consumeCommentRewriteConfirmation({
         confirmationId,
         accountId: context.account.id,
@@ -5392,19 +5258,19 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
       }),
       invalidMessage: "The rewrite confirmation is missing or expired. Generate a fresh preview first.",
     },
-    budget: {
+    budget: ({ confirmation }) => ({
       sessionKey: context.account.id,
       scopeKey: workflowScope,
       documentId,
       targetDocumentId: documentId,
-      content: pendingConfirmation.rewritten_content || "",
+      content: confirmation?.rewritten_content || "",
       payload: {
         confirmation_id: confirmationId,
-        comment_ids: pendingConfirmation.comment_ids || [],
-        resolve_comments: pendingConfirmation.resolve_comments === true,
+        comment_ids: confirmation?.comment_ids || [],
+        resolve_comments: confirmation?.resolve_comments === true,
       },
       essential: true,
-    },
+    }),
     performWrite: async ({ accessToken, confirmation }) => {
         await markDocRewriteApplying({
           accountId: context.account.id,

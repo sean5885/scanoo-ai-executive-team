@@ -83,8 +83,10 @@ write summary 目前重用：
 - `/Users/seanhan/Documents/Playground/src/write-guard.mjs`
 - `/Users/seanhan/Documents/Playground/src/lark-write-guard.mjs`
 - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
+- `/Users/seanhan/Documents/Playground/src/index.mjs`
 - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
 - `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`
+- `/Users/seanhan/Documents/Playground/src/comment-suggestion-workflow.mjs`
 - `/Users/seanhan/Documents/Playground/src/lark-content.mjs`
 
 它會做兩種檢查：
@@ -108,10 +110,13 @@ write summary 目前重用：
 
 - high-risk doc / meeting apply family 經 `runCanonicalLarkMutation(...)`
 - public HTTP external writes 經 `executeCanonicalLarkMutation(...)`
+- runtime-only message writers in `src/index.mjs`, `src/comment-suggestion-workflow.mjs`, and `src/meeting-agent.mjs` 經 `executeCanonicalLarkMessageReply(...)` / `executeCanonicalLarkMessageSend(...)`
 - lane-executor 外部寫入經 `runCanonicalLarkMutation(...)`
-- `http-server.mjs` / `meeting-agent.mjs` / `lane-executor.mjs` 不再直接呼叫 `executeLarkWrite(...)`
-- `planDocumentCreateGuard(...)`
+- `http-server.mjs` / `index.mjs` / `comment-suggestion-workflow.mjs` / `meeting-agent.mjs` / `lane-executor.mjs` 不再直接呼叫 `executeLarkWrite(...)`
+- `runDocumentCreateMutation(...)`
 - `assertDocumentCreateAllowed(...)`
+- comment rewrite apply 的 confirmation `peek` / `validate` 進 runtime
+- drive/wiki apply 的 preview gate 不再在 route 層先 short-circuit，而是交給 runtime verifier block
 
 目前固定檢查的 Phase 1 write-policy family 已擴成 registry-backed external action coverage：
 

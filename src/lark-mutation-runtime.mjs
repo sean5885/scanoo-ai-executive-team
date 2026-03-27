@@ -1,15 +1,33 @@
 import { executeLarkWrite } from "./execute-lark-write.mjs";
 import { getExternalMutationSpec } from "./external-mutation-registry.mjs";
 import { replyMessage, sendMessage } from "./lark-content.mjs";
-import { buildCanonicalMutationRequest } from "./mutation-admission.mjs";
+import {
+  buildCanonicalMutationRequest,
+  buildCreateDocCanonicalRequest,
+} from "./mutation-admission.mjs";
 import { runMutation } from "./mutation-runtime.mjs";
-import { buildExternalWritePolicy } from "./write-policy-contract.mjs";
+import {
+  buildCreateDocWritePolicy,
+  buildExternalWritePolicy,
+} from "./write-policy-contract.mjs";
+import {
+  consumeDocumentCreateConfirmation,
+  createDocumentCreateConfirmation,
+  peekDocumentCreateConfirmation,
+} from "./doc-update-confirmations.mjs";
+import { planDocumentCreateGuard } from "./lark-write-guard.mjs";
 
 function cleanText(value) {
   return String(value || "").trim();
 }
 
 function cloneObject(value = null) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? { ...value }
+    : null;
+}
+
+function cloneRecord(value = null) {
   return value && typeof value === "object" && !Array.isArray(value)
     ? { ...value }
     : null;
@@ -158,6 +176,195 @@ export async function executeCanonicalLarkMutation(options = {}) {
   return mutationExecution?.ok === true
     ? mutationExecution.result
     : mutationExecution;
+}
+
+export async function runDocumentCreateMutation({
+  pathname = "/api/doc/create",
+  accountId = null,
+  account = null,
+  accessToken = null,
+  logger = null,
+  traceId = null,
+  originalRequest = null,
+  title = "",
+  requestedFolderToken = "",
+  content = "",
+  source = "",
+  owner = "",
+  intent = "",
+  type = "",
+  confirm = false,
+  confirmationId = "",
+  idempotencyKey = null,
+  autoConfirmWithoutConfirmation = false,
+  createConfirmation = createDocumentCreateConfirmation,
+  peekConfirmation = peekDocumentCreateConfirmation,
+  consumeConfirmation = consumeDocumentCreateConfirmation,
+  performWrite = null,
+} = {}) {
+  const createGuard = planDocumentCreateGuard({
+    title,
+    source,
+    requestedFolderToken,
+    account,
+    requireConfirmation: false,
+    confirmed: confirm,
+  });
+  if (!createGuard.ok) {
+    return {
+      ok: false,
+      stage: "guard_blocked",
+      error: createGuard.error,
+      message: createGuard.message,
+      statusCode: createGuard.statusCode,
+      create_guard: createGuard,
+      write_policy: buildCreateDocWritePolicy({
+        folderToken: requestedFolderToken,
+        idempotencyKey,
+      }),
+    };
+  }
+
+  const folderToken = createGuard.resolved_folder_token || undefined;
+  const writePolicy = buildCreateDocWritePolicy({
+    folderToken,
+    idempotencyKey,
+  });
+  const shouldAutoConfirm = autoConfirmWithoutConfirmation === true && !cleanText(confirmationId);
+  let effectiveConfirm = confirm === true;
+  let effectiveConfirmationId = cleanText(confirmationId);
+
+  if (!effectiveConfirm && !shouldAutoConfirm) {
+    const preview = await createConfirmation({
+      accountId,
+      title,
+      requestedFolderToken,
+      resolvedFolderToken: folderToken,
+      content,
+      source,
+      owner,
+      intent,
+      type,
+    });
+    return {
+      ok: true,
+      stage: "preview_ready",
+      auto_confirmed: false,
+      preview,
+      create_guard: createGuard,
+      write_policy: writePolicy,
+      requested_folder_token: requestedFolderToken || null,
+      resolved_folder_token: folderToken || null,
+    };
+  }
+
+  if (shouldAutoConfirm) {
+    const preview = await createConfirmation({
+      accountId,
+      title,
+      requestedFolderToken,
+      resolvedFolderToken: folderToken,
+      content,
+      source,
+      owner,
+      intent,
+      type,
+    });
+    effectiveConfirm = true;
+    effectiveConfirmationId = cleanText(preview.confirmation_id);
+  }
+
+  const canonicalRequest = buildCreateDocCanonicalRequest({
+    pathname,
+    method: "POST",
+    folderToken,
+    context: {
+      idempotencyKey,
+      confirmed: true,
+      verifierCompleted: true,
+      reviewRequiredActive: false,
+    },
+    originalRequest,
+  });
+  const mutationExecution = await runCanonicalLarkMutation({
+    action: "create_doc",
+    pathname,
+    accountId,
+    accessToken,
+    logger,
+    traceId,
+    canonicalRequest,
+    payload: {
+      title,
+      folder_token: folderToken || null,
+      requested_folder_token: requestedFolderToken || null,
+      content,
+      confirmation_id: effectiveConfirmationId || null,
+      confirm: effectiveConfirm === true,
+      source: source || "api_doc_create",
+      owner: owner || null,
+      intent: intent || null,
+      type: type || null,
+    },
+    confirmation: {
+      kind: "document_create",
+      requireConfirm: true,
+      requireConfirmationId: true,
+      confirm: effectiveConfirm,
+      confirmationId: effectiveConfirmationId,
+      peek: async () => peekConfirmation({
+        confirmationId: effectiveConfirmationId,
+        accountId,
+      }),
+      consume: async () => consumeConfirmation({
+        confirmationId: effectiveConfirmationId,
+        accountId,
+        title,
+        requestedFolderToken,
+        resolvedFolderToken: folderToken,
+        content,
+      }),
+      invalidMessage: "The document creation confirmation is missing or expired.",
+    },
+    budget: {
+      sessionKey: accountId,
+      scopeKey: writePolicy?.scope_key || null,
+      targetDocumentId: folderToken || null,
+      content,
+      payload: {
+        title,
+        folder_token: folderToken || null,
+        requested_folder_token: requestedFolderToken || null,
+        source: source || "api_doc_create",
+        owner: owner || null,
+        intent: intent || null,
+        type: type || null,
+      },
+      idempotencyKey,
+    },
+    performWrite: async (runtimeInput) => performWrite({
+      ...runtimeInput,
+      folderToken,
+      requestedFolderToken,
+      createGuard: cloneRecord(createGuard),
+      writePolicy: cloneRecord(writePolicy),
+      confirmationId: effectiveConfirmationId,
+      confirm: effectiveConfirm,
+    }),
+  });
+
+  return {
+    ok: mutationExecution?.ok === true,
+    stage: "mutation_executed",
+    auto_confirmed: shouldAutoConfirm,
+    mutation_execution: mutationExecution,
+    create_guard: createGuard,
+    write_policy: writePolicy,
+    requested_folder_token: requestedFolderToken || null,
+    resolved_folder_token: folderToken || null,
+    confirmation_id: effectiveConfirmationId || null,
+    confirm: effectiveConfirm === true,
+  };
 }
 
 function buildMessageScopeKey({ receiveIdType = "", receiveId = "" } = {}) {

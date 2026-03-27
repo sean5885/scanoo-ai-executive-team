@@ -1,10 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
 import {
   assertLarkWriteExecutionAllowed,
   withLarkWriteExecutionContext,
 } from "../src/execute-lark-write.mjs";
+
+const testDb = await createTestDbHarness();
+
+test.after(() => {
+  testDb.close();
+});
 
 test("assertLarkWriteExecutionAllowed blocks direct writes outside runtime context", () => {
   assert.throws(
