@@ -159,7 +159,9 @@ test("answer route normalizes the exact leaking runtime query into natural-langu
       executePlannedUserInput: async () => ({
         ok: true,
         action: "get_runtime_info",
-        params: {},
+        planner_action: "runtime_info",
+        answer: "系統目前運作正常，沒有異常。",
+        sources: [],
         execution_result: {
           ok: true,
           kind: "runtime_info",
@@ -168,7 +170,6 @@ test("answer route normalizes the exact leaking runtime query into natural-langu
           cwd: "/tmp/test-runtime",
           service_start_time: "2026-03-27T15:00:00.000Z",
         },
-        trace_id: "trace_runtime_info_test",
       }),
     },
   });
