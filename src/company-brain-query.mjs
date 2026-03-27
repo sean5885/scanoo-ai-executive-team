@@ -7,7 +7,7 @@ import {
 import {
   buildStructuredSummary as buildCompanyBrainStructuredSummary,
   parseLearningStateRow,
-} from "./company-brain-learning.mjs";
+} from "./company-brain-learning-core.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import { cosineSimilarity, embedTextLocally } from "./semantic-embeddings.mjs";
 import { normalizeText } from "./text-utils.mjs";
@@ -593,6 +593,35 @@ export function getCompanyBrainDocDetailAction({
   }
 
   return buildUnifiedResult(true, buildDetailData(row));
+}
+
+export function getCompanyBrainDocRecordAction({
+  accountId = "",
+  docId = "",
+} = {}) {
+  const normalizedAccountId = cleanText(accountId);
+  const normalizedDocId = cleanText(docId);
+  if (!normalizedAccountId) {
+    return buildUnifiedResult(false, {}, "missing_account_id");
+  }
+  if (!normalizedDocId) {
+    return buildUnifiedResult(false, {}, "missing_doc_id");
+  }
+
+  const row = getCompanyBrainDocQueryRecord(normalizedAccountId, normalizedDocId);
+  if (!row) {
+    return buildUnifiedResult(false, {}, "not_found");
+  }
+
+  return buildUnifiedResult(true, {
+    doc: buildCompanyBrainDocMeta(row),
+    raw_text: cleanText(row?.raw_text) || "",
+    title: cleanText(row?.title) || null,
+    source: cleanText(row?.source) || null,
+    created_at: cleanText(row?.created_at) || null,
+    creator: normalizeCreator(row),
+    url: cleanText(row?.url) || null,
+  });
 }
 
 export function listApprovedCompanyBrainKnowledgeAction({

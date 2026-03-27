@@ -1,5 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
+
+const testDb = await createTestDbHarness();
+
+test.after(() => {
+  testDb.close();
+});
 
 import { cleanSnippet as cleanKnowledgeSnippet } from "../src/knowledge/snippet-cleaner.mjs";
 import {

@@ -3,11 +3,11 @@ import { evaluateCompanyBrainApplyGate } from "./company-brain-lifecycle-contrac
 import { EVIDENCE_TYPES, verifyTaskCompletion } from "./executive-verifier.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import {
-  getCompanyBrainApprovedKnowledge,
-  getCompanyBrainDoc,
-  getCompanyBrainLearningState,
-  getCompanyBrainReviewState,
-} from "./rag-repository.mjs";
+  getApprovedCompanyBrainKnowledgeDetailFromRuntimeSync,
+  getCompanyBrainApprovalStateFromRuntimeSync,
+  getCompanyBrainDocRecordFromRuntimeSync,
+  getCompanyBrainLearningStateFromRuntimeSync,
+} from "./read-runtime.mjs";
 
 export const MUTATION_VERIFIER_PROFILES = Object.freeze([
   "cloud_doc_v1",
@@ -183,18 +183,20 @@ function verifyKnowledgeWritePre({
     issues.push("missing_expected_write");
   }
   if (!issues.length && cleanText(canonicalRequest?.action_type) === "company_brain_apply") {
-    const reviewState = getCompanyBrainReviewState(accountId, docId);
-    const approvedKnowledge = getCompanyBrainApprovedKnowledge(accountId, docId);
+    const approvalState = getCompanyBrainApprovalStateFromRuntimeSync({
+      accountId,
+      docId,
+    });
     const applyGate = evaluateCompanyBrainApplyGate({
       approvalState: {
-        review_state: reviewState
+        review_state: approvalState?.review_state
           ? {
-              status: cleanText(reviewState.review_status) || null,
+              status: cleanText(approvalState.review_state.status) || null,
             }
           : null,
-        approval: approvedKnowledge?.approved_at
+        approval: approvalState?.approval
           ? {
-              status: "approved",
+              status: cleanText(approvalState.approval.status) || null,
             }
           : null,
       },
@@ -247,9 +249,12 @@ function verifyKnowledgeWritePost({
   let evidence = [];
 
   if (expectedWrite === "review_state" || expectedWrite === "review_state_optional") {
-    const reviewState = getCompanyBrainReviewState(accountId, docId);
+    const reviewState = getCompanyBrainApprovalStateFromRuntimeSync({
+      accountId,
+      docId,
+    })?.review_state;
     const expectedStatus = cleanText(execution?.data?.review_state?.status || input.expected_status);
-    const actualStatus = cleanText(reviewState?.review_status);
+    const actualStatus = cleanText(reviewState?.status);
     if (expectedWrite === "review_state_optional" && !expectedStatus) {
       return buildVerifierResult({
         phase: "post",
@@ -270,8 +275,11 @@ function verifyKnowledgeWritePost({
       });
     }
   } else if (expectedWrite === "approved_knowledge") {
-    const approvedKnowledge = getCompanyBrainApprovedKnowledge(accountId, docId);
-    if (!approvedKnowledge?.approved_at) {
+    const approvedKnowledge = getApprovedCompanyBrainKnowledgeDetailFromRuntimeSync({
+      accountId,
+      docId,
+    });
+    if (!approvedKnowledge?.knowledge_state?.approved_at) {
       issues.push("db_write_missing");
     } else {
       evidence.push({
@@ -280,8 +288,11 @@ function verifyKnowledgeWritePost({
       });
     }
   } else if (expectedWrite === "mirror_doc") {
-    const mirroredDoc = getCompanyBrainDoc(accountId, docId);
-    if (!mirroredDoc?.doc_id) {
+    const mirroredDoc = getCompanyBrainDocRecordFromRuntimeSync({
+      accountId,
+      docId,
+    });
+    if (!mirroredDoc?.doc?.doc_id) {
       issues.push("db_write_missing");
     } else {
       evidence.push({
@@ -290,8 +301,11 @@ function verifyKnowledgeWritePost({
       });
     }
   } else if (expectedWrite === "learning_state") {
-    const learningState = getCompanyBrainLearningState(accountId, docId);
-    if (!cleanText(learningState?.learning_status) || cleanText(learningState?.learning_status) === "not_learned") {
+    const learningState = getCompanyBrainLearningStateFromRuntimeSync({
+      accountId,
+      docId,
+    })?.learning_state;
+    if (!cleanText(learningState?.status) || cleanText(learningState?.status) === "not_learned") {
       issues.push("db_write_missing");
     } else {
       evidence.push({

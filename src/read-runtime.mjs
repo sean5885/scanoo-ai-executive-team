@@ -1,16 +1,23 @@
 import {
+  getCompanyBrainDocRecordAction,
   getCompanyBrainDocDetailAction,
   listCompanyBrainDocsAction,
   searchCompanyBrainDocsAction,
 } from "./company-brain-query.mjs";
 import {
+  getCompanyBrainApprovalStateAction,
   getApprovedCompanyBrainKnowledgeDetailDerivedAction,
   getCompanyBrainLearningStateDetailAction,
   listApprovedCompanyBrainKnowledgeDerivedAction,
   listCompanyBrainLearningStateAction,
   searchApprovedCompanyBrainKnowledgeDerivedAction,
 } from "./derived-read-authority.mjs";
-import { searchKnowledgeBaseIndexAction } from "./index-read-authority.mjs";
+import {
+  querySystemKnowledgeIndexAction,
+  querySystemKnowledgeWithContextIndexAction,
+  querySystemKnowledgeWithSnippetIndexAction,
+  searchKnowledgeBaseIndexAction,
+} from "./index-read-authority.mjs";
 import {
   getDocument,
   listDocumentComments,
@@ -32,6 +39,24 @@ const INDEX_READERS = new Map([
       top_k: payload.top_k,
     },
   })],
+  ["query_system_knowledge", ({ payload }) => querySystemKnowledgeIndexAction({
+    payload: {
+      q: payload.q,
+      keyword: payload.q,
+    },
+  })],
+  ["query_system_knowledge_with_snippet", ({ payload }) => querySystemKnowledgeWithSnippetIndexAction({
+    payload: {
+      q: payload.q,
+      keyword: payload.q,
+    },
+  })],
+  ["query_system_knowledge_with_context", ({ payload }) => querySystemKnowledgeWithContextIndexAction({
+    payload: {
+      q: payload.q,
+      keyword: payload.q,
+    },
+  })],
 ]);
 
 const MIRROR_READERS = new Map([
@@ -47,6 +72,10 @@ const MIRROR_READERS = new Map([
     ranking_weights: payload.ranking_weights,
   })],
   ["get_company_brain_doc_detail", ({ accountId, payload }) => getCompanyBrainDocDetailAction({
+    accountId,
+    docId: payload.doc_id,
+  })],
+  ["get_company_brain_doc_record", ({ accountId, payload }) => getCompanyBrainDocRecordAction({
     accountId,
     docId: payload.doc_id,
   })],
@@ -73,6 +102,10 @@ const DERIVED_READERS = new Map([
     limit: payload.limit,
   })],
   ["get_company_brain_learning_state_detail", ({ accountId, payload }) => getCompanyBrainLearningStateDetailAction({
+    accountId,
+    docId: payload.doc_id,
+  })],
+  ["get_company_brain_approval_state", ({ accountId, payload }) => getCompanyBrainApprovalStateAction({
     accountId,
     docId: payload.doc_id,
   })],
@@ -312,6 +345,84 @@ export async function runRead({ canonicalRequest, logger = null } = {}) {
   };
 }
 
+export function runReadSync({ canonicalRequest, logger = null } = {}) {
+  let request = null;
+  try {
+    request = assertCanonicalReadRequestSchema(canonicalRequest);
+  } catch {
+    return {
+      ok: false,
+      action: cleanText(canonicalRequest?.action || canonicalRequest?.action_type) || null,
+      primary_authority: null,
+      authorities_attempted: [],
+      fallback_used: false,
+      result: buildFailSoftQueryResult("invalid_canonical_read_request"),
+      error: "invalid_canonical_read_request",
+    };
+  }
+
+  if (request.primary_authority === LIVE_AUTHORITY) {
+    return {
+      ok: false,
+      action: request.action,
+      primary_authority: request.primary_authority,
+      authorities_attempted: [request.primary_authority],
+      fallback_used: false,
+      result: buildFailSoftQueryResult("runtime_exception"),
+      error: "runtime_exception",
+    };
+  }
+
+  const reader = resolveReaderForRequest(request);
+  if (typeof reader !== "function") {
+    return {
+      ok: false,
+      action: request.action,
+      primary_authority: request.primary_authority,
+      authorities_attempted: [request.primary_authority],
+      fallback_used: false,
+      result: buildFailSoftQueryResult("runtime_exception"),
+      error: "runtime_exception",
+    };
+  }
+
+  let result = null;
+  try {
+    result = reader({
+      accountId: request.account_id,
+      payload: request.payload,
+      context: request.context,
+    });
+  } catch {
+    result = buildFailSoftQueryResult("runtime_exception");
+  }
+
+  if (result && typeof result.then === "function") {
+    result = buildFailSoftQueryResult("runtime_exception");
+  }
+
+  logReadRuntime(logger, {
+    stage: "read_runtime",
+    action: request.action,
+    account_id: request.account_id,
+    primary_authority: request.primary_authority,
+    ok: result?.success === true,
+    error: result?.success === true ? null : cleanText(result?.error) || "runtime_exception",
+  });
+
+  return {
+    ok: result?.success === true,
+    action: request.action,
+    primary_authority: request.primary_authority,
+    authorities_attempted: [request.primary_authority],
+    fallback_used: false,
+    result: result && typeof result === "object" && !Array.isArray(result)
+      ? result
+      : buildFailSoftQueryResult("runtime_exception"),
+    error: result?.success === true ? null : cleanText(result?.error) || "runtime_exception",
+  };
+}
+
 function buildLiveReadCanonicalRequest({
   action = "",
   accountId = "",
@@ -368,6 +479,29 @@ function buildIndexReadCanonicalRequest({
   };
 }
 
+function buildMirrorReadCanonicalRequest({
+  action = "",
+  accountId = "",
+  payload = {},
+  pathname = "",
+  readerOverrides = null,
+} = {}) {
+  return {
+    action,
+    account_id: cleanText(accountId) || "",
+    payload: payload && typeof payload === "object" && !Array.isArray(payload)
+      ? { ...payload }
+      : {},
+    context: {
+      pathname: cleanText(pathname) || null,
+      primary_authority: MIRROR_AUTHORITY,
+      reader_overrides: readerOverrides && typeof readerOverrides === "object" && !Array.isArray(readerOverrides)
+        ? { ...readerOverrides }
+        : undefined,
+    },
+  };
+}
+
 function buildDerivedReadCanonicalRequest({
   action = "",
   accountId = "",
@@ -389,6 +523,13 @@ function buildDerivedReadCanonicalRequest({
         : undefined,
     },
   };
+}
+
+function unwrapReadExecutionSync(readExecution = null) {
+  if (readExecution?.result?.success === true) {
+    return readExecution.result.data;
+  }
+  return null;
 }
 
 export async function readDocumentFromRuntime({
@@ -439,6 +580,69 @@ export async function searchKnowledgeBaseFromRuntime({
   });
 
   return unwrapReadExecution(readExecution);
+}
+
+export function querySystemKnowledgeFromRuntimeSync({
+  keyword = "",
+  pathname = "internal:query_system_knowledge",
+  logger = null,
+  readerOverrides = null,
+} = {}) {
+  const readExecution = runReadSync({
+    canonicalRequest: buildIndexReadCanonicalRequest({
+      action: "query_system_knowledge",
+      accountId: "__system__",
+      payload: {
+        q: cleanText(keyword) || "",
+      },
+      pathname,
+      readerOverrides,
+    }),
+    logger,
+  });
+  return unwrapReadExecutionSync(readExecution)?.items || [];
+}
+
+export function querySystemKnowledgeWithSnippetFromRuntimeSync({
+  keyword = "",
+  pathname = "internal:query_system_knowledge_with_snippet",
+  logger = null,
+  readerOverrides = null,
+} = {}) {
+  const readExecution = runReadSync({
+    canonicalRequest: buildIndexReadCanonicalRequest({
+      action: "query_system_knowledge_with_snippet",
+      accountId: "__system__",
+      payload: {
+        q: cleanText(keyword) || "",
+      },
+      pathname,
+      readerOverrides,
+    }),
+    logger,
+  });
+  return unwrapReadExecutionSync(readExecution)?.items || [];
+}
+
+export function querySystemKnowledgeWithContextFromRuntimeSync({
+  keyword = "",
+  pathname = "internal:query_system_knowledge_with_context",
+  logger = null,
+  readerOverrides = null,
+} = {}) {
+  const readExecution = runReadSync({
+    canonicalRequest: buildIndexReadCanonicalRequest({
+      action: "query_system_knowledge_with_context",
+      accountId: "__system__",
+      payload: {
+        q: cleanText(keyword) || "",
+      },
+      pathname,
+      readerOverrides,
+    }),
+    logger,
+  });
+  return unwrapReadExecutionSync(readExecution)?.items || [];
 }
 
 export async function listDocumentCommentsFromRuntime({
@@ -493,6 +697,50 @@ export async function getApprovedCompanyBrainKnowledgeDetailFromRuntime({
   return unwrapReadExecution(readExecution);
 }
 
+export function getCompanyBrainDocRecordFromRuntimeSync({
+  accountId = "",
+  docId = "",
+  pathname = "internal:get_company_brain_doc_record",
+  logger = null,
+  readerOverrides = null,
+} = {}) {
+  const readExecution = runReadSync({
+    canonicalRequest: buildMirrorReadCanonicalRequest({
+      action: "get_company_brain_doc_record",
+      accountId,
+      payload: {
+        doc_id: docId,
+      },
+      pathname,
+      readerOverrides,
+    }),
+    logger,
+  });
+  return unwrapReadExecutionSync(readExecution);
+}
+
+export function getCompanyBrainDocDetailFromRuntimeSync({
+  accountId = "",
+  docId = "",
+  pathname = "internal:get_company_brain_doc_detail",
+  logger = null,
+  readerOverrides = null,
+} = {}) {
+  const readExecution = runReadSync({
+    canonicalRequest: buildMirrorReadCanonicalRequest({
+      action: "get_company_brain_doc_detail",
+      accountId,
+      payload: {
+        doc_id: docId,
+      },
+      pathname,
+      readerOverrides,
+    }),
+    logger,
+  });
+  return unwrapReadExecutionSync(readExecution);
+}
+
 export async function getCompanyBrainLearningStateFromRuntime({
   accountId = "",
   docId = "",
@@ -513,4 +761,70 @@ export async function getCompanyBrainLearningStateFromRuntime({
     logger,
   });
   return unwrapReadExecution(readExecution);
+}
+
+export function getApprovedCompanyBrainKnowledgeDetailFromRuntimeSync({
+  accountId = "",
+  docId = "",
+  pathname = "internal:get_approved_company_brain_knowledge_detail",
+  logger = null,
+  readerOverrides = null,
+} = {}) {
+  const readExecution = runReadSync({
+    canonicalRequest: buildDerivedReadCanonicalRequest({
+      action: "get_approved_company_brain_knowledge_detail",
+      accountId,
+      payload: {
+        doc_id: docId,
+      },
+      pathname,
+      readerOverrides,
+    }),
+    logger,
+  });
+  return unwrapReadExecutionSync(readExecution);
+}
+
+export function getCompanyBrainLearningStateFromRuntimeSync({
+  accountId = "",
+  docId = "",
+  pathname = "internal:get_company_brain_learning_state_detail",
+  logger = null,
+  readerOverrides = null,
+} = {}) {
+  const readExecution = runReadSync({
+    canonicalRequest: buildDerivedReadCanonicalRequest({
+      action: "get_company_brain_learning_state_detail",
+      accountId,
+      payload: {
+        doc_id: docId,
+      },
+      pathname,
+      readerOverrides,
+    }),
+    logger,
+  });
+  return unwrapReadExecutionSync(readExecution);
+}
+
+export function getCompanyBrainApprovalStateFromRuntimeSync({
+  accountId = "",
+  docId = "",
+  pathname = "internal:get_company_brain_approval_state",
+  logger = null,
+  readerOverrides = null,
+} = {}) {
+  const readExecution = runReadSync({
+    canonicalRequest: buildDerivedReadCanonicalRequest({
+      action: "get_company_brain_approval_state",
+      accountId,
+      payload: {
+        doc_id: docId,
+      },
+      pathname,
+      readerOverrides,
+    }),
+    logger,
+  });
+  return unwrapReadExecutionSync(readExecution);
 }

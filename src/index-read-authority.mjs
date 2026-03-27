@@ -12,6 +12,11 @@ import {
   normalizeText,
   toSearchMatchQuery,
 } from "./text-utils.mjs";
+import {
+  querySystemKnowledge,
+  querySystemKnowledgeWithContext,
+  querySystemKnowledgeWithSnippet,
+} from "./knowledge/system-knowledge-core.mjs";
 
 function buildSearchCandidates(query) {
   const normalized = normalizeText(query).replace(/[?？!！。]+$/g, "");
@@ -77,6 +82,36 @@ export function searchKnowledgeBaseIndexAction({ accountId, payload = {} } = {})
   return {
     success: true,
     data: searchKnowledgeBaseByIndexAuthority(accountId, query, limit),
+    error: null,
+  };
+}
+
+export function querySystemKnowledgeIndexAction({ payload = {} } = {}) {
+  return {
+    success: true,
+    data: {
+      items: querySystemKnowledge(payload.q || payload.keyword),
+    },
+    error: null,
+  };
+}
+
+export function querySystemKnowledgeWithSnippetIndexAction({ payload = {} } = {}) {
+  return {
+    success: true,
+    data: {
+      items: querySystemKnowledgeWithSnippet(payload.q || payload.keyword),
+    },
+    error: null,
+  };
+}
+
+export function querySystemKnowledgeWithContextIndexAction({ payload = {} } = {}) {
+  return {
+    success: true,
+    data: {
+      items: querySystemKnowledgeWithContext(payload.q || payload.keyword),
+    },
     error: null,
   };
 }

@@ -1,12 +1,13 @@
 import { resolveCompanyBrainWriteIntake } from "./company-brain-write-intake.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import {
-  getCompanyBrainApprovedKnowledge,
-  getCompanyBrainDoc,
-  getCompanyBrainReviewState,
   upsertCompanyBrainApprovedKnowledge,
   upsertCompanyBrainReviewState,
 } from "./rag-repository.mjs";
+import {
+  getCompanyBrainApprovalStateFromRuntimeSync,
+  getCompanyBrainDocRecordFromRuntimeSync,
+} from "./read-runtime.mjs";
 
 export const COMPANY_BRAIN_REVIEW_STATUSES = Object.freeze([
   "pending_review",
@@ -106,8 +107,11 @@ export function stageCompanyBrainReviewState({
     return buildUnifiedResult(false, {}, "invalid_review_status");
   }
 
-  const doc = getCompanyBrainDoc(normalizedAccountId, normalizedDocId);
-  if (!doc) {
+  const doc = getCompanyBrainDocRecordFromRuntimeSync({
+    accountId: normalizedAccountId,
+    docId: normalizedDocId,
+  });
+  if (!doc?.doc?.doc_id) {
     return buildUnifiedResult(false, {}, "not_found");
   }
 
@@ -200,19 +204,25 @@ export function resolveCompanyBrainReviewDecision({
     return buildUnifiedResult(false, {}, "missing_doc_id");
   }
 
-  const doc = getCompanyBrainDoc(normalizedAccountId, normalizedDocId);
-  if (!doc) {
+  const doc = getCompanyBrainDocRecordFromRuntimeSync({
+    accountId: normalizedAccountId,
+    docId: normalizedDocId,
+  });
+  if (!doc?.doc?.doc_id) {
     return buildUnifiedResult(false, {}, "not_found");
   }
 
-  const existing = getCompanyBrainReviewState(normalizedAccountId, normalizedDocId);
+  const existing = getCompanyBrainApprovalStateFromRuntimeSync({
+    accountId: normalizedAccountId,
+    docId: normalizedDocId,
+  })?.review_state;
   const stored = upsertCompanyBrainReviewState({
     account_id: normalizedAccountId,
     doc_id: normalizedDocId,
     review_status: approved ? "approved" : "rejected",
     source_stage: cleanText(existing?.source_stage) || "mirror",
     proposed_action: cleanText(existing?.proposed_action) || "review_doc",
-    conflict_items: parseConflictItems(existing),
+    conflict_items: Array.isArray(existing?.conflict_items) ? existing.conflict_items : [],
     review_notes: notes,
     decided_by: cleanText(actor) || "unknown",
     decided_at: new Date().toISOString(),
@@ -239,12 +249,18 @@ export function promoteApprovedCompanyBrainKnowledge({
     return buildUnifiedResult(false, {}, "missing_doc_id");
   }
 
-  const doc = getCompanyBrainDoc(normalizedAccountId, normalizedDocId);
-  if (!doc) {
+  const doc = getCompanyBrainDocRecordFromRuntimeSync({
+    accountId: normalizedAccountId,
+    docId: normalizedDocId,
+  });
+  if (!doc?.doc?.doc_id) {
     return buildUnifiedResult(false, {}, "not_found");
   }
 
-  const reviewState = parseCompanyBrainReviewState(getCompanyBrainReviewState(normalizedAccountId, normalizedDocId) || {});
+  const reviewState = getCompanyBrainApprovalStateFromRuntimeSync({
+    accountId: normalizedAccountId,
+    docId: normalizedDocId,
+  })?.review_state || null;
   if (reviewState?.status !== "approved") {
     return buildUnifiedResult(false, {
       doc_id: normalizedDocId,
@@ -341,12 +357,15 @@ export function checkCompanyBrainConflictAction({
     return buildUnifiedResult(false, {}, "missing_doc_id");
   }
 
-  const doc = getCompanyBrainDoc(normalizedAccountId, normalizedDocId);
-  if (!doc) {
+  const doc = getCompanyBrainDocRecordFromRuntimeSync({
+    accountId: normalizedAccountId,
+    docId: normalizedDocId,
+  });
+  if (!doc?.doc?.doc_id) {
     return buildUnifiedResult(false, {}, "not_found");
   }
 
-  const effectiveTitle = cleanText(title) || cleanText(doc.title) || null;
+  const effectiveTitle = cleanText(title) || cleanText(doc.title || doc.doc?.title) || null;
   const intakeBoundary = resolveCompanyBrainWriteIntake({
     accountId: normalizedAccountId,
     action,
@@ -501,8 +520,19 @@ export function getCompanyBrainApprovalState({
     return null;
   }
 
+  const runtimeState = getCompanyBrainApprovalStateFromRuntimeSync({
+    accountId: normalizedAccountId,
+    docId: normalizedDocId,
+  });
+  if (!runtimeState) {
+    return {
+      review_state: null,
+      approval: null,
+    };
+  }
+
   return {
-    review_state: parseCompanyBrainReviewState(getCompanyBrainReviewState(normalizedAccountId, normalizedDocId) || {}),
-    approval: parseCompanyBrainApprovedKnowledge(getCompanyBrainApprovedKnowledge(normalizedAccountId, normalizedDocId) || {}),
+    review_state: runtimeState.review_state || null,
+    approval: runtimeState.approval || null,
   };
 }

@@ -61,8 +61,10 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
     - now exposes a separate `primary_authority = "derived"` branch for approved knowledge and learning-state reads backed by `/Users/seanhan/Documents/Playground/src/derived-read-authority.mjs`
     - also exposes a separate `primary_authority = "live"` branch for direct doc/comment reads backed by `lark-content.mjs`, but only when `freshness = "live_required"`
     - routes `/search` plus answer-service retrieval through the index branch while still keeping one single primary authority per read
-    - delegates mirror list/search/detail to `company-brain-query.mjs`
-    - delegates approved list/search/detail plus internal learning-state detail/list reads to `derived-read-authority.mjs`
+    - now also provides bounded sync helpers for internal mirror/derived/index runtime callers that must keep existing synchronous contracts
+    - delegates mirror list/search/detail plus internal mirror doc-record reads to `company-brain-query.mjs`
+    - delegates approved list/search/detail, internal learning-state detail/list reads, and internal approval-state reads to `derived-read-authority.mjs`
+    - delegates local checked-in `docs/system` keyword/snippet/context search actions to the index branch through `index-read-authority.mjs`
     - returns one canonical runtime envelope and does not mix index, mirror, live, or derived fallback in the same read
   - `/Users/seanhan/Documents/Playground/src/derived-read-authority.mjs`
     - owns the current derived readers for:
@@ -120,7 +122,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 ## Final Audit Prep
 
-Current remaining bypass callers that still read state without entering `read-runtime.mjs`:
+The previously flagged bypass callers now re-enter `read-runtime.mjs` through bounded internal actions:
 
 - mutation-side company-brain lifecycle helpers:
   - `/Users/seanhan/Documents/Playground/src/company-brain-review.mjs`
@@ -130,10 +132,10 @@ Current remaining bypass callers that still read state without entering `read-ru
   - `/Users/seanhan/Documents/Playground/src/knowledge/knowledge-service.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner/knowledge-bridge.mjs`
 
-Current read paths still outside `read-runtime.mjs`:
+Current status in this scan:
 
-- mutation-side repository lookups used for review gates, learning writes, and durable-write verification
-- local `docs/system` keyword/snippet reads used by the planner-side knowledge helper path
+- no remaining caller from those five modules was found reading mirror/derived/index state without first entering `read-runtime.mjs`
+- write-side persistence still happens in the owning write modules or repository helpers after the runtime-gated read step; `read-runtime.mjs` remains a read boundary, not a write runtime
 
 No remaining public company-brain list/search/detail route was found bypassing `read-runtime.mjs` in this scan.
 
