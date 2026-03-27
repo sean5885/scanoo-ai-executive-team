@@ -2,6 +2,7 @@ import { loadDocsFromDir } from "./doc-loader.mjs";
 import { searchDocsByKeyword } from "./doc-index.mjs";
 import { rankResults } from "./rank-results.mjs";
 import { cleanSnippet } from "./snippet-cleaner.mjs";
+import { guardedMemorySet } from "../memory-write-guard.mjs";
 
 let cachedIndex = null;
 const QUERY_NORMALIZATION_MAP = {
@@ -30,6 +31,11 @@ function shouldSuppressGenericBusinessExpansion(raw = "", latinTokens = []) {
 export function getSystemKnowledgeIndex() {
   if (!cachedIndex) {
     cachedIndex = loadDocsFromDir("./docs/system");
+    guardedMemorySet({
+      key: "system_knowledge:index",
+      value: cachedIndex,
+      source: "system-knowledge",
+    });
   }
   return cachedIndex;
 }

@@ -74,6 +74,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `/Users/seanhan/Documents/Playground/src/company-brain-learning.mjs`
     - derives deterministic `structured_summary`, `key_concepts`, and `tags`
     - writes simplified per-doc `learning_state`
+    - also mirrors the latest persisted per-doc learning state into the process-local memory authority under `company_brain_learning:${account_id}:${doc_id}`
     - does not perform approval/governance admission
   - `/Users/seanhan/Documents/Playground/src/company-brain-review.mjs`
     - persists bounded per-doc review state with:
@@ -95,8 +96,11 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
     - confirms review/apply/learning writes by checking durable SQLite state after execute, and allows `conflict_check` / intake review sync to skip post-verifier only when no review-state mutation is required
   - `/Users/seanhan/Documents/Playground/src/company-brain-memory-authority.mjs`
     - exposes a tiny process-local `{ writeMemory, readMemory }` helper backed by `globalThis.__company_brain_memory__`
-    - no checked-in runtime route, planner flow, read-runtime branch, mutation-runtime path, or approval-governed caller currently imports it
+    - no checked-in runtime route, planner flow, read-runtime branch, mutation-runtime path, or approval-governed caller currently imports it directly
     - its contents are lost on process restart and it is not part of the current SQLite-backed company-brain persistence boundary
+  - `/Users/seanhan/Documents/Playground/src/memory-write-guard.mjs`
+    - exposes `guardedMemorySet(...)` as a tiny wrapper over the process-local memory authority
+    - currently normalizes key/source and is used only by local process-memory helper paths
   - `/Users/seanhan/Documents/Playground/src/company-brain-query.mjs`
     - now also exposes approved-knowledge list/search/detail actions that only read from `company_brain_approved_knowledge`
     - keeps the existing mirror read-side actions unchanged and separate
@@ -109,6 +113,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - a minimal agent-facing review/conflict/approval/apply runtime now exists, and its current internal write gating is routed through mutation-runtime rather than route-local allow/deny
 - the simplified learning sidecar write routes now also use that same runtime boundary instead of direct route-local persistence
 - the process-local `company-brain-memory-authority.mjs` helper is not a canonical memory authority, not durable storage, and not part of the approval-governed company-brain path
+- `memory-write-guard.mjs` only wraps process-local cache writes; it does not replace SQLite learning-state persistence, review/apply flows, or approved-knowledge admission
 - there is still no standalone company-brain-owned verifier, human review UI, or semantic conflict resolver
 - Public list/detail/search routes only return:
   - `doc_id`

@@ -15,6 +15,7 @@ import {
   getCompanyBrainDocRecordFromRuntimeSync,
   getCompanyBrainLearningStateFromRuntimeSync,
 } from "./read-runtime.mjs";
+import { guardedMemorySet } from "./memory-write-guard.mjs";
 
 export {
   buildEmptyLearningState,
@@ -97,10 +98,16 @@ export function ingestLearningDocAction({
     notes: existing.notes,
     learned_at: learnedAt,
   });
+  const nextLearningState = parseLearningStateRow(stored);
+  guardedMemorySet({
+    key: `company_brain_learning:${normalizedAccountId}:${normalizedDocId}`,
+    value: nextLearningState,
+    source: "company-brain-learning",
+  });
 
   return buildUnifiedResult(true, {
     doc: buildDocMeta(runtimeDoc.doc),
-    learning_state: parseLearningStateRow(stored),
+    learning_state: nextLearningState,
   });
 }
 
@@ -166,9 +173,15 @@ export function updateLearningStateAction({
     notes: nextState.notes,
     learned_at: nextState.learned_at,
   });
+  const persistedLearningState = parseLearningStateRow(stored);
+  guardedMemorySet({
+    key: `company_brain_learning:${normalizedAccountId}:${normalizedDocId}`,
+    value: persistedLearningState,
+    source: "company-brain-learning",
+  });
 
   return buildUnifiedResult(true, {
     doc: buildDocMeta(runtimeDoc.doc),
-    learning_state: parseLearningStateRow(stored),
+    learning_state: persistedLearningState,
   });
 }

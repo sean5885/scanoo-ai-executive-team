@@ -154,6 +154,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - `src/derived-read-authority.mjs` now owns the derived-side readers for approved company-brain list/search/detail, the current internal learning-state list/detail reads, and the internal approval-state envelope reads, keeping those routes on one fixed `primary_authority = "derived"`
   - `src/company-brain-learning-core.mjs` now holds the pure structured-summary / learning-state helpers that are shared by `src/company-brain-learning.mjs`, `src/company-brain-query.mjs`, and `src/derived-read-authority.mjs`, so the runtime can import derived readers without creating a circular dependency back into the mutation-side learning writer
   - `src/company-brain-learning.mjs` now provides a bounded learning sidecar for verified company-brain docs: `ingestLearningDocAction(...)` derives deterministic `structured_summary`, `key_concepts`, and `tags`; `updateLearningStateAction(...)` updates simplified per-doc learning state; both write into SQLite `company_brain_learning_state`, and those mutation-side reads now first confirm mirror/derived state through `read-runtime.mjs` before persisting through `mutation-runtime`
+  - after successful SQLite persistence, the same module now also mirrors the latest per-doc learning state into the process-local memory authority through `memory-write-guard.mjs` using `company_brain_learning:${account_id}:${doc_id}`
   - `GET /answer` no longer calls `answer-service.mjs` directly; it now first requires a strict planner decision shaped as either legacy single-step `{ action, params }` or bounded multi-step `{ steps: [{ action, params }] }`, rejects wrapped/non-JSON planner output with `{ error: "planner_failed" }`, rejects contract-external actions with structured `INVALID_ACTION`, and now passes the final response through a dedicated `normalizeUserResponse()` boundary so the HTTP body stays natural-language (`ok`, `answer`, `sources`, `limitations`) instead of exposing planner envelopes
   - that same strict planner path now also attaches deterministic explanation metadata to each normalized decision and envelope: `why` plus a simplified `alternative`, while `trace.reasoning` exposes the same pair for downstream lane/debug consumption without relaxing the core planner JSON contract; `normalizeUserResponse()` strips those internal fields from the outward `/answer` body
   - the same HTTP request path now also enforces `HTTP_REQUEST_TIMEOUT_MS` as a per-request timeout budget; timeout emits `event=request_timeout`, records that error into `http_request_monitor`, raises a rate-limited alert keyed by route/path, and still passes the final user body through `normalizeUserResponse()` so timeout replies remain natural language without `error/trace/details`
@@ -1000,6 +1001,12 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - local process-only company-brain memory helper
   - exposes `writeMemory({ key, value, source })` plus `readMemory({ key })`
   - stores entries in `globalThis.__company_brain_memory__`
+  - not connected to `read-runtime.mjs`, `mutation-runtime.mjs`, SQLite persistence, planner routes, or company-brain approval/governance paths
+
+- `/Users/seanhan/Documents/Playground/src/memory-write-guard.mjs`
+  - local process-only memory write wrapper
+  - exposes `guardedMemorySet({ key, value, source })`
+  - currently normalizes key/source and delegates to `company-brain-memory-authority.mjs`
   - not connected to `read-runtime.mjs`, `mutation-runtime.mjs`, SQLite persistence, planner routes, or company-brain approval/governance paths
 
 - `/Users/seanhan/Documents/Playground/src/config/tech-terms.mjs`
