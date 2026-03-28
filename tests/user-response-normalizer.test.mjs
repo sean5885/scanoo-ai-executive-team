@@ -252,3 +252,35 @@ test("chat reply suggests comparison-oriented next step for decision-style queri
   assert.ok(userResponse.sources.length <= 3);
   assert.ok(userResponse.limitations.length <= 3);
 });
+
+test("chat reply maps canonical payload sources through the shared answer source mapper", () => {
+  const userResponse = normalizeUserResponse({
+    payload: {
+      ok: true,
+      answer: "這是整理後的回答。",
+      sources: [
+        {
+          id: "source_runtime_1",
+          snippet: "Back to [README.md](/Users/seanhan/Documents/Playground/README.md)\n\n- runtime boundary keeps evidence explicit.",
+          metadata: {
+            title: "Runtime Boundary",
+            url: "https://example.com/runtime-boundary",
+            source_type: "docx",
+            document_id: "runtime_doc_1",
+          },
+        },
+        {
+          title: "Missing Snippet Source",
+          url: "https://example.com/missing-snippet",
+          source_type: "docx",
+        },
+      ],
+    },
+  });
+
+  assert.equal(userResponse.ok, true);
+  assert.equal(userResponse.sources.length, 1);
+  assert.match(userResponse.sources[0], /Runtime Boundary：runtime boundary keeps evidence explicit\./i);
+  assert.match(userResponse.sources[0], /https:\/\/example\.com\/runtime-boundary/);
+  assert.doesNotMatch(userResponse.sources[0], /\/Users\/|Back to \[?README|\[object Object\]/);
+});

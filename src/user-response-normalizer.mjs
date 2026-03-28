@@ -3,6 +3,7 @@ import {
   buildPlannedUserInputUserFacingReply,
   renderPlannerUserFacingReplyText,
 } from "./executive-planner.mjs";
+import { normalizeUserFacingAnswerSources } from "./answer-source-mapper.mjs";
 import { normalizeText } from "./text-utils.mjs";
 
 const MAX_USER_FACING_SOURCES = 3;
@@ -15,55 +16,6 @@ function normalizeCompareText(text = "") {
     .replace(/[「」"'`]/g, "")
     .replace(/\s+/g, " ")
     .trim();
-}
-
-function buildComparableBigrams(text = "") {
-  const normalized = normalizeCompareText(text).replace(/[^a-z0-9\u4e00-\u9fff]+/g, "");
-  if (!normalized) {
-    return new Set();
-  }
-  if (normalized.length < 3) {
-    return new Set([normalized]);
-  }
-  const grams = new Set();
-  for (let index = 0; index < normalized.length - 1; index += 1) {
-    grams.add(normalized.slice(index, index + 2));
-  }
-  return grams;
-}
-
-function computeReasonSimilarity(left = "", right = "") {
-  const normalizedLeft = normalizeCompareText(left);
-  const normalizedRight = normalizeCompareText(right);
-  if (!normalizedLeft || !normalizedRight) {
-    return 0;
-  }
-  if (
-    normalizedLeft === normalizedRight
-    || normalizedLeft.includes(normalizedRight)
-    || normalizedRight.includes(normalizedLeft)
-  ) {
-    return 1;
-  }
-
-  const leftBigrams = buildComparableBigrams(normalizedLeft);
-  const rightBigrams = buildComparableBigrams(normalizedRight);
-  if (!leftBigrams.size || !rightBigrams.size) {
-    return 0;
-  }
-
-  let intersection = 0;
-  for (const token of leftBigrams) {
-    if (rightBigrams.has(token)) {
-      intersection += 1;
-    }
-  }
-
-  return intersection / new Set([...leftBigrams, ...rightBigrams]).size;
-}
-
-function areSimilarEvidenceReasons(left = "", right = "") {
-  return computeReasonSimilarity(left, right) >= 0.72;
 }
 
 function emitBoundaryLog({
@@ -115,61 +67,6 @@ function normalizePlannerDocumentItems(items = []) {
 
 function buildPlannerDocumentLabel(item = {}) {
   return normalizeText(item?.title || item?.doc_id || "") || "未命名文件";
-}
-
-function buildPlannerDocumentGroupLabel(items = []) {
-  const labels = normalizeUserResponseList((Array.isArray(items) ? items : []).map(buildPlannerDocumentLabel));
-  if (labels.length <= 1) {
-    return labels[0] || "未命名文件";
-  }
-  if (labels.length === 2) {
-    return labels.join("、");
-  }
-  return `${labels.slice(0, 2).join("、")} 等 ${labels.length} 份文件`;
-}
-
-function buildPlannerDocumentReason(item = {}) {
-  return normalizeText(item?.reason || "") || "這份文件出現在這輪檢索結果中。";
-}
-
-function buildPlannerDocumentSourceGroups(items = []) {
-  const normalizedItems = normalizePlannerDocumentItems(items);
-  const groups = [];
-
-  for (const item of normalizedItems) {
-    const reason = buildPlannerDocumentReason(item);
-    const existingGroup = groups.find((group) => areSimilarEvidenceReasons(group.primaryReason, reason));
-    if (existingGroup) {
-      existingGroup.items.push(item);
-      existingGroup.reasons = normalizeUserResponseList([...existingGroup.reasons, reason]);
-      existingGroup.firstIndex = Math.min(existingGroup.firstIndex, item._index || 0);
-      continue;
-    }
-    groups.push({
-      items: [item],
-      reasons: [reason],
-      primaryReason: reason,
-      firstIndex: item._index || 0,
-    });
-  }
-
-  return groups
-    .sort((left, right) => left.firstIndex - right.firstIndex)
-    .slice(0, MAX_USER_FACING_SOURCES);
-}
-
-function buildPlannerDocumentSourceLine(groupOrItem = {}) {
-  const group = Array.isArray(groupOrItem?.items)
-    ? groupOrItem
-    : { items: [groupOrItem], reasons: [buildPlannerDocumentReason(groupOrItem)] };
-  const items = Array.isArray(group.items) ? group.items : [];
-  const label = buildPlannerDocumentGroupLabel(items);
-  const reasons = normalizeUserResponseList(group.reasons || []).slice(0, 2);
-  const reason = reasons.join("；") || "這份文件出現在這輪檢索結果中。";
-  if (items.length === 1 && items[0]?.url) {
-    return `${label}：${reason} 連結：${items[0].url}`;
-  }
-  return `${label}：${reason}`;
 }
 
 function buildPlannerEvidenceGapAnswer({
@@ -315,10 +212,12 @@ export function buildPlannerSuccessUserResponse(envelope = {}) {
     : {};
   const kind = normalizeText(execution.kind || "");
   const documentItems = normalizePlannerDocumentItems(execution.items);
+  const queryText = resolvePlannerQueryText(envelope, execution);
   const pendingItemLines = buildPendingItemRenderLines(execution.pending_items);
-  const evidenceSourceLines = normalizeUserResponseList(
-    buildPlannerDocumentSourceGroups(documentItems).map(buildPlannerDocumentSourceLine),
-  );
+  const evidenceSourceLines = normalizeUserFacingAnswerSources(documentItems, {
+    query: queryText,
+    maxSources: MAX_USER_FACING_SOURCES,
+  });
 
   if (kind === "runtime_info") {
     const summary = [
@@ -375,7 +274,7 @@ export function buildPlannerSuccessUserResponse(envelope = {}) {
       : normalizePlannerDocumentItems([{
           title,
           doc_id: docId,
-          reason: execution.match_reason || "這份文件直接命中這輪需求。",
+          reason: execution.match_reason || "",
         }]);
     return {
       ok: true,
@@ -391,12 +290,13 @@ export function buildPlannerSuccessUserResponse(envelope = {}) {
             .filter(Boolean)
             .join(" ")
         : buildPlannerEvidenceGapAnswer({ title, docId }),
-      sources: normalizeUserResponseList(
-        [
-          ...buildPlannerDocumentSourceGroups(effectiveSources).map(buildPlannerDocumentSourceLine),
-          ...pendingItemLines,
-        ],
-      ),
+      sources: normalizeUserResponseList([
+        ...normalizeUserFacingAnswerSources(effectiveSources, {
+          query: queryText,
+          maxSources: MAX_USER_FACING_SOURCES,
+        }),
+        ...pendingItemLines,
+      ]),
       limitations: buildPlannerNextSteps({
         envelope,
         execution,
@@ -502,7 +402,9 @@ export function normalizeUserResponse({
       const normalizedFailure = {
         ok: false,
         answer: normalizeText(failureReply.answer || "") || "這次沒有拿到可以直接交付的安全結果。",
-        sources: normalizeUserResponseList(failureReply.sources),
+        sources: normalizeUserFacingAnswerSources(failureReply.sources, {
+          maxSources: MAX_USER_FACING_SOURCES,
+        }),
         limitations: normalizeUserResponseList(failureReply.limitations),
       };
       emitBoundaryLog({
@@ -528,7 +430,9 @@ export function normalizeUserResponse({
     const normalizedPayload = {
       ok: objectPayload.ok !== false,
       answer: normalizeText(objectPayload.answer || ""),
-      sources: normalizeUserResponseList(objectPayload.sources),
+      sources: normalizeUserFacingAnswerSources(objectPayload.sources, {
+        maxSources: MAX_USER_FACING_SOURCES,
+      }),
       limitations: normalizeUserResponseList(objectPayload.limitations),
     };
     emitBoundaryLog({

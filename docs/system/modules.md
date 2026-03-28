@@ -955,10 +955,15 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - shared read-side source normalizer for index-backed retrieval
   - cleans retrieval snippets and bounds metadata to the canonical `{ id, snippet, metadata }` schema reused by `/search`, `answer-service.mjs`, and adjacent registered-agent retrieval prompts
 
+- `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`
+  - `/answer`-side source boundary mapper between canonical read sources and public evidence lines
+  - accepts canonical `{ id, snippet, metadata }` rows directly, can also lift planner doc items `{ title, doc_id, url, reason }` into that same canonical shape, and then renders bounded user-facing `sources[]` lines from the canonical rows only
+  - enforces fail-closed evidence rules at the boundary: rows without a canonicalizable `id + snippet` are dropped, snippet text still goes through `/Users/seanhan/Documents/Playground/src/read-source-schema.mjs` cleanup, and near-duplicate snippets can be merged without bypassing canonical source normalization
+
 - `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
   - final user-facing reply boundary for planner/agent answers
   - keeps the outward shape stable as `{ ok, answer, sources, limitations }` and the visible text fixed to `結論 / 重點 / 下一步`
-  - for planner doc/detail hits, `sources[]` now deduplicate repeated evidence rows and can merge near-duplicate retrieval reasons into one bounded evidence point while preserving ranked result order; `limitations[]` now prefer query-aware next-step hints (lookup / debug / decision) before generic fallback guidance, but still only use current retrieved evidence and never add unsupported facts
+  - for planner doc/detail hits, `sources[]` now flow through `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs` as the single source outlet; the normalizer no longer invents generic evidence text when snippet-level evidence is missing, while `limitations[]` still prefer query-aware next-step hints (lookup / debug / decision) before generic fallback guidance
 
 - `/Users/seanhan/Documents/Playground/src/doc-comment-rewrite.mjs`
   - comment-to-doc patch-plan workflow

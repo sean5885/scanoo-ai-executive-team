@@ -192,6 +192,48 @@ test("answer route normalizes the exact leaking runtime query into natural-langu
   assert.equal("execution_result" in payload, false);
 });
 
+test("answer route keeps sources on the shared canonical mapper and strips snippet noise", async (t) => {
+  const server = await startTestServer(t, {
+    requestTimeoutMs: 180000,
+    serviceOverrides: {
+      executePlannedUserInput: async () => ({
+        ok: true,
+        action: "search_company_brain_docs",
+        execution_result: {
+          ok: true,
+          kind: "search",
+          match_reason: "delivery owner",
+          items: [
+            {
+              title: "Delivery SOP",
+              doc_id: "doc_delivery_sop",
+              url: "https://larksuite.com/docx/doc_delivery_sop",
+              reason: "Back to [README.md](/Users/seanhan/Documents/Playground/README.md)\n\n- delivery owner checklist stays explicit before completion.",
+            },
+            {
+              title: "No Snippet Source",
+              doc_id: "doc_delivery_empty",
+              url: "https://larksuite.com/docx/doc_delivery_empty",
+              reason: "",
+            },
+          ],
+        },
+      }),
+    },
+  });
+  const { port } = server.address();
+
+  const response = await fetch(`http://127.0.0.1:${port}/answer?q=${encodeURIComponent("查 delivery owner")}`);
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.sources.length, 1);
+  assert.match(payload.sources[0], /Delivery SOP：delivery owner checklist stays explicit before completion\./);
+  assert.match(payload.sources[0], /https:\/\/larksuite\.com\/docx\/doc_delivery_sop/);
+  assert.doesNotMatch(payload.sources[0], /\/Users\/|Back to \[?README|\[object Object\]/);
+});
+
 test("answer route converts planner errors into natural-language fallback without internal JSON exposure", async (t) => {
   const server = startHttpServer({
     listen: false,
