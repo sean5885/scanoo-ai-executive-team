@@ -138,6 +138,82 @@ function buildAdmissionFailure({ action = "", admission = null } = {}) {
   };
 }
 
+function cloneJournalValue(value) {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof globalThis.structuredClone === "function") {
+    try {
+      return globalThis.structuredClone(value);
+    } catch {
+      // fall through
+    }
+  }
+
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return undefined;
+  }
+}
+
+function maybeAttachJournalValue(target = null, key = "", value = undefined) {
+  if (!target || typeof target !== "object" || Array.isArray(target)) {
+    return;
+  }
+  if (value === null) {
+    return;
+  }
+
+  const cloned = cloneJournalValue(value);
+  if (cloned === undefined) {
+    return;
+  }
+  if (Array.isArray(cloned) && cloned.length === 0) {
+    return;
+  }
+  if (cloned && typeof cloned === "object" && !Array.isArray(cloned) && Object.keys(cloned).length === 0) {
+    return;
+  }
+
+  target[key] = cloned;
+}
+
+function buildMutationMeta({
+  mode = "passthrough",
+  start = 0,
+  journal = null,
+  writePolicy = null,
+  authority = null,
+  audit = null,
+  preVerification = null,
+  postVerification = null,
+  includePolicyFields = false,
+} = {}) {
+  const meta = {
+    execution_mode: mode,
+    duration_ms: Date.now() - start,
+    journal: journal && typeof journal === "object" ? journal : {},
+  };
+
+  if (includePolicyFields) {
+    meta.write_policy = writePolicy;
+    meta.authority = authority;
+  }
+
+  maybeAttachJournalValue(meta.journal, "audit", audit);
+
+  if (preVerification || postVerification) {
+    meta.verification = {
+      ...(preVerification ? { pre: preVerification } : {}),
+      ...(postVerification ? { post: postVerification } : {}),
+    };
+  }
+
+  return meta;
+}
+
 export async function runMutation({ action, payload, context, execute }) {
   if (!execute) {
     void payload;
@@ -269,6 +345,10 @@ export async function runMutation({ action, payload, context, execute }) {
     started_at: start,
   };
   const rollback = context?.rollback;
+  const audit =
+    context?.audit && typeof context.audit === "object" && !Array.isArray(context.audit)
+      ? context.audit
+      : null;
 
   if (canonicalRequest) {
     logMutationAdmission(resolvedLogger, "mutation_admission_started", {
@@ -291,11 +371,12 @@ export async function runMutation({ action, payload, context, execute }) {
           action,
           admission,
         }),
-        meta: {
-          execution_mode: mode,
-          duration_ms: Date.now() - start,
+        meta: buildMutationMeta({
+          mode,
+          start,
           journal,
-        },
+          audit,
+        }),
       });
     }
   }
@@ -312,14 +393,13 @@ export async function runMutation({ action, payload, context, execute }) {
         action,
         verification: preVerification,
       }),
-      meta: {
-        execution_mode: mode,
-        duration_ms: Date.now() - start,
+      meta: buildMutationMeta({
+        mode,
+        start,
         journal,
-        verification: {
-          pre: preVerification,
-        },
-      },
+        audit,
+        preVerification,
+      }),
     });
   }
 
@@ -347,7 +427,7 @@ export async function runMutation({ action, payload, context, execute }) {
     journal.error = err?.message || "execution_failed";
     if (typeof rollback === "function") {
       try {
-        await rollback({
+        const rollbackResult = await rollback({
           action,
           payload,
           context,
@@ -356,11 +436,13 @@ export async function runMutation({ action, payload, context, execute }) {
         journal.rollback = {
           status: "success",
         };
+        maybeAttachJournalValue(journal.rollback, "details", rollbackResult);
       } catch (rollbackErr) {
         journal.rollback = {
           status: "failed",
           error: rollbackErr?.message || "rollback_failed",
         };
+        maybeAttachJournalValue(journal.rollback, "details", rollbackErr?.details);
       }
     } else {
       journal.rollback = {
@@ -372,18 +454,13 @@ export async function runMutation({ action, payload, context, execute }) {
       ok: false,
       action,
       error: "execution_failed",
-      meta: {
-        execution_mode: mode,
-        duration_ms: Date.now() - start,
+      meta: buildMutationMeta({
+        mode,
+        start,
         journal,
-        ...(preVerification
-          ? {
-              verification: {
-                pre: preVerification,
-              },
-            }
-          : {}),
-      },
+        audit,
+        preVerification,
+      }),
     });
   }
 
@@ -402,15 +479,14 @@ export async function runMutation({ action, payload, context, execute }) {
         action,
         verification: postVerification,
       }),
-      meta: {
-        execution_mode: mode,
-        duration_ms: Date.now() - start,
+      meta: buildMutationMeta({
+        mode,
+        start,
         journal,
-        verification: {
-          ...(preVerification ? { pre: preVerification } : {}),
-          post: postVerification,
-        },
-      },
+        audit,
+        preVerification,
+        postVerification,
+      }),
     });
   }
 
@@ -418,21 +494,17 @@ export async function runMutation({ action, payload, context, execute }) {
     ok: true,
     action,
     result,
-    meta: {
-      execution_mode: mode,
-      duration_ms: Date.now() - start,
+    meta: buildMutationMeta({
+      mode,
+      start,
       journal,
-      write_policy: writePolicy,
+      writePolicy,
       authority: currentAuthority,
-      ...((preVerification || postVerification)
-        ? {
-            verification: {
-              ...(preVerification ? { pre: preVerification } : {}),
-              ...(postVerification ? { post: postVerification } : {}),
-            },
-          }
-        : {}),
-    },
+      audit,
+      preVerification,
+      postVerification,
+      includePolicyFields: true,
+    }),
   };
 
   if (idempotencyKey) {

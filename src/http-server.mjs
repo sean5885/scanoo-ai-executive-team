@@ -101,7 +101,11 @@ import {
   getCompanyBrainApprovalState,
   reviewCompanyBrainDocAction,
 } from "./company-brain-review.mjs";
-import { applyRewrittenDocument, rewriteDocumentFromComments } from "./doc-comment-rewrite.mjs";
+import {
+  applyRewrittenDocument,
+  rewriteDocumentFromComments,
+  rollbackRewrittenDocument,
+} from "./doc-comment-rewrite.mjs";
 import {
   buildPlannedUserInputEnvelope,
   executePlannedUserInput,
@@ -5305,6 +5309,11 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
     },
     originalRequest: body,
   });
+  const rewriteRollbackState = {};
+  const mutationAudit = {
+    boundary: "document_comment_rewrite_apply",
+    nested_mutations: [],
+  };
   const mutationExecution = await runCanonicalLarkMutation({
     action: "document_comment_rewrite_apply",
     pathname: "/api/doc/rewrite-from-comments",
@@ -5313,6 +5322,11 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
     logger,
     traceId: res.__trace_id || null,
     canonicalRequest,
+    audit: mutationAudit,
+    rollback: async () => rollbackRewrittenDocument(context.token, documentId, {
+      rollbackState: rewriteRollbackState,
+      mutationAudit,
+    }),
     payload: {
       document_id: documentId,
       confirmation_id: confirmationId,
@@ -5394,6 +5408,8 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
           {
             patchPlan: confirmation.patch_plan || [],
             resolveCommentIds: confirmation.resolve_comments ? confirmation.comment_ids : [],
+            rollbackState: rewriteRollbackState,
+            mutationAudit,
           },
         );
       },

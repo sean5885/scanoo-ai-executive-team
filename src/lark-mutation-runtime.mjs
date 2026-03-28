@@ -105,6 +105,8 @@ export async function runCanonicalLarkMutation({
   budget = null,
   verifierProfile = "",
   verifierInput = null,
+  rollback = null,
+  audit = null,
   performWrite = null,
   onSuccess = null,
   apiName = "",
@@ -154,6 +156,8 @@ export async function runCanonicalLarkMutation({
       ...(verifierInput && typeof verifierInput === "object" && !Array.isArray(verifierInput)
         ? { verifier_input: { ...verifierInput } }
         : {}),
+      ...(typeof rollback === "function" ? { rollback } : {}),
+      ...(audit && typeof audit === "object" && !Array.isArray(audit) ? { audit } : {}),
     },
     execute: async () => executeLarkWrite({
       apiName: cleanText(apiName) || cleanText(action) || "external_mutation",

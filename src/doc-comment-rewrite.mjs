@@ -19,6 +19,7 @@ import {
   trimTextForBudget,
 } from "./agent-token-governance.mjs";
 import { getWorkflowCheckpoint, updateWorkflowCheckpoint } from "./agent-workflow-state.mjs";
+import { withLarkWriteExecutionContext } from "./execute-lark-write.mjs";
 import { resolveDocumentComment, updateDocument } from "./lark-content.mjs";
 import {
   listDocumentCommentsFromRuntime,
@@ -31,6 +32,30 @@ function normalizeText(value) {
 
 function buildReadRuntimeAccountId(accessToken) {
   return `token:${String(accessToken || "").trim() || "unknown"}`;
+}
+
+function ensureMutationAudit(value = null) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  value.nested_mutations = Array.isArray(value.nested_mutations) ? value.nested_mutations : [];
+  return value;
+}
+
+function recordNestedMutation(audit = null, {
+  phase = "execute",
+  action = "",
+  targetId = "",
+} = {}) {
+  const resolvedAudit = ensureMutationAudit(audit);
+  if (!resolvedAudit) {
+    return;
+  }
+  resolvedAudit.nested_mutations.push({
+    phase,
+    action: String(action || "").trim() || null,
+    target_id: String(targetId || "").trim() || null,
+  });
 }
 
 async function collectDocumentComments(accessToken, documentId, { includeSolved = false } = {}) {
@@ -464,9 +489,17 @@ export async function applyRewrittenDocument(
   accessToken,
   documentId,
   rewrittenContent,
-  { resolveCommentIds = [], patchPlan = [] } = {},
+  {
+    resolveCommentIds = [],
+    patchPlan = [],
+    rollbackState = null,
+    mutationAudit = null,
+    readDocument = readDocumentFromRuntime,
+    updateDocumentFn = updateDocument,
+    resolveCommentFn = resolveDocumentComment,
+  } = {},
 ) {
-  const currentDocument = await readDocumentFromRuntime({
+  const currentDocument = await readDocument({
     accountId: buildReadRuntimeAccountId(accessToken),
     accessToken,
     documentId,
@@ -475,12 +508,41 @@ export async function applyRewrittenDocument(
   const nextContent = patchPlan.length
     ? applyParagraphPatchPlan(currentDocument.content, patchPlan)
     : rewrittenContent;
-  const updateResult = await updateDocument(accessToken, documentId, nextContent, "replace");
-  const resolvedComments = await Promise.all(
-    (Array.isArray(resolveCommentIds) ? resolveCommentIds : [])
-      .filter(Boolean)
-      .map((commentId) => resolveDocumentComment(accessToken, documentId, commentId, true, "docx")),
-  );
+  const resolvedRollbackState =
+    rollbackState && typeof rollbackState === "object" && !Array.isArray(rollbackState)
+      ? rollbackState
+      : null;
+  if (resolvedRollbackState) {
+    resolvedRollbackState.document_id = documentId;
+    resolvedRollbackState.original_content = currentDocument.content || "";
+    resolvedRollbackState.resolved_comment_ids = Array.isArray(resolvedRollbackState.resolved_comment_ids)
+      ? resolvedRollbackState.resolved_comment_ids
+      : [];
+    resolvedRollbackState.document_updated = false;
+  }
+  const updateResult = await updateDocumentFn(accessToken, documentId, nextContent, "replace");
+  recordNestedMutation(mutationAudit, {
+    phase: "execute",
+    action: "update_document",
+    targetId: documentId,
+  });
+  if (resolvedRollbackState) {
+    resolvedRollbackState.document_updated = true;
+  }
+
+  const resolvedComments = [];
+  for (const commentId of (Array.isArray(resolveCommentIds) ? resolveCommentIds : []).filter(Boolean)) {
+    const resolvedComment = await resolveCommentFn(accessToken, documentId, commentId, true, "docx");
+    resolvedComments.push(resolvedComment);
+    recordNestedMutation(mutationAudit, {
+      phase: "execute",
+      action: "resolve_comment",
+      targetId: resolvedComment?.comment_id || commentId,
+    });
+    if (resolvedRollbackState) {
+      resolvedRollbackState.resolved_comment_ids.push(resolvedComment?.comment_id || commentId);
+    }
+  }
 
   const structuredResult = buildDocRewriteStructuredResult({
     originalContent: currentDocument.content,
@@ -500,4 +562,79 @@ export async function applyRewrittenDocument(
     structured_result: structuredResult,
     workflow_state: "applying",
   };
+}
+
+export async function rollbackRewrittenDocument(
+  accessToken,
+  documentId,
+  {
+    rollbackState = null,
+    mutationAudit = null,
+    updateDocumentFn = updateDocument,
+    resolveCommentFn = resolveDocumentComment,
+  } = {},
+) {
+  const resolvedRollbackState =
+    rollbackState && typeof rollbackState === "object" && !Array.isArray(rollbackState)
+      ? rollbackState
+      : {};
+  const unresolvedCommentIds = [];
+  const details = {
+    document_restored: false,
+    unresolved_comment_ids: unresolvedCommentIds,
+  };
+  const errors = [];
+
+  await withLarkWriteExecutionContext({
+    api_name: "document_comment_rewrite_apply_rollback",
+    action: "document_comment_rewrite_apply_rollback",
+    pathname: "internal:doc_comment_rewrite/rollback",
+    account_id: buildReadRuntimeAccountId(accessToken),
+  }, async () => {
+    if (resolvedRollbackState.document_updated === true) {
+      try {
+        await updateDocumentFn(
+          accessToken,
+          documentId,
+          resolvedRollbackState.original_content || "",
+          "replace",
+        );
+        details.document_restored = true;
+        recordNestedMutation(mutationAudit, {
+          phase: "rollback",
+          action: "restore_document",
+          targetId: documentId,
+        });
+      } catch (error) {
+        errors.push(`restore_document:${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    for (const commentId of [...new Set(
+      (Array.isArray(resolvedRollbackState.resolved_comment_ids)
+        ? resolvedRollbackState.resolved_comment_ids
+        : []
+      ).filter(Boolean),
+    )]) {
+      try {
+        await resolveCommentFn(accessToken, documentId, commentId, false, "docx");
+        unresolvedCommentIds.push(commentId);
+        recordNestedMutation(mutationAudit, {
+          phase: "rollback",
+          action: "reopen_comment",
+          targetId: commentId,
+        });
+      } catch (error) {
+        errors.push(`reopen_comment:${commentId}:${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  });
+
+  if (errors.length) {
+    const rollbackError = new Error(errors.join("; "));
+    rollbackError.details = details;
+    throw rollbackError;
+  }
+
+  return details;
 }

@@ -592,6 +592,67 @@ test("runMutation keeps execution failure shape when rollback hook also fails", 
   }
 });
 
+test("runMutation records nested mutation audit and rollback details", async () => {
+  const audit = {
+    boundary: "meeting_confirm_write",
+    nested_mutations: [],
+  };
+
+  const result = await runMutation({
+    action: "meeting_confirm_write",
+    payload: {
+      confirmation_id: "confirm-1",
+    },
+    context: {
+      audit,
+      rollback() {
+        audit.nested_mutations.push({
+          phase: "rollback",
+          action: "delete_document",
+          target_id: "doc-1",
+        });
+        return {
+          cleanup: "deleted_created_document",
+          target_id: "doc-1",
+        };
+      },
+    },
+    async execute() {
+      audit.nested_mutations.push({
+        phase: "execute",
+        action: "create_document",
+        target_id: "doc-1",
+      });
+      throw new Error("boom");
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "execution_failed");
+  assert.deepEqual(result.meta?.journal?.audit, {
+    boundary: "meeting_confirm_write",
+    nested_mutations: [
+      {
+        phase: "execute",
+        action: "create_document",
+        target_id: "doc-1",
+      },
+      {
+        phase: "rollback",
+        action: "delete_document",
+        target_id: "doc-1",
+      },
+    ],
+  });
+  assert.deepEqual(result.meta?.journal?.rollback, {
+    status: "success",
+    details: {
+      cleanup: "deleted_created_document",
+      target_id: "doc-1",
+    },
+  });
+});
+
 test("runMutation denies execute when canonical mutation admission blocks the write", async () => {
   const canonicalRequest = buildMeetingConfirmWriteCanonicalRequest({
     pathname: "/api/meeting/confirm",

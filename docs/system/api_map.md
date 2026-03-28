@@ -329,7 +329,7 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Purpose: preview comment-driven patch plan, then confirm before apply
   - Input note: target doc can be supplied as `document_id` / `doc_token`, a doc URL field, or a nested `target_document.url`
   - Read note: preview-time source reads and apply-time stale-confirmation verification reads now enter `read-runtime.mjs` with `primary_authority=live`; mirror and live are not mixed inside the same rewrite flow
-  - Side effect note: preview path also returns a rewrite summary card; apply path depends on a temporary confirmation artifact, enters the shared `executeLarkWrite(...)` path, carries a patch plan, and may resolve comments after write; direct internal helper apply is disabled so this route is the only supported writeback entry
+  - Side effect note: preview path also returns a rewrite summary card; apply path depends on a temporary confirmation artifact, enters the shared `executeLarkWrite(...)` path, carries a patch plan, may resolve comments after write, and now runs a compensating rollback that restores the previous doc body plus reopens already-resolved comments when a later nested step fails; direct internal helper apply is disabled so this route is the only supported writeback entry
   - Budget note: confirmed apply now also checks the local Lark write-budget / duplicate guard before replacing the doc
 
 - `GET /api/messages`

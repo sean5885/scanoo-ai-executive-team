@@ -22,10 +22,11 @@ test.after(() => {
   testDb.close();
 });
 
-function createCoordinatorHarness() {
+function createCoordinatorHarness(overrides = {}) {
   const confirmations = new Map();
   const documents = new Map();
   const createdDocuments = [];
+  const deletedDocuments = [];
   const sentMessages = [];
   const mappings = new Map();
   const tracker = new Map();
@@ -95,12 +96,19 @@ function createCoordinatorHarness() {
       mappings.set(`${accountId}:${projectKey}:${meetingType}`, value);
       return value;
     },
+    removeMeetingDocumentMapping: (accountId, projectKey, meetingType) =>
+      mappings.delete(`${accountId}:${projectKey}:${meetingType}`),
     findSyncedMeetingDocument: () => null,
     createDocument: async (_accessToken, title) => {
       const documentId = `doc-${createdDocuments.length + 1}`;
       createdDocuments.push({ documentId, title });
       documents.set(documentId, "");
       return { document_id: documentId, title };
+    },
+    deleteDocument: async (_accessToken, documentId) => {
+      deletedDocuments.push({ documentId });
+      documents.delete(documentId);
+      return { document_id: documentId, deleted: true };
     },
     getDocument: async (_accessToken, documentId) => ({
       document_id: documentId,
@@ -160,12 +168,14 @@ function createCoordinatorHarness() {
       }
       tracker.set(key, items);
     },
+    ...overrides,
   });
 
   return {
     coordinator,
     documents,
     createdDocuments,
+    deletedDocuments,
     sentMessages,
     confirmations,
     mappings,
@@ -456,6 +466,40 @@ test("meeting confirmation creates new general document when no existing documen
 
   assert.equal(harness.createdDocuments.length, 1);
   assert.ok(harness.documents.get("doc-1").startsWith("[20260315]"));
+});
+
+test("meeting confirmation deletes newly created document when prepend write fails after create", async () => {
+  const harness = createCoordinatorHarness({
+    updateDocument: async () => {
+      throw new Error("prepend_failed");
+    },
+  });
+
+  const preview = await harness.coordinator.processMeetingPreview({
+    accountId: "acct-1",
+    accessToken: "token",
+    transcriptText: `
+      客戶會議
+      參與人員：Sean
+      主要內容：確認交付範圍
+      關鍵結論：四月啟動
+    `,
+    chatId: "chat-rollback",
+    metadata: { date: "20260315" },
+  });
+
+  const failed = await harness.coordinator.confirmMeetingWrite({
+    accountId: "acct-1",
+    accessToken: "token",
+    confirmationId: preview.confirmation.confirmation_id,
+  });
+
+  assert.equal(failed?.ok, false);
+  assert.equal(failed?.error, "execution_failed");
+  assert.equal(harness.createdDocuments.length, 1);
+  assert.equal(harness.deletedDocuments.length, 1);
+  assert.equal(harness.deletedDocuments[0].documentId, "doc-1");
+  assert.equal(harness.documents.has("doc-1"), false);
 });
 
 test("meeting confirmation deny path logs write observability fields", async () => {

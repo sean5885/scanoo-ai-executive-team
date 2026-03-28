@@ -22,9 +22,11 @@ import {
   peekMeetingWriteConfirmation,
 } from "./doc-update-confirmations.mjs";
 import { buildCompactSystemPrompt, governPromptSections, trimTextForBudget } from "./agent-token-governance.mjs";
+import { withLarkWriteExecutionContext } from "./execute-lark-write.mjs";
 import { callOpenClawTextGeneration } from "./openclaw-text-service.mjs";
 import {
-  createManagedDocument,
+  createDocument,
+  deleteDriveItem,
   ensureDocumentManagerPermission,
   updateDocument,
 } from "./lark-content.mjs";
@@ -72,6 +74,30 @@ const MEETING_START_SIGNALS = [
   "開始記錄會議",
   "开始记录会议",
 ];
+
+function ensureNestedMutationAudit(value = null) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  value.nested_mutations = Array.isArray(value.nested_mutations) ? value.nested_mutations : [];
+  return value;
+}
+
+function recordNestedMutation(audit = null, {
+  phase = "execute",
+  action = "",
+  targetId = "",
+} = {}) {
+  const resolvedAudit = ensureNestedMutationAudit(audit);
+  if (!resolvedAudit) {
+    return;
+  }
+  resolvedAudit.nested_mutations.push({
+    phase,
+    action: normalizeText(action) || null,
+    target_id: normalizeText(targetId) || null,
+  });
+}
 const OFFLINE_MEETING_CONTEXT_SIGNALS = [
   "線下會議",
   "线下会议",
@@ -1082,6 +1108,25 @@ function saveMeetingDocumentMapping({ accountId, projectKey, projectName, meetin
   return getMappedMeetingDocument(accountId, projectKey, meetingType);
 }
 
+function removeMeetingDocumentMapping(accountId, projectKey, meetingType, documentId = "") {
+  if (!accountId || !projectKey || !meetingType) {
+    return 0;
+  }
+
+  const normalizedDocumentId = normalizeText(documentId);
+  const result = normalizedDocumentId
+    ? db.prepare(`
+      DELETE FROM meeting_documents
+      WHERE account_id = ? AND project_key = ? AND meeting_type = ? AND document_id = ?
+    `).run(accountId, projectKey, meetingType, normalizedDocumentId)
+    : db.prepare(`
+      DELETE FROM meeting_documents
+      WHERE account_id = ? AND project_key = ? AND meeting_type = ?
+    `).run(accountId, projectKey, meetingType);
+
+  return Number(result?.changes || 0);
+}
+
 function findSyncedMeetingDocument(accountId, title) {
   return db
     .prepare(`
@@ -1218,7 +1263,8 @@ function defaultCoordinatorDeps() {
       documentId,
       pathname: "internal:meeting/read_document",
     }),
-    createDocument: createManagedDocument,
+    createDocument,
+    deleteDocument: async (accessToken, documentId) => deleteDriveItem(accessToken, documentId, "docx", "user"),
     updateDocument,
     buildMeetingSummary,
     createConfirmation: createMeetingWriteConfirmation,
@@ -1227,6 +1273,7 @@ function defaultCoordinatorDeps() {
     ensureDocumentManagerPermission,
     getMappedMeetingDocument,
     saveMeetingDocumentMapping,
+    removeMeetingDocumentMapping,
     findSyncedMeetingDocument,
     listWeeklyTrackerItems,
     upsertWeeklyTrackerItem,
@@ -1313,6 +1360,8 @@ export function createMeetingCoordinator(overrides = {}) {
     projectName,
     meetingType,
     chatId,
+    rollbackState = null,
+    mutationAudit = null,
   }) {
     const existing = await resolveMeetingDocumentTarget({ accountId, projectKey, projectName, meetingType, chatId });
     if (existing.document_id) {
@@ -1329,12 +1378,28 @@ export function createMeetingCoordinator(overrides = {}) {
       accessToken,
       existing.title,
       meetingDocFolderToken || undefined,
+      "user",
       {
-        tokenType: "user",
-        managerOpenId: accountOpenId,
         source: "meeting_confirm_write",
       },
     );
+    recordNestedMutation(mutationAudit, {
+      phase: "execute",
+      action: "create_document",
+      targetId: created.document_id,
+    });
+    if (rollbackState && typeof rollbackState === "object" && !Array.isArray(rollbackState)) {
+      rollbackState.created_document_id = created.document_id;
+      rollbackState.created_document_title = created.title || existing.title;
+      rollbackState.project_key = projectKey;
+      rollbackState.meeting_type = meetingType;
+    }
+    if (accountOpenId) {
+      await deps.ensureDocumentManagerPermission(accessToken, created.document_id, {
+        tokenType: "user",
+        managerOpenId: accountOpenId,
+      });
+    }
     deps.saveMeetingDocumentMapping({
       accountId,
       projectKey,
@@ -1352,7 +1417,14 @@ export function createMeetingCoordinator(overrides = {}) {
     };
   }
 
-  async function prependMeetingEntry({ accountId, accessToken, documentId, content }) {
+  async function prependMeetingEntry({
+    accountId,
+    accessToken,
+    documentId,
+    content,
+    rollbackState = null,
+    mutationAudit = null,
+  }) {
     const current = await deps.readDocument({ accountId, accessToken, documentId });
     const normalizedCurrent = normalizeText(current.content || "");
     const normalizedIncoming = normalizeText(content);
@@ -1367,12 +1439,97 @@ export function createMeetingCoordinator(overrides = {}) {
     const nextContent = normalizedCurrent
       ? `${normalizedIncoming}\n\n${normalizedCurrent}`
       : normalizedIncoming;
+    if (rollbackState && typeof rollbackState === "object" && !Array.isArray(rollbackState)) {
+      rollbackState.target_document_id = documentId;
+      rollbackState.previous_content = current.content || "";
+      rollbackState.document_updated = false;
+    }
 
     const result = await deps.updateDocument(accessToken, documentId, nextContent, "replace");
+    recordNestedMutation(mutationAudit, {
+      phase: "execute",
+      action: "update_document",
+      targetId: documentId,
+    });
+    if (rollbackState && typeof rollbackState === "object" && !Array.isArray(rollbackState)) {
+      rollbackState.document_updated = true;
+    }
     return {
       ...result,
       deduplicated: false,
     };
+  }
+
+  async function rollbackMeetingWrite({
+    accessToken,
+    accountId,
+    rollbackState = null,
+    mutationAudit = null,
+  } = {}) {
+    const state =
+      rollbackState && typeof rollbackState === "object" && !Array.isArray(rollbackState)
+        ? rollbackState
+        : {};
+    const details = {
+      deleted_document_id: null,
+      restored_document_id: null,
+    };
+    const errors = [];
+
+    await withLarkWriteExecutionContext({
+      api_name: "meeting_confirm_write_rollback",
+      action: "meeting_confirm_write_rollback",
+      pathname: "internal:meeting/confirm/rollback",
+      account_id: accountId || null,
+    }, async () => {
+      if (normalizeText(state.created_document_id)) {
+        try {
+          await deps.deleteDocument(accessToken, state.created_document_id);
+          details.deleted_document_id = state.created_document_id;
+          recordNestedMutation(mutationAudit, {
+            phase: "rollback",
+            action: "delete_document",
+            targetId: state.created_document_id,
+          });
+          deps.removeMeetingDocumentMapping(
+            accountId,
+            state.project_key,
+            state.meeting_type,
+            state.created_document_id,
+          );
+        } catch (error) {
+          errors.push(`delete_document:${error instanceof Error ? error.message : String(error)}`);
+        }
+        return;
+      }
+
+      if (state.document_updated === true && normalizeText(state.target_document_id)) {
+        try {
+          await deps.updateDocument(
+            accessToken,
+            state.target_document_id,
+            state.previous_content || "",
+            "replace",
+          );
+          details.restored_document_id = state.target_document_id;
+          recordNestedMutation(mutationAudit, {
+            phase: "rollback",
+            action: "restore_document",
+            targetId: state.target_document_id,
+          });
+        } catch (error) {
+          errors.push(`restore_document:${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    });
+
+    if (errors.length) {
+      const rollbackError = new Error(errors.join("; "));
+      rollbackError.details = details;
+      throw rollbackError;
+    }
+
+    return details;
   }
 
   async function updateWeeklyTodoTracker(summary, context) {
@@ -1611,6 +1768,14 @@ export function createMeetingCoordinator(overrides = {}) {
         reviewRequiredActive: false,
       },
     });
+    const mutationAudit = {
+      boundary: "meeting_confirm_write",
+      nested_mutations: [],
+    };
+    const rollbackState = {
+      project_key: pendingConfirmation.project_key || null,
+      meeting_type: pendingConfirmation.meeting_type || null,
+    };
     const mutationExecution = await runCanonicalLarkMutation({
       action: "meeting_confirm_write",
       pathname,
@@ -1619,6 +1784,13 @@ export function createMeetingCoordinator(overrides = {}) {
       logger,
       traceId,
       canonicalRequest: resolvedCanonicalRequest,
+      audit: mutationAudit,
+      rollback: async () => rollbackMeetingWrite({
+        accessToken,
+        accountId,
+        rollbackState,
+        mutationAudit,
+      }),
       payload: {
         confirmation_id: confirmationId,
         project_key: pendingConfirmation.project_key || null,
@@ -1668,6 +1840,8 @@ export function createMeetingCoordinator(overrides = {}) {
                 projectName: confirmation.project_name,
                 meetingType: confirmation.meeting_type,
                 chatId: confirmation.chat_id,
+                rollbackState,
+                mutationAudit,
               });
 
           const writeResult = await prependMeetingEntry({
@@ -1675,6 +1849,8 @@ export function createMeetingCoordinator(overrides = {}) {
             accessToken,
             documentId: targetDoc.document_id,
             content: confirmation.doc_entry_content,
+            rollbackState,
+            mutationAudit,
           });
 
           deps.saveMeetingDocumentMapping({
