@@ -1,29 +1,60 @@
-# Mutation Governance Phase1 - Step1 Mapping Baseline
+# Mutation Path Mapping Phase1
 
 Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
-## Purpose
+## Status
 
-This document is the Step 1 baseline for mutation-path mapping.
+This file is now a `historical baseline`, not the exhaustive current mutation inventory.
 
-It defines the current grounded execute-path hook points for the Phase 1 mutation routes.
+It remains useful because it records the original Phase 1 hook-point mapping for the highest-risk routes, but the current runtime has already moved to a broader registry-backed write family.
 
-Step 3 must align to this baseline and should not change these hook points casually.
+For current write truth, read:
 
-## Route Mapping
+- [write_policy_unification.md](/Users/seanhan/Documents/Playground/docs/system/write_policy_unification.md)
+- [truth_matrix.md](/Users/seanhan/Documents/Playground/docs/system/truth_matrix.md)
 
-| Route | A. entrypoint | B. route-local prerequisite | C. current write_guard | D. evidence / trace | E. execute callsite | F. unified admission hook point |
-| --- | --- | --- | --- | --- | --- | --- |
-| `create_doc` | `/api/doc/create` -> [`handleDocumentCreate(...)`](/Users/seanhan/Documents/Playground/src/http-server.mjs)<br>`/agent/docs/create` -> [`handleAgentCreateDoc(...)`](/Users/seanhan/Documents/Playground/src/http-server.mjs) -> `handleDocumentCreate(...)` | 1. title is required<br>2. `planDocumentCreateGuard(...)` must pass confirmation + sandbox routing rules<br>3. agent route still requires `validateDocumentCreateEntryGovernance(...)` | Route now builds `buildCreateDocCanonicalRequest(...)` and passes it into `runMutation(...)`; route-local allow/deny no longer decides the final external write | Admission logs now originate in `mutation-runtime.mjs`; create-path evidence still comes from lifecycle/index helpers, and post-create failures now also emit nested `journal.audit` / `journal.rollback.details` for delete-and-cleanup rollback | Main write remains `getHttpService("createDocument", createDocument)(...)`; post-create permission repair and optional initial content write now sit inside the same rollback boundary | Hook point is after route-local guard success and before the existing create-path execution block in `handleDocumentCreate(...)` |
-| `update_doc` | `/api/doc/update` -> [`handleDocumentUpdate(...)`](/Users/seanhan/Documents/Playground/src/http-server.mjs) | 1. document id + content are required<br>2. replace/targeted apply still requires preview confirmation and stale-revision checks<br>3. explicit write target is still required before direct apply | Route now builds `buildUpdateDocCanonicalRequest(...)` and passes it into `runMutation(...)`; replace and non-replace flows share the same runtime admission hop while keeping the legacy preview/apply split | Admission logs now originate in `mutation-runtime.mjs`; downstream evidence still comes from document update success plus company-brain intake staging | Existing executor remains `getHttpService("updateDocument", updateDocument)(...)` | Hook point is after explicit-target / confirmation prerequisites and before the final doc update call |
-| `meeting_confirm_write` | `/api/meeting/confirm` -> [`handleMeetingConfirm(...)`](/Users/seanhan/Documents/Playground/src/http-server.mjs)<br>`/meeting/confirm` -> [`handleMeetingConfirmPage(...)`](/Users/seanhan/Documents/Playground/src/http-server.mjs)<br>Shared executor remains `meetingCoordinator.confirmMeetingWrite(...)` in [`src/meeting-agent.mjs`](/Users/seanhan/Documents/Playground/src/meeting-agent.mjs) | 1. confirmation id is required at the route surface<br>2. route peeks pending confirmation to build canonical input when the confirmation still exists<br>3. coordinator still owns consume/writeback and fail-soft handling | Route layer now only builds `buildMeetingConfirmWriteCanonicalRequest(...)`; `meetingCoordinator.confirmMeetingWrite(...)` passes that request into `runMutation(...)`, so the final allow/deny lives in mutation-runtime instead of route-local or coordinator-local write guard code | Admission logs now originate in `mutation-runtime.mjs`; downstream meeting evidence still comes from `buildMeetingVerification(...)`, doc update / dedupe behavior, weekly todo writeback in `meeting-agent.mjs`, and runtime `journal.audit` / `journal.rollback.details` when nested cleanup is needed | Existing executor is unchanged: `meetingCoordinator.confirmMeetingWrite(...)` still resolves/create target doc and prepends the meeting entry, but now carries compensating rollback that deletes a newly created doc or restores the previous doc body on later failure | Hook point is in the two HTTP confirm routes, after confirmation lookup is sufficient to build canonical request and before the coordinator enters runtime-controlled execute |
-| `document_comment_rewrite_apply` | `/api/doc/rewrite-from-comments` apply branch inside [`handleDocumentRewriteFromComments(...)`](/Users/seanhan/Documents/Playground/src/http-server.mjs) | 1. `confirm=true` plus `confirmation_id` is required for apply<br>2. `peekCommentRewriteConfirmation(...)` must succeed<br>3. current revision must still match preview state | Apply route now builds `buildDocumentCommentRewriteApplyCanonicalRequest(...)` and passes it into `runMutation(...)`; deny responses are translated back to the legacy `write_guard_denied` envelope so route response shape stays unchanged | Admission logs now originate in `mutation-runtime.mjs`; existing workflow evidence still comes from `finalizeDocRewriteWorkflowTask(...)` with `file_updated` and `API_call_success` evidence, while nested cleanup evidence now lands in runtime `journal.audit` / `journal.rollback.details` | Existing executor remains `applyRewrittenDocument(...)` followed by workflow finalization, but apply now uses a compensating rollback helper to restore the old doc body and reopen already-resolved comments when nested writeback fails | Hook point is after stale-confirmation checks and before `consumeCommentRewriteConfirmation(...)` / `applyRewrittenDocument(...)` |
-| `drive_organize_apply` | `/api/drive/organize/apply` -> [`handleDriveOrganize(...)`](/Users/seanhan/Documents/Playground/src/http-server.mjs) with `apply=true` | 1. same-scope preview/review must already exist via `markCloudDocApplying(...)`<br>2. preview plan must already exist before runtime-controlled apply | Apply route now only builds `buildDriveOrganizeApplyCanonicalRequest(...)` plus `cloud_doc_v1` verifier input, then passes both into `runMutation(...)`; route-local admission/deny is removed | Admission and verifier logs now originate in `mutation-runtime.mjs`; existing workflow evidence still comes from `finalizeCloudDocWorkflowTask(...)` | Existing executor remains `getHttpService("applyDriveOrganization", applyDriveOrganization)(...)` through `executeLarkWrite(...)` | Hook point is after preview/applying prerequisite checks and before the existing apply executor call |
-| `wiki_organize_apply` | `/api/wiki/organize/apply` -> [`handleWikiOrganize(...)`](/Users/seanhan/Documents/Playground/src/http-server.mjs) with `apply=true` | 1. same-scope preview/review must already exist via `markCloudDocApplying(...)`<br>2. preview plan must already exist before runtime-controlled apply | Apply route now only builds `buildWikiOrganizeApplyCanonicalRequest(...)` plus `cloud_doc_v1` verifier input, then passes both into `runMutation(...)`; route-local admission/deny is removed | Admission and verifier logs now originate in `mutation-runtime.mjs`; existing workflow evidence still comes from `finalizeCloudDocWorkflowTask(...)` | Existing executor remains `getHttpService("applyWikiOrganization", applyWikiOrganization)(...)` through `executeLarkWrite(...)` | Hook point is after preview/applying prerequisite checks and before the existing apply executor call |
-| `company-brain apply` | `/agent/company-brain/docs/:doc_id/apply` -> [`handleAgentApplyApprovedCompanyBrainKnowledge(...)`](/Users/seanhan/Documents/Playground/src/http-server.mjs) | 1. route first reads approval state via `getCompanyBrainApprovalState(...)`<br>2. route applies `evaluateCompanyBrainApplyGate(...)` and only enters admission when lifecycle state is already apply-eligible<br>3. non-eligible requests still fall through to the existing action result so response shape remains stable | When lifecycle gate passes, route builds `buildCompanyBrainApplyCanonicalRequest(...)` and calls `admitMutation(...)`; this preserves the documented `lifecycle first, adapter second` ordering for company-brain apply | Admission logs are emitted in route layer; durable mutation evidence remains the approved-knowledge upsert performed by the existing action path | Existing executor remains `applyApprovedCompanyBrainKnowledgeAction(...)` | Hook point is between lifecycle gate success and the existing apply action call |
+## What Is Still Grounded Here
 
-## Baseline Constraint
+The following Phase 1 routes are still real and still use the mapped runtime entrypoints:
 
-This file is the Step 1 baseline for mutation hook-point mapping.
+| Route family | Current action | Current state |
+| --- | --- | --- |
+| doc create | `create_doc` | implemented |
+| doc update | `update_doc` | implemented |
+| comment rewrite apply | `document_comment_rewrite_apply` | implemented |
+| meeting confirm write | `meeting_confirm_write` | implemented |
+| drive organize apply | `drive_organize_apply` | implemented |
+| wiki organize apply | `wiki_organize_apply` | implemented |
+| company-brain apply | `apply_company_brain_approved_knowledge` | implemented as internal governance write |
 
-Subsequent Step 3 admission integration should use these grounded hook points as the reference baseline and should not change them without an explicit re-mapping update in the same document set.
+## What Changed After Phase 1
+
+- external write action coverage is no longer limited to the original Phase 1 set
+- registry-backed actions now also cover:
+  - drive direct writes
+  - wiki direct writes
+  - message reply/send/reaction writes
+  - calendar event create
+  - task and task-comment writes
+  - bitable writes
+  - spreadsheet writes
+  - meeting capture doc create/update/delete
+- the primary current mapping source is `/Users/seanhan/Documents/Playground/src/external-mutation-registry.mjs`
+
+## Phase 1 Hook-Point Summary
+
+| Surface | Current hook point | Journal / evidence owner |
+| --- | --- | --- |
+| external Lark apply/write | `lark-mutation-runtime.mjs -> mutation-runtime.mjs` | mutation journal plus route/workflow evidence |
+| company-brain governance write | `http-server.mjs -> mutation-runtime.mjs` | mutation journal plus company-brain lifecycle evidence |
+| route preview/confirmation logic | route/workflow module | route/workflow state, not final execute authority |
+
+## Deprecated Reading
+
+Do not treat this file as:
+
+- the full action inventory
+- the full write-policy contract
+- proof that only seven write actions are runtime-governed
+
+That reading is outdated.

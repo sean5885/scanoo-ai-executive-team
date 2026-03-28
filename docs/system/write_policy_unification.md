@@ -4,186 +4,49 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 ## Purpose
 
-This document defines the checked-in write-governance convergence state for external mutation paths.
+This file mirrors the current write-governance convergence state.
 
-It now serves two purposes:
+It covers:
 
-- inventory the external/internal write actions that exist in code
-- describe the shared policy/runtime surface that those writes are expected to use today
+1. external Lark writes
+2. internal company-brain governance writes that reuse the same policy language
 
-The repo now carries two shared runtime layers for this path:
+## Current Write Topology
 
-- `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`
-  - owns canonical admission, shared allow/deny, and verifier `pre` / `post` execution checks
-- `/Users/seanhan/Documents/Playground/src/lark-mutation-runtime.mjs`
-  - owns the external-write bridge `canonical request -> runMutation(...) -> executeLarkWrite(...)`
+### External Lark Write Path
 
-Current checked-in external writes now route their final external mutation through that shared bridge:
+Current runtime chain:
 
-- Doc:
-  - `create_doc`
-  - `update_doc`
-  - `document_comment_rewrite_apply`
-- Drive / Wiki:
-  - `drive_organize_apply`
-  - `wiki_organize_apply`
-  - `create_drive_folder`
-  - `move_drive_item`
-  - `delete_drive_item`
-  - `create_wiki_node`
-  - `move_wiki_node`
-- Message / Calendar / Task:
-  - `message_send`
-  - `message_reply`
-  - `message_reaction_create`
-  - `message_reaction_delete`
-  - `calendar_create_event`
-  - `task_create`
-  - `task_comment_create`
-  - `task_comment_update`
-  - `task_comment_delete`
-- Bitable / Sheet:
-  - `bitable_app_create`
-  - `bitable_app_update`
-  - `bitable_table_create`
-  - `bitable_record_create`
-  - `bitable_record_update`
-  - `bitable_record_delete`
-  - `bitable_records_bulk_upsert`
-  - `spreadsheet_create`
-  - `spreadsheet_update`
-  - `spreadsheet_replace`
-  - `spreadsheet_replace_batch`
-- meeting capture lane writes:
-  - `meeting_capture_create_document`
-  - `meeting_capture_document_update`
-  - `meeting_capture_document_delete`
+1. action metadata from `/Users/seanhan/Documents/Playground/src/external-mutation-registry.mjs`
+2. write policy from `/Users/seanhan/Documents/Playground/src/write-policy-contract.mjs`
+3. route or lane builds canonical request
+4. `/Users/seanhan/Documents/Playground/src/lark-mutation-runtime.mjs`
+5. `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`
+6. `/Users/seanhan/Documents/Playground/src/execute-lark-write.mjs`
 
-The current external action inventory and route-level enforcement fixtures are registry-backed by `/Users/seanhan/Documents/Playground/src/external-mutation-registry.mjs`; `/Users/seanhan/Documents/Playground/src/write-policy-contract.mjs` and `/Users/seanhan/Documents/Playground/src/write-policy-enforcement.mjs` now derive their external route/action coverage from that registry instead of a hand-maintained partial list.
+Current truth:
 
-For the checked-in code truth today, direct `executeLarkWrite(...)` calls no longer exist in `/Users/seanhan/Documents/Playground/src/http-server.mjs`, `/Users/seanhan/Documents/Playground/src/index.mjs`, `/Users/seanhan/Documents/Playground/src/comment-suggestion-workflow.mjs`, `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`, or `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`; the only remaining `executeLarkWrite(...)` callsite is the centralized bridge in `/Users/seanhan/Documents/Playground/src/lark-mutation-runtime.mjs`.
+- this path is implemented
+- `execute-lark-write.mjs` is the centralized external write bridge
+- direct route-level `executeLarkWrite(...)` is no longer the primary checked-in pattern
 
-`/Users/seanhan/Documents/Playground/src/execute-lark-write.mjs` now enforces the `direct_lark_write_bypass` assertion for all environments, not only `development`, so any external Lark write must execute inside the centralized runtime context.
+### Internal Governance Write Path
 
-## Current Grounded Files
+Current runtime chain:
 
-Current code truth for this design is grounded in:
+1. company-brain route or ingest/update boundary builds canonical request
+2. `mutation-runtime.mjs` performs admission and verification
+3. internal action writes review, conflict, approval, apply, or learning state
 
-- `/Users/seanhan/Documents/Playground/src/http-server.mjs`
-- `/Users/seanhan/Documents/Playground/src/index.mjs`
-- `/Users/seanhan/Documents/Playground/src/comment-suggestion-workflow.mjs`
-- `/Users/seanhan/Documents/Playground/src/write-guard.mjs`
-- `/Users/seanhan/Documents/Playground/src/lark-write-guard.mjs`
-- `/Users/seanhan/Documents/Playground/src/http-route-contracts.mjs`
-- `/Users/seanhan/Documents/Playground/src/external-mutation-registry.mjs`
-- `/Users/seanhan/Documents/Playground/src/write-policy-contract.mjs`
-- `/Users/seanhan/Documents/Playground/src/write-policy-enforcement.mjs`
-- `/Users/seanhan/Documents/Playground/src/http-idempotency-store.mjs`
-- `/Users/seanhan/Documents/Playground/src/lark-write-budget-guard.mjs`
-- `/Users/seanhan/Documents/Playground/src/execute-lark-write.mjs`
-- `/Users/seanhan/Documents/Playground/src/lark-mutation-runtime.mjs`
-- `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`
-- `/Users/seanhan/Documents/Playground/src/cloud-doc-organization-workflow.mjs`
-- `/Users/seanhan/Documents/Playground/src/company-brain-write-intake.mjs`
-- `/Users/seanhan/Documents/Playground/src/company-brain-lifecycle-contract.mjs`
-- `/Users/seanhan/Documents/Playground/src/mutation-admission.mjs`
-- `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`
-- `/Users/seanhan/Documents/Playground/docs/system/planner_contract.json`
+Current truth:
 
-## Boundary
+- implemented
+- reuses policy language and mutation journal shape
+- does not become an external Lark write
 
-This unification work covers two adjacent families:
+## Canonical Policy Object
 
-1. external writes
-   - mutations to Lark Drive / Wiki / Doc / Message / Calendar / Task / Bitable / Sheet surfaces
-2. internal governance writes
-   - company-brain mirror / review / approval / learning writes that do not leave the local runtime, but still need the same policy language
-
-Preview-only paths are intentionally excluded from the write-action inventory below unless they directly gate an apply path.
-
-## A. Write Action Inventory
-
-### Phase 1 focus set
-
-These are the write actions that should define the first shared policy vocabulary because they already have partial governance or explicit apply/writeback semantics.
-
-| action key | current entry | target | current grounded governance |
-| --- | --- | --- | --- |
-| `create_doc` | `POST /api/doc/create`, `POST /agent/docs/create` | external Lark doc create, plus optional initial content write | explicit create guard in `lark-write-guard.mjs`; preview confirmation, confirmation replay/consume, and guard resolution are now owned by `runDocumentCreateMutation(...)` in `lark-mutation-runtime.mjs` instead of route-local branching; planner/agent governance in `planner_contract.json`; final external write now routes through `executeLarkWrite(...)` plus budget / duplicate guard; post-create permission/update failures now fail the transaction and trigger compensating rollback plus runtime `journal.audit`; `external_write=true`; `review_required=conditional` |
-| `update_doc` | `POST /api/doc/update` | external Lark doc update | replace/targeted modes use preview/confirm; append keeps existing direct-apply API shape; the final external write now routes through `runMutation(...) -> executeLarkWrite(...)`; downstream company-brain intake classifies update as review-gated |
-| `document_comment_rewrite_apply` | `POST /api/doc/rewrite-from-comments` with apply path | external Lark doc replace plus optional comment resolution | preview confirmation artifact, confirmation peek/validate, stale-revision check, and canonical request now feed `runMutation(...)`; verifier precondition is patch-plan plus rewritten content; budget / duplicate guard still runs in `executeLarkWrite(...)` before apply |
-| `meeting_confirm_write` | `POST /api/meeting/confirm`, `GET /meeting/confirm` | external Lark meeting doc prepend/writeback | confirmation artifact plus canonical request now feed `meetingCoordinator.confirmMeetingWrite(...) -> runMutation(...)`; verifier precondition is summary/doc-entry completeness; budget / duplicate guard still runs before writeback |
-| `drive_organize_apply` | `POST /api/drive/organize/apply` | external Drive move task submission | same-scope preview/review prerequisite is now enforced by canonical request + `cloud_doc_v1` verifier evidence inside runtime; the route may mark workflow state, but it no longer short-circuits the write path before runtime admission; budget / duplicate guard still runs in `executeLarkWrite(...)` |
-| `wiki_organize_apply` | `POST /api/wiki/organize/apply` | external Wiki move task submission | same-scope preview/review prerequisite is now enforced by canonical request + `cloud_doc_v1` verifier evidence inside runtime; the route may mark workflow state, but it no longer short-circuits the write path before runtime admission; budget / duplicate guard still runs in `executeLarkWrite(...)` |
-| `cloud_doc_apply` | cloud-doc workflow task layer above drive/wiki apply | workflow owner over external Drive/Wiki apply | scope-bound executive task, preview-plan evidence, verifier gate on completion |
-| `ingest_doc` | `ingestVerifiedDocumentToCompanyBrain(...)` internal path | internal mirror write into `company_brain_docs` | internal write guard allow, intake boundary classification, optional staged review state |
-| `review_company_brain_doc` | `POST /agent/company-brain/review` | internal review-state write | lifecycle contract exists in `company-brain-lifecycle-contract.mjs`; review route is explicit |
-| `check_company_brain_conflicts` | `POST /agent/company-brain/conflicts` | internal conflict-state/review-state write | explicit bounded route; overlap evidence drives `conflict_state` and may stage `conflict_detected` |
-| `approval_transition_company_brain_doc` | `POST /agent/company-brain/approval-transition` | internal approval decision write | explicit bounded route; decision is separate from final apply |
-| `apply_company_brain_approved_knowledge` | `POST /agent/company-brain/docs/:doc_id/apply` | internal apply into approved knowledge table | explicit lifecycle contract with `review_required=always`, `apply_gate=true`, allowed states `approved|applied` |
-
-### Other grounded external mutation routes
-
-These external write actions are now part of the same registry-backed external write-policy/runtime family:
-
-- Drive:
-  - `create_folder`
-  - `move`
-  - `delete`
-- Wiki:
-  - `create_wiki_node`
-  - `move_wiki_node`
-- Messages:
-  - `message_reply`
-  - `message_reply_card`
-  - `message_reaction_create`
-  - `message_reaction_delete`
-- Calendar:
-  - `calendar_create_event`
-- Tasks:
-  - `task_create`
-  - `task_comment_create`
-  - `task_comment_update`
-  - `task_comment_delete`
-- Bitable:
-  - `bitable_app_create`
-  - `bitable_app_update`
-  - `bitable_table_create`
-  - `bitable_record_create`
-  - `bitable_record_update`
-  - `bitable_record_delete`
-  - `bitable_records_bulk_upsert`
-- Sheets:
-  - `spreadsheet_create`
-  - `spreadsheet_update`
-  - `spreadsheet_replace`
-  - `spreadsheet_replace_batch`
-
-These public HTTP write surfaces now route their final external mutation through `/Users/seanhan/Documents/Playground/src/lark-mutation-runtime.mjs`, so they share the same canonical admission, write-policy snapshot, and budget / dedupe boundary as the higher-risk doc and meeting write family even though they do not introduce new preview/confirmation artifacts.
-
-The same runtime bridge is now also the checked-in authority for non-HTTP message writers that previously bypassed route governance:
-
-- `/Users/seanhan/Documents/Playground/src/index.mjs`
-  - uses `executeCanonicalLarkMessageReply(...)` and `executeCanonicalLarkMessageSend(...)`
-- `/Users/seanhan/Documents/Playground/src/comment-suggestion-workflow.mjs`
-  - uses `executeCanonicalLarkMessageReply(...)` for preview cards
-- `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`
-  - uses `executeCanonicalLarkMessageSend(...)` for preview/confirmation cards
-
-### Other grounded internal mutation routes
-
-These are internal writes that should eventually speak the same policy language even though they are not external writes:
-
-- `ingest_learning_doc`
-- `update_learning_state`
-- document lifecycle retry / lifecycle seed writes
-- executive-task state transitions for `doc_rewrite` and `cloud_doc`
-
-## B. Unified Policy Contract
-
-### Minimum contract
-
-Every write action should be able to emit the same bounded policy object:
+Current shape:
 
 ```json
 {
@@ -192,417 +55,114 @@ Every write action should be able to emit the same bounded policy object:
   "owner": "string",
   "intent": "string",
   "action_type": "string",
-  "external_write": "boolean",
-  "confirm_required": "boolean",
+  "external_write": true,
+  "confirm_required": false,
   "review_required": "never|conditional|always",
   "scope_key": "string|null",
   "idempotency_key": "string|null"
 }
 ```
 
-### Field meaning
+Current code:
 
-- `source`
-  - stable origin of the write request
-  - examples:
-    - `agent_create_doc`
-    - `doc_comment_rewrite`
-    - `meeting_confirm`
-    - `cloud_doc_workflow`
-    - `document_lifecycle_verified_ingest`
-- `owner`
-  - subsystem that owns execution plus evidence collection for this write
-  - examples:
-    - `planner_agent`
-    - `doc_rewrite_workflow`
-    - `meeting_agent`
-    - `cloud_doc_workflow`
-    - `company_brain_write_intake`
-- `intent`
-  - stable reason the write is happening
-  - examples:
-    - `create_doc`
-    - `rewrite_apply`
-    - `meeting_writeback`
-    - `drive_organize_apply`
-    - `formal_company_brain_apply`
-- `action_type`
-  - normalized mutation category
-  - preferred bounded values for current repo:
-    - `create`
-    - `update`
-    - `replace`
-    - `move`
-    - `delete`
-    - `reply`
-    - `apply`
-    - `writeback`
-    - `ingest`
-    - `review`
-    - `approval_transition`
-    - `upsert`
-- `external_write`
-  - `true` only when the mutation leaves the local runtime and changes an external system
-  - `false` for internal company-brain / local-governance writes
-- `confirm_required`
-  - whether explicit operator/user confirmation is required before the mutation executes
-- `review_required`
-  - `never`:
-    - no preview/review gate is expected before execution
-  - `conditional`:
-    - gate depends on mode, overlap, or promotion risk
-  - `always`:
-    - write cannot proceed without review/approval semantics
-- `scope_key`
-  - stable target scope used for same-target continuation, preview/apply pairing, and drift prevention
-  - examples:
-    - `drive:<folder_token>`
-    - `wiki:<space_id|parent_node_token|space_name>`
-    - `doc-rewrite:<document_id>`
-    - `company-brain:<doc_id>`
-- `idempotency_key`
-  - request-level dedupe key when the same write may be retried or replayed
-  - only explicit caller-provided keys participate in idempotency replay / duplicate detection; internal request fingerprints stay separate fallback dedupe evidence
-  - current checked-in runtime also has a process-local stateful path in `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs` keyed by `context.idempotency_key`; it marks the first in-flight call as `pending`, returns `idempotency_in_progress` for overlapping retries, stores the first successful response as `done`, clears pending state on non-success, and does not survive restart
-  - may be `null` for one-shot confirmation-token paths
-
-### Contract rules
-
-1. This contract is metadata first, not a new public response shape.
-2. A path is only considered policy-aligned when the same write action can produce this object deterministically from checked-in code.
-3. Existing confirmation IDs and preview artifacts remain valid; they do not need to be replaced by `idempotency_key`.
-4. Generic HTTP idempotency already exists for `POST|PUT|PATCH` when `idempotency_key` is provided; this remained the Phase 1 baseline intent, but current checked-in code now also carries a narrower in-process replay cache inside `mutation-runtime.mjs`.
-5. `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs` also accepts an optional runtime-only `context.write_policy.allowed_actions` array; when present, the runtime fail-soft blocks any action not in that allowlist with `write_policy_violation` before idempotency/admission/execute.
-6. The same runtime now also accepts an optional runtime-only `context.write_policy.authority` binding; when present, `context.authority` must match exactly or the runtime fail-soft blocks before idempotency/admission/execute with `authority_mismatch`.
-7. Successful `runMutation(...)` responses now echo both the provided `write_policy` snapshot in `meta.write_policy` and the resolved runtime authority in `meta.authority`.
-
-## C. Gap Analysis
-
-### Summary
-
-No current write path emits the full unified contract end-to-end today.
-
-Current runtime is split across three partially overlapping governance shapes:
-
-- planner/route governance
-  - strongest on `create_doc`
-- write-guard runtime gating
-  - strongest on `document_comment_rewrite_apply`, `meeting_confirm_write`, `drive_organize_apply`, `wiki_organize_apply`
-- company-brain lifecycle governance
-  - strongest on review / conflict / approval / apply
-
-### Per-path status
-
-| path | already aligned | missing or inconsistent |
-| --- | --- | --- |
-| `create_doc` | `source`, `owner`, `intent` entry metadata already required; `external_write=true`; `confirm_required=true`; `review_required=conditional` | no explicit `action_type`; no stable `scope_key`; `idempotency_key` exists only as generic HTTP capability, not action contract |
-| `update_doc` | explicit target + replace confirmation behavior already exists; company-brain intake already treats update as review-sensitive; checked-in route contract / canonical builder / scope key now exist | `confirm_required` still stays mode-dependent at runtime and is not yet fully surfaced as one normalized policy bit; no explicit idempotency policy beyond generic HTTP support |
-| `document_comment_rewrite_apply` | explicit owner/workflow in `decideWriteGuard(...)`; confirmation + verifier gate already exists | no checked-in policy object; `source`, `intent`, and `review_required` stay implicit; `scope_key` exists only as workflow session key; no explicit idempotency policy |
-| `meeting_confirm_write` | explicit canonical builder, policy object, and mutation-runtime admission now exist; confirmation + verifier gate still stays intact | no explicit idempotency policy; runtime stats still show warn-mode rollout evidence is insufficient for enforce |
-| `drive_organize_apply` | explicit owner/workflow in `decideWriteGuard(...)`; preview/review prerequisite; stable `scope_key` already exists | no checked-in `source` / `intent`; `review_required` is behavioral, not contract-bound; no per-action policy object |
-| `wiki_organize_apply` | explicit owner/workflow in `decideWriteGuard(...)`; preview/review prerequisite; stable `scope_key` already exists | same gaps as `drive_organize_apply` |
-| `cloud_doc_apply` | workflow owner, scope, preview plan, and verifier gate already exist at executive-task layer | not surfaced as a shared route/action policy object; external write is indirect through drive/wiki apply |
-| `ingest_doc` | internal owner/workflow exists; review/conflict requirement is already classified by helper | no checked-in policy contract; no stable `scope_key`; confirm/review fields are helper output, not shared write metadata |
-| `review_company_brain_doc` / `check_company_brain_conflicts` / `approval_transition_company_brain_doc` / `apply_company_brain_approved_knowledge` | explicit lifecycle governance, canonical builders, and mutation-runtime admission now exist | lifecycle contract still stays adjacent to the shared write-policy dialect rather than replacing it; optional/no-op conflict checks rely on verifier skip semantics instead of a durable write every time |
-| `ingest_learning_doc` / `update_learning_state` | explicit action names, bounded route shapes, canonical builders, and mutation-runtime admission now exist | learning state still remains a planner/query-side sidecar and not approval-governed company-brain memory |
-| other external mutation routes | real external writes are grounded in code | almost all lack explicit preview/confirm/review metadata and should not be swept into Phase 1 until the contract primitive is proven on the higher-risk workflows above |
-
-### Key structural gaps
-
-1. The repo has shared write gating, but not shared write metadata.
-2. `scope_key` is strong in cloud-doc, absent in most other writes.
-3. `source` / `owner` / `intent` are strongest at planner create-doc entry, but mostly implicit elsewhere.
-4. `review_required` exists today in three different forms:
-   - planner governance metadata
-   - write-guard prerequisite behavior
-   - company-brain lifecycle rules
-5. `idempotency_key` exists at generic HTTP level and now also has a narrow in-process replay path in `mutation-runtime.mjs`, but it is not yet classified per action and the two layers do not yet share one canonical scope contract.
-
-## Phase 1 Grounded Status
-
-The current checked-in Phase 1 landing stays metadata-only.
-
-It now adds one shared checked-in write-policy module and mounts that metadata on the requested high-risk write family without changing write behavior:
-
-- shared source of truth:
-  - `/Users/seanhan/Documents/Playground/src/write-policy-contract.mjs`
-- route-contract mount:
-  - `/Users/seanhan/Documents/Playground/src/http-route-contracts.mjs`
-- log-surface mount:
-  - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
-  - `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`
-- diagnostics presence check:
-  - `/Users/seanhan/Documents/Playground/src/control-diagnostics.mjs`
-  - `/Users/seanhan/Documents/Playground/scripts/control-diagnostics.mjs`
-
-Grounded Phase 1 write-policy route surfaces are:
-
-- `/api/doc/create`
-- `/agent/docs/create`
-- `/api/drive/organize/apply`
-- `/api/wiki/organize/apply`
-- `/api/doc/rewrite-from-comments` (apply metadata only; preview/apply runtime behavior stays unchanged)
-- `/api/meeting/confirm`
-- `/meeting/confirm`
-
-The normalized Phase 1 action set exposed through diagnostics is:
-
-- `create_doc`
-- `drive_organize_apply`
-- `wiki_organize_apply`
-- `document_comment_rewrite_apply`
-- `meeting_confirm_write`
-
-## Phase 2 Grounded Status
-
-Phase 2 now upgrades the same Phase 1 metadata family into bounded runtime governance without rewriting adapters, DB schema, or planner/lane flow.
-
-Grounded Phase 2 files are:
-
-- `/Users/seanhan/Documents/Playground/src/write-policy-enforcement.mjs`
-- `/Users/seanhan/Documents/Playground/src/write-guard.mjs`
-- `/Users/seanhan/Documents/Playground/src/http-route-contracts.mjs`
-- `/Users/seanhan/Documents/Playground/src/http-server.mjs`
-- `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`
-- `/Users/seanhan/Documents/Playground/src/control-diagnostics.mjs`
-- `/Users/seanhan/Documents/Playground/src/system-self-check.mjs`
-- `/Users/seanhan/Documents/Playground/src/release-check.mjs`
-
-### Phase 2 enforcement model
-
-Every grounded Phase 1 write route now has one checked-in enforcement record:
-
-```json
-{
-  "enforcement_version": "write_policy_enforcement_v1",
-  "action": "string",
-  "pathname": "string",
-  "mode": "observe|warn|enforce",
-  "checks": {
-    "scope_key": "boolean",
-    "idempotency_key": "boolean",
-    "confirm_required": "boolean",
-    "review_required": "boolean"
-  }
-}
-```
-
-This layer stays additive:
-
-- `observe`
-  - log only
-- `warn`
-  - log plus explicit warning event
-- `enforce`
-  - convert a passing write guard / route path into a bounded block
-
-Current checked-in initial modes are:
-
-- `create_doc`
-  - `enforce`
-- `meeting_confirm_write`
-  - `warn`
-- `drive_organize_apply`
-  - `observe`
-- `wiki_organize_apply`
-  - `observe`
-- `document_comment_rewrite_apply`
-  - `warn`
-
-Current checked-in violation family is bounded to:
-
-- `missing_scope_key`
-- `missing_idempotency_key`
-- `confirm_required`
-- `review_required`
-
-Each violation record now also carries bounded structured detail:
-
-- `reason`
-  - `scope_key_unset`
-  - `idempotency_key_unset`
-  - `missing_confirmation`
-  - `missing_review_evidence`
-- `check`
-  - the specific coverage gate that produced the violation
-- `signals`
-  - whether `scope_key`, `idempotency_key`, confirmation, and review evidence were present at runtime
-
-### Phase 2 runtime mount
-
-Current code truth is:
-
-- `create_doc`
-  - route-level enforcement in `/Users/seanhan/Documents/Playground/src/http-server.mjs`
-  - stable fallback `scope_key = drive:root` when no folder token is supplied
-- `drive_organize_apply`
-  - policy evaluation is mounted through `/Users/seanhan/Documents/Playground/src/write-guard.mjs`
-- `wiki_organize_apply`
-  - policy evaluation is mounted through `/Users/seanhan/Documents/Playground/src/write-guard.mjs`
-- `document_comment_rewrite_apply`
-  - policy evaluation is mounted through `/Users/seanhan/Documents/Playground/src/write-guard.mjs`
-- `meeting_confirm_write`
-  - policy evaluation is mounted through `/Users/seanhan/Documents/Playground/src/write-guard.mjs` and `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`
-
-This still does **not** introduce:
-
-- a new approval runtime
-- a new background worker path
-- a DB-backed policy state store
-- a planner-owned write-policy lane
-- fail-close on every route at once
-
-## D. Phase 1 Patch Plan
-
-Phase 1 should be intentionally small and should not change write behavior.
-
-### Phase 1 objective
-
-Make the existing high-risk write paths speak one checked-in policy language without rewriting route logic, Lark adapters, or lifecycle state machines.
-
-### Phase 1 patch set
-
-1. add one checked-in source of truth for write-policy metadata
-   - preferred new file:
-     - `/Users/seanhan/Documents/Playground/src/write-policy-contract.mjs`
-   - content:
-     - policy version constant
-     - bounded `review_required` enum
-     - bounded `action_type` enum
-     - helper to normalize/build a write-policy record
-
-2. attach static policy records to current Phase 1 write routes
-   - `create_doc`
-   - `update_doc`
-   - `document_comment_rewrite_apply`
-   - `meeting_confirm_write`
-   - `drive_organize_apply`
-   - `wiki_organize_apply`
-   - `apply_company_brain_approved_knowledge`
-   - internal `ingest_doc` helper classification may also emit the same metadata shape
-
-3. expose those policy records through checked-in route/contract mirrors
-   - extend `/Users/seanhan/Documents/Playground/src/http-route-contracts.mjs`
-   - keep `/Users/seanhan/Documents/Playground/docs/system/planner_contract.json` aligned for planner-owned actions
-   - do not invent a second planner contract file
-
-4. log the normalized write-policy record at the existing write decision points
-   - reuse existing logger surfaces
-   - do not change allow/deny logic in `write-guard.mjs`
-   - do not change create guard semantics in `lark-write-guard.mjs`
-
-5. add policy-presence diagnostics only after metadata exists
-   - extend `/Users/seanhan/Documents/Playground/src/control-diagnostics.mjs`
-   - verify that each Phase 1 write action still exposes a policy record
-
-### Explicit non-goals for Phase 1
-
-- no Lark SDK adapter rewrite
-- no DB schema change
-- no new approval runtime
-- no new company-brain ownership layer
-- no attempt to sweep every mutation route in one pass
-- no public API response-shape change
-
-## E. Files To Touch / Avoid
-
-### Safe to touch in Phase 1
-
-- `/Users/seanhan/Documents/Playground/docs/system/write_policy_unification.md`
 - `/Users/seanhan/Documents/Playground/src/write-policy-contract.mjs`
-- `/Users/seanhan/Documents/Playground/src/http-route-contracts.mjs`
-- `/Users/seanhan/Documents/Playground/src/write-guard.mjs`
-- `/Users/seanhan/Documents/Playground/src/lark-write-guard.mjs`
-- localized write-entry sections in `/Users/seanhan/Documents/Playground/src/http-server.mjs`
-- `/Users/seanhan/Documents/Playground/src/company-brain-write-intake.mjs`
-- `/Users/seanhan/Documents/Playground/src/company-brain-lifecycle-contract.mjs`
-- `/Users/seanhan/Documents/Playground/src/control-diagnostics.mjs`
-- `/Users/seanhan/Documents/Playground/docs/system/planner_contract.json`
-- `/Users/seanhan/Documents/Playground/docs/system/planner_contract_spec.md`
+- `/Users/seanhan/Documents/Playground/tests/write-policy-contract.test.mjs`
 
-### Avoid in Phase 1
+## External Actions Already Unified
 
-- `/Users/seanhan/Documents/Playground/src/lark-content.mjs`
-  - keep low-level API adapters unchanged
-- `/Users/seanhan/Documents/Playground/src/rag-repository.mjs`
-  - do not change company-brain storage shape yet
-- `/Users/seanhan/Documents/Playground/src/db.mjs`
-  - no schema work for write-policy unification Phase 1
-- `/Users/seanhan/Documents/Playground/src/executive-planner.mjs`
-  - only touch later if planner-owned actions need expanded contract emission
-- `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
-  - current task/control ownership should stay stable
-- route families not in the Phase 1 focus set:
-  - message write routes
-  - calendar/task direct write routes
-  - bitable/sheet mutation routes
-  - drive/wiki simple create/move/delete routes
-- `/Users/seanhan/Documents/Playground/openclaw-plugin`
-  - plugin payload contracts should follow after HTTP/runtime metadata is stable
+### Doc
 
-## Recommended Phase Order After This Design
-
-1. Phase 1
-   - metadata unification only
-2. Phase 2
-   - bounded enforcement for the Phase 1 set
-   - diagnostics / self-check / release-check visibility for mode, coverage, and violation stats
-3. Phase 3
-   - rollout enforcement upgrades on already grounded Phase 1 routes
-   - keep route-by-route diagnostics for:
-     - enforcement mode
-     - runtime violation rate
-     - scope / idempotency coverage when trace evidence exists
-     - bounded upgrade advice
-4. Phase 4
-   - add evidence / data layer hardening for rollout trust
-   - split trace evidence by:
-     - `traffic_source = real|test|replay`
-     - `request_backed = true|false`
-   - make warn -> enforce advice depend on trusted real request-backed data only
-5. Phase 5
-   - expand the same contract to remaining external mutation families
-6. Phase 6
-   - decide whether write-policy metadata should become part of planner/runtime public evidence surfaces
-
-### Phase 3 rollout checkpoint
-
-Current rollout target is intentionally narrow:
-
-- `meeting_confirm_write`
-  - target remains `enforce`
-  - but the route should stay at `warn` until request-backed runtime evidence shows acceptable violation rate
-  - optional emergency rollback path exists as env-controlled fail-open + alert, not as default behavior
+- `create_doc`
+- `update_doc`
 - `document_comment_rewrite_apply`
-  - upgraded from `observe` to `warn`
-  - warning events now expose structured violation reasons and coverage signals
+
+### Drive and Wiki
+
 - `drive_organize_apply`
-  - stays `observe`
-  - diagnostics now surface route-level scope/idempotency coverage rates when trace evidence exists
 - `wiki_organize_apply`
-  - stays `observe`
-  - diagnostics now surface route-level scope/idempotency coverage rates when trace evidence exists
+- `create_drive_folder`
+- `move_drive_item`
+- `delete_drive_item`
+- `create_wiki_node`
+- `move_wiki_node`
 
-### Phase 4 evidence-layer checkpoint
+### Message, Calendar, Task
 
-Current rollout decision now treats mixed trace evidence as unsafe by default.
+- `message_send`
+- `message_reply`
+- `message_reaction_create`
+- `message_reaction_delete`
+- `calendar_create_event`
+- `task_create`
+- `task_comment_create`
+- `task_comment_update`
+- `task_comment_delete`
 
-Trusted rollout basis is narrowed to:
+### Bitable and Sheet
 
-- `traffic_source = real`
-- `request_backed = true`
+- `bitable_app_create`
+- `bitable_app_update`
+- `bitable_table_create`
+- `bitable_record_create`
+- `bitable_record_update`
+- `bitable_record_delete`
+- `bitable_records_bulk_upsert`
+- `spreadsheet_create`
+- `spreadsheet_update`
+- `spreadsheet_replace`
+- `spreadsheet_replace_batch`
 
-Current warn -> enforce rule is intentionally fixed and additive:
+### Meeting Capture
 
-- real request-backed sample size must be at least `20`
-- real request-backed violation rate must stay below `1%`
-- `confirm_required` / `review_required` coverage must already be wired in checked-in enforcement checks
+- `meeting_capture_create_document`
+- `meeting_capture_document_update`
+- `meeting_capture_document_delete`
 
-This checkpoint still does **not**:
+## Internal Writes Already Speaking The Same Policy Language
 
-- change write behavior
-- change enforcement logic
-- change Lark adapter behavior
-- auto-upgrade route modes
+- `ingest_doc`
+- `review_company_brain_doc`
+- `check_company_brain_conflicts`
+- `approval_transition_company_brain_doc`
+- `apply_company_brain_approved_knowledge`
+- `ingest_learning_doc`
+- `update_learning_state`
 
-It only changes which evidence is considered credible enough for rollout advice.
+## Mutation Journal
+
+`mutation-runtime.mjs` records a `mutation journal` in `meta.journal`.
+
+Current fields:
+
+- `action`
+- `status`
+- `started_at`
+- optional `error`
+- optional `rollback`
+- optional `audit`
+
+Current truth:
+
+- this journal exists today
+- rollback and nested audit evidence are already used by document create, comment rewrite apply, and meeting confirm write failure handling
+
+## Implemented vs Policy-Only
+
+### Implemented
+
+- registry-backed external action inventory
+- stable write policy object
+- runtime admission and verification
+- mutation journal output
+- route-level write policy enforcement fixtures
+
+### Policy-Only or Incomplete
+
+- full repo-wide unification of every local mutation helper
+- a single universal idempotency scope shared across HTTP and runtime-local caches
+- a broader generic approval runtime outside the checked-in company-brain lifecycle path
+
+## Historical Notes
+
+- the frozen admission baseline in `mutation_admission_contract_v1.md` is historical, not the best summary of current runtime coverage
+- [mutation_path_mapping_phase1.md](/Users/seanhan/Documents/Playground/docs/system/mutation_path_mapping_phase1.md) remains a useful baseline, but it is not the full current inventory
