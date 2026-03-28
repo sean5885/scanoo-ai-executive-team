@@ -47,6 +47,7 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Handler: `handleRuntimeInfo`
   - Module: runtime / HTTP API
   - Purpose: expose the current DB path, node PID, working directory, and service start time for the running HTTP process
+  - Response shape: `{ ok, action, db_path, node_pid, cwd, service_start_time }` with `action=get_runtime_info`
   - Log note: emits `stage=runtime_info`
 
 - `POST /api/runtime/resolve-scopes`

@@ -159,7 +159,7 @@ test("answer route normalizes the exact leaking runtime query into natural-langu
       executePlannedUserInput: async () => ({
         ok: true,
         action: "get_runtime_info",
-        planner_action: "runtime_info",
+        planner_action: "get_runtime_info",
         answer: "系統目前運作正常，沒有異常。",
         sources: [],
         execution_result: {
