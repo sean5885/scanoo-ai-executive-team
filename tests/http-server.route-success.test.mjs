@@ -733,7 +733,7 @@ test("document create preview/confirm redirects demo-like titles into sandbox fo
   }]);
 });
 
-test("document create preview/confirm keeps 200 response when initial content write fails after create", async (t) => {
+test("document create preview/confirm rolls back created doc when initial content write fails after create", async (t) => {
   withEnv(t, {
     ALLOW_LARK_WRITES: "true",
   });
@@ -744,6 +744,7 @@ test("document create preview/confirm keeps 200 response when initial content wr
     db.prepare("DELETE FROM lark_sources WHERE account_id = ? AND external_id = ?").run("acct-1", documentId);
   });
   let updateCalls = 0;
+  const deletedDocumentIds = [];
   const { server, calls } = await startTestServer(t, {
     createDocument: async () => ({
       document_id: documentId,
@@ -764,6 +765,13 @@ test("document create preview/confirm keeps 200 response when initial content wr
       };
       throw error;
     },
+    deleteDocument: async (_accessToken, incomingDocumentId) => {
+      deletedDocumentIds.push(incomingDocumentId);
+      return {
+        document_id: incomingDocumentId,
+        deleted: true,
+      };
+    },
   });
 
   const { port } = server.address();
@@ -780,25 +788,109 @@ test("document create preview/confirm keeps 200 response when initial content wr
   });
 
   assert.equal(previewPayload.create_preview.has_initial_content, true);
-  assert.equal(response.status, 200);
-  assert.equal(payload.ok, true);
-  assert.equal(payload.document_id, documentId);
+  assert.equal(response.status, 500);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.error, "execution_failed");
   assert.equal(updateCalls, 1);
-  assert.equal(payload.write_result, null);
-  assert.equal(payload.initial_content_write_failed, true);
-  assert.equal(payload.initial_content_write_error?.http_status, 400);
-  assert.equal(payload.initial_content_write_error?.platform_msg, "invalid block parent");
+  assert.deepEqual(deletedDocumentIds, [documentId]);
 
   const lifecycleRow = db.prepare(
     "SELECT raw_text, status, failure_reason FROM lark_documents WHERE account_id = ? AND document_id = ?",
   ).get("acct-1", documentId);
-  assert.equal(lifecycleRow?.raw_text, null);
-  assert.equal(lifecycleRow?.status, "verified");
-  assert.equal(lifecycleRow?.failure_reason, null);
+  const sourceRow = db.prepare(
+    "SELECT id FROM lark_sources WHERE account_id = ? AND external_id = ?",
+  ).get("acct-1", documentId);
+  const companyBrainRow = db.prepare(
+    "SELECT doc_id FROM company_brain_docs WHERE account_id = ? AND doc_id = ?",
+  ).get("acct-1", documentId);
+  assert.equal(lifecycleRow, undefined);
+  assert.equal(sourceRow, undefined);
+  assert.equal(companyBrainRow, undefined);
 
   const writeFailureLog = calls.find((entry) => entry[1]?.event === "document_create_initial_content_write_failed");
   assert.equal(writeFailureLog?.[1]?.document_id, documentId);
   assert.equal(writeFailureLog?.[1]?.http_status, 400);
+});
+
+test("document create rolls back after permission grant succeeds but initial content write fails", async (t) => {
+  withEnv(t, {
+    ALLOW_LARK_WRITES: "true",
+  });
+  const documentId = `doc-create-permission-then-update-fail-${Date.now()}`;
+  t.after(() => {
+    db.prepare("DELETE FROM company_brain_docs WHERE account_id = ? AND doc_id = ?").run("acct-1", documentId);
+    db.prepare("DELETE FROM lark_documents WHERE account_id = ? AND document_id = ?").run("acct-1", documentId);
+    db.prepare("DELETE FROM lark_sources WHERE account_id = ? AND external_id = ?").run("acct-1", documentId);
+  });
+
+  let permissionCalls = 0;
+  const deletedDocumentIds = [];
+  const { server } = await startTestServer(t, {
+    getValidUserTokenState: async () => ({
+      status: "valid",
+      token: { access_token: "token-1", account_id: "acct-1" },
+      account: { id: "acct-1", open_id: "ou_test_acct-1" },
+      refreshed: false,
+      error: null,
+    }),
+    getStoredAccountContext: async () => ({
+      account: { id: "acct-1", open_id: "ou_test_acct-1" },
+    }),
+    createDocument: async () => ({
+      document_id: documentId,
+      revision_id: "rev-create-permission-then-update-fail-1",
+      title: "Permission then update fail",
+      created_by_open_id: "ou_someone_else",
+      url: `https://larksuite.com/docx/${documentId}`,
+    }),
+    ensureDocumentManagerPermission: async () => {
+      permissionCalls += 1;
+      return {
+        document_id: documentId,
+        manager_open_id: "ou_test_acct-1",
+        manager_permission: "full_access",
+      };
+    },
+    updateDocument: async () => {
+      const error = new Error("Failed to write Lark document content");
+      error.response = {
+        status: 400,
+        data: {
+          code: 99991663,
+          msg: "invalid block parent",
+          log_id: "log-permission-then-update-400",
+        },
+      };
+      throw error;
+    },
+    deleteDocument: async (_accessToken, incomingDocumentId) => {
+      deletedDocumentIds.push(incomingDocumentId);
+      return {
+        document_id: incomingDocumentId,
+        deleted: true,
+      };
+    },
+  });
+
+  const { port } = server.address();
+  const { applyResponse, applyPayload } = await previewThenConfirmDocumentCreate({
+    port,
+    body: {
+      title: "Permission then update fail",
+      content: "# Draft\n\nInitial content",
+    },
+  });
+
+  assert.equal(applyResponse.status, 500);
+  assert.equal(applyPayload.ok, false);
+  assert.equal(applyPayload.error, "execution_failed");
+  assert.equal(permissionCalls, 1);
+  assert.deepEqual(deletedDocumentIds, [documentId]);
+
+  const lifecycleRow = db.prepare(
+    "SELECT id FROM lark_documents WHERE account_id = ? AND document_id = ?",
+  ).get("acct-1", documentId);
+  assert.equal(lifecycleRow, undefined);
 });
 
 test("agent create_doc blocks when entry governance metadata is missing", async (t) => {

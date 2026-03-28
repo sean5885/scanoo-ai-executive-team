@@ -204,6 +204,8 @@ export async function runDocumentCreateMutation({
   createConfirmation = createDocumentCreateConfirmation,
   peekConfirmation = peekDocumentCreateConfirmation,
   consumeConfirmation = consumeDocumentCreateConfirmation,
+  rollback = null,
+  audit = null,
   performWrite = null,
 } = {}) {
   const createGuard = planDocumentCreateGuard({
@@ -298,6 +300,8 @@ export async function runDocumentCreateMutation({
     logger,
     traceId,
     canonicalRequest,
+    ...(typeof rollback === "function" ? { rollback } : {}),
+    ...(audit && typeof audit === "object" && !Array.isArray(audit) ? { audit } : {}),
     payload: {
       title,
       folder_token: folderToken || null,
