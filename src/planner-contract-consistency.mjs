@@ -34,15 +34,18 @@ const RUNTIME_INFO_FLOW_FILE = fileURLToPath(new URL("./planner-runtime-info-flo
 const OKR_FLOW_FILE = fileURLToPath(new URL("./planner-okr-flow.mjs", import.meta.url));
 const BD_FLOW_FILE = fileURLToPath(new URL("./planner-bd-flow.mjs", import.meta.url));
 const DELIVERY_FLOW_FILE = fileURLToPath(new URL("./planner-delivery-flow.mjs", import.meta.url));
+const TASK_LIFECYCLE_FILE = fileURLToPath(new URL("./planner-task-lifecycle-v1.mjs", import.meta.url));
 const GATE_FAILURE_CATEGORIES = [
   "undefined_actions",
   "undefined_presets",
+  "undefined_routing_reasons",
   "selector_contract_mismatches",
   "action_governance_mismatches",
 ];
 const FINDING_CATEGORY_ORDER = [
   "undefined_actions",
   "undefined_presets",
+  "undefined_routing_reasons",
   "selector_contract_mismatches",
   "action_governance_mismatches",
   "deprecated_reachable_targets",
@@ -51,6 +54,7 @@ export const PLANNER_DIAGNOSTICS_COMPARE_FIELDS = [
   "gate",
   "undefined_actions",
   "undefined_presets",
+  "undefined_routing_reasons",
   "selector_contract_mismatches",
   "action_governance_mismatches",
   "deprecated_reachable_targets",
@@ -72,9 +76,11 @@ function loadPlannerContract({ contractOverride } = {}) {
 function buildContractCatalog(contract = {}) {
   const actions = Object.keys(contract?.actions || {}).map((name) => cleanText(name)).filter(Boolean);
   const presets = Object.keys(contract?.presets || {}).map((name) => cleanText(name)).filter(Boolean);
+  const routingReasons = Object.keys(contract?.routing_reason || {}).map((name) => cleanText(name)).filter(Boolean);
   return {
     actions,
     presets,
+    routing_reasons: routingReasons,
     targets: [...actions, ...presets],
   };
 }
@@ -340,6 +346,52 @@ function buildObservedDecisionSources({
   ].filter(Boolean);
 }
 
+function scanLiteralFieldValuesFromFile(file = "", fieldName = "") {
+  const normalizedFile = cleanText(file);
+  const normalizedFieldName = cleanText(fieldName);
+  if (!normalizedFile || !normalizedFieldName) {
+    return [];
+  }
+
+  const pattern = new RegExp(`${normalizedFieldName}:\\s*["'\`]([^"'\\\`]+)["'\`]`, "g");
+  const sourceText = readFileSync(normalizedFile, "utf8");
+  const values = [];
+  let match = pattern.exec(sourceText);
+  while (match) {
+    values.push(cleanText(match[1]));
+    match = pattern.exec(sourceText);
+  }
+  return uniqTargets(values);
+}
+
+function buildObservedRoutingReasonSource({
+  sourceId = "",
+  file = "",
+  kind = "",
+  reasons = [],
+} = {}) {
+  return {
+    source_id: cleanText(sourceId) || null,
+    file: cleanText(file) || null,
+    kind: cleanText(kind) || null,
+    routing_reasons: uniqTargets(reasons),
+  };
+}
+
+function buildObservedDecisionRoutingReasonSource({
+  sourceId = "",
+  file = "",
+  kind = "",
+  decisions = [],
+} = {}) {
+  return buildObservedRoutingReasonSource({
+    sourceId,
+    file,
+    kind,
+    reasons: decisions.map((decision) => cleanText(decision?.routing_reason)),
+  });
+}
+
 function observePlannerSelectorTargets() {
   const selectorSamples = [
     { userIntent: "建立文件並查詢", taskType: "" },
@@ -360,9 +412,32 @@ function observePlannerSelectorTargets() {
   );
 }
 
+function observePlannerSelectorRoutingReasons() {
+  const selectorSamples = [
+    { userIntent: "建立文件並查詢", taskType: "" },
+    { userIntent: "建立文件後列出知識庫", taskType: "" },
+    { userIntent: "搜尋後打開內容", taskType: "" },
+    { userIntent: "", taskType: "doc_write" },
+    { userIntent: "列出文件", taskType: "" },
+    { userIntent: "學習這份文件", taskType: "" },
+    { userIntent: "update learning state", taskType: "" },
+    { userIntent: "runtime", taskType: "" },
+    { userIntent: "幫我看看", taskType: "" },
+  ];
+
+  return uniqTargets(
+    selectorSamples.map((sample) => selectPlannerTool({
+      userIntent: sample.userIntent,
+      taskType: sample.taskType,
+      logger: null,
+    })?.routing_reason),
+  );
+}
+
 function observeDocQueryRouterTargets() {
   return [
     routeDocQuery("找 OKR 文件"),
+    routeDocQuery("你把我的雲端文件再看一遍，把不屬於scanoo的內容摘出去讓我確認"),
     routeDocQuery("整理這份文件"),
     routeDocQuery("這份文件寫了什麼", {
       activeDoc: {
@@ -377,6 +452,13 @@ function observeDocQueryFlowTargets() {
   return [
     resolveDocQueryRoute({
       userIntent: "找 OKR 文件",
+      payload: {},
+      activeDoc: null,
+      activeCandidates: [],
+      logger: null,
+    }),
+    resolveDocQueryRoute({
+      userIntent: "你把我的雲端文件再看一遍，把不屬於scanoo的內容摘出去讓我確認",
       payload: {},
       activeDoc: null,
       activeCandidates: [],
@@ -502,6 +584,14 @@ function observeDeliveryFlowTargets() {
   ];
 }
 
+function observeTaskLifecycleTargets() {
+  return scanLiteralFieldValuesFromFile(TASK_LIFECYCLE_FILE, "selected_action");
+}
+
+function observeTaskLifecycleRoutingReasons() {
+  return scanLiteralFieldValuesFromFile(TASK_LIFECYCLE_FILE, "routing_reason");
+}
+
 function dedupeFindings(findings = []) {
   const seen = new Set();
   return findings.filter((finding) => {
@@ -517,6 +607,24 @@ function dedupeFindings(findings = []) {
     seen.add(key);
     return true;
   });
+}
+
+function classifyObservedRoutingReasonSource(contract = {}, source = {}) {
+  const findings = [];
+  for (const routingReason of Array.isArray(source.routing_reasons) ? source.routing_reasons : []) {
+    if (contract?.routing_reason?.[routingReason]) {
+      continue;
+    }
+    findings.push({
+      category: "undefined_routing_reasons",
+      source_id: source.source_id,
+      file: source.file,
+      target: routingReason,
+      reason: "routing_reason_missing_from_contract",
+      contract_kind: null,
+    });
+  }
+  return findings;
 }
 
 function classifyObservedSource(contract = {}, source = {}) {
@@ -663,6 +771,42 @@ function collectObservedSources() {
       kind: "flow_route",
       decisions: observeDeliveryFlowTargets(),
     }),
+    buildObservedSource({
+      sourceId: "planner_task_lifecycle_v1.actions",
+      file: TASK_LIFECYCLE_FILE,
+      kind: "internal_follow_up",
+      allowedKinds: ["action"],
+      targets: observeTaskLifecycleTargets(),
+    }),
+  ];
+}
+
+function collectObservedRoutingReasonSources() {
+  return [
+    buildObservedRoutingReasonSource({
+      sourceId: "planner_selector",
+      file: EXECUTIVE_PLANNER_FILE,
+      kind: "selector",
+      reasons: observePlannerSelectorRoutingReasons(),
+    }),
+    buildObservedDecisionRoutingReasonSource({
+      sourceId: "doc_query_router",
+      file: ROUTER_FILE,
+      kind: "selector_route",
+      decisions: observeDocQueryRouterTargets(),
+    }),
+    buildObservedDecisionRoutingReasonSource({
+      sourceId: "planner_doc_query_flow.route",
+      file: DOC_QUERY_FLOW_FILE,
+      kind: "flow_route",
+      decisions: observeDocQueryFlowTargets(),
+    }),
+    buildObservedRoutingReasonSource({
+      sourceId: "planner_task_lifecycle_v1.routing_reason",
+      file: TASK_LIFECYCLE_FILE,
+      kind: "internal_follow_up",
+      reasons: observeTaskLifecycleRoutingReasons(),
+    }),
   ];
 }
 
@@ -694,6 +838,9 @@ export function buildPlannerDiagnosticsSummary(report = {}) {
       : 0,
     undefined_presets: Number.isFinite(report?.summary?.undefined_presets)
       ? report.summary.undefined_presets
+      : 0,
+    undefined_routing_reasons: Number.isFinite(report?.summary?.undefined_routing_reasons)
+      ? report.summary.undefined_routing_reasons
       : 0,
     selector_contract_mismatches: Number.isFinite(report?.summary?.selector_contract_mismatches)
       ? report.summary.selector_contract_mismatches
@@ -747,6 +894,7 @@ function normalizePlannerDiagnosticsSummary(summary = {}) {
     gate: cleanText(summary?.gate) === "pass" ? "pass" : "fail",
     undefined_actions: Number(summary?.undefined_actions || 0),
     undefined_presets: Number(summary?.undefined_presets || 0),
+    undefined_routing_reasons: Number(summary?.undefined_routing_reasons || 0),
     selector_contract_mismatches: Number(summary?.selector_contract_mismatches || 0),
     action_governance_mismatches: Number(summary?.action_governance_mismatches || 0),
     deprecated_reachable_targets: Number(summary?.deprecated_reachable_targets || 0),
@@ -790,9 +938,11 @@ export function runPlannerContractConsistencyCheck({ contractOverride } = {}) {
   const contract = loadPlannerContract({ contractOverride });
   const contractCatalog = buildContractCatalog(contract);
   const observedSources = collectObservedSources();
+  const observedRoutingReasonSources = collectObservedRoutingReasonSources();
   const findings = dedupeFindings(
     [
       ...observedSources.flatMap((source) => classifyObservedSource(contract, source)),
+      ...observedRoutingReasonSources.flatMap((source) => classifyObservedRoutingReasonSource(contract, source)),
       ...collectActionGovernanceFindings(contract),
     ],
   );
@@ -800,6 +950,7 @@ export function runPlannerContractConsistencyCheck({ contractOverride } = {}) {
   const groupedFindings = {
     undefined_actions: findings.filter((finding) => finding.category === "undefined_actions"),
     undefined_presets: findings.filter((finding) => finding.category === "undefined_presets"),
+    undefined_routing_reasons: findings.filter((finding) => finding.category === "undefined_routing_reasons"),
     deprecated_reachable_targets: findings.filter((finding) => finding.category === "deprecated_reachable_targets"),
     selector_contract_mismatches: findings.filter((finding) => finding.category === "selector_contract_mismatches"),
     action_governance_mismatches: findings.filter((finding) => finding.category === "action_governance_mismatches"),
@@ -812,6 +963,7 @@ export function runPlannerContractConsistencyCheck({ contractOverride } = {}) {
     summary: {
       undefined_actions: groupedFindings.undefined_actions.length,
       undefined_presets: groupedFindings.undefined_presets.length,
+      undefined_routing_reasons: groupedFindings.undefined_routing_reasons.length,
       deprecated_reachable_targets: groupedFindings.deprecated_reachable_targets.length,
       selector_contract_mismatches: groupedFindings.selector_contract_mismatches.length,
       action_governance_mismatches: groupedFindings.action_governance_mismatches.length,
@@ -828,16 +980,20 @@ export function runPlannerContractConsistencyCheck({ contractOverride } = {}) {
       version: cleanText(contract?.version) || null,
       actions: contractCatalog.actions,
       presets: contractCatalog.presets,
+      routing_reasons: contractCatalog.routing_reasons,
     },
     summary: {
       observed_sources: observedSources.length,
+      observed_routing_reason_sources: observedRoutingReasonSources.length,
       undefined_actions: groupedFindings.undefined_actions.length,
       undefined_presets: groupedFindings.undefined_presets.length,
+      undefined_routing_reasons: groupedFindings.undefined_routing_reasons.length,
       deprecated_reachable_targets: groupedFindings.deprecated_reachable_targets.length,
       selector_contract_mismatches: groupedFindings.selector_contract_mismatches.length,
       action_governance_mismatches: groupedFindings.action_governance_mismatches.length,
     },
     observed_sources: observedSources,
+    observed_routing_reason_sources: observedRoutingReasonSources,
     findings: groupedFindings,
   };
 }
@@ -850,7 +1006,7 @@ export function renderPlannerContractConsistencyReport(report = {}) {
     `planner contract gate: ${report?.gate?.ok ? "pass" : "fail"}`,
     `planner contract consistency: ${report?.ok ? "ok" : "drift_detected"}`,
     `contract version: ${cleanText(report?.contract?.version) || "unknown"}`,
-    `summary: gate=${diagnosticsSummary.gate} | undefined_actions=${diagnosticsSummary.undefined_actions} | undefined_presets=${diagnosticsSummary.undefined_presets} | selector_contract_mismatches=${diagnosticsSummary.selector_contract_mismatches} | action_governance_mismatches=${diagnosticsSummary.action_governance_mismatches} | deprecated_reachable_targets=${diagnosticsSummary.deprecated_reachable_targets}`,
+    `summary: gate=${diagnosticsSummary.gate} | undefined_actions=${diagnosticsSummary.undefined_actions} | undefined_presets=${diagnosticsSummary.undefined_presets} | undefined_routing_reasons=${diagnosticsSummary.undefined_routing_reasons} | selector_contract_mismatches=${diagnosticsSummary.selector_contract_mismatches} | action_governance_mismatches=${diagnosticsSummary.action_governance_mismatches} | deprecated_reachable_targets=${diagnosticsSummary.deprecated_reachable_targets}`,
     `decision: ${decision.summary}`,
   ];
 

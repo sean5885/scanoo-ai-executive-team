@@ -278,6 +278,7 @@ test("system self-check surfaces planner create_doc governance mismatches", asyn
     summary: {
       undefined_actions: 0,
       undefined_presets: 0,
+      undefined_routing_reasons: 0,
       selector_contract_mismatches: 0,
       action_governance_mismatches: governanceFindings.length,
       deprecated_reachable_targets: 0,
@@ -299,6 +300,7 @@ test("system self-check surfaces planner create_doc governance mismatches", asyn
       ...baseReport.summary,
       undefined_actions: 0,
       undefined_presets: 0,
+      undefined_routing_reasons: 0,
       selector_contract_mismatches: 0,
       action_governance_mismatches: governanceFindings.length,
       deprecated_reachable_targets: 0,

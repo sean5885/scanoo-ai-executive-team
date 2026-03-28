@@ -27,7 +27,7 @@ test("planner diagnostics CLI renders the fixed single-view summary", () => {
 
   assert.match(output, /Planner Diagnostics/);
   assert.match(output, /planner contract gate: pass/);
-  assert.match(output, /summary: gate=pass \| undefined_actions=0 \| undefined_presets=0 \| selector_contract_mismatches=0 \| action_governance_mismatches=0 \| deprecated_reachable_targets=0/);
+  assert.match(output, /summary: gate=pass \| undefined_actions=0 \| undefined_presets=0 \| undefined_routing_reasons=0 \| selector_contract_mismatches=0 \| action_governance_mismatches=0 \| deprecated_reachable_targets=0/);
   assert.match(output, /decision: Gate passes\. No planner implementation or contract change is required\./);
 });
 
@@ -53,6 +53,7 @@ test("planner diagnostics CLI archives the full JSON report into snapshot histor
     gate: "pass",
     undefined_actions: 0,
     undefined_presets: 0,
+    undefined_routing_reasons: 0,
     selector_contract_mismatches: 0,
     action_governance_mismatches: 0,
     deprecated_reachable_targets: 0,
@@ -141,6 +142,7 @@ test("planner diagnostics CLI renders compare-previous with directional markers"
   assert.match(output, /↓ gate: fail -> pass/);
   assert.match(output, /↓ undefined_actions: 2 -> 0 \(-2\)/);
   assert.match(output, /= undefined_presets: 0/);
+  assert.match(output, /= undefined_routing_reasons: 0/);
   assert.match(output, /↓ selector_contract_mismatches: 1 -> 0 \(-1\)/);
   assert.match(output, /= deprecated_reachable_targets: 0/);
   assert.doesNotMatch(output, /findings:/);

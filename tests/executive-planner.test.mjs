@@ -2941,7 +2941,7 @@ test("runPlannerToolFlow routes the exact scanoo exclusion live query into docum
   });
 
   assert.equal(result.selected_action, "search_company_brain_docs");
-  assert.equal(result.routing_reason, "doc_query_scoped_exclusion_search");
+  assert.equal(result.routing_reason, "doc_query_search");
   assert.deepEqual(calls, [{
     action: "search_company_brain_docs",
     payload: {
@@ -3474,6 +3474,7 @@ test("runPlannerToolFlow keeps mirror detail formatting on the same read without
     });
 
     assert.equal(fetchCalls.length, 0);
+    assert.equal(result.routing_reason, "forced_selection");
     assert.equal(result.execution_result?.formatted_output?.kind, "detail");
     assert.equal(result.execution_result?.formatted_output?.doc_id, "doc_mirror_only_1");
     assert.equal(result.execution_result?.formatted_output?.content_summary, "mirror summary only");
@@ -4052,7 +4053,7 @@ test("search/detail reply renders pending item actions and mark_resolved follow-
   });
 
   assert.equal(resolved.selected_action, "mark_resolved");
-  assert.equal(resolved.routing_reason, "task_lifecycle_pending_item_action");
+  assert.equal(resolved.routing_reason, "task_lifecycle_follow_up");
   assert.equal(resolved.execution_result?.action, "mark_resolved");
   assert.equal(resolved.execution_result?.data?.status, "resolved");
   assert.equal(resolved.execution_result?.data?.changed, true);

@@ -169,7 +169,7 @@ function route(q = "", { activeDoc = null, activeCandidates = [] } = {}) {
   if (wantsScopedExclusionSearch) {
     return buildRouteDecision({
       action: "search_company_brain_docs",
-      routingReason: "doc_query_scoped_exclusion_search",
+      routingReason: "doc_query_search",
     });
   }
 

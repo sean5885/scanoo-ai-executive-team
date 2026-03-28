@@ -8,6 +8,7 @@
   - stable tool targets callable by planner runtime
   - each action defines `input_schema`, `output_schema`, and bridge/tool-side `error_codes`
   - controlled write actions may also define checked-in `governance` metadata such as `external_write`, `confirm_required`, conditional `review_required`, and required entry-governance fields
+  - current planner follow-up actions that surface through `runPlannerToolFlow(...)` are also part of this checked-in action catalog even when they are satisfied by local planner lifecycle state instead of the HTTP tool registry (`read_task_lifecycle_v1`, `update_task_lifecycle_v1`, `mark_resolved`)
 - `presets`
   - stable multi-step planner targets
   - each preset defines `input_schema`, `output_schema`, and `step_actions`
@@ -32,6 +33,7 @@
   - normalized doc-query flow route output: router fields plus shaped `payload`
 - `planner_tool_flow_output`
   - output of `runPlannerToolFlow(...)`
+  - fixed fields are `selected_action`, `execution_result`, `routing_reason`, `synthetic_agent_hint`, and `trace_id`
 - `planned_user_input_envelope`
   - output of `buildPlannedUserInputEnvelope(...)`
 
@@ -54,3 +56,5 @@
 - `fallback`
 
 Each fixture validates observed public output against `public_contracts` and asserts that emitted `error` / `routing_reason` / target values are declared in the contract.
+
+`/Users/seanhan/Documents/Playground/src/planner-contract-consistency.mjs` also treats observed planner-side `routing_reason` values as a blocking contract surface. If an emitted `routing_reason` is missing from `planner_contract.json`, diagnostics must fail with `undefined_routing_reasons`.

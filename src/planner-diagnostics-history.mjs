@@ -102,6 +102,7 @@ function buildManifestEntry({
     gate: cleanText(diagnosticsSummary?.gate) || "fail",
     undefined_actions: Number(diagnosticsSummary?.undefined_actions || 0),
     undefined_presets: Number(diagnosticsSummary?.undefined_presets || 0),
+    undefined_routing_reasons: Number(diagnosticsSummary?.undefined_routing_reasons || 0),
     selector_contract_mismatches: Number(diagnosticsSummary?.selector_contract_mismatches || 0),
     action_governance_mismatches: Number(diagnosticsSummary?.action_governance_mismatches || 0),
     deprecated_reachable_targets: Number(diagnosticsSummary?.deprecated_reachable_targets || 0),

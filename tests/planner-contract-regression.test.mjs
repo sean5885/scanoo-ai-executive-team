@@ -11,9 +11,11 @@ const [
     runPlannerToolFlow,
   },
   { resolveDocQueryRoute },
+  { replacePlannerTaskLifecycleStoreForTests },
 ] = await Promise.all([
   import("../src/executive-planner.mjs"),
   import("../src/planner-doc-query-flow.mjs"),
+  import("../src/planner-task-lifecycle-v1.mjs"),
 ]);
 import { route } from "../src/router.js";
 
@@ -240,6 +242,62 @@ const fixtures = [
       assert.equal(envelope.trace?.fallback_reason, "planner_failed");
     },
   },
+  {
+    id: "task-lifecycle-read",
+    async run() {
+      resetPlannerRuntimeContext();
+      replacePlannerTaskLifecycleStoreForTests({
+        tasks: {
+          task_contract_read_1: {
+            id: "task_contract_read_1",
+            scope_key: "scope_contract_read",
+            title: "跟進 Alice",
+            theme: "okr",
+            owner: "Alice",
+            deadline: "2026-03-28",
+            task_state: "planned",
+            lifecycle_state: "planned",
+            created_at: "2026-03-20T00:00:00.000Z",
+            updated_at: "2026-03-20T00:00:00.000Z",
+          },
+        },
+        scopes: {
+          scope_contract_read: {
+            scope_key: "scope_contract_read",
+            theme: "okr",
+            selected_action: "search_and_detail_doc",
+            user_intent: "整理 OKR 文件",
+            trace_id: "trace_contract_read",
+            source_kind: "search_and_detail",
+            source_doc_id: "doc_contract_read",
+            source_title: "OKR Weekly Review",
+            current_task_ids: ["task_contract_read_1"],
+            created_at: "2026-03-20T00:00:00.000Z",
+            updated_at: "2026-03-20T00:00:00.000Z",
+          },
+        },
+        latest_scope_key: "scope_contract_read",
+      });
+      const result = await runPlannerToolFlow({
+        userIntent: "誰負責這些 task？",
+        payload: {},
+        logger: quietLogger,
+        async dispatcher() {
+          throw new Error("should_not_dispatch_doc_tool");
+        },
+      });
+      return [{
+        contractName: "planner_tool_flow_output",
+        value: result,
+      }];
+    },
+    assert(records) {
+      const result = records[0].value;
+      assert.equal(result.selected_action, "read_task_lifecycle_v1");
+      assert.equal(result.execution_result?.action, "read_task_lifecycle_v1");
+      assert.equal(result.routing_reason, "task_lifecycle_follow_up");
+    },
+  },
 ];
 
 for (const fixture of fixtures) {
@@ -247,6 +305,10 @@ for (const fixture of fixtures) {
     const records = await fixture.run();
     for (const record of records) {
       assertSchema(record.contractName, record.value);
+      if (record.contractName === "planner_tool_flow_output") {
+        assert.equal("synthetic_agent_hint" in record.value, true, "planner_tool_flow_output missing synthetic_agent_hint");
+        assert.equal("agent_execution" in record.value, false, "planner_tool_flow_output should not expose agent_execution");
+      }
       assertKnownRoutingReason(record.value?.routing_reason);
       assertKnownTarget(record.value?.selected_target, record.value?.target_kind);
       assertKnownError(record.value?.error);

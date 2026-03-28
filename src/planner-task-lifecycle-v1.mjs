@@ -1908,7 +1908,7 @@ export async function maybeRunPlannerTaskLifecycleFollowUp({
       return {
         selected_action: "mark_resolved",
         reason: "命中 planner pending item action，但目前無法唯一定位 item。",
-        routing_reason: "task_lifecycle_pending_item_action",
+        routing_reason: "task_lifecycle_follow_up",
         execution_result: executionResult,
         snapshot,
       };
@@ -1922,7 +1922,7 @@ export async function maybeRunPlannerTaskLifecycleFollowUp({
     return {
       selected_action: "mark_resolved",
       reason: "命中 planner pending item action。",
-      routing_reason: "task_lifecycle_pending_item_action",
+      routing_reason: "task_lifecycle_follow_up",
       pending_item_action: {
         item_id: cleanText(targetTask.id),
         task: cloneValue(targetTask),

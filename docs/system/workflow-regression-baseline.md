@@ -410,6 +410,7 @@ npm run release-check:ci -- --compare-snapshot <run-id|path>
   - `gate`
   - `undefined_actions`
   - `undefined_presets`
+  - `undefined_routing_reasons`
   - `selector_contract_mismatches`
   - `deprecated_reachable_targets`
 - snapshot 檔內容為該次 CLI 對應的完整 JSON diagnostics report
@@ -479,11 +480,13 @@ npm run release-check:ci -- --compare-snapshot <run-id|path>
 - fail 條件僅限：
   - `undefined actions > 0`
   - `undefined presets > 0`
+  - `undefined routing reasons > 0`
   - `selector/contract mismatches > 0`
 - 固定 diagnostics summary 欄位為：
   - `gate`
   - `undefined_actions`
   - `undefined_presets`
+  - `undefined_routing_reasons`
   - `selector_contract_mismatches`
   - `deprecated_reachable_targets`
 - 若 `gate = fail`，decision 提示固定為：

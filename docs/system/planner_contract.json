@@ -683,6 +683,72 @@
       "error_codes": [
         "internal_error"
       ]
+    },
+    "read_task_lifecycle_v1": {
+      "input_schema": {
+        "type": "object",
+        "required": [],
+        "properties": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["ok", "action", "trace_id", "data", "formatted_output"],
+        "properties": {
+          "ok": { "type": "boolean" },
+          "action": { "type": "string" },
+          "trace_id": { "type": ["string", "null"] },
+          "data": { "type": "object" },
+          "formatted_output": { "type": "object" }
+        }
+      },
+      "error_codes": [
+        "business_error",
+        "not_found"
+      ]
+    },
+    "update_task_lifecycle_v1": {
+      "input_schema": {
+        "type": "object",
+        "required": [],
+        "properties": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["ok", "action", "trace_id", "data", "formatted_output"],
+        "properties": {
+          "ok": { "type": "boolean" },
+          "action": { "type": "string" },
+          "trace_id": { "type": ["string", "null"] },
+          "data": { "type": "object" },
+          "formatted_output": { "type": "object" }
+        }
+      },
+      "error_codes": [
+        "business_error",
+        "not_found"
+      ]
+    },
+    "mark_resolved": {
+      "input_schema": {
+        "type": "object",
+        "required": [],
+        "properties": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["ok", "action", "data", "formatted_output"],
+        "properties": {
+          "ok": { "type": "boolean" },
+          "action": { "type": "string" },
+          "data": { "type": "object" },
+          "formatted_output": { "type": "object" },
+          "trace_id": { "type": ["string", "null"] }
+        }
+      },
+      "error_codes": [
+        "not_found",
+        "business_error"
+      ]
     }
   },
   "presets": {
@@ -835,12 +901,12 @@
     },
     "planner_tool_flow_output": {
       "type": "object",
-      "required": ["selected_action", "execution_result", "routing_reason", "trace_id"],
+      "required": ["selected_action", "execution_result", "routing_reason", "synthetic_agent_hint", "trace_id"],
       "properties": {
         "selected_action": { "type": ["string", "null"] },
         "execution_result": { "type": ["object", "null"] },
         "routing_reason": { "type": ["string", "null"] },
-        "agent_execution": { "type": ["object", "null"] },
+        "synthetic_agent_hint": { "type": ["object", "null"] },
         "trace_id": { "type": ["string", "null"] }
       }
     },

@@ -29,6 +29,7 @@ test("planner contract consistency report surfaces selector kind drift without i
   assert.equal(report.diagnostics_summary.gate, "pass");
   assert.equal(report.summary.undefined_actions, 0);
   assert.equal(report.summary.undefined_presets, 0);
+  assert.equal(report.summary.undefined_routing_reasons, 0);
   assert.equal(report.summary.deprecated_reachable_targets, 0);
   assert.equal(report.summary.selector_contract_mismatches, 0);
   assert.equal(report.summary.action_governance_mismatches, 0);
@@ -36,10 +37,12 @@ test("planner contract consistency report surfaces selector kind drift without i
     gate: "pass",
     undefined_actions: 0,
     undefined_presets: 0,
+    undefined_routing_reasons: 0,
     selector_contract_mismatches: 0,
     action_governance_mismatches: 0,
     deprecated_reachable_targets: 0,
   });
+  assert.deepEqual(report.findings.undefined_routing_reasons, []);
   assert.equal(report.decision.action, "observe_only");
   assert.deepEqual(report.findings.selector_contract_mismatches, []);
   assert.deepEqual(report.findings.action_governance_mismatches, []);
@@ -51,7 +54,7 @@ test("planner contract consistency CLI renderer includes the main drift counters
 
   assert.match(text, /Planner Diagnostics/);
   assert.match(text, /planner contract gate:/);
-  assert.match(text, /summary: gate=pass \| undefined_actions=0 \| undefined_presets=0 \| selector_contract_mismatches=0 \| action_governance_mismatches=0 \| deprecated_reachable_targets=0/);
+  assert.match(text, /summary: gate=pass \| undefined_actions=0 \| undefined_presets=0 \| undefined_routing_reasons=0 \| selector_contract_mismatches=0 \| action_governance_mismatches=0 \| deprecated_reachable_targets=0/);
   assert.match(text, /decision: Gate passes\./);
 });
 
@@ -74,6 +77,7 @@ test("planner diagnostics decision keeps deprecated reachable targets as non-blo
     summary: {
       undefined_actions: 0,
       undefined_presets: 0,
+      undefined_routing_reasons: 0,
       selector_contract_mismatches: 0,
       deprecated_reachable_targets: 1,
     },
@@ -84,6 +88,7 @@ test("planner diagnostics decision keeps deprecated reachable targets as non-blo
     gate: "pass",
     undefined_actions: 0,
     undefined_presets: 0,
+    undefined_routing_reasons: 0,
     selector_contract_mismatches: 0,
     action_governance_mismatches: 0,
     deprecated_reachable_targets: 1,
@@ -97,6 +102,7 @@ test("planner diagnostics decision defaults to fixing planner implementation on 
     gate: "fail",
     undefined_actions: 1,
     undefined_presets: 0,
+    undefined_routing_reasons: 0,
     selector_contract_mismatches: 0,
     deprecated_reachable_targets: 0,
   });
@@ -143,4 +149,32 @@ test("planner contract consistency flags missing create_doc required_entry_field
   assert.equal(report.findings.action_governance_mismatches[0].target, "create_doc");
   assert.equal(report.findings.action_governance_mismatches[0].field, "required_entry_fields");
   assert.equal(report.findings.action_governance_mismatches[0].reason, "required_entry_fields_mismatch");
+});
+
+test("planner contract consistency flags missing registered routing_reason", () => {
+  const contractOverride = JSON.parse(JSON.stringify(plannerContract));
+  delete contractOverride.routing_reason.selector_get_runtime_info;
+
+  const report = runPlannerContractConsistencyCheck({ contractOverride });
+
+  assert.equal(report.ok, false);
+  assert.equal(report.gate.ok, false);
+  assert.deepEqual(report.gate.failing_categories, ["undefined_routing_reasons"]);
+  assert.equal(report.summary.undefined_routing_reasons, 1);
+  assert.equal(report.findings.undefined_routing_reasons[0].target, "selector_get_runtime_info");
+  assert.equal(report.findings.undefined_routing_reasons[0].reason, "routing_reason_missing_from_contract");
+});
+
+test("planner contract consistency flags missing lifecycle follow-up action", () => {
+  const contractOverride = JSON.parse(JSON.stringify(plannerContract));
+  delete contractOverride.actions.read_task_lifecycle_v1;
+
+  const report = runPlannerContractConsistencyCheck({ contractOverride });
+
+  assert.equal(report.ok, false);
+  assert.equal(report.gate.ok, false);
+  assert.deepEqual(report.gate.failing_categories, ["undefined_actions"]);
+  assert.equal(report.summary.undefined_actions, 1);
+  assert.equal(report.findings.undefined_actions[0].target, "read_task_lifecycle_v1");
+  assert.equal(report.findings.undefined_actions[0].source_id, "planner_task_lifecycle_v1.actions");
 });

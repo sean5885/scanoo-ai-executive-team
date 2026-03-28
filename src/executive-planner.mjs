@@ -107,6 +107,12 @@ const PLANNER_EXPLICIT_AUTH_ACTIONS = new Set([
   "search_company_brain_docs",
   "get_company_brain_doc_detail",
 ]);
+const PLANNER_ROUTING_REASON_ALIASES = Object.freeze({
+  doc_query_scoped_exclusion_search: "doc_query_search",
+  selector_search_company_brain_docs_scoped_exclusion: "selector_search_company_brain_docs",
+  task_lifecycle_pending_item_action: "task_lifecycle_follow_up",
+  forced_detail_for_mirror_runtime: "forced_selection",
+});
 
 const executiveCollaborationSignals = [
   "各個 agent",
@@ -211,6 +217,14 @@ function actionRequiresExplicitUserAuth(action = "") {
 
 function normalizePlannerAuthContext(authContext = null) {
   return normalizeExplicitUserAuthContext(authContext);
+}
+
+function normalizePlannerRoutingReason(routingReason = "", fallback = "") {
+  const normalized = cleanText(routingReason) || cleanText(fallback);
+  if (!normalized) {
+    return null;
+  }
+  return PLANNER_ROUTING_REASON_ALIASES[normalized] || normalized;
 }
 
 // ---------------------------------------------------------------------------
@@ -1596,6 +1610,9 @@ function derivePlannerAgentLane({
     "create_search_detail_list_doc",
     "update_learning_state",
     "ingest_learning_doc",
+    "read_task_lifecycle_v1",
+    "update_task_lifecycle_v1",
+    "mark_resolved",
   ].includes(action)) {
     return "doc";
   }
@@ -1628,7 +1645,7 @@ function buildPlannerAgentOutput({
   return {
     selected_action: selectedAction,
     execution_result: executionResult,
-    routing_reason: cleanText(routingReason) || null,
+    routing_reason: normalizePlannerRoutingReason(routingReason) || null,
     synthetic_agent_hint: resolvePlannerAgentExecution({
       taskType,
       payload,
@@ -2784,7 +2801,7 @@ export function selectPlannerTool({
   } else if (semantics.wants_scoped_doc_exclusion_search) {
     selectedAction = "search_company_brain_docs";
     reason = "這輪是在文件範圍內重新盤點某個主題集合，所以先 search 候選文件。";
-    routingReason = "selector_search_company_brain_docs_scoped_exclusion";
+    routingReason = "selector_search_company_brain_docs";
   } else if (
     normalizedTaskType === "knowledge_learning"
     || normalizedIntent.includes("學習這份文件")
@@ -2829,6 +2846,7 @@ export function selectPlannerTool({
     reason = ROUTING_NO_MATCH;
     routingReason = "routing_no_match";
   }
+  routingReason = normalizePlannerRoutingReason(routingReason);
 
   const reasoning = normalizeDecisionReasoning({
     why: reason || null,
@@ -3225,7 +3243,10 @@ export async function runPlannerToolFlow({
       selectedAction: cleanText(forcedSelection?.selected_action || forcedSelection?.action || "") || null,
       executionResult: preAbortResult,
       traceId: preAbortResult.trace_id || null,
-      routingReason: cleanText(forcedSelection?.routing_reason || forcedSelection?.reason || "") || "forced_selection",
+      routingReason: normalizePlannerRoutingReason(
+        cleanText(forcedSelection?.routing_reason || forcedSelection?.reason || ""),
+        "forced_selection",
+      ) || "forced_selection",
       taskType,
       payload,
     });
@@ -3247,7 +3268,10 @@ export async function runPlannerToolFlow({
     ? {
         selected_action: cleanText(forcedSelection.selected_action || forcedSelection.action || "") || null,
         reason: cleanText(forcedSelection.reason || "") || "forced_selection",
-        routing_reason: cleanText(forcedSelection.routing_reason || forcedSelection.reason || "") || "forced_selection",
+        routing_reason: normalizePlannerRoutingReason(
+          cleanText(forcedSelection.routing_reason || forcedSelection.reason || ""),
+          "forced_selection",
+        ) || "forced_selection",
       }
     : null;
   const plannerDocQueryContext = getPlannerDocQueryContext({ sessionKey });
@@ -3309,16 +3333,22 @@ export async function runPlannerToolFlow({
     ? {
         ...selectorSelection,
         reason: selectorSelection?.reason || "命中更具體的 selector 規則，覆蓋 generic search hard route。",
-        routing_reason: cleanText(selectorSelection?.routing_reason || "") || "selector_override_generic_search_route",
+        routing_reason: normalizePlannerRoutingReason(
+          cleanText(selectorSelection?.routing_reason || ""),
+          "selector_override_generic_search_route",
+        ) || "selector_override_generic_search_route",
       }
     : hardRoutedAction
     ? {
         selected_action: hardRoutedAction,
         reason: taskLifecycleFollowUp?.reason || "命中硬路由規則。",
-        routing_reason: cleanText(taskLifecycleFollowUp?.routing_reason || routedFlow?.routing_reason || "") || "hard_route_match",
+        routing_reason: normalizePlannerRoutingReason(
+          cleanText(taskLifecycleFollowUp?.routing_reason || routedFlow?.routing_reason || ""),
+          "hard_route_match",
+        ) || "hard_route_match",
       }
     : selectorSelection;
-  const selectionRoutingReason = cleanText(selection?.routing_reason || "")
+  const selectionRoutingReason = normalizePlannerRoutingReason(cleanText(selection?.routing_reason || ""))
     || (cleanText(selection?.selected_action || "") ? "selector_match" : "routing_no_match");
   const selectionReasoning = normalizeDecisionReasoning({
     why: selection?.why || selection?.reason || null,
@@ -3350,7 +3380,6 @@ export async function runPlannerToolFlow({
     });
   } else if (
     !taskLifecycleFollowUp?.execution_result
-    && selectionAction !== "mark_resolved"
     && !getPlannerActionContract(selectionAction)
     && !getPlannerPreset(selectionAction)
   ) {
