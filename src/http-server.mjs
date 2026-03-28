@@ -210,6 +210,8 @@ import {
   sanitizeTracePayload,
 } from "./monitoring-store.mjs";
 import { normalizeUserResponse } from "./user-response-normalizer.mjs";
+import db from "./db.mjs";
+import { withLarkWriteExecutionContext } from "./execute-lark-write.mjs";
 
 installMemoryWriteDetector();
 
@@ -1255,6 +1257,30 @@ function buildDocumentWriteAuthPayload(context, action) {
   };
 }
 
+function ensureMutationAudit(value = null) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  value.nested_mutations = Array.isArray(value.nested_mutations) ? value.nested_mutations : [];
+  return value;
+}
+
+function recordNestedMutation(audit = null, {
+  phase = "execute",
+  action = "",
+  targetId = "",
+} = {}) {
+  const resolvedAudit = ensureMutationAudit(audit);
+  if (!resolvedAudit) {
+    return;
+  }
+  resolvedAudit.nested_mutations.push({
+    phase: String(phase || "").trim() || "execute",
+    action: String(action || "").trim() || null,
+    target_id: String(targetId || "").trim() || null,
+  });
+}
+
 function respondDocumentWriteSuccess(res, statusCode, payload) {
   jsonResponse(res, statusCode, {
     ok: true,
@@ -1539,7 +1565,12 @@ async function applyDocumentManagerPermissionGrant({
   logger = noopHttpLogger,
 }) {
   const managerOpenId = String(context.account.open_id || "").trim();
-  const createdByOpenId = managerOpenId;
+  const createdByOpenId = String(
+    created?.created_by_open_id
+    || created?.creator_open_id
+    || created?.owner_open_id
+    || managerOpenId,
+  ).trim();
   let permissionGrantFailed = false;
   let permissionGrantSkipped = false;
   let permissionGrantError = null;
@@ -1555,10 +1586,14 @@ async function applyDocumentManagerPermissionGrant({
   }
 
   try {
-    await ensureDocumentManagerPermission(context.token, created.document_id, {
-      tokenType: "user",
-      managerOpenId,
-    });
+    await getHttpService("ensureDocumentManagerPermission", ensureDocumentManagerPermission)(
+      context.token,
+      created.document_id,
+      {
+        tokenType: "user",
+        managerOpenId,
+      },
+    );
   } catch (error) {
     permissionGrantFailed = true;
     permissionGrantError = extractHttpPlatformError(error);
@@ -1675,6 +1710,13 @@ async function handleDocumentCreateIndexBoundary({
       index_document_id: indexedDocument?.document_row?.id || null,
       source: "api",
     });
+    return {
+      ok: true,
+      indexed: true,
+      verified: indexedDocument?.verified === true,
+      ingested: indexedDocument?.verified === true,
+      indexed_document_id: indexedDocument?.document_row?.id || null,
+    };
   } catch (error) {
     await persistIndexFailureLifecycleRecord({
       account: context.account,
@@ -1691,7 +1733,163 @@ async function handleDocumentCreateIndexBoundary({
       document_id: created.document_id || null,
       error: logger.compactError(error),
     });
+    return {
+      ok: false,
+      indexed: false,
+      verified: false,
+      ingested: false,
+      error,
+    };
   }
+}
+
+function cleanupRolledBackCreatedDocumentArtifacts({
+  accountId,
+  documentId,
+  mutationAudit = null,
+} = {}) {
+  const normalizedAccountId = String(accountId || "").trim();
+  const normalizedDocumentId = String(documentId || "").trim();
+  if (!normalizedAccountId || !normalizedDocumentId) {
+    return {
+      deleted_document_rows: 0,
+      deleted_source_rows: 0,
+      deleted_company_brain_rows: 0,
+      deleted_chunk_fts_rows: 0,
+    };
+  }
+
+  return runRepositoryTransaction(() => {
+    const documentRows = db.prepare(
+      "SELECT id FROM lark_documents WHERE account_id = ? AND document_id = ?",
+    ).all(normalizedAccountId, normalizedDocumentId);
+    const selectChunkIds = db.prepare("SELECT id FROM lark_chunks WHERE document_id = ?");
+    const deleteChunkFts = db.prepare("DELETE FROM lark_chunks_fts WHERE chunk_id = ?");
+    let deletedChunkFtsRows = 0;
+
+    for (const row of documentRows) {
+      const chunkRows = selectChunkIds.all(row.id);
+      for (const chunkRow of chunkRows) {
+        deletedChunkFtsRows += deleteChunkFts.run(chunkRow.id).changes;
+      }
+    }
+
+    const deletedCompanyBrainRows = db.prepare(
+      "DELETE FROM company_brain_docs WHERE account_id = ? AND doc_id = ?",
+    ).run(normalizedAccountId, normalizedDocumentId).changes;
+    const deletedSourceRows = db.prepare(
+      "DELETE FROM lark_sources WHERE account_id = ? AND external_id = ?",
+    ).run(normalizedAccountId, normalizedDocumentId).changes;
+    const deletedDocumentRows = db.prepare(
+      "DELETE FROM lark_documents WHERE account_id = ? AND document_id = ?",
+    ).run(normalizedAccountId, normalizedDocumentId).changes;
+
+    if (deletedChunkFtsRows > 0) {
+      recordNestedMutation(mutationAudit, {
+        phase: "rollback",
+        action: "delete_document_chunk_fts",
+        targetId: normalizedDocumentId,
+      });
+    }
+    if (deletedCompanyBrainRows > 0) {
+      recordNestedMutation(mutationAudit, {
+        phase: "rollback",
+        action: "delete_company_brain_doc",
+        targetId: normalizedDocumentId,
+      });
+    }
+    if (deletedSourceRows > 0) {
+      recordNestedMutation(mutationAudit, {
+        phase: "rollback",
+        action: "delete_document_source",
+        targetId: normalizedDocumentId,
+      });
+    }
+    if (deletedDocumentRows > 0) {
+      recordNestedMutation(mutationAudit, {
+        phase: "rollback",
+        action: "delete_document_lifecycle_seed",
+        targetId: normalizedDocumentId,
+      });
+    }
+
+    return {
+      deleted_document_rows: deletedDocumentRows,
+      deleted_source_rows: deletedSourceRows,
+      deleted_company_brain_rows: deletedCompanyBrainRows,
+      deleted_chunk_fts_rows: deletedChunkFtsRows,
+    };
+  });
+}
+
+async function rollbackCreatedDocumentTransaction({
+  accessToken,
+  accountId,
+  rollbackState = null,
+  mutationAudit = null,
+} = {}) {
+  const state =
+    rollbackState && typeof rollbackState === "object" && !Array.isArray(rollbackState)
+      ? rollbackState
+      : {};
+  const details = {
+    deleted_document_id: null,
+    local_cleanup: {
+      deleted_document_rows: 0,
+      deleted_source_rows: 0,
+      deleted_company_brain_rows: 0,
+      deleted_chunk_fts_rows: 0,
+    },
+  };
+  const errors = [];
+  let externalDeleteSucceeded = !String(state.created_document_id || "").trim();
+
+  await withLarkWriteExecutionContext({
+    api_name: "document_create_rollback",
+    action: "document_create_rollback",
+    pathname: "internal:doc/create/rollback",
+    account_id: accountId || null,
+  }, async () => {
+    if (!String(state.created_document_id || "").trim()) {
+      return;
+    }
+
+    try {
+      await getHttpService(
+        "deleteDocument",
+        async (token, documentId) => deleteDriveItem(token, documentId, "docx", "user"),
+      )(accessToken, state.created_document_id);
+      details.deleted_document_id = state.created_document_id;
+      externalDeleteSucceeded = true;
+      recordNestedMutation(mutationAudit, {
+        phase: "rollback",
+        action: "delete_document",
+        targetId: state.created_document_id,
+      });
+    } catch (error) {
+      errors.push(`delete_document:${error instanceof Error ? error.message : String(error)}`);
+    }
+  });
+
+  if (externalDeleteSucceeded && String(state.created_document_id || "").trim()) {
+    try {
+      details.local_cleanup = cleanupRolledBackCreatedDocumentArtifacts({
+        accountId,
+        documentId: state.created_document_id,
+        mutationAudit,
+      });
+    } catch (error) {
+      errors.push(`cleanup_local_state:${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  if (errors.length) {
+    const rollbackError = new Error(errors.join("; "));
+    rollbackError.details = details;
+    throw rollbackError;
+  }
+
+  return details;
 }
 
 function upsertApiLifecycleDocument({
@@ -3499,6 +3697,11 @@ async function handleDocumentCreate(
   }
 
   const autoConfirmLegacyAgentCreate = requireEntryGovernance === true && !confirmationId;
+  const createRollbackState = {};
+  const mutationAudit = {
+    boundary: "create_doc",
+    nested_mutations: [],
+  };
   const createRuntime = await runDocumentCreateMutation({
     pathname,
     accountId: context.account.id,
@@ -3518,6 +3721,13 @@ async function handleDocumentCreate(
     confirmationId,
     idempotencyKey,
     autoConfirmWithoutConfirmation: autoConfirmLegacyAgentCreate,
+    rollback: async () => rollbackCreatedDocumentTransaction({
+      accessToken: context.token,
+      accountId: context.account.id,
+      rollbackState: createRollbackState,
+      mutationAudit,
+    }),
+    audit: mutationAudit,
     performWrite: async ({ accessToken, folderToken, createGuard, writePolicy }) => {
         let created;
         try {
@@ -3528,6 +3738,12 @@ async function handleDocumentCreate(
             "user",
             { source: source || "api_doc_create" },
           );
+          createRollbackState.created_document_id = created?.document_id || null;
+          recordNestedMutation(mutationAudit, {
+            phase: "execute",
+            action: "create_document",
+            targetId: created?.document_id || null,
+          });
         } catch (error) {
           await persistCreateFailedLifecycleRecord({
             account: context.account,
@@ -3548,6 +3764,11 @@ async function handleDocumentCreate(
           createdAt,
           logger,
         });
+        recordNestedMutation(mutationAudit, {
+          phase: "execute",
+          action: "persist_document_lifecycle_seed",
+          targetId: created?.document_id || null,
+        });
         logger.info("document_create_create_succeeded", {
           account_id: context.account.id,
           document_id: created.document_id || null,
@@ -3563,6 +3784,18 @@ async function handleDocumentCreate(
           created,
           logger,
         });
+        if (permissionGrantFailed) {
+          const error = new Error("document_create_permission_grant_failed");
+          error.details = permissionGrantError;
+          throw error;
+        }
+        if (!permissionGrantSkipped) {
+          recordNestedMutation(mutationAudit, {
+            phase: "execute",
+            action: "grant_document_permission",
+            targetId: created?.document_id || null,
+          });
+        }
 
         let writeResult = null;
         let initialContentWriteFailed = false;
@@ -3586,10 +3819,18 @@ async function handleDocumentCreate(
               created,
               initialContentWriteError,
             );
+            const writeError = new Error("document_create_initial_content_write_failed");
+            writeError.details = initialContentWriteError;
+            throw writeError;
           }
+          recordNestedMutation(mutationAudit, {
+            phase: "execute",
+            action: "update_document",
+            targetId: created?.document_id || null,
+          });
         }
 
-        await handleDocumentCreateIndexBoundary({
+        const indexBoundary = await handleDocumentCreateIndexBoundary({
           context,
           created,
           folderToken,
@@ -3597,6 +3838,20 @@ async function handleDocumentCreate(
           createdAt,
           logger,
         });
+        if (indexBoundary?.indexed) {
+          recordNestedMutation(mutationAudit, {
+            phase: "execute",
+            action: "index_document",
+            targetId: created?.document_id || null,
+          });
+        }
+        if (indexBoundary?.ingested) {
+          recordNestedMutation(mutationAudit, {
+            phase: "execute",
+            action: "ingest_company_brain_doc",
+            targetId: created?.document_id || null,
+          });
+        }
         logger.info("document_create_completed", {
           account_id: context.account.id,
           document_id: created.document_id || null,
@@ -7565,6 +7820,7 @@ async function handleSearch(res, requestUrl, body, logger = noopHttpLogger) {
     });
     const { account, items } = await getHttpService("searchKnowledgeBase", searchKnowledgeBase)(accountId, q, k, {
       pathname: requestUrl?.pathname || "/search",
+      logger,
     });
     logger.info("knowledge_search_completed", {
       account_id: account.id,

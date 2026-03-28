@@ -17,6 +17,7 @@ import {
   querySystemKnowledgeWithContext,
   querySystemKnowledgeWithSnippet,
 } from "./knowledge/system-knowledge-core.mjs";
+import { buildReadSourceItems } from "./read-source-schema.mjs";
 
 function buildSearchCandidates(query) {
   const normalized = normalizeText(query).replace(/[?？!！。]+$/g, "");
@@ -71,7 +72,10 @@ export function searchKnowledgeBaseByIndexAuthority(accountId, query, limit = se
 
   return {
     account: accountContext.account,
-    items: [...merged.values()].slice(0, resolvedLimit),
+    items: buildReadSourceItems(
+      [...merged.values()].slice(0, resolvedLimit),
+      { query },
+    ),
   };
 }
 

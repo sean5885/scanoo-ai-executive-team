@@ -849,6 +849,7 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
   - keep `mutation-admission.mjs` builder-only in Step 2: no route execute wiring, no planner/Lark/DB mutation, and no route-specific business logic inside the adapter
   - keep `mutation-runtime.mjs` as the shared write-entry scaffold for the first connected family; it now normalizes the checked-in canonical request, runs admission before execute, returns `missing_execute` when no executor is supplied, returns `invalid_executor` with a stable message when `execute` is present but not callable, derives `meta.execution_mode` from `context.execution_mode` with a default of `passthrough`, records `meta.duration_ms` around the downstream executor call, and emits a small `meta.journal` (`action / status / started_at`, plus `error` on failure); execution-failure fail-soft results now support an optional `context.rollback` hook, persist `journal.rollback.status` / `details`, and can snapshot caller-supplied nested mutation audit evidence into `journal.audit`; when callers pass `context.idempotency_key`, the same runtime now keeps an in-process state entry (`pending` before execute, `done` after the first successful response) so overlapping retries fail-soft with `idempotency_in_progress` instead of double-running the mutation, and non-success paths clear the pending entry so later retries can re-enter safely
   - the first connected runtime family is now `create_doc`, `update_doc`, `document_comment_rewrite_apply`, and `meeting_confirm_write`; the route layer builds canonical request input and then hands off the final allow/deny to `runMutation(...)`
+  - `create_doc` now also uses the same runtime journal / rollback contract as the later apply routes: route-local execute records nested audit entries for `create_document`, permission repair, optional `update_document`, and local index/ingest writes, while rollback deletes the newly created doc and removes local lifecycle/index artifacts when a post-create step fails
   - keep `execute-lark-write.mjs` adapter-only for this first landing: it still owns confirmation consumption, write-budget / dedupe checks, and the final `performWrite(...)` hop, but it no longer performs mutation-admission policy decisions
   - keep `company-brain apply` ordering explicit as `lifecycle gate first, mutation admission adapter second`
   - provide one checked-in write-policy metadata contract (`policy_version / source / owner / intent / action_type / external_write / confirm_required / review_required / scope_key / idempotency_key`) for the Phase 1 high-risk write family
@@ -947,7 +948,12 @@ System status / next phase: [system_status_next_phase.md](/Users/seanhan/Documen
 - `/Users/seanhan/Documents/Playground/src/answer-service.mjs`
   - hybrid retrieval-to-answer pipeline
   - now uses XML-governed prompt sections, checkpoint summaries, retrieved-snippet budgets, and shared low-variance generation settings instead of stuffing raw chunks
+  - its retrieval boundary is now fail-closed on `read-runtime.mjs` index authority; the service no longer needs direct `rag-repository.mjs` reads, and both `searchKnowledgeBase(...)` and `answerQuestion(...)` consume the same canonical read-source objects shaped as `{ id, snippet, metadata }`
   - answer prompt instructions are now stricter for low-variance text models: answer order is fixed as `answer -> sources -> unresolved/limits`, invented tool-use is explicitly forbidden, and missing evidence must be surfaced as uncertainty instead of filled-in facts; external API/response shape remains unchanged
+
+- `/Users/seanhan/Documents/Playground/src/read-source-schema.mjs`
+  - shared read-side source normalizer for index-backed retrieval
+  - cleans retrieval snippets and bounds metadata to the canonical `{ id, snippet, metadata }` schema reused by `/search`, `answer-service.mjs`, and adjacent registered-agent retrieval prompts
 
 - `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
   - final user-facing reply boundary for planner/agent answers

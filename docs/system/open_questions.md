@@ -203,6 +203,18 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
      - `/Users/seanhan/Documents/Playground/docs/system/api_map.md`
      - `/Users/seanhan/Documents/Playground/docs/system/write_policy_unification.md`
 
+23. Read-side source schema is now unified for `/search` and `answer-service.mjs`, but top-level `/answer` still has a separate user-facing formatter boundary.
+   - Why it matters:
+     - index-backed retrieval now shares one canonical `{ id, snippet, metadata }` source schema through `read-runtime.mjs`
+     - but `/answer` still returns planner-normalized natural-language `sources[]` lines instead of exposing those canonical source objects directly
+     - future contributors must not describe the whole read surface as fully single-schema end-to-end until there is an explicit keep-vs-unify decision for planner-normalized `/answer`
+   - Current code truth:
+     - `/Users/seanhan/Documents/Playground/src/read-runtime.mjs`
+     - `/Users/seanhan/Documents/Playground/src/index-read-authority.mjs`
+     - `/Users/seanhan/Documents/Playground/src/read-source-schema.mjs`
+     - `/Users/seanhan/Documents/Playground/src/answer-service.mjs`
+     - `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
+
 ## Cannot Be Confirmed From Code Alone
 
 - whether any hosted deployment exists outside the local machine

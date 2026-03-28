@@ -21,6 +21,11 @@ import {
 } from "./agent-token-governance.mjs";
 import { renderPlannerUserFacingReplyText } from "./executive-planner.mjs";
 import { getWorkflowCheckpoint, updateWorkflowCheckpoint } from "./agent-workflow-state.mjs";
+import {
+  getReadSourceSnippet,
+  getReadSourceTitle,
+  getReadSourceUrl,
+} from "./read-source-schema.mjs";
 import { searchKnowledgeBase } from "./answer-service.mjs";
 import { parseRegisteredAgentCommand } from "./agent-registry.mjs";
 import { analyzeImageTask, buildStructuredImageContext } from "./image-understanding-service.mjs";
@@ -48,12 +53,12 @@ const noopLogger = {
 function buildRetrievedContext(question, items = []) {
   const keywords = cleanText(question).split(/\s+/).filter(Boolean);
   return items.slice(0, 6).map((item) => {
-    const snippet = trimTextForBudget(item.content, answerSnippetMaxChars, {
+    const snippet = trimTextForBudget(getReadSourceSnippet(item), answerSnippetMaxChars, {
       keywords,
     });
     return [
-      `Title: ${item.title}`,
-      `URL: ${item.url || "N/A"}`,
+      `Title: ${getReadSourceTitle(item) || "未命名來源"}`,
+      `URL: ${getReadSourceUrl(item) || "N/A"}`,
       `Snippet: ${snippet}`,
     ].join("\n");
   });
@@ -192,7 +197,11 @@ function buildSourceFooter(items = []) {
   return [
     "",
     "來源",
-    ...topItems.map((item) => `- ${item.title}${item.url ? `｜${item.url}` : ""}`),
+    ...topItems.map((item) => {
+      const title = getReadSourceTitle(item) || item.id;
+      const url = getReadSourceUrl(item);
+      return `- ${title}${url ? `｜${url}` : ""}`;
+    }),
   ].join("\n");
 }
 
@@ -462,7 +471,7 @@ export async function executeRegisteredAgent({
           fallback_used: false,
           image_context_used: Boolean(imageContext),
           supporting_context_used: Boolean(supportingContext),
-          source_titles: items.slice(0, 4).map((item) => item.title),
+          source_titles: items.slice(0, 4).map((item) => getReadSourceTitle(item) || item.id),
         },
       };
     }
@@ -474,12 +483,12 @@ export async function executeRegisteredAgent({
     completed: [`已處理：${trimTextForBudget(requestText, 120, { preserveTail: false })}`],
     pending: [],
     constraints: agent.rules || [],
-    facts: items.slice(0, 4).map((item) => `來源：${item.title}`),
+    facts: items.slice(0, 4).map((item) => `來源：${getReadSourceTitle(item) || item.id}`),
     risks: answer ? [] : ["agent 回答為空"],
     meta: {
       agent_id: agent.id,
       last_request: requestText,
-      last_sources: items.slice(0, 3).map((item) => item.title),
+      last_sources: items.slice(0, 3).map((item) => getReadSourceTitle(item) || item.id),
       last_image_context: imageContext ? "yes" : "no",
       last_supporting_context: supportingContext ? "yes" : "no",
       last_governance_stage: promptInput.governance?.stage || "normal",
@@ -510,7 +519,7 @@ export async function executeRegisteredAgent({
         fallback_used: false,
         image_context_used: Boolean(imageContext),
         supporting_context_used: Boolean(supportingContext),
-        source_titles: items.slice(0, 4).map((item) => item.title),
+        source_titles: items.slice(0, 4).map((item) => getReadSourceTitle(item) || item.id),
       },
     };
   }
@@ -524,7 +533,7 @@ export async function executeRegisteredAgent({
       fallback_used: false,
       image_context_used: Boolean(imageContext),
       supporting_context_used: Boolean(supportingContext),
-      source_titles: items.slice(0, 4).map((item) => item.title),
+      source_titles: items.slice(0, 4).map((item) => getReadSourceTitle(item) || item.id),
     },
   };
 }

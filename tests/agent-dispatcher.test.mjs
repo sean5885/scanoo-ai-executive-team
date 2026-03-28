@@ -19,21 +19,24 @@ test.after(() => {
   testDb.close();
 });
 
+function makeSourceItem(title, url, snippet) {
+  return {
+    id: `${title}-${url}`.replace(/\s+/g, "_"),
+    snippet,
+    metadata: {
+      title,
+      url,
+    },
+  };
+}
+
 test("buildRegisteredAgentPrompt keeps persona goal, image context, and retrieval context compact", () => {
   const result = buildRegisteredAgentPrompt({
     agent: getRegisteredAgent("ceo"),
     userRequest: "請幫我整合這份決策背景與風險",
     items: [
-      {
-        title: "董事會紀錄",
-        url: "https://example.com/doc-1",
-        content: "這是一段很長的決策背景。".repeat(120),
-      },
-      {
-        title: "產品策略",
-        url: "https://example.com/doc-2",
-        content: "這是一段很長的產品策略與風險。".repeat(120),
-      },
+      makeSourceItem("董事會紀錄", "https://example.com/doc-1", "這是一段很長的決策背景。".repeat(120)),
+      makeSourceItem("產品策略", "https://example.com/doc-2", "這是一段很長的產品策略與風險。".repeat(120)),
     ],
     checkpoint: {
       goal: "持續回答 CEO 決策問題",
@@ -59,11 +62,7 @@ test("buildRegisteredAgentPrompt forces single-voice three-part synthesis when s
     agent: getRegisteredAgent("ceo"),
     userRequest: "請收斂這輪多角色意見",
     items: [
-      {
-        title: "董事會紀錄",
-        url: "https://example.com/doc-1",
-        content: "決策背景與風險整理。",
-      },
+      makeSourceItem("董事會紀錄", "https://example.com/doc-1", "決策背景與風險整理。"),
     ],
     supportingContext: "/consult\n- 子任務：拆解問題\n- 輸出：先確認決策邊界",
   });
@@ -83,11 +82,7 @@ test("executeRegisteredAgent can use injected text generator without direct LLM 
     searchFn() {
       return {
         items: [
-          {
-            title: "公司 OKR 運作方式說明",
-            url: "https://example.com/okr",
-            content: "說明公司 OKR 範圍與跨角色週會。",
-          },
+          makeSourceItem("公司 OKR 運作方式說明", "https://example.com/okr", "說明公司 OKR 範圍與跨角色週會。"),
         ],
       };
     },
@@ -112,11 +107,7 @@ test("executeRegisteredAgent intercepts raw JSON string payload before it reache
     searchFn() {
       return {
         items: [
-          {
-            title: "公司 OKR 運作方式說明",
-            url: "https://example.com/okr",
-            content: "說明公司 OKR 範圍與跨角色週會。",
-          },
+          makeSourceItem("公司 OKR 運作方式說明", "https://example.com/okr", "說明公司 OKR 範圍與跨角色週會。"),
         ],
       };
     },
@@ -145,11 +136,7 @@ test("executeRegisteredAgent intercepts raw JSON object payload and keeps machin
     searchFn() {
       return {
         items: [
-          {
-            title: "公司 OKR 運作方式說明",
-            url: "https://example.com/okr",
-            content: "說明公司 OKR 範圍與跨角色週會。",
-          },
+          makeSourceItem("公司 OKR 運作方式說明", "https://example.com/okr", "說明公司 OKR 範圍與跨角色週會。"),
         ],
       };
     },
@@ -184,11 +171,7 @@ test("executeRegisteredAgent fallback reply no longer exposes extractive wording
     searchFn() {
       return {
         items: [
-          {
-            title: "公司 OKR 運作方式說明",
-            url: "https://example.com/okr",
-            content: "說明公司 OKR 範圍與跨角色週會。",
-          },
+          makeSourceItem("公司 OKR 運作方式說明", "https://example.com/okr", "說明公司 OKR 範圍與跨角色週會。"),
         ],
       };
     },
@@ -218,11 +201,7 @@ test("executeRegisteredAgent intercepts fenced JSON error blob and preserves pro
     searchFn() {
       return {
         items: [
-          {
-            title: "公司 OKR 運作方式說明",
-            url: "https://example.com/okr",
-            content: "說明公司 OKR 範圍與跨角色週會。",
-          },
+          makeSourceItem("公司 OKR 運作方式說明", "https://example.com/okr", "說明公司 OKR 範圍與跨角色週會。"),
         ],
       };
     },
@@ -255,11 +234,7 @@ test("executeRegisteredAgent leaves ordinary JSON string output on the normal su
     searchFn() {
       return {
         items: [
-          {
-            title: "公司 OKR 運作方式說明",
-            url: "https://example.com/okr",
-            content: "說明公司 OKR 範圍與跨角色週會。",
-          },
+          makeSourceItem("公司 OKR 運作方式說明", "https://example.com/okr", "說明公司 OKR 範圍與跨角色週會。"),
         ],
       };
     },

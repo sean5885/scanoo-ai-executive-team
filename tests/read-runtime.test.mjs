@@ -196,7 +196,13 @@ test("runRead routes canonical knowledge search through index authority only", a
     accountId,
     docId: "doc_read_runtime_index_1",
     title: "Index Launch Notes",
-    rawText: "launch checklist owner timeline",
+    rawText: [
+      "# Index Launch Notes",
+      "",
+      "Back to [README.md](/Users/seanhan/Documents/Playground/README.md)",
+      "",
+      "- launch checklist owner timeline",
+    ].join("\n"),
   });
 
   try {
@@ -216,7 +222,10 @@ test("runRead routes canonical knowledge search through index authority only", a
     assert.deepEqual(result.authorities_attempted, ["index"]);
     assert.equal(result.fallback_used, false);
     assert.equal(result.result.success, true);
-    assert.equal(result.result.data.items[0].title, "Index Launch Notes");
+    assert.equal(result.result.data.items[0].metadata.title, "Index Launch Notes");
+    assert.match(result.result.data.items[0].snippet, /launch checklist owner timeline/i);
+    assert.doesNotMatch(result.result.data.items[0].snippet, /\/Users\//);
+    assert.doesNotMatch(result.result.data.items[0].snippet, /Back to \[?README/i);
   } finally {
     cleanupAccountFixtures(accountId);
   }

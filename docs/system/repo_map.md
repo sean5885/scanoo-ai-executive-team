@@ -60,6 +60,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `/Users/seanhan/Documents/Playground/src/answer-service.mjs`
   - `/Users/seanhan/Documents/Playground/src/read-runtime.mjs`
   - `/Users/seanhan/Documents/Playground/src/index-read-authority.mjs`
+  - `/Users/seanhan/Documents/Playground/src/read-source-schema.mjs`
 
 - Routing eval baseline
   - `/Users/seanhan/Documents/Playground/src/routing-eval.mjs`
@@ -108,7 +109,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `/Users/seanhan/Documents/Playground/src/mutation-admission.mjs`
   - `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`
   - `mutation-admission.mjs` is the current checked-in admission adapter path for the Phase 1 routes.
-  - `mutation-runtime.mjs` is currently only a narrow execution-mode scaffold used by the `create_doc` HTTP execute path; it returns `missing_execute` when no executor is provided, returns `invalid_executor` plus a stable message when `execute` is present but not a function, derives `meta.execution_mode` from `context.execution_mode` with a default of `passthrough`, records `meta.duration_ms` around the downstream executor call, and now includes a small `meta.journal` with `action / status / started_at` plus `error` on failure. Execution-failure fail-soft results also support an optional `context.rollback` hook and expose its outcome via `journal.rollback.status` (`success`, `failed`, or `pending` when no rollback hook is supplied). For `execution_mode="controlled"` it still forwards the same request with an extra `controlled: true` marker into the downstream executor. The `create_doc` route still unwraps the nested write result before sending the HTTP response, so it does not yet replace route-local guards, verifiers, admission, or execute logic.
+  - `mutation-runtime.mjs` is currently the checked-in execution scaffold for the first external-write family; it returns `missing_execute` when no executor is provided, returns `invalid_executor` plus a stable message when `execute` is present but not a function, derives `meta.execution_mode` from `context.execution_mode` with a default of `passthrough`, records `meta.duration_ms` around the downstream executor call, and includes a small `meta.journal` with `action / status / started_at` plus `error` on failure. Execution-failure fail-soft results support an optional `context.rollback` hook, expose its outcome via `journal.rollback.status` (`success`, `failed`, or `pending`), and can snapshot nested mutation audit evidence into `journal.audit`. `create_doc`, `meeting_confirm_write`, and comment-rewrite apply now use that rollback/audit boundary for compensating cleanup, while the HTTP routes still unwrap the nested success result before sending the public response.
 
 - Local knowledge helpers
   - `/Users/seanhan/Documents/Playground/src/knowledge/doc-index.mjs`

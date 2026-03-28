@@ -290,9 +290,9 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Guard note: the route is now preview-first for live create; the first request returns a temporary `document_create` confirmation artifact and the real create path requires both `confirm=true` and `confirmation_id`
   - Guard note: live document creation remains fail-closed by default on the actual write path; `NODE_ENV=production` stays a hard stop even if write env flags are set
   - Guard note: titles/sources that look like `test` / `demo` / `verify` / `smoke` / `e2e` are sandbox-only; they are redirected to `LARK_WRITE_SANDBOX_FOLDER_TOKEN` when configured, otherwise blocked
-  - Side effect note: the confirmed write path now performs `peek -> consume -> executeLarkWrite(...) -> createDocument/updateDocument`; the docx adapter still adds structured create-error diagnostics and still avoids root-create fallback unless `ALLOW_LARK_CREATE_ROOT_FALLBACK=true` is explicitly enabled
+  - Side effect note: the confirmed write path now performs `peek -> consume -> executeLarkWrite(...) -> createDocument -> permission grant -> optional updateDocument`; the docx adapter still adds structured create-error diagnostics and still avoids root-create fallback unless `ALLOW_LARK_CREATE_ROOT_FALLBACK=true` is explicitly enabled
   - Budget note: confirmed create also checks the local Lark write-budget / duplicate guard before any real doc create or initial replace write
-  - Route behavior note: document creation is the blocking step; post-create manager-permission grant is non-blocking, skipped when the current user is already the owner, and returned as `permission_grant_failed` / `permission_grant_skipped` / `permission_grant_error`
+  - Route behavior note: `createDocument`, manager-permission grant, and optional initial replace write now share one runtime transaction; if a later step fails after create succeeds, the route fails closed, deletes the just-created doc, cleans local lifecycle/index rows, and keeps the public success response shape unchanged on full success
   - Index note: after create succeeds, the route writes normalized metadata `{ doc_id, source, created_at, creator: { account_id, open_id }, title, folder_token }` into the existing `lark_sources` / `lark_documents` index as a non-blocking `document_index` step; this is not a separate company-brain module
   - Lifecycle note: the route now advances `lark_documents.status` through `created -> indexed -> verified`, records `indexed_at` / `verified_at`, and writes `create_failed` / `index_failed` / `verify_failed` plus `failure_reason` on the corresponding failure path, with `document_lifecycle_update` logs for each transition
   - Company-brain note: when the lifecycle reaches `verified`, the route also attempts a non-blocking mirror write into `company_brain_docs` with `{ doc_id, title, source, created_at, creator }`, logging under `stage=company_brain_ingest`
@@ -473,11 +473,12 @@ The main HTTP surface is implemented in `/Users/seanhan/Documents/Playground/src
   - Handler: `handleSearch`
   - Purpose: hybrid retrieval search
   - Read note: the route now enters `read-runtime.mjs` with `primary_authority=index`; the index branch is backed by `/Users/seanhan/Documents/Playground/src/index-read-authority.mjs` over the existing `rag-repository.mjs` chunk search helpers, and it does not mix index results with mirror/live fallback in the same read
+  - Response note: `items[]` now expose one canonical read-source schema `{ id, snippet, metadata }`; `metadata` is bounded to `document_id`, `title`, `url`, `source_type`, `chunk_index`, and `updated_at`, while `snippet` is cleaned to remove path / markdown shell noise before the route returns it
 
 - `GET /answer`
   - Handler: `handleAnswer`
   - Purpose: force user text through planner decision before any execution
-  - Read note: answer generation remains in `/Users/seanhan/Documents/Playground/src/answer-service.mjs`, but its retrieval stage now also enters `read-runtime.mjs` with `primary_authority=index` before any answer synthesis happens
+  - Read note: the top-level route no longer calls `/Users/seanhan/Documents/Playground/src/answer-service.mjs` directly; it first enters planner execution, and any selected read-side document lookup must then use the existing `read-runtime.mjs` authority-specific path instead of direct repository reads
   - Response note: planner must first emit strict legacy `{ action, params }` or bounded multi-step `{ steps: [{ action, params }] }`; wrapped/non-JSON output is rejected as `error=planner_failed`
   - Response note: both success and controlled failure now pass through a final `normalizeUserResponse()` boundary
   - Response note: the outward body is always natural-language JSON shaped as `{ ok, answer, sources, limitations }`

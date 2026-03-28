@@ -21,6 +21,11 @@ import {
   trimTextForBudget,
 } from "./agent-token-governance.mjs";
 import { getWorkflowCheckpoint, updateWorkflowCheckpoint } from "./agent-workflow-state.mjs";
+import {
+  getReadSourceSnippet,
+  getReadSourceTitle,
+  getReadSourceUrl,
+} from "./read-source-schema.mjs";
 import { searchKnowledgeBaseFromRuntime } from "./read-runtime.mjs";
 import { callOpenClawTextGeneration } from "./openclaw-text-service.mjs";
 import { normalizeText } from "./text-utils.mjs";
@@ -33,25 +38,34 @@ export const ANSWER_SYSTEM_PROMPT = buildCompactSystemPrompt("你是 Lark 知識
   "回答格式保持穩定：答案、來源、待確認。",
 ]);
 
-export async function searchKnowledgeBase(accountId, query, limit = searchTopK, { pathname = "internal:answer_service_search" } = {}) {
+export async function searchKnowledgeBase(
+  accountId,
+  query,
+  limit = searchTopK,
+  {
+    pathname = "internal:answer_service_search",
+    logger = null,
+    readerOverrides = null,
+  } = {},
+) {
   return searchKnowledgeBaseFromRuntime({
     accountId,
     query,
     limit,
     pathname,
+    logger,
+    readerOverrides,
   });
 }
 
 function buildExtractiveAnswer(question, items) {
   const snippets = items.slice(0, 4).map((item, index) => {
-    const excerpt = normalizeText(item.content).slice(0, 280);
-    return `${index + 1}. ${item.title}: ${excerpt}`;
+    const excerpt = normalizeText(getReadSourceSnippet(item)).slice(0, 280);
+    const title = getReadSourceTitle(item) || "未命名來源";
+    return `${index + 1}. ${title}: ${excerpt}`;
   });
 
-  const sources = items.slice(0, 4).map((item) => ({
-    title: item.title,
-    url: item.url,
-  }));
+  const sources = items.slice(0, 4);
 
   const answer = snippets.length
     ? `根據檢索到的 Lark 知識，和「${question}」最相關的內容如下：\n${snippets.join("\n")}`
@@ -66,12 +80,14 @@ function buildAnswerSourceBlocks(question, items) {
   let totalChars = 0;
 
   for (const item of items) {
-    const content = trimTextForBudget(item.content, answerSnippetMaxChars, {
+    const content = trimTextForBudget(getReadSourceSnippet(item), answerSnippetMaxChars, {
       keywords,
     });
+    const title = getReadSourceTitle(item) || "未命名來源";
+    const url = getReadSourceUrl(item) || "N/A";
     const block = [
-      `Title: ${item.title}`,
-      `URL: ${item.url || "N/A"}`,
+      `Title: ${title}`,
+      `URL: ${url}`,
       `Snippet: ${content}`,
     ].join("\n");
     if (totalChars + block.length > answerMaxContextChars) {
@@ -196,9 +212,20 @@ async function callChatModel(question, items, { checkpoint = null } = {}) {
   };
 }
 
-export async function answerQuestion(accountId, question, limit = searchTopK, { workflowStateKey = "" } = {}) {
+export async function answerQuestion(
+  accountId,
+  question,
+  limit = searchTopK,
+  {
+    workflowStateKey = "",
+    logger = null,
+    readerOverrides = null,
+  } = {},
+) {
   const { account, items } = await searchKnowledgeBase(accountId, question, limit, {
     pathname: "internal:answer_question_search",
+    logger,
+    readerOverrides,
   });
   const checkpoint = workflowStateKey ? await getWorkflowCheckpoint(workflowStateKey) : null;
 
@@ -222,11 +249,7 @@ export async function answerQuestion(accountId, question, limit = searchTopK, { 
     };
   }
 
-  const sources = items.slice(0, limit).map((item) => ({
-    title: item.title,
-    url: item.url,
-    source_type: item.source_type,
-  }));
+  const sources = items.slice(0, limit);
 
   let generated = null;
   try {
@@ -239,7 +262,7 @@ export async function answerQuestion(accountId, question, limit = searchTopK, { 
         completed: [`已回答：${trimTextForBudget(question, 100, { preserveTail: false })}`],
         pending: [],
         constraints: ["只能根據檢索到的 Lark 內容回答", "回答時應保留來源標題與 URL"],
-        facts: sources.slice(0, 4).map((item) => `來源：${item.title}`),
+        facts: sources.slice(0, 4).map((item) => `來源：${getReadSourceTitle(item) || item.id}`),
         risks: ["文本生成失敗，已改用檢索摘要保底"],
         meta: { last_question: question, last_provider: "retrieval_summary_fallback" },
       });
@@ -252,7 +275,7 @@ export async function answerQuestion(accountId, question, limit = searchTopK, { 
       completed: [`已回答：${trimTextForBudget(question, 100, { preserveTail: false })}`],
       pending: [],
       constraints: ["只能根據檢索到的 Lark 內容回答", "回答時應保留來源標題與 URL"],
-      facts: sources.slice(0, 4).map((item) => `來源：${item.title}`),
+      facts: sources.slice(0, 4).map((item) => `來源：${getReadSourceTitle(item) || item.id}`),
       risks: generated.answer ? [] : ["文本回答為空，需改用檢索摘要或重試"],
       meta: {
         last_question: question,
