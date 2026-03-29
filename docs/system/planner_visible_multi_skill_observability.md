@@ -16,6 +16,10 @@ The goal is not to widen admission. The goal is to prove that both skills can st
 - preserves the existing non-skill routing family
 - keeps the answer pipeline in front of every user-visible reply
 
+For the production-ready but not-yet-wired live telemetry design that builds on top of this checked-in watch, see:
+
+- [planner_visible_live_telemetry_design.md](/Users/seanhan/Documents/Playground/docs/system/planner_visible_live_telemetry_design.md)
+
 ## Code Anchors
 
 - `/Users/seanhan/Documents/Playground/src/planner-visible-skill-observability.mjs`
@@ -79,6 +83,13 @@ Current checked-in metrics from that pack:
 - routing fallback distribution:
   - `search_company_brain_docs: 2`
   - `search_and_detail_doc: 2`
+
+Telemetry normalization used by the live design maps these fixture labels to:
+
+- `search_and_summarize` -> `search`
+- `detail_summary` -> `detail`
+- `mixed_query` -> `mixed`
+- `follow_up_reference` -> `follow-up`
 
 Interpretation:
 
@@ -166,6 +177,21 @@ Current read order by failure class:
 - answer inconsistency or raw payload leak
   - inspect `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
   - inspect `/Users/seanhan/Documents/Playground/src/planner-visible-skill-observability.mjs`
+
+## Live Design Boundary
+
+This document remains the checked-in coexistence watch and fixture baseline.
+
+It is not itself a live telemetry pipeline.
+
+Current intended layering is:
+
+- this file:
+  - checked-in selector/query/probe watch
+- [planner_visible_live_telemetry_design.md](/Users/seanhan/Documents/Playground/docs/system/planner_visible_live_telemetry_design.md):
+  - production-ready event/metric/alert/rollback design
+- `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-spec.mjs`:
+  - checked-in minimal stub for future wiring
 
 ## Rollback SOP
 

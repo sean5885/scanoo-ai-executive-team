@@ -111,6 +111,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/skills/search-and-summarize-skill.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner/skill-bridge.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner-visible-skill-observability.mjs`
+  - `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-spec.mjs`
 - Current truth:
   - a checked-in minimal skill contract now exists
   - skill definitions must now declare `skill_class` and `runtime_access`
@@ -120,10 +121,12 @@ Current-truth docs for onboarding are:
   - planner can consume a skill result through a bridge envelope
   - planner-visible skill selection is deterministic-only and conflict-fail-closed
   - planner-visible skill rollout now has a checked-in observability/rollback watch over selector, tool execution, and answer-boundary evidence
+  - a spec-only live telemetry/monitoring/rollback definition is now checked in for future wiring, but it does not emit runtime events yet
   - skill existence does not add a new public route or planner routing target by itself
 - Evidence:
   - `/Users/seanhan/Documents/Playground/tests/skill-runtime.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/planner-visible-skill-observability.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/planner-visible-live-telemetry-spec.test.mjs`
 
 ### 5. External Write Path
 
@@ -215,6 +218,7 @@ Current-truth docs for onboarding are:
 - no full autonomous company-brain server
 - no repo-wide universal read unification; some review/verification helpers still read state directly
 - no targeted block-level doc mutation runtime; targeted preview exists, final apply is still replace-based in the doc write adapter
+- no checked-in live planner-visible telemetry emitter, production telemetry sink, or runtime rollback flag carrier yet; current live design is spec-only in `/Users/seanhan/Documents/Playground/docs/system/planner_visible_live_telemetry_design.md`
 
 ## Historical or Frozen References
 

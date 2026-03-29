@@ -162,6 +162,7 @@ All minimum trace/log events should align around these fields:
 - dedicated `handoff` / `escalation` runtime events as first-class logger outputs
 - planner trace events currently use the planner module logger path only; they are not yet a full shared system logging runtime
 - doc-query trace events are also planner-module-local debug events; they are not a separate public logging surface
+- the planner-visible live telemetry event family described in `/Users/seanhan/Documents/Playground/docs/system/planner_visible_live_telemetry_design.md` is still spec-only and not yet emitted by runtime
 
 ## Persisted Local Debug Surface
 
@@ -282,6 +283,36 @@ The reconstruction CLI reads both tables so operators can quickly inspect:
 - boundary:
   - this event is evidence for debug / rollback checks only
   - it does not change the user-facing response contract
+
+## 0C. Proposed `planner_visible_*` live telemetry events
+
+- purpose:
+  - define a production-ready event family for planner-visible routing/monitoring/rollback without changing the planner contract
+- status:
+  - spec-only in the current repo state
+  - current checked-in stub lives at `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-spec.mjs`
+- proposed event set:
+  - `planner_visible_skill_selected`
+  - `planner_visible_fail_closed`
+  - `planner_visible_ambiguity`
+  - `planner_visible_fallback`
+  - `planner_visible_answer_generated`
+- required shared fields:
+  - `query_type`
+  - `selected_skill`
+  - `candidate_skills`
+  - `decision_reason`
+  - `routing_family`
+  - `request_id`
+  - `timestamp`
+- recommended shared extension fields:
+  - `trace_id`
+  - `reason_code`
+  - `task_type`
+- boundary:
+  - these events are for future live telemetry, metrics, alerting, and rollback SOP only
+  - they must reuse the existing request/trace chain
+  - they must not widen admission or alter the public response shape
 
 ## 1. `action_dispatch`
 

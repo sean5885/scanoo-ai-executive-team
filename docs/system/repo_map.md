@@ -51,6 +51,9 @@ This file explains which directories are part of the current runtime, which are 
   - `truth_matrix.md`
   - `open_questions.md`
 - planning, alignment, refactor, release, and audit docs in the same directory are useful context, but they are not the first source to use for current runtime truth
+- planner-visible live telemetry design currently lives in:
+  - `/Users/seanhan/Documents/Playground/docs/system/planner_visible_live_telemetry_design.md`
+  - this is a checked-in design mirror, not a live pipeline declaration
 
 ### `/Users/seanhan/Documents/Playground/scripts`
 
@@ -110,6 +113,17 @@ This file explains which directories are part of the current runtime, which are 
 - `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`
 - `/Users/seanhan/Documents/Playground/src/answer-service.mjs`
   - real file, but secondary helper rather than the main public `/answer` path
+
+### Skill Runtime And Telemetry Spec
+
+- `/Users/seanhan/Documents/Playground/src/skill-runtime.mjs`
+- `/Users/seanhan/Documents/Playground/src/planner/skill-bridge.mjs`
+- `/Users/seanhan/Documents/Playground/src/planner-visible-skill-observability.mjs`
+- `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-spec.mjs`
+- Current truth:
+  - planner-visible coexistence watch is implemented as a checked-in fixture pack
+  - live telemetry schema/metrics/rollback definitions are checked in as a stub/spec only
+  - no production telemetry pipeline is wired from this subtree yet
 
 ### Write Surface
 
