@@ -21,6 +21,7 @@ Current code anchors:
 Related mirror:
 
 - `/Users/seanhan/Documents/Playground/docs/system/skill_surface_policy.md`
+- `/Users/seanhan/Documents/Playground/docs/system/skill_planner_visible_readiness.md`
 
 ## Current Global Limits
 
@@ -39,6 +40,8 @@ Current checked-in meaning:
 - the current thread does not authorize a third skill
 - planner-visible skill selection must still resolve to exactly one skill action
 - if two skills claim the same deterministic selector key, selection returns no skill path instead of choosing heuristically
+- planner-visible promotion must go through `internal_only -> readiness_check -> planner_visible`
+- direct jump from `internal_only` to `planner_visible` is rejected fail-closed
 
 ## Skill Surface Layers
 
@@ -64,8 +67,11 @@ Current checked-in skills:
 Current checked-in enforcement:
 
 - `internal_only` skills must stay `deterministic_only`
-- `planner_visible` skills cannot stay `deterministic_only`
+- `planner_visible` skills must pass through `readiness_check`
+- `planner_visible` skills must stay `deterministic_only`
 - `planner_visible` skills must be `read_only`
+- `planner_visible` skills must stay `read_runtime` only
+- `planner_visible` skills must prove regression pass, answer-pipeline enforcement, raw-output blocking, stable output shape, and locked side-effect boundary
 - `user_facing_capability` is rejected fail-closed at registry build time
 
 ## Skill Classes
@@ -156,6 +162,12 @@ Current selection rules:
    - return `selector_skill_conflict`
    - do not treat key collisions as aliases or fallback candidates
 
+For `readiness_check` and `planner_visible` candidates the bar is stricter:
+
+- selector key conflict blocks promotion at registry build time
+- overlapping deterministic selector task types block promotion at registry build time
+- selector drift is treated as fail-closed readiness failure, not as a runtime tie-break
+
 This keeps old behavior stable as long as a new skill uses a different selector key.
 It also keeps current internal-only skills outside the strict planner catalog.
 
@@ -217,7 +229,11 @@ Current regression coverage includes:
 - a second non-overlapping skill does not change that result
 - selector task-type conflicts fail closed
 - selector key conflicts fail closed
-- planner-visible and deterministic-only cannot be mixed in one skill action entry
+- planner-visible direct jump without `readiness_check` fails closed
+- planner-visible candidate without regression pass fails closed
+- planner-visible candidate without answer-pipeline enforcement fails closed
+- planner-visible candidate with selector drift fails closed
+- planner-visible candidate with unstable output or side-effect boundary fails closed
 - skill input must be serializable
 - skill output must be serializable
 - skill chains are rejected

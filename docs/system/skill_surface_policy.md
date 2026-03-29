@@ -16,6 +16,10 @@ Current code anchors:
 - `/Users/seanhan/Documents/Playground/tests/executive-planner.test.mjs`
 - `/Users/seanhan/Documents/Playground/tests/user-response-normalizer.test.mjs`
 
+Related mirror:
+
+- `/Users/seanhan/Documents/Playground/docs/system/skill_planner_visible_readiness.md`
+
 ## Current Surface Layers
 
 ### 1. `internal_only`
@@ -53,7 +57,12 @@ Current checked-in status:
 Current policy gate:
 
 - only `read_only` skills may enter this layer
-- `deterministic_only` selector mode is not allowed here
+- direct jump from `internal_only` is forbidden; promotion must go through `readiness_check`
+- deterministic selector mode must remain `deterministic_only`
+- deterministic selector key and selector task types must remain conflict-free
+- full regression gate must be green
+- the existing answer pipeline must remain in front of the user response
+- raw skill output must stay hidden behind normalization
 - this layer is policy-defined but not activated by any current skill
 
 ### 3. `user_facing_capability`
@@ -75,9 +84,13 @@ Only skills that satisfy all of the following may be considered in future:
 
 - surface layer is `planner_visible`
 - skill class is `read_only`
+- previous promotion stage is `readiness_check`
+- deterministic selector remains unique and conflict-free
 - planner contract explicitly allows catalog visibility
 - planner dispatch still goes through `planner/skill-bridge.mjs`
 - user-facing reply still goes through `user-response-normalizer.mjs`
+- canonical sources still go through `answer-source-mapper.mjs`
+- output shape and side-effect boundary are already proven stable
 
 Current checked-in answer:
 
@@ -144,10 +157,12 @@ This means:
 Expansion remains blocked until all of the following are done in the same change:
 
 1. define the candidate skill's surface layer explicitly
-2. prove planner catalog eligibility with regression tests
-3. prove no bypass of `user-response-normalizer.mjs`
-4. prove no drift in existing API behavior
-5. update `docs/system` mirrors and `planner_contract.json` together
+2. keep the promotion path explicit as `internal_only -> readiness_check -> planner_visible`
+3. prove planner catalog eligibility with regression tests
+4. prove no bypass of `user-response-normalizer.mjs`
+5. prove no drift in existing API behavior
+6. update `/Users/seanhan/Documents/Playground/docs/system/skill_planner_visible_readiness.md` and other `docs/system` mirrors together
+7. update `planner_contract.json` only if the planner-visible surface is intentionally activated
 
 Current thread outcome:
 

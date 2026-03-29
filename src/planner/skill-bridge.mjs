@@ -4,6 +4,7 @@ import { runSkill } from "../skill-runtime.mjs";
 import {
   SKILL_CLASS_READ_ONLY,
   SKILL_SELECTOR_MODE_DETERMINISTIC,
+  SKILL_RUNTIME_ACCESS_READ,
   buildSkillGovernanceView,
   isPlannerCatalogEligibleSkillSurface,
   normalizeSkillSurface,
@@ -12,6 +13,15 @@ import {
   SKILL_SURFACE_PLANNER_VISIBLE,
   SKILL_SURFACE_USER_FACING_CAPABILITY,
 } from "../skill-governance.mjs";
+
+const SKILL_PROMOTION_STAGE_INTERNAL_ONLY = "internal_only";
+const SKILL_PROMOTION_STAGE_READINESS_CHECK = "readiness_check";
+const SKILL_PROMOTION_STAGE_PLANNER_VISIBLE = "planner_visible";
+const VALID_SKILL_PROMOTION_STAGES = Object.freeze([
+  SKILL_PROMOTION_STAGE_INTERNAL_ONLY,
+  SKILL_PROMOTION_STAGE_READINESS_CHECK,
+  SKILL_PROMOTION_STAGE_PLANNER_VISIBLE,
+]);
 
 function normalizeStringList(items = []) {
   if (!Array.isArray(items)) {
@@ -48,30 +58,158 @@ function normalizePlannerSkillSideEffects(items = []) {
     .filter((item) => item.mode || item.action || item.runtime || item.authority);
 }
 
-function buildPlannerSkillSurfacePolicy({ surfaceLayer = "", selectorMode = "", skillClass = "" } = {}) {
+function normalizePlannerSkillPromotionStage(value = "") {
+  const normalized = cleanText(value);
+  return VALID_SKILL_PROMOTION_STAGES.includes(normalized)
+    ? normalized
+    : SKILL_PROMOTION_STAGE_INTERNAL_ONLY;
+}
+
+function normalizePlannerSkillUpgradePath(entry = {}) {
+  const currentStage = normalizePlannerSkillPromotionStage(entry?.promotion_stage || entry?.surface_layer);
+  const previousStageRaw = cleanText(entry?.previous_promotion_stage);
+  const previousStage = VALID_SKILL_PROMOTION_STAGES.includes(previousStageRaw)
+    ? previousStageRaw
+    : null;
+
+  return Object.freeze({
+    current_stage: currentStage,
+    previous_stage: previousStage,
+  });
+}
+
+function normalizePlannerSkillReadinessGate(entry = {}) {
+  const rawGate = entry?.readiness_gate && typeof entry.readiness_gate === "object" && !Array.isArray(entry.readiness_gate)
+    ? entry.readiness_gate
+    : {};
+
+  return Object.freeze({
+    regression_suite_passed: rawGate.regression_suite_passed === true,
+    answer_pipeline_enforced: rawGate.answer_pipeline_enforced === true,
+    raw_skill_output_blocked: rawGate.raw_skill_output_blocked === true,
+    output_shape_stable: rawGate.output_shape_stable === true,
+    side_effect_boundary_locked: rawGate.side_effect_boundary_locked === true,
+  });
+}
+
+function intersectStringLists(left = [], right = []) {
+  if (!Array.isArray(left) || !Array.isArray(right)) {
+    return [];
+  }
+  const rightSet = new Set(right.map((item) => cleanText(item)).filter(Boolean));
+  return left
+    .map((item) => cleanText(item))
+    .filter((item) => item && rightSet.has(item));
+}
+
+function buildPlannerSkillSurfacePolicy({
+  surfaceLayer = "",
+  selectorMode = "",
+  skillClass = "",
+  runtimeAccess = [],
+  allowedSideEffects = {},
+  upgradePath = {},
+  readinessGate = {},
+} = {}) {
   const normalizedSurfaceLayer = normalizeSkillSurface(surfaceLayer);
   const normalizedSelectorMode = cleanText(selectorMode);
   const normalizedSkillClass = cleanText(skillClass);
+  const normalizedRuntimeAccess = Array.isArray(runtimeAccess)
+    ? runtimeAccess.map((item) => cleanText(item)).filter(Boolean)
+    : [];
+  const declaredWriteSideEffects = Array.isArray(allowedSideEffects?.write)
+    ? allowedSideEffects.write.map((item) => cleanText(item)).filter(Boolean)
+    : [];
   const violations = [];
 
-  if (normalizedSurfaceLayer === SKILL_SURFACE_INTERNAL_ONLY && normalizedSelectorMode !== SKILL_SELECTOR_MODE_DETERMINISTIC) {
+  if (
+    normalizedSurfaceLayer === SKILL_SURFACE_INTERNAL_ONLY
+    && normalizedSelectorMode !== SKILL_SELECTOR_MODE_DETERMINISTIC
+  ) {
     violations.push({
       code: "internal_only_skill_must_be_deterministic_only",
       message: "internal_only skills must remain deterministic-only and stay outside the strict planner catalog.",
     });
   }
 
+  if (
+    normalizedSurfaceLayer === SKILL_SURFACE_INTERNAL_ONLY
+    && upgradePath.current_stage === SKILL_PROMOTION_STAGE_PLANNER_VISIBLE
+  ) {
+    violations.push({
+      code: "skill_surface_stage_mismatch",
+      message: "planner_visible promotion stage cannot be combined with an internal_only surface.",
+    });
+  }
+
   if (normalizedSurfaceLayer === SKILL_SURFACE_PLANNER_VISIBLE) {
-    if (normalizedSelectorMode === SKILL_SELECTOR_MODE_DETERMINISTIC) {
+    if (upgradePath.current_stage !== SKILL_PROMOTION_STAGE_PLANNER_VISIBLE) {
       violations.push({
-        code: "planner_visible_skill_cannot_be_deterministic_only",
-        message: "planner_visible skills must be explicitly selectable and cannot stay hidden behind deterministic-only routing.",
+        code: "planner_visible_stage_mismatch",
+        message: "planner_visible skills must declare promotion_stage=planner_visible.",
+      });
+    }
+    if (upgradePath.previous_stage !== SKILL_PROMOTION_STAGE_READINESS_CHECK) {
+      violations.push({
+        code: "planner_visible_direct_jump_not_allowed",
+        message: "planner-visible promotion must pass through readiness_check and cannot jump directly from internal_only.",
+      });
+    }
+    if (normalizedSelectorMode !== SKILL_SELECTOR_MODE_DETERMINISTIC) {
+      violations.push({
+        code: "planner_visible_skill_must_be_deterministic_only",
+        message: "planner_visible skills must keep deterministic selector wiring with no conflicts.",
       });
     }
     if (normalizedSkillClass !== SKILL_CLASS_READ_ONLY) {
       violations.push({
         code: "planner_visible_skill_must_be_read_only",
         message: "planner_visible skills must remain read-only in the current skill-surface policy.",
+      });
+    }
+    if (
+      normalizedRuntimeAccess.length !== 1
+      || normalizedRuntimeAccess[0] !== SKILL_RUNTIME_ACCESS_READ
+    ) {
+      violations.push({
+        code: "planner_visible_skill_must_be_read_runtime_only",
+        message: "planner_visible skills must stay on read_runtime only.",
+      });
+    }
+    if (declaredWriteSideEffects.length > 0) {
+      violations.push({
+        code: "planner_visible_skill_write_side_effect_not_allowed",
+        message: "planner_visible skills must not declare write side effects.",
+      });
+    }
+    if (readinessGate.regression_suite_passed !== true) {
+      violations.push({
+        code: "planner_visible_skill_requires_regression_pass",
+        message: "planner_visible promotion requires a checked readiness_check with full regression pass.",
+      });
+    }
+    if (readinessGate.answer_pipeline_enforced !== true) {
+      violations.push({
+        code: "planner_visible_skill_answer_pipeline_bypass",
+        message: "planner_visible skills must keep the existing answer pipeline in front of user replies.",
+      });
+    }
+    if (readinessGate.raw_skill_output_blocked !== true) {
+      violations.push({
+        code: "planner_visible_skill_raw_output_exposed",
+        message: "raw skill output must remain hidden behind the answer layer.",
+      });
+    }
+    if (readinessGate.output_shape_stable !== true) {
+      violations.push({
+        code: "planner_visible_skill_output_shape_unstable",
+        message: "planner_visible promotion requires a stable checked output shape.",
+      });
+    }
+    if (readinessGate.side_effect_boundary_locked !== true) {
+      violations.push({
+        code: "planner_visible_skill_side_effect_boundary_unstable",
+        message: "planner_visible promotion requires side effects to stay within the declared read-only boundary.",
       });
     }
   }
@@ -85,10 +223,56 @@ function buildPlannerSkillSurfacePolicy({ surfaceLayer = "", selectorMode = "", 
 
   return Object.freeze({
     surface_layer: normalizedSurfaceLayer,
-    planner_catalog_eligible: isPlannerCatalogEligibleSkillSurface(normalizedSurfaceLayer),
+    planner_catalog_eligible: isPlannerCatalogEligibleSkillSurface(normalizedSurfaceLayer) && violations.length === 0,
     raw_user_output_allowed: false,
+    promotion_stage: upgradePath.current_stage,
+    previous_promotion_stage: upgradePath.previous_stage,
+    readiness_gate: readinessGate,
     violations: Object.freeze(violations),
   });
+}
+
+function validatePlannerSkillRegistrySurfacePolicy(registry = new Map()) {
+  if (!(registry instanceof Map)) {
+    return [];
+  }
+
+  const entries = [...registry.values()];
+  const candidateEntries = entries.filter((entry) => (
+    entry.surface_layer === SKILL_SURFACE_PLANNER_VISIBLE
+    || entry.promotion_stage === SKILL_PROMOTION_STAGE_READINESS_CHECK
+    || entry.promotion_stage === SKILL_PROMOTION_STAGE_PLANNER_VISIBLE
+  ));
+  const violations = [];
+
+  for (const entry of candidateEntries) {
+    const selectorKey = cleanText(entry.selector_key);
+    const selectorKeyConflicts = selectorKey
+      ? entries.filter((other) => other.action !== entry.action && cleanText(other.selector_key) === selectorKey)
+      : [];
+    if (selectorKeyConflicts.length > 0) {
+      violations.push({
+        code: "planner_visible_selector_key_conflict",
+        action: entry.action,
+      });
+    }
+
+    const overlappingTaskTypes = entries
+      .filter((other) => (
+        other.action !== entry.action
+        && cleanText(other.selector_mode) === SKILL_SELECTOR_MODE_DETERMINISTIC
+      ))
+      .flatMap((other) => intersectStringLists(entry.selector_task_types, other.selector_task_types));
+    if (overlappingTaskTypes.length > 0) {
+      violations.push({
+        code: "planner_visible_selector_task_type_conflict",
+        action: entry.action,
+        task_types: Array.from(new Set(overlappingTaskTypes)),
+      });
+    }
+  }
+
+  return violations;
 }
 
 export function buildPlannerSkillEnvelope(skillExecution = {}) {
@@ -147,10 +331,16 @@ export function createPlannerSkillActionRegistry(entries = []) {
       allowed_side_effects: entry.allowed_side_effects,
     });
     const selector = normalizePlannerSkillSelector(entry);
+    const upgradePath = normalizePlannerSkillUpgradePath(entry);
+    const readinessGate = normalizePlannerSkillReadinessGate(entry);
     const surfacePolicy = buildPlannerSkillSurfacePolicy({
       surfaceLayer: entry.surface_layer,
       selectorMode: selector.selector_mode,
       skillClass: governance.skill_class,
+      runtimeAccess: governance.runtime_access,
+      allowedSideEffects: entry.allowed_side_effects,
+      upgradePath,
+      readinessGate,
     });
     if (surfacePolicy.violations.length > 0) {
       throw new Error("invalid_planner_skill_surface_policy");
@@ -185,10 +375,18 @@ export function createPlannerSkillActionRegistry(entries = []) {
       surface_layer: surfacePolicy.surface_layer,
       planner_catalog_eligible: surfacePolicy.planner_catalog_eligible,
       raw_user_output_allowed: surfacePolicy.raw_user_output_allowed,
+      promotion_stage: surfacePolicy.promotion_stage,
+      previous_promotion_stage: surfacePolicy.previous_promotion_stage,
+      readiness_gate: surfacePolicy.readiness_gate,
       buildSkillInput: typeof entry.buildSkillInput === "function"
         ? entry.buildSkillInput
         : (() => ({})),
     }));
+  }
+
+  const registryViolations = validatePlannerSkillRegistrySurfacePolicy(registry);
+  if (registryViolations.length > 0) {
+    throw new Error("invalid_planner_skill_surface_policy");
   }
 
   return registry;

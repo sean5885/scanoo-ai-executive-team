@@ -223,6 +223,11 @@ This path is bounded by the checked-in planner contract:
   - current selection entries are deterministic-only:
     - `taskType=skill_read` -> `search_and_summarize`
     - `taskType=document_summary_skill` -> `document_summarize`
+  - planner-visible readiness exists only as fail-closed governance in `planner/skill-bridge.mjs`:
+    - valid promotion path is `internal_only -> readiness_check -> planner_visible`
+    - direct jump is rejected
+    - selector drift, answer-pipeline bypass, unstable output shape, or side-effect overreach all block promotion
+    - no checked-in skill is promoted by this governance change
   - strict user-input planner `target_catalog` hides those internal-only skill-backed actions
   - strict planner decision validation rejects those actions if model JSON tries to call them directly
   - deterministic selection now resolves through the checked-in skill selector registry in `planner/skill-bridge.mjs`

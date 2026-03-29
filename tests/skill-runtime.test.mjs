@@ -800,22 +800,166 @@ test("deterministic skill selector fail-closes when two skills claim the same se
   });
 });
 
-test("planner-visible and deterministic-only skill surfaces cannot be mixed", () => {
+test("planner-visible skill candidate fails closed when it jumps directly from internal_only", () => {
   assert.throws(() => createPlannerSkillActionRegistry([
     {
-      action: "unsafe_visible_skill",
-      skill_name: "unsafe_visible_skill",
+      action: "jump_visible_skill",
+      skill_name: "jump_visible_skill",
       surface_layer: "planner_visible",
+      promotion_stage: "planner_visible",
       skill_class: "read_only",
       runtime_access: ["read_runtime"],
       selector_mode: "deterministic_only",
-      selector_key: "skill.unsafe_visible.read",
-      selector_task_types: ["unsafe_visible_skill"],
-      routing_reason: "selector_unsafe_visible_skill",
-      selection_reason: "unsafe visible path",
+      selector_key: "skill.jump_visible.read",
+      selector_task_types: ["jump_visible_skill"],
+      routing_reason: "selector_jump_visible_skill",
+      selection_reason: "jump visible path",
       allowed_side_effects: {
         read: ["search_knowledge_base"],
         write: [],
+      },
+      readiness_gate: {
+        regression_suite_passed: true,
+        answer_pipeline_enforced: true,
+        raw_skill_output_blocked: true,
+        output_shape_stable: true,
+        side_effect_boundary_locked: true,
+      },
+    },
+  ]), /invalid_planner_skill_surface_policy/);
+});
+
+test("planner-visible skill candidate fails closed when readiness_check regression gate is not satisfied", () => {
+  assert.throws(() => createPlannerSkillActionRegistry([
+    {
+      action: "regression_unready_visible_skill",
+      skill_name: "regression_unready_visible_skill",
+      surface_layer: "planner_visible",
+      promotion_stage: "planner_visible",
+      previous_promotion_stage: "readiness_check",
+      skill_class: "read_only",
+      runtime_access: ["read_runtime"],
+      selector_mode: "deterministic_only",
+      selector_key: "skill.regression_unready_visible.read",
+      selector_task_types: ["regression_unready_visible_skill"],
+      routing_reason: "selector_regression_unready_visible_skill",
+      selection_reason: "regression unready visible path",
+      allowed_side_effects: {
+        read: ["search_knowledge_base"],
+        write: [],
+      },
+      readiness_gate: {
+        regression_suite_passed: false,
+        answer_pipeline_enforced: true,
+        raw_skill_output_blocked: true,
+        output_shape_stable: true,
+        side_effect_boundary_locked: true,
+      },
+    },
+  ]), /invalid_planner_skill_surface_policy/);
+});
+
+test("planner-visible skill candidate fails closed when answer pipeline could be bypassed", () => {
+  assert.throws(() => createPlannerSkillActionRegistry([
+    {
+      action: "answer_bypass_visible_skill",
+      skill_name: "answer_bypass_visible_skill",
+      surface_layer: "planner_visible",
+      promotion_stage: "planner_visible",
+      previous_promotion_stage: "readiness_check",
+      skill_class: "read_only",
+      runtime_access: ["read_runtime"],
+      selector_mode: "deterministic_only",
+      selector_key: "skill.answer_bypass_visible.read",
+      selector_task_types: ["answer_bypass_visible_skill"],
+      routing_reason: "selector_answer_bypass_visible_skill",
+      selection_reason: "answer bypass visible path",
+      allowed_side_effects: {
+        read: ["search_knowledge_base"],
+        write: [],
+      },
+      readiness_gate: {
+        regression_suite_passed: true,
+        answer_pipeline_enforced: false,
+        raw_skill_output_blocked: true,
+        output_shape_stable: true,
+        side_effect_boundary_locked: true,
+      },
+    },
+  ]), /invalid_planner_skill_surface_policy/);
+});
+
+test("planner-visible skill candidate fails closed on selector drift against an existing deterministic skill", () => {
+  assert.throws(() => createPlannerSkillActionRegistry([
+    {
+      action: "search_and_summarize",
+      skill_name: "search_and_summarize",
+      surface_layer: "internal_only",
+      skill_class: "read_only",
+      runtime_access: ["read_runtime"],
+      selector_mode: "deterministic_only",
+      selector_key: "skill.search_and_summarize.read",
+      selector_task_types: ["skill_read"],
+      routing_reason: "selector_search_and_summarize_skill",
+      selection_reason: "read-only skill path",
+      allowed_side_effects: {
+        read: ["search_knowledge_base"],
+        write: [],
+      },
+    },
+    {
+      action: "drift_visible_skill",
+      skill_name: "drift_visible_skill",
+      surface_layer: "planner_visible",
+      promotion_stage: "planner_visible",
+      previous_promotion_stage: "readiness_check",
+      skill_class: "read_only",
+      runtime_access: ["read_runtime"],
+      selector_mode: "deterministic_only",
+      selector_key: "skill.drift_visible.read",
+      selector_task_types: ["skill_read"],
+      routing_reason: "selector_drift_visible_skill",
+      selection_reason: "drift visible path",
+      allowed_side_effects: {
+        read: ["search_knowledge_base"],
+        write: [],
+      },
+      readiness_gate: {
+        regression_suite_passed: true,
+        answer_pipeline_enforced: true,
+        raw_skill_output_blocked: true,
+        output_shape_stable: true,
+        side_effect_boundary_locked: true,
+      },
+    },
+  ]), /invalid_planner_skill_surface_policy/);
+});
+
+test("planner-visible skill candidate fails closed when output shape or side-effect boundary is unstable", () => {
+  assert.throws(() => createPlannerSkillActionRegistry([
+    {
+      action: "unstable_visible_skill",
+      skill_name: "unstable_visible_skill",
+      surface_layer: "planner_visible",
+      promotion_stage: "planner_visible",
+      previous_promotion_stage: "readiness_check",
+      skill_class: "read_only",
+      runtime_access: ["read_runtime"],
+      selector_mode: "deterministic_only",
+      selector_key: "skill.unstable_visible.read",
+      selector_task_types: ["unstable_visible_skill"],
+      routing_reason: "selector_unstable_visible_skill",
+      selection_reason: "unstable visible path",
+      allowed_side_effects: {
+        read: ["search_knowledge_base"],
+        write: ["create_doc"],
+      },
+      readiness_gate: {
+        regression_suite_passed: true,
+        answer_pipeline_enforced: true,
+        raw_skill_output_blocked: true,
+        output_shape_stable: false,
+        side_effect_boundary_locked: false,
       },
     },
   ]), /invalid_planner_skill_surface_policy/);

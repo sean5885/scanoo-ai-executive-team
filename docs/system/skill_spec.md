@@ -20,6 +20,7 @@ Current code anchors:
 Related mirror:
 
 - `/Users/seanhan/Documents/Playground/docs/system/skill_surface_policy.md`
+- `/Users/seanhan/Documents/Playground/docs/system/skill_planner_visible_readiness.md`
 
 This baseline is intentionally narrow:
 
@@ -381,8 +382,15 @@ Current v1 rules:
 - each planner execution may use at most one skill-backed action
 - skill chaining is not allowed
 - planner-visible skills must have unique deterministic selector keys
+- planner-visible promotion must pass through `internal_only -> readiness_check -> planner_visible`
+- direct jump from `internal_only` to `planner_visible` is rejected fail-closed
 - selector conflicts fail closed instead of choosing heuristically
 - current checked-in planner skill action is read-only only
+- planner-visible candidates must also keep:
+  - `selector_mode = deterministic_only`
+  - `runtime_access = ["read_runtime"]`
+  - `allowed_side_effects.write = []`
+  - existing answer/source normalization boundary
 - declared side effects must stay within:
   - `read: ["search_knowledge_base"]`
   - `write: []`
