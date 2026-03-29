@@ -9,7 +9,7 @@ This document defines a production-ready telemetry / monitoring / rollback desig
 Current design scope:
 
 - add a checked-in event/metric/alert/rollback spec
-- add checked-in minimal runtime emission with an in-memory collector
+- add checked-in minimal runtime emission through a telemetry adapter layer
 - keep the current planner contract unchanged
 - keep the current two-skill admission boundary unchanged
 - reuse the existing request/trace/debug surface where possible
@@ -40,7 +40,8 @@ The current runtime already exposes the key local evidence we will build on late
 - `http_request_trace_events`
   - persists trace-scoped runtime events for local reconstruction
 - `planner_visible_*`
-  - now emits spec-constrained runtime events into an in-memory collector only
+  - now emits spec-constrained runtime events through an injected telemetry adapter
+  - the default adapter is an in-memory buffer so current behavior stays local-only
   - current checked-in emission points are planner decision / selection, fail-closed admission, fallback, and answer boundary
 
 Current checked-in baseline from the coexistence watch:
@@ -67,9 +68,55 @@ This baseline is the only checked-in fact today. It is valid as an initial alert
 - `/Users/seanhan/Documents/Playground/src/runtime-observability.mjs`
 - `/Users/seanhan/Documents/Playground/src/monitoring-store.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-spec.mjs`
+- `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-adapter.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-runtime.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-visible-skill-observability.mjs`
 - `/Users/seanhan/Documents/Playground/docs/system/trace_log_spec.md`
+
+## Telemetry Adapter Layer
+
+The runtime no longer writes directly to one concrete sink.
+
+Current checked-in adapter contract:
+
+- `emit(event)`
+  - required
+  - receives the fully built planner-visible telemetry event without altering schema
+- `flush()`
+  - optional
+  - lets a sink finish local delivery when the caller explicitly asks
+- `getBuffer()`
+  - optional
+  - primarily for the default in-memory adapter and local tests
+
+Current checked-in adapters:
+
+- `InMemoryTelemetryAdapter`
+  - default runtime adapter
+  - keeps a bounded local event buffer
+  - preserves the prior collector behavior for tests and local inspection
+- `StructuredLogTelemetryAdapter`
+  - mock production-facing sink
+  - serializes each event into one JSON log line
+  - can write to `console` or a local file stub
+
+Injection boundary:
+
+- adapter selection happens when planner-visible runtime is initialized
+- `executePlannedUserInput(...)` and `runPlannerToolFlow(...)` accept an injected adapter
+- telemetry context carries the resolved adapter forward so later answer-boundary emission uses the same sink
+- when no adapter is injected, runtime falls back to the default in-memory adapter
+
+Sink lifecycle:
+
+- `emit(...)`
+  - called immediately at each checked-in planner-visible emission point
+- `flush()`
+  - not required for the default in-memory adapter, but available for adapters that stage writes
+- `reset()`
+  - adapter-specific helper used only by local tests and the default in-memory buffer
+- buffer trimming
+  - the default in-memory adapter keeps a bounded buffer and drops the oldest events first
 
 ## Query-Type Normalization
 
@@ -577,11 +624,12 @@ One request should be traceable in this order:
 
 When this design is wired later, the safest sequence is:
 
-1. emit the five planner-visible telemetry events into the existing structured logger
-2. mirror the same payloads into `http_request_trace_events`
-3. compute metrics out-of-band
-4. keep rollback control manual first
-5. add feature-flag automation only after trace/debug quality is proven
+1. inject a production adapter that mirrors the existing event schema without changing runtime callsites
+2. emit the five planner-visible telemetry events into the chosen structured-log or pipeline sink
+3. mirror the same payloads into `http_request_trace_events`
+4. compute metrics out-of-band
+5. keep rollback control manual first
+6. add feature-flag automation only after trace/debug quality is proven
 
 This order preserves the current fail-closed posture and avoids introducing a second decision surface.
 
@@ -590,6 +638,8 @@ This order preserves the current fail-closed posture and avoids introducing a se
 The checked-in minimal stub for this design lives at:
 
 - `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-spec.mjs`
+- `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-adapter.mjs`
+- `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-runtime.mjs`
 
 What it does now:
 
@@ -598,12 +648,14 @@ What it does now:
 - exports alert thresholds aligned to the current fixture baseline
 - exports rollback mode definitions
 - exports a stub event builder for future wiring/tests
+- emits runtime events through an injected adapter, defaulting to local in-memory storage
+- provides a mock structured-log adapter for future pipeline integration tests
 
 What it does not do:
 
-- it does not emit logs
 - it does not write SQLite rows
 - it does not create dashboards
+- it does not connect to Datadog, ELK, BigQuery, or another external backend
 - it does not change planner behavior
 
 ## Current Assessment
@@ -619,5 +671,5 @@ The repo is not yet running live planner-visible telemetry because:
 So the safe current position is:
 
 - design is production-ready
-- runtime integration is intentionally deferred
+- runtime adapter integration is checked in, but external pipeline wiring is intentionally deferred
 - rollback policy remains fail-closed and manual-first

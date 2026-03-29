@@ -291,7 +291,8 @@ The reconstruction CLI reads both tables so operators can quickly inspect:
 - status:
   - checked-in minimal runtime emission now exists
   - current schema guard lives at `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-spec.mjs`
-  - current in-memory collector/runtime hook lives at `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-runtime.mjs`
+  - current adapter/runtime hook lives at `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-runtime.mjs`
+  - current adapter definitions live at `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-adapter.mjs`
 - proposed event set:
   - `planner_visible_skill_selected`
   - `planner_visible_fail_closed`
@@ -311,7 +312,8 @@ The reconstruction CLI reads both tables so operators can quickly inspect:
   - `reason_code`
   - `task_type`
 - boundary:
-  - these events now emit inside runtime, but only into a local in-memory collector
+  - these events now emit inside runtime through a local adapter layer
+  - the default sink is still a local in-memory adapter and the mock structured-log adapter stays local-only
   - external telemetry pipeline, dashboard, and alert transport are still future work
   - they must reuse the existing request/trace chain
   - they must not widen admission or alter the public response shape

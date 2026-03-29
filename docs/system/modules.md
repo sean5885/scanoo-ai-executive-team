@@ -112,6 +112,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/planner/skill-bridge.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner-visible-skill-observability.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-spec.mjs`
+  - `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-adapter.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-runtime.mjs`
 - Current truth:
   - a checked-in minimal skill contract now exists
@@ -122,12 +123,14 @@ Current-truth docs for onboarding are:
   - planner can consume a skill result through a bridge envelope
   - planner-visible skill selection is deterministic-only and conflict-fail-closed
   - planner-visible skill rollout now has a checked-in observability/rollback watch over selector, tool execution, and answer-boundary evidence
-  - planner-visible live telemetry now emits minimal spec-constrained runtime events into an in-memory collector at planner decision/selection, fail-closed admission, fallback, and answer boundary
+  - planner-visible live telemetry now emits minimal spec-constrained runtime events through an injected telemetry adapter at planner decision/selection, fail-closed admission, fallback, and answer boundary
+  - the default adapter is a bounded in-memory buffer and the checked-in mock structured-log adapter can write JSON lines to console or a local file stub
   - no external telemetry pipeline is wired from this module set yet
   - skill existence does not add a new public route or planner routing target by itself
 - Evidence:
   - `/Users/seanhan/Documents/Playground/tests/skill-runtime.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/planner-visible-skill-observability.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/planner-visible-live-telemetry-adapter.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/planner-visible-live-telemetry-spec.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/planner-visible-live-telemetry-runtime.test.mjs`
 

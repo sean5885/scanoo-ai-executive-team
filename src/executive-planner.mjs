@@ -72,6 +72,7 @@ import {
   selectPlannerSkillActionForTaskType,
 } from "./planner/skill-bridge.mjs";
 import {
+  attachPlannerVisibleTelemetryAdapter,
   attachPlannerVisibleTelemetryContext,
   copyPlannerVisibleTelemetryContext,
   createPlannerVisibleTelemetryContext,
@@ -1231,6 +1232,7 @@ function createPlannerVisibleTelemetryMonitor({
   decisionReason = "",
   requestId = "",
   traceId = null,
+  telemetryAdapter = null,
 } = {}) {
   const semantics = derivePlannerUserInputSemantics(text);
   const queryType = resolvePlannerVisibleTelemetryQueryType({
@@ -1281,6 +1283,7 @@ function createPlannerVisibleTelemetryMonitor({
       : selectedSkill
         ? "admitted"
         : "fallback",
+    telemetry_adapter: telemetryAdapter,
   });
 
   return {
@@ -3744,6 +3747,7 @@ export async function runPlannerToolFlow({
   sessionKey = "",
   requestId = "",
   telemetryContext = null,
+  telemetryAdapter = null,
 } = {}) {
   const preAbortResult = buildPlannerAbortResult({
     action: cleanText(forcedSelection?.selected_action || forcedSelection?.action || "") || null,
@@ -3891,7 +3895,11 @@ export async function runPlannerToolFlow({
         selectedAction: selection?.selected_action,
         decisionReason: selectionReasoning.why || selection?.reason || null,
         requestId,
+        telemetryAdapter,
       });
+  if (plannerVisibleMonitor?.context) {
+    attachPlannerVisibleTelemetryAdapter(plannerVisibleMonitor.context, telemetryAdapter);
+  }
   emitPlannerVisibleTelemetryForMonitor({
     monitor: plannerVisibleMonitor,
     selectedAction: selection?.selected_action,
@@ -6508,6 +6516,7 @@ export async function executePlannedUserInput({
   signal = null,
   sessionKey = "",
   requestId = "",
+  telemetryAdapter = null,
 } = {}) {
   const preAbortInfo = derivePlannerAbortInfo({ signal });
   if (preAbortInfo) {
@@ -6543,6 +6552,7 @@ export async function executePlannedUserInput({
         selectedAction: decision?.action,
         decisionReason: decision?.why || "",
         requestId,
+        telemetryAdapter,
       })
     : null;
   emitPlannerVisibleTelemetryForMonitor({
@@ -6562,6 +6572,7 @@ export async function executePlannedUserInput({
           authContext,
           signal,
           sessionKey,
+          telemetryAdapter,
         });
       } catch (error) {
         const abortedResult = buildPlannerAbortResult({
@@ -6696,6 +6707,7 @@ export async function executePlannedUserInput({
       sessionKey,
       requestId: plannerVisibleMonitor?.context?.request_id || requestId,
       telemetryContext: plannerVisibleMonitor?.context || null,
+      telemetryAdapter,
     });
   } catch (error) {
     const abortedResult = buildPlannerAbortResult({

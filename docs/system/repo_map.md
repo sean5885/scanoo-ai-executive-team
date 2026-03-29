@@ -120,11 +120,13 @@ This file explains which directories are part of the current runtime, which are 
 - `/Users/seanhan/Documents/Playground/src/planner/skill-bridge.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-visible-skill-observability.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-spec.mjs`
+- `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-adapter.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-runtime.mjs`
 - Current truth:
   - planner-visible coexistence watch is implemented as a checked-in fixture pack
   - live telemetry schema/metrics/rollback definitions are checked in and enforced by a dedicated runtime helper
-  - planner-visible runtime now emits minimal spec-constrained events into an in-memory collector
+  - planner-visible runtime now emits minimal spec-constrained events through an injected telemetry adapter
+  - the default adapter remains in-memory and the mock structured-log adapter is local-only
   - no production telemetry pipeline is wired from this subtree yet
 
 ### Write Surface

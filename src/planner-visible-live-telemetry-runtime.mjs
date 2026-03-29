@@ -1,14 +1,17 @@
 import { cleanText } from "./message-intent-utils.mjs";
 import { createRequestId } from "./runtime-observability.mjs";
 import { buildPlannerVisibleTelemetryEvent } from "./planner-visible-live-telemetry-spec.mjs";
+import {
+  createInMemoryTelemetryAdapter,
+  DEFAULT_PLANNER_VISIBLE_TELEMETRY_BUFFER_SIZE,
+  isPlannerVisibleTelemetryAdapter,
+} from "./planner-visible-live-telemetry-adapter.mjs";
 
-const DEFAULT_PLANNER_VISIBLE_TELEMETRY_BUFFER_SIZE = 200;
 const PLANNER_VISIBLE_TELEMETRY_CONTEXT = Symbol.for("lobster.planner_visible_live_telemetry");
-
-const plannerVisibleTelemetryCollector = {
-  maxEvents: DEFAULT_PLANNER_VISIBLE_TELEMETRY_BUFFER_SIZE,
-  events: [],
-};
+const PLANNER_VISIBLE_TELEMETRY_ADAPTER = Symbol.for("lobster.planner_visible_live_telemetry_adapter");
+const defaultPlannerVisibleTelemetryAdapter = createInMemoryTelemetryAdapter({
+  maxBufferSize: DEFAULT_PLANNER_VISIBLE_TELEMETRY_BUFFER_SIZE,
+});
 
 function normalizeStringList(items = []) {
   if (!Array.isArray(items)) {
@@ -32,11 +35,35 @@ function ensureContextState(context = null) {
   return context;
 }
 
-function trimCollector() {
-  const overflow = plannerVisibleTelemetryCollector.events.length - plannerVisibleTelemetryCollector.maxEvents;
-  if (overflow > 0) {
-    plannerVisibleTelemetryCollector.events.splice(0, overflow);
+function attachTelemetryAdapter(context = null, adapter = null) {
+  const normalizedContext = ensureContextState(context);
+  if (!normalizedContext) {
+    return resolveTelemetryAdapter(adapter);
   }
+  if (isPlannerVisibleTelemetryAdapter(adapter)) {
+    Object.defineProperty(normalizedContext, PLANNER_VISIBLE_TELEMETRY_ADAPTER, {
+      value: adapter,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+    return adapter;
+  }
+  if (!isPlannerVisibleTelemetryAdapter(normalizedContext[PLANNER_VISIBLE_TELEMETRY_ADAPTER])) {
+    Object.defineProperty(normalizedContext, PLANNER_VISIBLE_TELEMETRY_ADAPTER, {
+      value: defaultPlannerVisibleTelemetryAdapter,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return normalizedContext[PLANNER_VISIBLE_TELEMETRY_ADAPTER];
+}
+
+function resolveTelemetryAdapter(adapter = null) {
+  return isPlannerVisibleTelemetryAdapter(adapter)
+    ? adapter
+    : defaultPlannerVisibleTelemetryAdapter;
 }
 
 export function createPlannerVisibleTelemetryContext({
@@ -52,8 +79,9 @@ export function createPlannerVisibleTelemetryContext({
   skill_surface_layer = null,
   skill_promotion_stage = null,
   reason_code = null,
+  telemetry_adapter = null,
 } = {}) {
-  return ensureContextState({
+  const context = ensureContextState({
     request_id: cleanText(request_id) || createRequestId("planner_visible"),
     query_type: cleanText(query_type) || null,
     candidate_skills: normalizeStringList(candidate_skills),
@@ -67,6 +95,8 @@ export function createPlannerVisibleTelemetryContext({
     skill_promotion_stage: cleanText(skill_promotion_stage) || null,
     reason_code: cleanText(reason_code) || null,
   });
+  attachTelemetryAdapter(context, telemetry_adapter);
+  return context;
 }
 
 export function attachPlannerVisibleTelemetryContext(target, context = null) {
@@ -80,6 +110,7 @@ export function attachPlannerVisibleTelemetryContext(target, context = null) {
     configurable: true,
     writable: true,
   });
+  attachTelemetryAdapter(normalizedContext);
   return normalizedContext;
 }
 
@@ -100,6 +131,7 @@ export function updatePlannerVisibleTelemetryContext(targetOrContext, patch = {}
   if (!context) {
     return null;
   }
+  attachTelemetryAdapter(context);
   const normalizedPatch = patch && typeof patch === "object" && !Array.isArray(patch) ? patch : {};
 
   if (Object.prototype.hasOwnProperty.call(normalizedPatch, "request_id")) {
@@ -142,6 +174,22 @@ export function updatePlannerVisibleTelemetryContext(targetOrContext, patch = {}
   return context;
 }
 
+export function attachPlannerVisibleTelemetryAdapter(targetOrContext, adapter = null) {
+  const context = getPlannerVisibleTelemetryContext(targetOrContext) || ensureContextState(targetOrContext);
+  if (!context) {
+    return resolveTelemetryAdapter(adapter);
+  }
+  return attachTelemetryAdapter(context, adapter);
+}
+
+export function getPlannerVisibleTelemetryAdapter(targetOrContext) {
+  const context = getPlannerVisibleTelemetryContext(targetOrContext) || ensureContextState(targetOrContext);
+  if (context && isPlannerVisibleTelemetryAdapter(context[PLANNER_VISIBLE_TELEMETRY_ADAPTER])) {
+    return context[PLANNER_VISIBLE_TELEMETRY_ADAPTER];
+  }
+  return defaultPlannerVisibleTelemetryAdapter;
+}
+
 export function hasPlannerVisibleTelemetryEvent(targetOrContext, event = "") {
   const context = getPlannerVisibleTelemetryContext(targetOrContext) || ensureContextState(targetOrContext);
   return Boolean(context?._emitted_events?.has(cleanText(event)));
@@ -160,6 +208,7 @@ export function emitPlannerVisibleTelemetryEvent({
   if (!normalizedEvent) {
     return null;
   }
+  const telemetryAdapter = getPlannerVisibleTelemetryAdapter(normalizedContext);
 
   const telemetryEvent = buildPlannerVisibleTelemetryEvent({
     event: normalizedEvent,
@@ -174,27 +223,47 @@ export function emitPlannerVisibleTelemetryEvent({
     extra,
   });
 
-  plannerVisibleTelemetryCollector.events.push(telemetryEvent);
-  trimCollector();
+  telemetryAdapter.emit(telemetryEvent);
   normalizedContext._emitted_events.add(normalizedEvent);
   return telemetryEvent;
+}
+
+export function listPlannerVisibleTelemetryEvents({
+  adapter = null,
+  request_id = "",
+} = {}) {
+  const telemetryAdapter = resolveTelemetryAdapter(adapter);
+  if (typeof telemetryAdapter.getBuffer !== "function") {
+    return [];
+  }
+  return telemetryAdapter.getBuffer({ request_id });
+}
+
+export function flushPlannerVisibleTelemetryAdapter({
+  adapter = null,
+} = {}) {
+  const telemetryAdapter = resolveTelemetryAdapter(adapter);
+  if (typeof telemetryAdapter.flush === "function") {
+    return telemetryAdapter.flush();
+  }
+  return null;
 }
 
 export function listPlannerVisibleTelemetryCollectorEvents({
   request_id = "",
 } = {}) {
-  const normalizedRequestId = cleanText(request_id);
-  return plannerVisibleTelemetryCollector.events
-    .filter((event) => !normalizedRequestId || event.request_id === normalizedRequestId)
-    .map((event) => ({ ...event }));
+  return listPlannerVisibleTelemetryEvents({
+    adapter: defaultPlannerVisibleTelemetryAdapter,
+    request_id,
+  });
 }
 
 export function resetPlannerVisibleTelemetryCollector({
   max_events = DEFAULT_PLANNER_VISIBLE_TELEMETRY_BUFFER_SIZE,
 } = {}) {
-  const normalizedMaxEvents = Number.isInteger(max_events) && max_events > 0
-    ? max_events
-    : DEFAULT_PLANNER_VISIBLE_TELEMETRY_BUFFER_SIZE;
-  plannerVisibleTelemetryCollector.maxEvents = normalizedMaxEvents;
-  plannerVisibleTelemetryCollector.events.length = 0;
+  if (typeof defaultPlannerVisibleTelemetryAdapter.reset === "function") {
+    defaultPlannerVisibleTelemetryAdapter.reset({
+      maxBufferSize: max_events,
+    });
+  }
 }

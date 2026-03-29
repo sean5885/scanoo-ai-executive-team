@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createTestDbHarness } from "./utils/test-db-factory.mjs";
+import {
+  createInMemoryTelemetryAdapter,
+  createStructuredLogTelemetryAdapter,
+} from "../src/planner-visible-live-telemetry-adapter.mjs";
 
 const testDb = await createTestDbHarness();
 const [
@@ -137,6 +141,68 @@ test("runtime skill success path emits planner-visible selection and answer tele
   assertTelemetrySchema(events);
 });
 
+test("runtime can inject a non-default in-memory telemetry adapter", async () => {
+  const telemetryAdapter = createInMemoryTelemetryAdapter();
+  const runtimeResult = await runPlannerToolFlow({
+    userIntent: "幫我整理 launch checklist",
+    taskType: "skill_read",
+    requestId: "req_runtime_custom_in_memory_adapter",
+    telemetryAdapter,
+    payload: {
+      account_id: "acct_runtime_custom_in_memory_adapter",
+      reader_overrides: {
+        index: {
+          search_knowledge_base: {
+            success: true,
+            data: {
+              items: [
+                {
+                  id: "doc_skill_custom_adapter:0",
+                  snippet: "launch checklist rollout with review gate and rollback watch",
+                  metadata: {
+                    title: "Launch Checklist Summary",
+                    url: "https://example.com/launch-checklist-summary",
+                  },
+                },
+              ],
+            },
+            error: null,
+          },
+        },
+      },
+    },
+    logger: {
+      info() {},
+      warn() {},
+      error() {},
+      debug() {},
+    },
+  });
+
+  const envelope = buildPlannedUserInputEnvelope(buildExecuteLikeResult(runtimeResult, {
+    action: runtimeResult.selected_action,
+    params: {
+      account_id: "acct_runtime_custom_in_memory_adapter",
+    },
+    why: "skill runtime success with custom in-memory telemetry adapter",
+  }));
+  normalizeUserResponse({ plannerEnvelope: envelope });
+
+  const adapterEvents = telemetryAdapter.getBuffer({
+    request_id: "req_runtime_custom_in_memory_adapter",
+  });
+  const defaultCollectorEvents = listPlannerVisibleTelemetryCollectorEvents({
+    request_id: "req_runtime_custom_in_memory_adapter",
+  });
+
+  assert.deepEqual(adapterEvents.map((event) => event.event), [
+    "planner_visible_skill_selected",
+    "planner_visible_answer_generated",
+  ]);
+  assert.deepEqual(defaultCollectorEvents, []);
+  assertTelemetrySchema(adapterEvents);
+});
+
 test("mixed planner-visible fail-closed path emits fail_closed, ambiguity, fallback, and answer telemetry", async () => {
   const result = await executePlannedUserInput({
     text: "幫我搜尋這份 launch checklist 文件並整理重點",
@@ -269,5 +335,80 @@ test("follow-up fail-closed path keeps fallback and answer telemetry without amb
   assert.equal(events[1].fallback_action, "search_and_detail_doc");
   assert.equal(events[2].answer_contract_ok, true);
   assert.equal(events[2].answer_consistency_proxy_ok, true);
+  assertTelemetrySchema(events);
+});
+
+test("runtime can emit planner-visible telemetry through the structured log adapter", async () => {
+  const structuredLines = [];
+  const telemetryAdapter = createStructuredLogTelemetryAdapter({
+    writer(line) {
+      structuredLines.push(line);
+    },
+  });
+
+  const result = await executePlannedUserInput({
+    text: "幫我搜尋這份 launch checklist 文件並整理重點",
+    requestId: "req_runtime_structured_log_adapter",
+    telemetryAdapter,
+    plannedDecision: {
+      action: "search_company_brain_docs",
+      params: {
+        q: "launch checklist",
+      },
+    },
+    logger: {
+      info() {},
+      warn() {},
+      error() {},
+      debug() {},
+    },
+    async toolFlowRunner({
+      forcedSelection,
+      telemetryContext,
+    }) {
+      const runtimeResult = {
+        selected_action: forcedSelection?.selected_action || null,
+        execution_result: {
+          ok: true,
+          action: forcedSelection?.selected_action || null,
+          kind: "search",
+          match_reason: "launch checklist",
+          items: [
+            {
+              title: "Launch Checklist",
+              doc_id: "doc_launch_checklist",
+              url: "https://example.com/launch-checklist",
+              reason: "文件內容直接命中 launch checklist。",
+            },
+          ],
+          trace_id: "trace_runtime_structured_log_adapter",
+        },
+        trace_id: "trace_runtime_structured_log_adapter",
+      };
+      attachPlannerVisibleTelemetryContext(runtimeResult, telemetryContext);
+      return runtimeResult;
+    },
+  });
+
+  const envelope = buildPlannedUserInputEnvelope(result);
+  normalizeUserResponse({ plannerEnvelope: envelope });
+
+  const events = telemetryAdapter.getBuffer()
+    .filter((event) => event.request_id === "req_runtime_structured_log_adapter");
+  const logLines = telemetryAdapter.getLogBuffer();
+  const parsedLogEvents = structuredLines.map((line) => JSON.parse(line));
+  const defaultCollectorEvents = listPlannerVisibleTelemetryCollectorEvents({
+    request_id: "req_runtime_structured_log_adapter",
+  });
+
+  assert.deepEqual(events.map((event) => event.event), [
+    "planner_visible_fail_closed",
+    "planner_visible_ambiguity",
+    "planner_visible_fallback",
+    "planner_visible_answer_generated",
+  ]);
+  assert.equal(defaultCollectorEvents.length, 0);
+  assert.equal(logLines.length, events.length);
+  assert.deepEqual(parsedLogEvents.map((event) => event.event), events.map((event) => event.event));
   assertTelemetrySchema(events);
 });
