@@ -10,6 +10,7 @@
   - each action defines `input_schema`, `output_schema`, and bridge/tool-side `error_codes`
   - controlled write actions may also define checked-in `governance` metadata such as `external_write`, `confirm_required`, conditional `review_required`, and required entry-governance fields
   - skill-backed actions may define `planner_visibility: "deterministic_only"` so the strict user-input planner prompt does not expose them in `target_catalog` while deterministic selector/runtime code can still use them
+  - skill-backed actions may also carry repo-side surface policy metadata, but current strict planner gate still treats `internal_only` skill-backed actions as not catalog-visible even if the action exists in `planner_contract.json`
   - current planner follow-up actions that surface through `runPlannerToolFlow(...)` are also part of this checked-in action catalog even when they are satisfied by local planner lifecycle state instead of the HTTP tool registry (`read_task_lifecycle_v1`, `update_task_lifecycle_v1`, `mark_resolved`)
 - `presets`
   - stable multi-step planner targets
@@ -46,6 +47,7 @@
 - public `selected_target` must resolve to `actions` or `presets` according to `target_kind`
 - planner action governance for controlled writes must stay aligned across `planner_contract.json`, planner tool registry, and checked-in route contracts
 - planner skill-backed actions must stay aligned across `planner_contract.json`, planner skill registry/bridge, and selector-emitted `routing_reason`
+- internal-only skill-backed actions must remain hidden from strict planner `target_catalog`
 - if runtime behavior changes intentionally, update code and this contract in the same change
 - if docs disagree with code, code is the current fact and the conflict must be tracked in `open_questions.md`
 

@@ -151,6 +151,7 @@ Current truth:
 
 - this helper is implemented and tested
 - it is not the main public `/answer` route
+- even when planner uses a skill-backed action, the final user-facing reply still goes through the existing answer normalization path rather than exposing raw skill payload fields
 
 ## 4. Adjacent Workflows
 
@@ -172,6 +173,7 @@ Current truth:
 - `search_and_summarize` uses `search_knowledge_base`
 - `document_summarize` uses `get_company_brain_doc_detail`
 - this does not register a new public route or planner routing target
+- both checked-in skill-backed actions remain internal-only and stay outside strict planner `target_catalog`
 - this does not bypass mutation-runtime for writes
 
 ### 4B. Comment Rewrite

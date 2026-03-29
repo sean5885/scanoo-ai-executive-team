@@ -13,9 +13,14 @@ Current code anchors:
 - `/Users/seanhan/Documents/Playground/src/skill-runtime.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner/skill-bridge.mjs`
 - `/Users/seanhan/Documents/Playground/src/executive-planner.mjs`
+- `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
 - `/Users/seanhan/Documents/Playground/src/read-runtime.mjs`
 - `/Users/seanhan/Documents/Playground/tests/skill-runtime.test.mjs`
 - `/Users/seanhan/Documents/Playground/tests/executive-planner.test.mjs`
+
+Related mirror:
+
+- `/Users/seanhan/Documents/Playground/docs/system/skill_surface_policy.md`
 
 ## Current Global Limits
 
@@ -31,8 +36,37 @@ Current code anchors:
 Current checked-in meaning:
 
 - adding a second or third skill does not automatically make planner use them
+- the current thread does not authorize a third skill
 - planner-visible skill selection must still resolve to exactly one skill action
 - if two skills claim the same deterministic selector key, selection returns no skill path instead of choosing heuristically
+
+## Skill Surface Layers
+
+Checked-in planner skill actions now carry an explicit surface layer:
+
+- `internal_only`
+  - deterministic planner-only access
+  - hidden from strict user-input planner `target_catalog`
+- `planner_visible`
+  - reserved for future planner-selectable skill-backed actions
+  - no checked-in skill currently uses it
+- `user_facing_capability`
+  - reserved and disabled
+  - no checked-in registry entry may use it
+
+Current checked-in skills:
+
+- `search_and_summarize`
+  - `surface_layer = internal_only`
+- `document_summarize`
+  - `surface_layer = internal_only`
+
+Current checked-in enforcement:
+
+- `internal_only` skills must stay `deterministic_only`
+- `planner_visible` skills cannot stay `deterministic_only`
+- `planner_visible` skills must be `read_only`
+- `user_facing_capability` is rejected fail-closed at registry build time
 
 ## Skill Classes
 
@@ -65,6 +99,18 @@ Current checked-in examples:
   - `runtime_access = ["read_runtime"]`
   - allowed side effects:
     - `read:get_company_brain_doc_detail`
+
+Current v1 surface rule by class:
+
+- `read_only`
+  - allowed for `internal_only`
+  - may become `planner_visible` only in future with explicit approval and regression coverage
+- `write`
+  - may exist only as internal helper in future
+  - must not become `planner_visible` in current policy
+- `hybrid`
+  - may exist only as internal helper in future
+  - must not become `planner_visible` in current policy
 
 ## Skill Vs Tool Vs Agent
 
@@ -111,6 +157,21 @@ Current selection rules:
    - do not treat key collisions as aliases or fallback candidates
 
 This keeps old behavior stable as long as a new skill uses a different selector key.
+It also keeps current internal-only skills outside the strict planner catalog.
+
+## Response Surface Boundary
+
+Current checked-in answer:
+
+- a skill may produce structured output for planner/runtime use
+- a skill may not directly define the user-facing response surface
+- planner success replies must still pass through `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
+- source rendering must still pass through `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`
+
+Current checked-in effect:
+
+- raw skill fields such as `bridge`, `side_effects`, selector metadata, and internal trace state are not rendered directly to users
+- deterministic skill summaries are adapted into canonical `answer / sources / limitations`
 
 ## Isolation Rules
 
@@ -156,25 +217,28 @@ Current regression coverage includes:
 - a second non-overlapping skill does not change that result
 - selector task-type conflicts fail closed
 - selector key conflicts fail closed
+- planner-visible and deterministic-only cannot be mixed in one skill action entry
 - skill input must be serializable
 - skill output must be serializable
 - skill chains are rejected
 - checked-in skills do not import repo / DB side channels
 - planner skill failures do not fall back into generic document search
+- strict planner target catalog keeps internal-only skill actions hidden
+- strict planner decision validation rejects internal-only skill actions
+- planner skill success replies still go through canonical answer-source mapping
 
-## Safe Expansion To 3-5 Skills
+## Future Expansion Guard
 
 Current answer:
 
-- yes, conditionally safe
-
-Current conditions:
-
 - keep `max_skills_per_run = 1`
 - keep `allow_skill_chain = false`
-- each planner-visible skill must have a unique deterministic selector key
+- each deterministic selector entry must have a unique selector key and non-overlapping selection semantics
 - every new skill must declare `skill_class` and `runtime_access`
+- every new skill must declare a surface layer explicitly
 - every new skill must stay on governed runtime surfaces
 - every new skill must add regression tests proving existing selector outputs do not drift
+- every new skill must prove it does not bypass `user-response-normalizer.mjs`
 
-If those conditions are not met, the checked-in governance model should remain at one planner-visible skill.
+Current thread does not open a third skill.
+If those conditions are not met, the checked-in governance model must remain exactly at the current two internal-only read skills.

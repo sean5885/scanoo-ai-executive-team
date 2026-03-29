@@ -218,15 +218,20 @@ This path is bounded by the checked-in planner contract:
   - checked-in planner actions:
     - `search_and_summarize`
     - `document_summarize`
+  - checked-in surface layer:
+    - both skill-backed actions are `internal_only`
   - current selection entries are deterministic-only:
     - `taskType=skill_read` -> `search_and_summarize`
     - `taskType=document_summary_skill` -> `document_summarize`
+  - strict user-input planner `target_catalog` hides those internal-only skill-backed actions
+  - strict planner decision validation rejects those actions if model JSON tries to call them directly
   - deterministic selection now resolves through the checked-in skill selector registry in `planner/skill-bridge.mjs`
   - if more than one planner-visible skill claims the same deterministic selector key, selection fails closed as `selector_skill_conflict`
   - planner dispatch must call `planner/skill-bridge.mjs`
   - `planner/skill-bridge.mjs` may call exactly one checked-in skill runtime entry
   - current allowed side effects stay read-only (`search_knowledge_base`, `get_company_brain_doc_detail`)
   - skill failure remains fail-closed and does not fall back into another planner tool/preset path
+  - successful skill results still pass through `user-response-normalizer.mjs` and canonical source mapping before reaching the user
 
 ## Contract Consistency Check
 

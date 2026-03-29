@@ -15,6 +15,11 @@ Current code anchors:
 - `/Users/seanhan/Documents/Playground/src/skills/document-summarize-skill.mjs`
 - `/Users/seanhan/Documents/Playground/src/skills/search-and-summarize-skill.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner/skill-bridge.mjs`
+- `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
+
+Related mirror:
+
+- `/Users/seanhan/Documents/Playground/docs/system/skill_surface_policy.md`
 
 This baseline is intentionally narrow:
 
@@ -81,16 +86,20 @@ Boundary:
 - planner may consume a skill result only through `planner/skill-bridge.mjs`
 - planner does not call `skill-runtime` directly
 - a skill does not bypass planner action governance just because the skill exists
+- a skill does not create a new outward response surface just because the skill exists
 - v1 uses explicit planner actions to keep routing deterministic and auditable:
   - planner action: `search_and_summarize`
   - backing skill: `search_and_summarize`
+  - surface layer: `internal_only`
   - planner visibility: `deterministic_only`
   - selector path: chosen only by deterministic runtime conditions such as `taskType=skill_read`
   - planner action: `document_summarize`
   - backing skill: `document_summarize`
+  - surface layer: `internal_only`
   - planner visibility: `deterministic_only`
   - selector path: chosen only by deterministic runtime conditions such as `taskType=document_summary_skill`
   - both actions stay outside the normal strict user-input planner `target_catalog`
+  - both actions are rejected if strict planner JSON tries to call them directly
 
 ### Read / Write Runtime Boundary
 
@@ -101,6 +110,10 @@ Boundary:
 - skill runtime itself:
   - is not a direct write/read escape hatch
   - cannot claim write completion without mutation-runtime evidence
+- skill outward rendering:
+  - must still pass through `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
+  - must still use canonical source rendering from `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`
+  - must not directly expose raw `bridge`, `side_effects`, or trace-oriented fields to the user
 
 Current checked-in examples:
 
