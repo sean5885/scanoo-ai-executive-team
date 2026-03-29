@@ -157,7 +157,7 @@ test("mixed search-and-summarize user intents keep the existing search path when
   assert.equal(event?.payload?.skill_selector_key, null);
 });
 
-test("search_and_summarize stays observable and read-only, but noisy results still surface unstable answer text", async () => {
+test("search_and_summarize stays observable and read-only while noisy search snippets are cleaned before final answer rendering", async () => {
   const { events, logger } = createEventLogger();
   const result = await runPlannerToolFlow({
     userIntent: "幫我搜尋 launch checklist 並整理重點",
@@ -240,8 +240,9 @@ test("search_and_summarize stays observable and read-only, but noisy results sti
   assert.equal(userResponse.ok, true);
   assert.equal(userResponse.sources.length >= 2, true);
   assert.match(userResponse.answer || "", /launch checklist/i);
+  assert.match(userResponse.answer || "", /Ship checklist owner: ops/i);
   assert.match(userResponse.sources.join(" "), /Noisy Launch Notes|跨語 Launch Plan|Long Guardrail Note/);
   assert.match(userResponse.limitations.join(" "), /僅摘要前 3 筆來源/);
   assert.doesNotMatch(text, /skill_bridge|search_and_summarize|side_effects|read-runtime|authority/);
-  assert.match(text, /\/Users\/|Back to \[?README/);
+  assert.doesNotMatch(text, /\/Users\/|Back to \[?README|https:\/\/example\.com\/checklist/);
 });

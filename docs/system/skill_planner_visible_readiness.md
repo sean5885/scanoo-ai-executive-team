@@ -291,9 +291,10 @@ Current conclusion for `search_and_summarize`:
 
 - not eligible to become the second checked-in `planner_visible` skill in the current baseline
 - blocking reasons:
-  - noisy-answer instability under search results
   - missing explicit `readiness_check` stage
   - planner-visible admission would risk changing the existing search path
+- current rerun note:
+  - checked-in `search_knowledge_base` answer-path hardening now canonicalizes override-backed search snippets through the shared read-source cleanup before `search_and_summarize` builds its summary, so README/path/link noise is no longer a readiness blocker on this path
 
 Promoted candidate:
 

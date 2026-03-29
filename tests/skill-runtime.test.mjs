@@ -367,6 +367,12 @@ test("search_and_summarize keeps the same output shape when results contain mark
   assert.ok(Array.isArray(result.output.limitations));
   assert.match(result.output.summary, /Noisy Notes/);
   assert.match(result.output.summary, /Roadmap Draft/);
+  assert.match(result.output.summary, /Ship checklist owner: ops/i);
+  assert.match(result.output.summary, /owner: eng status: ready/i);
+  assert.match(result.output.sources[0].snippet, /Ship checklist owner: ops/i);
+  assert.match(result.output.sources[1].snippet, /owner: eng status: ready/i);
+  assert.doesNotMatch(result.output.summary, /\/Users\/|Back to \[?README|https:\/\/example\.com\/checklist/);
+  assert.doesNotMatch(result.output.sources.map((item) => item.snippet).join(" "), /\/Users\/|Back to \[?README|https:\/\/example\.com\/checklist/);
 });
 
 test("search_and_summarize trims long result snippets deterministically and keeps preview limits stable", async () => {
@@ -487,6 +493,7 @@ test("search_and_summarize preserves multilingual search results without changin
   assert.match(result.output.summary, /跨語系 launch plan/);
   assert.equal(result.output.sources[0].title, "跨語 Launch Plan");
   assert.match(result.output.sources[0].snippet, /mixed-language snippet/);
+  assert.match(result.output.sources[1].snippet, /日本語メモ release window と依賴項目/);
   assert.equal(result.output.limitations.length, 0);
 });
 

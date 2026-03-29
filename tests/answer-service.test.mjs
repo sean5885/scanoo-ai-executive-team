@@ -228,6 +228,8 @@ test("answerQuestion can complete through read-runtime overrides without direct 
         id: "runtime_source_1",
         snippet: "runtime boundary answer for runtime boundary",
         metadata: {
+          chunk_index: null,
+          updated_at: "",
           title: "Runtime Boundary",
           url: "https://example.com/runtime-boundary",
           source_type: "docx",

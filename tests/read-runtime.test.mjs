@@ -231,6 +231,49 @@ test("runRead routes canonical knowledge search through index authority only", a
   }
 });
 
+test("runRead canonicalizes overridden knowledge-search snippets before returning them", async () => {
+  const result = await runRead({
+    canonicalRequest: {
+      action: "search_knowledge_base",
+      account_id: "acct_read_runtime_override",
+      payload: {
+        q: "launch checklist",
+        top_k: 5,
+      },
+      context: {
+        primary_authority: "index",
+        reader_overrides: {
+          index: {
+            search_knowledge_base: {
+              success: true,
+              data: {
+                items: [
+                  {
+                    id: "doc_override_1:0",
+                    snippet: "Back to [README.md](/Users/seanhan/Documents/Playground/README.md)\n- [Ship checklist](https://example.com/checklist)\n- owner: ops",
+                    metadata: {
+                      title: "Noisy Launch Notes",
+                      url: "https://example.com/noisy-launch-notes",
+                    },
+                  },
+                ],
+              },
+              error: null,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.result.data.items.length, 1);
+  assert.match(result.result.data.items[0].snippet, /Ship checklist owner: ops/i);
+  assert.doesNotMatch(result.result.data.items[0].snippet, /\/Users\/|Back to \[?README|https:\/\/example\.com\/checklist/);
+  assert.equal(result.result.data.items[0].metadata.title, "Noisy Launch Notes");
+  assert.equal(result.result.data.items[0].metadata.url, "https://example.com/noisy-launch-notes");
+});
+
 test("runRead keeps approved mirror detail on the same canonical result shape", async () => {
   const accountId = `acct_read_runtime_approved_${Date.now()}`;
   ensureTestAccount(accountId);

@@ -23,6 +23,7 @@ import {
   listDocumentComments,
 } from "./lark-content.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
+import { buildReadSourceItems } from "./read-source-schema.mjs";
 
 const INDEX_AUTHORITY = "index";
 const MIRROR_AUTHORITY = "mirror";
@@ -294,6 +295,31 @@ function logReadRuntime(logger = null, event = {}) {
   logger?.debug?.("read_runtime", event);
 }
 
+function normalizeReadResult(result = null, request = {}) {
+  if (!result || typeof result !== "object" || Array.isArray(result) || result.success !== true) {
+    return result;
+  }
+
+  if (request?.action !== "search_knowledge_base") {
+    return result;
+  }
+
+  const data = result.data && typeof result.data === "object" && !Array.isArray(result.data)
+    ? result.data
+    : {};
+  const items = Array.isArray(data.items) ? data.items : [];
+
+  return {
+    ...result,
+    data: {
+      ...data,
+      items: buildReadSourceItems(items, {
+        query: cleanText(request?.payload?.q || request?.payload?.query || ""),
+      }),
+    },
+  };
+}
+
 export async function runRead({ canonicalRequest, logger = null } = {}) {
   let request = null;
   try {
@@ -332,6 +358,7 @@ export async function runRead({ canonicalRequest, logger = null } = {}) {
   } catch {
     result = buildFailSoftQueryResult("runtime_exception");
   }
+  result = normalizeReadResult(result, request);
 
   logReadRuntime(logger, {
     stage: "read_runtime",
@@ -410,6 +437,7 @@ export function runReadSync({ canonicalRequest, logger = null } = {}) {
   if (result && typeof result.then === "function") {
     result = buildFailSoftQueryResult("runtime_exception");
   }
+  result = normalizeReadResult(result, request);
 
   logReadRuntime(logger, {
     stage: "read_runtime",
