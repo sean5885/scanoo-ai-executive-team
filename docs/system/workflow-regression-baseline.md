@@ -520,6 +520,10 @@ npm run release-check:ci -- --compare-snapshot <run-id|path>
   - `src/planner-bd-flow.mjs`
   - `src/planner-delivery-flow.mjs`
 - 修改會改變 planner action/preset target name 或 target kind 的 contract-adjacent code
+- 修改 planner/answer/registered-agent 共用的 canonical envelope 邊界：
+  - `src/executive-planner.mjs`
+  - `src/user-response-normalizer.mjs`
+  - `src/agent-dispatcher.mjs`
 
 ### Update Contract Vs Fix Planner
 

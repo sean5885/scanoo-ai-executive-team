@@ -64,3 +64,11 @@
 Each fixture validates observed public output against `public_contracts` and asserts that emitted `error` / `routing_reason` / target values are declared in the contract.
 
 `/Users/seanhan/Documents/Playground/src/planner-contract-consistency.mjs` also treats observed planner-side `routing_reason` values as a blocking contract surface. If an emitted `routing_reason` is missing from `planner_contract.json`, diagnostics must fail with `undefined_routing_reasons`.
+
+The current closure guard also scans `src/router.js` literal `action` / `preset` / `routingReason` branches in addition to runtime fixtures, so newly added router targets or routing reasons fail the planner contract gate even before a bespoke fixture is written.
+
+`/Users/seanhan/Documents/Playground/tests/planner-contract-closure.test.mjs` adds the cross-surface closure pack:
+
+- router literal `action` / `preset` / `routingReason` values must all resolve to `planner_contract.json`
+- canonical planner action naming must stay stable across planner envelope and answer normalization boundaries
+- a canonical planner envelope must still round-trip through planner -> answer normalization -> registered-agent structured boundary without leaking raw machine envelopes

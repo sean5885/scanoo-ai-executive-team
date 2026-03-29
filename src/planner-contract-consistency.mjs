@@ -442,6 +442,11 @@ function observeDocQueryRouterTargets() {
     routeDocQuery("找 OKR 文件"),
     routeDocQuery("你把我的雲端文件再看一遍，把不屬於scanoo的內容摘出去讓我確認"),
     routeDocQuery("整理這份文件"),
+    routeDocQuery("打開第1份文件", {
+      activeCandidates: [
+        { doc_id: "doc_candidate_1", title: "Candidate 1" },
+      ],
+    }),
     routeDocQuery("這份文件寫了什麼", {
       activeDoc: {
         doc_id: "doc_active",
@@ -593,6 +598,18 @@ function observeTaskLifecycleTargets() {
 
 function observeTaskLifecycleRoutingReasons() {
   return scanLiteralFieldValuesFromFile(TASK_LIFECYCLE_FILE, "routing_reason");
+}
+
+function observeRouterLiteralActionTargets() {
+  return scanLiteralFieldValuesFromFile(ROUTER_FILE, "action");
+}
+
+function observeRouterLiteralPresetTargets() {
+  return scanLiteralFieldValuesFromFile(ROUTER_FILE, "preset");
+}
+
+function observeRouterLiteralRoutingReasons() {
+  return scanLiteralFieldValuesFromFile(ROUTER_FILE, "routingReason");
 }
 
 function dedupeFindings(findings = []) {
@@ -751,6 +768,20 @@ function collectObservedSources() {
       kind: "selector_route",
       decisions: observeDocQueryRouterTargets(),
     }),
+    buildObservedSource({
+      sourceId: "doc_query_router.literal_actions",
+      file: ROUTER_FILE,
+      kind: "selector_route_literal",
+      allowedKinds: ["action"],
+      targets: observeRouterLiteralActionTargets(),
+    }),
+    buildObservedSource({
+      sourceId: "doc_query_router.literal_presets",
+      file: ROUTER_FILE,
+      kind: "selector_route_literal",
+      allowedKinds: ["preset"],
+      targets: observeRouterLiteralPresetTargets(),
+    }),
     ...buildObservedDecisionSources({
       sourceId: "planner_doc_query_flow.route",
       file: DOC_QUERY_FLOW_FILE,
@@ -805,6 +836,12 @@ function collectObservedRoutingReasonSources() {
       file: ROUTER_FILE,
       kind: "selector_route",
       decisions: observeDocQueryRouterTargets(),
+    }),
+    buildObservedRoutingReasonSource({
+      sourceId: "doc_query_router.literal_routing_reasons",
+      file: ROUTER_FILE,
+      kind: "selector_route_literal",
+      reasons: observeRouterLiteralRoutingReasons(),
     }),
     buildObservedDecisionRoutingReasonSource({
       sourceId: "planner_doc_query_flow.route",

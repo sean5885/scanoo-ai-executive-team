@@ -166,6 +166,25 @@ test("planner contract consistency flags missing registered routing_reason", () 
   assert.equal(report.findings.undefined_routing_reasons[0].reason, "routing_reason_missing_from_contract");
 });
 
+test("planner contract consistency scans router literal routing reasons beyond sample fixtures", () => {
+  const contractOverride = JSON.parse(JSON.stringify(plannerContract));
+  delete contractOverride.routing_reason.doc_query_active_candidate_detail;
+
+  const report = runPlannerContractConsistencyCheck({ contractOverride });
+
+  assert.equal(report.ok, false);
+  assert.equal(report.gate.ok, false);
+  assert.deepEqual(report.gate.failing_categories, ["undefined_routing_reasons"]);
+  assert.equal(report.summary.undefined_routing_reasons >= 1, true);
+  assert.equal(
+    report.findings.undefined_routing_reasons.some((finding) => (
+      finding.target === "doc_query_active_candidate_detail"
+      && finding.source_id === "doc_query_router.literal_routing_reasons"
+    )),
+    true,
+  );
+});
+
 test("planner contract mirror keeps document_summarize planner_visible metadata aligned with the skill registry", () => {
   const contractPolicy = plannerContract?.actions?.document_summarize?.skill_surface_policy;
   const registryEntry = getPlannerSkillAction("document_summarize");
