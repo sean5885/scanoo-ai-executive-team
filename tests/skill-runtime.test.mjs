@@ -313,6 +313,183 @@ test("search_and_summarize returns deterministic runtime failure without bypassi
   });
 });
 
+test("search_and_summarize keeps the same output shape when results contain markdown and link noise", async () => {
+  const result = await runSkill({
+    registry: defaultSkillRegistry,
+    skillName: "search_and_summarize",
+    input: {
+      account_id: "acct_skill_runtime_noise",
+      query: "launch checklist",
+      reader_overrides: {
+        index: {
+          search_knowledge_base: {
+            success: true,
+            data: {
+              items: [
+                {
+                  id: "doc_noise_1:0",
+                  snippet: "Back to [README.md](/Users/seanhan/Documents/Playground/README.md)\n- [Ship checklist](https://example.com/checklist)\n- owner: ops",
+                  metadata: {
+                    title: "Noisy Notes",
+                    url: "https://example.com/noisy-notes",
+                  },
+                },
+                {
+                  id: "doc_noise_2:0",
+                  snippet: "## TODO\n\nowner: eng\n\nstatus: ready",
+                  metadata: {
+                    title: "Roadmap Draft",
+                    url: "https://example.com/roadmap-draft",
+                  },
+                },
+              ],
+            },
+            error: null,
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(Object.keys(result.output).sort(), [
+    "found",
+    "hits",
+    "limitations",
+    "query",
+    "sources",
+    "summary",
+  ]);
+  assert.equal(result.output.query, "launch checklist");
+  assert.equal(result.output.hits, 2);
+  assert.equal(result.output.sources.length, 2);
+  assert.equal(typeof result.output.summary, "string");
+  assert.ok(Array.isArray(result.output.limitations));
+  assert.match(result.output.summary, /Noisy Notes/);
+  assert.match(result.output.summary, /Roadmap Draft/);
+});
+
+test("search_and_summarize trims long result snippets deterministically and keeps preview limits stable", async () => {
+  const longSnippet = "launch guardrail ".repeat(20);
+  const result = await runSkill({
+    registry: defaultSkillRegistry,
+    skillName: "search_and_summarize",
+    input: {
+      account_id: "acct_skill_runtime_long",
+      query: "launch guardrail",
+      reader_overrides: {
+        index: {
+          search_knowledge_base: {
+            success: true,
+            data: {
+              items: [
+                {
+                  id: "doc_long_1:0",
+                  snippet: longSnippet,
+                  metadata: {
+                    title: "Long Guardrail Note",
+                    url: "https://example.com/long-guardrail-note",
+                  },
+                },
+                {
+                  id: "doc_long_2:0",
+                  snippet: "owner cadence",
+                  metadata: {
+                    title: "Owner Cadence",
+                    url: "https://example.com/owner-cadence",
+                  },
+                },
+                {
+                  id: "doc_long_3:0",
+                  snippet: "risk checklist",
+                  metadata: {
+                    title: "Risk Checklist",
+                    url: "https://example.com/risk-checklist",
+                  },
+                },
+                {
+                  id: "doc_long_4:0",
+                  snippet: "extra fallback note",
+                  metadata: {
+                    title: "Overflow Result",
+                    url: "https://example.com/overflow-result",
+                  },
+                },
+              ],
+            },
+            error: null,
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.output.hits, 4);
+  assert.equal(result.output.sources.length, 3);
+  assert.equal(result.output.sources[0].snippet.endsWith("..."), true);
+  assert.match(result.output.summary, /找到 4 筆/);
+  assert.deepEqual(result.output.limitations, [
+    "僅摘要前 3 筆來源，其餘結果未展開。",
+  ]);
+});
+
+test("search_and_summarize preserves multilingual search results without changing the stable output contract", async () => {
+  const result = await runSkill({
+    registry: defaultSkillRegistry,
+    skillName: "search_and_summarize",
+    input: {
+      account_id: "acct_skill_runtime_multilingual",
+      query: "跨語系 launch plan",
+      reader_overrides: {
+        index: {
+          search_knowledge_base: {
+            success: true,
+            data: {
+              items: [
+                {
+                  id: "doc_multi_1:0",
+                  snippet: "混合語言摘要片段 mixed-language snippet 與负责人 owner",
+                  metadata: {
+                    title: "跨語 Launch Plan",
+                    url: "https://example.com/multilingual-launch-plan",
+                  },
+                },
+                {
+                  id: "doc_multi_2:0",
+                  snippet: "日本語メモ release window と依賴項目",
+                  metadata: {
+                    title: "Release Window JP",
+                    url: "https://example.com/release-window-jp",
+                  },
+                },
+              ],
+            },
+            error: null,
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(Object.keys(result.output).sort(), [
+    "found",
+    "hits",
+    "limitations",
+    "query",
+    "sources",
+    "summary",
+  ]);
+  assert.equal(result.output.query, "跨語系 launch plan");
+  assert.equal(result.output.hits, 2);
+  assert.equal(result.output.found, true);
+  assert.match(result.output.summary, /跨語系 launch plan/);
+  assert.equal(result.output.sources[0].title, "跨語 Launch Plan");
+  assert.match(result.output.sources[0].snippet, /mixed-language snippet/);
+  assert.equal(result.output.limitations.length, 0);
+});
+
 test("document_summarize runs through read-runtime and returns a single-document summary", async () => {
   const result = await runSkill({
     registry: defaultSkillRegistry,

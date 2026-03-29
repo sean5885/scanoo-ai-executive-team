@@ -17,6 +17,7 @@ Current code anchors:
 - `/Users/seanhan/Documents/Playground/tests/skill-runtime.test.mjs`
 - `/Users/seanhan/Documents/Playground/tests/executive-planner.test.mjs`
 - `/Users/seanhan/Documents/Playground/tests/planner-visible-skill-observability.test.mjs`
+- `/Users/seanhan/Documents/Playground/tests/search-and-summarize-readiness.test.mjs`
 - `/Users/seanhan/Documents/Playground/tests/user-response-normalizer.test.mjs`
 
 Related mirrors:
@@ -244,6 +245,55 @@ Current status:
   - full readiness gate marked true for regression, answer pipeline, raw-output blocking, output stability, and side-effect boundary lock
 - `search_and_summarize` remains outside strict planner `target_catalog`
 - `document_summarize` is allowed to enter strict planner `target_catalog`
+
+Thread `second-planner-visible-skill-readiness-v1` reran the checked readiness evidence for `search_and_summarize` without changing its surface metadata.
+
+Rerun outcome for `search_and_summarize`:
+
+- deterministic selector
+  - pass
+  - current checked-in selector key remains `skill.search_and_summarize.read`
+  - current checked-in selector task types remain `knowledge_read_skill` and `skill_read`
+  - current checked-in selector task types stay disjoint from `document_summarize`
+  - an explicit promotion candidate that overlaps `document_summarize` task types fails closed at registry-build time
+- output shape stability
+  - fail
+  - runtime output shape stays schema-stable across noisy, long, and multilingual fixtures
+  - however, the full answer path still surfaces noisy snippet text such as README/path markers inside the user-facing answer for noisy search results
+  - this means the candidate does not yet have stable enough final answer text for planner-visible exposure
+- answer pipeline safety
+  - pass
+  - skill-backed replies still pass through `user-response-normalizer.mjs`
+  - `chat_output_boundary` still records `planner_skill_answer_pipeline_enforced=true`
+  - raw bridge payload remains blocked from direct user rendering
+- side effect boundary
+  - pass
+  - allowed side effects remain read-only at `search_knowledge_base`
+  - runtime access remains `["read_runtime"]`
+  - no write side effects are declared
+- observability
+  - pass
+  - selector, tool-execution, and chat-boundary evidence all remain traceable on the checked-in `taskType=skill_read` path
+- regression
+  - pass when the repo-level `npm test` gate is green
+
+Additional blocking facts from the rerun:
+
+- `search_and_summarize` still has not entered `readiness_check`
+  - direct promotion from `internal_only` to `planner_visible` remains forbidden by checked-in policy
+- mixed search-plus-summarize user intents still stay on `search_company_brain_docs` when no deterministic skill `taskType` is supplied
+  - this preserves the existing search path today
+- promoting `search_and_summarize` to `planner_visible` would expose it inside strict planner `target_catalog`
+  - current semantic validation already treats `search_and_summarize` as a valid document-query action family once catalog-visible
+  - therefore promotion would widen the current search routing surface unless extra routing hardening is added first
+
+Current conclusion for `search_and_summarize`:
+
+- not eligible to become the second checked-in `planner_visible` skill in the current baseline
+- blocking reasons:
+  - noisy-answer instability under search results
+  - missing explicit `readiness_check` stage
+  - planner-visible admission would risk changing the existing search path
 
 Promoted candidate:
 
