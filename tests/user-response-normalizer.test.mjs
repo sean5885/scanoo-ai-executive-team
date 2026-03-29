@@ -284,3 +284,50 @@ test("chat reply maps canonical payload sources through the shared answer source
   assert.match(userResponse.sources[0], /https:\/\/example\.com\/runtime-boundary/);
   assert.doesNotMatch(userResponse.sources[0], /\/Users\/|Back to \[?README|\[object Object\]/);
 });
+
+test("chat reply routes planner skill output through canonical answer sources without leaking raw skill payload", () => {
+  const userResponse = normalizeUserResponse({
+    plannerEnvelope: {
+      ok: true,
+      action: "search_and_summarize",
+      execution_result: {
+        ok: true,
+        action: "search_and_summarize",
+        data: {
+          bridge: "skill_bridge",
+          skill: "search_and_summarize",
+          query: "runtime boundary",
+          summary: "runtime boundary keeps evidence explicit and deterministic.",
+          hits: 1,
+          found: true,
+          limitations: ["如果你要，我可以再整理成 checklist。"],
+          side_effects: [
+            {
+              mode: "read",
+              action: "search_knowledge_base",
+              runtime: "read-runtime",
+              authority: "index",
+            },
+          ],
+          sources: [
+            {
+              id: "runtime_source_1",
+              title: "Runtime Boundary",
+              url: "https://example.com/runtime-boundary",
+              snippet: "Back to [README.md](/Users/seanhan/Documents/Playground/README.md)\n\n- runtime boundary keeps evidence explicit and deterministic.",
+            },
+          ],
+        },
+      },
+    },
+  });
+  const text = renderUserResponseText(userResponse);
+
+  assert.equal(userResponse.ok, true);
+  assert.match(userResponse.answer || "", /runtime boundary keeps evidence explicit and deterministic/i);
+  assert.equal(userResponse.sources.length, 1);
+  assert.match(userResponse.sources[0], /Runtime Boundary：runtime boundary keeps evidence explicit and deterministic\./i);
+  assert.match(userResponse.limitations.join(" "), /checklist/);
+  assert.doesNotMatch(text, /skill_bridge|search_and_summarize|side_effects|read-runtime|authority/);
+  assert.doesNotMatch(text, /\/Users\/|Back to \[?README/);
+});

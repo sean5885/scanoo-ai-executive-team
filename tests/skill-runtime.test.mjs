@@ -624,6 +624,7 @@ test("planner skill bridge exposes checked-in read-only skill actions and adapts
     {
       action: "search_and_summarize",
       skill_name: "search_and_summarize",
+      surface_layer: "internal_only",
       max_skills_per_run: 1,
       allow_skill_chain: false,
       skill_class: "read_only",
@@ -632,6 +633,8 @@ test("planner skill bridge exposes checked-in read-only skill actions and adapts
       selector_key: "skill.search_and_summarize.read",
       selector_task_types: ["knowledge_read_skill", "skill_read"],
       routing_reason: "selector_search_and_summarize_skill",
+      planner_catalog_eligible: false,
+      raw_user_output_allowed: false,
       allowed_side_effects: {
         read: ["search_knowledge_base"],
         write: [],
@@ -640,6 +643,7 @@ test("planner skill bridge exposes checked-in read-only skill actions and adapts
     {
       action: "document_summarize",
       skill_name: "document_summarize",
+      surface_layer: "internal_only",
       max_skills_per_run: 1,
       allow_skill_chain: false,
       skill_class: "read_only",
@@ -648,6 +652,8 @@ test("planner skill bridge exposes checked-in read-only skill actions and adapts
       selector_key: "skill.document_summarize.read",
       selector_task_types: ["document_summary_skill"],
       routing_reason: "selector_document_summarize_skill",
+      planner_catalog_eligible: false,
+      raw_user_output_allowed: false,
       allowed_side_effects: {
         read: ["get_company_brain_doc_detail"],
         write: [],
@@ -792,6 +798,27 @@ test("deterministic skill selector fail-closes when two skills claim the same se
     reason: "",
     error: "selector_conflict",
   });
+});
+
+test("planner-visible and deterministic-only skill surfaces cannot be mixed", () => {
+  assert.throws(() => createPlannerSkillActionRegistry([
+    {
+      action: "unsafe_visible_skill",
+      skill_name: "unsafe_visible_skill",
+      surface_layer: "planner_visible",
+      skill_class: "read_only",
+      runtime_access: ["read_runtime"],
+      selector_mode: "deterministic_only",
+      selector_key: "skill.unsafe_visible.read",
+      selector_task_types: ["unsafe_visible_skill"],
+      routing_reason: "selector_unsafe_visible_skill",
+      selection_reason: "unsafe visible path",
+      allowed_side_effects: {
+        read: ["search_knowledge_base"],
+        write: [],
+      },
+    },
+  ]), /invalid_planner_skill_surface_policy/);
 });
 
 test("checked-in skills do not import repo or DB side-channel dependencies", async () => {

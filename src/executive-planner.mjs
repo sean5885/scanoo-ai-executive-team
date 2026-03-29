@@ -65,6 +65,7 @@ import {
 } from "./planner-task-lifecycle-v1.mjs";
 import {
   getPlannerSkillAction,
+  isPlannerSkillActionCatalogVisible,
   listPlannerSkillActions,
   runPlannerSkillBridge,
   selectPlannerSkillActionForTaskType,
@@ -1055,6 +1056,10 @@ function getPlannerPresetContract(preset = "") {
 }
 
 function isPlannerDecisionCatalogVisible(name = "") {
+  const normalizedName = cleanText(name);
+  if (getPlannerSkillAction(normalizedName)) {
+    return isPlannerSkillActionCatalogVisible(normalizedName);
+  }
   const entry = getPlannerDecisionContract(name)?.contract || null;
   return cleanText(entry?.planner_visibility || "").toLowerCase() !== "deterministic_only";
 }
@@ -1088,18 +1093,28 @@ function summarizePlannerInputSchema(schema = null) {
   return requiredFields.length > 0 ? requiredFields.join(", ") : "(none)";
 }
 
+export function listPlannerDecisionCatalogEntries() {
+  const actionEntries = Object.entries(plannerContract?.actions || {})
+    .filter(([name]) => isPlannerDecisionCatalogVisible(name))
+    .map(([name, contract]) => ({
+      name,
+      type: "action",
+      required_params: summarizePlannerInputSchema(contract?.input_schema),
+    }));
+  const presetEntries = Object.entries(plannerContract?.presets || {})
+    .filter(([name]) => isPlannerDecisionCatalogVisible(name))
+    .map(([name, contract]) => ({
+      name,
+      type: "preset",
+      required_params: summarizePlannerInputSchema(contract?.input_schema),
+    }));
+  return [...actionEntries, ...presetEntries];
+}
+
 function plannerDecisionCatalogText() {
-  const actionLines = Object.entries(plannerContract?.actions || {})
-    .filter(([name]) => isPlannerDecisionCatalogVisible(name))
-    .map(([name, contract]) => (
-      `- ${name}: type=action; required_params=${summarizePlannerInputSchema(contract?.input_schema)}`
-    ));
-  const presetLines = Object.entries(plannerContract?.presets || {})
-    .filter(([name]) => isPlannerDecisionCatalogVisible(name))
-    .map(([name, contract]) => (
-      `- ${name}: type=preset; required_params=${summarizePlannerInputSchema(contract?.input_schema)}`
-    ));
-  return [...actionLines, ...presetLines].join("\n");
+  return listPlannerDecisionCatalogEntries()
+    .map((entry) => `- ${entry.name}: type=${entry.type}; required_params=${entry.required_params}`)
+    .join("\n");
 }
 
 function matchesSchemaType(expectedType, value) {
@@ -2552,6 +2567,15 @@ export function validatePlannerUserInputDecision(decision = {}, { text = "" } = 
 
   const contractTarget = getPlannerDecisionContract(action);
   if (!contractTarget) {
+    return {
+      ok: false,
+      error: normalizePublicPlannerErrorCode(INVALID_ACTION),
+      action,
+      params,
+    };
+  }
+
+  if (getPlannerSkillAction(action) && !isPlannerSkillActionCatalogVisible(action)) {
     return {
       ok: false,
       error: normalizePublicPlannerErrorCode(INVALID_ACTION),

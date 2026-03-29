@@ -25,6 +25,7 @@ const [
     planExecutiveTurn,
     planUserInputAction,
     resetPlannerRuntimeContext,
+    listPlannerDecisionCatalogEntries,
     selectPlannerTool,
     listPlannerSkillBridges,
     runPlannerMultiStep,
@@ -32,6 +33,7 @@ const [
     runPlannerToolFlow,
     validateInput,
     validateOutput,
+    validatePlannerUserInputDecision,
     validatePresetOutput,
     normalizeError,
   },
@@ -5376,6 +5378,7 @@ test("selectPlannerTool keeps the original read-only skill path deterministic wi
     {
       action: "search_and_summarize",
       skill_name: "search_and_summarize",
+      surface_layer: "internal_only",
       max_skills_per_run: 1,
       allow_skill_chain: false,
       skill_class: "read_only",
@@ -5384,6 +5387,8 @@ test("selectPlannerTool keeps the original read-only skill path deterministic wi
       selector_key: "skill.search_and_summarize.read",
       selector_task_types: ["knowledge_read_skill", "skill_read"],
       routing_reason: "selector_search_and_summarize_skill",
+      planner_catalog_eligible: false,
+      raw_user_output_allowed: false,
       allowed_side_effects: {
         read: ["search_knowledge_base"],
         write: [],
@@ -5392,6 +5397,7 @@ test("selectPlannerTool keeps the original read-only skill path deterministic wi
     {
       action: "document_summarize",
       skill_name: "document_summarize",
+      surface_layer: "internal_only",
       max_skills_per_run: 1,
       allow_skill_chain: false,
       skill_class: "read_only",
@@ -5400,6 +5406,8 @@ test("selectPlannerTool keeps the original read-only skill path deterministic wi
       selector_key: "skill.document_summarize.read",
       selector_task_types: ["document_summary_skill"],
       routing_reason: "selector_document_summarize_skill",
+      planner_catalog_eligible: false,
+      raw_user_output_allowed: false,
       allowed_side_effects: {
         read: ["get_company_brain_doc_detail"],
         write: [],
@@ -5418,6 +5426,36 @@ test("selectPlannerTool can deterministically choose the second read-only skill 
   assert.equal(result.selected_action, "document_summarize");
   assert.equal(result.routing_reason, "selector_document_summarize_skill");
   assert.match(result.reason || "", /文件摘要 read-only skill/);
+});
+
+test("strict planner target catalog keeps internal-only skill actions hidden", () => {
+  const catalogEntries = listPlannerDecisionCatalogEntries();
+  const catalogNames = catalogEntries.map((entry) => entry.name);
+
+  assert.equal(catalogNames.includes("search_and_summarize"), false);
+  assert.equal(catalogNames.includes("document_summarize"), false);
+  assert.equal(catalogNames.includes("search_company_brain_docs"), true);
+  assert.equal(catalogNames.includes("get_company_brain_doc_detail"), true);
+});
+
+test("strict planner decision validation rejects internal-only skill actions even when they exist in the contract", () => {
+  const result = validatePlannerUserInputDecision({
+    action: "search_and_summarize",
+    params: {
+      account_id: "acct_hidden_skill",
+      q: "launch checklist",
+    },
+  });
+
+  assert.deepEqual(result, {
+    ok: false,
+    error: "invalid_action",
+    action: "search_and_summarize",
+    params: {
+      account_id: "acct_hidden_skill",
+      q: "launch checklist",
+    },
+  });
 });
 
 test("runPlannerToolFlow executes preset runner when selection returns preset", async () => {

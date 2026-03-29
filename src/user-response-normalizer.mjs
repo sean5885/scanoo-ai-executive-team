@@ -69,6 +69,18 @@ function buildPlannerDocumentLabel(item = {}) {
   return normalizeText(item?.title || item?.doc_id || "") || "未命名文件";
 }
 
+function normalizePlannerSkillSources(items = []) {
+  return (Array.isArray(items) ? items : [])
+    .map((item) => ({
+      id: normalizeText(item?.id || ""),
+      title: normalizeText(item?.title || ""),
+      doc_id: normalizeText(item?.doc_id || item?.document_id || item?.id || ""),
+      url: normalizeText(item?.url || ""),
+      reason: normalizeText(item?.snippet || item?.reason || ""),
+    }))
+    .filter((item) => item.id || item.title || item.doc_id || item.url || item.reason);
+}
+
 function buildPlannerEvidenceGapAnswer({
   title = "",
   docId = "",
@@ -78,6 +90,59 @@ function buildPlannerEvidenceGapAnswer({
     return `我先定位到「${label}」，但目前可用來源不足，所以先不補更多內容細節。`;
   }
   return "我先定位到對應文件，但目前可用來源不足，所以先不補更多內容細節。";
+}
+
+function buildPlannerSkillSuccessUserResponse({
+  envelope = {},
+  execution = {},
+} = {}) {
+  const skillData = execution?.data && typeof execution.data === "object" && !Array.isArray(execution.data)
+    ? execution.data
+    : {};
+  if (normalizeText(skillData.bridge || "") !== "skill_bridge") {
+    return null;
+  }
+
+  const queryText = normalizeText(
+    skillData.query
+    || skillData.title
+    || skillData.doc_id
+    || resolvePlannerQueryText(envelope, execution),
+  );
+  const documentItems = normalizePlannerSkillSources(skillData.sources);
+  const hasEvidence = Boolean(
+    normalizeText(skillData.summary || "")
+    || documentItems.length > 0
+    || skillData.found === true,
+  );
+  const fallbackLimitations = normalizeUserResponseList(Array.isArray(skillData.limitations) ? skillData.limitations : []);
+  const nextSteps = buildPlannerNextSteps({
+    envelope,
+    execution: {
+      match_reason: queryText,
+      content_summary: normalizeText(skillData.summary || ""),
+    },
+    documentItems,
+    hasEvidence,
+    fallbacks: fallbackLimitations.length > 0
+      ? fallbackLimitations
+      : hasEvidence
+        ? ["如果你要，我可以沿著這批已驗證來源繼續整理成更短的摘要或 checklist。"]
+        : ["如果你要，我可以換更精準的文件名、主題詞或 doc_id 再查一次。"],
+  });
+
+  return {
+    ok: true,
+    answer: normalizeText(skillData.summary || "")
+      || (skillData.found === true
+        ? "我已用既有受控 answer pipeline 整理這輪 skill 結果。"
+        : "目前沒有找到可以直接整理的已驗證內容。"),
+    sources: normalizeUserFacingAnswerSources(documentItems, {
+      query: queryText,
+      maxSources: MAX_USER_FACING_SOURCES,
+    }),
+    limitations: nextSteps,
+  };
 }
 
 function resolvePlannerQueryText(envelope = {}, execution = {}) {
@@ -210,6 +275,13 @@ export function buildPlannerSuccessUserResponse(envelope = {}) {
   const execution = envelope?.execution_result && typeof envelope.execution_result === "object"
     ? envelope.execution_result
     : {};
+  const skillResponse = buildPlannerSkillSuccessUserResponse({
+    envelope,
+    execution,
+  });
+  if (skillResponse) {
+    return skillResponse;
+  }
   const kind = normalizeText(execution.kind || "");
   const documentItems = normalizePlannerDocumentItems(execution.items);
   const queryText = resolvePlannerQueryText(envelope, execution);

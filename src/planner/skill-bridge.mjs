@@ -2,8 +2,15 @@ import { cleanText } from "../message-intent-utils.mjs";
 import { defaultSkillRegistry } from "../skill-registry.mjs";
 import { runSkill } from "../skill-runtime.mjs";
 import {
+  SKILL_CLASS_READ_ONLY,
+  SKILL_SELECTOR_MODE_DETERMINISTIC,
   buildSkillGovernanceView,
+  isPlannerCatalogEligibleSkillSurface,
+  normalizeSkillSurface,
   normalizePlannerSkillSelector,
+  SKILL_SURFACE_INTERNAL_ONLY,
+  SKILL_SURFACE_PLANNER_VISIBLE,
+  SKILL_SURFACE_USER_FACING_CAPABILITY,
 } from "../skill-governance.mjs";
 
 function normalizeStringList(items = []) {
@@ -39,6 +46,49 @@ function normalizePlannerSkillSideEffects(items = []) {
       authority: cleanText(item?.authority) || null,
     }))
     .filter((item) => item.mode || item.action || item.runtime || item.authority);
+}
+
+function buildPlannerSkillSurfacePolicy({ surfaceLayer = "", selectorMode = "", skillClass = "" } = {}) {
+  const normalizedSurfaceLayer = normalizeSkillSurface(surfaceLayer);
+  const normalizedSelectorMode = cleanText(selectorMode);
+  const normalizedSkillClass = cleanText(skillClass);
+  const violations = [];
+
+  if (normalizedSurfaceLayer === SKILL_SURFACE_INTERNAL_ONLY && normalizedSelectorMode !== SKILL_SELECTOR_MODE_DETERMINISTIC) {
+    violations.push({
+      code: "internal_only_skill_must_be_deterministic_only",
+      message: "internal_only skills must remain deterministic-only and stay outside the strict planner catalog.",
+    });
+  }
+
+  if (normalizedSurfaceLayer === SKILL_SURFACE_PLANNER_VISIBLE) {
+    if (normalizedSelectorMode === SKILL_SELECTOR_MODE_DETERMINISTIC) {
+      violations.push({
+        code: "planner_visible_skill_cannot_be_deterministic_only",
+        message: "planner_visible skills must be explicitly selectable and cannot stay hidden behind deterministic-only routing.",
+      });
+    }
+    if (normalizedSkillClass !== SKILL_CLASS_READ_ONLY) {
+      violations.push({
+        code: "planner_visible_skill_must_be_read_only",
+        message: "planner_visible skills must remain read-only in the current skill-surface policy.",
+      });
+    }
+  }
+
+  if (normalizedSurfaceLayer === SKILL_SURFACE_USER_FACING_CAPABILITY) {
+    violations.push({
+      code: "user_facing_skill_surface_not_enabled",
+      message: "user-facing skill capabilities are reserved for future work and cannot be registered in the current baseline.",
+    });
+  }
+
+  return Object.freeze({
+    surface_layer: normalizedSurfaceLayer,
+    planner_catalog_eligible: isPlannerCatalogEligibleSkillSurface(normalizedSurfaceLayer),
+    raw_user_output_allowed: false,
+    violations: Object.freeze(violations),
+  });
 }
 
 export function buildPlannerSkillEnvelope(skillExecution = {}) {
@@ -97,6 +147,14 @@ export function createPlannerSkillActionRegistry(entries = []) {
       allowed_side_effects: entry.allowed_side_effects,
     });
     const selector = normalizePlannerSkillSelector(entry);
+    const surfacePolicy = buildPlannerSkillSurfacePolicy({
+      surfaceLayer: entry.surface_layer,
+      selectorMode: selector.selector_mode,
+      skillClass: governance.skill_class,
+    });
+    if (surfacePolicy.violations.length > 0) {
+      throw new Error("invalid_planner_skill_surface_policy");
+    }
     const selectorKey = cleanText(entry?.selector_key) || action;
 
     registry.set(action, Object.freeze({
@@ -124,6 +182,9 @@ export function createPlannerSkillActionRegistry(entries = []) {
       selector_task_types: selector.selector_task_types,
       routing_reason: selector.routing_reason,
       selection_reason: selector.selection_reason,
+      surface_layer: surfacePolicy.surface_layer,
+      planner_catalog_eligible: surfacePolicy.planner_catalog_eligible,
+      raw_user_output_allowed: surfacePolicy.raw_user_output_allowed,
       buildSkillInput: typeof entry.buildSkillInput === "function"
         ? entry.buildSkillInput
         : (() => ({})),
@@ -137,6 +198,7 @@ const plannerSkillActionRegistry = createPlannerSkillActionRegistry([
   {
     action: "search_and_summarize",
     skill_name: "search_and_summarize",
+    surface_layer: "internal_only",
     skill_class: "read_only",
     runtime_access: ["read_runtime"],
     selector_mode: "deterministic_only",
@@ -165,6 +227,7 @@ const plannerSkillActionRegistry = createPlannerSkillActionRegistry([
   {
     action: "document_summarize",
     skill_name: "document_summarize",
+    surface_layer: "internal_only",
     skill_class: "read_only",
     runtime_access: ["read_runtime"],
     selector_mode: "deterministic_only",
@@ -194,6 +257,7 @@ export function listPlannerSkillActions() {
   return Array.from(plannerSkillActionRegistry.values()).map((entry) => ({
     action: entry.action,
     skill_name: entry.skill_name,
+    surface_layer: entry.surface_layer,
     max_skills_per_run: entry.max_skills_per_run,
     allow_skill_chain: entry.allow_skill_chain,
     skill_class: entry.skill_class,
@@ -202,12 +266,18 @@ export function listPlannerSkillActions() {
     selector_key: entry.selector_key,
     selector_task_types: entry.selector_task_types,
     routing_reason: entry.routing_reason,
+    planner_catalog_eligible: entry.planner_catalog_eligible,
+    raw_user_output_allowed: entry.raw_user_output_allowed,
     allowed_side_effects: entry.allowed_side_effects,
   }));
 }
 
 export function getPlannerSkillAction(action = "") {
   return plannerSkillActionRegistry.get(cleanText(action));
+}
+
+export function isPlannerSkillActionCatalogVisible(action = "") {
+  return getPlannerSkillAction(action)?.planner_catalog_eligible === true;
 }
 
 export function selectPlannerSkillActionForTaskType({
