@@ -1252,6 +1252,26 @@ test("document_summarize planner_visible metadata stays fully gated and catalog-
   assert.deepEqual(entry?.readiness_gate, {
     regression_suite_passed: true,
     answer_pipeline_enforced: true,
+    observability_evidence_verified: true,
+    raw_skill_output_blocked: true,
+    output_shape_stable: true,
+    side_effect_boundary_locked: true,
+  });
+});
+
+test("search_and_summarize readiness_check metadata stays internal_only and catalog-hidden", () => {
+  const entry = getPlannerSkillAction("search_and_summarize");
+
+  assert.equal(entry?.surface_layer, "internal_only");
+  assert.equal(entry?.promotion_stage, "readiness_check");
+  assert.equal(entry?.previous_promotion_stage, "internal_only");
+  assert.equal(entry?.planner_catalog_eligible, false);
+  assert.equal(entry?.selector_key, "skill.search_and_summarize.read");
+  assert.deepEqual(entry?.selector_task_types, ["knowledge_read_skill", "skill_read"]);
+  assert.deepEqual(entry?.readiness_gate, {
+    regression_suite_passed: true,
+    answer_pipeline_enforced: true,
+    observability_evidence_verified: true,
     raw_skill_output_blocked: true,
     output_shape_stable: true,
     side_effect_boundary_locked: true,
@@ -1276,6 +1296,7 @@ test("planner_visible document_summarize admission succeeds when readiness metad
       readiness_gate: {
         regression_suite_passed: true,
         answer_pipeline_enforced: true,
+        observability_evidence_verified: true,
         raw_skill_output_blocked: true,
         output_shape_stable: true,
         side_effect_boundary_locked: true,
@@ -1399,6 +1420,7 @@ test("readiness_check candidate fails closed when previous stage is not recorded
       readiness_gate: {
         regression_suite_passed: true,
         answer_pipeline_enforced: true,
+        observability_evidence_verified: true,
         raw_skill_output_blocked: true,
         output_shape_stable: true,
         side_effect_boundary_locked: true,
@@ -1429,12 +1451,44 @@ test("readiness_check candidate fails closed when readiness evidence is incomple
       readiness_gate: {
         regression_suite_passed: true,
         answer_pipeline_enforced: true,
+        observability_evidence_verified: true,
         raw_skill_output_blocked: true,
         output_shape_stable: true,
         side_effect_boundary_locked: false,
       },
       allowed_side_effects: {
         read: ["get_company_brain_doc_detail"],
+        write: [],
+      },
+    },
+  ]), /invalid_planner_skill_surface_policy/);
+});
+
+test("readiness_check candidate fails closed when observability evidence is missing", () => {
+  assert.throws(() => createPlannerSkillActionRegistry([
+    {
+      action: "search_and_summarize",
+      skill_name: "search_and_summarize",
+      surface_layer: "internal_only",
+      promotion_stage: "readiness_check",
+      previous_promotion_stage: "internal_only",
+      skill_class: "read_only",
+      runtime_access: ["read_runtime"],
+      selector_mode: "deterministic_only",
+      selector_key: "skill.search_and_summarize.read",
+      selector_task_types: ["knowledge_read_skill", "skill_read"],
+      routing_reason: "selector_search_and_summarize_skill",
+      selection_reason: "search summary path",
+      readiness_gate: {
+        regression_suite_passed: true,
+        answer_pipeline_enforced: true,
+        observability_evidence_verified: false,
+        raw_skill_output_blocked: true,
+        output_shape_stable: true,
+        side_effect_boundary_locked: true,
+      },
+      allowed_side_effects: {
+        read: ["search_knowledge_base"],
         write: [],
       },
     },
@@ -1462,6 +1516,7 @@ test("planner-visible skill candidate fails closed when it jumps directly from i
       readiness_gate: {
         regression_suite_passed: true,
         answer_pipeline_enforced: true,
+        observability_evidence_verified: true,
         raw_skill_output_blocked: true,
         output_shape_stable: true,
         side_effect_boundary_locked: true,
@@ -1492,6 +1547,7 @@ test("planner-visible stage metadata fails closed when mixed with internal_only 
       readiness_gate: {
         regression_suite_passed: true,
         answer_pipeline_enforced: true,
+        observability_evidence_verified: true,
         raw_skill_output_blocked: true,
         output_shape_stable: true,
         side_effect_boundary_locked: true,
@@ -1522,6 +1578,7 @@ test("planner-visible skill candidate fails closed when readiness_check regressi
       readiness_gate: {
         regression_suite_passed: false,
         answer_pipeline_enforced: true,
+        observability_evidence_verified: true,
         raw_skill_output_blocked: true,
         output_shape_stable: true,
         side_effect_boundary_locked: true,
@@ -1552,6 +1609,38 @@ test("planner-visible skill candidate fails closed when answer pipeline could be
       readiness_gate: {
         regression_suite_passed: true,
         answer_pipeline_enforced: false,
+        observability_evidence_verified: true,
+        raw_skill_output_blocked: true,
+        output_shape_stable: true,
+        side_effect_boundary_locked: true,
+      },
+    },
+  ]), /invalid_planner_skill_surface_policy/);
+});
+
+test("planner-visible skill candidate fails closed when observability evidence is missing", () => {
+  assert.throws(() => createPlannerSkillActionRegistry([
+    {
+      action: "observability_unready_visible_skill",
+      skill_name: "observability_unready_visible_skill",
+      surface_layer: "planner_visible",
+      promotion_stage: "planner_visible",
+      previous_promotion_stage: "readiness_check",
+      skill_class: "read_only",
+      runtime_access: ["read_runtime"],
+      selector_mode: "deterministic_only",
+      selector_key: "skill.observability_unready_visible.read",
+      selector_task_types: ["observability_unready_visible_skill"],
+      routing_reason: "selector_observability_unready_visible_skill",
+      selection_reason: "observability unready visible path",
+      allowed_side_effects: {
+        read: ["search_knowledge_base"],
+        write: [],
+      },
+      readiness_gate: {
+        regression_suite_passed: true,
+        answer_pipeline_enforced: true,
+        observability_evidence_verified: false,
         raw_skill_output_blocked: true,
         output_shape_stable: true,
         side_effect_boundary_locked: true,
@@ -1598,6 +1687,7 @@ test("planner-visible skill candidate fails closed on selector drift against an 
       readiness_gate: {
         regression_suite_passed: true,
         answer_pipeline_enforced: true,
+        observability_evidence_verified: true,
         raw_skill_output_blocked: true,
         output_shape_stable: true,
         side_effect_boundary_locked: true,
@@ -1628,6 +1718,7 @@ test("planner-visible skill candidate fails closed when output shape or side-eff
       readiness_gate: {
         regression_suite_passed: true,
         answer_pipeline_enforced: true,
+        observability_evidence_verified: true,
         raw_skill_output_blocked: true,
         output_shape_stable: false,
         side_effect_boundary_locked: false,

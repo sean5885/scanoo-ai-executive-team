@@ -86,6 +86,7 @@ function normalizePlannerSkillReadinessGate(entry = {}) {
   return Object.freeze({
     regression_suite_passed: rawGate.regression_suite_passed === true,
     answer_pipeline_enforced: rawGate.answer_pipeline_enforced === true,
+    observability_evidence_verified: rawGate.observability_evidence_verified === true,
     raw_skill_output_blocked: rawGate.raw_skill_output_blocked === true,
     output_shape_stable: rawGate.output_shape_stable === true,
     side_effect_boundary_locked: rawGate.side_effect_boundary_locked === true,
@@ -195,6 +196,12 @@ function buildPlannerSkillSurfacePolicy({
         message: "readiness_check candidates must keep the existing answer pipeline in front of user replies.",
       });
     }
+    if (readinessGate.observability_evidence_verified !== true) {
+      violations.push({
+        code: "readiness_check_observability_evidence_missing",
+        message: "readiness_check candidates must prove selector, tool, and answer-boundary observability evidence before metadata can advance.",
+      });
+    }
     if (readinessGate.raw_skill_output_blocked !== true) {
       violations.push({
         code: "readiness_check_raw_output_exposed",
@@ -265,6 +272,12 @@ function buildPlannerSkillSurfacePolicy({
       violations.push({
         code: "planner_visible_skill_answer_pipeline_bypass",
         message: "planner_visible skills must keep the existing answer pipeline in front of user replies.",
+      });
+    }
+    if (readinessGate.observability_evidence_verified !== true) {
+      violations.push({
+        code: "planner_visible_skill_observability_evidence_missing",
+        message: "planner_visible promotion requires checked observability evidence for selector, tool, and answer-boundary logs.",
       });
     }
     if (readinessGate.raw_skill_output_blocked !== true) {
@@ -470,6 +483,8 @@ const plannerSkillActionRegistry = createPlannerSkillActionRegistry([
     action: "search_and_summarize",
     skill_name: "search_and_summarize",
     surface_layer: "internal_only",
+    promotion_stage: "readiness_check",
+    previous_promotion_stage: "internal_only",
     skill_class: "read_only",
     runtime_access: ["read_runtime"],
     selector_mode: "deterministic_only",
@@ -477,6 +492,14 @@ const plannerSkillActionRegistry = createPlannerSkillActionRegistry([
     selector_task_types: ["knowledge_read_skill", "skill_read"],
     routing_reason: "selector_search_and_summarize_skill",
     selection_reason: "呼叫端明確要求 read-only skill bridge，固定走單一 skill action。",
+    readiness_gate: {
+      regression_suite_passed: true,
+      answer_pipeline_enforced: true,
+      observability_evidence_verified: true,
+      raw_skill_output_blocked: true,
+      output_shape_stable: true,
+      side_effect_boundary_locked: true,
+    },
     allowed_side_effects: {
       read: ["search_knowledge_base"],
       write: [],
@@ -511,6 +534,7 @@ const plannerSkillActionRegistry = createPlannerSkillActionRegistry([
     readiness_gate: {
       regression_suite_passed: true,
       answer_pipeline_enforced: true,
+      observability_evidence_verified: true,
       raw_skill_output_blocked: true,
       output_shape_stable: true,
       side_effect_boundary_locked: true,

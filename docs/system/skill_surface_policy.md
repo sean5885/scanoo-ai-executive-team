@@ -34,12 +34,16 @@ Meaning:
 Current checked-in examples:
 
 - `search_and_summarize`
+  - `surface_layer = internal_only`
+  - `promotion_stage = readiness_check`
+  - `previous_promotion_stage = internal_only`
 
 Required rules:
 
 - selector mode must stay `deterministic_only`
 - raw skill output must not be rendered directly to user
 - final user-facing reply must still pass through the existing answer / normalization pipeline
+- readiness-check metadata must not widen strict planner catalog visibility
 
 ### 2. `planner_visible`
 
@@ -65,6 +69,7 @@ Current policy gate:
 - deterministic selector key and selector task types must remain conflict-free
 - full regression gate must be green
 - the existing answer pipeline must remain in front of the user response
+- selector/tool/boundary observability evidence must already be checked in
 - raw skill output must stay hidden behind normalization
 - this layer remains fail-closed and is activated only for `document_summarize` in the current baseline
 
@@ -104,6 +109,8 @@ Current checked-in answer:
 The following must stay `internal_only` in the current baseline:
 
 - `search_and_summarize`
+  - current checked-in metadata is `promotion_stage = readiness_check`
+  - it still remains hidden from strict planner `target_catalog`
 - any future `write` skill
 - any future `hybrid` skill
 - any skill whose output has not yet been normalized into the existing answer pipeline
@@ -143,6 +150,8 @@ This means:
 ### Currently open
 
 - deterministic planner access to `search_and_summarize`
+  - current checked-in stage metadata is `readiness_check`
+  - strict planner catalog admission remains disabled
 - deterministic planner access to `document_summarize`
   - current checked-in stage metadata for `document_summarize` is `planner_visible`
   - it is now visible in strict planner `target_catalog`
@@ -171,6 +180,8 @@ Expansion remains blocked until all of the following are done in the same change
 
 Current thread outcome:
 
+- `search_and_summarize` is now recorded as `readiness_check` while staying `surface_layer=internal_only`
+- no change to strict planner `target_catalog` visibility for `search_and_summarize`
 - `document_summarize` is now promoted from `readiness_check` to `planner_visible`
 - no new skill added
 - no skill chain added

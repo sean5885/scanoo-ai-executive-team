@@ -5,6 +5,7 @@ import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
 const testDb = await createTestDbHarness();
 const {
+  listPlannerDecisionCatalogEntries,
   renderPlannerUserFacingReplyText,
   runPlannerToolFlow,
   selectPlannerTool,
@@ -68,7 +69,21 @@ test("search_and_summarize selector stays disjoint from document_summarize", () 
   assert.equal(documentEntry.selector_key, "skill.document_summarize.read");
   assert.deepEqual(overlappingTaskTypes, []);
   assert.equal(searchEntry.surface_layer, "internal_only");
+  assert.equal(searchEntry.promotion_stage, "readiness_check");
+  assert.equal(searchEntry.previous_promotion_stage, "internal_only");
+  assert.equal(searchEntry.planner_catalog_eligible, false);
   assert.equal(documentEntry.surface_layer, "planner_visible");
+});
+
+test("search_and_summarize readiness_check status does not enter the strict planner catalog", () => {
+  const catalogNames = listPlannerDecisionCatalogEntries().map((entry) => entry.name);
+  const searchEntry = getPlannerSkillAction("search_and_summarize");
+
+  assert.equal(searchEntry?.surface_layer, "internal_only");
+  assert.equal(searchEntry?.promotion_stage, "readiness_check");
+  assert.equal(searchEntry?.previous_promotion_stage, "internal_only");
+  assert.equal(searchEntry?.planner_catalog_eligible, false);
+  assert.equal(catalogNames.includes("search_and_summarize"), false);
 });
 
 test("search_and_summarize promotion candidate fails closed when it overlaps document_summarize selector task types", () => {
@@ -89,6 +104,7 @@ test("search_and_summarize promotion candidate fails closed when it overlaps doc
       readiness_gate: {
         regression_suite_passed: true,
         answer_pipeline_enforced: true,
+        observability_evidence_verified: true,
         raw_skill_output_blocked: true,
         output_shape_stable: true,
         side_effect_boundary_locked: true,
@@ -114,6 +130,7 @@ test("search_and_summarize promotion candidate fails closed when it overlaps doc
       readiness_gate: {
         regression_suite_passed: true,
         answer_pipeline_enforced: true,
+        observability_evidence_verified: true,
         raw_skill_output_blocked: true,
         output_shape_stable: true,
         side_effect_boundary_locked: true,

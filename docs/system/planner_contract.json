@@ -413,6 +413,20 @@
     },
     "search_and_summarize": {
       "planner_visibility": "deterministic_only",
+      "skill_surface_policy": {
+        "surface_layer": "internal_only",
+        "promotion_stage": "readiness_check",
+        "previous_promotion_stage": "internal_only",
+        "planner_catalog_eligible": false,
+        "readiness_gate": {
+          "regression_suite_passed": true,
+          "answer_pipeline_enforced": true,
+          "observability_evidence_verified": true,
+          "raw_skill_output_blocked": true,
+          "output_shape_stable": true,
+          "side_effect_boundary_locked": true
+        }
+      },
       "input_schema": {
         "type": "object",
         "required": ["account_id", "q"],
@@ -499,6 +513,7 @@
         "readiness_gate": {
           "regression_suite_passed": true,
           "answer_pipeline_enforced": true,
+          "observability_evidence_verified": true,
           "raw_skill_output_blocked": true,
           "output_shape_stable": true,
           "side_effect_boundary_locked": true

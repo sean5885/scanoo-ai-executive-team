@@ -30,12 +30,17 @@ Related mirrors:
 
 Current checked-in baseline for this promotion thread is:
 
-- freeze starts from `document-summarize-readiness-check-v1`
-- `search_and_summarize` remains `internal_only`
+- freeze starts from `search-and-summarize-output-hardening-v1`
+- output noise blocker is cleared on the checked-in `search_and_summarize` answer path
+- `search_and_summarize` is checked in as `surface_layer=internal_only`
+- `search_and_summarize` is checked in as `promotion_stage=readiness_check`
+- `search_and_summarize` keeps `previous_promotion_stage=internal_only`
+- `search_and_summarize` remains outside strict planner `target_catalog`
+- `search_and_summarize` does not become `planner_visible` in this thread
 - skill chaining remains disabled
 - `document_summarize` is the only checked-in skill promoted to `planner_visible`
 - no third skill is added
-- this change expands planner-visible runtime surface only for `document_summarize`
+- no public API changes are introduced
 
 ## Readiness Gate
 
@@ -44,6 +49,7 @@ A skill-backed planner action may be considered for `planner_visible` only when 
 - selector remains deterministic and conflict-free
 - regression gate is fully green
 - the existing answer pipeline cannot be bypassed
+- selector, tool-execution, and answer-boundary observability evidence is already checked in
 - raw skill output is never exposed directly to the user
 - the skill remains strictly `read_only`
 - runtime access remains strictly `read_runtime`
@@ -57,7 +63,7 @@ Fail-closed meaning:
 
 ## Runtime Observability And Regression Watch
 
-Current checked-in runtime now adds a minimal observability watch for the promoted `document_summarize` path without changing any public API:
+Current checked-in runtime keeps the minimal observability watch for the promoted `document_summarize` path, and the same selector/tool/boundary evidence is now required for `search_and_summarize` readiness-check admission without changing any public API:
 
 - selector/runtime logs now expose whether a deterministic skill selector was attempted, which selector key was hit, whether selection fail-closed, and whether the chosen skill is `planner_visible` or `internal_only`
 - skill-backed `tool_execution` logs now carry the skill surface layer, promotion stage, selector key, and whether the execution ended in `fail_closed`
@@ -105,6 +111,7 @@ Use this checklist during `readiness_check` and keep evidence in the same change
 - regression pack is green, including skill runtime, planner contract/selector, answer normalization, and existing route regressions
 - successful skill replies still pass through `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
 - canonical sources still pass through `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`
+- selector/tool-execution/chat-boundary observability evidence is present for the checked-in skill path
 - raw fields such as `bridge`, `side_effects`, selector metadata, and trace-only fields are not rendered to the user
 - output schema is stable and matches the checked-in planner contract output shape
 - side effects are still bounded to the same read-only runtime surface and authority family
@@ -235,18 +242,21 @@ Current checked-in skill-backed actions:
 
 Current status:
 
-- `search_and_summarize` remains `promotion_stage=internal_only`
+- `search_and_summarize` is now checked in as `promotion_stage=readiness_check`
+- `search_and_summarize` records `previous_promotion_stage=internal_only`
 - `search_and_summarize` remains `surface_layer=internal_only`
+- `search_and_summarize` remains `planner_catalog_eligible=false`
+- `search_and_summarize` records readiness evidence for regression, answer pipeline, observability, raw-output blocking, output stability, and side-effect boundary lock
 - `document_summarize` is now checked in as:
   - `surface_layer=planner_visible`
   - `promotion_stage=planner_visible`
   - `previous_promotion_stage=readiness_check`
   - `planner_catalog_eligible=true`
-  - full readiness gate marked true for regression, answer pipeline, raw-output blocking, output stability, and side-effect boundary lock
+  - full readiness gate marked true for regression, answer pipeline, observability, raw-output blocking, output stability, and side-effect boundary lock
 - `search_and_summarize` remains outside strict planner `target_catalog`
 - `document_summarize` is allowed to enter strict planner `target_catalog`
 
-Thread `second-planner-visible-skill-readiness-v1` reran the checked readiness evidence for `search_and_summarize` without changing its surface metadata.
+Thread `search-and-summarize-readiness-check-v1` promotes `search_and_summarize` metadata into `readiness_check` without widening its planner-visible surface.
 
 Rerun outcome for `search_and_summarize`:
 
@@ -257,10 +267,10 @@ Rerun outcome for `search_and_summarize`:
   - current checked-in selector task types stay disjoint from `document_summarize`
   - an explicit promotion candidate that overlaps `document_summarize` task types fails closed at registry-build time
 - output shape stability
-  - fail
+  - pass
   - runtime output shape stays schema-stable across noisy, long, and multilingual fixtures
-  - however, the full answer path still surfaces noisy snippet text such as README/path markers inside the user-facing answer for noisy search results
-  - this means the candidate does not yet have stable enough final answer text for planner-visible exposure
+  - checked-in answer hardening now strips README/path/link noise before final answer rendering on the readiness path
+  - output stability is no longer the blocker for this candidate
 - answer pipeline safety
   - pass
   - skill-backed replies still pass through `user-response-normalizer.mjs`
@@ -274,13 +284,14 @@ Rerun outcome for `search_and_summarize`:
 - observability
   - pass
   - selector, tool-execution, and chat-boundary evidence all remain traceable on the checked-in `taskType=skill_read` path
+  - readiness-check metadata now records this evidence explicitly and fails closed if it is missing
 - regression
   - pass when the repo-level `npm test` gate is green
 
 Additional blocking facts from the rerun:
 
-- `search_and_summarize` still has not entered `readiness_check`
-  - direct promotion from `internal_only` to `planner_visible` remains forbidden by checked-in policy
+- `search_and_summarize` is now in `readiness_check`, but it is still not `planner_visible`
+  - strict planner catalog admission remains disabled on purpose in this thread
 - mixed search-plus-summarize user intents still stay on `search_company_brain_docs` when no deterministic skill `taskType` is supplied
   - this preserves the existing search path today
 - promoting `search_and_summarize` to `planner_visible` would expose it inside strict planner `target_catalog`
@@ -291,8 +302,8 @@ Current conclusion for `search_and_summarize`:
 
 - not eligible to become the second checked-in `planner_visible` skill in the current baseline
 - blocking reasons:
-  - missing explicit `readiness_check` stage
   - planner-visible admission would risk changing the existing search path
+  - planner-visible admission widening is still intentionally blocked after readiness-check
 - current rerun note:
   - checked-in `search_knowledge_base` answer-path hardening now canonicalizes override-backed search snippets through the shared read-source cleanup before `search_and_summarize` builds its summary, so README/path/link noise is no longer a readiness blocker on this path
 
@@ -308,7 +319,7 @@ Promoted candidate:
   - `document_summarize` has completed the checked-in promotion path `internal_only -> readiness_check -> planner_visible`
   - strict planner catalog admission is now active for this action only
   - answer pipeline, canonical source mapping, and raw payload blocking remain unchanged
-  - observability / rollback watch is now checked in for this action only
+  - planner-visible rollback watch remains checked in for this action only
 
 Second candidate, but not first:
 
@@ -316,4 +327,5 @@ Second candidate, but not first:
 - broader query surface means more selector/query regression risk than `document_summarize`
 - current answer for future promotion:
   - a second `planner_visible` skill is now conditionally allowed only if it passes the same readiness gate and `npm run check:planner-visible-skill` remains green
+  - `search_and_summarize` has cleared the readiness-check metadata gate but still has not cleared planner-visible admission widening
   - this is not automatic promotion and does not relax `fail_closed`

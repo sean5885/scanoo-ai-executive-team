@@ -61,6 +61,8 @@ Current checked-in skills:
 
 - `search_and_summarize`
   - `surface_layer = internal_only`
+  - `promotion_stage = readiness_check`
+  - `previous_promotion_stage = internal_only`
 - `document_summarize`
   - `surface_layer = planner_visible`
   - `promotion_stage = planner_visible`
@@ -73,12 +75,12 @@ Current checked-in enforcement:
 - `readiness_check` skills must record `previous_promotion_stage = internal_only`
 - `readiness_check` skills must remain `read_only`
 - `readiness_check` skills must stay `read_runtime` only
-- `readiness_check` skills must prove regression pass, answer-pipeline enforcement, raw-output blocking, stable output shape, and locked side-effect boundary before the stage metadata is accepted
+- `readiness_check` skills must prove regression pass, answer-pipeline enforcement, observability evidence, raw-output blocking, stable output shape, and locked side-effect boundary before the stage metadata is accepted
 - `planner_visible` skills must pass through `readiness_check`
 - `planner_visible` skills must stay `deterministic_only`
 - `planner_visible` skills must be `read_only`
 - `planner_visible` skills must stay `read_runtime` only
-- `planner_visible` skills must prove regression pass, answer-pipeline enforcement, raw-output blocking, stable output shape, and locked side-effect boundary
+- `planner_visible` skills must prove regression pass, answer-pipeline enforcement, observability evidence, raw-output blocking, stable output shape, and locked side-effect boundary
 - `user_facing_capability` is rejected fail-closed at registry build time
 
 ## Skill Classes
@@ -240,6 +242,7 @@ Current regression coverage includes:
 - planner-visible direct jump without `readiness_check` fails closed
 - planner-visible candidate without regression pass fails closed
 - planner-visible candidate without answer-pipeline enforcement fails closed
+- readiness-check or planner-visible candidate without observability evidence fails closed
 - planner-visible candidate with selector drift fails closed
 - planner-visible candidate with unstable output or side-effect boundary fails closed
 - skill input must be serializable

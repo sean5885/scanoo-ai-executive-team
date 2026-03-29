@@ -178,6 +178,32 @@ test("planner contract mirror keeps document_summarize planner_visible metadata 
     readiness_gate: {
       regression_suite_passed: true,
       answer_pipeline_enforced: true,
+      observability_evidence_verified: true,
+      raw_skill_output_blocked: true,
+      output_shape_stable: true,
+      side_effect_boundary_locked: true,
+    },
+  });
+  assert.equal(registryEntry?.surface_layer, contractPolicy.surface_layer);
+  assert.equal(registryEntry?.promotion_stage, contractPolicy.promotion_stage);
+  assert.equal(registryEntry?.previous_promotion_stage, contractPolicy.previous_promotion_stage);
+  assert.equal(registryEntry?.planner_catalog_eligible, contractPolicy.planner_catalog_eligible);
+  assert.deepEqual(registryEntry?.readiness_gate, contractPolicy.readiness_gate);
+});
+
+test("planner contract mirror keeps search_and_summarize readiness_check metadata aligned with the skill registry", () => {
+  const contractPolicy = plannerContract?.actions?.search_and_summarize?.skill_surface_policy;
+  const registryEntry = getPlannerSkillAction("search_and_summarize");
+
+  assert.deepEqual(contractPolicy, {
+    surface_layer: "internal_only",
+    promotion_stage: "readiness_check",
+    previous_promotion_stage: "internal_only",
+    planner_catalog_eligible: false,
+    readiness_gate: {
+      regression_suite_passed: true,
+      answer_pipeline_enforced: true,
+      observability_evidence_verified: true,
       raw_skill_output_blocked: true,
       output_shape_stable: true,
       side_effect_boundary_locked: true,
