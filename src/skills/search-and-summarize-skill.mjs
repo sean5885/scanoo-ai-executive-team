@@ -132,6 +132,8 @@ export const searchAndSummarizeSkill = createSkillDefinition({
     read: ["search_knowledge_base"],
     write: [],
   },
+  skill_class: "read_only",
+  runtime_access: ["read_runtime"],
   failure_mode: "fail_closed",
   async run({ input, logger }) {
     const accountId = cleanText(input?.account_id);

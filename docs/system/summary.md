@@ -16,6 +16,8 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - skill governance mirrors:
   - [Skill Routing Map](/Users/seanhan/Documents/Playground/docs/system/skill_routing_map.md)
   - [Skill Audit Summary](/Users/seanhan/Documents/Playground/docs/system/skill_audit_summary.md)
+  - [Skill Governance](/Users/seanhan/Documents/Playground/docs/system/skill_governance.md)
+  - [Skill Addition Checklist](/Users/seanhan/Documents/Playground/docs/system/skill_addition_checklist.md)
 - repo thread / commit inventory:
   - [repo_thread_inventory.md](/Users/seanhan/Documents/Playground/docs/system/repo_thread_inventory.md)
 - Lark user OAuth

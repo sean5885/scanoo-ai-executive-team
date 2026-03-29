@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { cleanText } from "./message-intent-utils.mjs";
 import { getRouteContract } from "./http-route-contracts.mjs";
 import {
+  listPlannerSkillBridges,
   listPlannerPresets,
   listPlannerTools,
   selectPlannerTool,
@@ -394,6 +395,7 @@ function buildObservedDecisionRoutingReasonSource({
 
 function observePlannerSelectorTargets() {
   const selectorSamples = [
+    { userIntent: "幫我整理 launch checklist", taskType: "skill_read" },
     { userIntent: "建立文件並查詢", taskType: "" },
     { userIntent: "建立文件後列出知識庫", taskType: "" },
     { userIntent: "搜尋後打開內容", taskType: "" },
@@ -414,6 +416,7 @@ function observePlannerSelectorTargets() {
 
 function observePlannerSelectorRoutingReasons() {
   const selectorSamples = [
+    { userIntent: "幫我整理 launch checklist", taskType: "skill_read" },
     { userIntent: "建立文件並查詢", taskType: "" },
     { userIntent: "建立文件後列出知識庫", taskType: "" },
     { userIntent: "搜尋後打開內容", taskType: "" },
@@ -701,6 +704,7 @@ function classifyObservedSource(contract = {}, source = {}) {
 
 function collectObservedSources() {
   const toolTargets = listPlannerTools().map((tool) => cleanText(tool.action));
+  const skillTargets = listPlannerSkillBridges().map((skill) => cleanText(skill.action));
   const presets = listPlannerPresets();
   const presetTargets = presets.map((preset) => cleanText(preset.preset));
   const presetStepSources = presets.map((preset) => buildObservedSource({
@@ -718,6 +722,13 @@ function collectObservedSources() {
       kind: "tool_registry",
       allowedKinds: ["action"],
       targets: toolTargets,
+    }),
+    buildObservedSource({
+      sourceId: "planner_skill_registry",
+      file: EXECUTIVE_PLANNER_FILE,
+      kind: "skill_registry",
+      allowedKinds: ["action"],
+      targets: skillTargets,
     }),
     buildObservedSource({
       sourceId: "planner_preset_registry",
