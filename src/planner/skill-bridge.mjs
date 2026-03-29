@@ -560,6 +560,62 @@ export function isPlannerSkillActionCatalogVisible(action = "") {
   return getPlannerSkillAction(action)?.planner_catalog_eligible === true;
 }
 
+function listPlannerSkillEntriesForTaskType({
+  taskType = "",
+  registry = plannerSkillActionRegistry,
+} = {}) {
+  const normalizedTaskType = cleanText(String(taskType || "").toLowerCase());
+  if (!normalizedTaskType || !(registry instanceof Map)) {
+    return [];
+  }
+  return [...registry.values()].filter((entry) => (
+    entry.selector_mode === "deterministic_only"
+    && Array.isArray(entry.selector_task_types)
+    && entry.selector_task_types.includes(normalizedTaskType)
+  ));
+}
+
+export function buildPlannerSkillSelectionTelemetry({
+  taskType = "",
+  selection = null,
+  registry = plannerSkillActionRegistry,
+} = {}) {
+  const normalizedTaskType = cleanText(String(taskType || "").toLowerCase());
+  const matches = listPlannerSkillEntriesForTaskType({
+    taskType: normalizedTaskType,
+    registry,
+  });
+  const selectedEntry = selection?.ok === true
+    ? registry.get(cleanText(selection?.action))
+    : null;
+  const fallbackEntry = selectedEntry || (matches.length === 1 ? matches[0] : null);
+  const attempted = matches.length > 0;
+  let selectorStatus = null;
+
+  if (attempted) {
+    selectorStatus = selection?.ok === true
+      ? "selected"
+      : cleanText(selection?.error) === "selector_conflict"
+        ? "fail_closed_conflict"
+        : "fail_closed_not_found";
+  }
+
+  return {
+    skill_selector_attempted: attempted,
+    skill_selector_task_type: attempted ? normalizedTaskType : null,
+    skill_selector_match_count: attempted ? matches.length : 0,
+    skill_selector_status: selectorStatus,
+    skill_selector_fail_closed: attempted && selection?.ok !== true,
+    skill_selector_key: cleanText(fallbackEntry?.selector_key) || null,
+    skill_action: cleanText(fallbackEntry?.action) || null,
+    skill_name: cleanText(fallbackEntry?.skill_name) || null,
+    skill_surface_layer: cleanText(fallbackEntry?.surface_layer) || null,
+    skill_promotion_stage: cleanText(fallbackEntry?.promotion_stage) || null,
+    skill_catalog_eligible: fallbackEntry?.planner_catalog_eligible === true,
+    skill_routing_reason: cleanText(selection?.routing_reason || fallbackEntry?.routing_reason) || null,
+  };
+}
+
 export function selectPlannerSkillActionForTaskType({
   taskType = "",
   registry = plannerSkillActionRegistry,
@@ -575,11 +631,10 @@ export function selectPlannerSkillActionForTaskType({
     };
   }
 
-  const matches = [...registry.values()].filter((entry) => (
-    entry.selector_mode === "deterministic_only"
-    && Array.isArray(entry.selector_task_types)
-    && entry.selector_task_types.includes(normalizedTaskType)
-  ));
+  const matches = listPlannerSkillEntriesForTaskType({
+    taskType: normalizedTaskType,
+    registry,
+  });
 
   if (matches.length !== 1) {
     return {

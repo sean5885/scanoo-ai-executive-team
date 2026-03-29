@@ -110,6 +110,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/skill-registry.mjs`
   - `/Users/seanhan/Documents/Playground/src/skills/search-and-summarize-skill.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner/skill-bridge.mjs`
+  - `/Users/seanhan/Documents/Playground/src/planner-visible-skill-observability.mjs`
 - Current truth:
   - a checked-in minimal skill contract now exists
   - skill definitions must now declare `skill_class` and `runtime_access`
@@ -118,9 +119,11 @@ Current-truth docs for onboarding are:
   - the checked-in sample skill is read-only and goes through `read-runtime`
   - planner can consume a skill result through a bridge envelope
   - planner-visible skill selection is deterministic-only and conflict-fail-closed
+  - planner-visible skill rollout now has a checked-in observability/rollback watch over selector, tool execution, and answer-boundary evidence
   - skill existence does not add a new public route or planner routing target by itself
 - Evidence:
   - `/Users/seanhan/Documents/Playground/tests/skill-runtime.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/planner-visible-skill-observability.test.mjs`
 
 ### 5. External Write Path
 

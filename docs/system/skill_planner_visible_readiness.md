@@ -11,9 +11,12 @@ Current code anchors:
 - `/Users/seanhan/Documents/Playground/src/planner/skill-bridge.mjs`
 - `/Users/seanhan/Documents/Playground/src/skill-governance.mjs`
 - `/Users/seanhan/Documents/Playground/src/executive-planner.mjs`
+- `/Users/seanhan/Documents/Playground/src/planner-visible-skill-observability.mjs`
 - `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
+- `/Users/seanhan/Documents/Playground/scripts/planner-visible-skill-check.mjs`
 - `/Users/seanhan/Documents/Playground/tests/skill-runtime.test.mjs`
 - `/Users/seanhan/Documents/Playground/tests/executive-planner.test.mjs`
+- `/Users/seanhan/Documents/Playground/tests/planner-visible-skill-observability.test.mjs`
 - `/Users/seanhan/Documents/Playground/tests/user-response-normalizer.test.mjs`
 
 Related mirrors:
@@ -51,6 +54,42 @@ Fail-closed meaning:
 - if any one gate is missing, false, drifting, or unverifiable, promotion does not happen
 - no heuristic downgrade, fallback promotion, or partial visibility is allowed
 
+## Runtime Observability And Regression Watch
+
+Current checked-in runtime now adds a minimal observability watch for the promoted `document_summarize` path without changing any public API:
+
+- selector/runtime logs now expose whether a deterministic skill selector was attempted, which selector key was hit, whether selection fail-closed, and whether the chosen skill is `planner_visible` or `internal_only`
+- skill-backed `tool_execution` logs now carry the skill surface layer, promotion stage, selector key, and whether the execution ended in `fail_closed`
+- `user-response-normalizer.mjs` now emits `chat_output_boundary` evidence for skill-backed replies with:
+  - `planner_skill_boundary = "answer_pipeline"`
+  - `planner_skill_answer_pipeline_enforced = true`
+  - `planner_skill_raw_payload_blocked = true`
+- a lightweight repo-wide check now exists at:
+  - `npm run check:planner-visible-skill`
+  - `node scripts/planner-visible-skill-check.mjs`
+
+Current metric definitions for that check:
+
+- `planner_selected_document_summarize`
+  - whether the success probe still deterministically selects `document_summarize`
+- `selector_key_hit_rate`
+  - checked-in deterministic selection fixtures whose observed selector key matches the expected selector key
+- `fallback_count`
+  - deterministic skill selector fixtures that unexpectedly fail-close during the green-path pack
+- `fail_closed_count`
+  - unexpected fail-closed executions in the green-path pack; current expected baseline is `0`
+- `skill_surface_split`
+  - ratio of successful deterministic skill selections landing on `planner_visible` vs `internal_only` within the checked-in watch fixtures
+
+Current checked-in baseline for this watch is:
+
+- `document_summarize_selected = true`
+- `selector_key_hit_rate = 2/2`
+- `fallback_count = 0`
+- `fail_closed_count = 0`
+- `planner_visible = 1`
+- `internal_only = 1`
+
 ## Readiness Checklist
 
 Use this checklist during `readiness_check` and keep evidence in the same change:
@@ -68,6 +107,11 @@ Use this checklist during `readiness_check` and keep evidence in the same change
 - raw fields such as `bridge`, `side_effects`, selector metadata, and trace-only fields are not rendered to the user
 - output schema is stable and matches the checked-in planner contract output shape
 - side effects are still bounded to the same read-only runtime surface and authority family
+- `npm run check:planner-visible-skill` is green and records:
+  - answer-pipeline evidence present
+  - raw payload blocking present
+  - fail-closed negative probe still behaves as `fail_closed`
+  - existing non-skill routing fixture remains unchanged
 
 ## Promotion Flow
 
@@ -112,6 +156,55 @@ Any one of the following blocks promotion:
   - any declared write side effect
   - any `mutation_runtime` access
   - any side effect that would escape the current read-only authority boundary
+
+## Rollback Triggers
+
+The promoted `planner_visible` surface must now be rolled back to `internal_only` if any one of these checked-in triggers fires:
+
+- `selector_drift`
+  - selector action, selector key, or planner-visible/internal-only split no longer matches the checked-in deterministic fixture pack
+- `answer_bypass`
+  - skill-backed output reaches the user without `chat_output_boundary` evidence showing the answer pipeline remained in front of the user boundary
+  - raw bridge payload leaks into user-visible text
+- `regression_break`
+  - the `document_summarize` happy path no longer succeeds under the checked-in success probe
+  - the negative probe no longer ends in `fail_closed`
+- `routing_mismatch`
+  - an existing non-skill routing fixture changes action/routing because of planner-visible skill wiring
+
+Current rollback decision boundary is fail-closed:
+
+- if `npm run check:planner-visible-skill` exits non-zero, do not promote another planner-visible skill
+- if the promoted skill is already active and one of the triggers above appears in the checked-in watch, revert the promotion metadata/path first, then investigate
+
+## Debug SOP
+
+When the planner-visible skill watch fails, current checked-in debug order is:
+
+1. run `npm run check:planner-visible-skill`
+2. inspect selector evidence in:
+   - `planner_tool_select`
+   - `lobster_tool_execution`
+   - `chat_output_boundary`
+3. if the mismatch is selector-side, inspect:
+   - `/Users/seanhan/Documents/Playground/src/planner/skill-bridge.mjs`
+   - `/Users/seanhan/Documents/Playground/src/executive-planner.mjs`
+4. if the mismatch is answer-boundary-side, inspect:
+   - `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
+   - `/Users/seanhan/Documents/Playground/tests/user-response-normalizer.test.mjs`
+5. if the mismatch is routing-side, confirm existing non-skill fixtures still map to the same planner action before changing selector wiring
+
+## Rollback SOP
+
+Current checked-in rollback path is:
+
+1. stop at the first triggered condition from `npm run check:planner-visible-skill`
+2. if `selector_drift`, `answer_bypass`, `regression_break`, or `routing_mismatch` is true, treat `document_summarize` planner-visible admission as unsafe
+3. revert the promotion path back to `internal_only` before attempting a new promotion or adding another planner-visible skill
+4. rerun:
+   - `npm run check:planner-visible-skill`
+   - `npm run planner:diagnostics`
+5. only after both checks are green may a future planner-visible promotion be considered again
 
 ## Upgradeable vs Not Upgradeable
 
@@ -164,8 +257,12 @@ Promoted candidate:
   - `document_summarize` has completed the checked-in promotion path `internal_only -> readiness_check -> planner_visible`
   - strict planner catalog admission is now active for this action only
   - answer pipeline, canonical source mapping, and raw payload blocking remain unchanged
+  - observability / rollback watch is now checked in for this action only
 
 Second candidate, but not first:
 
 - `search_and_summarize`
 - broader query surface means more selector/query regression risk than `document_summarize`
+- current answer for future promotion:
+  - a second `planner_visible` skill is now conditionally allowed only if it passes the same readiness gate and `npm run check:planner-visible-skill` remains green
+  - this is not automatic promotion and does not relax `fail_closed`

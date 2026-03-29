@@ -133,6 +133,26 @@ All minimum trace/log events should align around these fields:
 - the monitoring layer now also persists trace-scoped runtime events into SQLite `http_request_trace_events`; this stays a local observability/debug surface and does not replace the runtime logger stream
 - a local CLI `node scripts/debug-trace.mjs <trace_id>` can now reconstruct one persisted request timeline from those trace events plus the compact request row
 - runtime console/log sinks now emit one JSON log object per line for the shared runtime logger, rate-limited alerts, and tool execution logs; the runtime payload keeps `event` as a compatibility alias while `event_type` is the canonical analysis key
+- planner selector logs for checked-in skill-backed actions now also expose:
+  - `skill_selector_attempted`
+  - `skill_selector_task_type`
+  - `skill_selector_status`
+  - `skill_selector_fail_closed`
+  - `skill_selector_key`
+  - `skill_surface_layer`
+  - `skill_promotion_stage`
+- skill-backed `tool_execution` logs now also expose:
+  - `skill_bridge`
+  - `skill_name`
+  - `skill_surface_layer`
+  - `skill_promotion_stage`
+  - `skill_selector_key`
+  - `skill_fail_closed`
+  - `skill_stop_reason`
+- `chat_output_boundary` logs now also expose planner-visible skill boundary evidence when the reply came from `skill_bridge`:
+  - `planner_skill_boundary = "answer_pipeline"`
+  - `planner_skill_answer_pipeline_enforced = true`
+  - `planner_skill_raw_payload_blocked = true`
 
 ### Fields not yet consistently runtimeized
 
@@ -201,6 +221,7 @@ The reconstruction CLI reads both tables so operators can quickly inspect:
   - `trace_id`
   - `timestamp`
   - `duration_ms`
+  - checked-in skill observability fields such as `skill_surface_layer`, `skill_selector_key`, and `skill_fail_closed`
 - sample shape:
   ```json
   {
@@ -222,6 +243,45 @@ The reconstruction CLI reads both tables so operators can quickly inspect:
   - `tool_execution` is execution evidence only
   - it does not replace planner `action_dispatch` / `action_result`
   - tool logs must record both controlled errors and runtime exceptions; no silent fail
+
+## 0A. `planner_tool_select` skill selector fields
+
+- purpose:
+  - record deterministic planner skill selection state without changing planner public result shapes
+- trigger:
+  - planner selector runs for user intent / task type selection
+- checked-in skill fields:
+  - `skill_selector_attempted`
+  - `skill_selector_task_type`
+  - `skill_selector_match_count`
+  - `skill_selector_status`
+  - `skill_selector_fail_closed`
+  - `skill_selector_key`
+  - `skill_action`
+  - `skill_name`
+  - `skill_surface_layer`
+  - `skill_promotion_stage`
+- boundary:
+  - this is observability only
+  - selector drift must still fail closed; these fields do not authorize fallback
+
+## 0B. `chat_output_boundary` planner skill evidence
+
+- purpose:
+  - prove skill-backed replies still crossed the existing answer pipeline before user rendering
+- trigger:
+  - `user-response-normalizer.mjs` normalizes a planner envelope into user-facing `answer / sources / limitations`
+- checked-in planner-skill fields:
+  - `planner_skill_boundary`
+  - `planner_skill_action`
+  - `planner_skill_name`
+  - `planner_skill_surface_layer`
+  - `planner_skill_promotion_stage`
+  - `planner_skill_answer_pipeline_enforced`
+  - `planner_skill_raw_payload_blocked`
+- boundary:
+  - this event is evidence for debug / rollback checks only
+  - it does not change the user-facing response contract
 
 ## 1. `action_dispatch`
 

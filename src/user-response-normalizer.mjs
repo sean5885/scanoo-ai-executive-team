@@ -3,6 +3,7 @@ import {
   buildPlannedUserInputUserFacingReply,
   renderPlannerUserFacingReplyText,
 } from "./executive-planner.mjs";
+import { getPlannerSkillAction } from "./planner/skill-bridge.mjs";
 import { normalizeUserFacingAnswerSources } from "./answer-source-mapper.mjs";
 import { normalizeText } from "./text-utils.mjs";
 
@@ -23,18 +24,51 @@ function emitBoundaryLog({
   traceId = null,
   handlerName = null,
   ok = null,
+  extraFields = {},
 } = {}) {
   const payload = {
     chat_output_boundary: "normalized",
     handler_name: normalizeText(handlerName || "") || "unknown_handler",
     trace_id: normalizeText(traceId || "") || null,
     ok: typeof ok === "boolean" ? ok : null,
+    ...(extraFields && typeof extraFields === "object" && !Array.isArray(extraFields) ? extraFields : {}),
   };
   if (logger?.info) {
     logger.info("chat_output_boundary", payload);
     return;
   }
   console.info("chat_output_boundary", payload);
+}
+
+function resolvePlannerExecutionData(execution = {}) {
+  if (execution?.data && typeof execution.data === "object" && !Array.isArray(execution.data)) {
+    return execution.data;
+  }
+  return execution && typeof execution === "object" && !Array.isArray(execution) ? execution : {};
+}
+
+function buildPlannerSkillBoundaryFields(envelope = {}) {
+  const execution = envelope?.execution_result && typeof envelope.execution_result === "object"
+    ? envelope.execution_result
+    : {};
+  const executionData = resolvePlannerExecutionData(execution);
+  if (normalizeText(executionData.bridge || "") !== "skill_bridge") {
+    return {};
+  }
+
+  const registryEntry = getPlannerSkillAction(
+    normalizeText(envelope?.action || execution?.action || executionData.skill || ""),
+  );
+
+  return {
+    planner_skill_boundary: "answer_pipeline",
+    planner_skill_action: normalizeText(registryEntry?.action || execution?.action || envelope?.action || "") || null,
+    planner_skill_name: normalizeText(registryEntry?.skill_name || executionData.skill || "") || null,
+    planner_skill_surface_layer: normalizeText(registryEntry?.surface_layer || "") || null,
+    planner_skill_promotion_stage: normalizeText(registryEntry?.promotion_stage || "") || null,
+    planner_skill_answer_pipeline_enforced: true,
+    planner_skill_raw_payload_blocked: true,
+  };
 }
 
 export function normalizeUserResponseList(items = []) {
@@ -484,6 +518,7 @@ export function normalizeUserResponse({
         traceId,
         handlerName,
         ok: normalizedFailure.ok,
+        extraFields: buildPlannerSkillBoundaryFields(envelope),
       });
       return normalizedFailure;
     }
@@ -493,6 +528,7 @@ export function normalizeUserResponse({
       traceId,
       handlerName,
       ok: normalizedSuccess.ok,
+      extraFields: buildPlannerSkillBoundaryFields(envelope),
     });
     return normalizedSuccess;
   }

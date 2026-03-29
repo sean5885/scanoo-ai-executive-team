@@ -64,6 +64,7 @@ import {
   syncPlannerActionLayerTaskLifecycle,
 } from "./planner-task-lifecycle-v1.mjs";
 import {
+  buildPlannerSkillSelectionTelemetry,
   getPlannerSkillAction,
   isPlannerSkillActionCatalogVisible,
   listPlannerSkillActions,
@@ -2403,6 +2404,31 @@ function buildPlannerToolExecutionData(result = null) {
   );
 }
 
+function buildPlannerSkillToolExecutionExtra({
+  skillAction = null,
+  result = null,
+} = {}) {
+  if (!skillAction || typeof skillAction !== "object") {
+    return {};
+  }
+
+  const stopReason = cleanText(result?.data?.stop_reason || result?.error || "");
+  return {
+    skill_bridge: true,
+    skill_name: cleanText(skillAction.skill_name) || null,
+    skill_surface_layer: cleanText(skillAction.surface_layer) || null,
+    skill_promotion_stage: cleanText(skillAction.promotion_stage) || null,
+    skill_catalog_eligible: skillAction.planner_catalog_eligible === true,
+    skill_selector_key: cleanText(skillAction.selector_key) || null,
+    skill_selector_task_types: Array.isArray(skillAction.selector_task_types)
+      ? skillAction.selector_task_types.map((item) => cleanText(item)).filter(Boolean)
+      : [],
+    skill_routing_reason: cleanText(skillAction.routing_reason) || null,
+    skill_fail_closed: result?.ok === false && stopReason === "fail_closed",
+    skill_stop_reason: stopReason || null,
+  };
+}
+
 function shapePlannerSkillDispatchPayload({
   action = "",
   userIntent = "",
@@ -2821,6 +2847,10 @@ export function selectPlannerTool({
   const skillSelection = selectPlannerSkillActionForTaskType({
     taskType: normalizedTaskType,
   });
+  const skillSelectionTelemetry = buildPlannerSkillSelectionTelemetry({
+    taskType: normalizedTaskType,
+    selection: skillSelection,
+  });
 
   if (skillSelection.ok === true) {
     selectedAction = skillSelection.action;
@@ -2933,6 +2963,7 @@ export function selectPlannerTool({
     reason: reason || null,
     routing_reason: routingReason || null,
     reasoning,
+    ...skillSelectionTelemetry,
   });
 
   return {
@@ -3129,6 +3160,10 @@ export async function dispatchPlannerTool({
       data: buildPlannerToolExecutionData(finalResult),
       error: finalResult?.ok === false ? finalResult?.error || "business_error" : null,
       traceId: finalResult?.trace_id || null,
+      extra: buildPlannerSkillToolExecutionExtra({
+        skillAction,
+        result: finalResult,
+      }),
     });
     return finalResult;
   }

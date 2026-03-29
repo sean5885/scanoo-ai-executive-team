@@ -254,6 +254,7 @@ Current regression coverage includes:
 - incomplete or malformed `readiness_check` metadata fails closed at planner skill registry build time
 - planner-visible stage metadata mixed with `internal_only` surface fails closed at planner skill registry build time
 - planner skill success replies still go through canonical answer-source mapping
+- planner-visible skill watch now checks selector key hits, planner-visible/internal-only split, fail-closed negative probe, answer-boundary evidence, and non-skill routing stability through `npm run check:planner-visible-skill`
 
 ## Future Expansion Guard
 
@@ -267,6 +268,8 @@ Current answer:
 - every new skill must stay on governed runtime surfaces
 - every new skill must add regression tests proving existing selector outputs do not drift
 - every new skill must prove it does not bypass `user-response-normalizer.mjs`
+- every future planner-visible candidate must keep `npm run check:planner-visible-skill` green
+- every future planner-visible candidate must define rollback conditions for selector drift, answer bypass, regression break, and routing mismatch in the same change
 
 Current thread does not open a third skill.
 If those conditions are not met, the checked-in governance model must remain at the current bounded surface of one internal-only read skill plus one planner-visible read skill.

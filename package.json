@@ -29,6 +29,7 @@
     "check:test-db-factory": "node scripts/test-db-guardrails.mjs --check factory",
     "check:routing": "npm run routing:diagnostics --",
     "check:planner": "npm run planner:diagnostics --",
+    "check:planner-visible-skill": "node scripts/planner-visible-skill-check.mjs",
     "release-check:ci": "node scripts/release-check-ci.mjs",
     "lint:test-db": "node scripts/test-db-guardrails.mjs --check direct-import",
     "planner:contract-check": "node scripts/planner-contract-check.mjs",
