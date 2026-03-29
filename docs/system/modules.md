@@ -101,7 +101,24 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/tests/user-response-normalizer.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/answer-service.test.mjs`
 
-### 4. External Write Path
+### 4. Skill Runtime
+
+- Implemented:
+  - `/Users/seanhan/Documents/Playground/src/skill-contract.mjs`
+  - `/Users/seanhan/Documents/Playground/src/skill-runtime.mjs`
+  - `/Users/seanhan/Documents/Playground/src/skill-registry.mjs`
+  - `/Users/seanhan/Documents/Playground/src/skills/search-and-summarize-skill.mjs`
+  - `/Users/seanhan/Documents/Playground/src/planner/skill-bridge.mjs`
+- Current truth:
+  - a checked-in minimal skill contract now exists
+  - the runtime validates input, output, and side effects
+  - the checked-in sample skill is read-only and goes through `read-runtime`
+  - planner can consume a skill result through a bridge envelope
+  - skill existence does not add a new public route or planner routing target by itself
+- Evidence:
+  - `/Users/seanhan/Documents/Playground/tests/skill-runtime.test.mjs`
+
+### 5. External Write Path
 
 - Implemented:
   - `/Users/seanhan/Documents/Playground/src/external-mutation-registry.mjs`
@@ -121,7 +138,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/tests/lark-mutation-runtime.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/execute-lark-write.test.mjs`
 
-### 5. Company-Brain Mirror and Governance
+### 6. Company-Brain Mirror and Governance
 
 - Implemented mirror/read side:
   - `/Users/seanhan/Documents/Playground/src/company-brain-write-intake.mjs`
@@ -143,7 +160,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/tests/company-brain-lifecycle-contract.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/http-server.route-success.test.mjs`
 
-### 6. Workflow-Specific Mutation Surfaces
+### 7. Workflow-Specific Mutation Surfaces
 
 - Implemented:
   - comment rewrite: `/Users/seanhan/Documents/Playground/src/doc-comment-rewrite.mjs`
@@ -159,7 +176,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/tests/meeting-agent.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/control-unification-phase2-meeting.test.mjs`
 
-### 7. Classification and Plugin Adapters
+### 8. Classification and Plugin Adapters
 
 - Implemented:
   - semantic classifier: `/Users/seanhan/Documents/Playground/src/lark-drive-semantic-classifier.mjs`

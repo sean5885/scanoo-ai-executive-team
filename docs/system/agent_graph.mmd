@@ -1,24 +1,22 @@
 flowchart TD
-    A["OpenClaw Runtime"] --> B["lark-kb Plugin"]
-    B --> C["Local HTTP API"]
+    A["Planner / Internal Caller"] --> B["Skill Runtime"]
+    B --> C["Skill Registry"]
+    C --> D["search_and_summarize"]
 
-    C --> D["Lark Content Service"]
-    C --> E["Answer Service"]
-    C --> F["Comment Rewrite Service"]
-    C --> G["Security Bridge"]
+    D --> E["Read Runtime"]
+    E --> F["Index Authority"]
+    F --> G["SQLite Retrieval / FTS"]
 
-    H["Semantic Classifier"] --> I["Drive Organizer"]
-    I --> D
-    H --> J["OpenClaw Agent Session"]
+    D -. "write not allowed" .-> H["Mutation Runtime"]
 
-    E --> K["SQLite Retrieval"]
-    E --> L["Optional LLM"]
+    B --> I["Planner Skill Bridge"]
+    I --> J["Planner-Consumable Envelope"]
 
-    F --> D
-    F --> L
+    K["Meeting Workflow"] --> L["Implicit Skill: meeting summary"]
+    M["Doc Rewrite Workflow"] --> N["Implicit Skill: rewrite proposal"]
+    O["Answer Helper"] --> P["Implicit Skill: retrieval + answer summary"]
 
-    G --> M["lobster_security Python Wrapper"]
-
-    N["Lark Drive / Wiki / Doc / Message / Calendar / Task"] --> D
-    C --> O["Knowledge Sync and FTS Index"]
-    O --> K
+    L --> E
+    N --> E
+    N --> H
+    P --> E

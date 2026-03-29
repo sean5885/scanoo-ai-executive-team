@@ -12,7 +12,7 @@ The three main paths are:
 2. `write`
 3. `answer`
 
-Sync, meeting, and comment-rewrite are adjacent workflows built on top of those paths.
+Sync, meeting, comment-rewrite, and the minimal skill layer are adjacent workflows built on top of those paths.
 
 ## 1. Read Path
 
@@ -154,7 +154,25 @@ Current truth:
 
 ## 4. Adjacent Workflows
 
-### 4A. Comment Rewrite
+### 4A. Skill Runtime
+
+Current path:
+
+1. planner-adjacent caller or internal module selects a checked-in skill
+2. `skill-runtime.mjs` validates input schema
+3. skill executes only through declared bounded runtimes/tools
+4. `skill-runtime.mjs` validates side effects and output schema
+5. optional planner adaptation happens through `planner/skill-bridge.mjs`
+
+Current truth:
+
+- implemented as a minimal baseline
+- current checked-in sample skill is `search_and_summarize`
+- current sample skill is read-only and uses `read-runtime` with `search_knowledge_base`
+- this does not register a new public route or planner routing target
+- this does not bypass mutation-runtime for writes
+
+### 4B. Comment Rewrite
 
 Current path:
 
@@ -168,7 +186,7 @@ Current truth:
 - implemented
 - still ends in replace-based doc materialization
 
-### 4B. Meeting Workflow
+### 4C. Meeting Workflow
 
 Current path:
 
@@ -183,7 +201,7 @@ Current truth:
 - structured meeting output exists
 - `/meeting` is still a specialized workflow, not proof of a generic delegated subagent framework
 
-### 4C. Sync
+### 4D. Sync
 
 Current path:
 
