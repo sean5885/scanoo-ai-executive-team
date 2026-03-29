@@ -289,8 +289,9 @@ The reconstruction CLI reads both tables so operators can quickly inspect:
 - purpose:
   - define a production-ready event family for planner-visible routing/monitoring/rollback without changing the planner contract
 - status:
-  - spec-only in the current repo state
-  - current checked-in stub lives at `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-spec.mjs`
+  - checked-in minimal runtime emission now exists
+  - current schema guard lives at `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-spec.mjs`
+  - current in-memory collector/runtime hook lives at `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-runtime.mjs`
 - proposed event set:
   - `planner_visible_skill_selected`
   - `planner_visible_fail_closed`
@@ -310,7 +311,8 @@ The reconstruction CLI reads both tables so operators can quickly inspect:
   - `reason_code`
   - `task_type`
 - boundary:
-  - these events are for future live telemetry, metrics, alerting, and rollback SOP only
+  - these events now emit inside runtime, but only into a local in-memory collector
+  - external telemetry pipeline, dashboard, and alert transport are still future work
   - they must reuse the existing request/trace chain
   - they must not widen admission or alter the public response shape
 

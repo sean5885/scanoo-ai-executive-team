@@ -112,6 +112,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/planner/skill-bridge.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner-visible-skill-observability.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-spec.mjs`
+  - `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-runtime.mjs`
 - Current truth:
   - a checked-in minimal skill contract now exists
   - skill definitions must now declare `skill_class` and `runtime_access`
@@ -121,12 +122,14 @@ Current-truth docs for onboarding are:
   - planner can consume a skill result through a bridge envelope
   - planner-visible skill selection is deterministic-only and conflict-fail-closed
   - planner-visible skill rollout now has a checked-in observability/rollback watch over selector, tool execution, and answer-boundary evidence
-  - a spec-only live telemetry/monitoring/rollback definition is now checked in for future wiring, but it does not emit runtime events yet
+  - planner-visible live telemetry now emits minimal spec-constrained runtime events into an in-memory collector at planner decision/selection, fail-closed admission, fallback, and answer boundary
+  - no external telemetry pipeline is wired from this module set yet
   - skill existence does not add a new public route or planner routing target by itself
 - Evidence:
   - `/Users/seanhan/Documents/Playground/tests/skill-runtime.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/planner-visible-skill-observability.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/planner-visible-live-telemetry-spec.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/planner-visible-live-telemetry-runtime.test.mjs`
 
 ### 5. External Write Path
 

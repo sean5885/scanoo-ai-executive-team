@@ -7,6 +7,7 @@ import {
   PLANNER_VISIBLE_TELEMETRY_EVENT_CATALOG,
   PLANNER_VISIBLE_TELEMETRY_REQUIRED_FIELDS,
   PLANNER_VISIBLE_TELEMETRY_ROLLBACK_MODES,
+  buildPlannerVisibleTelemetryEvent,
   buildPlannerVisibleTelemetryStubEvent,
   listPlannerVisibleTelemetryEvents,
 } from "../src/planner-visible-live-telemetry-spec.mjs";
@@ -73,4 +74,24 @@ test("planner-visible live telemetry stub event normalizes the monitored request
   assert.equal(event.request_id, "req_demo_123");
   assert.equal(event.trace_id, "trace_demo_123");
   assert.equal(event.reason_code, "admitted");
+});
+
+test("planner-visible live telemetry runtime builder rejects ad-hoc fields", () => {
+  assert.throws(() => buildPlannerVisibleTelemetryEvent({
+    event: "planner_visible_skill_selected",
+    query_type: "search",
+    selected_skill: "search_and_summarize",
+    candidate_skills: ["search_and_summarize", "document_summarize"],
+    decision_reason: "search-plus-summarize admission passed",
+    routing_family: "planner_visible_search",
+    request_id: "req_demo_123",
+    timestamp: "2026-03-29T12:00:00.000Z",
+    trace_id: "trace_demo_123",
+    extra: {
+      reason_code: "admitted",
+      selector_key: "skill.search_and_summarize.read",
+      admission_outcome: "admitted",
+      ad_hoc_field: "not_allowed",
+    },
+  }), /unknown_planner_visible_telemetry_field:ad_hoc_field/);
 });

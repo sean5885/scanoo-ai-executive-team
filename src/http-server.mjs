@@ -7876,6 +7876,7 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger) {
       baseUrl: oauthBaseUrl,
       authContext: resolveExplicitPlannerAuthContext(res, requestUrl, body),
       signal: logger?.__abort_signal || res?.__abort_signal || null,
+      requestId: res?.__request_id || null,
     });
     const envelope = buildPlannedUserInputEnvelope(result);
     const userResponse = normalizeUserResponse({

@@ -345,3 +345,63 @@ export function buildPlannerVisibleTelemetryStubEvent({
     ...(extra && typeof extra === "object" && !Array.isArray(extra) ? extra : {}),
   });
 }
+
+export function buildPlannerVisibleTelemetryEvent({
+  event = "",
+  query_type = "",
+  selected_skill = null,
+  candidate_skills = [],
+  decision_reason = "",
+  routing_family = "",
+  request_id = "",
+  timestamp = "",
+  trace_id = null,
+  extra = {},
+} = {}) {
+  const normalizedEvent = cleanText(event);
+  const catalogEntry = PLANNER_VISIBLE_TELEMETRY_EVENT_CATALOG[normalizedEvent];
+  if (!catalogEntry) {
+    throw new TypeError("unknown_planner_visible_telemetry_event");
+  }
+
+  const allowedFields = new Set([
+    "event",
+    ...catalogEntry.required_fields,
+    ...catalogEntry.optional_fields,
+  ]);
+  const normalizedExtra = {};
+  const rawExtra = extra && typeof extra === "object" && !Array.isArray(extra) ? extra : {};
+  for (const [key, value] of Object.entries(rawExtra)) {
+    const normalizedKey = cleanText(key);
+    if (!normalizedKey) {
+      continue;
+    }
+    if (!allowedFields.has(normalizedKey)) {
+      throw new TypeError(`unknown_planner_visible_telemetry_field:${normalizedKey}`);
+    }
+    normalizedExtra[normalizedKey] = Array.isArray(value)
+      ? Object.freeze(value.map((item) => cleanText(item)).filter(Boolean))
+      : value;
+  }
+
+  const builtEvent = buildPlannerVisibleTelemetryStubEvent({
+    event: normalizedEvent,
+    query_type,
+    selected_skill,
+    candidate_skills,
+    decision_reason,
+    routing_family,
+    request_id,
+    timestamp,
+    trace_id,
+    extra: normalizedExtra,
+  });
+
+  for (const field of catalogEntry.required_fields) {
+    if (!Object.prototype.hasOwnProperty.call(builtEvent, field)) {
+      throw new TypeError(`missing_planner_visible_telemetry_field:${field}`);
+    }
+  }
+
+  return builtEvent;
+}

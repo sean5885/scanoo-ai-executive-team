@@ -71,6 +71,15 @@ import {
   runPlannerSkillBridge,
   selectPlannerSkillActionForTaskType,
 } from "./planner/skill-bridge.mjs";
+import {
+  attachPlannerVisibleTelemetryContext,
+  copyPlannerVisibleTelemetryContext,
+  createPlannerVisibleTelemetryContext,
+  emitPlannerVisibleTelemetryEvent,
+  getPlannerVisibleTelemetryContext,
+  hasPlannerVisibleTelemetryEvent,
+  updatePlannerVisibleTelemetryContext,
+} from "./planner-visible-live-telemetry-runtime.mjs";
 
 const executiveStartSignals = [
   "agent",
@@ -1147,6 +1156,222 @@ function resolvePlannerVisibleSkillAdmissions({
     admitted_actions: Object.freeze(ambiguous ? [] : admitted),
     ambiguous,
   };
+}
+
+function listPlannerVisibleCandidateSkills() {
+  return listPlannerSkillBridges()
+    .filter((entry) => entry?.planner_catalog_eligible === true)
+    .map((entry) => cleanText(entry?.action))
+    .filter(Boolean);
+}
+
+function resolvePlannerVisibleTelemetryQueryType({
+  taskType = "",
+  semantics = null,
+} = {}) {
+  const normalizedTaskType = cleanText(taskType);
+  if (normalizedTaskType === "skill_read" || normalizedTaskType === "knowledge_read_skill") {
+    return "search";
+  }
+  if (normalizedTaskType === "document_summary_skill") {
+    return "detail";
+  }
+
+  const effectiveSemantics = semantics && typeof semantics === "object" && !Array.isArray(semantics)
+    ? semantics
+    : {};
+  if (effectiveSemantics.wants_search_summary === true && effectiveSemantics.wants_document_detail === true) {
+    return "mixed";
+  }
+  if (effectiveSemantics.explicit_same_task === true && effectiveSemantics.wants_document_detail === true) {
+    return "follow-up";
+  }
+  if (effectiveSemantics.wants_search_summary === true) {
+    return "search";
+  }
+  if (
+    effectiveSemantics.wants_document_summary === true
+    || effectiveSemantics.wants_document_detail === true
+  ) {
+    return "detail";
+  }
+  return null;
+}
+
+function resolvePlannerVisibleTelemetryRoutingFamily({
+  action = "",
+  queryType = null,
+} = {}) {
+  const normalizedAction = cleanText(action);
+  if (normalizedAction === "search_and_summarize") {
+    return "planner_visible_search";
+  }
+  if (normalizedAction === "document_summarize") {
+    return "planner_visible_detail";
+  }
+  if (normalizedAction === "search_company_brain_docs") {
+    return "search_company_brain_docs";
+  }
+  if (normalizedAction === "search_and_detail_doc" || normalizedAction === "get_company_brain_doc_detail") {
+    return "search_and_detail_doc";
+  }
+  if (queryType === "search" || queryType === "mixed") {
+    return "search_company_brain_docs";
+  }
+  if (queryType === "detail" || queryType === "follow-up") {
+    return "search_and_detail_doc";
+  }
+  return "routing_no_match";
+}
+
+function createPlannerVisibleTelemetryMonitor({
+  text = "",
+  taskType = "",
+  selectedAction = "",
+  decisionReason = "",
+  requestId = "",
+  traceId = null,
+} = {}) {
+  const semantics = derivePlannerUserInputSemantics(text);
+  const queryType = resolvePlannerVisibleTelemetryQueryType({
+    taskType,
+    semantics,
+  });
+  const candidateSkills = listPlannerVisibleCandidateSkills();
+  if (!queryType || candidateSkills.length === 0) {
+    return null;
+  }
+
+  const selectedSkillEntry = getPlannerSkillAction(selectedAction);
+  const selectedSkill = selectedSkillEntry?.planner_catalog_eligible === true
+    ? cleanText(selectedSkillEntry.action)
+    : null;
+  const admissions = resolvePlannerVisibleSkillAdmissions({
+    text,
+    semantics,
+  });
+  const failClosed = !selectedSkill && (queryType === "mixed" || queryType === "follow-up");
+  const ambiguous = admissions.ambiguous === true || queryType === "mixed";
+  const context = createPlannerVisibleTelemetryContext({
+    request_id: requestId,
+    query_type: queryType,
+    candidate_skills: candidateSkills,
+    selected_skill: selectedSkill,
+    routing_family: resolvePlannerVisibleTelemetryRoutingFamily({
+      action: selectedAction,
+      queryType,
+    }),
+    decision_reason: cleanText(decisionReason)
+      || (
+        failClosed
+          ? "planner-visible admission failed closed and routing returned to the existing non-skill family."
+          : selectedSkill
+            ? "planner-visible skill selection passed and routing committed to the monitored skill path."
+            : "planner-visible telemetry monitored the existing non-skill routing family."
+      ),
+    trace_id: traceId,
+    task_type: taskType,
+    selector_key: cleanText(selectedSkillEntry?.selector_key) || null,
+    skill_surface_layer: cleanText(selectedSkillEntry?.surface_layer) || null,
+    skill_promotion_stage: cleanText(selectedSkillEntry?.promotion_stage) || null,
+    reason_code: failClosed
+      ? ambiguous === true
+        ? "ambiguous_fail_closed"
+        : "fail_closed"
+      : selectedSkill
+        ? "admitted"
+        : "fallback",
+  });
+
+  return {
+    context,
+    admissions,
+    ambiguous,
+    fail_closed: failClosed,
+  };
+}
+
+function emitPlannerVisibleTelemetryForMonitor({
+  monitor = null,
+  selectedAction = "",
+} = {}) {
+  const context = monitor?.context || null;
+  if (!context) {
+    return;
+  }
+
+  if (
+    context.selected_skill
+    && !hasPlannerVisibleTelemetryEvent(context, "planner_visible_skill_selected")
+  ) {
+    emitPlannerVisibleTelemetryEvent({
+      event: "planner_visible_skill_selected",
+      context,
+      extra: {
+        reason_code: context.reason_code || "admitted",
+        selector_key: context.selector_key,
+        admission_outcome: "admitted",
+        skill_surface_layer: context.skill_surface_layer,
+        skill_promotion_stage: context.skill_promotion_stage,
+        task_type: context.task_type,
+      },
+    });
+  }
+
+  if (
+    monitor?.fail_closed === true
+    && !hasPlannerVisibleTelemetryEvent(context, "planner_visible_fail_closed")
+  ) {
+    emitPlannerVisibleTelemetryEvent({
+      event: "planner_visible_fail_closed",
+      context,
+      extra: {
+        reason_code: context.reason_code || "fail_closed",
+        fail_closed_stage: "admission",
+        admission_outcome: "fail_closed",
+        rejected_skills: context.candidate_skills,
+        selector_key: context.selector_key,
+        ambiguity_detected: monitor?.ambiguous === true,
+        task_type: context.task_type,
+      },
+    });
+  }
+
+  if (
+    monitor?.fail_closed === true
+    && monitor?.ambiguous === true
+    && !hasPlannerVisibleTelemetryEvent(context, "planner_visible_ambiguity")
+  ) {
+    emitPlannerVisibleTelemetryEvent({
+      event: "planner_visible_ambiguity",
+      context,
+      extra: {
+        reason_code: "ambiguous_fail_closed",
+        ambiguity_signals: ["multiple_planner_visible_candidates"],
+        admission_outcome: "ambiguous_fail_closed",
+        rejected_skills: context.candidate_skills,
+        selector_key: context.selector_key,
+        task_type: context.task_type,
+      },
+    });
+  }
+
+  if (
+    monitor?.fail_closed === true
+    && !hasPlannerVisibleTelemetryEvent(context, "planner_visible_fallback")
+  ) {
+    emitPlannerVisibleTelemetryEvent({
+      event: "planner_visible_fallback",
+      context,
+      extra: {
+        reason_code: context.reason_code || "fallback",
+        fallback_action: cleanText(selectedAction) || null,
+        fallback_reason: context.decision_reason,
+        fallback_family_source: "baseline_guard",
+        task_type: context.task_type,
+      },
+    });
+  }
 }
 
 function isPlannerDecisionCatalogVisible(name = "", { text = "", semantics = null } = {}) {
@@ -3517,6 +3742,8 @@ export async function runPlannerToolFlow({
   authContext = null,
   signal = null,
   sessionKey = "",
+  requestId = "",
+  telemetryContext = null,
 } = {}) {
   const preAbortResult = buildPlannerAbortResult({
     action: cleanText(forcedSelection?.selected_action || forcedSelection?.action || "") || null,
@@ -3639,6 +3866,35 @@ export async function runPlannerToolFlow({
     alternative: selection?.alternative || buildUserInputDecisionAlternative({
       action: selection?.selected_action || null,
     }),
+  });
+  const existingPlannerVisibleTelemetryContext = getPlannerVisibleTelemetryContext(telemetryContext)
+    || (telemetryContext && typeof telemetryContext === "object" && !Array.isArray(telemetryContext)
+      ? telemetryContext
+      : null);
+  const plannerVisibleMonitor = existingPlannerVisibleTelemetryContext
+    ? {
+        context: updatePlannerVisibleTelemetryContext(existingPlannerVisibleTelemetryContext, {
+          selected_skill: getPlannerSkillAction(selection?.selected_action)?.planner_catalog_eligible === true
+            ? cleanText(selection?.selected_action || "") || null
+            : null,
+          routing_family: resolvePlannerVisibleTelemetryRoutingFamily({
+            action: selection?.selected_action,
+            queryType: existingPlannerVisibleTelemetryContext?.query_type || null,
+          }),
+          decision_reason: selectionReasoning.why || selection?.reason || null,
+          task_type: agentInput.task_type,
+        }),
+      }
+    : createPlannerVisibleTelemetryMonitor({
+        text: agentInput.user_intent,
+        taskType: agentInput.task_type,
+        selectedAction: selection?.selected_action,
+        decisionReason: selectionReasoning.why || selection?.reason || null,
+        requestId,
+      });
+  emitPlannerVisibleTelemetryForMonitor({
+    monitor: plannerVisibleMonitor,
+    selectedAction: selection?.selected_action,
   });
 
   let executionResult = null;
@@ -3859,7 +4115,7 @@ export async function runPlannerToolFlow({
     sessionKey,
   });
 
-  return buildPlannerAgentOutput({
+  const plannerOutput = buildPlannerAgentOutput({
     selectedAction: selection.selected_action,
     executionResult,
     traceId,
@@ -3867,6 +4123,13 @@ export async function runPlannerToolFlow({
     taskType,
     payload: agentInput.payload,
   });
+  if (plannerVisibleMonitor?.context) {
+    updatePlannerVisibleTelemetryContext(plannerVisibleMonitor.context, {
+      trace_id: traceId || executionResult?.trace_id || null,
+    });
+    attachPlannerVisibleTelemetryContext(plannerOutput, plannerVisibleMonitor.context);
+  }
+  return plannerOutput;
 }
 
 // ---------------------------------------------------------------------------
@@ -6244,6 +6507,7 @@ export async function executePlannedUserInput({
   authContext = null,
   signal = null,
   sessionKey = "",
+  requestId = "",
 } = {}) {
   const preAbortInfo = derivePlannerAbortInfo({ signal });
   if (preAbortInfo) {
@@ -6273,6 +6537,18 @@ export async function executePlannedUserInput({
         );
       })()
     : await planUserInputAction({ text, requester, signal, sessionKey });
+  const plannerVisibleMonitor = !decision?.error && !Array.isArray(decision?.steps)
+    ? createPlannerVisibleTelemetryMonitor({
+        text,
+        selectedAction: decision?.action,
+        decisionReason: decision?.why || "",
+        requestId,
+      })
+    : null;
+  emitPlannerVisibleTelemetryForMonitor({
+    monitor: plannerVisibleMonitor,
+    selectedAction: decision?.action,
+  });
   if (decision?.error) {
     if (decision.error === "semantic_mismatch") {
       let reroutedResult = null;
@@ -6314,15 +6590,21 @@ export async function executePlannedUserInput({
           trace_id: reroutedResult?.trace_id || null,
         });
         return {
-          ok: reroutedResult?.execution_result?.ok === true,
-          action: cleanText(reroutedResult?.selected_action || "") || null,
-          params: null,
-          error: cleanText(reroutedResult?.execution_result?.error || "") || null,
-          execution_result: reroutedResult?.execution_result || null,
-          synthetic_agent_hint: reroutedResult?.synthetic_agent_hint || null,
-          trace_id: reroutedResult?.trace_id || null,
-          why: "原始 decision 與這輪需求不一致，所以先改走 reroute。",
-          alternative: normalizeDecisionAlternative(decision?.alternative),
+          ...(() => {
+            const output = {
+              ok: reroutedResult?.execution_result?.ok === true,
+              action: cleanText(reroutedResult?.selected_action || "") || null,
+              params: null,
+              error: cleanText(reroutedResult?.execution_result?.error || "") || null,
+              execution_result: reroutedResult?.execution_result || null,
+              synthetic_agent_hint: reroutedResult?.synthetic_agent_hint || null,
+              trace_id: reroutedResult?.trace_id || null,
+              why: "原始 decision 與這輪需求不一致，所以先改走 reroute。",
+              alternative: normalizeDecisionAlternative(decision?.alternative),
+            };
+            copyPlannerVisibleTelemetryContext(reroutedResult, output);
+            return output;
+          })(),
         };
       }
     }
@@ -6412,6 +6694,8 @@ export async function executePlannedUserInput({
       disableAutoRouting: true,
       signal,
       sessionKey,
+      requestId: plannerVisibleMonitor?.context?.request_id || requestId,
+      telemetryContext: plannerVisibleMonitor?.context || null,
     });
   } catch (error) {
     const abortedResult = buildPlannerAbortResult({
@@ -6432,7 +6716,7 @@ export async function executePlannedUserInput({
     }
   }
 
-  return {
+  const output = {
     ok: runtimeResult?.execution_result?.ok === true,
     action: decision.action,
     params: decision.params,
@@ -6443,6 +6727,8 @@ export async function executePlannedUserInput({
     why: cleanText(decision?.why || "") || null,
     alternative: normalizeDecisionAlternative(decision?.alternative),
   };
+  copyPlannerVisibleTelemetryContext(runtimeResult, output);
+  return output;
 }
 
 export function buildPlannedUserInputEnvelope(result = {}) {
@@ -6482,7 +6768,7 @@ export function buildPlannedUserInputEnvelope(result = {}) {
         source: "planned_user_input_envelope",
       });
     }
-    return {
+    const envelope = {
       ok: false,
       error: cleanText(result.error || "") || "planner_failed",
       ...(cleanText(result.action || "") ? { action: cleanText(result.action) } : {}),
@@ -6511,9 +6797,11 @@ export function buildPlannedUserInputEnvelope(result = {}) {
         reasoning,
       },
     };
+    copyPlannerVisibleTelemetryContext(result, envelope);
+    return envelope;
   }
 
-  return {
+  const envelope = {
     ok: result.ok === true,
     action: cleanText(result.action || "") || null,
     params: normalizePlannerPayload(result.params),
@@ -6538,6 +6826,8 @@ export function buildPlannedUserInputEnvelope(result = {}) {
       reasoning,
     },
   };
+  copyPlannerVisibleTelemetryContext(result, envelope);
+  return envelope;
 }
 
 function buildExecutiveDecisionAlternative({

@@ -4,11 +4,18 @@ import {
   renderPlannerUserFacingReplyText,
 } from "./executive-planner.mjs";
 import { getPlannerSkillAction } from "./planner/skill-bridge.mjs";
+import {
+  emitPlannerVisibleTelemetryEvent,
+  getPlannerVisibleTelemetryContext,
+  hasPlannerVisibleTelemetryEvent,
+  updatePlannerVisibleTelemetryContext,
+} from "./planner-visible-live-telemetry-runtime.mjs";
 import { normalizeUserFacingAnswerSources } from "./answer-source-mapper.mjs";
 import { normalizeText } from "./text-utils.mjs";
 
 const MAX_USER_FACING_SOURCES = 3;
 const MAX_USER_FACING_NEXT_STEPS = 3;
+const RAW_PLANNER_VISIBLE_PAYLOAD_PATTERN = /skill_bridge|document_summarize|search_and_summarize|side_effects|get_company_brain_doc_detail|search_knowledge_base|read-runtime|authority/i;
 
 function normalizeCompareText(text = "") {
   return normalizeText(String(text || ""))
@@ -69,6 +76,67 @@ function buildPlannerSkillBoundaryFields(envelope = {}) {
     planner_skill_answer_pipeline_enforced: true,
     planner_skill_raw_payload_blocked: true,
   };
+}
+
+function buildPlannerVisibleAnswerShapeSignature(response = {}) {
+  const answerLength = normalizeText(response?.answer || "").length;
+  const sourceCount = Array.isArray(response?.sources) ? response.sources.length : 0;
+  const limitationCount = Array.isArray(response?.limitations) ? response.limitations.length : 0;
+  const status = response?.ok === true ? "ok" : "error";
+  return `${status}:${answerLength}:${sourceCount}:${limitationCount}`;
+}
+
+function maybeEmitPlannerVisibleAnswerTelemetry({
+  envelope = null,
+  normalizedResponse = null,
+  traceId = null,
+} = {}) {
+  const context = getPlannerVisibleTelemetryContext(envelope);
+  if (!context || hasPlannerVisibleTelemetryEvent(context, "planner_visible_answer_generated")) {
+    return;
+  }
+
+  const response = normalizedResponse && typeof normalizedResponse === "object" && !Array.isArray(normalizedResponse)
+    ? normalizedResponse
+    : {};
+  const boundaryFields = buildPlannerSkillBoundaryFields(envelope || {});
+  const answerSkillAction = normalizeText(
+    boundaryFields.planner_skill_action
+    || envelope?.action
+    || envelope?.execution_result?.action
+    || "",
+  ) || null;
+  const responseText = [
+    response.answer,
+    ...(Array.isArray(response.sources) ? response.sources : []),
+    ...(Array.isArray(response.limitations) ? response.limitations : []),
+  ].filter(Boolean).join("\n");
+  const answerContractOk = typeof response.answer === "string"
+    && Array.isArray(response.sources)
+    && Array.isArray(response.limitations);
+  const rawPayloadBlocked = !RAW_PLANNER_VISIBLE_PAYLOAD_PATTERN.test(responseText);
+  const answerConsistencyProxyOk = answerContractOk
+    && rawPayloadBlocked
+    && (!context.selected_skill || answerSkillAction === context.selected_skill);
+
+  updatePlannerVisibleTelemetryContext(context, {
+    trace_id: normalizeText(traceId || envelope?.trace_id || "") || context.trace_id,
+  });
+  emitPlannerVisibleTelemetryEvent({
+    event: "planner_visible_answer_generated",
+    context,
+    extra: {
+      answer_pipeline_enforced: true,
+      raw_payload_blocked: rawPayloadBlocked,
+      answer_contract_ok: answerContractOk,
+      answer_consistency_proxy_ok: answerConsistencyProxyOk,
+      answer_skill_action: answerSkillAction,
+      source_count: Array.isArray(response.sources) ? response.sources.length : 0,
+      limitation_count: Array.isArray(response.limitations) ? response.limitations.length : 0,
+      answer_shape_signature: buildPlannerVisibleAnswerShapeSignature(response),
+      response_status: response.ok === true ? "success" : "error",
+    },
+  });
 }
 
 export function normalizeUserResponseList(items = []) {
@@ -513,6 +581,11 @@ export function normalizeUserResponse({
         }),
         limitations: normalizeUserResponseList(failureReply.limitations),
       };
+      maybeEmitPlannerVisibleAnswerTelemetry({
+        envelope,
+        normalizedResponse: normalizedFailure,
+        traceId,
+      });
       emitBoundaryLog({
         logger,
         traceId,
@@ -523,6 +596,11 @@ export function normalizeUserResponse({
       return normalizedFailure;
     }
     const normalizedSuccess = buildPlannerSuccessUserResponse(envelope);
+    maybeEmitPlannerVisibleAnswerTelemetry({
+      envelope,
+      normalizedResponse: normalizedSuccess,
+      traceId,
+    });
     emitBoundaryLog({
       logger,
       traceId,

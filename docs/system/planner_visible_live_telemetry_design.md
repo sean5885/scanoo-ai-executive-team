@@ -9,23 +9,25 @@ This document defines a production-ready telemetry / monitoring / rollback desig
 Current design scope:
 
 - add a checked-in event/metric/alert/rollback spec
+- add checked-in minimal runtime emission with an in-memory collector
 - keep the current planner contract unchanged
 - keep the current two-skill admission boundary unchanged
 - reuse the existing request/trace/debug surface where possible
 
-Out of scope in this thread:
+Still out of scope in this thread:
 
 - no new skill
 - no planner public response contract change
-- no real telemetry sink, dashboard, alerting transport, or feature-flag runtime
+- no external telemetry sink, dashboard, alerting transport, or feature-flag runtime
 - no change to the current checked-in routing or admission behavior
 
 ## Current Code Truth
 
-The current checked-in observability surface is still fixture-backed, not live:
+The current checked-in observability surface now has a minimal live runtime stub on top of the existing fixture-backed watch:
 
 - [planner_visible_multi_skill_observability.md](/Users/seanhan/Documents/Playground/docs/system/planner_visible_multi_skill_observability.md)
 - `/Users/seanhan/Documents/Playground/src/planner-visible-skill-observability.mjs`
+- `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-runtime.mjs`
 
 The current runtime already exposes the key local evidence we will build on later:
 
@@ -37,6 +39,9 @@ The current runtime already exposes the key local evidence we will build on late
   - proves skill-backed replies still passed the answer pipeline before user rendering
 - `http_request_trace_events`
   - persists trace-scoped runtime events for local reconstruction
+- `planner_visible_*`
+  - now emits spec-constrained runtime events into an in-memory collector only
+  - current checked-in emission points are planner decision / selection, fail-closed admission, fallback, and answer boundary
 
 Current checked-in baseline from the coexistence watch:
 
@@ -62,6 +67,7 @@ This baseline is the only checked-in fact today. It is valid as an initial alert
 - `/Users/seanhan/Documents/Playground/src/runtime-observability.mjs`
 - `/Users/seanhan/Documents/Playground/src/monitoring-store.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-spec.mjs`
+- `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-runtime.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-visible-skill-observability.mjs`
 - `/Users/seanhan/Documents/Playground/docs/system/trace_log_spec.md`
 
