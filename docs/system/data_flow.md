@@ -167,8 +167,10 @@ Current path:
 Current truth:
 
 - implemented as a minimal baseline
-- current checked-in sample skill is `search_and_summarize`
-- current sample skill is read-only and uses `read-runtime` with `search_knowledge_base`
+- current checked-in sample skills are `search_and_summarize` and `document_summarize`
+- both checked-in sample skills are read-only and use `read-runtime`
+- `search_and_summarize` uses `search_knowledge_base`
+- `document_summarize` uses `get_company_brain_doc_detail`
 - this does not register a new public route or planner routing target
 - this does not bypass mutation-runtime for writes
 

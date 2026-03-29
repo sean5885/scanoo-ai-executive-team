@@ -215,13 +215,17 @@ This path is bounded by the checked-in planner contract:
 - no heuristic or free-text fallback is used on this strict user-input planning path
 - bounded `synthetic_agent_hint` lane inference now also keeps company-brain learning actions (`ingest_learning_doc`, `update_learning_state`) on the checked-in `doc` lane instead of falling through `fallback_agent`
 - planner skill integration is explicit and bounded:
-  - checked-in planner action: `search_and_summarize`
-  - current selection entry is deterministic-only (`taskType=skill_read` or equivalent internal caller contract)
+  - checked-in planner actions:
+    - `search_and_summarize`
+    - `document_summarize`
+  - current selection entries are deterministic-only:
+    - `taskType=skill_read` -> `search_and_summarize`
+    - `taskType=document_summary_skill` -> `document_summarize`
   - deterministic selection now resolves through the checked-in skill selector registry in `planner/skill-bridge.mjs`
   - if more than one planner-visible skill claims the same deterministic selector key, selection fails closed as `selector_skill_conflict`
   - planner dispatch must call `planner/skill-bridge.mjs`
   - `planner/skill-bridge.mjs` may call exactly one checked-in skill runtime entry
-  - current allowed side effects stay read-only (`search_knowledge_base`)
+  - current allowed side effects stay read-only (`search_knowledge_base`, `get_company_brain_doc_detail`)
   - skill failure remains fail-closed and does not fall back into another planner tool/preset path
 
 ## Contract Consistency Check

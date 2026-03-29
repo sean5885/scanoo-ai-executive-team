@@ -53,13 +53,18 @@ Current validation rules:
 - declared class must match `allowed_side_effects`
 - invalid or mismatched governance metadata throws `invalid_skill_definition`
 
-Current checked-in example:
+Current checked-in examples:
 
 - `search_and_summarize`
   - `skill_class = read_only`
   - `runtime_access = ["read_runtime"]`
   - allowed side effects:
     - `read:search_knowledge_base`
+- `document_summarize`
+  - `skill_class = read_only`
+  - `runtime_access = ["read_runtime"]`
+  - allowed side effects:
+    - `read:get_company_brain_doc_detail`
 
 ## Skill Vs Tool Vs Agent
 
@@ -85,6 +90,7 @@ Current non-goals:
 Planner-visible skills now declare selector metadata in `planner/skill-bridge.mjs`:
 
 - `selector_mode`
+- `selector_key`
 - `selector_task_types`
 - `routing_reason`
 - `selection_reason`
@@ -96,10 +102,13 @@ Current selection rules:
 3. zero match:
    - return `routing_no_match`
 4. one match:
-   - return that skill action
+   - return that skill action only if its `selector_key` is unique inside the registry
 5. multiple matches:
    - return `selector_skill_conflict`
    - do not choose by insertion order, score, or heuristic
+6. duplicate `selector_key`:
+   - return `selector_skill_conflict`
+   - do not treat key collisions as aliases or fallback candidates
 
 This keeps old behavior stable as long as a new skill uses a different selector key.
 
@@ -143,8 +152,10 @@ Current code truth:
 Current regression coverage includes:
 
 - deterministic selector still picks `search_and_summarize` for `skill_read`
+- deterministic selector picks `document_summarize` for `document_summary_skill`
 - a second non-overlapping skill does not change that result
-- selector conflicts fail closed
+- selector task-type conflicts fail closed
+- selector key conflicts fail closed
 - skill input must be serializable
 - skill output must be serializable
 - skill chains are rejected

@@ -3029,6 +3029,78 @@ test("runPlannerToolFlow fail-closes skill failures without falling back to docu
   ]);
 });
 
+test("runPlannerToolFlow routes the second read-only skill deterministically without drifting search skill routing", async () => {
+  resetPlannerRuntimeContext();
+  const result = await runPlannerToolFlow({
+    userIntent: "幫我整理 Delivery SOP",
+    taskType: "document_summary_skill",
+    payload: {
+      account_id: "acct_document_skill_flow",
+      doc_id: "doc_delivery_flow_1",
+      reader_overrides: {
+        mirror: {
+          get_company_brain_doc_detail: {
+            success: true,
+            data: {
+              doc: {
+                doc_id: "doc_delivery_flow_1",
+                title: "Delivery SOP",
+                url: "https://example.com/doc_delivery_flow_1",
+                source: "mirror",
+                created_at: "2026-03-20T00:00:00.000Z",
+                creator: {
+                  account_id: "acct_document_skill_flow",
+                  open_id: "ou_delivery_flow",
+                },
+              },
+              summary: {
+                overview: "這份文件說明交付 SOP 與驗收節點。",
+                headings: ["交付節奏", "驗收條件"],
+                highlights: ["每週二同步交付狀態"],
+                snippet: "交付 SOP 與驗收節點整理",
+                content_length: 900,
+              },
+              learning_state: {
+                status: "learned",
+                structured_summary: {
+                  overview: "learned",
+                  headings: [],
+                  highlights: [],
+                  snippet: "learned",
+                  content_length: 90,
+                },
+                key_concepts: [],
+                tags: [],
+                notes: "",
+                learned_at: null,
+                updated_at: null,
+              },
+            },
+            error: null,
+          },
+        },
+      },
+    },
+    logger: console,
+  });
+
+  assert.equal(result.selected_action, "document_summarize");
+  assert.equal(result.routing_reason, "selector_document_summarize_skill");
+  assert.equal(result.execution_result?.ok, true);
+  assert.equal(result.execution_result?.action, "document_summarize");
+  assert.equal(result.execution_result?.data?.bridge, "skill_bridge");
+  assert.equal(result.execution_result?.data?.skill, "document_summarize");
+  assert.equal(result.execution_result?.data?.doc_id, "doc_delivery_flow_1");
+  assert.deepEqual(result.execution_result?.data?.side_effects, [
+    {
+      mode: "read",
+      action: "get_company_brain_doc_detail",
+      runtime: "read-runtime",
+      authority: "mirror",
+    },
+  ]);
+});
+
 test("runPlannerToolFlow routes the exact scanoo exclusion live query into document search with a scoped subject", async () => {
   resetPlannerRuntimeContext();
   const calls = [];
@@ -5290,7 +5362,7 @@ test("selectPlannerTool aligns search-plus-content phrasing to generic search", 
   assert.equal(result.routing_reason, "selector_search_company_brain_docs");
 });
 
-test("selectPlannerTool can deterministically choose the single read-only skill path", () => {
+test("selectPlannerTool keeps the original read-only skill path deterministic with two skills registered", () => {
   const result = selectPlannerTool({
     userIntent: "幫我整理 launch checklist",
     taskType: "skill_read",
@@ -5309,6 +5381,7 @@ test("selectPlannerTool can deterministically choose the single read-only skill 
       skill_class: "read_only",
       runtime_access: ["read_runtime"],
       selector_mode: "deterministic_only",
+      selector_key: "skill.search_and_summarize.read",
       selector_task_types: ["knowledge_read_skill", "skill_read"],
       routing_reason: "selector_search_and_summarize_skill",
       allowed_side_effects: {
@@ -5316,7 +5389,35 @@ test("selectPlannerTool can deterministically choose the single read-only skill 
         write: [],
       },
     },
+    {
+      action: "document_summarize",
+      skill_name: "document_summarize",
+      max_skills_per_run: 1,
+      allow_skill_chain: false,
+      skill_class: "read_only",
+      runtime_access: ["read_runtime"],
+      selector_mode: "deterministic_only",
+      selector_key: "skill.document_summarize.read",
+      selector_task_types: ["document_summary_skill"],
+      routing_reason: "selector_document_summarize_skill",
+      allowed_side_effects: {
+        read: ["get_company_brain_doc_detail"],
+        write: [],
+      },
+    },
   ]);
+});
+
+test("selectPlannerTool can deterministically choose the second read-only skill path", () => {
+  const result = selectPlannerTool({
+    userIntent: "幫我整理這份文件",
+    taskType: "document_summary_skill",
+    logger: console,
+  });
+
+  assert.equal(result.selected_action, "document_summarize");
+  assert.equal(result.routing_reason, "selector_document_summarize_skill");
+  assert.match(result.reason || "", /文件摘要 read-only skill/);
 });
 
 test("runPlannerToolFlow executes preset runner when selection returns preset", async () => {

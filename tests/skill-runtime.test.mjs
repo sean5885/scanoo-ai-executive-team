@@ -19,6 +19,7 @@ import {
 } from "../src/skill-runtime.mjs";
 
 const SKILL_FILE_URLS = [
+  new URL("../src/skills/document-summarize-skill.mjs", import.meta.url),
   new URL("../src/skills/search-and-summarize-skill.mjs", import.meta.url),
 ];
 
@@ -192,6 +193,111 @@ test("search_and_summarize returns deterministic runtime failure without bypassi
   });
 });
 
+test("document_summarize runs through read-runtime and returns a single-document summary", async () => {
+  const result = await runSkill({
+    registry: defaultSkillRegistry,
+    skillName: "document_summarize",
+    input: {
+      account_id: "acct_document_skill",
+      doc_id: "doc_delivery_1",
+      reader_overrides: {
+        mirror: {
+          get_company_brain_doc_detail: {
+            success: true,
+            data: {
+              doc: {
+                doc_id: "doc_delivery_1",
+                title: "Delivery SOP",
+                url: "https://example.com/doc_delivery_1",
+                source: "mirror",
+                created_at: "2026-03-20T00:00:00.000Z",
+                creator: {
+                  account_id: "acct_document_skill",
+                  open_id: "ou_delivery",
+                },
+              },
+              summary: {
+                overview: "這份文件說明交付 SOP 與驗收節點。",
+                headings: ["交付節奏", "驗收條件", "風險處理"],
+                highlights: ["每週二同步交付狀態", "驗收需附 owner 與 deadline", "異常情況要在 24 小時內升級"],
+                snippet: "交付 SOP 與驗收節點整理",
+                content_length: 1200,
+              },
+              learning_state: {
+                status: "learned",
+                structured_summary: {
+                  overview: "learning summary",
+                  headings: [],
+                  highlights: [],
+                  snippet: "learning snippet",
+                  content_length: 320,
+                },
+                key_concepts: ["delivery", "acceptance"],
+                tags: ["ops"],
+                notes: "",
+                learned_at: "2026-03-21T00:00:00.000Z",
+                updated_at: "2026-03-21T00:00:00.000Z",
+              },
+            },
+            error: null,
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.skill, "document_summarize");
+  assert.deepEqual(result.side_effects, [
+    {
+      mode: "read",
+      action: "get_company_brain_doc_detail",
+      runtime: "read-runtime",
+      authority: "mirror",
+    },
+  ]);
+  assert.equal(result.output.doc_id, "doc_delivery_1");
+  assert.equal(result.output.title, "Delivery SOP");
+  assert.equal(result.output.found, true);
+  assert.equal(result.output.hits, 1);
+  assert.match(result.output.summary, /交付 SOP/i);
+  assert.match(result.output.summary, /交付節奏/);
+  assert.equal(result.output.sources[0].title, "Delivery SOP");
+  assert.equal(result.output.limitations.length, 1);
+
+  const plannerEnvelope = buildPlannerSkillEnvelope(result);
+  assert.deepEqual(plannerEnvelope, {
+    ok: true,
+    action: "skill:document_summarize",
+    data: {
+      skill: "document_summarize",
+      doc_id: "doc_delivery_1",
+      title: "Delivery SOP",
+      summary: result.output.summary,
+      hits: 1,
+      found: true,
+      sources: [
+        {
+          id: "doc_delivery_1",
+          title: "Delivery SOP",
+          url: "https://example.com/doc_delivery_1",
+          snippet: "交付 SOP 與驗收節點整理",
+        },
+      ],
+      limitations: ["僅保留前 2 個重點。"],
+      side_effects: [
+        {
+          mode: "read",
+          action: "get_company_brain_doc_detail",
+          runtime: "read-runtime",
+          authority: "mirror",
+        },
+      ],
+    },
+    trace_id: null,
+  });
+});
+
 test("skill runtime fail-closes when side effects exceed contract", async () => {
   const unsafeSkill = createSkillDefinition({
     name: "unsafe_skill",
@@ -314,6 +420,63 @@ test("listSkillContracts exposes the checked-in minimal skill contract", () => {
         disallow_side_channel_repo_db_access: true,
       },
     },
+    {
+      name: "document_summarize",
+      input_schema: {
+        type: "object",
+        required: ["account_id", "doc_id"],
+        properties: {
+          account_id: { type: "string" },
+          doc_id: { type: "string" },
+          pathname: { type: ["string", "null"] },
+          reader_overrides: { type: ["object", "null"] },
+        },
+      },
+      output_schema: {
+        type: "object",
+        required: ["doc_id", "title", "summary", "hits", "found", "sources", "limitations"],
+        properties: {
+          doc_id: { type: "string" },
+          title: { type: "string" },
+          summary: { type: "string" },
+          hits: { type: "number" },
+          found: { type: "boolean" },
+          limitations: {
+            type: "array",
+            items: { type: "string" },
+          },
+          sources: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["id", "title", "url", "snippet"],
+              properties: {
+                id: { type: ["string", "null"] },
+                title: { type: "string" },
+                url: { type: ["string", "null"] },
+                snippet: { type: "string" },
+              },
+            },
+          },
+        },
+      },
+      allowed_side_effects: {
+        read: ["get_company_brain_doc_detail"],
+        write: [],
+      },
+      failure_mode: "fail_closed",
+      skill_class: "read_only",
+      runtime_access: ["read_runtime"],
+      governance: {
+        skill_class: "read_only",
+        runtime_access: ["read_runtime"],
+        max_skills_per_run: 1,
+        allow_skill_chain: false,
+        input_must_be_serializable: true,
+        output_must_be_serializable: true,
+        disallow_side_channel_repo_db_access: true,
+      },
+    },
   ]);
 });
 
@@ -421,7 +584,7 @@ test("skill runtime rejects skill chaining and keeps max_skills_per_run at one",
   });
 });
 
-test("planner skill bridge exposes a single read-only skill action and adapts runtime output", async () => {
+test("planner skill bridge exposes checked-in read-only skill actions and adapts runtime output", async () => {
   const bridgeResult = await runPlannerSkillBridge({
     action: "search_and_summarize",
     payload: {
@@ -466,10 +629,27 @@ test("planner skill bridge exposes a single read-only skill action and adapts ru
       skill_class: "read_only",
       runtime_access: ["read_runtime"],
       selector_mode: "deterministic_only",
+      selector_key: "skill.search_and_summarize.read",
       selector_task_types: ["knowledge_read_skill", "skill_read"],
       routing_reason: "selector_search_and_summarize_skill",
       allowed_side_effects: {
         read: ["search_knowledge_base"],
+        write: [],
+      },
+    },
+    {
+      action: "document_summarize",
+      skill_name: "document_summarize",
+      max_skills_per_run: 1,
+      allow_skill_chain: false,
+      skill_class: "read_only",
+      runtime_access: ["read_runtime"],
+      selector_mode: "deterministic_only",
+      selector_key: "skill.document_summarize.read",
+      selector_task_types: ["document_summary_skill"],
+      routing_reason: "selector_document_summarize_skill",
+      allowed_side_effects: {
+        read: ["get_company_brain_doc_detail"],
         write: [],
       },
     },
@@ -484,6 +664,7 @@ test("deterministic skill selector keeps existing routing stable when a new non-
       skill_class: "read_only",
       runtime_access: ["read_runtime"],
       selector_mode: "deterministic_only",
+      selector_key: "skill.search_and_summarize.read",
       selector_task_types: ["skill_read"],
       routing_reason: "selector_search_and_summarize_skill",
       selection_reason: "read-only skill path",
@@ -498,6 +679,7 @@ test("deterministic skill selector keeps existing routing stable when a new non-
       skill_class: "read_only",
       runtime_access: ["read_runtime"],
       selector_mode: "deterministic_only",
+      selector_key: "skill.compile_delivery_notes.read",
       selector_task_types: ["delivery_skill_read"],
       routing_reason: "selector_compile_delivery_notes_skill",
       selection_reason: "delivery skill path",
@@ -528,6 +710,7 @@ test("deterministic skill selector fail-closes when multiple skills compete for 
       skill_class: "read_only",
       runtime_access: ["read_runtime"],
       selector_mode: "deterministic_only",
+      selector_key: "skill.search_and_summarize.read",
       selector_task_types: ["skill_read"],
       routing_reason: "selector_search_and_summarize_skill",
       selection_reason: "read-only skill path",
@@ -542,6 +725,7 @@ test("deterministic skill selector fail-closes when multiple skills compete for 
       skill_class: "read_only",
       runtime_access: ["read_runtime"],
       selector_mode: "deterministic_only",
+      selector_key: "skill.competing.read",
       selector_task_types: ["skill_read"],
       routing_reason: "selector_competing_skill",
       selection_reason: "competing path",
@@ -554,6 +738,52 @@ test("deterministic skill selector fail-closes when multiple skills compete for 
 
   assert.deepEqual(selectPlannerSkillActionForTaskType({
     taskType: "skill_read",
+    registry,
+  }), {
+    ok: false,
+    action: null,
+    routing_reason: "selector_skill_conflict",
+    reason: "",
+    error: "selector_conflict",
+  });
+});
+
+test("deterministic skill selector fail-closes when two skills claim the same selector key", () => {
+  const registry = createPlannerSkillActionRegistry([
+    {
+      action: "document_summarize",
+      skill_name: "document_summarize",
+      skill_class: "read_only",
+      runtime_access: ["read_runtime"],
+      selector_mode: "deterministic_only",
+      selector_key: "skill.document.read",
+      selector_task_types: ["document_summary_skill"],
+      routing_reason: "selector_document_summarize_skill",
+      selection_reason: "document summary path",
+      allowed_side_effects: {
+        read: ["get_company_brain_doc_detail"],
+        write: [],
+      },
+    },
+    {
+      action: "duplicate_document_skill",
+      skill_name: "duplicate_document_skill",
+      skill_class: "read_only",
+      runtime_access: ["read_runtime"],
+      selector_mode: "deterministic_only",
+      selector_key: "skill.document.read",
+      selector_task_types: ["document_summary_skill_alt"],
+      routing_reason: "selector_duplicate_document_skill",
+      selection_reason: "duplicate path",
+      allowed_side_effects: {
+        read: ["get_company_brain_doc_detail"],
+        write: [],
+      },
+    },
+  ]);
+
+  assert.deepEqual(selectPlannerSkillActionForTaskType({
+    taskType: "document_summary_skill",
     registry,
   }), {
     ok: false,

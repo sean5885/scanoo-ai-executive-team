@@ -1620,6 +1620,7 @@ function derivePlannerAgentLane({
     "list_company_brain_docs",
     "search_company_brain_docs",
     "search_and_summarize",
+    "document_summarize",
     "get_company_brain_doc_detail",
     "search_and_detail_doc",
     "create_and_list_doc",
@@ -5536,6 +5537,7 @@ function validatePlannerDecisionSemantics({
     "list_company_brain_docs",
     "search_company_brain_docs",
     "search_and_summarize",
+    "document_summarize",
     "get_company_brain_doc_detail",
     "search_and_detail_doc",
     "runtime_and_list_docs",
@@ -5748,6 +5750,11 @@ function buildUserInputDecisionAlternative(decision = {}) {
         action: "search_company_brain_docs",
         summary: "也可只先 search 候選文件；這輪需要受控 read-only skill 直接輸出摘要。",
       });
+    case "document_summarize":
+      return normalizeDecisionAlternative({
+        action: "get_company_brain_doc_detail",
+        summary: "也可直接走一般 detail；這輪需要受控 read-only skill 把單一文件整理成固定摘要。",
+      });
     case "list_company_brain_docs":
       return normalizeDecisionAlternative({
         action: "search_company_brain_docs",
@@ -5850,6 +5857,9 @@ function buildUserInputDecisionWhy({
   }
   if (cleanText(result?.action || "") === "search_and_summarize") {
     return "這輪需求被明確約束為 read-only skill 摘要路徑，所以不直接走一般 search bridge。";
+  }
+  if (cleanText(result?.action || "") === "document_summarize") {
+    return "這輪需求被明確約束為單一文件的 read-only skill 摘要路徑，所以不直接走一般 detail bridge。";
   }
   if (cleanText(result?.action || "") === "list_company_brain_docs") {
     return "需求偏向列出已驗證文件鏡像，而不是鎖定單一文件內容。";

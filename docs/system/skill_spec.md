@@ -12,13 +12,14 @@ Current code anchors:
 - `/Users/seanhan/Documents/Playground/src/skill-contract.mjs`
 - `/Users/seanhan/Documents/Playground/src/skill-runtime.mjs`
 - `/Users/seanhan/Documents/Playground/src/skill-registry.mjs`
+- `/Users/seanhan/Documents/Playground/src/skills/document-summarize-skill.mjs`
 - `/Users/seanhan/Documents/Playground/src/skills/search-and-summarize-skill.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner/skill-bridge.mjs`
 
 This baseline is intentionally narrow:
 
 - it defines what a skill is
-- it gives one checked-in read-only example
+- it gives two checked-in read-only examples
 - it keeps planner, read-runtime, and mutation-runtime boundaries explicit
 - it does not add a new public route
 - it does not change mutation/read/answer contracts
@@ -80,12 +81,16 @@ Boundary:
 - planner may consume a skill result only through `planner/skill-bridge.mjs`
 - planner does not call `skill-runtime` directly
 - a skill does not bypass planner action governance just because the skill exists
-- v1 uses one explicit planner action to keep routing deterministic and auditable:
+- v1 uses explicit planner actions to keep routing deterministic and auditable:
   - planner action: `search_and_summarize`
   - backing skill: `search_and_summarize`
   - planner visibility: `deterministic_only`
-  - selector path: only chosen by deterministic runtime conditions such as `taskType=skill_read`
-  - LLM `target_catalog` does not expose this action in the normal strict user-input planner prompt
+  - selector path: chosen only by deterministic runtime conditions such as `taskType=skill_read`
+  - planner action: `document_summarize`
+  - backing skill: `document_summarize`
+  - planner visibility: `deterministic_only`
+  - selector path: chosen only by deterministic runtime conditions such as `taskType=document_summary_skill`
+  - both actions stay outside the normal strict user-input planner `target_catalog`
 
 ### Read / Write Runtime Boundary
 
@@ -97,12 +102,18 @@ Boundary:
   - is not a direct write/read escape hatch
   - cannot claim write completion without mutation-runtime evidence
 
-Current checked-in example:
+Current checked-in examples:
 
 - `search_and_summarize`
   - read-only
   - uses `read-runtime`
   - allowed effect is only `read:search_knowledge_base`
+  - declared `skill_class=read_only`
+  - declared `runtime_access=["read_runtime"]`
+- `document_summarize`
+  - read-only
+  - uses `read-runtime`
+  - allowed effect is only `read:get_company_brain_doc_detail`
   - declared `skill_class=read_only`
   - declared `runtime_access=["read_runtime"]`
 
@@ -157,7 +168,7 @@ These capabilities existed before the checked-in skill runtime, but were embedde
 | `planner/knowledge-bridge.mjs` planner answer helper | rewrites query, retrieves, and builds summary for planner-side knowledge use | helper is skill-like; still not a generic skill runtime |
 
 Current checked-in skill baseline does not replace those flows.
-It only introduces a shared contract and one minimal sample implementation.
+It only introduces a shared contract and two minimal sample implementations.
 
 ## Checked-In Example Skill
 
@@ -214,6 +225,58 @@ Boundary:
 - does not add heuristic fallback or multi-skill planning
 - does not change answer-service output contract
 
+### `document_summarize`
+
+Code:
+
+- `/Users/seanhan/Documents/Playground/src/skills/document-summarize-skill.mjs`
+
+Contract:
+
+```json
+{
+  "name": "document_summarize",
+  "input_schema": {
+    "type": "object",
+    "required": ["account_id", "doc_id"],
+    "properties": {
+      "account_id": { "type": "string" },
+      "doc_id": { "type": "string" },
+      "pathname": { "type": ["string", "null"] },
+      "reader_overrides": { "type": ["object", "null"] }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["doc_id", "title", "summary", "hits", "found", "sources", "limitations"]
+  },
+  "allowed_side_effects": {
+    "read": ["get_company_brain_doc_detail"],
+    "write": []
+  },
+  "skill_class": "read_only",
+  "runtime_access": ["read_runtime"],
+  "failure_mode": "fail_closed"
+}
+```
+
+Behavior:
+
+1. validates `account_id` and `doc_id`
+2. validates input is JSON-serializable plain data
+3. calls `read-runtime` with canonical `get_company_brain_doc_detail`
+4. records actual side effect as `read-runtime / mirror / get_company_brain_doc_detail`
+5. builds a deterministic summary from the document structured summary
+6. adapts cleanly into a planner envelope through `planner/skill-bridge.mjs`
+
+Boundary:
+
+- does not read the repository directly
+- does not call mutation runtime
+- input/output are cloned by runtime, so the skill does not share caller object references
+- does not add heuristic fallback or multi-skill planning
+- does not change answer-service or generic detail contracts
+
 ## Planner-Consumable Shape
 
 `/Users/seanhan/Documents/Playground/src/planner/skill-bridge.mjs` converts a skill result into:
@@ -236,9 +299,9 @@ Boundary:
 }
 ```
 
-This shape is planner-usable but does not register a new planner action.
+This shape is planner-usable but does not register a new planner action by itself.
 
-For planner runtime integration, the same bridge now also exposes one checked-in planner-facing action result:
+For planner runtime integration, the same bridge now also exposes checked-in planner-facing action results:
 
 ```json
 {
@@ -260,6 +323,30 @@ For planner runtime integration, the same bridge now also exposes one checked-in
     "runtime_access": ["read_runtime"],
     "selector_mode": "deterministic_only",
     "selector_task_types": ["knowledge_read_skill", "skill_read"]
+  },
+  "trace_id": "string|null"
+}
+```
+
+```json
+{
+  "ok": true,
+  "action": "document_summarize",
+  "data": {
+    "skill": "document_summarize",
+    "doc_id": "string",
+    "title": "string",
+    "summary": "string|null",
+    "hits": "number",
+    "found": "boolean",
+    "sources": ["object"],
+    "limitations": ["string"],
+    "side_effects": ["object"],
+    "bridge": "skill_bridge",
+    "max_skills_per_run": 1,
+    "allow_skill_chain": false,
+    "skill_class": "read_only",
+    "runtime_access": ["read_runtime"]
   },
   "trace_id": "string|null"
 }

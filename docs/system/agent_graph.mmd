@@ -2,12 +2,17 @@ flowchart TD
     A["Planner / Internal Caller"] --> B["Skill Runtime"]
     B --> C["Skill Registry"]
     C --> D["search_and_summarize"]
+    C --> D2["document_summarize"]
 
     D --> E["Read Runtime"]
+    D2 --> E
     E --> F["Index Authority"]
+    E --> F2["Mirror Authority"]
     F --> G["SQLite Retrieval / FTS"]
+    F2 --> G2["Verified Doc Mirror"]
 
     D -. "write not allowed" .-> H["Mutation Runtime"]
+    D2 -. "write not allowed" .-> H
 
     B --> I["Planner Skill Bridge"]
     I --> J["Planner-Consumable Envelope"]
