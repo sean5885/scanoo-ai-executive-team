@@ -5418,7 +5418,7 @@ test("selectPlannerTool keeps the original read-only skill path deterministic wi
 
 test("selectPlannerTool can deterministically choose the second read-only skill path", () => {
   const result = selectPlannerTool({
-    userIntent: "幫我整理這份文件",
+    userIntent: "幫我整理 launch checklist 文件重點",
     taskType: "document_summary_skill",
     logger: console,
   });
@@ -5432,21 +5432,31 @@ test("strict planner target catalog admits search_and_summarize only inside its 
   const admittedCatalogNames = listPlannerDecisionCatalogEntries({
     text: "幫我搜尋 launch checklist 並整理重點",
   }).map((entry) => entry.name);
+  const detailSummaryCatalogNames = listPlannerDecisionCatalogEntries({
+    text: "幫我整理 launch checklist 文件重點",
+  }).map((entry) => entry.name);
   const searchOnlyCatalogNames = listPlannerDecisionCatalogEntries({
     text: "找 launch checklist 文件",
   }).map((entry) => entry.name);
   const ambiguousCatalogNames = listPlannerDecisionCatalogEntries({
     text: "幫我搜尋這份 launch checklist 文件並整理重點",
   }).map((entry) => entry.name);
+  const followUpCatalogNames = listPlannerDecisionCatalogEntries({
+    text: "這份文件幫我整理重點",
+  }).map((entry) => entry.name);
 
   assert.equal(admittedCatalogNames.includes("search_and_summarize"), true);
   assert.equal(admittedCatalogNames.includes("document_summarize"), false);
+  assert.equal(detailSummaryCatalogNames.includes("document_summarize"), true);
+  assert.equal(detailSummaryCatalogNames.includes("search_and_summarize"), false);
   assert.equal(searchOnlyCatalogNames.includes("search_and_summarize"), false);
   assert.equal(searchOnlyCatalogNames.includes("document_summarize"), false);
   assert.equal(ambiguousCatalogNames.includes("search_and_summarize"), false);
   assert.equal(ambiguousCatalogNames.includes("document_summarize"), false);
+  assert.equal(followUpCatalogNames.includes("document_summarize"), false);
   assert.equal(searchOnlyCatalogNames.includes("search_company_brain_docs"), true);
   assert.equal(ambiguousCatalogNames.includes("get_company_brain_doc_detail"), true);
+  assert.equal(followUpCatalogNames.includes("search_and_detail_doc"), true);
 });
 
 test("strict planner decision validation admits search_and_summarize only for its planner-visible admission boundary", () => {
@@ -5497,7 +5507,7 @@ test("strict planner decision validation admits planner-visible document_summari
       doc_id: "doc_hidden_document_skill",
     },
   }, {
-    text: "幫我整理這份文件",
+    text: "幫我整理 launch checklist 文件重點",
   });
 
   assert.deepEqual(result, {
@@ -5508,6 +5518,28 @@ test("strict planner decision validation admits planner-visible document_summari
       doc_id: "doc_hidden_document_skill",
     },
     target_kind: "action",
+  });
+});
+
+test("strict planner decision validation keeps follow-up references out of planner-visible document_summarize", () => {
+  const result = validatePlannerUserInputDecision({
+    action: "document_summarize",
+    params: {
+      account_id: "acct_hidden_document_skill",
+      doc_id: "doc_hidden_document_skill",
+    },
+  }, {
+    text: "這份文件幫我整理重點",
+  });
+
+  assert.deepEqual(result, {
+    ok: false,
+    error: "invalid_action",
+    action: "document_summarize",
+    params: {
+      account_id: "acct_hidden_document_skill",
+      doc_id: "doc_hidden_document_skill",
+    },
   });
 });
 

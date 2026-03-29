@@ -25,6 +25,7 @@ Related mirrors:
 - `/Users/seanhan/Documents/Playground/docs/system/skill_surface_policy.md`
 - `/Users/seanhan/Documents/Playground/docs/system/skill_governance.md`
 - `/Users/seanhan/Documents/Playground/docs/system/skill_spec.md`
+- `/Users/seanhan/Documents/Playground/docs/system/planner_visible_multi_skill_observability.md`
 
 ## Frozen Baseline
 
@@ -80,20 +81,36 @@ Current metric definitions for that check:
   - whether the success probe still deterministically selects `document_summarize`
 - `selector_key_hit_rate`
   - checked-in deterministic selection fixtures whose observed selector key matches the expected selector key
+- `selector_hit_rate_per_skill`
+  - per-skill split of the deterministic selector pack
 - `fallback_count`
   - deterministic skill selector fixtures that unexpectedly fail-close during the green-path pack
 - `fail_closed_count`
-  - unexpected fail-closed executions in the green-path pack; current expected baseline is `0`
+  - checked-in query-type cases that fail-close under the current multi-skill watch; current expected baseline is `2`
+- `fail_closed_ratio`
+  - ratio of fail-closed cases in the checked-in query-type watch; current expected baseline is `0.5`
+- `ambiguity_trigger_count`
+  - number of checked-in query-type fixtures that prove ambiguity-driven fail-close; current expected baseline is `1`
+- `routing_fallback_distribution`
+  - how the checked-in query-type watch falls back into the existing non-skill routing family
 - `skill_surface_split`
   - ratio of successful deterministic skill selections landing on `planner_visible` vs `internal_only` within the checked-in watch fixtures
 
 Current checked-in baseline for this watch is:
 
 - `document_summarize_selected = true`
-- `selector_key_hit_rate = 2/2`
+- `selector_key_hit_rate = 3/3`
+- `selector_hit_rate_per_skill`
+  - `search_and_summarize = 2/2`
+  - `document_summarize = 1/1`
 - `fallback_count = 0`
-- `fail_closed_count = 0`
-- `planner_visible = 2`
+- `fail_closed_count = 2`
+- `fail_closed_ratio = 0.5`
+- `ambiguity_trigger_count = 1`
+- `routing_fallback_distribution`
+  - `search_company_brain_docs = 2`
+  - `search_and_detail_doc = 2`
+- `planner_visible = 3`
 - `internal_only = 0`
 
 ## Readiness Checklist
@@ -120,6 +137,8 @@ Use this checklist during `readiness_check` and keep evidence in the same change
   - fail-closed negative probe still behaves as `fail_closed`
   - existing non-skill routing fixture remains unchanged
   - planner-visible skill admission stays query-bounded and fail-closed when the query is ambiguous
+  - follow-up / deictic references stay outside planner-visible admission
+  - selector overlap remains zero across all checked-in planner-visible skills
 
 ## Promotion Flow
 
@@ -169,21 +188,23 @@ Any one of the following blocks promotion:
 
 The promoted `planner_visible` surface must now be rolled back to `internal_only` if any one of these checked-in triggers fires:
 
-- `selector_drift`
-  - selector action, selector key, or planner-visible/internal-only split no longer matches the checked-in deterministic fixture pack
-- `answer_bypass`
-  - skill-backed output reaches the user without `chat_output_boundary` evidence showing the answer pipeline remained in front of the user boundary
-  - raw bridge payload leaks into user-visible text
-- `regression_break`
-  - the `document_summarize` happy path no longer succeeds under the checked-in success probe
-  - the negative probe no longer ends in `fail_closed`
+- `selector_overlap_threshold_exceeded`
+  - selector key conflicts or deterministic selector task-type overlap pairs rise above `0`
+- `fail_closed_rate_anomalous`
+  - fail-closed count rises above the checked-in query-type baseline `2`
+  - or fail-closed ratio rises above `0.5`
 - `routing_mismatch`
   - an existing non-skill routing fixture changes action/routing because of planner-visible skill wiring
+- `answer_inconsistency`
+  - skill-backed output reaches the user without `chat_output_boundary` evidence showing the answer pipeline remained in front of the user boundary
+  - raw bridge payload leaks into user-visible text
+  - success/fail-closed probes stop proving the current normalized answer boundary
 
 Current rollback decision boundary is fail-closed:
 
 - if `npm run check:planner-visible-skill` exits non-zero, do not promote another planner-visible skill
 - if the promoted skill is already active and one of the triggers above appears in the checked-in watch, revert the promotion metadata/path first, then investigate
+- the dedicated coexistence thresholds and query-type watch are mirrored in `/Users/seanhan/Documents/Playground/docs/system/planner_visible_multi_skill_observability.md`
 
 ## Debug SOP
 
@@ -201,14 +222,23 @@ When the planner-visible skill watch fails, current checked-in debug order is:
    - `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
    - `/Users/seanhan/Documents/Playground/tests/user-response-normalizer.test.mjs`
 5. if the mismatch is routing-side, confirm existing non-skill fixtures still map to the same planner action before changing selector wiring
+6. for two-skill coexistence drift, also inspect:
+   - `summary.selector_hit_rate_per_skill`
+   - `summary.fail_closed_count`
+   - `summary.fail_closed_ratio`
+   - `summary.ambiguity_trigger_count`
+   - `summary.routing_fallback_distribution`
+   - `query_types`
+   - `observability.selector_overlap`
 
 ## Rollback SOP
 
 Current checked-in rollback path is:
 
 1. stop at the first triggered condition from `npm run check:planner-visible-skill`
-2. if `selector_drift`, `answer_bypass`, `regression_break`, or `routing_mismatch` is true, treat `document_summarize` planner-visible admission as unsafe
+2. if `selector_overlap_threshold_exceeded`, `fail_closed_rate_anomalous`, `routing_mismatch`, or `answer_inconsistency` is true, treat the current multi-skill planner-visible surface as unsafe
 3. revert the promotion path back to `internal_only` before attempting a new promotion or adding another planner-visible skill
+   - the fast path is to demote only the affected entry in `/Users/seanhan/Documents/Playground/src/planner/skill-bridge.mjs`
 4. rerun:
    - `npm run check:planner-visible-skill`
    - `npm run planner:diagnostics`
@@ -258,7 +288,8 @@ Current status:
   - `planner_catalog_eligible=true`
   - full readiness gate marked true for regression, answer pipeline, observability, raw-output blocking, output stability, and side-effect boundary lock
 - `search_and_summarize` enters strict planner `target_catalog` only when its query-bound admission boundary passes
-- `document_summarize` is allowed to enter strict planner `target_catalog`
+- `document_summarize` is allowed to enter strict planner `target_catalog` only on direct detail-summary semantics
+- explicit same-task follow-up references such as `這份文件幫我整理重點` now fail closed and stay on the existing non-skill detail family
 
 Thread `search-and-summarize-admission-boundary-v1` promotes `search_and_summarize` from `readiness_check` to `planner_visible` with a query-bound fail-closed admission boundary so the planner-visible surface does not widen the existing generic search path.
 

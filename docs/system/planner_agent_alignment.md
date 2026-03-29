@@ -230,8 +230,9 @@ This path is bounded by the checked-in planner contract:
     - selector drift, answer-pipeline bypass, unstable output shape, or side-effect overreach all block promotion
     - `search_and_summarize` and `document_summarize` are promoted in the current baseline
     - `search_and_summarize` promotion is additionally narrowed by a query-bound admission boundary that fails closed on ambiguity and preserves the original generic search path
-  - strict user-input planner `target_catalog` admits `document_summarize`, and admits `search_and_summarize` only when its admission boundary passes
-  - strict planner decision validation may admit `search_and_summarize` only inside that admission boundary, and may admit `document_summarize` only on its own non-overlapping detail-summary boundary
+    - current two-skill coexistence watch is mirrored in `/Users/seanhan/Documents/Playground/docs/system/planner_visible_multi_skill_observability.md`
+  - strict user-input planner `target_catalog` admits `document_summarize` only on direct detail-summary semantics, and admits `search_and_summarize` only when its admission boundary passes
+  - strict planner decision validation may admit `search_and_summarize` only inside that admission boundary, and may admit `document_summarize` only on its own non-overlapping detail-summary boundary; explicit same-task follow-up references fail closed out of planner-visible admission
   - deterministic selection now resolves through the checked-in skill selector registry in `planner/skill-bridge.mjs`
   - if more than one planner-visible skill claims the same deterministic selector key, selection fails closed as `selector_skill_conflict`
   - planner dispatch must call `planner/skill-bridge.mjs`

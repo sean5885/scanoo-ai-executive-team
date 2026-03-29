@@ -562,7 +562,7 @@ const plannerSkillActionRegistry = createPlannerSkillActionRegistry([
     },
     planner_admission_boundary: {
       require_signals: ["wants_document_summary", "wants_document_detail"],
-      forbid_signals: ["wants_document_search", "wants_document_list", "wants_scoped_doc_exclusion_search"],
+      forbid_signals: ["wants_document_search", "wants_document_list", "wants_scoped_doc_exclusion_search", "explicit_same_task"],
       fail_closed_on_ambiguity: true,
     },
     allowed_side_effects: {

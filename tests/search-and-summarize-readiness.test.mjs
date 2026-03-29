@@ -186,6 +186,21 @@ test("mixed search-and-summarize user intents keep the existing search path when
   assert.equal(event?.payload?.skill_selector_key, null);
 });
 
+test("direct document detail summaries keep the existing non-skill path when no skill task type is provided", () => {
+  const { events, logger } = createEventLogger();
+  const result = selectPlannerTool({
+    userIntent: "幫我整理 launch checklist 文件重點",
+    taskType: "",
+    logger,
+  });
+  const event = findLatestEvent(events, "planner_tool_select");
+
+  assert.equal(result.selected_action, "search_and_detail_doc");
+  assert.equal(result.routing_reason, "selector_search_and_detail_doc");
+  assert.equal(event?.payload?.skill_selector_attempted, false);
+  assert.equal(event?.payload?.skill_selector_key, null);
+});
+
 test("planner-visible search_and_summarize stays fail-closed for ambiguous mixed search/detail queries", () => {
   const ambiguousText = "幫我搜尋這份 launch checklist 文件並整理重點";
   const searchSkillDecision = validatePlannerUserInputDecision({
@@ -211,6 +226,58 @@ test("planner-visible search_and_summarize stays fail-closed for ambiguous mixed
   assert.equal(searchSkillDecision.error, "invalid_action");
   assert.equal(documentSkillDecision.ok, false);
   assert.equal(documentSkillDecision.error, "invalid_action");
+});
+
+test("planner-visible document_summarize stays direct-detail only and rejects follow-up references", () => {
+  const admittedCatalogNames = listPlannerDecisionCatalogEntries({
+    text: "幫我整理 launch checklist 文件重點",
+  }).map((entry) => entry.name);
+  const followUpCatalogNames = listPlannerDecisionCatalogEntries({
+    text: "這份文件幫我整理重點",
+  }).map((entry) => entry.name);
+  const directDetailDecision = validatePlannerUserInputDecision({
+    action: "document_summarize",
+    params: {
+      account_id: "acct_document_direct",
+      doc_id: "doc_launch_checklist",
+    },
+  }, {
+    text: "幫我整理 launch checklist 文件重點",
+  });
+  const followUpDecision = validatePlannerUserInputDecision({
+    action: "document_summarize",
+    params: {
+      account_id: "acct_document_follow_up",
+      doc_id: "doc_launch_checklist",
+    },
+  }, {
+    text: "這份文件幫我整理重點",
+  });
+  const searchDecision = validatePlannerUserInputDecision({
+    action: "search_and_summarize",
+    params: {
+      account_id: "acct_document_direct",
+      q: "launch checklist",
+    },
+  }, {
+    text: "幫我整理 launch checklist 文件重點",
+  });
+
+  assert.equal(admittedCatalogNames.includes("document_summarize"), true);
+  assert.equal(followUpCatalogNames.includes("document_summarize"), false);
+  assert.deepEqual(directDetailDecision, {
+    ok: true,
+    action: "document_summarize",
+    params: {
+      account_id: "acct_document_direct",
+      doc_id: "doc_launch_checklist",
+    },
+    target_kind: "action",
+  });
+  assert.equal(followUpDecision.ok, false);
+  assert.equal(followUpDecision.error, "invalid_action");
+  assert.equal(searchDecision.ok, false);
+  assert.equal(searchDecision.error, "invalid_action");
 });
 
 test("search_and_summarize stays observable and read-only while noisy search snippets are cleaned before final answer rendering", async () => {
