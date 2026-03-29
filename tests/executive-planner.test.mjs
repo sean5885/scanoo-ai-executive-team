@@ -5397,7 +5397,7 @@ test("selectPlannerTool keeps the original read-only skill path deterministic wi
     {
       action: "document_summarize",
       skill_name: "document_summarize",
-      surface_layer: "internal_only",
+      surface_layer: "planner_visible",
       max_skills_per_run: 1,
       allow_skill_chain: false,
       skill_class: "read_only",
@@ -5406,7 +5406,7 @@ test("selectPlannerTool keeps the original read-only skill path deterministic wi
       selector_key: "skill.document_summarize.read",
       selector_task_types: ["document_summary_skill"],
       routing_reason: "selector_document_summarize_skill",
-      planner_catalog_eligible: false,
+      planner_catalog_eligible: true,
       raw_user_output_allowed: false,
       allowed_side_effects: {
         read: ["get_company_brain_doc_detail"],
@@ -5433,7 +5433,7 @@ test("strict planner target catalog keeps internal-only skill actions hidden", (
   const catalogNames = catalogEntries.map((entry) => entry.name);
 
   assert.equal(catalogNames.includes("search_and_summarize"), false);
-  assert.equal(catalogNames.includes("document_summarize"), false);
+  assert.equal(catalogNames.includes("document_summarize"), true);
   assert.equal(catalogNames.includes("search_company_brain_docs"), true);
   assert.equal(catalogNames.includes("get_company_brain_doc_detail"), true);
 });
@@ -5458,7 +5458,7 @@ test("strict planner decision validation rejects internal-only skill actions eve
   });
 });
 
-test("strict planner decision validation still rejects document_summarize during readiness_check", () => {
+test("strict planner decision validation admits planner-visible document_summarize", () => {
   const result = validatePlannerUserInputDecision({
     action: "document_summarize",
     params: {
@@ -5468,13 +5468,13 @@ test("strict planner decision validation still rejects document_summarize during
   });
 
   assert.deepEqual(result, {
-    ok: false,
-    error: "invalid_action",
+    ok: true,
     action: "document_summarize",
     params: {
       account_id: "acct_hidden_document_skill",
       doc_id: "doc_hidden_document_skill",
     },
+    target_kind: "action",
   });
 });
 

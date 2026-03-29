@@ -96,11 +96,12 @@ Boundary:
   - selector path: chosen only by deterministic runtime conditions such as `taskType=skill_read`
   - planner action: `document_summarize`
   - backing skill: `document_summarize`
-  - surface layer: `internal_only`
+  - surface layer: `planner_visible`
   - planner visibility: `deterministic_only`
   - selector path: chosen only by deterministic runtime conditions such as `taskType=document_summary_skill`
-  - both actions stay outside the normal strict user-input planner `target_catalog`
-  - both actions are rejected if strict planner JSON tries to call them directly
+  - `search_and_summarize` stays outside the normal strict user-input planner `target_catalog`
+  - `document_summarize` is admitted to the strict planner `target_catalog` after the checked-in `readiness_check -> planner_visible` promotion
+  - even when planner can call `document_summarize` directly, output still stays behind `planner/skill-bridge.mjs`, `user-response-normalizer.mjs`, and canonical source mapping
 
 ### Read / Write Runtime Boundary
 

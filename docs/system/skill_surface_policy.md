@@ -34,10 +34,6 @@ Meaning:
 Current checked-in examples:
 
 - `search_and_summarize`
-- `document_summarize`
-  - still `internal_only`
-  - checked-in `promotion_stage = readiness_check`
-  - `previous_promotion_stage = internal_only`
 
 Required rules:
 
@@ -49,13 +45,17 @@ Required rules:
 
 Meaning:
 
-- reserved for future planner-selectable skill-backed actions
-- would allow a skill-backed action to appear in strict planner `target_catalog`
+- planner-selectable skill-backed action surface
+- allows a skill-backed action to appear in strict planner `target_catalog`
 - still must go through planner contract validation, `planner/skill-bridge.mjs`, and the existing answer pipeline
 
 Current checked-in status:
 
-- no checked-in skill uses this layer
+- `document_summarize`
+  - `surface_layer = planner_visible`
+  - `promotion_stage = planner_visible`
+  - `previous_promotion_stage = readiness_check`
+  - strict planner catalog admission is enabled
 
 Current policy gate:
 
@@ -66,7 +66,7 @@ Current policy gate:
 - full regression gate must be green
 - the existing answer pipeline must remain in front of the user response
 - raw skill output must stay hidden behind normalization
-- this layer is policy-defined but not activated by any current skill
+- this layer remains fail-closed and is activated only for `document_summarize` in the current baseline
 
 ### 3. `user_facing_capability`
 
@@ -97,14 +97,13 @@ Only skills that satisfy all of the following may be considered in future:
 
 Current checked-in answer:
 
-- none
+- `document_summarize`
 
 ### What must remain deterministic-only
 
 The following must stay `internal_only` in the current baseline:
 
 - `search_and_summarize`
-- `document_summarize`
 - any future `write` skill
 - any future `hybrid` skill
 - any skill whose output has not yet been normalized into the existing answer pipeline
@@ -145,14 +144,15 @@ This means:
 
 - deterministic planner access to `search_and_summarize`
 - deterministic planner access to `document_summarize`
-  - current checked-in stage metadata for `document_summarize` is `readiness_check`, but the action remains `internal_only`
-  - it is still hidden from strict planner `target_catalog`
+  - current checked-in stage metadata for `document_summarize` is `planner_visible`
+  - it is now visible in strict planner `target_catalog`
+  - it still stays behind `planner/skill-bridge.mjs` and the existing answer boundary
 
 ### Currently not open
 
 - third checked-in skill
 - skill chaining
-- planner-visible skill-backed actions
+- additional planner-visible skill-backed actions beyond `document_summarize`
 - user-facing capability layer
 - raw skill output rendered directly to user
 - write / hybrid skills in planner catalog
@@ -171,8 +171,8 @@ Expansion remains blocked until all of the following are done in the same change
 
 Current thread outcome:
 
-- `document_summarize` now records checked-in `readiness_check` status while staying `internal_only`
+- `document_summarize` is now promoted from `readiness_check` to `planner_visible`
 - no new skill added
 - no skill chain added
-- no new public capability enabled
-- no planner-visible surface activated
+- no public API drift introduced
+- planner-visible surface is activated only for `document_summarize`

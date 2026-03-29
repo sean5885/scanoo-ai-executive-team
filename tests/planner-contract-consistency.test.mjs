@@ -166,15 +166,15 @@ test("planner contract consistency flags missing registered routing_reason", () 
   assert.equal(report.findings.undefined_routing_reasons[0].reason, "routing_reason_missing_from_contract");
 });
 
-test("planner contract mirror keeps document_summarize readiness_check metadata aligned with the skill registry", () => {
+test("planner contract mirror keeps document_summarize planner_visible metadata aligned with the skill registry", () => {
   const contractPolicy = plannerContract?.actions?.document_summarize?.skill_surface_policy;
   const registryEntry = getPlannerSkillAction("document_summarize");
 
   assert.deepEqual(contractPolicy, {
-    surface_layer: "internal_only",
-    promotion_stage: "readiness_check",
-    previous_promotion_stage: "internal_only",
-    planner_catalog_eligible: false,
+    surface_layer: "planner_visible",
+    promotion_stage: "planner_visible",
+    previous_promotion_stage: "readiness_check",
+    planner_catalog_eligible: true,
     readiness_gate: {
       regression_suite_passed: true,
       answer_pipeline_enforced: true,

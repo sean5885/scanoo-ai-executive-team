@@ -51,8 +51,8 @@ Checked-in planner skill actions now carry an explicit surface layer:
   - deterministic planner-only access
   - hidden from strict user-input planner `target_catalog`
 - `planner_visible`
-  - reserved for future planner-selectable skill-backed actions
-  - no checked-in skill currently uses it
+  - planner-selectable skill-backed action surface
+  - current checked-in example: `document_summarize`
 - `user_facing_capability`
   - reserved and disabled
   - no checked-in registry entry may use it
@@ -62,9 +62,9 @@ Current checked-in skills:
 - `search_and_summarize`
   - `surface_layer = internal_only`
 - `document_summarize`
-  - `surface_layer = internal_only`
-  - `promotion_stage = readiness_check`
-  - `previous_promotion_stage = internal_only`
+  - `surface_layer = planner_visible`
+  - `promotion_stage = planner_visible`
+  - `previous_promotion_stage = readiness_check`
 
 Current checked-in enforcement:
 
@@ -177,7 +177,7 @@ For `readiness_check` and `planner_visible` candidates the bar is stricter:
 
 This keeps old behavior stable as long as a new skill uses a different selector key.
 It also keeps current internal-only skills outside the strict planner catalog.
-It also means a checked-in `readiness_check` skill remains selector-stable and catalog-hidden until a later explicit `planner_visible` promotion.
+It also means only an explicitly promoted checked-in skill may enter the strict planner catalog, while the remaining internal-only skills stay hidden.
 
 ## Response Surface Boundary
 
@@ -249,8 +249,10 @@ Current regression coverage includes:
 - planner skill failures do not fall back into generic document search
 - strict planner target catalog keeps internal-only skill actions hidden
 - strict planner decision validation rejects internal-only skill actions
-- completed `readiness_check` metadata for `document_summarize` still keeps the action hidden from strict planner `target_catalog`
+- strict planner target catalog admits planner-visible `document_summarize`
+- strict planner decision validation admits planner-visible `document_summarize`
 - incomplete or malformed `readiness_check` metadata fails closed at planner skill registry build time
+- planner-visible stage metadata mixed with `internal_only` surface fails closed at planner skill registry build time
 - planner skill success replies still go through canonical answer-source mapping
 
 ## Future Expansion Guard
@@ -267,4 +269,4 @@ Current answer:
 - every new skill must prove it does not bypass `user-response-normalizer.mjs`
 
 Current thread does not open a third skill.
-If those conditions are not met, the checked-in governance model must remain exactly at the current two internal-only read skills.
+If those conditions are not met, the checked-in governance model must remain at the current bounded surface of one internal-only read skill plus one planner-visible read skill.

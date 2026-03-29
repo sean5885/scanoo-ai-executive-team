@@ -24,14 +24,14 @@ Related mirrors:
 
 ## Frozen Baseline
 
-Current checked-in baseline remains unchanged:
+Current checked-in baseline for this promotion thread is:
 
-- freeze stays at `planner-visible-skill-readiness-v1 + latest main`
-- all checked-in skills remain `internal_only`
+- freeze starts from `document-summarize-readiness-check-v1`
+- `search_and_summarize` remains `internal_only`
 - skill chaining remains disabled
-- no checked-in skill is promoted to `planner_visible` in this thread
-- `document_summarize` now records a completed `readiness_check` while remaining `internal_only`
-- this change does not expand the planner-visible runtime surface
+- `document_summarize` is the only checked-in skill promoted to `planner_visible`
+- no third skill is added
+- this change expands planner-visible runtime surface only for `document_summarize`
 
 ## Readiness Gate
 
@@ -141,28 +141,29 @@ Current checked-in skill-backed actions:
 
 Current status:
 
-- both remain `internal_only`
 - `search_and_summarize` remains `promotion_stage=internal_only`
+- `search_and_summarize` remains `surface_layer=internal_only`
 - `document_summarize` is now checked in as:
-  - `surface_layer=internal_only`
-  - `promotion_stage=readiness_check`
-  - `previous_promotion_stage=internal_only`
+  - `surface_layer=planner_visible`
+  - `promotion_stage=planner_visible`
+  - `previous_promotion_stage=readiness_check`
+  - `planner_catalog_eligible=true`
   - full readiness gate marked true for regression, answer pipeline, raw-output blocking, output stability, and side-effect boundary lock
-- neither is promoted to `planner_visible` in this thread
-- neither is allowed to enter strict planner `target_catalog`
+- `search_and_summarize` remains outside strict planner `target_catalog`
+- `document_summarize` is allowed to enter strict planner `target_catalog`
 
-First upgrade candidate:
+Promoted candidate:
 
-- yes, a first candidate exists conceptually: `document_summarize`
+- `document_summarize`
 - reason:
   - narrowest read-only surface
   - single-document input shape is simpler than open search query shape
   - deterministic selector is already isolated to `taskType=document_summary_skill`
   - answer/source rendering already maps cleanly into the existing user boundary
 - current conclusion:
-  - `document_summarize` is now the first checked-in `readiness_check` candidate
-  - it is still not promoted to `planner_visible`
-  - any future formal promotion must remain a dedicated follow-up change and must keep strict planner catalog admission fail-closed until that promotion lands
+  - `document_summarize` has completed the checked-in promotion path `internal_only -> readiness_check -> planner_visible`
+  - strict planner catalog admission is now active for this action only
+  - answer pipeline, canonical source mapping, and raw payload blocking remain unchanged
 
 Second candidate, but not first:
 

@@ -991,7 +991,7 @@ test("planner skill bridge exposes checked-in read-only skill actions and adapts
     {
       action: "document_summarize",
       skill_name: "document_summarize",
-      surface_layer: "internal_only",
+      surface_layer: "planner_visible",
       max_skills_per_run: 1,
       allow_skill_chain: false,
       skill_class: "read_only",
@@ -1000,7 +1000,7 @@ test("planner skill bridge exposes checked-in read-only skill actions and adapts
       selector_key: "skill.document_summarize.read",
       selector_task_types: ["document_summary_skill"],
       routing_reason: "selector_document_summarize_skill",
-      planner_catalog_eligible: false,
+      planner_catalog_eligible: true,
       raw_user_output_allowed: false,
       allowed_side_effects: {
         read: ["get_company_brain_doc_detail"],
@@ -1056,13 +1056,13 @@ test("deterministic skill selector keeps existing routing stable when a new non-
   });
 });
 
-test("document_summarize readiness_check metadata stays internal-only and fully gated", () => {
+test("document_summarize planner_visible metadata stays fully gated and catalog-eligible", () => {
   const entry = getPlannerSkillAction("document_summarize");
 
-  assert.equal(entry?.surface_layer, "internal_only");
-  assert.equal(entry?.promotion_stage, "readiness_check");
-  assert.equal(entry?.previous_promotion_stage, "internal_only");
-  assert.equal(entry?.planner_catalog_eligible, false);
+  assert.equal(entry?.surface_layer, "planner_visible");
+  assert.equal(entry?.promotion_stage, "planner_visible");
+  assert.equal(entry?.previous_promotion_stage, "readiness_check");
+  assert.equal(entry?.planner_catalog_eligible, true);
   assert.equal(entry?.selector_key, "skill.document_summarize.read");
   assert.deepEqual(entry?.selector_task_types, ["document_summary_skill"]);
   assert.deepEqual(entry?.readiness_gate, {
@@ -1072,6 +1072,38 @@ test("document_summarize readiness_check metadata stays internal-only and fully 
     output_shape_stable: true,
     side_effect_boundary_locked: true,
   });
+});
+
+test("planner_visible document_summarize admission succeeds when readiness metadata is complete", () => {
+  const registry = createPlannerSkillActionRegistry([
+    {
+      action: "document_summarize",
+      skill_name: "document_summarize",
+      surface_layer: "planner_visible",
+      promotion_stage: "planner_visible",
+      previous_promotion_stage: "readiness_check",
+      skill_class: "read_only",
+      runtime_access: ["read_runtime"],
+      selector_mode: "deterministic_only",
+      selector_key: "skill.document_summarize.read",
+      selector_task_types: ["document_summary_skill"],
+      routing_reason: "selector_document_summarize_skill",
+      selection_reason: "document summary path",
+      readiness_gate: {
+        regression_suite_passed: true,
+        answer_pipeline_enforced: true,
+        raw_skill_output_blocked: true,
+        output_shape_stable: true,
+        side_effect_boundary_locked: true,
+      },
+      allowed_side_effects: {
+        read: ["get_company_brain_doc_detail"],
+        write: [],
+      },
+    },
+  ]);
+
+  assert.equal(registry.get("document_summarize")?.planner_catalog_eligible, true);
 });
 
 test("deterministic skill selector fail-closes when multiple skills compete for the same task type", () => {
@@ -1239,6 +1271,36 @@ test("planner-visible skill candidate fails closed when it jumps directly from i
       selector_task_types: ["jump_visible_skill"],
       routing_reason: "selector_jump_visible_skill",
       selection_reason: "jump visible path",
+      allowed_side_effects: {
+        read: ["search_knowledge_base"],
+        write: [],
+      },
+      readiness_gate: {
+        regression_suite_passed: true,
+        answer_pipeline_enforced: true,
+        raw_skill_output_blocked: true,
+        output_shape_stable: true,
+        side_effect_boundary_locked: true,
+      },
+    },
+  ]), /invalid_planner_skill_surface_policy/);
+});
+
+test("planner-visible stage metadata fails closed when mixed with internal_only surface", () => {
+  assert.throws(() => createPlannerSkillActionRegistry([
+    {
+      action: "surface_mixed_visible_skill",
+      skill_name: "surface_mixed_visible_skill",
+      surface_layer: "internal_only",
+      promotion_stage: "planner_visible",
+      previous_promotion_stage: "readiness_check",
+      skill_class: "read_only",
+      runtime_access: ["read_runtime"],
+      selector_mode: "deterministic_only",
+      selector_key: "skill.surface_mixed_visible.read",
+      selector_task_types: ["surface_mixed_visible_skill"],
+      routing_reason: "selector_surface_mixed_visible_skill",
+      selection_reason: "surface mixed visible path",
       allowed_side_effects: {
         read: ["search_knowledge_base"],
         write: [],

@@ -498,9 +498,9 @@ const plannerSkillActionRegistry = createPlannerSkillActionRegistry([
   {
     action: "document_summarize",
     skill_name: "document_summarize",
-    surface_layer: "internal_only",
-    promotion_stage: "readiness_check",
-    previous_promotion_stage: "internal_only",
+    surface_layer: "planner_visible",
+    promotion_stage: "planner_visible",
+    previous_promotion_stage: "readiness_check",
     skill_class: "read_only",
     runtime_access: ["read_runtime"],
     selector_mode: "deterministic_only",
