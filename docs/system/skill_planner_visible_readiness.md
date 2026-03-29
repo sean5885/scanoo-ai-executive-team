@@ -26,11 +26,12 @@ Related mirrors:
 
 Current checked-in baseline remains unchanged:
 
-- freeze stays at `skill-surface-expansion-policy-v1`
+- freeze stays at `planner-visible-skill-readiness-v1 + latest main`
 - all checked-in skills remain `internal_only`
 - skill chaining remains disabled
 - no checked-in skill is promoted to `planner_visible` in this thread
-- this change defines governance only and does not expand the planner-visible runtime surface
+- `document_summarize` now records a completed `readiness_check` while remaining `internal_only`
+- this change does not expand the planner-visible runtime surface
 
 ## Readiness Gate
 
@@ -141,7 +142,13 @@ Current checked-in skill-backed actions:
 Current status:
 
 - both remain `internal_only`
-- neither is promoted in this thread
+- `search_and_summarize` remains `promotion_stage=internal_only`
+- `document_summarize` is now checked in as:
+  - `surface_layer=internal_only`
+  - `promotion_stage=readiness_check`
+  - `previous_promotion_stage=internal_only`
+  - full readiness gate marked true for regression, answer pipeline, raw-output blocking, output stability, and side-effect boundary lock
+- neither is promoted to `planner_visible` in this thread
 - neither is allowed to enter strict planner `target_catalog`
 
 First upgrade candidate:
@@ -153,12 +160,11 @@ First upgrade candidate:
   - deterministic selector is already isolated to `taskType=document_summary_skill`
   - answer/source rendering already maps cleanly into the existing user boundary
 - current conclusion:
-  - `document_summarize` is only the first candidate for future `readiness_check`
-  - it is not promoted now
-  - it must still prove the full readiness checklist in a future dedicated change
+  - `document_summarize` is now the first checked-in `readiness_check` candidate
+  - it is still not promoted to `planner_visible`
+  - any future formal promotion must remain a dedicated follow-up change and must keep strict planner catalog admission fail-closed until that promotion lands
 
 Second candidate, but not first:
 
 - `search_and_summarize`
 - broader query surface means more selector/query regression risk than `document_summarize`
-

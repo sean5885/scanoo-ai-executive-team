@@ -5458,6 +5458,26 @@ test("strict planner decision validation rejects internal-only skill actions eve
   });
 });
 
+test("strict planner decision validation still rejects document_summarize during readiness_check", () => {
+  const result = validatePlannerUserInputDecision({
+    action: "document_summarize",
+    params: {
+      account_id: "acct_hidden_document_skill",
+      doc_id: "doc_hidden_document_skill",
+    },
+  });
+
+  assert.deepEqual(result, {
+    ok: false,
+    error: "invalid_action",
+    action: "document_summarize",
+    params: {
+      account_id: "acct_hidden_document_skill",
+      doc_id: "doc_hidden_document_skill",
+    },
+  });
+});
+
 test("runPlannerToolFlow executes preset runner when selection returns preset", async () => {
   let dispatcherCalled = false;
   let presetCalled = false;

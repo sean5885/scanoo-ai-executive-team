@@ -8,6 +8,7 @@ const testDb = await createTestDbHarness();
 import {
   buildPlannerSkillEnvelope,
   createPlannerSkillActionRegistry,
+  getPlannerSkillAction,
   listPlannerSkillActions,
   runPlannerSkillBridge,
   selectPlannerSkillActionForTaskType,
@@ -1055,6 +1056,24 @@ test("deterministic skill selector keeps existing routing stable when a new non-
   });
 });
 
+test("document_summarize readiness_check metadata stays internal-only and fully gated", () => {
+  const entry = getPlannerSkillAction("document_summarize");
+
+  assert.equal(entry?.surface_layer, "internal_only");
+  assert.equal(entry?.promotion_stage, "readiness_check");
+  assert.equal(entry?.previous_promotion_stage, "internal_only");
+  assert.equal(entry?.planner_catalog_eligible, false);
+  assert.equal(entry?.selector_key, "skill.document_summarize.read");
+  assert.deepEqual(entry?.selector_task_types, ["document_summary_skill"]);
+  assert.deepEqual(entry?.readiness_gate, {
+    regression_suite_passed: true,
+    answer_pipeline_enforced: true,
+    raw_skill_output_blocked: true,
+    output_shape_stable: true,
+    side_effect_boundary_locked: true,
+  });
+});
+
 test("deterministic skill selector fail-closes when multiple skills compete for the same task type", () => {
   const registry = createPlannerSkillActionRegistry([
     {
@@ -1145,6 +1164,65 @@ test("deterministic skill selector fail-closes when two skills claim the same se
     reason: "",
     error: "selector_conflict",
   });
+});
+
+test("readiness_check candidate fails closed when previous stage is not recorded", () => {
+  assert.throws(() => createPlannerSkillActionRegistry([
+    {
+      action: "document_summarize",
+      skill_name: "document_summarize",
+      surface_layer: "internal_only",
+      promotion_stage: "readiness_check",
+      skill_class: "read_only",
+      runtime_access: ["read_runtime"],
+      selector_mode: "deterministic_only",
+      selector_key: "skill.document_summarize.read",
+      selector_task_types: ["document_summary_skill"],
+      routing_reason: "selector_document_summarize_skill",
+      selection_reason: "document summary path",
+      readiness_gate: {
+        regression_suite_passed: true,
+        answer_pipeline_enforced: true,
+        raw_skill_output_blocked: true,
+        output_shape_stable: true,
+        side_effect_boundary_locked: true,
+      },
+      allowed_side_effects: {
+        read: ["get_company_brain_doc_detail"],
+        write: [],
+      },
+    },
+  ]), /invalid_planner_skill_surface_policy/);
+});
+
+test("readiness_check candidate fails closed when readiness evidence is incomplete", () => {
+  assert.throws(() => createPlannerSkillActionRegistry([
+    {
+      action: "document_summarize",
+      skill_name: "document_summarize",
+      surface_layer: "internal_only",
+      promotion_stage: "readiness_check",
+      previous_promotion_stage: "internal_only",
+      skill_class: "read_only",
+      runtime_access: ["read_runtime"],
+      selector_mode: "deterministic_only",
+      selector_key: "skill.document_summarize.read",
+      selector_task_types: ["document_summary_skill"],
+      routing_reason: "selector_document_summarize_skill",
+      selection_reason: "document summary path",
+      readiness_gate: {
+        regression_suite_passed: true,
+        answer_pipeline_enforced: true,
+        raw_skill_output_blocked: true,
+        output_shape_stable: true,
+        side_effect_boundary_locked: false,
+      },
+      allowed_side_effects: {
+        read: ["get_company_brain_doc_detail"],
+        write: [],
+      },
+    },
+  ]), /invalid_planner_skill_surface_policy/);
 });
 
 test("planner-visible skill candidate fails closed when it jumps directly from internal_only", () => {

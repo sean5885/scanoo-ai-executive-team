@@ -121,6 +121,7 @@ function buildPlannerSkillSurfacePolicy({
     ? allowedSideEffects.write.map((item) => cleanText(item)).filter(Boolean)
     : [];
   const violations = [];
+  const isReadinessCheckStage = upgradePath.current_stage === SKILL_PROMOTION_STAGE_READINESS_CHECK;
 
   if (
     normalizedSurfaceLayer === SKILL_SURFACE_INTERNAL_ONLY
@@ -140,6 +141,78 @@ function buildPlannerSkillSurfacePolicy({
       code: "skill_surface_stage_mismatch",
       message: "planner_visible promotion stage cannot be combined with an internal_only surface.",
     });
+  }
+
+  if (isReadinessCheckStage) {
+    if (normalizedSurfaceLayer !== SKILL_SURFACE_INTERNAL_ONLY) {
+      violations.push({
+        code: "readiness_check_surface_mismatch",
+        message: "readiness_check candidates must remain internal_only until a later planner_visible promotion.",
+      });
+    }
+    if (upgradePath.previous_stage !== SKILL_PROMOTION_STAGE_INTERNAL_ONLY) {
+      violations.push({
+        code: "readiness_check_previous_stage_required",
+        message: "readiness_check candidates must record previous_promotion_stage=internal_only.",
+      });
+    }
+    if (normalizedSelectorMode !== SKILL_SELECTOR_MODE_DETERMINISTIC) {
+      violations.push({
+        code: "readiness_check_skill_must_be_deterministic_only",
+        message: "readiness_check candidates must keep deterministic selector wiring with no conflicts.",
+      });
+    }
+    if (normalizedSkillClass !== SKILL_CLASS_READ_ONLY) {
+      violations.push({
+        code: "readiness_check_skill_must_be_read_only",
+        message: "readiness_check candidates must remain read-only.",
+      });
+    }
+    if (
+      normalizedRuntimeAccess.length !== 1
+      || normalizedRuntimeAccess[0] !== SKILL_RUNTIME_ACCESS_READ
+    ) {
+      violations.push({
+        code: "readiness_check_skill_must_be_read_runtime_only",
+        message: "readiness_check candidates must stay on read_runtime only.",
+      });
+    }
+    if (declaredWriteSideEffects.length > 0) {
+      violations.push({
+        code: "readiness_check_skill_write_side_effect_not_allowed",
+        message: "readiness_check candidates must not declare write side effects.",
+      });
+    }
+    if (readinessGate.regression_suite_passed !== true) {
+      violations.push({
+        code: "readiness_check_requires_regression_pass",
+        message: "readiness_check requires a checked regression pass before metadata can advance.",
+      });
+    }
+    if (readinessGate.answer_pipeline_enforced !== true) {
+      violations.push({
+        code: "readiness_check_answer_pipeline_bypass",
+        message: "readiness_check candidates must keep the existing answer pipeline in front of user replies.",
+      });
+    }
+    if (readinessGate.raw_skill_output_blocked !== true) {
+      violations.push({
+        code: "readiness_check_raw_output_exposed",
+        message: "readiness_check candidates must keep raw skill output hidden behind the answer layer.",
+      });
+    }
+    if (readinessGate.output_shape_stable !== true) {
+      violations.push({
+        code: "readiness_check_output_shape_unstable",
+        message: "readiness_check candidates must prove a stable checked output shape.",
+      });
+    }
+    if (readinessGate.side_effect_boundary_locked !== true) {
+      violations.push({
+        code: "readiness_check_side_effect_boundary_unstable",
+        message: "readiness_check candidates must keep side effects within the declared read-only boundary.",
+      });
+    }
   }
 
   if (normalizedSurfaceLayer === SKILL_SURFACE_PLANNER_VISIBLE) {
@@ -426,6 +499,8 @@ const plannerSkillActionRegistry = createPlannerSkillActionRegistry([
     action: "document_summarize",
     skill_name: "document_summarize",
     surface_layer: "internal_only",
+    promotion_stage: "readiness_check",
+    previous_promotion_stage: "internal_only",
     skill_class: "read_only",
     runtime_access: ["read_runtime"],
     selector_mode: "deterministic_only",
@@ -433,6 +508,13 @@ const plannerSkillActionRegistry = createPlannerSkillActionRegistry([
     selector_task_types: ["document_summary_skill"],
     routing_reason: "selector_document_summarize_skill",
     selection_reason: "呼叫端明確要求文件摘要 read-only skill，固定走單一 skill action。",
+    readiness_gate: {
+      regression_suite_passed: true,
+      answer_pipeline_enforced: true,
+      raw_skill_output_blocked: true,
+      output_shape_stable: true,
+      side_effect_boundary_locked: true,
+    },
     allowed_side_effects: {
       read: ["get_company_brain_doc_detail"],
       write: [],

@@ -11,6 +11,7 @@ const {
   renderPlannerContractConsistencyReport,
   runPlannerContractConsistencyCheck,
 } = await import("../src/planner-contract-consistency.mjs");
+const { getPlannerSkillAction } = await import("../src/planner/skill-bridge.mjs");
 
 const plannerContract = JSON.parse(
   readFileSync(new URL("../docs/system/planner_contract.json", import.meta.url), "utf8"),
@@ -163,6 +164,30 @@ test("planner contract consistency flags missing registered routing_reason", () 
   assert.equal(report.summary.undefined_routing_reasons, 1);
   assert.equal(report.findings.undefined_routing_reasons[0].target, "selector_get_runtime_info");
   assert.equal(report.findings.undefined_routing_reasons[0].reason, "routing_reason_missing_from_contract");
+});
+
+test("planner contract mirror keeps document_summarize readiness_check metadata aligned with the skill registry", () => {
+  const contractPolicy = plannerContract?.actions?.document_summarize?.skill_surface_policy;
+  const registryEntry = getPlannerSkillAction("document_summarize");
+
+  assert.deepEqual(contractPolicy, {
+    surface_layer: "internal_only",
+    promotion_stage: "readiness_check",
+    previous_promotion_stage: "internal_only",
+    planner_catalog_eligible: false,
+    readiness_gate: {
+      regression_suite_passed: true,
+      answer_pipeline_enforced: true,
+      raw_skill_output_blocked: true,
+      output_shape_stable: true,
+      side_effect_boundary_locked: true,
+    },
+  });
+  assert.equal(registryEntry?.surface_layer, contractPolicy.surface_layer);
+  assert.equal(registryEntry?.promotion_stage, contractPolicy.promotion_stage);
+  assert.equal(registryEntry?.previous_promotion_stage, contractPolicy.previous_promotion_stage);
+  assert.equal(registryEntry?.planner_catalog_eligible, contractPolicy.planner_catalog_eligible);
+  assert.deepEqual(registryEntry?.readiness_gate, contractPolicy.readiness_gate);
 });
 
 test("planner contract consistency flags missing lifecycle follow-up action", () => {

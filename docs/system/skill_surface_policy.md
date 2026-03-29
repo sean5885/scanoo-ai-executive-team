@@ -35,6 +35,9 @@ Current checked-in examples:
 
 - `search_and_summarize`
 - `document_summarize`
+  - still `internal_only`
+  - checked-in `promotion_stage = readiness_check`
+  - `previous_promotion_stage = internal_only`
 
 Required rules:
 
@@ -142,6 +145,8 @@ This means:
 
 - deterministic planner access to `search_and_summarize`
 - deterministic planner access to `document_summarize`
+  - current checked-in stage metadata for `document_summarize` is `readiness_check`, but the action remains `internal_only`
+  - it is still hidden from strict planner `target_catalog`
 
 ### Currently not open
 
@@ -166,7 +171,8 @@ Expansion remains blocked until all of the following are done in the same change
 
 Current thread outcome:
 
-- policy only
+- `document_summarize` now records checked-in `readiness_check` status while staying `internal_only`
 - no new skill added
 - no skill chain added
 - no new public capability enabled
+- no planner-visible surface activated

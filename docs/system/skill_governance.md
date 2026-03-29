@@ -63,10 +63,17 @@ Current checked-in skills:
   - `surface_layer = internal_only`
 - `document_summarize`
   - `surface_layer = internal_only`
+  - `promotion_stage = readiness_check`
+  - `previous_promotion_stage = internal_only`
 
 Current checked-in enforcement:
 
 - `internal_only` skills must stay `deterministic_only`
+- `readiness_check` skills must stay `internal_only`
+- `readiness_check` skills must record `previous_promotion_stage = internal_only`
+- `readiness_check` skills must remain `read_only`
+- `readiness_check` skills must stay `read_runtime` only
+- `readiness_check` skills must prove regression pass, answer-pipeline enforcement, raw-output blocking, stable output shape, and locked side-effect boundary before the stage metadata is accepted
 - `planner_visible` skills must pass through `readiness_check`
 - `planner_visible` skills must stay `deterministic_only`
 - `planner_visible` skills must be `read_only`
@@ -170,6 +177,7 @@ For `readiness_check` and `planner_visible` candidates the bar is stricter:
 
 This keeps old behavior stable as long as a new skill uses a different selector key.
 It also keeps current internal-only skills outside the strict planner catalog.
+It also means a checked-in `readiness_check` skill remains selector-stable and catalog-hidden until a later explicit `planner_visible` promotion.
 
 ## Response Surface Boundary
 
@@ -241,6 +249,8 @@ Current regression coverage includes:
 - planner skill failures do not fall back into generic document search
 - strict planner target catalog keeps internal-only skill actions hidden
 - strict planner decision validation rejects internal-only skill actions
+- completed `readiness_check` metadata for `document_summarize` still keeps the action hidden from strict planner `target_catalog`
+- incomplete or malformed `readiness_check` metadata fails closed at planner skill registry build time
 - planner skill success replies still go through canonical answer-source mapping
 
 ## Future Expansion Guard
