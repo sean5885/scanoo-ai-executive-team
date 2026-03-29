@@ -19,6 +19,7 @@ Use this checklist before adding any new checked-in skill.
 - do not expose the skill to planner unless it has a deterministic selector key
 - do not reuse an existing selector key
 - do not add heuristic ranking or fallback between skills
+- if a future promotion from `internal_only` to `planner_visible` is intended, follow `/Users/seanhan/Documents/Playground/docs/system/skill_planner_visible_readiness.md`
 
 ## Isolation
 

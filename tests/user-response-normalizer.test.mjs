@@ -331,3 +331,52 @@ test("chat reply routes planner skill output through canonical answer sources wi
   assert.doesNotMatch(text, /skill_bridge|search_and_summarize|side_effects|read-runtime|authority/);
   assert.doesNotMatch(text, /\/Users\/|Back to \[?README/);
 });
+
+test("chat reply keeps document_summarize behind the answer pipeline even with markdown and link noise", () => {
+  const userResponse = normalizeUserResponse({
+    plannerEnvelope: {
+      ok: true,
+      action: "document_summarize",
+      execution_result: {
+        ok: true,
+        action: "document_summarize",
+        data: {
+          bridge: "skill_bridge",
+          skill: "document_summarize",
+          doc_id: "doc_noise_1",
+          title: "Noisy Notes",
+          summary: "文件「Noisy Notes」摘要：# TODO - [Ship checklist](https://example.com/checklist) - owner: ops",
+          hits: 1,
+          found: true,
+          limitations: ["文件缺少可用的結構化摘要，只能回傳基本文件資訊。"],
+          side_effects: [
+            {
+              mode: "read",
+              action: "get_company_brain_doc_detail",
+              runtime: "read-runtime",
+              authority: "mirror",
+            },
+          ],
+          sources: [
+            {
+              id: "doc_noise_1",
+              title: "Noisy Notes",
+              url: "https://example.com/noisy-notes",
+              snippet: "Back to [README.md](/Users/seanhan/Documents/Playground/README.md)\n- [Ship checklist](https://example.com/checklist)\n- owner: ops",
+            },
+          ],
+        },
+      },
+    },
+  });
+  const text = renderUserResponseText(userResponse);
+
+  assert.equal(userResponse.ok, true);
+  assert.match(userResponse.answer || "", /Noisy Notes/);
+  assert.equal(userResponse.sources.length, 1);
+  assert.match(userResponse.sources[0], /Noisy Notes：Ship checklist owner: ops/i);
+  assert.match(userResponse.sources[0], /https:\/\/example\.com\/noisy-notes/);
+  assert.match(userResponse.limitations.join(" "), /文件缺少可用的結構化摘要/);
+  assert.doesNotMatch(text, /skill_bridge|document_summarize|side_effects|get_company_brain_doc_detail|read-runtime|authority/);
+  assert.doesNotMatch(text, /\/Users\/|Back to \[?README/);
+});
