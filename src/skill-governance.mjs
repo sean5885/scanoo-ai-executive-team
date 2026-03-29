@@ -3,6 +3,9 @@ import { cleanText } from "./message-intent-utils.mjs";
 export const SKILL_CLASS_READ_ONLY = "read_only";
 export const SKILL_CLASS_WRITE = "write";
 export const SKILL_CLASS_HYBRID = "hybrid";
+export const SKILL_SURFACE_INTERNAL_ONLY = "internal_only";
+export const SKILL_SURFACE_PLANNER_VISIBLE = "planner_visible";
+export const SKILL_SURFACE_USER_FACING_CAPABILITY = "user_facing_capability";
 export const SKILL_SELECTOR_MODE_DETERMINISTIC = "deterministic_only";
 export const SKILL_SELECTOR_MODE_MANUAL = "manual_only";
 export const SKILL_RUNTIME_ACCESS_READ = "read_runtime";
@@ -19,6 +22,12 @@ const VALID_SKILL_CLASSES = Object.freeze([
 const VALID_SELECTOR_MODES = Object.freeze([
   SKILL_SELECTOR_MODE_DETERMINISTIC,
   SKILL_SELECTOR_MODE_MANUAL,
+]);
+
+const VALID_SKILL_SURFACES = Object.freeze([
+  SKILL_SURFACE_INTERNAL_ONLY,
+  SKILL_SURFACE_PLANNER_VISIBLE,
+  SKILL_SURFACE_USER_FACING_CAPABILITY,
 ]);
 
 const VALID_RUNTIME_ACCESS = Object.freeze([
@@ -80,6 +89,17 @@ export function buildDefaultRuntimeAccessForSkillClass(skillClass = SKILL_CLASS_
     return Object.freeze([SKILL_RUNTIME_ACCESS_WRITE]);
   }
   return Object.freeze([SKILL_RUNTIME_ACCESS_READ]);
+}
+
+export function normalizeSkillSurface(value = "") {
+  const normalized = cleanText(value);
+  return VALID_SKILL_SURFACES.includes(normalized)
+    ? normalized
+    : SKILL_SURFACE_INTERNAL_ONLY;
+}
+
+export function isPlannerCatalogEligibleSkillSurface(value = "") {
+  return normalizeSkillSurface(value) === SKILL_SURFACE_PLANNER_VISIBLE;
 }
 
 export function normalizeSkillGovernance(definition = {}) {
