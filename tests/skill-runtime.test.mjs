@@ -2,7 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
+const testDb = await createTestDbHarness();
 import {
   buildPlannerSkillEnvelope,
   createPlannerSkillActionRegistry,
@@ -22,6 +24,123 @@ const SKILL_FILE_URLS = [
   new URL("../src/skills/document-summarize-skill.mjs", import.meta.url),
   new URL("../src/skills/search-and-summarize-skill.mjs", import.meta.url),
 ];
+
+test.after(() => {
+  testDb.close();
+});
+
+function buildDocumentDetailOverride({
+  accountId = "acct_document_skill",
+  docId = "doc_default",
+  title = "Document Title",
+  url = "https://example.com/doc_default",
+  summary = {},
+} = {}) {
+  return {
+    mirror: {
+      get_company_brain_doc_detail: {
+        success: true,
+        data: {
+          doc: {
+            doc_id: docId,
+            title,
+            url,
+            source: "mirror",
+            created_at: "2026-03-20T00:00:00.000Z",
+            creator: {
+              account_id: accountId,
+              open_id: `ou_${docId}`,
+            },
+          },
+          summary,
+          learning_state: {
+            status: "learned",
+            structured_summary: {
+              overview: "",
+              headings: [],
+              highlights: [],
+              snippet: "",
+              content_length: 0,
+            },
+            key_concepts: [],
+            tags: [],
+            notes: "",
+            learned_at: null,
+            updated_at: null,
+          },
+        },
+        error: null,
+      },
+    },
+  };
+}
+
+function assertDocumentSummarizeReadOnlyBoundary(result, {
+  authority = "mirror",
+} = {}) {
+  assert.deepEqual(result.side_effects, [
+    {
+      mode: "read",
+      action: "get_company_brain_doc_detail",
+      runtime: "read-runtime",
+      authority,
+    },
+  ]);
+}
+
+function assertDocumentSummarizeStableShape(result, {
+  docId,
+  title,
+  found,
+  hits,
+  authority = "mirror",
+} = {}) {
+  assert.equal(result.ok, true);
+  assert.equal(result.skill, "document_summarize");
+  assert.equal(result.failure_mode, "fail_closed");
+  assertDocumentSummarizeReadOnlyBoundary(result, { authority });
+  assert.deepEqual(Object.keys(result.output).sort(), [
+    "doc_id",
+    "found",
+    "hits",
+    "limitations",
+    "sources",
+    "summary",
+    "title",
+  ]);
+  assert.equal(result.output.doc_id, docId);
+  assert.equal(result.output.title, title);
+  assert.equal(result.output.found, found);
+  assert.equal(result.output.hits, hits);
+  assert.equal(typeof result.output.summary, "string");
+  assert.ok(Array.isArray(result.output.limitations));
+  assert.ok(Array.isArray(result.output.sources));
+  assert.equal(result.output.sources.length, 1);
+
+  const plannerEnvelope = buildPlannerSkillEnvelope(result);
+  assert.deepEqual(Object.keys(plannerEnvelope.data).sort(), [
+    "doc_id",
+    "found",
+    "hits",
+    "limitations",
+    "side_effects",
+    "skill",
+    "sources",
+    "summary",
+    "title",
+  ]);
+  assert.equal(plannerEnvelope.ok, true);
+  assert.equal(plannerEnvelope.action, "skill:document_summarize");
+  assert.equal(plannerEnvelope.data.skill, "document_summarize");
+  assert.equal(plannerEnvelope.data.doc_id, docId);
+  assert.equal(plannerEnvelope.data.title, title);
+  assert.equal(plannerEnvelope.data.found, found);
+  assert.equal(plannerEnvelope.data.hits, hits);
+  assert.equal(typeof plannerEnvelope.data.summary, "string");
+  assert.ok(Array.isArray(plannerEnvelope.data.limitations));
+  assert.ok(Array.isArray(plannerEnvelope.data.sources));
+  assert.deepEqual(plannerEnvelope.data.side_effects, result.side_effects);
+}
 
 test("search_and_summarize runs through read-runtime and returns planner-usable output", async () => {
   const result = await runSkill({
@@ -296,6 +415,234 @@ test("document_summarize runs through read-runtime and returns a single-document
     },
     trace_id: null,
   });
+});
+
+test("document_summarize keeps a stable shape for an empty document without bypassing the read-only boundary", async () => {
+  const result = await runSkill({
+    registry: defaultSkillRegistry,
+    skillName: "document_summarize",
+    input: {
+      account_id: "acct_document_skill_empty",
+      doc_id: "doc_empty_1",
+      reader_overrides: buildDocumentDetailOverride({
+        accountId: "acct_document_skill_empty",
+        docId: "doc_empty_1",
+        title: "Empty Draft",
+      }),
+    },
+  });
+
+  assertDocumentSummarizeStableShape(result, {
+    docId: "doc_empty_1",
+    title: "Empty Draft",
+    found: true,
+    hits: 1,
+  });
+  assert.match(result.output.summary, /文件「Empty Draft」摘要：已整理可用內容。/);
+  assert.deepEqual(result.output.limitations, ["文件缺少可用的結構化摘要，只能回傳基本文件資訊。"]);
+  assert.equal(result.output.sources[0].snippet, "目前沒有可用的摘要片段。");
+});
+
+test("document_summarize remains stable for very long documents and trims heading highlight previews deterministically", async () => {
+  const longOverview = "長文件概覽 ".repeat(120);
+  const result = await runSkill({
+    registry: defaultSkillRegistry,
+    skillName: "document_summarize",
+    input: {
+      account_id: "acct_document_skill_long",
+      doc_id: "doc_long_1",
+      reader_overrides: buildDocumentDetailOverride({
+        accountId: "acct_document_skill_long",
+        docId: "doc_long_1",
+        title: "Long Spec",
+        summary: {
+          overview: longOverview,
+          headings: ["章節一", "章節二", "章節三", "章節四", "章節五"],
+          highlights: ["重點一", "重點二", "重點三", "重點四"],
+          snippet: "長文件摘要片段",
+          content_length: 200000,
+        },
+      }),
+    },
+  });
+
+  assertDocumentSummarizeStableShape(result, {
+    docId: "doc_long_1",
+    title: "Long Spec",
+    found: true,
+    hits: 1,
+  });
+  assert.match(result.output.summary, /長文件概覽/);
+  assert.match(result.output.summary, /重點段落：章節一、章節二、章節三/);
+  assert.doesNotMatch(result.output.summary, /章節四|章節五/);
+  assert.match(result.output.summary, /關鍵資訊：重點一；重點二/);
+  assert.doesNotMatch(result.output.summary, /重點三|重點四/);
+  assert.deepEqual(result.output.limitations, [
+    "僅保留前 3 個段落標題。",
+    "僅保留前 2 個重點。",
+  ]);
+});
+
+test("document_summarize keeps the same output shape when document summaries contain markdown list and link noise", async () => {
+  const result = await runSkill({
+    registry: defaultSkillRegistry,
+    skillName: "document_summarize",
+    input: {
+      account_id: "acct_document_skill_noise",
+      doc_id: "doc_noise_1",
+      reader_overrides: buildDocumentDetailOverride({
+        accountId: "acct_document_skill_noise",
+        docId: "doc_noise_1",
+        title: "Noisy Notes",
+        summary: {
+          overview: "# TODO\n- [Ship checklist](https://example.com/checklist)\n- owner: ops",
+          headings: ["## Scope", "- Risks"],
+          highlights: ["[verify](https://example.com/verify)", "`link + markdown`"],
+          snippet: "Back to [README.md](/Users/seanhan/Documents/Playground/README.md)\n- noisy snippet",
+          content_length: 300,
+        },
+      }),
+    },
+  });
+
+  assertDocumentSummarizeStableShape(result, {
+    docId: "doc_noise_1",
+    title: "Noisy Notes",
+    found: true,
+    hits: 1,
+  });
+  assert.match(result.output.summary, /Ship checklist/);
+  assert.match(result.output.summary, /https:\/\/example\.com\/checklist/);
+  assert.match(result.output.sources[0].snippet, /Back to \[README\.md\]/);
+});
+
+test("document_summarize fail-closes retrieval misses instead of inventing a summary", async () => {
+  const result = await runSkill({
+    registry: defaultSkillRegistry,
+    skillName: "document_summarize",
+    input: {
+      account_id: "acct_document_skill_missing",
+      doc_id: "doc_missing_1",
+      reader_overrides: {
+        mirror: {
+          get_company_brain_doc_detail: {
+            success: false,
+            error: "not_found",
+            data: {},
+          },
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(result, {
+    ok: false,
+    skill: "document_summarize",
+    failure_mode: "fail_closed",
+    error: "not_found",
+    output: null,
+    side_effects: [
+      {
+        mode: "read",
+        action: "get_company_brain_doc_detail",
+        runtime: "read-runtime",
+        authority: "mirror",
+      },
+    ],
+    trace_id: null,
+    details: {
+      phase: "read_runtime",
+      authorities_attempted: ["mirror"],
+    },
+  });
+
+  const plannerEnvelope = buildPlannerSkillEnvelope(result);
+  assert.deepEqual(plannerEnvelope, {
+    ok: false,
+    action: "skill:document_summarize",
+    error: "not_found",
+    data: {
+      skill: "document_summarize",
+      stop_reason: "fail_closed",
+      phase: "read_runtime",
+      side_effects: [
+        {
+          mode: "read",
+          action: "get_company_brain_doc_detail",
+          runtime: "read-runtime",
+          authority: "mirror",
+        },
+      ],
+    },
+    trace_id: null,
+  });
+});
+
+test("document_summarize stays stable when the document exists but its content is explicitly empty", async () => {
+  const result = await runSkill({
+    registry: defaultSkillRegistry,
+    skillName: "document_summarize",
+    input: {
+      account_id: "acct_document_skill_blank",
+      doc_id: "doc_blank_1",
+      reader_overrides: buildDocumentDetailOverride({
+        accountId: "acct_document_skill_blank",
+        docId: "doc_blank_1",
+        title: "Blank Template",
+        summary: {
+          overview: "   ",
+          headings: [],
+          highlights: [],
+          snippet: "",
+          content_length: 0,
+        },
+      }),
+    },
+  });
+
+  assertDocumentSummarizeStableShape(result, {
+    docId: "doc_blank_1",
+    title: "Blank Template",
+    found: true,
+    hits: 1,
+  });
+  assert.match(result.output.summary, /文件「Blank Template」摘要：已整理可用內容。/);
+  assert.deepEqual(result.output.limitations, ["文件缺少可用的結構化摘要，只能回傳基本文件資訊。"]);
+  assert.equal(result.output.sources[0].snippet, "目前沒有可用的摘要片段。");
+});
+
+test("document_summarize preserves multilingual summaries without changing the stable output contract", async () => {
+  const result = await runSkill({
+    registry: defaultSkillRegistry,
+    skillName: "document_summarize",
+    input: {
+      account_id: "acct_document_skill_multi",
+      doc_id: "doc_multi_1",
+      reader_overrides: buildDocumentDetailOverride({
+        accountId: "acct_document_skill_multi",
+        docId: "doc_multi_1",
+        title: "Global Launch Notes",
+        summary: {
+          overview: "這份文件整理 launch checklist、担当者、次の一手。",
+          headings: ["中文摘要", "English Checklist", "日本語メモ"],
+          highlights: ["owner: 小明", "next action: review rollout", "期限: 来週月曜"],
+          snippet: "混合語言摘要片段 mixed-language snippet",
+          content_length: 640,
+        },
+      }),
+    },
+  });
+
+  assertDocumentSummarizeStableShape(result, {
+    docId: "doc_multi_1",
+    title: "Global Launch Notes",
+    found: true,
+    hits: 1,
+  });
+  assert.match(result.output.summary, /launch checklist/);
+  assert.match(result.output.summary, /日本語メモ/);
+  assert.match(result.output.summary, /owner: 小明/);
+  assert.deepEqual(result.output.limitations, ["僅保留前 2 個重點。"]);
 });
 
 test("skill runtime fail-closes when side effects exceed contract", async () => {

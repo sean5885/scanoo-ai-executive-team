@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
+const testDb = await createTestDbHarness();
 import { runDocumentCreateMutation } from "../src/lark-mutation-runtime.mjs";
+
+test.after(() => {
+  testDb.close();
+});
 
 test("runDocumentCreateMutation carries create_doc audit and rollback details into the runtime journal", async () => {
   const previousAllowWrites = process.env.ALLOW_LARK_WRITES;

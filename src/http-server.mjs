@@ -7826,12 +7826,21 @@ async function handleSearch(res, requestUrl, body, logger = noopHttpLogger) {
       account_id: account.id,
       total: items.length,
     });
+    const normalizedItems = items.map((item) => ({
+      ...item,
+      document_id: item?.document_id || item?.metadata?.document_id || null,
+      title: item?.title || item?.metadata?.title || null,
+      url: item?.url || item?.metadata?.url || null,
+      source_type: item?.source_type || item?.metadata?.source_type || null,
+      chunk_index: item?.chunk_index ?? item?.metadata?.chunk_index ?? null,
+      updated_at: item?.updated_at || item?.metadata?.updated_at || null,
+    }));
     jsonResponse(res, 200, {
       ok: true,
       account_id: account.id,
       q,
-      total: items.length,
-      items,
+      total: normalizedItems.length,
+      items: normalizedItems,
     });
   } catch (error) {
     logger.warn("knowledge_search_failed", {

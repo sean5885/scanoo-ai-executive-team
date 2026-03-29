@@ -1,15 +1,54 @@
 import { cleanText } from "../src/message-intent-utils.mjs";
 import {
-  PLANNER_DIAGNOSTICS_COMPARE_FIELDS,
-  buildPlannerDiagnosticsCompareSummary,
-  renderPlannerContractConsistencyReport,
-  runPlannerContractConsistencyCheck,
-} from "../src/planner-contract-consistency.mjs";
-import {
   archivePlannerDiagnosticsSnapshot,
   readPlannerDiagnosticsManifest,
   resolvePlannerDiagnosticsSnapshot,
 } from "../src/planner-diagnostics-history.mjs";
+
+let plannerDiagnosticsModulePromise = null;
+
+function withStdoutSuppressed(fn) {
+  const originalWrite = process.stdout.write.bind(process.stdout);
+  process.stdout.write = (...args) => {
+    const callback = typeof args[args.length - 1] === "function" ? args[args.length - 1] : null;
+    callback?.();
+    return true;
+  };
+
+  try {
+    const result = fn();
+    if (result && typeof result.then === "function") {
+      return result.finally(() => {
+        process.stdout.write = originalWrite;
+      });
+    }
+    process.stdout.write = originalWrite;
+    return result;
+  } catch (error) {
+    process.stdout.write = originalWrite;
+    throw error;
+  }
+}
+
+async function loadPlannerDiagnosticsModule({ suppressStdout = false } = {}) {
+  if (plannerDiagnosticsModulePromise) {
+    return plannerDiagnosticsModulePromise;
+  }
+
+  const load = () => import("../src/planner-contract-consistency.mjs");
+  plannerDiagnosticsModulePromise = suppressStdout
+    ? withStdoutSuppressed(load)
+    : load();
+  return plannerDiagnosticsModulePromise;
+}
+
+async function runWithOptionalStdoutSuppression(fn, { suppressStdout = false } = {}) {
+  if (!suppressStdout) {
+    return fn();
+  }
+
+  return withStdoutSuppressed(fn);
+}
 
 function getArgValue(flag = "") {
   const index = process.argv.indexOf(flag);
@@ -90,6 +129,7 @@ function formatPlannerDiagnosticsCompareReport({
   currentRunId = "",
   compareTarget = null,
   manifestPath = "",
+  compareFields = [],
 } = {}) {
   const currentSummary = report?.diagnostics_summary || {};
   const previousSummary = compareTarget?.report?.diagnostics_summary || {};
@@ -99,7 +139,7 @@ function formatPlannerDiagnosticsCompareReport({
     `Compare: ${buildCompareLabel(compareTarget)}`,
   ];
 
-  for (const field of PLANNER_DIAGNOSTICS_COMPARE_FIELDS) {
+  for (const field of compareFields) {
     lines.push(buildFieldStatus(field, currentSummary, previousSummary).line);
   }
 
@@ -154,8 +194,19 @@ async function main() {
   }
 
   const wantsJson = process.argv.includes("--json");
+  const {
+    PLANNER_DIAGNOSTICS_COMPARE_FIELDS,
+    buildPlannerDiagnosticsCompareSummary,
+    renderPlannerContractConsistencyReport,
+    runPlannerContractConsistencyCheck,
+  } = await loadPlannerDiagnosticsModule({
+    suppressStdout: wantsJson,
+  });
   const compareTarget = await resolveCompareTarget();
-  const report = runPlannerContractConsistencyCheck();
+  const report = await runWithOptionalStdoutSuppression(
+    () => runPlannerContractConsistencyCheck(),
+    { suppressStdout: wantsJson },
+  );
 
   if (compareTarget) {
     report.compare_summary = buildPlannerDiagnosticsCompareSummary({
@@ -178,6 +229,7 @@ async function main() {
       currentRunId: archiveRecord?.run_id || "",
       compareTarget,
       manifestPath: manifest?.manifest_path || "",
+      compareFields: PLANNER_DIAGNOSTICS_COMPARE_FIELDS,
     }));
   } else {
     console.log(renderPlannerContractConsistencyReport(report));
