@@ -1,4 +1,9 @@
 import { cleanText } from "./message-intent-utils.mjs";
+import {
+  buildSkillGovernanceView,
+  normalizeSkillGovernance,
+  validateSkillGovernance,
+} from "./skill-governance.mjs";
 
 function normalizeSchemaTypeList(schema = null) {
   if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
@@ -126,6 +131,17 @@ export function createSkillDefinition(definition = {}) {
     throw new Error("invalid_skill_definition");
   }
 
+  const normalizedAllowedSideEffects = normalizeAllowedSideEffects(definition.allowed_side_effects);
+  const governanceDefinition = {
+    ...definition,
+    allowed_side_effects: normalizedAllowedSideEffects,
+  };
+  const governanceViolations = validateSkillGovernance(governanceDefinition);
+  if (governanceViolations.length > 0) {
+    throw new Error("invalid_skill_definition");
+  }
+  const governance = normalizeSkillGovernance(governanceDefinition);
+
   return Object.freeze({
     name,
     input_schema:
@@ -136,18 +152,28 @@ export function createSkillDefinition(definition = {}) {
       definition.output_schema && typeof definition.output_schema === "object" && !Array.isArray(definition.output_schema)
         ? definition.output_schema
         : { type: "object" },
-    allowed_side_effects: normalizeAllowedSideEffects(definition.allowed_side_effects),
+    allowed_side_effects: normalizedAllowedSideEffects,
     failure_mode: cleanText(definition.failure_mode) || "fail_closed",
+    skill_class: governance.skill_class,
+    runtime_access: governance.runtime_access,
+    governance,
     run,
   });
 }
 
 export function buildSkillContractView(definition = {}) {
+  const normalizedAllowedSideEffects = normalizeAllowedSideEffects(definition.allowed_side_effects);
   return {
     name: cleanText(definition.name) || null,
     input_schema: definition.input_schema && typeof definition.input_schema === "object" ? definition.input_schema : null,
     output_schema: definition.output_schema && typeof definition.output_schema === "object" ? definition.output_schema : null,
-    allowed_side_effects: normalizeAllowedSideEffects(definition.allowed_side_effects),
+    allowed_side_effects: normalizedAllowedSideEffects,
     failure_mode: cleanText(definition.failure_mode) || "fail_closed",
+    skill_class: cleanText(definition.skill_class) || null,
+    runtime_access: Array.isArray(definition.runtime_access) ? definition.runtime_access : [],
+    governance: buildSkillGovernanceView({
+      ...definition,
+      allowed_side_effects: normalizedAllowedSideEffects,
+    }),
   };
 }

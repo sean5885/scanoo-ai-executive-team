@@ -1778,23 +1778,21 @@ test("dispatchPlannerTool routes planner skill actions through skill-bridge with
         q: "launch checklist",
         reader_overrides: {
           index: {
-            search_knowledge_base() {
-              return {
-                success: true,
-                data: {
-                  items: [
-                    {
-                      id: "doc_skill_bridge_dispatch:0",
-                      snippet: "launch checklist owner timeline and review cadence",
-                      metadata: {
-                        title: "Launch Runbook",
-                        url: "https://example.com/doc_skill_bridge_dispatch",
-                      },
+            search_knowledge_base: {
+              success: true,
+              data: {
+                items: [
+                  {
+                    id: "doc_skill_bridge_dispatch:0",
+                    snippet: "launch checklist owner timeline and review cadence",
+                    metadata: {
+                      title: "Launch Runbook",
+                      url: "https://example.com/doc_skill_bridge_dispatch",
                     },
-                  ],
-                },
-                error: null,
-              };
+                  },
+                ],
+              },
+              error: null,
             },
           },
         },
@@ -3002,8 +3000,10 @@ test("runPlannerToolFlow fail-closes skill failures without falling back to docu
       account_id: "acct_skill_fail_closed",
       reader_overrides: {
         index: {
-          search_knowledge_base() {
-            throw new Error("reader exploded");
+          search_knowledge_base: {
+            success: false,
+            error: "runtime_exception",
+            data: null,
           },
         },
       },
@@ -5306,6 +5306,11 @@ test("selectPlannerTool can deterministically choose the single read-only skill 
       skill_name: "search_and_summarize",
       max_skills_per_run: 1,
       allow_skill_chain: false,
+      skill_class: "read_only",
+      runtime_access: ["read_runtime"],
+      selector_mode: "deterministic_only",
+      selector_task_types: ["knowledge_read_skill", "skill_read"],
+      routing_reason: "selector_search_and_summarize_skill",
       allowed_side_effects: {
         read: ["search_knowledge_base"],
         write: [],

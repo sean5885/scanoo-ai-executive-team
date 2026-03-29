@@ -217,6 +217,8 @@ This path is bounded by the checked-in planner contract:
 - planner skill integration is explicit and bounded:
   - checked-in planner action: `search_and_summarize`
   - current selection entry is deterministic-only (`taskType=skill_read` or equivalent internal caller contract)
+  - deterministic selection now resolves through the checked-in skill selector registry in `planner/skill-bridge.mjs`
+  - if more than one planner-visible skill claims the same deterministic selector key, selection fails closed as `selector_skill_conflict`
   - planner dispatch must call `planner/skill-bridge.mjs`
   - `planner/skill-bridge.mjs` may call exactly one checked-in skill runtime entry
   - current allowed side effects stay read-only (`search_knowledge_base`)

@@ -67,6 +67,7 @@ import {
   getPlannerSkillAction,
   listPlannerSkillActions,
   runPlannerSkillBridge,
+  selectPlannerSkillActionForTaskType,
 } from "./planner/skill-bridge.mjs";
 
 const executiveStartSignals = [
@@ -2792,13 +2793,14 @@ export function selectPlannerTool({
   let reason = "";
   let routingReason = "routing_no_match";
 
-  if (
-    normalizedTaskType === "skill_read"
-    || normalizedTaskType === "knowledge_read_skill"
-  ) {
-    selectedAction = "search_and_summarize";
-    reason = "呼叫端明確要求 read-only skill bridge，固定走單一 skill action。";
-    routingReason = "selector_search_and_summarize_skill";
+  const skillSelection = selectPlannerSkillActionForTaskType({
+    taskType: normalizedTaskType,
+  });
+
+  if (skillSelection.ok === true) {
+    selectedAction = skillSelection.action;
+    reason = skillSelection.reason;
+    routingReason = skillSelection.routing_reason;
   } else if (
     normalizedIntent.includes("建立文件並查詢")
     || normalizedIntent.includes("create then search")

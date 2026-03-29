@@ -8,6 +8,7 @@ This document mirrors the checked-in minimal `agent skill` runtime baseline.
 
 Current code anchors:
 
+- `/Users/seanhan/Documents/Playground/src/skill-governance.mjs`
 - `/Users/seanhan/Documents/Playground/src/skill-contract.mjs`
 - `/Users/seanhan/Documents/Playground/src/skill-runtime.mjs`
 - `/Users/seanhan/Documents/Playground/src/skill-registry.mjs`
@@ -31,6 +32,8 @@ A skill is a bounded reusable capability with:
 
 - explicit `input_schema`
 - explicit `output_schema`
+- explicit `skill_class`
+- explicit `runtime_access`
 - declared `allowed_side_effects`
 - fixed `failure_mode`
 
@@ -51,6 +54,10 @@ Current checked-in meaning:
   - explicitly declared as `read` or `write`
   - checked after execution
   - undeclared effects fail closed
+- governance:
+  - fixed `max_skills_per_run=1`
+  - fixed `allow_skill_chain=false`
+  - input/output must be JSON-serializable plain data
 
 ### Relationship With Planner Action And Tool
 
@@ -96,6 +103,8 @@ Current checked-in example:
   - read-only
   - uses `read-runtime`
   - allowed effect is only `read:search_knowledge_base`
+  - declared `skill_class=read_only`
+  - declared `runtime_access=["read_runtime"]`
 
 ## Minimal Checked-In Contract
 
@@ -106,6 +115,8 @@ Current contract shape:
   "name": "string",
   "input_schema": "object",
   "output_schema": "object",
+  "skill_class": "read_only|write|hybrid",
+  "runtime_access": ["read_runtime|mutation_runtime"],
   "allowed_side_effects": {
     "read": ["string"],
     "write": ["string"]
@@ -116,11 +127,19 @@ Current contract shape:
 
 Current runtime rules:
 
+- missing or mismatched governance metadata:
+  - throws `invalid_skill_definition`
 - input validation failure:
+  - returns `contract_violation`
+- non-serializable input:
   - returns `contract_violation`
 - undeclared side effect:
   - returns `contract_violation`
+- nested skill execution:
+  - returns `contract_violation`
 - invalid output shape:
+  - returns `contract_violation`
+- non-serializable output:
   - returns `contract_violation`
 - runtime failure:
   - returns controlled failure such as `runtime_exception`
@@ -172,6 +191,8 @@ Contract:
     "read": ["search_knowledge_base"],
     "write": []
   },
+  "skill_class": "read_only",
+  "runtime_access": ["read_runtime"],
   "failure_mode": "fail_closed"
 }
 ```
@@ -179,15 +200,17 @@ Contract:
 Behavior:
 
 1. validates `account_id` and `query`
-2. calls `read-runtime` with canonical `search_knowledge_base`
-3. records actual side effect as `read-runtime / index / search_knowledge_base`
-4. builds a deterministic summary from retrieved snippets
-5. adapts cleanly into a planner envelope through `planner/skill-bridge.mjs`
+2. validates input is JSON-serializable plain data
+3. calls `read-runtime` with canonical `search_knowledge_base`
+4. records actual side effect as `read-runtime / index / search_knowledge_base`
+5. builds a deterministic summary from retrieved snippets
+6. adapts cleanly into a planner envelope through `planner/skill-bridge.mjs`
 
 Boundary:
 
 - does not read the repository directly
 - does not call mutation runtime
+- input/output are cloned by runtime, so the skill does not share caller object references
 - does not add heuristic fallback or multi-skill planning
 - does not change answer-service output contract
 
@@ -232,7 +255,11 @@ For planner runtime integration, the same bridge now also exposes one checked-in
     "side_effects": ["object"],
     "bridge": "skill_bridge",
     "max_skills_per_run": 1,
-    "allow_skill_chain": false
+    "allow_skill_chain": false,
+    "skill_class": "read_only",
+    "runtime_access": ["read_runtime"],
+    "selector_mode": "deterministic_only",
+    "selector_task_types": ["knowledge_read_skill", "skill_read"]
   },
   "trace_id": "string|null"
 }
@@ -253,6 +280,8 @@ Current v1 rules:
 - direct planner -> skill-runtime calls are not allowed
 - each planner execution may use at most one skill-backed action
 - skill chaining is not allowed
+- planner-visible skills must have unique deterministic selector keys
+- selector conflicts fail closed instead of choosing heuristically
 - current checked-in planner skill action is read-only only
 - declared side effects must stay within:
   - `read: ["search_knowledge_base"]`

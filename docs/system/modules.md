@@ -104,6 +104,7 @@ Current-truth docs for onboarding are:
 ### 4. Skill Runtime
 
 - Implemented:
+  - `/Users/seanhan/Documents/Playground/src/skill-governance.mjs`
   - `/Users/seanhan/Documents/Playground/src/skill-contract.mjs`
   - `/Users/seanhan/Documents/Playground/src/skill-runtime.mjs`
   - `/Users/seanhan/Documents/Playground/src/skill-registry.mjs`
@@ -111,9 +112,12 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/planner/skill-bridge.mjs`
 - Current truth:
   - a checked-in minimal skill contract now exists
+  - skill definitions must now declare `skill_class` and `runtime_access`
   - the runtime validates input, output, and side effects
+  - the runtime rejects non-serializable input/output and nested skill execution
   - the checked-in sample skill is read-only and goes through `read-runtime`
   - planner can consume a skill result through a bridge envelope
+  - planner-visible skill selection is deterministic-only and conflict-fail-closed
   - skill existence does not add a new public route or planner routing target by itself
 - Evidence:
   - `/Users/seanhan/Documents/Playground/tests/skill-runtime.test.mjs`

@@ -1,6 +1,10 @@
 import { cleanText } from "../message-intent-utils.mjs";
 import { defaultSkillRegistry } from "../skill-registry.mjs";
 import { runSkill } from "../skill-runtime.mjs";
+import {
+  buildSkillGovernanceView,
+  normalizePlannerSkillSelector,
+} from "../skill-governance.mjs";
 
 function normalizeStringList(items = []) {
   if (!Array.isArray(items)) {
@@ -72,16 +76,69 @@ export function buildPlannerSkillEnvelope(skillExecution = {}) {
   };
 }
 
-const plannerSkillActionRegistry = new Map([
-  ["search_and_summarize", Object.freeze({
+export function createPlannerSkillActionRegistry(entries = []) {
+  const registry = new Map();
+
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const action = cleanText(entry?.action);
+    const skillName = cleanText(entry?.skill_name);
+    if (!action || !skillName) {
+      continue;
+    }
+    const governance = buildSkillGovernanceView({
+      skill_class: entry.skill_class,
+      runtime_access: entry.runtime_access,
+      allowed_side_effects: entry.allowed_side_effects,
+    });
+    const selector = normalizePlannerSkillSelector(entry);
+
+    registry.set(action, Object.freeze({
+      action,
+      skill_name: skillName,
+      max_skills_per_run: governance.max_skills_per_run,
+      allow_skill_chain: governance.allow_skill_chain,
+      skill_class: governance.skill_class,
+      runtime_access: governance.runtime_access,
+      allowed_side_effects: governance.skill_class
+        ? Object.freeze({
+          read: Array.isArray(entry?.allowed_side_effects?.read)
+            ? Object.freeze(entry.allowed_side_effects.read.map((item) => cleanText(item)).filter(Boolean))
+            : Object.freeze([]),
+          write: Array.isArray(entry?.allowed_side_effects?.write)
+            ? Object.freeze(entry.allowed_side_effects.write.map((item) => cleanText(item)).filter(Boolean))
+            : Object.freeze([]),
+        })
+        : Object.freeze({
+          read: Object.freeze([]),
+          write: Object.freeze([]),
+        }),
+      selector_mode: selector.selector_mode,
+      selector_task_types: selector.selector_task_types,
+      routing_reason: selector.routing_reason,
+      selection_reason: selector.selection_reason,
+      buildSkillInput: typeof entry.buildSkillInput === "function"
+        ? entry.buildSkillInput
+        : (() => ({})),
+    }));
+  }
+
+  return registry;
+}
+
+const plannerSkillActionRegistry = createPlannerSkillActionRegistry([
+  {
     action: "search_and_summarize",
     skill_name: "search_and_summarize",
-    max_skills_per_run: 1,
-    allow_skill_chain: false,
-    allowed_side_effects: Object.freeze({
-      read: Object.freeze(["search_knowledge_base"]),
-      write: Object.freeze([]),
-    }),
+    skill_class: "read_only",
+    runtime_access: ["read_runtime"],
+    selector_mode: "deterministic_only",
+    selector_task_types: ["knowledge_read_skill", "skill_read"],
+    routing_reason: "selector_search_and_summarize_skill",
+    selection_reason: "呼叫端明確要求 read-only skill bridge，固定走單一 skill action。",
+    allowed_side_effects: {
+      read: ["search_knowledge_base"],
+      write: [],
+    },
     buildSkillInput(payload = {}) {
       const normalizedPayload = payload && typeof payload === "object" && !Array.isArray(payload)
         ? payload
@@ -95,7 +152,7 @@ const plannerSkillActionRegistry = new Map([
         reader_overrides: normalizedPayload.reader_overrides ?? null,
       };
     },
-  })],
+  },
 ]);
 
 export function listPlannerSkillActions() {
@@ -104,12 +161,57 @@ export function listPlannerSkillActions() {
     skill_name: entry.skill_name,
     max_skills_per_run: entry.max_skills_per_run,
     allow_skill_chain: entry.allow_skill_chain,
+    skill_class: entry.skill_class,
+    runtime_access: entry.runtime_access,
+    selector_mode: entry.selector_mode,
+    selector_task_types: entry.selector_task_types,
+    routing_reason: entry.routing_reason,
     allowed_side_effects: entry.allowed_side_effects,
   }));
 }
 
 export function getPlannerSkillAction(action = "") {
   return plannerSkillActionRegistry.get(cleanText(action));
+}
+
+export function selectPlannerSkillActionForTaskType({
+  taskType = "",
+  registry = plannerSkillActionRegistry,
+} = {}) {
+  const normalizedTaskType = cleanText(String(taskType || "").toLowerCase());
+  if (!normalizedTaskType || !(registry instanceof Map)) {
+    return {
+      ok: false,
+      action: null,
+      routing_reason: "routing_no_match",
+      reason: "",
+      error: "not_found",
+    };
+  }
+
+  const matches = [...registry.values()].filter((entry) => (
+    entry.selector_mode === "deterministic_only"
+    && Array.isArray(entry.selector_task_types)
+    && entry.selector_task_types.includes(normalizedTaskType)
+  ));
+
+  if (matches.length !== 1) {
+    return {
+      ok: false,
+      action: null,
+      routing_reason: matches.length > 1 ? "selector_skill_conflict" : "routing_no_match",
+      reason: "",
+      error: matches.length > 1 ? "selector_conflict" : "not_found",
+    };
+  }
+
+  return {
+    ok: true,
+    action: matches[0].action,
+    skill_name: matches[0].skill_name,
+    routing_reason: matches[0].routing_reason || `selector_${matches[0].action}_skill`,
+    reason: matches[0].selection_reason || "命中 deterministic skill selector。",
+  };
 }
 
 export async function runPlannerSkillBridge({

@@ -1,8 +1,17 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { cleanText } from "./message-intent-utils.mjs";
 import {
   buildSkillContractView,
   validateSkillSchema,
 } from "./skill-contract.mjs";
+import {
+  DEFAULT_ALLOW_SKILL_CHAIN,
+  DEFAULT_MAX_SKILLS_PER_RUN,
+  cloneSerializableValue,
+  validateSerializableValue,
+} from "./skill-governance.mjs";
+
+const activeSkillExecutionStore = new AsyncLocalStorage();
 
 function normalizeEffectEntry(entry = {}) {
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
@@ -116,7 +125,39 @@ export async function runSkill({
     });
   }
 
-  const inputViolations = validateSkillSchema(skill.input_schema, input, "$input");
+  const activeSkillExecution = activeSkillExecutionStore.getStore();
+  if (activeSkillExecution?.active_skill) {
+    return buildSkillFailure({
+      skill: skill.name,
+      error: "contract_violation",
+      failureMode: skill.failure_mode,
+      phase: "governance",
+      details: {
+        message: "skill_chain_not_allowed",
+        active_skill: activeSkillExecution.active_skill,
+        requested_skill: skill.name,
+        max_skills_per_run: DEFAULT_MAX_SKILLS_PER_RUN,
+        allow_skill_chain: DEFAULT_ALLOW_SKILL_CHAIN,
+      },
+    });
+  }
+
+  const inputSerializationViolations = validateSerializableValue(input, "$input");
+  if (inputSerializationViolations.length > 0) {
+    return buildSkillFailure({
+      skill: skill.name,
+      error: "contract_violation",
+      failureMode: skill.failure_mode,
+      phase: "input_serialization",
+      details: {
+        violations: inputSerializationViolations,
+      },
+    });
+  }
+
+  const detachedInput = cloneSerializableValue(input);
+
+  const inputViolations = validateSkillSchema(skill.input_schema, detachedInput, "$input");
   if (inputViolations.length > 0) {
     return buildSkillFailure({
       skill: skill.name,
@@ -131,11 +172,13 @@ export async function runSkill({
 
   let execution = null;
   try {
-    execution = await skill.run({
-      input,
+    execution = await activeSkillExecutionStore.run({
+      active_skill: skill.name,
+    }, async () => skill.run({
+      input: detachedInput,
       logger,
       signal,
-    });
+    }));
   } catch {
     return buildSkillFailure({
       skill: skill.name,
@@ -185,7 +228,23 @@ export async function runSkill({
     });
   }
 
-  const outputViolations = validateSkillSchema(skill.output_schema, execution.output, "$output");
+  const outputSerializationViolations = validateSerializableValue(execution.output, "$output");
+  if (outputSerializationViolations.length > 0) {
+    return buildSkillFailure({
+      skill: skill.name,
+      error: "contract_violation",
+      failureMode: skill.failure_mode,
+      phase: "output_serialization",
+      details: {
+        violations: outputSerializationViolations,
+      },
+      sideEffects,
+      traceId: execution.trace_id,
+    });
+  }
+
+  const detachedOutput = cloneSerializableValue(execution.output);
+  const outputViolations = validateSkillSchema(skill.output_schema, detachedOutput, "$output");
   if (outputViolations.length > 0) {
     return buildSkillFailure({
       skill: skill.name,
@@ -204,7 +263,7 @@ export async function runSkill({
     ok: true,
     skill: skill.name,
     failure_mode: skill.failure_mode,
-    output: execution.output,
+    output: detachedOutput,
     side_effects: sideEffects,
     trace_id: cleanText(execution.trace_id) || null,
     details: {

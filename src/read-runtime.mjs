@@ -214,34 +214,44 @@ function resolveAuthorityForAction(action = "") {
   return null;
 }
 
+function buildReaderOverride(override = null) {
+  if (typeof override === "function") {
+    return override;
+  }
+  if (override && typeof override === "object" && !Array.isArray(override)) {
+    return async () => JSON.parse(JSON.stringify(override));
+  }
+  return null;
+}
+
 function resolveReaderForRequest(request = {}) {
   const overrides = request.context?.reader_overrides;
   if (request.primary_authority === INDEX_AUTHORITY) {
-    const override = overrides?.index?.[request.action];
-    if (typeof override === "function") {
+    const override = buildReaderOverride(overrides?.index?.[request.action]);
+    if (override) {
       return override;
     }
     return INDEX_READERS.get(request.action) || null;
   }
 
   if (request.primary_authority === LIVE_AUTHORITY) {
-    const override = overrides?.live?.[request.action];
-    if (typeof override === "function") {
+    const override = buildReaderOverride(overrides?.live?.[request.action]);
+    if (override) {
       return override;
     }
     return LIVE_READERS.get(request.action) || null;
   }
 
   if (request.primary_authority === DERIVED_AUTHORITY) {
-    const override = overrides?.derived?.[request.action];
-    if (typeof override === "function") {
+    const override = buildReaderOverride(overrides?.derived?.[request.action]);
+    if (override) {
       return override;
     }
     return DERIVED_READERS.get(request.action) || null;
   }
 
-  const override = overrides?.mirror?.[request.action];
-  if (typeof override === "function") {
+  const override = buildReaderOverride(overrides?.mirror?.[request.action]);
+  if (override) {
     return override;
   }
   return MIRROR_READERS.get(request.action) || null;

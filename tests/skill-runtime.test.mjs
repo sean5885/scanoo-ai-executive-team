@@ -1,10 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 
 import {
   buildPlannerSkillEnvelope,
+  createPlannerSkillActionRegistry,
   listPlannerSkillActions,
   runPlannerSkillBridge,
+  selectPlannerSkillActionForTaskType,
 } from "../src/planner/skill-bridge.mjs";
 import { createSkillDefinition } from "../src/skill-contract.mjs";
 import { defaultSkillRegistry } from "../src/skill-registry.mjs";
@@ -14,9 +18,11 @@ import {
   runSkill,
 } from "../src/skill-runtime.mjs";
 
-test("search_and_summarize runs through read-runtime and returns planner-usable output", async () => {
-  const readerCalls = [];
+const SKILL_FILE_URLS = [
+  new URL("../src/skills/search-and-summarize-skill.mjs", import.meta.url),
+];
 
+test("search_and_summarize runs through read-runtime and returns planner-usable output", async () => {
   const result = await runSkill({
     registry: defaultSkillRegistry,
     skillName: "search_and_summarize",
@@ -26,42 +32,36 @@ test("search_and_summarize runs through read-runtime and returns planner-usable 
       limit: 5,
       reader_overrides: {
         index: {
-          search_knowledge_base: ({ accountId, payload }) => {
-            readerCalls.push({ accountId, payload });
-            return {
-              success: true,
-              data: {
-                account: { id: accountId },
-                items: [
-                  {
-                    id: "doc_launch_1:0",
-                    snippet: "launch checklist owner timeline and review cadence",
-                    metadata: {
-                      title: "Launch Runbook",
-                      url: "https://example.com/doc_launch_1",
-                    },
+          search_knowledge_base: {
+            success: true,
+            data: {
+              account: { id: "acct_skill_runtime" },
+              items: [
+                {
+                  id: "doc_launch_1:0",
+                  snippet: "launch checklist owner timeline and review cadence",
+                  metadata: {
+                    title: "Launch Runbook",
+                    url: "https://example.com/doc_launch_1",
                   },
-                  {
-                    id: "doc_launch_2:0",
-                    snippet: "rollout checklist with stage owners and deadline guardrails",
-                    metadata: {
-                      title: "Rollout Checklist",
-                      url: "https://example.com/doc_launch_2",
-                    },
+                },
+                {
+                  id: "doc_launch_2:0",
+                  snippet: "rollout checklist with stage owners and deadline guardrails",
+                  metadata: {
+                    title: "Rollout Checklist",
+                    url: "https://example.com/doc_launch_2",
                   },
-                ],
-              },
-              error: null,
-            };
+                },
+              ],
+            },
+            error: null,
           },
         },
       },
     },
   });
 
-  assert.equal(readerCalls.length, 1);
-  assert.equal(readerCalls[0].accountId, "acct_skill_runtime");
-  assert.equal(readerCalls[0].payload.q, "launch checklist");
   assert.equal(result.ok, true);
   assert.equal(result.skill, "search_and_summarize");
   assert.equal(result.failure_mode, "fail_closed");
@@ -160,8 +160,10 @@ test("search_and_summarize returns deterministic runtime failure without bypassi
       query: "launch checklist",
       reader_overrides: {
         index: {
-          search_knowledge_base() {
-            throw new Error("reader exploded");
+          search_knowledge_base: {
+            success: false,
+            error: "runtime_exception",
+            data: null,
           },
         },
       },
@@ -207,6 +209,8 @@ test("skill runtime fail-closes when side effects exceed contract", async () => 
       read: ["search_knowledge_base"],
       write: [],
     },
+    skill_class: "read_only",
+    runtime_access: ["read_runtime"],
     failure_mode: "fail_closed",
     async run() {
       return {
@@ -298,8 +302,123 @@ test("listSkillContracts exposes the checked-in minimal skill contract", () => {
         write: [],
       },
       failure_mode: "fail_closed",
+      skill_class: "read_only",
+      runtime_access: ["read_runtime"],
+      governance: {
+        skill_class: "read_only",
+        runtime_access: ["read_runtime"],
+        max_skills_per_run: 1,
+        allow_skill_chain: false,
+        input_must_be_serializable: true,
+        output_must_be_serializable: true,
+        disallow_side_channel_repo_db_access: true,
+      },
     },
   ]);
+});
+
+test("createSkillDefinition requires explicit governance metadata", () => {
+  assert.throws(() => createSkillDefinition({
+    name: "missing_governance",
+    input_schema: { type: "object" },
+    output_schema: { type: "object" },
+    allowed_side_effects: {
+      read: ["search_knowledge_base"],
+      write: [],
+    },
+    failure_mode: "fail_closed",
+    async run() {
+      return { ok: true, output: {} };
+    },
+  }), /invalid_skill_definition/);
+});
+
+test("skill runtime fail-closes when input is not JSON-serializable", async () => {
+  const result = await runSkill({
+    registry: defaultSkillRegistry,
+    skillName: "search_and_summarize",
+    input: {
+      account_id: "acct_non_serializable",
+      query: "launch checklist",
+      reader_overrides: {
+        index: {
+          search_knowledge_base() {
+            return {
+              success: true,
+              data: { items: [] },
+            };
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "contract_violation");
+  assert.equal(result.details.phase, "input_serialization");
+  assert.deepEqual(result.details.violations, [
+    {
+      code: "non_serializable_value",
+      path: "$input.reader_overrides.index.search_knowledge_base",
+      message: "$input.reader_overrides.index.search_knowledge_base must be JSON-serializable plain data.",
+    },
+  ]);
+});
+
+test("skill runtime rejects skill chaining and keeps max_skills_per_run at one", async () => {
+  const nestedSkill = createSkillDefinition({
+    name: "nested_skill",
+    input_schema: {
+      type: "object",
+    },
+    output_schema: {
+      type: "object",
+      required: ["summary"],
+      properties: {
+        summary: { type: "string" },
+      },
+    },
+    allowed_side_effects: {
+      read: ["search_knowledge_base"],
+      write: [],
+    },
+    skill_class: "read_only",
+    runtime_access: ["read_runtime"],
+    failure_mode: "fail_closed",
+    async run() {
+      const nestedResult = await runSkill({
+        registry: defaultSkillRegistry,
+        skillName: "search_and_summarize",
+        input: {
+          account_id: "acct_nested_skill",
+          query: "launch checklist",
+        },
+      });
+      return {
+        ok: false,
+        error: nestedResult.error,
+        details: nestedResult.details,
+      };
+    },
+  });
+
+  const result = await runSkill({
+    registry: createSkillRegistry([nestedSkill, ...defaultSkillRegistry.values()]),
+    skillName: "nested_skill",
+    input: {},
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "contract_violation");
+  assert.equal(result.details.phase, "governance");
+  assert.deepEqual(result.details, {
+    phase: "governance",
+    message: "skill_chain_not_allowed",
+    active_skill: "nested_skill",
+    requested_skill: "search_and_summarize",
+    max_skills_per_run: 1,
+    allow_skill_chain: false,
+  });
 });
 
 test("planner skill bridge exposes a single read-only skill action and adapts runtime output", async () => {
@@ -310,23 +429,21 @@ test("planner skill bridge exposes a single read-only skill action and adapts ru
       q: "launch checklist",
       reader_overrides: {
         index: {
-          search_knowledge_base() {
-            return {
-              success: true,
-              data: {
-                items: [
-                  {
-                    id: "doc_bridge_1:0",
-                    snippet: "launch checklist owner timeline and review cadence",
-                    metadata: {
-                      title: "Launch Runbook",
-                      url: "https://example.com/doc_bridge_1",
-                    },
+          search_knowledge_base: {
+            success: true,
+            data: {
+              items: [
+                {
+                  id: "doc_bridge_1:0",
+                  snippet: "launch checklist owner timeline and review cadence",
+                  metadata: {
+                    title: "Launch Runbook",
+                    url: "https://example.com/doc_bridge_1",
                   },
-                ],
-              },
-              error: null,
-            };
+                },
+              ],
+            },
+            error: null,
           },
         },
       },
@@ -346,10 +463,120 @@ test("planner skill bridge exposes a single read-only skill action and adapts ru
       skill_name: "search_and_summarize",
       max_skills_per_run: 1,
       allow_skill_chain: false,
+      skill_class: "read_only",
+      runtime_access: ["read_runtime"],
+      selector_mode: "deterministic_only",
+      selector_task_types: ["knowledge_read_skill", "skill_read"],
+      routing_reason: "selector_search_and_summarize_skill",
       allowed_side_effects: {
         read: ["search_knowledge_base"],
         write: [],
       },
     },
   ]);
+});
+
+test("deterministic skill selector keeps existing routing stable when a new non-overlapping skill is added", () => {
+  const registry = createPlannerSkillActionRegistry([
+    {
+      action: "search_and_summarize",
+      skill_name: "search_and_summarize",
+      skill_class: "read_only",
+      runtime_access: ["read_runtime"],
+      selector_mode: "deterministic_only",
+      selector_task_types: ["skill_read"],
+      routing_reason: "selector_search_and_summarize_skill",
+      selection_reason: "read-only skill path",
+      allowed_side_effects: {
+        read: ["search_knowledge_base"],
+        write: [],
+      },
+    },
+    {
+      action: "compile_delivery_notes",
+      skill_name: "compile_delivery_notes",
+      skill_class: "read_only",
+      runtime_access: ["read_runtime"],
+      selector_mode: "deterministic_only",
+      selector_task_types: ["delivery_skill_read"],
+      routing_reason: "selector_compile_delivery_notes_skill",
+      selection_reason: "delivery skill path",
+      allowed_side_effects: {
+        read: ["search_knowledge_base"],
+        write: [],
+      },
+    },
+  ]);
+
+  assert.deepEqual(selectPlannerSkillActionForTaskType({
+    taskType: "skill_read",
+    registry,
+  }), {
+    ok: true,
+    action: "search_and_summarize",
+    skill_name: "search_and_summarize",
+    routing_reason: "selector_search_and_summarize_skill",
+    reason: "read-only skill path",
+  });
+});
+
+test("deterministic skill selector fail-closes when multiple skills compete for the same task type", () => {
+  const registry = createPlannerSkillActionRegistry([
+    {
+      action: "search_and_summarize",
+      skill_name: "search_and_summarize",
+      skill_class: "read_only",
+      runtime_access: ["read_runtime"],
+      selector_mode: "deterministic_only",
+      selector_task_types: ["skill_read"],
+      routing_reason: "selector_search_and_summarize_skill",
+      selection_reason: "read-only skill path",
+      allowed_side_effects: {
+        read: ["search_knowledge_base"],
+        write: [],
+      },
+    },
+    {
+      action: "competing_skill",
+      skill_name: "competing_skill",
+      skill_class: "read_only",
+      runtime_access: ["read_runtime"],
+      selector_mode: "deterministic_only",
+      selector_task_types: ["skill_read"],
+      routing_reason: "selector_competing_skill",
+      selection_reason: "competing path",
+      allowed_side_effects: {
+        read: ["search_knowledge_base"],
+        write: [],
+      },
+    },
+  ]);
+
+  assert.deepEqual(selectPlannerSkillActionForTaskType({
+    taskType: "skill_read",
+    registry,
+  }), {
+    ok: false,
+    action: null,
+    routing_reason: "selector_skill_conflict",
+    reason: "",
+    error: "selector_conflict",
+  });
+});
+
+test("checked-in skills do not import repo or DB side-channel dependencies", async () => {
+  const disallowedPatterns = [
+    /from\s+["']node:fs["']/,
+    /from\s+["']fs["']/,
+    /from\s+["']better-sqlite3["']/,
+    /from\s+["'][^"']*\/db\.mjs["']/,
+    /from\s+["']node:path["']/,
+  ];
+
+  for (const fileUrl of SKILL_FILE_URLS) {
+    const source = await readFile(fileURLToPath(fileUrl), "utf8");
+    for (const pattern of disallowedPatterns) {
+      assert.equal(pattern.test(source), false, `${fileURLToPath(fileUrl)} matched ${pattern}`);
+    }
+  }
 });
