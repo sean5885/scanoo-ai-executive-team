@@ -63,6 +63,11 @@ import {
   resetPlannerTaskLifecycleStore,
   syncPlannerActionLayerTaskLifecycle,
 } from "./planner-task-lifecycle-v1.mjs";
+import {
+  getPlannerSkillAction,
+  listPlannerSkillActions,
+  runPlannerSkillBridge,
+} from "./planner/skill-bridge.mjs";
 
 const executiveStartSignals = [
   "agent",
@@ -1048,6 +1053,11 @@ function getPlannerPresetContract(preset = "") {
   return plannerContract?.presets?.[cleanText(preset)] || null;
 }
 
+function isPlannerDecisionCatalogVisible(name = "") {
+  const entry = getPlannerDecisionContract(name)?.contract || null;
+  return cleanText(entry?.planner_visibility || "").toLowerCase() !== "deterministic_only";
+}
+
 function getPlannerDecisionContract(name = "") {
   const normalizedName = cleanText(name);
   if (!normalizedName) {
@@ -1078,12 +1088,16 @@ function summarizePlannerInputSchema(schema = null) {
 }
 
 function plannerDecisionCatalogText() {
-  const actionLines = Object.entries(plannerContract?.actions || {}).map(([name, contract]) => (
-    `- ${name}: type=action; required_params=${summarizePlannerInputSchema(contract?.input_schema)}`
-  ));
-  const presetLines = Object.entries(plannerContract?.presets || {}).map(([name, contract]) => (
-    `- ${name}: type=preset; required_params=${summarizePlannerInputSchema(contract?.input_schema)}`
-  ));
+  const actionLines = Object.entries(plannerContract?.actions || {})
+    .filter(([name]) => isPlannerDecisionCatalogVisible(name))
+    .map(([name, contract]) => (
+      `- ${name}: type=action; required_params=${summarizePlannerInputSchema(contract?.input_schema)}`
+    ));
+  const presetLines = Object.entries(plannerContract?.presets || {})
+    .filter(([name]) => isPlannerDecisionCatalogVisible(name))
+    .map(([name, contract]) => (
+      `- ${name}: type=preset; required_params=${summarizePlannerInputSchema(contract?.input_schema)}`
+    ));
   return [...actionLines, ...presetLines].join("\n");
 }
 
@@ -1604,6 +1618,7 @@ function derivePlannerAgentLane({
     "create_doc",
     "list_company_brain_docs",
     "search_company_brain_docs",
+    "search_and_summarize",
     "get_company_brain_doc_detail",
     "search_and_detail_doc",
     "create_and_list_doc",
@@ -2371,6 +2386,23 @@ function buildPlannerToolExecutionData(result = null) {
   );
 }
 
+function shapePlannerSkillDispatchPayload({
+  action = "",
+  userIntent = "",
+  payload = {},
+} = {}) {
+  const skillAction = getPlannerSkillAction(action);
+  const normalizedPayload = normalizePlannerPayload(payload);
+  if (!skillAction) {
+    return normalizedPayload;
+  }
+
+  return {
+    ...normalizedPayload,
+    q: cleanText(normalizedPayload.q || normalizedPayload.query || userIntent) || "",
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Planner contract validation public helpers
 // ---------------------------------------------------------------------------
@@ -2720,6 +2752,10 @@ export function listPlannerTools() {
   }));
 }
 
+export function listPlannerSkillBridges() {
+  return listPlannerSkillActions();
+}
+
 export function listPlannerPresets() {
   return Array.from(plannerPresetRegistry.values()).map((preset) => ({
     preset: preset.preset,
@@ -2757,6 +2793,13 @@ export function selectPlannerTool({
   let routingReason = "routing_no_match";
 
   if (
+    normalizedTaskType === "skill_read"
+    || normalizedTaskType === "knowledge_read_skill"
+  ) {
+    selectedAction = "search_and_summarize";
+    reason = "呼叫端明確要求 read-only skill bridge，固定走單一 skill action。";
+    routingReason = "selector_search_and_summarize_skill";
+  } else if (
     normalizedIntent.includes("建立文件並查詢")
     || normalizedIntent.includes("create then search")
     || normalizedIntent.includes("建立後搜尋文件")
@@ -2881,6 +2924,10 @@ export function shouldPreferSelectorAction({
   const normalizedHardRoutedAction = cleanText(hardRoutedAction);
   const normalizedSelectorAction = cleanText(selectorAction);
 
+  if (getPlannerSkillAction(normalizedSelectorAction)) {
+    return true;
+  }
+
   return normalizedHardRoutedAction === "search_company_brain_docs"
     && Boolean(normalizedSelectorAction)
     && normalizedSelectorAction !== normalizedHardRoutedAction
@@ -2909,6 +2956,7 @@ export async function dispatchPlannerTool({
   const requestId = createRequestId("planner_tool");
   const hooks = createPlannerRuntimeHooks();
   const tool = getPlannerTool(runtimeInput.action);
+  const skillAction = getPlannerSkillAction(runtimeInput.action);
   const normalizedAuthContext = normalizePlannerAuthContext(authContext);
   const preAbortResult = buildPlannerAbortResult({
     action: runtimeInput.action,
@@ -2927,7 +2975,7 @@ export async function dispatchPlannerTool({
     });
     return preAbortResult;
   }
-  if (!tool) {
+  if (!tool && !skillAction) {
     const stoppedResult = buildPlannerStoppedResult({
       action: runtimeInput.action,
       error: INVALID_ACTION,
@@ -2949,15 +2997,16 @@ export async function dispatchPlannerTool({
     return stoppedResult;
   }
 
+  const dispatchTargetAction = tool?.action || skillAction?.action || runtimeInput.action;
   const resolvedInput = resolveDispatchInput({
-    action: tool.action,
+    action: dispatchTargetAction,
     payload: runtimeInput.payload,
     logger,
   });
   if (!resolvedInput.ok) {
     logPlannerTrace(logger, "warn", buildPlannerTraceEvent({
       eventType: "planner_tool_dispatch",
-      action: tool.action,
+      action: dispatchTargetAction,
       ok: false,
       error: "contract_violation",
       extra: {
@@ -2966,7 +3015,7 @@ export async function dispatchPlannerTool({
       },
     }));
     const stoppedResult = withDispatchMeta(buildPlannerStoppedResult({
-      action: tool.action,
+      action: dispatchTargetAction,
       error: "contract_violation",
       data: resolvedInput.result?.data || {},
       traceId: null,
@@ -2977,7 +3026,7 @@ export async function dispatchPlannerTool({
     });
     emitPlannerRuntimeTrace(logger, buildPlannerTraceEvent({
       eventType: "stopped",
-      action: tool.action,
+      action: dispatchTargetAction,
       ok: false,
       error: stoppedResult?.error || "contract_violation",
       retryCount: stoppedResult?.data?.retry_count ?? resolvedInput.retryCount ?? 0,
@@ -2988,7 +3037,7 @@ export async function dispatchPlannerTool({
     emitToolExecutionLog({
       logger,
       requestId,
-      action: tool.action,
+      action: dispatchTargetAction,
       params: runtimeInput.payload,
       success: false,
       data: buildPlannerToolExecutionData(stoppedResult),
@@ -3000,6 +3049,62 @@ export async function dispatchPlannerTool({
   const effectivePayload = resolvedInput.payload;
   const selfHealRetryCount = resolvedInput.selfHealRetryCount;
   const healed = resolvedInput.healed;
+
+  if (skillAction) {
+    const bridgeResult = await runPlannerSkillBridge({
+      action: skillAction.action,
+      payload: effectivePayload,
+      logger,
+      signal,
+    });
+    const outputValidation = validateOutput(skillAction.action, bridgeResult);
+    const bridgeValidatedResult = outputValidation.ok
+      ? bridgeResult
+      : buildPlannerStoppedResult({
+          action: skillAction.action,
+          error: "contract_violation",
+          data: {
+            phase: "output",
+            violations: outputValidation.violations,
+            raw: bridgeResult,
+          },
+          traceId: bridgeResult?.trace_id || null,
+        });
+    const retryCount = selfHealRetryCount;
+    const normalizedResult = bridgeValidatedResult?.ok === false
+      ? buildPlannerStoppedResult({
+          action: skillAction.action,
+          error: bridgeValidatedResult?.error || "business_error",
+          data: bridgeValidatedResult?.data || {},
+          traceId: bridgeValidatedResult?.trace_id || null,
+        })
+      : bridgeValidatedResult;
+    if (normalizedResult?.ok === false) {
+      emitPlannerRuntimeTrace(logger, buildPlannerTraceEvent({
+        eventType: "stopped",
+        action: skillAction.action,
+        ok: false,
+        error: normalizedResult?.error || "business_error",
+        retryCount,
+        healed,
+        stopped: true,
+        stopReason: normalizedResult?.data?.stop_reason || normalizedResult?.error || "business_error",
+        traceId: normalizedResult?.trace_id || null,
+      }));
+    }
+    const finalResult = withDispatchMeta(normalizedResult, { retryCount, healed });
+    emitToolExecutionLog({
+      logger,
+      requestId,
+      action: skillAction.action,
+      params: effectivePayload,
+      success: finalResult?.ok === true,
+      data: buildPlannerToolExecutionData(finalResult),
+      error: finalResult?.ok === false ? finalResult?.error || "business_error" : null,
+      traceId: finalResult?.trace_id || null,
+    });
+    return finalResult;
+  }
 
   let stickyTraceId = null;
   let runtimeRetryCount = 0;
@@ -3456,15 +3561,20 @@ export async function runPlannerToolFlow({
         selected_action: selection.selected_action,
       });
       const selectedFlow = routedFlow.flow || getPlannerFlowForAction(plannerFlows, selection.selected_action);
+      const dispatchPayload = buildPlannerFlowPayload({
+        flow: selectedFlow,
+        action: selection.selected_action,
+        userIntent: agentInput.user_intent,
+        payload: agentInput.payload,
+        logger,
+        sessionKey,
+      });
       executionResult = await dispatcher({
         action: selection.selected_action,
-        payload: buildPlannerFlowPayload({
-          flow: selectedFlow,
+        payload: shapePlannerSkillDispatchPayload({
           action: selection.selected_action,
           userIntent: agentInput.user_intent,
-          payload: agentInput.payload,
-          logger,
-          sessionKey,
+          payload: dispatchPayload,
         }),
         logger,
         authContext,
@@ -5367,6 +5477,22 @@ function hardenPlannerUserInputDecisionCandidate({
     }
   }
 
+  if (action === "search_and_summarize") {
+    const normalizedParams = params && typeof params === "object" && !Array.isArray(params)
+      ? params
+      : {};
+    const query = cleanText(normalizedParams.q || normalizedParams.query || "");
+    if (!query) {
+      return {
+        decision: buildPlannerSingleStepDecision("search_and_summarize", {
+          ...normalizedParams,
+          q: cleanText(text) || "",
+        }),
+        reason: "skill_query_filled_from_user_request",
+      };
+    }
+  }
+
   return {
     decision: normalizedDecision,
     reason: null,
@@ -5407,6 +5533,7 @@ function validatePlannerDecisionSemantics({
   const allowedDocumentActions = new Set([
     "list_company_brain_docs",
     "search_company_brain_docs",
+    "search_and_summarize",
     "get_company_brain_doc_detail",
     "search_and_detail_doc",
     "runtime_and_list_docs",
@@ -5614,6 +5741,11 @@ function buildUserInputDecisionAlternative(decision = {}) {
 
   const action = cleanText(decision?.action || "");
   switch (action) {
+    case "search_and_summarize":
+      return normalizeDecisionAlternative({
+        action: "search_company_brain_docs",
+        summary: "也可只先 search 候選文件；這輪需要受控 read-only skill 直接輸出摘要。",
+      });
     case "list_company_brain_docs":
       return normalizeDecisionAlternative({
         action: "search_company_brain_docs",
@@ -5713,6 +5845,9 @@ function buildUserInputDecisionWhy({
   }
   if (cleanText(result?.action || "") === "search_company_brain_docs") {
     return "需求偏向查資料或找文件，先 search 才能定位候選來源。";
+  }
+  if (cleanText(result?.action || "") === "search_and_summarize") {
+    return "這輪需求被明確約束為 read-only skill 摘要路徑，所以不直接走一般 search bridge。";
   }
   if (cleanText(result?.action || "") === "list_company_brain_docs") {
     return "需求偏向列出已驗證文件鏡像，而不是鎖定單一文件內容。";

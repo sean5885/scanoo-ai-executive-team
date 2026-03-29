@@ -28,6 +28,7 @@ Current runtime anchor:
 - `/Users/seanhan/Documents/Playground/src/planner-action-layer.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner/agent-executor.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner/agent-runtime.mjs`
+- `/Users/seanhan/Documents/Playground/src/planner/skill-bridge.mjs`
 
 Current minimum runtime responsibilities already implemented there:
 
@@ -35,6 +36,7 @@ Current minimum runtime responsibilities already implemented there:
 - planner action dispatch
 - planner multi-step execution
 - planner preset execution
+- bounded planner skill dispatch through skill-bridge
 - reusable planner flow interface / registry layer
 - reusable planner-side company-brain doc-query pipeline
 - bounded planner-side company-brain learning ingest/update dispatch
@@ -54,6 +56,7 @@ This means `planner_agent` currently maps to a runtime module, not just a pure s
 
 - selecting a tool action or preset from user intent / task type
 - dispatching planner tools into agent bridge routes or company-brain routes
+- dispatching planner skill-backed actions through `planner/skill-bridge.mjs`
 - running ordered multi-step plans and presets
 - applying minimal runtime checks before and after dispatch
 - returning a normalized result shape instead of throwing
@@ -67,6 +70,7 @@ Already in scope today:
 - `runPlannerToolFlow(...)`
 - `runPlannerMultiStep(...)`
 - `runPlannerPreset(...)`
+- single-skill read-only planner action dispatch via `skill-bridge`
 - `validateInput(...)`
 - `validateOutput(...)`
 - `validatePresetOutput(...)`
@@ -84,6 +88,8 @@ Still out of scope for current runtime:
 - independent planner worker mesh
 - generic agent-to-agent router
 - full handoff engine
+- generic multi-skill planner runtime
+- skill chaining
 - preset step-level validation
 - externalized policy/config system
 
@@ -208,6 +214,13 @@ This path is bounded by the checked-in planner contract:
 - `semantic_mismatch` on strict user-input planning now attempts one bounded reroute through `runPlannerToolFlow(...)` before surfacing a user-facing fallback
 - no heuristic or free-text fallback is used on this strict user-input planning path
 - bounded `synthetic_agent_hint` lane inference now also keeps company-brain learning actions (`ingest_learning_doc`, `update_learning_state`) on the checked-in `doc` lane instead of falling through `fallback_agent`
+- planner skill integration is explicit and bounded:
+  - checked-in planner action: `search_and_summarize`
+  - current selection entry is deterministic-only (`taskType=skill_read` or equivalent internal caller contract)
+  - planner dispatch must call `planner/skill-bridge.mjs`
+  - `planner/skill-bridge.mjs` may call exactly one checked-in skill runtime entry
+  - current allowed side effects stay read-only (`search_knowledge_base`)
+  - skill failure remains fail-closed and does not fall back into another planner tool/preset path
 
 ## Contract Consistency Check
 

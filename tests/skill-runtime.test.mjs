@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildPlannerSkillEnvelope } from "../src/planner/skill-bridge.mjs";
+import {
+  buildPlannerSkillEnvelope,
+  listPlannerSkillActions,
+  runPlannerSkillBridge,
+} from "../src/planner/skill-bridge.mjs";
 import { createSkillDefinition } from "../src/skill-contract.mjs";
 import { defaultSkillRegistry } from "../src/skill-registry.mjs";
 import {
@@ -294,6 +298,58 @@ test("listSkillContracts exposes the checked-in minimal skill contract", () => {
         write: [],
       },
       failure_mode: "fail_closed",
+    },
+  ]);
+});
+
+test("planner skill bridge exposes a single read-only skill action and adapts runtime output", async () => {
+  const bridgeResult = await runPlannerSkillBridge({
+    action: "search_and_summarize",
+    payload: {
+      account_id: "acct_bridge_runtime",
+      q: "launch checklist",
+      reader_overrides: {
+        index: {
+          search_knowledge_base() {
+            return {
+              success: true,
+              data: {
+                items: [
+                  {
+                    id: "doc_bridge_1:0",
+                    snippet: "launch checklist owner timeline and review cadence",
+                    metadata: {
+                      title: "Launch Runbook",
+                      url: "https://example.com/doc_bridge_1",
+                    },
+                  },
+                ],
+              },
+              error: null,
+            };
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(bridgeResult.ok, true);
+  assert.equal(bridgeResult.action, "search_and_summarize");
+  assert.equal(bridgeResult.data.skill, "search_and_summarize");
+  assert.equal(bridgeResult.data.bridge, "skill_bridge");
+  assert.equal(bridgeResult.data.allow_skill_chain, false);
+  assert.equal(bridgeResult.data.max_skills_per_run, 1);
+  assert.equal(bridgeResult.data.hits, 1);
+  assert.deepEqual(listPlannerSkillActions(), [
+    {
+      action: "search_and_summarize",
+      skill_name: "search_and_summarize",
+      max_skills_per_run: 1,
+      allow_skill_chain: false,
+      allowed_side_effects: {
+        read: ["search_knowledge_base"],
+        write: [],
+      },
     },
   ]);
 });

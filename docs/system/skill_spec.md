@@ -21,7 +21,7 @@ This baseline is intentionally narrow:
 - it keeps planner, read-runtime, and mutation-runtime boundaries explicit
 - it does not add a new public route
 - it does not change mutation/read/answer contracts
-- it does not change deterministic routing
+- it keeps deterministic routing explicit and bounded
 
 ## Skill Concept
 
@@ -70,8 +70,15 @@ Current checked-in planner bridge:
 
 Boundary:
 
-- planner may consume a skill result
-- planner does not implicitly bypass its own action registry because a skill exists
+- planner may consume a skill result only through `planner/skill-bridge.mjs`
+- planner does not call `skill-runtime` directly
+- a skill does not bypass planner action governance just because the skill exists
+- v1 uses one explicit planner action to keep routing deterministic and auditable:
+  - planner action: `search_and_summarize`
+  - backing skill: `search_and_summarize`
+  - planner visibility: `deterministic_only`
+  - selector path: only chosen by deterministic runtime conditions such as `taskType=skill_read`
+  - LLM `target_catalog` does not expose this action in the normal strict user-input planner prompt
 
 ### Read / Write Runtime Boundary
 
@@ -181,7 +188,7 @@ Boundary:
 
 - does not read the repository directly
 - does not call mutation runtime
-- does not modify planner routing
+- does not add heuristic fallback or multi-skill planning
 - does not change answer-service output contract
 
 ## Planner-Consumable Shape
@@ -207,6 +214,51 @@ Boundary:
 ```
 
 This shape is planner-usable but does not register a new planner action.
+
+For planner runtime integration, the same bridge now also exposes one checked-in planner-facing action result:
+
+```json
+{
+  "ok": true,
+  "action": "search_and_summarize",
+  "data": {
+    "skill": "search_and_summarize",
+    "query": "string|null",
+    "summary": "string|null",
+    "hits": "number",
+    "found": "boolean",
+    "sources": ["object"],
+    "limitations": ["string"],
+    "side_effects": ["object"],
+    "bridge": "skill_bridge",
+    "max_skills_per_run": 1,
+    "allow_skill_chain": false
+  },
+  "trace_id": "string|null"
+}
+```
+
+This keeps the integration explicit:
+
+- planner action selection stays deterministic
+- planner dispatch still goes through one bounded registry entry
+- skill execution still stays behind `skill-bridge`
+- the bridge does not expose a generic `run any skill` route
+
+## Planner Integration Rules
+
+Current v1 rules:
+
+- planner -> skill path is `planner action -> skill-bridge -> skill-runtime -> read-runtime`
+- direct planner -> skill-runtime calls are not allowed
+- each planner execution may use at most one skill-backed action
+- skill chaining is not allowed
+- current checked-in planner skill action is read-only only
+- declared side effects must stay within:
+  - `read: ["search_knowledge_base"]`
+  - `write: []`
+- any skill failure remains `fail_closed`
+- planner does not fall back from a failed skill-backed action into another tool/preset path inside the same execution
 
 ## Failure Model
 

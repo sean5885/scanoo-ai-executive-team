@@ -107,6 +107,9 @@
     "selector_search_company_brain_docs": {
       "surface": ["planner"]
     },
+    "selector_search_and_summarize_skill": {
+      "surface": ["planner"]
+    },
     "selector_create_doc": {
       "surface": ["planner"]
     },
@@ -403,6 +406,84 @@
         "invalid_query",
         "missing_user_access_token",
         "internal_error"
+      ]
+    },
+    "search_and_summarize": {
+      "planner_visibility": "deterministic_only",
+      "input_schema": {
+        "type": "object",
+        "required": ["account_id", "q"],
+        "properties": {
+          "account_id": { "type": "string" },
+          "q": { "type": "string" },
+          "limit": { "type": ["number", "string", "null"] },
+          "pathname": { "type": ["string", "null"] },
+          "reader_overrides": { "type": ["object", "null"] }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["ok", "action", "trace_id", "data"],
+        "properties": {
+          "ok": { "type": "boolean" },
+          "action": { "type": "string" },
+          "trace_id": { "type": ["string", "null"] },
+          "data": {
+            "type": "object",
+            "required": [
+              "skill",
+              "query",
+              "summary",
+              "hits",
+              "found",
+              "sources",
+              "limitations",
+              "side_effects"
+            ],
+            "properties": {
+              "skill": { "type": "string" },
+              "query": { "type": ["string", "null"] },
+              "summary": { "type": ["string", "null"] },
+              "hits": { "type": "number" },
+              "found": { "type": "boolean" },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["id", "title", "url", "snippet"],
+                  "properties": {
+                    "id": { "type": ["string", "null"] },
+                    "title": { "type": ["string", "null"] },
+                    "url": { "type": ["string", "null"] },
+                    "snippet": { "type": ["string", "null"] }
+                  }
+                }
+              },
+              "limitations": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "side_effects": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["mode", "action", "runtime", "authority"],
+                  "properties": {
+                    "mode": { "type": ["string", "null"] },
+                    "action": { "type": ["string", "null"] },
+                    "runtime": { "type": ["string", "null"] },
+                    "authority": { "type": ["string", "null"] }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "error_codes": [
+        "contract_violation",
+        "runtime_exception",
+        "not_found"
       ]
     },
     "get_company_brain_doc_detail": {

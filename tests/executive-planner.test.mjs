@@ -25,6 +25,8 @@ const [
     planExecutiveTurn,
     planUserInputAction,
     resetPlannerRuntimeContext,
+    selectPlannerTool,
+    listPlannerSkillBridges,
     runPlannerMultiStep,
     runPlannerPreset,
     runPlannerToolFlow,
@@ -1748,6 +1750,81 @@ test("dispatchPlannerTool logs successful tool execution with request_id", async
   }
 });
 
+test("dispatchPlannerTool routes planner skill actions through skill-bridge without fetch", async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  const toolLogs = [];
+  const logger = {
+    info(message, event) {
+      if (message === "lobster_tool_execution") {
+        toolLogs.push(event);
+      }
+    },
+    warn() {},
+    error() {},
+    debug() {},
+  };
+
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    throw new Error("skill path must not use fetch");
+  };
+
+  try {
+    const result = await dispatchPlannerTool({
+      action: "search_and_summarize",
+      payload: {
+        account_id: "acct_skill_bridge_dispatch",
+        q: "launch checklist",
+        reader_overrides: {
+          index: {
+            search_knowledge_base() {
+              return {
+                success: true,
+                data: {
+                  items: [
+                    {
+                      id: "doc_skill_bridge_dispatch:0",
+                      snippet: "launch checklist owner timeline and review cadence",
+                      metadata: {
+                        title: "Launch Runbook",
+                        url: "https://example.com/doc_skill_bridge_dispatch",
+                      },
+                    },
+                  ],
+                },
+                error: null,
+              };
+            },
+          },
+        },
+      },
+      logger,
+      baseUrl: "http://localhost:3333",
+    });
+
+    assert.equal(fetchCalls, 0);
+    assert.equal(result.ok, true);
+    assert.equal(result.action, "search_and_summarize");
+    assert.equal(result.data.bridge, "skill_bridge");
+    assert.equal(result.data.skill, "search_and_summarize");
+    assert.deepEqual(result.data.side_effects, [
+      {
+        mode: "read",
+        action: "search_knowledge_base",
+        runtime: "read-runtime",
+        authority: "index",
+      },
+    ]);
+    assert.equal(toolLogs.length, 1);
+    assert.equal(toolLogs[0].action, "search_and_summarize");
+    assert.equal(toolLogs[0].result.success, true);
+    assert.equal(toolLogs[0].result.data.bridge, "skill_bridge");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("dispatchPlannerTool logs failed tool execution with request_id", async () => {
   const originalFetch = globalThis.fetch;
   const toolLogs = [];
@@ -2914,6 +2991,42 @@ test("runPlannerToolFlow uses runtime-info flow for runtime query without affect
     action: "get_runtime_info",
     payload: {},
   }]);
+});
+
+test("runPlannerToolFlow fail-closes skill failures without falling back to document search", async () => {
+  resetPlannerRuntimeContext();
+  const result = await runPlannerToolFlow({
+    userIntent: "幫我整理 launch checklist",
+    taskType: "skill_read",
+    payload: {
+      account_id: "acct_skill_fail_closed",
+      reader_overrides: {
+        index: {
+          search_knowledge_base() {
+            throw new Error("reader exploded");
+          },
+        },
+      },
+    },
+    logger: console,
+  });
+
+  assert.equal(result.selected_action, "search_and_summarize");
+  assert.equal(result.routing_reason, "selector_search_and_summarize_skill");
+  assert.equal(result.execution_result?.ok, false);
+  assert.equal(result.execution_result?.error, "runtime_exception");
+  assert.equal(result.execution_result?.action, "search_and_summarize");
+  assert.equal(result.execution_result?.data?.bridge, "skill_bridge");
+  assert.equal(result.execution_result?.data?.skill, "search_and_summarize");
+  assert.equal(result.execution_result?.data?.stop_reason, "fail_closed");
+  assert.deepEqual(result.execution_result?.data?.side_effects, [
+    {
+      mode: "read",
+      action: "search_knowledge_base",
+      runtime: "read-runtime",
+      authority: "index",
+    },
+  ]);
 });
 
 test("runPlannerToolFlow routes the exact scanoo exclusion live query into document search with a scoped subject", async () => {
@@ -5175,6 +5288,30 @@ test("selectPlannerTool aligns search-plus-content phrasing to generic search", 
   assert.equal(result.selected_action, "search_company_brain_docs");
   assert.equal(result.reason, "使用者意圖是搜尋文件，固定走唯一 search action。");
   assert.equal(result.routing_reason, "selector_search_company_brain_docs");
+});
+
+test("selectPlannerTool can deterministically choose the single read-only skill path", () => {
+  const result = selectPlannerTool({
+    userIntent: "幫我整理 launch checklist",
+    taskType: "skill_read",
+    logger: console,
+  });
+
+  assert.equal(result.selected_action, "search_and_summarize");
+  assert.equal(result.routing_reason, "selector_search_and_summarize_skill");
+  assert.match(result.reason || "", /read-only skill bridge/);
+  assert.deepEqual(listPlannerSkillBridges(), [
+    {
+      action: "search_and_summarize",
+      skill_name: "search_and_summarize",
+      max_skills_per_run: 1,
+      allow_skill_chain: false,
+      allowed_side_effects: {
+        read: ["search_knowledge_base"],
+        write: [],
+      },
+    },
+  ]);
 });
 
 test("runPlannerToolFlow executes preset runner when selection returns preset", async () => {
