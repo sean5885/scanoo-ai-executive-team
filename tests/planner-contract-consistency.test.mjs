@@ -183,6 +183,11 @@ test("planner contract mirror keeps document_summarize planner_visible metadata 
       output_shape_stable: true,
       side_effect_boundary_locked: true,
     },
+    planner_admission_boundary: {
+      require_signals: ["wants_document_summary", "wants_document_detail"],
+      forbid_signals: ["wants_document_search", "wants_document_list", "wants_scoped_doc_exclusion_search"],
+      fail_closed_on_ambiguity: true,
+    },
   });
   assert.equal(registryEntry?.surface_layer, contractPolicy.surface_layer);
   assert.equal(registryEntry?.promotion_stage, contractPolicy.promotion_stage);
@@ -191,15 +196,15 @@ test("planner contract mirror keeps document_summarize planner_visible metadata 
   assert.deepEqual(registryEntry?.readiness_gate, contractPolicy.readiness_gate);
 });
 
-test("planner contract mirror keeps search_and_summarize readiness_check metadata aligned with the skill registry", () => {
+test("planner contract mirror keeps search_and_summarize planner_visible admission metadata aligned with the skill registry", () => {
   const contractPolicy = plannerContract?.actions?.search_and_summarize?.skill_surface_policy;
   const registryEntry = getPlannerSkillAction("search_and_summarize");
 
   assert.deepEqual(contractPolicy, {
-    surface_layer: "internal_only",
-    promotion_stage: "readiness_check",
-    previous_promotion_stage: "internal_only",
-    planner_catalog_eligible: false,
+    surface_layer: "planner_visible",
+    promotion_stage: "planner_visible",
+    previous_promotion_stage: "readiness_check",
+    planner_catalog_eligible: true,
     readiness_gate: {
       regression_suite_passed: true,
       answer_pipeline_enforced: true,
@@ -207,6 +212,11 @@ test("planner contract mirror keeps search_and_summarize readiness_check metadat
       raw_skill_output_blocked: true,
       output_shape_stable: true,
       side_effect_boundary_locked: true,
+    },
+    planner_admission_boundary: {
+      require_signals: ["wants_document_search", "wants_search_summary"],
+      forbid_signals: ["wants_document_detail", "wants_document_list", "explicit_same_task", "wants_scoped_doc_exclusion_search"],
+      fail_closed_on_ambiguity: true,
     },
   });
   assert.equal(registryEntry?.surface_layer, contractPolicy.surface_layer);

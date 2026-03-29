@@ -173,7 +173,9 @@ Current truth:
 - `search_and_summarize` uses `search_knowledge_base`
 - `document_summarize` uses `get_company_brain_doc_detail`
 - this does not register a new public route or planner routing target
-- both checked-in skill-backed actions remain internal-only and stay outside strict planner `target_catalog`
+- both checked-in skill-backed actions stay behind `planner/skill-bridge.mjs` and the answer pipeline
+- `document_summarize` is planner-visible on its single-document summary boundary
+- `search_and_summarize` is planner-visible only on its query-bound search-plus-summarize admission boundary and otherwise fails closed back to the original routing family
 - this does not bypass mutation-runtime for writes
 
 ### 4B. Comment Rewrite

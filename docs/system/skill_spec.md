@@ -91,17 +91,17 @@ Boundary:
 - v1 uses explicit planner actions to keep routing deterministic and auditable:
   - planner action: `search_and_summarize`
   - backing skill: `search_and_summarize`
-  - surface layer: `internal_only`
+  - surface layer: `planner_visible`
   - planner visibility: `deterministic_only`
   - selector path: chosen only by deterministic runtime conditions such as `taskType=skill_read`
+  - strict planner catalog admission: only when the query matches the checked-in search-plus-summarize admission boundary; ambiguity fails closed
   - planner action: `document_summarize`
   - backing skill: `document_summarize`
   - surface layer: `planner_visible`
   - planner visibility: `deterministic_only`
   - selector path: chosen only by deterministic runtime conditions such as `taskType=document_summary_skill`
-  - `search_and_summarize` stays outside the normal strict user-input planner `target_catalog`
-  - `document_summarize` is admitted to the strict planner `target_catalog` after the checked-in `readiness_check -> planner_visible` promotion
-  - even when planner can call `document_summarize` directly, output still stays behind `planner/skill-bridge.mjs`, `user-response-normalizer.mjs`, and canonical source mapping
+  - strict planner catalog admission: only on the non-overlapping single-document summary boundary
+  - even when planner can call either skill directly, output still stays behind `planner/skill-bridge.mjs`, `user-response-normalizer.mjs`, and canonical source mapping
 
 ### Read / Write Runtime Boundary
 

@@ -93,6 +93,20 @@ function normalizePlannerSkillReadinessGate(entry = {}) {
   });
 }
 
+function normalizePlannerSkillAdmissionBoundary(entry = {}) {
+  const rawBoundary = entry?.planner_admission_boundary
+    && typeof entry.planner_admission_boundary === "object"
+    && !Array.isArray(entry.planner_admission_boundary)
+    ? entry.planner_admission_boundary
+    : {};
+
+  return Object.freeze({
+    require_signals: Object.freeze(normalizeStringList(rawBoundary.require_signals)),
+    forbid_signals: Object.freeze(normalizeStringList(rawBoundary.forbid_signals)),
+    fail_closed_on_ambiguity: rawBoundary.fail_closed_on_ambiguity !== false,
+  });
+}
+
 function intersectStringLists(left = [], right = []) {
   if (!Array.isArray(left) || !Array.isArray(right)) {
     return [];
@@ -419,6 +433,7 @@ export function createPlannerSkillActionRegistry(entries = []) {
     const selector = normalizePlannerSkillSelector(entry);
     const upgradePath = normalizePlannerSkillUpgradePath(entry);
     const readinessGate = normalizePlannerSkillReadinessGate(entry);
+    const plannerAdmissionBoundary = normalizePlannerSkillAdmissionBoundary(entry);
     const surfacePolicy = buildPlannerSkillSurfacePolicy({
       surfaceLayer: entry.surface_layer,
       selectorMode: selector.selector_mode,
@@ -464,6 +479,7 @@ export function createPlannerSkillActionRegistry(entries = []) {
       promotion_stage: surfacePolicy.promotion_stage,
       previous_promotion_stage: surfacePolicy.previous_promotion_stage,
       readiness_gate: surfacePolicy.readiness_gate,
+      planner_admission_boundary: plannerAdmissionBoundary,
       buildSkillInput: typeof entry.buildSkillInput === "function"
         ? entry.buildSkillInput
         : (() => ({})),
@@ -482,9 +498,9 @@ const plannerSkillActionRegistry = createPlannerSkillActionRegistry([
   {
     action: "search_and_summarize",
     skill_name: "search_and_summarize",
-    surface_layer: "internal_only",
-    promotion_stage: "readiness_check",
-    previous_promotion_stage: "internal_only",
+    surface_layer: "planner_visible",
+    promotion_stage: "planner_visible",
+    previous_promotion_stage: "readiness_check",
     skill_class: "read_only",
     runtime_access: ["read_runtime"],
     selector_mode: "deterministic_only",
@@ -499,6 +515,11 @@ const plannerSkillActionRegistry = createPlannerSkillActionRegistry([
       raw_skill_output_blocked: true,
       output_shape_stable: true,
       side_effect_boundary_locked: true,
+    },
+    planner_admission_boundary: {
+      require_signals: ["wants_document_search", "wants_search_summary"],
+      forbid_signals: ["wants_document_detail", "wants_document_list", "explicit_same_task", "wants_scoped_doc_exclusion_search"],
+      fail_closed_on_ambiguity: true,
     },
     allowed_side_effects: {
       read: ["search_knowledge_base"],
@@ -538,6 +559,11 @@ const plannerSkillActionRegistry = createPlannerSkillActionRegistry([
       raw_skill_output_blocked: true,
       output_shape_stable: true,
       side_effect_boundary_locked: true,
+    },
+    planner_admission_boundary: {
+      require_signals: ["wants_document_summary", "wants_document_detail"],
+      forbid_signals: ["wants_document_search", "wants_document_list", "wants_scoped_doc_exclusion_search"],
+      fail_closed_on_ambiguity: true,
     },
     allowed_side_effects: {
       read: ["get_company_brain_doc_detail"],

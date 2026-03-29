@@ -414,10 +414,10 @@
     "search_and_summarize": {
       "planner_visibility": "deterministic_only",
       "skill_surface_policy": {
-        "surface_layer": "internal_only",
-        "promotion_stage": "readiness_check",
-        "previous_promotion_stage": "internal_only",
-        "planner_catalog_eligible": false,
+        "surface_layer": "planner_visible",
+        "promotion_stage": "planner_visible",
+        "previous_promotion_stage": "readiness_check",
+        "planner_catalog_eligible": true,
         "readiness_gate": {
           "regression_suite_passed": true,
           "answer_pipeline_enforced": true,
@@ -425,6 +425,19 @@
           "raw_skill_output_blocked": true,
           "output_shape_stable": true,
           "side_effect_boundary_locked": true
+        },
+        "planner_admission_boundary": {
+          "require_signals": [
+            "wants_document_search",
+            "wants_search_summary"
+          ],
+          "forbid_signals": [
+            "wants_document_detail",
+            "wants_document_list",
+            "explicit_same_task",
+            "wants_scoped_doc_exclusion_search"
+          ],
+          "fail_closed_on_ambiguity": true
         }
       },
       "input_schema": {
@@ -517,6 +530,18 @@
           "raw_skill_output_blocked": true,
           "output_shape_stable": true,
           "side_effect_boundary_locked": true
+        },
+        "planner_admission_boundary": {
+          "require_signals": [
+            "wants_document_summary",
+            "wants_document_detail"
+          ],
+          "forbid_signals": [
+            "wants_document_search",
+            "wants_document_list",
+            "wants_scoped_doc_exclusion_search"
+          ],
+          "fail_closed_on_ambiguity": true
         }
       },
       "input_schema": {

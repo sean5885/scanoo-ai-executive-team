@@ -219,7 +219,7 @@ This path is bounded by the checked-in planner contract:
     - `search_and_summarize`
     - `document_summarize`
   - checked-in surface layer:
-    - `search_and_summarize` is `internal_only`
+    - `search_and_summarize` is `planner_visible`
     - `document_summarize` is `planner_visible`
   - current selection entries are deterministic-only:
     - `taskType=skill_read` -> `search_and_summarize`
@@ -228,9 +228,10 @@ This path is bounded by the checked-in planner contract:
     - valid promotion path is `internal_only -> readiness_check -> planner_visible`
     - direct jump is rejected
     - selector drift, answer-pipeline bypass, unstable output shape, or side-effect overreach all block promotion
-    - only `document_summarize` is promoted in the current baseline
-  - strict user-input planner `target_catalog` hides internal-only skill-backed actions and admits planner-visible `document_summarize`
-  - strict planner decision validation rejects `search_and_summarize` but may admit `document_summarize`
+    - `search_and_summarize` and `document_summarize` are promoted in the current baseline
+    - `search_and_summarize` promotion is additionally narrowed by a query-bound admission boundary that fails closed on ambiguity and preserves the original generic search path
+  - strict user-input planner `target_catalog` admits `document_summarize`, and admits `search_and_summarize` only when its admission boundary passes
+  - strict planner decision validation may admit `search_and_summarize` only inside that admission boundary, and may admit `document_summarize` only on its own non-overlapping detail-summary boundary
   - deterministic selection now resolves through the checked-in skill selector registry in `planner/skill-bridge.mjs`
   - if more than one planner-visible skill claims the same deterministic selector key, selection fails closed as `selector_skill_conflict`
   - planner dispatch must call `planner/skill-bridge.mjs`

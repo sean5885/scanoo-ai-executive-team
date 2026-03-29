@@ -1056,10 +1056,112 @@ function getPlannerPresetContract(preset = "") {
   return plannerContract?.presets?.[cleanText(preset)] || null;
 }
 
-function isPlannerDecisionCatalogVisible(name = "") {
+function buildPlannerSkillAdmissionSignals(semantics = null) {
+  const normalizedSemantics = semantics && typeof semantics === "object" && !Array.isArray(semantics)
+    ? semantics
+    : {};
+  return {
+    wants_document_search: normalizedSemantics.wants_document_search === true,
+    wants_document_summary: normalizedSemantics.wants_document_summary === true,
+    wants_search_summary: normalizedSemantics.wants_search_summary === true,
+    wants_document_detail: normalizedSemantics.wants_document_detail === true,
+    wants_document_list: normalizedSemantics.wants_document_list === true,
+    wants_scoped_doc_exclusion_search: normalizedSemantics.wants_scoped_doc_exclusion_search === true,
+    explicit_same_task: normalizedSemantics.explicit_same_task === true,
+  };
+}
+
+function evaluatePlannerVisibleSkillAdmission({
+  action = "",
+  text = "",
+  semantics = null,
+} = {}) {
+  const entry = getPlannerSkillAction(action);
+  if (!entry || entry.planner_catalog_eligible !== true) {
+    return {
+      admitted: false,
+      fail_closed: false,
+    };
+  }
+
+  const boundary = entry.planner_admission_boundary
+    && typeof entry.planner_admission_boundary === "object"
+    && !Array.isArray(entry.planner_admission_boundary)
+    ? entry.planner_admission_boundary
+    : null;
+  if (!boundary) {
+    return {
+      admitted: true,
+      fail_closed: false,
+    };
+  }
+
+  const normalizedText = cleanText(text);
+  if (!normalizedText) {
+    return {
+      admitted: false,
+      fail_closed: true,
+    };
+  }
+
+  const signals = buildPlannerSkillAdmissionSignals(semantics || derivePlannerUserInputSemantics(text));
+  const requiredSignals = Array.isArray(boundary.require_signals) ? boundary.require_signals : [];
+  const forbiddenSignals = Array.isArray(boundary.forbid_signals) ? boundary.forbid_signals : [];
+  const missingRequired = requiredSignals.filter((signal) => signals[signal] !== true);
+  const hitForbidden = forbiddenSignals.filter((signal) => signals[signal] === true);
+
+  return {
+    admitted: missingRequired.length === 0 && hitForbidden.length === 0,
+    fail_closed: missingRequired.length > 0 || hitForbidden.length > 0,
+    fail_closed_on_ambiguity: boundary.fail_closed_on_ambiguity !== false,
+  };
+}
+
+function resolvePlannerVisibleSkillAdmissions({
+  text = "",
+  semantics = null,
+} = {}) {
+  const skillEntries = listPlannerSkillBridges()
+    .filter((entry) => entry?.planner_catalog_eligible === true);
+  if (skillEntries.length === 0) {
+    return {
+      admitted_actions: Object.freeze([]),
+      ambiguous: false,
+    };
+  }
+
+  const admitted = skillEntries
+    .filter((entry) => evaluatePlannerVisibleSkillAdmission({
+      action: entry.action,
+      text,
+      semantics,
+    }).admitted === true)
+    .map((entry) => entry.action);
+
+  const ambiguous = admitted.length > 1 && skillEntries.some((entry) => (
+    admitted.includes(entry.action)
+    && entry?.planner_admission_boundary?.fail_closed_on_ambiguity !== false
+  ));
+
+  return {
+    admitted_actions: Object.freeze(ambiguous ? [] : admitted),
+    ambiguous,
+  };
+}
+
+function isPlannerDecisionCatalogVisible(name = "", { text = "", semantics = null } = {}) {
   const normalizedName = cleanText(name);
   if (getPlannerSkillAction(normalizedName)) {
-    return isPlannerSkillActionCatalogVisible(normalizedName);
+    if (!isPlannerSkillActionCatalogVisible(normalizedName)) {
+      return false;
+    }
+    if (!cleanText(text)) {
+      return true;
+    }
+    return resolvePlannerVisibleSkillAdmissions({
+      text,
+      semantics,
+    }).admitted_actions.includes(normalizedName);
   }
   const entry = getPlannerDecisionContract(name)?.contract || null;
   return cleanText(entry?.planner_visibility || "").toLowerCase() !== "deterministic_only";
@@ -1094,16 +1196,17 @@ function summarizePlannerInputSchema(schema = null) {
   return requiredFields.length > 0 ? requiredFields.join(", ") : "(none)";
 }
 
-export function listPlannerDecisionCatalogEntries() {
+export function listPlannerDecisionCatalogEntries({ text = "" } = {}) {
+  const semantics = cleanText(text) ? derivePlannerUserInputSemantics(text) : null;
   const actionEntries = Object.entries(plannerContract?.actions || {})
-    .filter(([name]) => isPlannerDecisionCatalogVisible(name))
+    .filter(([name]) => isPlannerDecisionCatalogVisible(name, { text, semantics }))
     .map(([name, contract]) => ({
       name,
       type: "action",
       required_params: summarizePlannerInputSchema(contract?.input_schema),
     }));
   const presetEntries = Object.entries(plannerContract?.presets || {})
-    .filter(([name]) => isPlannerDecisionCatalogVisible(name))
+    .filter(([name]) => isPlannerDecisionCatalogVisible(name, { text, semantics }))
     .map(([name, contract]) => ({
       name,
       type: "preset",
@@ -1112,8 +1215,8 @@ export function listPlannerDecisionCatalogEntries() {
   return [...actionEntries, ...presetEntries];
 }
 
-function plannerDecisionCatalogText() {
-  return listPlannerDecisionCatalogEntries()
+function plannerDecisionCatalogText({ text = "" } = {}) {
+  return listPlannerDecisionCatalogEntries({ text })
     .map((entry) => `- ${entry.name}: type=${entry.type}; required_params=${entry.required_params}`)
     .join("\n");
 }
@@ -2499,6 +2602,7 @@ export function validatePlannerUserInputDecision(decision = {}, { text = "" } = 
   const normalizedDecision = decision && typeof decision === "object" && !Array.isArray(decision)
     ? decision
     : {};
+  const semantics = cleanText(text) ? derivePlannerUserInputSemantics(text) : null;
   const effectiveDecision = hardenPlannerUserInputDecisionCandidate({
     text,
     decision: normalizedDecision,
@@ -2602,6 +2706,19 @@ export function validatePlannerUserInputDecision(decision = {}, { text = "" } = 
   }
 
   if (getPlannerSkillAction(action) && !isPlannerSkillActionCatalogVisible(action)) {
+    return {
+      ok: false,
+      error: normalizePublicPlannerErrorCode(INVALID_ACTION),
+      action,
+      params,
+    };
+  }
+
+  if (
+    getPlannerSkillAction(action)
+    && cleanText(text)
+    && !isPlannerDecisionCatalogVisible(action, { text, semantics })
+  ) {
     return {
       ok: false,
       error: normalizePublicPlannerErrorCode(INVALID_ACTION),
@@ -5106,7 +5223,7 @@ async function buildPlannerUserInputPrompt({ text = "", sessionKey = "" } = {}) 
       {
         name: "target_catalog",
         label: "target_catalog",
-        text: plannerDecisionCatalogText(),
+        text: plannerDecisionCatalogText({ text }),
         required: true,
         maxTokens: 220,
       },
@@ -5321,6 +5438,7 @@ function derivePlannerUserInputSemantics(text = "") {
       "search docs",
       "search company brain",
     ]);
+  const wantsSearchSummary = wantsDocumentSearch && plannerTextHasAny(normalizedText, documentSummarySignals);
   const wantsDocumentLookup = wantsDocumentList || wantsDocumentSummary || wantsDocumentDetail || wantsDocumentSearch || plannerTextHasAny(normalizedText, [
     "company brain",
     "知識庫",
@@ -5331,6 +5449,7 @@ function derivePlannerUserInputSemantics(text = "") {
     normalized_text: normalizedText,
     wants_conversation_summary: wantsConversationSummary,
     wants_document_summary: wantsDocumentSummary,
+    wants_search_summary: wantsSearchSummary,
     wants_document_list: wantsDocumentList,
     wants_document_search: wantsDocumentSearch,
     wants_document_detail: wantsDocumentDetail,

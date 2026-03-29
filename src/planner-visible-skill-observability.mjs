@@ -16,7 +16,7 @@ const SKILL_SELECTION_FIXTURES = Object.freeze([
     task_type: "skill_read",
     expected_action: "search_and_summarize",
     expected_selector_key: "skill.search_and_summarize.read",
-    expected_surface_layer: "internal_only",
+    expected_surface_layer: "planner_visible",
     expected_routing_reason: "selector_search_and_summarize_skill",
   },
   {

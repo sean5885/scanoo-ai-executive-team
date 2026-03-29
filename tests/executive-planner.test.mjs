@@ -5378,7 +5378,7 @@ test("selectPlannerTool keeps the original read-only skill path deterministic wi
     {
       action: "search_and_summarize",
       skill_name: "search_and_summarize",
-      surface_layer: "internal_only",
+      surface_layer: "planner_visible",
       max_skills_per_run: 1,
       allow_skill_chain: false,
       skill_class: "read_only",
@@ -5387,7 +5387,7 @@ test("selectPlannerTool keeps the original read-only skill path deterministic wi
       selector_key: "skill.search_and_summarize.read",
       selector_task_types: ["knowledge_read_skill", "skill_read"],
       routing_reason: "selector_search_and_summarize_skill",
-      planner_catalog_eligible: false,
+      planner_catalog_eligible: true,
       raw_user_output_allowed: false,
       allowed_side_effects: {
         read: ["search_knowledge_base"],
@@ -5428,26 +5428,57 @@ test("selectPlannerTool can deterministically choose the second read-only skill 
   assert.match(result.reason || "", /文件摘要 read-only skill/);
 });
 
-test("strict planner target catalog keeps internal-only skill actions hidden", () => {
-  const catalogEntries = listPlannerDecisionCatalogEntries();
-  const catalogNames = catalogEntries.map((entry) => entry.name);
+test("strict planner target catalog admits search_and_summarize only inside its admission boundary", () => {
+  const admittedCatalogNames = listPlannerDecisionCatalogEntries({
+    text: "幫我搜尋 launch checklist 並整理重點",
+  }).map((entry) => entry.name);
+  const searchOnlyCatalogNames = listPlannerDecisionCatalogEntries({
+    text: "找 launch checklist 文件",
+  }).map((entry) => entry.name);
+  const ambiguousCatalogNames = listPlannerDecisionCatalogEntries({
+    text: "幫我搜尋這份 launch checklist 文件並整理重點",
+  }).map((entry) => entry.name);
 
-  assert.equal(catalogNames.includes("search_and_summarize"), false);
-  assert.equal(catalogNames.includes("document_summarize"), true);
-  assert.equal(catalogNames.includes("search_company_brain_docs"), true);
-  assert.equal(catalogNames.includes("get_company_brain_doc_detail"), true);
+  assert.equal(admittedCatalogNames.includes("search_and_summarize"), true);
+  assert.equal(admittedCatalogNames.includes("document_summarize"), false);
+  assert.equal(searchOnlyCatalogNames.includes("search_and_summarize"), false);
+  assert.equal(searchOnlyCatalogNames.includes("document_summarize"), false);
+  assert.equal(ambiguousCatalogNames.includes("search_and_summarize"), false);
+  assert.equal(ambiguousCatalogNames.includes("document_summarize"), false);
+  assert.equal(searchOnlyCatalogNames.includes("search_company_brain_docs"), true);
+  assert.equal(ambiguousCatalogNames.includes("get_company_brain_doc_detail"), true);
 });
 
-test("strict planner decision validation rejects internal-only skill actions even when they exist in the contract", () => {
-  const result = validatePlannerUserInputDecision({
+test("strict planner decision validation admits search_and_summarize only for its planner-visible admission boundary", () => {
+  const admittedResult = validatePlannerUserInputDecision({
     action: "search_and_summarize",
     params: {
       account_id: "acct_hidden_skill",
       q: "launch checklist",
     },
+  }, {
+    text: "幫我搜尋 launch checklist 並整理重點",
+  });
+  const rejectedResult = validatePlannerUserInputDecision({
+    action: "search_and_summarize",
+    params: {
+      account_id: "acct_hidden_skill",
+      q: "launch checklist",
+    },
+  }, {
+    text: "找 launch checklist 文件",
   });
 
-  assert.deepEqual(result, {
+  assert.deepEqual(admittedResult, {
+    ok: true,
+    action: "search_and_summarize",
+    params: {
+      account_id: "acct_hidden_skill",
+      q: "launch checklist",
+    },
+    target_kind: "action",
+  });
+  assert.deepEqual(rejectedResult, {
     ok: false,
     error: "invalid_action",
     action: "search_and_summarize",
@@ -5465,6 +5496,8 @@ test("strict planner decision validation admits planner-visible document_summari
       account_id: "acct_hidden_document_skill",
       doc_id: "doc_hidden_document_skill",
     },
+  }, {
+    text: "幫我整理這份文件",
   });
 
   assert.deepEqual(result, {

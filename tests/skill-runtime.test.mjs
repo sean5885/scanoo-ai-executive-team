@@ -1156,7 +1156,7 @@ test("planner skill bridge exposes checked-in read-only skill actions and adapts
     {
       action: "search_and_summarize",
       skill_name: "search_and_summarize",
-      surface_layer: "internal_only",
+      surface_layer: "planner_visible",
       max_skills_per_run: 1,
       allow_skill_chain: false,
       skill_class: "read_only",
@@ -1165,7 +1165,7 @@ test("planner skill bridge exposes checked-in read-only skill actions and adapts
       selector_key: "skill.search_and_summarize.read",
       selector_task_types: ["knowledge_read_skill", "skill_read"],
       routing_reason: "selector_search_and_summarize_skill",
-      planner_catalog_eligible: false,
+      planner_catalog_eligible: true,
       raw_user_output_allowed: false,
       allowed_side_effects: {
         read: ["search_knowledge_base"],
@@ -1259,13 +1259,13 @@ test("document_summarize planner_visible metadata stays fully gated and catalog-
   });
 });
 
-test("search_and_summarize readiness_check metadata stays internal_only and catalog-hidden", () => {
+test("search_and_summarize planner_visible metadata stays gated behind the admission boundary", () => {
   const entry = getPlannerSkillAction("search_and_summarize");
 
-  assert.equal(entry?.surface_layer, "internal_only");
-  assert.equal(entry?.promotion_stage, "readiness_check");
-  assert.equal(entry?.previous_promotion_stage, "internal_only");
-  assert.equal(entry?.planner_catalog_eligible, false);
+  assert.equal(entry?.surface_layer, "planner_visible");
+  assert.equal(entry?.promotion_stage, "planner_visible");
+  assert.equal(entry?.previous_promotion_stage, "readiness_check");
+  assert.equal(entry?.planner_catalog_eligible, true);
   assert.equal(entry?.selector_key, "skill.search_and_summarize.read");
   assert.deepEqual(entry?.selector_task_types, ["knowledge_read_skill", "skill_read"]);
   assert.deepEqual(entry?.readiness_gate, {
@@ -1275,6 +1275,11 @@ test("search_and_summarize readiness_check metadata stays internal_only and cata
     raw_skill_output_blocked: true,
     output_shape_stable: true,
     side_effect_boundary_locked: true,
+  });
+  assert.deepEqual(entry?.planner_admission_boundary, {
+    require_signals: ["wants_document_search", "wants_search_summary"],
+    forbid_signals: ["wants_document_detail", "wants_document_list", "explicit_same_task", "wants_scoped_doc_exclusion_search"],
+    fail_closed_on_ambiguity: true,
   });
 });
 

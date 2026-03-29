@@ -9,6 +9,7 @@ const {
   renderPlannerUserFacingReplyText,
   runPlannerToolFlow,
   selectPlannerTool,
+  validatePlannerUserInputDecision,
 } = await import("../src/executive-planner.mjs");
 const {
   createPlannerSkillActionRegistry,
@@ -68,22 +69,33 @@ test("search_and_summarize selector stays disjoint from document_summarize", () 
   assert.equal(searchEntry.selector_key, "skill.search_and_summarize.read");
   assert.equal(documentEntry.selector_key, "skill.document_summarize.read");
   assert.deepEqual(overlappingTaskTypes, []);
-  assert.equal(searchEntry.surface_layer, "internal_only");
-  assert.equal(searchEntry.promotion_stage, "readiness_check");
-  assert.equal(searchEntry.previous_promotion_stage, "internal_only");
-  assert.equal(searchEntry.planner_catalog_eligible, false);
+  assert.equal(searchEntry.surface_layer, "planner_visible");
+  assert.equal(searchEntry.promotion_stage, "planner_visible");
+  assert.equal(searchEntry.previous_promotion_stage, "readiness_check");
+  assert.equal(searchEntry.planner_catalog_eligible, true);
   assert.equal(documentEntry.surface_layer, "planner_visible");
 });
 
-test("search_and_summarize readiness_check status does not enter the strict planner catalog", () => {
-  const catalogNames = listPlannerDecisionCatalogEntries().map((entry) => entry.name);
+test("search_and_summarize planner-visible admission is query-bounded and fail-closed", () => {
+  const admittedCatalogNames = listPlannerDecisionCatalogEntries({
+    text: "幫我搜尋 launch checklist 並整理重點",
+  }).map((entry) => entry.name);
+  const searchOnlyCatalogNames = listPlannerDecisionCatalogEntries({
+    text: "找 launch checklist 文件",
+  }).map((entry) => entry.name);
+  const ambiguousCatalogNames = listPlannerDecisionCatalogEntries({
+    text: "幫我搜尋這份 launch checklist 文件並整理重點",
+  }).map((entry) => entry.name);
   const searchEntry = getPlannerSkillAction("search_and_summarize");
 
-  assert.equal(searchEntry?.surface_layer, "internal_only");
-  assert.equal(searchEntry?.promotion_stage, "readiness_check");
-  assert.equal(searchEntry?.previous_promotion_stage, "internal_only");
-  assert.equal(searchEntry?.planner_catalog_eligible, false);
-  assert.equal(catalogNames.includes("search_and_summarize"), false);
+  assert.equal(searchEntry?.surface_layer, "planner_visible");
+  assert.equal(searchEntry?.promotion_stage, "planner_visible");
+  assert.equal(searchEntry?.previous_promotion_stage, "readiness_check");
+  assert.equal(searchEntry?.planner_catalog_eligible, true);
+  assert.equal(admittedCatalogNames.includes("search_and_summarize"), true);
+  assert.equal(searchOnlyCatalogNames.includes("search_and_summarize"), false);
+  assert.equal(ambiguousCatalogNames.includes("search_and_summarize"), false);
+  assert.equal(ambiguousCatalogNames.includes("document_summarize"), false);
 });
 
 test("search_and_summarize promotion candidate fails closed when it overlaps document_summarize selector task types", () => {
@@ -156,7 +168,7 @@ test("planner does not mis-select document_summarize for mixed search-and-summar
   assert.equal(result.routing_reason, "selector_search_and_summarize_skill");
   assert.equal(event?.payload?.skill_selector_attempted, true);
   assert.equal(event?.payload?.skill_selector_key, "skill.search_and_summarize.read");
-  assert.equal(event?.payload?.skill_surface_layer, "internal_only");
+  assert.equal(event?.payload?.skill_surface_layer, "planner_visible");
 });
 
 test("mixed search-and-summarize user intents keep the existing search path when no skill task type is provided", () => {
@@ -172,6 +184,33 @@ test("mixed search-and-summarize user intents keep the existing search path when
   assert.equal(result.routing_reason, "selector_search_company_brain_docs");
   assert.equal(event?.payload?.skill_selector_attempted, false);
   assert.equal(event?.payload?.skill_selector_key, null);
+});
+
+test("planner-visible search_and_summarize stays fail-closed for ambiguous mixed search/detail queries", () => {
+  const ambiguousText = "幫我搜尋這份 launch checklist 文件並整理重點";
+  const searchSkillDecision = validatePlannerUserInputDecision({
+    action: "search_and_summarize",
+    params: {
+      account_id: "acct_search_boundary_ambiguous",
+      q: "launch checklist",
+    },
+  }, {
+    text: ambiguousText,
+  });
+  const documentSkillDecision = validatePlannerUserInputDecision({
+    action: "document_summarize",
+    params: {
+      account_id: "acct_search_boundary_ambiguous",
+      doc_id: "doc_launch_checklist",
+    },
+  }, {
+    text: ambiguousText,
+  });
+
+  assert.equal(searchSkillDecision.ok, false);
+  assert.equal(searchSkillDecision.error, "invalid_action");
+  assert.equal(documentSkillDecision.ok, false);
+  assert.equal(documentSkillDecision.error, "invalid_action");
 });
 
 test("search_and_summarize stays observable and read-only while noisy search snippets are cleaned before final answer rendering", async () => {
@@ -248,10 +287,10 @@ test("search_and_summarize stays observable and read-only while noisy search sni
   assert.equal(result.selected_action, "search_and_summarize");
   assert.equal(result.execution_result?.ok, true);
   assert.equal(selectionEvent?.payload?.skill_selector_key, "skill.search_and_summarize.read");
-  assert.equal(toolEvent?.payload?.skill_surface_layer, "internal_only");
+  assert.equal(toolEvent?.payload?.skill_surface_layer, "planner_visible");
   assert.equal(toolEvent?.payload?.skill_fail_closed, false);
   assert.equal(boundaryEvent?.payload?.planner_skill_boundary, "answer_pipeline");
-  assert.equal(boundaryEvent?.payload?.planner_skill_surface_layer, "internal_only");
+  assert.equal(boundaryEvent?.payload?.planner_skill_surface_layer, "planner_visible");
   assert.equal(boundaryEvent?.payload?.planner_skill_answer_pipeline_enforced, true);
   assert.equal(boundaryEvent?.payload?.planner_skill_raw_payload_blocked, true);
   assert.equal(userResponse.ok, true);

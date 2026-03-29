@@ -28,10 +28,10 @@ test("planner-visible skill observability check stays green and keeps rollback t
   assert.equal(report.summary.fallback_count, 0);
   assert.equal(report.summary.fail_closed_count, 0);
   assert.deepEqual(report.summary.skill_surface_split, {
-    planner_visible: 1,
-    internal_only: 1,
-    planner_visible_ratio: 0.5,
-    internal_only_ratio: 0.5,
+    planner_visible: 2,
+    internal_only: 0,
+    planner_visible_ratio: 1,
+    internal_only_ratio: 0,
   });
   assert.deepEqual(report.safety, {
     answer_pipeline_before_user_response: true,

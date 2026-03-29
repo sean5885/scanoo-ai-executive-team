@@ -52,7 +52,7 @@ Checked-in planner skill actions now carry an explicit surface layer:
   - hidden from strict user-input planner `target_catalog`
 - `planner_visible`
   - planner-selectable skill-backed action surface
-  - current checked-in example: `document_summarize`
+  - current checked-in examples: `search_and_summarize`, `document_summarize`
 - `user_facing_capability`
   - reserved and disabled
   - no checked-in registry entry may use it
@@ -60,9 +60,10 @@ Checked-in planner skill actions now carry an explicit surface layer:
 Current checked-in skills:
 
 - `search_and_summarize`
-  - `surface_layer = internal_only`
-  - `promotion_stage = readiness_check`
-  - `previous_promotion_stage = internal_only`
+  - `surface_layer = planner_visible`
+  - `promotion_stage = planner_visible`
+  - `previous_promotion_stage = readiness_check`
+  - planner catalog admission is query-bounded and fail-closed
 - `document_summarize`
   - `surface_layer = planner_visible`
   - `promotion_stage = planner_visible`
@@ -81,6 +82,7 @@ Current checked-in enforcement:
 - `planner_visible` skills must be `read_only`
 - `planner_visible` skills must stay `read_runtime` only
 - `planner_visible` skills must prove regression pass, answer-pipeline enforcement, observability evidence, raw-output blocking, stable output shape, and locked side-effect boundary
+- `planner_visible` skills with broader query surfaces must define an explicit admission boundary; if the boundary cannot uniquely admit one skill, catalog admission fails closed
 - `user_facing_capability` is rejected fail-closed at registry build time
 
 ## Skill Classes
@@ -119,7 +121,7 @@ Current v1 surface rule by class:
 
 - `read_only`
   - allowed for `internal_only`
-  - may become `planner_visible` only in future with explicit approval and regression coverage
+  - may become `planner_visible` only with explicit approval, regression coverage, and any required fail-closed admission boundary
 - `write`
   - may exist only as internal helper in future
   - must not become `planner_visible` in current policy
@@ -179,7 +181,7 @@ For `readiness_check` and `planner_visible` candidates the bar is stricter:
 
 This keeps old behavior stable as long as a new skill uses a different selector key.
 It also keeps current internal-only skills outside the strict planner catalog.
-It also means only an explicitly promoted checked-in skill may enter the strict planner catalog, while the remaining internal-only skills stay hidden.
+It also means only an explicitly promoted checked-in skill may enter the strict planner catalog, and any planner-visible skill with a broader query surface must still pass its own fail-closed admission boundary before it is shown to the user-input planner.
 
 ## Response Surface Boundary
 
@@ -250,10 +252,11 @@ Current regression coverage includes:
 - skill chains are rejected
 - checked-in skills do not import repo / DB side channels
 - planner skill failures do not fall back into generic document search
-- strict planner target catalog keeps internal-only skill actions hidden
-- strict planner decision validation rejects internal-only skill actions
+- strict planner target catalog now admits `search_and_summarize` only when the query satisfies its checked-in search-plus-summarize admission boundary
+- strict planner decision validation rejects `search_and_summarize` outside that admission boundary
 - strict planner target catalog admits planner-visible `document_summarize`
 - strict planner decision validation admits planner-visible `document_summarize`
+- ambiguous overlap between `search_and_summarize` and `document_summarize` fails closed and leaves the original non-skill routing family available
 - incomplete or malformed `readiness_check` metadata fails closed at planner skill registry build time
 - planner-visible stage metadata mixed with `internal_only` surface fails closed at planner skill registry build time
 - planner skill success replies still go through canonical answer-source mapping
@@ -275,4 +278,4 @@ Current answer:
 - every future planner-visible candidate must define rollback conditions for selector drift, answer bypass, regression break, and routing mismatch in the same change
 
 Current thread does not open a third skill.
-If those conditions are not met, the checked-in governance model must remain at the current bounded surface of one internal-only read skill plus one planner-visible read skill.
+If those conditions are not met, the checked-in governance model must remain at the current bounded surface of query-bounded planner-visible read skills only.

@@ -34,9 +34,7 @@ Meaning:
 Current checked-in examples:
 
 - `search_and_summarize`
-  - `surface_layer = internal_only`
-  - `promotion_stage = readiness_check`
-  - `previous_promotion_stage = internal_only`
+  - no remaining checked-in example at this layer
 
 Required rules:
 
@@ -55,6 +53,11 @@ Meaning:
 
 Current checked-in status:
 
+- `search_and_summarize`
+  - `surface_layer = planner_visible`
+  - `promotion_stage = planner_visible`
+  - `previous_promotion_stage = readiness_check`
+  - strict planner catalog admission is enabled only when its query-bound admission boundary passes fail-closed
 - `document_summarize`
   - `surface_layer = planner_visible`
   - `promotion_stage = planner_visible`
@@ -71,7 +74,7 @@ Current policy gate:
 - the existing answer pipeline must remain in front of the user response
 - selector/tool/boundary observability evidence must already be checked in
 - raw skill output must stay hidden behind normalization
-- this layer remains fail-closed and is activated only for `document_summarize` in the current baseline
+- this layer remains fail-closed; `search_and_summarize` additionally requires a query-bound admission boundary so planner-visible access does not widen the generic search surface
 
 ### 3. `user_facing_capability`
 
@@ -102,15 +105,13 @@ Only skills that satisfy all of the following may be considered in future:
 
 Current checked-in answer:
 
+- `search_and_summarize`
 - `document_summarize`
 
 ### What must remain deterministic-only
 
 The following must stay `internal_only` in the current baseline:
 
-- `search_and_summarize`
-  - current checked-in metadata is `promotion_stage = readiness_check`
-  - it still remains hidden from strict planner `target_catalog`
 - any future `write` skill
 - any future `hybrid` skill
 - any skill whose output has not yet been normalized into the existing answer pipeline
@@ -150,8 +151,11 @@ This means:
 ### Currently open
 
 - deterministic planner access to `search_and_summarize`
-  - current checked-in stage metadata is `readiness_check`
-  - strict planner catalog admission remains disabled
+  - current checked-in stage metadata is `planner_visible`
+  - strict planner catalog admission is gated by a query-bound admission boundary:
+    - requires search + summarize semantics
+    - forbids detail/list/ambiguous follow-up semantics
+    - on ambiguity or missing evidence, catalog admission fails closed
 - deterministic planner access to `document_summarize`
   - current checked-in stage metadata for `document_summarize` is `planner_visible`
   - it is now visible in strict planner `target_catalog`
@@ -180,10 +184,10 @@ Expansion remains blocked until all of the following are done in the same change
 
 Current thread outcome:
 
-- `search_and_summarize` is now recorded as `readiness_check` while staying `surface_layer=internal_only`
-- no change to strict planner `target_catalog` visibility for `search_and_summarize`
+- `search_and_summarize` is now promoted from `readiness_check` to `planner_visible`
+- strict planner `target_catalog` visibility for `search_and_summarize` is now guarded by a query-bound fail-closed admission boundary instead of broad always-on visibility
 - `document_summarize` is now promoted from `readiness_check` to `planner_visible`
 - no new skill added
 - no skill chain added
 - no public API drift introduced
-- planner-visible surface is activated only for `document_summarize`
+- planner-visible surface is activated for `document_summarize` plus boundary-guarded `search_and_summarize`

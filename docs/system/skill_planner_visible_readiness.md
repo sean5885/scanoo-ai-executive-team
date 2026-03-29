@@ -35,8 +35,7 @@ Current checked-in baseline for this promotion thread is:
 - `search_and_summarize` is checked in as `surface_layer=internal_only`
 - `search_and_summarize` is checked in as `promotion_stage=readiness_check`
 - `search_and_summarize` keeps `previous_promotion_stage=internal_only`
-- `search_and_summarize` remains outside strict planner `target_catalog`
-- `search_and_summarize` does not become `planner_visible` in this thread
+- planner-visible admission widening is the only remaining blocker at freeze time
 - skill chaining remains disabled
 - `document_summarize` is the only checked-in skill promoted to `planner_visible`
 - no third skill is added
@@ -94,8 +93,8 @@ Current checked-in baseline for this watch is:
 - `selector_key_hit_rate = 2/2`
 - `fallback_count = 0`
 - `fail_closed_count = 0`
-- `planner_visible = 1`
-- `internal_only = 1`
+- `planner_visible = 2`
+- `internal_only = 0`
 
 ## Readiness Checklist
 
@@ -120,6 +119,7 @@ Use this checklist during `readiness_check` and keep evidence in the same change
   - raw payload blocking present
   - fail-closed negative probe still behaves as `fail_closed`
   - existing non-skill routing fixture remains unchanged
+  - planner-visible skill admission stays query-bounded and fail-closed when the query is ambiguous
 
 ## Promotion Flow
 
@@ -242,21 +242,25 @@ Current checked-in skill-backed actions:
 
 Current status:
 
-- `search_and_summarize` is now checked in as `promotion_stage=readiness_check`
-- `search_and_summarize` records `previous_promotion_stage=internal_only`
-- `search_and_summarize` remains `surface_layer=internal_only`
-- `search_and_summarize` remains `planner_catalog_eligible=false`
+- `search_and_summarize` is now checked in as `promotion_stage=planner_visible`
+- `search_and_summarize` records `previous_promotion_stage=readiness_check`
+- `search_and_summarize` is now `surface_layer=planner_visible`
+- `search_and_summarize` is now `planner_catalog_eligible=true`
 - `search_and_summarize` records readiness evidence for regression, answer pipeline, observability, raw-output blocking, output stability, and side-effect boundary lock
+- `search_and_summarize` now also records a planner admission boundary that:
+  - requires search + summarize semantics together
+  - forbids detail/list/scoped-search follow-up semantics
+  - fails closed when the query is ambiguous or not specific enough
 - `document_summarize` is now checked in as:
   - `surface_layer=planner_visible`
   - `promotion_stage=planner_visible`
   - `previous_promotion_stage=readiness_check`
   - `planner_catalog_eligible=true`
   - full readiness gate marked true for regression, answer pipeline, observability, raw-output blocking, output stability, and side-effect boundary lock
-- `search_and_summarize` remains outside strict planner `target_catalog`
+- `search_and_summarize` enters strict planner `target_catalog` only when its query-bound admission boundary passes
 - `document_summarize` is allowed to enter strict planner `target_catalog`
 
-Thread `search-and-summarize-readiness-check-v1` promotes `search_and_summarize` metadata into `readiness_check` without widening its planner-visible surface.
+Thread `search-and-summarize-admission-boundary-v1` promotes `search_and_summarize` from `readiness_check` to `planner_visible` with a query-bound fail-closed admission boundary so the planner-visible surface does not widen the existing generic search path.
 
 Rerun outcome for `search_and_summarize`:
 
@@ -288,24 +292,16 @@ Rerun outcome for `search_and_summarize`:
 - regression
   - pass when the repo-level `npm test` gate is green
 
-Additional blocking facts from the rerun:
+Current admission-boundary outcome for `search_and_summarize`:
 
-- `search_and_summarize` is now in `readiness_check`, but it is still not `planner_visible`
-  - strict planner catalog admission remains disabled on purpose in this thread
-- mixed search-plus-summarize user intents still stay on `search_company_brain_docs` when no deterministic skill `taskType` is supplied
-  - this preserves the existing search path today
-- promoting `search_and_summarize` to `planner_visible` would expose it inside strict planner `target_catalog`
-  - current semantic validation already treats `search_and_summarize` as a valid document-query action family once catalog-visible
-  - therefore promotion would widen the current search routing surface unless extra routing hardening is added first
-
-Current conclusion for `search_and_summarize`:
-
-- not eligible to become the second checked-in `planner_visible` skill in the current baseline
-- blocking reasons:
-  - planner-visible admission would risk changing the existing search path
-  - planner-visible admission widening is still intentionally blocked after readiness-check
+- now eligible as the second checked-in `planner_visible` skill in the current baseline
+- admission boundary:
+  - requires explicit search + summarize semantics together
+  - forbids overlap with `document_summarize` detail-style semantics
+  - ambiguous or underspecified queries fail closed and stay on the original routing family
+- existing search path stays unchanged when no deterministic skill `taskType` is supplied
 - current rerun note:
-  - checked-in `search_knowledge_base` answer-path hardening now canonicalizes override-backed search snippets through the shared read-source cleanup before `search_and_summarize` builds its summary, so README/path/link noise is no longer a readiness blocker on this path
+  - checked-in `search_knowledge_base` answer-path hardening still canonicalizes override-backed search snippets through the shared read-source cleanup before `search_and_summarize` builds its summary, and that remains compatible with planner-visible promotion
 
 Promoted candidate:
 
@@ -317,15 +313,14 @@ Promoted candidate:
   - answer/source rendering already maps cleanly into the existing user boundary
 - current conclusion:
   - `document_summarize` has completed the checked-in promotion path `internal_only -> readiness_check -> planner_visible`
-  - strict planner catalog admission is now active for this action only
+  - strict planner catalog admission is now active on its single-document summary boundary
   - answer pipeline, canonical source mapping, and raw payload blocking remain unchanged
-  - planner-visible rollback watch remains checked in for this action only
+  - planner-visible rollback watch remains checked in for this action
 
-Second candidate, but not first:
+Second promoted candidate:
 
 - `search_and_summarize`
-- broader query surface means more selector/query regression risk than `document_summarize`
-- current answer for future promotion:
-  - a second `planner_visible` skill is now conditionally allowed only if it passes the same readiness gate and `npm run check:planner-visible-skill` remains green
-  - `search_and_summarize` has cleared the readiness-check metadata gate but still has not cleared planner-visible admission widening
-  - this is not automatic promotion and does not relax `fail_closed`
+- broader query surface still means more selector/query regression risk than `document_summarize`
+- current checked-in answer:
+  - promotion is allowed only because the planner-visible admission boundary now narrows the catalog-visible surface back down and fails closed on ambiguity
+  - this is still not automatic promotion and does not relax `fail_closed`
