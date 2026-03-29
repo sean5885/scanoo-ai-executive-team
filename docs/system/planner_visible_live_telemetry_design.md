@@ -6,6 +6,10 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 This document defines a production-ready telemetry / monitoring / rollback design for the current `planner_visible` surface without wiring it into a real production pipeline yet.
 
+For the infra/data handoff blueprint that turns this local-only design into a production integration strategy, see:
+
+- [planner_visible_production_telemetry_integration_blueprint.md](/Users/seanhan/Documents/Playground/docs/system/planner_visible_production_telemetry_integration_blueprint.md)
+
 Current design scope:
 
 - add a checked-in event/metric/alert/rollback spec
