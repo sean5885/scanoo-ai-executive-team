@@ -1956,11 +1956,11 @@ export function createMeetingCoordinator(overrides = {}) {
       return {
         ok: false,
         error: mutationExecution.error,
-        message: mutationExecution.message,
-        write_guard: mutationExecution.write_guard || null,
+        message: mutationExecution.data?.message,
+        write_guard: mutationExecution.data?.write_guard || null,
       };
     }
-    const execution = mutationExecution.result;
+    const execution = mutationExecution.data;
     if (!execution?.ok) {
       return {
         ok: false,

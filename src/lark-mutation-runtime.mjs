@@ -15,6 +15,7 @@ import {
   createDocumentCreateConfirmation,
   peekDocumentCreateConfirmation,
 } from "./doc-update-confirmations.mjs";
+import { buildExecutionEnvelope } from "./execution-envelope.mjs";
 import { planDocumentCreateGuard } from "./lark-write-guard.mjs";
 
 function cleanText(value) {
@@ -178,7 +179,7 @@ export async function runCanonicalLarkMutation({
 export async function executeCanonicalLarkMutation(options = {}) {
   const mutationExecution = await runCanonicalLarkMutation(options);
   return mutationExecution?.ok === true
-    ? mutationExecution.result
+    ? mutationExecution.data
     : mutationExecution;
 }
 
@@ -217,18 +218,21 @@ export async function runDocumentCreateMutation({
     confirmed: confirm,
   });
   if (!createGuard.ok) {
-    return {
+    return buildExecutionEnvelope({
       ok: false,
-      stage: "guard_blocked",
+      action: "create_doc",
       error: createGuard.error,
-      message: createGuard.message,
-      statusCode: createGuard.statusCode,
-      create_guard: createGuard,
-      write_policy: buildCreateDocWritePolicy({
-        folderToken: requestedFolderToken,
-        idempotencyKey,
-      }),
-    };
+      data: {
+        stage: "guard_blocked",
+        message: createGuard.message,
+        statusCode: createGuard.statusCode,
+        create_guard: createGuard,
+        write_policy: buildCreateDocWritePolicy({
+          folderToken: requestedFolderToken,
+          idempotencyKey,
+        }),
+      },
+    });
   }
 
   const folderToken = createGuard.resolved_folder_token || undefined;
@@ -252,16 +256,19 @@ export async function runDocumentCreateMutation({
       intent,
       type,
     });
-    return {
+    return buildExecutionEnvelope({
       ok: true,
-      stage: "preview_ready",
-      auto_confirmed: false,
-      preview,
-      create_guard: createGuard,
-      write_policy: writePolicy,
-      requested_folder_token: requestedFolderToken || null,
-      resolved_folder_token: folderToken || null,
-    };
+      action: "create_doc",
+      data: {
+        stage: "preview_ready",
+        auto_confirmed: false,
+        preview,
+        create_guard: createGuard,
+        write_policy: writePolicy,
+        requested_folder_token: requestedFolderToken || null,
+        resolved_folder_token: folderToken || null,
+      },
+    });
   }
 
   if (shouldAutoConfirm) {
@@ -361,18 +368,22 @@ export async function runDocumentCreateMutation({
     }),
   });
 
-  return {
+  return buildExecutionEnvelope({
     ok: mutationExecution?.ok === true,
-    stage: "mutation_executed",
-    auto_confirmed: shouldAutoConfirm,
-    mutation_execution: mutationExecution,
-    create_guard: createGuard,
-    write_policy: writePolicy,
-    requested_folder_token: requestedFolderToken || null,
-    resolved_folder_token: folderToken || null,
-    confirmation_id: effectiveConfirmationId || null,
-    confirm: effectiveConfirm === true,
-  };
+    action: "create_doc",
+    data: {
+      stage: "mutation_executed",
+      auto_confirmed: shouldAutoConfirm,
+      mutation_execution: mutationExecution,
+      create_guard: createGuard,
+      write_policy: writePolicy,
+      requested_folder_token: requestedFolderToken || null,
+      resolved_folder_token: folderToken || null,
+      confirmation_id: effectiveConfirmationId || null,
+      confirm: effectiveConfirm === true,
+    },
+    error: mutationExecution?.ok === true ? null : mutationExecution?.error,
+  });
 }
 
 function buildMessageScopeKey({ receiveIdType = "", receiveId = "" } = {}) {

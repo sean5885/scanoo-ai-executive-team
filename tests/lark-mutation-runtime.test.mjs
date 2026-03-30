@@ -57,9 +57,10 @@ test("runDocumentCreateMutation carries create_doc audit and rollback details in
     });
 
     assert.equal(result.ok, false);
-    assert.equal(result.stage, "mutation_executed");
-    assert.equal(result.mutation_execution?.error, "execution_failed");
-    assert.deepEqual(result.mutation_execution?.meta?.journal?.audit, {
+    assert.deepEqual(Object.keys(result).sort(), ["action", "data", "error", "meta", "ok"]);
+    assert.equal(result.data?.stage, "mutation_executed");
+    assert.equal(result.data?.mutation_execution?.error, "execution_failed");
+    assert.deepEqual(result.data?.mutation_execution?.meta?.journal?.audit, {
       boundary: "create_doc",
       nested_mutations: [
         {
@@ -74,7 +75,7 @@ test("runDocumentCreateMutation carries create_doc audit and rollback details in
         },
       ],
     });
-    assert.deepEqual(result.mutation_execution?.meta?.journal?.rollback, {
+    assert.deepEqual(result.data?.mutation_execution?.meta?.journal?.rollback, {
       status: "success",
       details: {
         deleted_document_id: "doc-1",

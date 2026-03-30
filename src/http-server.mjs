@@ -211,6 +211,7 @@ import {
 } from "./monitoring-store.mjs";
 import { normalizeUserResponse } from "./user-response-normalizer.mjs";
 import db from "./db.mjs";
+import { buildExecutionEnvelope } from "./execution-envelope.mjs";
 import { withLarkWriteExecutionContext } from "./execute-lark-write.mjs";
 
 installMemoryWriteDetector();
@@ -911,8 +912,8 @@ function buildCompanyBrainReadCanonicalRequest({
 }
 
 function getCompanyBrainReadResult(readExecution = null) {
-  if (readExecution?.result && typeof readExecution.result === "object" && !Array.isArray(readExecution.result)) {
-    return readExecution.result;
+  if (readExecution?.data && typeof readExecution.data === "object" && !Array.isArray(readExecution.data)) {
+    return readExecution.data;
   }
   return {
     success: false,
@@ -1117,11 +1118,11 @@ function ingestVerifiedDocumentToCompanyBrain({ account, row, logger = noopHttpL
         account_id: account.id,
         doc_id: payload.doc_id,
         error: mutationExecution?.error || "mutation_verifier_blocked",
-        verifier: mutationExecution?.verifier || null,
+        verifier: getRuntimeExecutionData(mutationExecution)?.verifier || null,
       });
       return null;
     }
-    const result = mutationExecution.result;
+    const result = getRuntimeExecutionData(mutationExecution);
     if (result?.success !== true) {
       return null;
     }
@@ -1135,7 +1136,7 @@ function ingestVerifiedDocumentToCompanyBrain({ account, row, logger = noopHttpL
       logger,
     });
     if (reviewSyncExecution?.ok) {
-      const reviewResult = reviewSyncExecution.result;
+      const reviewResult = getRuntimeExecutionData(reviewSyncExecution);
       const intakeBoundary = reviewResult?.data?.intake_boundary || null;
       logger.info("document_company_brain_intake_classified", {
         stage: "company_brain_intake_boundary",
@@ -1169,7 +1170,7 @@ function ingestVerifiedDocumentToCompanyBrain({ account, row, logger = noopHttpL
         account_id: account.id,
         doc_id: payload.doc_id,
         error: reviewSyncExecution?.error || "mutation_verifier_blocked",
-        verifier: reviewSyncExecution?.verifier || null,
+        verifier: getRuntimeExecutionData(reviewSyncExecution)?.verifier || null,
       });
     }
     return result.data?.ingested || null;
@@ -1297,13 +1298,24 @@ function respondDocumentWriteFailure(res, statusCode, error, extra = {}) {
 }
 
 function respondWriteExecutionFailure(res, execution, fallbackStatusCode = 409) {
-  jsonResponse(res, Number(execution?.statusCode || fallbackStatusCode), {
+  const executionData = getRuntimeExecutionData(execution);
+  jsonResponse(res, Number(executionData?.statusCode || fallbackStatusCode), {
     ok: false,
     error: execution?.error || "write_guard_denied",
-    ...(execution?.message ? { message: execution.message } : {}),
-    write_guard: execution?.write_guard || null,
-    ...(Array.isArray(execution?.violation_types) ? { violation_types: execution.violation_types } : {}),
+    ...(executionData?.message ? { message: executionData.message } : {}),
+    write_guard: executionData?.write_guard || null,
+    ...(Array.isArray(executionData?.violation_types) ? { violation_types: executionData.violation_types } : {}),
   });
+}
+
+function getRuntimeExecutionData(execution = null) {
+  if (!execution || typeof execution !== "object" || Array.isArray(execution)) {
+    return null;
+  }
+  if (execution.data && typeof execution.data === "object" && !Array.isArray(execution.data)) {
+    return execution.data;
+  }
+  return execution;
 }
 
 function buildDocumentCreateResult({
@@ -2939,11 +2951,12 @@ async function handleDriveCreateFolder(res, requestUrl, body) {
     performWrite: async ({ accessToken }) => createDriveFolder(accessToken, folderToken, name),
   });
   if (!execution.ok) {
+    const executionData = getRuntimeExecutionData(execution);
     jsonResponse(res, 409, {
       ok: false,
       error: execution.error,
-      message: execution.message,
-      write_guard: execution.write_guard || null,
+      message: executionData?.message,
+      write_guard: executionData?.write_guard || null,
     });
     return;
   }
@@ -2999,11 +3012,12 @@ async function handleDriveMove(res, requestUrl, body) {
     performWrite: async ({ accessToken }) => moveDriveItem(accessToken, fileToken, type, folderToken),
   });
   if (!execution.ok) {
+    const executionData = getRuntimeExecutionData(execution);
     jsonResponse(res, 409, {
       ok: false,
       error: execution.error,
-      message: execution.message,
-      write_guard: execution.write_guard || null,
+      message: executionData?.message,
+      write_guard: executionData?.write_guard || null,
     });
     return;
   }
@@ -3077,11 +3091,12 @@ async function handleDriveDelete(res, requestUrl, body) {
     performWrite: async ({ accessToken }) => deleteDriveItem(accessToken, fileToken, type),
   });
   if (!execution.ok) {
+    const executionData = getRuntimeExecutionData(execution);
     jsonResponse(res, 409, {
       ok: false,
       error: execution.error,
-      message: execution.message,
-      write_guard: execution.write_guard || null,
+      message: executionData?.message,
+      write_guard: executionData?.write_guard || null,
     });
     return;
   }
@@ -3220,11 +3235,11 @@ async function handleDriveOrganize(res, requestUrl, body, apply, logger = noopHt
   if (apply && !mutationExecution.ok) {
     respondCloudDocPreviewRequired(
       res,
-      mutationExecution.message || "Drive organize apply is blocked by write policy.",
+      getRuntimeExecutionData(mutationExecution)?.message || "Drive organize apply is blocked by write policy.",
     );
     return;
   }
-  const execution = apply ? mutationExecution.result : null;
+  const execution = apply ? getRuntimeExecutionData(mutationExecution) : null;
   if (apply && !execution?.ok) {
     respondCloudDocPreviewRequired(res, execution?.message || "Drive organize apply is blocked by write policy.");
     return;
@@ -3329,11 +3344,12 @@ async function handleWikiCreateNode(res, requestUrl, body) {
     performWrite: async ({ accessToken }) => createWikiNode(accessToken, spaceId, title, parentNodeToken),
   });
   if (!execution.ok) {
+    const executionData = getRuntimeExecutionData(execution);
     jsonResponse(res, 409, {
       ok: false,
       error: execution.error,
-      message: execution.message,
-      write_guard: execution.write_guard || null,
+      message: executionData?.message,
+      write_guard: executionData?.write_guard || null,
     });
     return;
   }
@@ -3398,11 +3414,12 @@ async function handleWikiMove(res, requestUrl, body) {
     ),
   });
   if (!execution.ok) {
+    const executionData = getRuntimeExecutionData(execution);
     jsonResponse(res, 409, {
       ok: false,
       error: execution.error,
-      message: execution.message,
-      write_guard: execution.write_guard || null,
+      message: executionData?.message,
+      write_guard: executionData?.write_guard || null,
     });
     return;
   }
@@ -3539,11 +3556,11 @@ async function handleWikiOrganize(res, requestUrl, body, apply, logger = noopHtt
   if (apply && !mutationExecution.ok) {
     respondCloudDocPreviewRequired(
       res,
-      mutationExecution.message || "Wiki organize apply is blocked by write policy.",
+      getRuntimeExecutionData(mutationExecution)?.message || "Wiki organize apply is blocked by write policy.",
     );
     return;
   }
-  const execution = apply ? mutationExecution.result : null;
+  const execution = apply ? getRuntimeExecutionData(mutationExecution) : null;
   if (apply && !execution?.ok) {
     respondCloudDocPreviewRequired(res, execution?.message || "Wiki organize apply is blocked by write policy.");
     return;
@@ -3873,52 +3890,53 @@ async function handleDocumentCreate(
         };
       },
   });
-  const createGuard = createRuntime.create_guard || null;
-  const resolvedWritePolicy = createRuntime.write_policy || writePolicy;
-  const folderToken = createRuntime.resolved_folder_token || null;
+  const createRuntimeData = getRuntimeExecutionData(createRuntime) || {};
+  const createGuard = createRuntimeData.create_guard || null;
+  const resolvedWritePolicy = createRuntimeData.write_policy || writePolicy;
+  const folderToken = createRuntimeData.resolved_folder_token || null;
 
-  if (createRuntime.stage === "guard_blocked") {
+  if (createRuntimeData.stage === "guard_blocked") {
     logger.warn("document_create_guard_blocked", {
       account_id: context.account.id,
       tenant_key: context.account?.tenant_key || null,
       error: createRuntime.error,
-      requested_folder_token: createRuntime.requested_folder_token,
-      resolved_folder_token: createRuntime.resolved_folder_token,
+      requested_folder_token: createRuntimeData.requested_folder_token,
+      resolved_folder_token: createRuntimeData.resolved_folder_token,
       demo_like: createGuard?.classification?.demo_like === true,
       write_policy: resolvedWritePolicy,
     });
-    respondDocumentWriteFailure(res, createRuntime.statusCode, createRuntime.error, {
-      message: createRuntime.message,
-      requested_folder_token: createRuntime.requested_folder_token,
-      resolved_folder_token: createRuntime.resolved_folder_token,
+    respondDocumentWriteFailure(res, createRuntimeData.statusCode, createRuntime.error, {
+      message: createRuntimeData.message,
+      requested_folder_token: createRuntimeData.requested_folder_token,
+      resolved_folder_token: createRuntimeData.resolved_folder_token,
       demo_like: createGuard?.classification?.demo_like === true,
     });
     return;
   }
 
-  if (createRuntime.stage === "preview_ready") {
+  if (createRuntimeData.stage === "preview_ready") {
     logger.info("document_create_preview_ready", {
       account_id: context.account.id,
-      requested_folder_token: createRuntime.requested_folder_token,
-      resolved_folder_token: createRuntime.resolved_folder_token,
-      confirmation_id: createRuntime.preview?.confirmation_id || null,
+      requested_folder_token: createRuntimeData.requested_folder_token,
+      resolved_folder_token: createRuntimeData.resolved_folder_token,
+      confirmation_id: createRuntimeData.preview?.confirmation_id || null,
       has_initial_content: Boolean(content),
       demo_like: createGuard?.classification?.demo_like === true,
       write_policy: resolvedWritePolicy,
     });
     respondDocumentWriteSuccess(res, 200, buildDocumentCreatePreviewResult({
       context,
-      preview: createRuntime.preview,
+      preview: createRuntimeData.preview,
     }));
     return;
   }
 
-  if (createRuntime.auto_confirmed) {
+  if (createRuntimeData.auto_confirmed) {
     logger.info("document_create_agent_bridge_auto_confirmed", {
       account_id: context.account.id,
-      requested_folder_token: createRuntime.requested_folder_token,
-      resolved_folder_token: createRuntime.resolved_folder_token,
-      confirmation_id: createRuntime.confirmation_id || null,
+      requested_folder_token: createRuntimeData.requested_folder_token,
+      resolved_folder_token: createRuntimeData.resolved_folder_token,
+      confirmation_id: createRuntimeData.confirmation_id || null,
       has_initial_content: Boolean(content),
       demo_like: createGuard?.classification?.demo_like === true,
       write_policy: resolvedWritePolicy,
@@ -3928,20 +3946,21 @@ async function handleDocumentCreate(
   logger.info("document_create_started", {
     account_id: context.account.id,
     has_folder_token: Boolean(folderToken),
-    requested_folder_token: createRuntime.requested_folder_token,
-    resolved_folder_token: createRuntime.resolved_folder_token,
+    requested_folder_token: createRuntimeData.requested_folder_token,
+    resolved_folder_token: createRuntimeData.resolved_folder_token,
     has_initial_content: Boolean(content),
     demo_like: createGuard?.classification?.demo_like === true,
     write_policy: resolvedWritePolicy,
   });
 
-  const mutationExecution = createRuntime.mutation_execution;
+  const mutationExecution = createRuntimeData.mutation_execution;
   if (!mutationExecution.ok) {
+    const mutationExecutionData = getRuntimeExecutionData(mutationExecution);
     if (mutationExecution.error === "write_policy_enforcement_blocked") {
       respondDocumentWriteFailure(res, 409, "write_policy_enforcement_blocked", {
-        message: mutationExecution.message,
-        violation_types: Array.isArray(mutationExecution.violation_types)
-          ? mutationExecution.violation_types
+        message: mutationExecutionData?.message,
+        violation_types: Array.isArray(mutationExecutionData?.violation_types)
+          ? mutationExecutionData.violation_types
           : [],
       });
       return;
@@ -3954,7 +3973,7 @@ async function handleDocumentCreate(
     return;
   }
 
-  const execution = mutationExecution.result;
+  const execution = getRuntimeExecutionData(mutationExecution);
   if (!execution?.ok) {
     respondWriteExecutionFailure(res, execution);
     return;
@@ -4034,25 +4053,38 @@ async function handleDocumentLifecycleSummary(res, requestUrl, body, logger = no
 }
 
 async function handleRuntimeInfo(res, requestUrl, body, logger = noopHttpLogger) {
-  const payload = {
-    db_path: getDbPath(),
-    node_pid: process.pid,
-    cwd: process.cwd(),
-    service_start_time: serviceStartTime,
-  };
+  try {
+    const result = {
+      db_path: getDbPath(),
+      node_pid: process.pid,
+      cwd: process.cwd(),
+      service_start_time: serviceStartTime,
+    };
 
-  logger.info("runtime_info", {
-    stage: "runtime_info",
-    action: "get_runtime_info",
-    kind: "runtime_info",
-    ...payload,
-  });
+    logger.info("runtime_info", {
+      stage: "runtime_info",
+      action: "get_runtime_info",
+      kind: "runtime_info",
+      ...result,
+    });
 
-  jsonResponse(res, 200, {
-    ok: true,
-    action: "get_runtime_info",
-    ...payload,
-  });
+    jsonResponse(res, 200, buildExecutionEnvelope({
+      ok: true,
+      action: "get_runtime_info",
+      data: result,
+    }));
+  } catch (err) {
+    logger.error("runtime_info_failed", {
+      stage: "runtime_info",
+      action: "get_runtime_info",
+      error: logger.compactError?.(err) || { message: err?.message || "runtime_exception" },
+    });
+    jsonResponse(res, 500, buildExecutionEnvelope({
+      ok: false,
+      action: "get_runtime_info",
+      error: err,
+    }));
+  }
 }
 
 async function handleMonitoringRequests(res, requestUrl) {
@@ -4439,7 +4471,7 @@ async function handleAgentReviewCompanyBrainDoc(res, requestUrl, body, logger = 
     }),
   });
   const result = mutationExecution.ok
-    ? mutationExecution.result
+    ? getRuntimeExecutionData(mutationExecution)
     : buildCompanyBrainRuntimeBlockedResult({
         docId,
         error: mutationExecution.error,
@@ -4511,7 +4543,7 @@ async function handleAgentCheckCompanyBrainConflicts(res, requestUrl, body, logg
     }),
   });
   const result = mutationExecution.ok
-    ? mutationExecution.result
+    ? getRuntimeExecutionData(mutationExecution)
     : buildCompanyBrainRuntimeBlockedResult({
         docId,
         error: mutationExecution.error,
@@ -4582,7 +4614,7 @@ async function handleAgentCompanyBrainApprovalTransition(res, requestUrl, body, 
     }),
   });
   const result = mutationExecution.ok
-    ? mutationExecution.result
+    ? getRuntimeExecutionData(mutationExecution)
     : buildCompanyBrainRuntimeBlockedResult({
         docId,
         error: mutationExecution.error,
@@ -4659,7 +4691,7 @@ async function handleAgentApplyApprovedCompanyBrainKnowledge(res, requestUrl, bo
     }),
   });
   const result = mutationExecution.ok
-    ? mutationExecution.result
+    ? getRuntimeExecutionData(mutationExecution)
     : buildCompanyBrainRuntimeBlockedResult({
         docId,
         error: mutationExecution.error,
@@ -4726,7 +4758,7 @@ async function handleAgentIngestLearningDoc(res, requestUrl, body, logger = noop
     }),
   });
   const result = mutationExecution.ok
-    ? mutationExecution.result
+    ? getRuntimeExecutionData(mutationExecution)
     : buildCompanyBrainRuntimeBlockedResult({
         docId,
         error: mutationExecution.error,
@@ -4801,7 +4833,7 @@ async function handleAgentUpdateLearningState(res, requestUrl, body, logger = no
     }),
   });
   const result = mutationExecution.ok
-    ? mutationExecution.result
+    ? getRuntimeExecutionData(mutationExecution)
     : buildCompanyBrainRuntimeBlockedResult({
         docId,
         error: mutationExecution.error,
@@ -5364,7 +5396,7 @@ async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogg
     );
     return;
   }
-  const execution = mutationExecution.result;
+  const execution = getRuntimeExecutionData(mutationExecution);
   if (!execution?.ok) {
     respondWriteExecutionFailure(res, execution, execution.error === "execution_failed" ? 500 : 409);
     return;
@@ -5387,7 +5419,7 @@ async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogg
     traceId: res.__trace_id || null,
   });
   if (reviewSyncExecution?.ok) {
-    const reviewResult = reviewSyncExecution.result;
+    const reviewResult = getRuntimeExecutionData(reviewSyncExecution);
     const intakeBoundary = reviewResult?.data?.intake_boundary || null;
     logger.info("document_company_brain_update_boundary", {
       stage: "company_brain_write_intake_boundary",
@@ -5672,26 +5704,26 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
   if (!mutationExecution.ok) {
     respondDocumentRewriteFailure(
       res,
-      Number(mutationExecution.statusCode || (mutationExecution.error === "execution_failed" ? 500 : 409)),
+      Number(getRuntimeExecutionData(mutationExecution)?.statusCode || (mutationExecution.error === "execution_failed" ? 500 : 409)),
       mutationExecution.error,
-      mutationExecution.message,
+      getRuntimeExecutionData(mutationExecution)?.message,
       {
-        write_guard: mutationExecution.write_guard || null,
-        ...(Array.isArray(mutationExecution.violation_types)
-          ? { violation_types: mutationExecution.violation_types }
+        write_guard: getRuntimeExecutionData(mutationExecution)?.write_guard || null,
+        ...(Array.isArray(getRuntimeExecutionData(mutationExecution)?.violation_types)
+          ? { violation_types: getRuntimeExecutionData(mutationExecution).violation_types }
           : {}),
       },
     );
     return;
   }
-  const execution = mutationExecution.result;
+  const execution = getRuntimeExecutionData(mutationExecution);
   if (!execution?.ok) {
     respondDocumentRewriteFailure(
       res,
-      Number(execution.statusCode || (execution.error === "execution_failed" ? 500 : 409)),
+      Number(getRuntimeExecutionData(execution)?.statusCode || (execution.error === "execution_failed" ? 500 : 409)),
       execution.error,
-      execution.message,
-      { write_guard: execution.write_guard || null },
+      getRuntimeExecutionData(execution)?.message,
+      { write_guard: getRuntimeExecutionData(execution)?.write_guard || null },
     );
     return;
   }

@@ -18,6 +18,22 @@ test.after(() => {
   testDb.close();
 });
 
+function buildExpectedExecutionEnvelope({
+  ok = false,
+  action = null,
+  data = null,
+  meta = null,
+  error = null,
+} = {}) {
+  return {
+    ok,
+    action,
+    data,
+    meta,
+    error,
+  };
+}
+
 test("runMutation returns a stable error when no execute callback is provided", async () => {
   const result = await runMutation({
     action: "create_doc",
@@ -25,10 +41,11 @@ test("runMutation returns a stable error when no execute callback is provided", 
     context: { pathname: "/api/doc/create" },
   });
 
-  assert.deepEqual(result, {
+  assert.deepEqual(result, buildExpectedExecutionEnvelope({
     ok: false,
+    action: "create_doc",
     error: "missing_execute",
-  });
+  }));
 });
 
 test("runMutation rejects a non-function executor with a stable contract error", async () => {
@@ -39,11 +56,14 @@ test("runMutation rejects a non-function executor with a stable contract error",
     execute: "not-a-function",
   });
 
-  assert.deepEqual(result, {
+  assert.deepEqual(result, buildExpectedExecutionEnvelope({
     ok: false,
+    action: "create_doc",
+    data: {
+      message: "execute must be a function",
+    },
     error: "invalid_executor",
-    message: "execute must be a function",
-  });
+  }));
 });
 
 test("runMutation passes through to execute without changing create_doc inputs", async () => {
@@ -81,10 +101,10 @@ test("runMutation passes through to execute without changing create_doc inputs",
       payload,
       context,
     }]);
-    assert.deepEqual(result, {
+    assert.deepEqual(result, buildExpectedExecutionEnvelope({
       ok: true,
       action: "create_doc",
-      result: {
+      data: {
         ok: true,
         action: "create_doc",
         passthrough: true,
@@ -100,7 +120,8 @@ test("runMutation passes through to execute without changing create_doc inputs",
         write_policy: null,
         authority: null,
       },
-    });
+      error: null,
+    }));
   } finally {
     Date.now = originalNow;
   }
@@ -139,10 +160,10 @@ test("runMutation marks controlled execution input when execution_mode is contro
       context,
       controlled: true,
     }]);
-    assert.deepEqual(result, {
+    assert.deepEqual(result, buildExpectedExecutionEnvelope({
       ok: true,
       action: "create_doc",
-      result: {
+      data: {
         ok: true,
         action: "create_doc",
         controlled: true,
@@ -158,7 +179,8 @@ test("runMutation marks controlled execution input when execution_mode is contro
         write_policy: null,
         authority: null,
       },
-    });
+      error: null,
+    }));
   } finally {
     Date.now = originalNow;
   }
@@ -183,11 +205,12 @@ test("runMutation blocks execute when context write_policy.allowed_actions exclu
   });
 
   assert.equal(called, false);
-  assert.deepEqual(result, {
+  assert.deepEqual(result, buildExpectedExecutionEnvelope({
     ok: false,
     action: "create_doc",
-    error: "write_policy_violation",
-    message: 'action "create_doc" is not allowed',
+    data: {
+      message: 'action "create_doc" is not allowed',
+    },
     meta: {
       execution_mode: "passthrough",
       duration_ms: 0,
@@ -202,7 +225,8 @@ test("runMutation blocks execute when context write_policy.allowed_actions exclu
         source: "test_policy",
       },
     },
-  });
+    error: "write_policy_violation",
+  }));
   assert.equal(typeof result.meta?.journal?.started_at, "number");
 });
 
@@ -248,11 +272,12 @@ test("runMutation blocks execute when context authority does not match write_pol
   });
 
   assert.equal(called, false);
-  assert.deepEqual(result, {
+  assert.deepEqual(result, buildExpectedExecutionEnvelope({
     ok: false,
     action: "create_doc",
-    error: "authority_mismatch",
-    message: 'requires authority "derived" but got "mirror"',
+    data: {
+      message: 'requires authority "derived" but got "mirror"',
+    },
     meta: {
       execution_mode: "passthrough",
       duration_ms: 0,
@@ -269,7 +294,8 @@ test("runMutation blocks execute when context authority does not match write_pol
       },
       authority: "mirror",
     },
-  });
+    error: "authority_mismatch",
+  }));
   assert.equal(typeof result.meta?.journal?.started_at, "number");
 });
 
@@ -336,10 +362,10 @@ test("runMutation replays the first successful response when context idempotency
     });
 
     assert.equal(calls.length, 1);
-    assert.deepEqual(firstResult, {
+    assert.deepEqual(firstResult, buildExpectedExecutionEnvelope({
       ok: true,
       action: "create_doc",
-      result: {
+      data: {
         ok: true,
         created: true,
       },
@@ -354,7 +380,8 @@ test("runMutation replays the first successful response when context idempotency
         write_policy: null,
         authority: null,
       },
-    });
+      error: null,
+    }));
     assert.deepEqual(secondResult, firstResult);
   } finally {
     Date.now = originalNow;
@@ -399,10 +426,11 @@ test("runMutation returns idempotency_in_progress while the same context idempot
     },
   });
 
-  assert.deepEqual(secondResult, {
+  assert.deepEqual(secondResult, buildExpectedExecutionEnvelope({
     ok: false,
+    action: "create_doc",
     error: "idempotency_in_progress",
-  });
+  }));
 
   releaseExecution();
   const firstResult = await firstRun;
@@ -474,10 +502,9 @@ test("runMutation returns a stable execution_failed boundary with timing when ex
       },
     });
 
-    assert.deepEqual(result, {
+    assert.deepEqual(result, buildExpectedExecutionEnvelope({
       ok: false,
       action: "create_doc",
-      error: "execution_failed",
       meta: {
         execution_mode: "controlled",
         duration_ms: 35,
@@ -491,7 +518,8 @@ test("runMutation returns a stable execution_failed boundary with timing when ex
           },
         },
       },
-    });
+      error: "execution_failed",
+    }));
   } finally {
     Date.now = originalNow;
   }
@@ -524,10 +552,9 @@ test("runMutation executes rollback hook and records success when execute throws
     assert.equal(calls[0].payload.title, "demo");
     assert.equal(calls[0].context.execution_mode, "controlled");
     assert.equal(calls[0].error?.message, "boom");
-    assert.deepEqual(result, {
+    assert.deepEqual(result, buildExpectedExecutionEnvelope({
       ok: false,
       action: "create_doc",
-      error: "execution_failed",
       meta: {
         execution_mode: "controlled",
         duration_ms: 31,
@@ -541,7 +568,8 @@ test("runMutation executes rollback hook and records success when execute throws
           },
         },
       },
-    });
+      error: "execution_failed",
+    }));
   } finally {
     Date.now = originalNow;
   }
@@ -568,10 +596,9 @@ test("runMutation keeps execution failure shape when rollback hook also fails", 
       },
     });
 
-    assert.deepEqual(result, {
+    assert.deepEqual(result, buildExpectedExecutionEnvelope({
       ok: false,
       action: "create_doc",
-      error: "execution_failed",
       meta: {
         execution_mode: "controlled",
         duration_ms: 44,
@@ -586,7 +613,8 @@ test("runMutation keeps execution failure shape when rollback hook also fails", 
           },
         },
       },
-    });
+      error: "execution_failed",
+    }));
   } finally {
     Date.now = originalNow;
   }
@@ -687,9 +715,9 @@ test("runMutation denies execute when canonical mutation admission blocks the wr
   assert.equal(result.ok, false);
   assert.equal(result.action, "meeting_confirm_write");
   assert.equal(result.error, "write_guard_denied");
-  assert.equal(result.write_guard?.reason, "confirmation_required");
-  assert.equal(result.admission?.allowed, false);
-  assert.equal(result.message, "External write requires explicit confirmation before apply.");
+  assert.equal(result.data?.write_guard?.reason, "confirmation_required");
+  assert.equal(result.data?.admission?.allowed, false);
+  assert.equal(result.data?.message, "External write requires explicit confirmation before apply.");
 });
 
 test("runMutation blocks cloud-doc apply before execute when preview evidence is missing", async () => {
@@ -730,8 +758,8 @@ test("runMutation blocks cloud-doc apply before execute when preview evidence is
   assert.equal(called, false);
   assert.equal(result.ok, false);
   assert.equal(result.error, "mutation_verifier_blocked");
-  assert.equal(result.verifier?.phase, "pre");
-  assert.equal(result.verifier?.reason, "missing_preview_plan");
+  assert.equal(result.data?.verifier?.phase, "pre");
+  assert.equal(result.data?.verifier?.reason, "missing_preview_plan");
 });
 
 test("runMutation blocks cloud-doc apply after execute when apply evidence is missing", async () => {
@@ -785,8 +813,8 @@ test("runMutation blocks cloud-doc apply after execute when apply evidence is mi
 
   assert.equal(result.ok, false);
   assert.equal(result.error, "mutation_verifier_blocked");
-  assert.equal(result.verifier?.phase, "post");
-  assert.equal(result.verifier?.reason, "insufficient_evidence");
+  assert.equal(result.data?.verifier?.phase, "post");
+  assert.equal(result.data?.verifier?.reason, "insufficient_evidence");
 });
 
 test("runMutation blocks company-brain apply before execute when lifecycle gate is not satisfied", async () => {
@@ -830,7 +858,7 @@ test("runMutation blocks company-brain apply before execute when lifecycle gate 
   assert.equal(called, false);
   assert.equal(result.ok, false);
   assert.equal(result.error, "mutation_verifier_blocked");
-  assert.equal(result.verifier?.phase, "pre");
+  assert.equal(result.data?.verifier?.phase, "pre");
 });
 
 test("runMutation blocks knowledge write after execute when durable db evidence is missing", async () => {
@@ -879,8 +907,8 @@ test("runMutation blocks knowledge write after execute when durable db evidence 
 
   assert.equal(result.ok, false);
   assert.equal(result.error, "mutation_verifier_blocked");
-  assert.equal(result.verifier?.phase, "post");
-  assert.equal(result.verifier?.reason, "db_write_missing");
+  assert.equal(result.data?.verifier?.phase, "post");
+  assert.equal(result.data?.verifier?.reason, "db_write_missing");
 });
 
 test("runMutation allows optional company-brain conflict verification to skip when no review-state mutation is needed", async () => {
@@ -978,6 +1006,6 @@ test("runMutation blocks learning-state update when durable db evidence is missi
 
   assert.equal(result.ok, false);
   assert.equal(result.error, "mutation_verifier_blocked");
-  assert.equal(result.verifier?.phase, "post");
-  assert.equal(result.verifier?.reason, "db_write_missing");
+  assert.equal(result.data?.verifier?.phase, "post");
+  assert.equal(result.data?.verifier?.reason, "db_write_missing");
 });

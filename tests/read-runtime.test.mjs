@@ -179,11 +179,12 @@ test("runRead routes canonical company-brain search through mirror authority onl
     });
 
     assert.equal(result.ok, true);
-    assert.equal(result.primary_authority, "mirror");
-    assert.deepEqual(result.authorities_attempted, ["mirror"]);
-    assert.equal(result.fallback_used, false);
-    assert.equal(result.result.success, true);
-    assert.equal(result.result.data.items[0].doc_id, "doc_read_runtime_1");
+    assert.deepEqual(Object.keys(result).sort(), ["action", "data", "error", "meta", "ok"]);
+    assert.equal(result.meta.primary_authority, "mirror");
+    assert.deepEqual(result.meta.authorities_attempted, ["mirror"]);
+    assert.equal(result.meta.fallback_used, false);
+    assert.equal(result.data.success, true);
+    assert.equal(result.data.data.items[0].doc_id, "doc_read_runtime_1");
   } finally {
     cleanupAccountFixtures(accountId);
   }
@@ -218,14 +219,14 @@ test("runRead routes canonical knowledge search through index authority only", a
     });
 
     assert.equal(result.ok, true);
-    assert.equal(result.primary_authority, "index");
-    assert.deepEqual(result.authorities_attempted, ["index"]);
-    assert.equal(result.fallback_used, false);
-    assert.equal(result.result.success, true);
-    assert.equal(result.result.data.items[0].metadata.title, "Index Launch Notes");
-    assert.match(result.result.data.items[0].snippet, /launch checklist owner timeline/i);
-    assert.doesNotMatch(result.result.data.items[0].snippet, /\/Users\//);
-    assert.doesNotMatch(result.result.data.items[0].snippet, /Back to \[?README/i);
+    assert.equal(result.meta.primary_authority, "index");
+    assert.deepEqual(result.meta.authorities_attempted, ["index"]);
+    assert.equal(result.meta.fallback_used, false);
+    assert.equal(result.data.success, true);
+    assert.equal(result.data.data.items[0].metadata.title, "Index Launch Notes");
+    assert.match(result.data.data.items[0].snippet, /launch checklist owner timeline/i);
+    assert.doesNotMatch(result.data.data.items[0].snippet, /\/Users\//);
+    assert.doesNotMatch(result.data.data.items[0].snippet, /Back to \[?README/i);
   } finally {
     cleanupAccountFixtures(accountId);
   }
@@ -267,11 +268,11 @@ test("runRead canonicalizes overridden knowledge-search snippets before returnin
   });
 
   assert.equal(result.ok, true);
-  assert.equal(result.result.data.items.length, 1);
-  assert.match(result.result.data.items[0].snippet, /Ship checklist owner: ops/i);
-  assert.doesNotMatch(result.result.data.items[0].snippet, /\/Users\/|Back to \[?README|https:\/\/example\.com\/checklist/);
-  assert.equal(result.result.data.items[0].metadata.title, "Noisy Launch Notes");
-  assert.equal(result.result.data.items[0].metadata.url, "https://example.com/noisy-launch-notes");
+  assert.equal(result.data.data.items.length, 1);
+  assert.match(result.data.data.items[0].snippet, /Ship checklist owner: ops/i);
+  assert.doesNotMatch(result.data.data.items[0].snippet, /\/Users\/|Back to \[?README|https:\/\/example\.com\/checklist/);
+  assert.equal(result.data.data.items[0].metadata.title, "Noisy Launch Notes");
+  assert.equal(result.data.data.items[0].metadata.url, "https://example.com/noisy-launch-notes");
 });
 
 test("runRead keeps approved mirror detail on the same canonical result shape", async () => {
@@ -317,11 +318,11 @@ test("runRead keeps approved mirror detail on the same canonical result shape", 
     });
 
     assert.equal(result.ok, true);
-    assert.equal(result.primary_authority, "derived");
-    assert.deepEqual(result.authorities_attempted, ["derived"]);
-    assert.equal(result.result.success, true);
-    assert.equal(result.result.data.doc.doc_id, "doc_read_runtime_approved_1");
-    assert.equal(result.result.data.knowledge_state.stage, "approved");
+    assert.equal(result.meta.primary_authority, "derived");
+    assert.deepEqual(result.meta.authorities_attempted, ["derived"]);
+    assert.equal(result.data.success, true);
+    assert.equal(result.data.data.doc.doc_id, "doc_read_runtime_approved_1");
+    assert.equal(result.data.data.knowledge_state.stage, "approved");
   } finally {
     cleanupAccountFixtures(accountId);
   }
@@ -384,13 +385,13 @@ test("runRead routes learning-state detail through derived authority only", asyn
     });
 
     assert.equal(result.ok, true);
-    assert.equal(result.primary_authority, "derived");
-    assert.deepEqual(result.authorities_attempted, ["derived"]);
-    assert.equal(result.fallback_used, false);
-    assert.equal(result.result.success, true);
-    assert.equal(result.result.data.doc.doc_id, "doc_read_runtime_learning_1");
-    assert.equal(result.result.data.learning_state.status, "learned");
-    assert.equal(result.result.data.derived_state.stage, "learning_state");
+    assert.equal(result.meta.primary_authority, "derived");
+    assert.deepEqual(result.meta.authorities_attempted, ["derived"]);
+    assert.equal(result.meta.fallback_used, false);
+    assert.equal(result.data.success, true);
+    assert.equal(result.data.data.doc.doc_id, "doc_read_runtime_learning_1");
+    assert.equal(result.data.data.learning_state.status, "learned");
+    assert.equal(result.data.data.derived_state.stage, "learning_state");
   } finally {
     cleanupAccountFixtures(accountId);
   }
@@ -427,11 +428,11 @@ test("runRead routes live document reads only when freshness is live_required", 
   });
 
   assert.equal(result.ok, true);
-  assert.equal(result.primary_authority, "live");
-  assert.deepEqual(result.authorities_attempted, ["live"]);
-  assert.equal(result.fallback_used, false);
-  assert.equal(result.result.success, true);
-  assert.equal(result.result.data.document_id, "doc_live_runtime_1");
+  assert.equal(result.meta.primary_authority, "live");
+  assert.deepEqual(result.meta.authorities_attempted, ["live"]);
+  assert.equal(result.meta.fallback_used, false);
+  assert.equal(result.data.success, true);
+  assert.equal(result.data.data.document_id, "doc_live_runtime_1");
 });
 
 test("runRead rejects live document reads without live_required freshness", async () => {
@@ -450,8 +451,9 @@ test("runRead rejects live document reads without live_required freshness", asyn
   });
 
   assert.equal(result.ok, false);
-  assert.equal(result.primary_authority, null);
-  assert.deepEqual(result.authorities_attempted, []);
+  assert.deepEqual(Object.keys(result).sort(), ["action", "data", "error", "meta", "ok"]);
+  assert.equal(result.meta.primary_authority, null);
+  assert.deepEqual(result.meta.authorities_attempted, []);
   assert.equal(result.error, "invalid_canonical_read_request");
 });
 
@@ -470,7 +472,7 @@ test("runRead rejects index search when the requested primary authority does not
   });
 
   assert.equal(result.ok, false);
-  assert.equal(result.primary_authority, null);
-  assert.deepEqual(result.authorities_attempted, []);
+  assert.equal(result.meta.primary_authority, null);
+  assert.deepEqual(result.meta.authorities_attempted, []);
   assert.equal(result.error, "invalid_canonical_read_request");
 });

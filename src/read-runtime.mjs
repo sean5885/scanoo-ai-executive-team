@@ -22,6 +22,7 @@ import {
   getDocument,
   listDocumentComments,
 } from "./lark-content.mjs";
+import { buildExecutionEnvelope } from "./execution-envelope.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import { buildReadSourceItems } from "./read-source-schema.mjs";
 
@@ -325,28 +326,32 @@ export async function runRead({ canonicalRequest, logger = null } = {}) {
   try {
     request = assertCanonicalReadRequestSchema(canonicalRequest);
   } catch {
-    return {
+    return buildExecutionEnvelope({
       ok: false,
-      action: cleanText(canonicalRequest?.action || canonicalRequest?.action_type) || null,
-      primary_authority: null,
-      authorities_attempted: [],
-      fallback_used: false,
-      result: buildFailSoftQueryResult("invalid_canonical_read_request"),
+      action: "get_runtime_info",
+      data: buildFailSoftQueryResult("invalid_canonical_read_request"),
+      meta: {
+        primary_authority: null,
+        authorities_attempted: [],
+        fallback_used: false,
+      },
       error: "invalid_canonical_read_request",
-    };
+    });
   }
 
   const reader = resolveReaderForRequest(request);
   if (typeof reader !== "function") {
-    return {
+    return buildExecutionEnvelope({
       ok: false,
-      action: request.action,
-      primary_authority: request.primary_authority,
-      authorities_attempted: [request.primary_authority],
-      fallback_used: false,
-      result: buildFailSoftQueryResult("runtime_exception"),
+      action: "get_runtime_info",
+      data: buildFailSoftQueryResult("runtime_exception"),
+      meta: {
+        primary_authority: request.primary_authority,
+        authorities_attempted: [request.primary_authority],
+        fallback_used: false,
+      },
       error: "runtime_exception",
-    };
+    });
   }
   let result = null;
   try {
@@ -369,17 +374,19 @@ export async function runRead({ canonicalRequest, logger = null } = {}) {
     error: result?.success === true ? null : cleanText(result?.error) || "runtime_exception",
   });
 
-  return {
+  return buildExecutionEnvelope({
     ok: result?.success === true,
-    action: request.action,
-    primary_authority: request.primary_authority,
-    authorities_attempted: [request.primary_authority],
-    fallback_used: false,
-    result: result && typeof result === "object" && !Array.isArray(result)
+    action: "get_runtime_info",
+    data: result && typeof result === "object" && !Array.isArray(result)
       ? result
       : buildFailSoftQueryResult("runtime_exception"),
+    meta: {
+      primary_authority: request.primary_authority,
+      authorities_attempted: [request.primary_authority],
+      fallback_used: false,
+    },
     error: result?.success === true ? null : cleanText(result?.error) || "runtime_exception",
-  };
+  });
 }
 
 export function runReadSync({ canonicalRequest, logger = null } = {}) {
@@ -387,40 +394,46 @@ export function runReadSync({ canonicalRequest, logger = null } = {}) {
   try {
     request = assertCanonicalReadRequestSchema(canonicalRequest);
   } catch {
-    return {
+    return buildExecutionEnvelope({
       ok: false,
-      action: cleanText(canonicalRequest?.action || canonicalRequest?.action_type) || null,
-      primary_authority: null,
-      authorities_attempted: [],
-      fallback_used: false,
-      result: buildFailSoftQueryResult("invalid_canonical_read_request"),
+      action: "get_runtime_info",
+      data: buildFailSoftQueryResult("invalid_canonical_read_request"),
+      meta: {
+        primary_authority: null,
+        authorities_attempted: [],
+        fallback_used: false,
+      },
       error: "invalid_canonical_read_request",
-    };
+    });
   }
 
   if (request.primary_authority === LIVE_AUTHORITY) {
-    return {
+    return buildExecutionEnvelope({
       ok: false,
-      action: request.action,
-      primary_authority: request.primary_authority,
-      authorities_attempted: [request.primary_authority],
-      fallback_used: false,
-      result: buildFailSoftQueryResult("runtime_exception"),
+      action: "get_runtime_info",
+      data: buildFailSoftQueryResult("runtime_exception"),
+      meta: {
+        primary_authority: request.primary_authority,
+        authorities_attempted: [request.primary_authority],
+        fallback_used: false,
+      },
       error: "runtime_exception",
-    };
+    });
   }
 
   const reader = resolveReaderForRequest(request);
   if (typeof reader !== "function") {
-    return {
+    return buildExecutionEnvelope({
       ok: false,
-      action: request.action,
-      primary_authority: request.primary_authority,
-      authorities_attempted: [request.primary_authority],
-      fallback_used: false,
-      result: buildFailSoftQueryResult("runtime_exception"),
+      action: "get_runtime_info",
+      data: buildFailSoftQueryResult("runtime_exception"),
+      meta: {
+        primary_authority: request.primary_authority,
+        authorities_attempted: [request.primary_authority],
+        fallback_used: false,
+      },
       error: "runtime_exception",
-    };
+    });
   }
 
   let result = null;
@@ -448,17 +461,19 @@ export function runReadSync({ canonicalRequest, logger = null } = {}) {
     error: result?.success === true ? null : cleanText(result?.error) || "runtime_exception",
   });
 
-  return {
+  return buildExecutionEnvelope({
     ok: result?.success === true,
-    action: request.action,
-    primary_authority: request.primary_authority,
-    authorities_attempted: [request.primary_authority],
-    fallback_used: false,
-    result: result && typeof result === "object" && !Array.isArray(result)
+    action: "get_runtime_info",
+    data: result && typeof result === "object" && !Array.isArray(result)
       ? result
       : buildFailSoftQueryResult("runtime_exception"),
+    meta: {
+      primary_authority: request.primary_authority,
+      authorities_attempted: [request.primary_authority],
+      fallback_used: false,
+    },
     error: result?.success === true ? null : cleanText(result?.error) || "runtime_exception",
-  };
+  });
 }
 
 function buildLiveReadCanonicalRequest({
@@ -488,10 +503,10 @@ function buildLiveReadCanonicalRequest({
 }
 
 async function unwrapReadExecution(readExecution = null) {
-  if (readExecution?.result?.success === true) {
-    return readExecution.result.data;
+  if (readExecution?.data?.success === true) {
+    return readExecution.data.data;
   }
-  throw new Error(cleanText(readExecution?.error || readExecution?.result?.error) || "runtime_exception");
+  throw new Error(cleanText(readExecution?.error || readExecution?.data?.error) || "runtime_exception");
 }
 
 function buildIndexReadCanonicalRequest({
@@ -564,8 +579,8 @@ function buildDerivedReadCanonicalRequest({
 }
 
 function unwrapReadExecutionSync(readExecution = null) {
-  if (readExecution?.result?.success === true) {
-    return readExecution.result.data;
+  if (readExecution?.data?.success === true) {
+    return readExecution.data.data;
   }
   return null;
 }

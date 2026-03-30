@@ -103,7 +103,7 @@ export async function generateDocumentCommentSuggestionCard({
       cardTitle: confirmation.preview_card.title,
     });
     if (execution.ok !== true) {
-      throw new Error(execution.message || execution.error || "comment_suggestion_reply_failed");
+      throw new Error(execution.data?.message || execution.error || "comment_suggestion_reply_failed");
     }
     notification = execution.result;
   }

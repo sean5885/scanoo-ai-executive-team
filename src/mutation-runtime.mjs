@@ -2,6 +2,7 @@ import {
   admitMutation,
   assertCanonicalMutationRequestSchema,
 } from "./mutation-admission.mjs";
+import { buildExecutionEnvelope } from "./execution-envelope.mjs";
 import { runMutationVerification } from "./mutation-verifier.mjs";
 
 function cleanText(value) {
@@ -101,16 +102,18 @@ function buildMutationVerifierFailure({
   action = "",
   verification = null,
 } = {}) {
-  return {
+  return buildExecutionEnvelope({
     ok: false,
     action,
-    statusCode: 409,
     error: "mutation_verifier_blocked",
-    message: cleanText(verification?.message) || "Mutation write is blocked until verification evidence is complete.",
-    verifier: verification && typeof verification === "object"
-      ? { ...verification }
-      : null,
-  };
+    data: {
+      statusCode: 409,
+      message: cleanText(verification?.message) || "Mutation write is blocked until verification evidence is complete.",
+      verifier: verification && typeof verification === "object"
+        ? { ...verification }
+        : null,
+    },
+  });
 }
 
 function buildAdmissionFailure({ action = "", admission = null } = {}) {
@@ -120,22 +123,24 @@ function buildAdmissionFailure({ action = "", admission = null } = {}) {
     ? "write_policy_enforcement_blocked"
     : "write_guard_denied";
 
-  return {
+  return buildExecutionEnvelope({
     ok: false,
     action,
-    statusCode: 409,
     error,
-    message: buildWriteGuardMessage(writeGuard),
-    write_guard: writeGuard,
-    admission,
-    ...(error === "write_policy_enforcement_blocked"
-      ? {
-          violation_types: Array.isArray(policyEnforcement?.violation_types)
-            ? [...policyEnforcement.violation_types]
-            : [],
-        }
-      : {}),
-  };
+    data: {
+      statusCode: 409,
+      message: buildWriteGuardMessage(writeGuard),
+      write_guard: writeGuard,
+      admission,
+      ...(error === "write_policy_enforcement_blocked"
+        ? {
+            violation_types: Array.isArray(policyEnforcement?.violation_types)
+              ? [...policyEnforcement.violation_types]
+              : [],
+          }
+        : {}),
+    },
+  });
 }
 
 function cloneJournalValue(value) {
@@ -219,18 +224,25 @@ export async function runMutation({ action, payload, context, execute }) {
     void payload;
     void context;
 
-    return { ok: false, error: "missing_execute" };
+    return buildExecutionEnvelope({
+      ok: false,
+      action,
+      error: "missing_execute",
+    });
   }
 
   if (typeof execute !== "function") {
     void payload;
     void context;
 
-    return {
+    return buildExecutionEnvelope({
       ok: false,
+      action,
       error: "invalid_executor",
-      message: "execute must be a function",
-    };
+      data: {
+        message: "execute must be a function",
+      },
+    });
   }
 
   const writePolicy =
@@ -244,11 +256,13 @@ export async function runMutation({ action, payload, context, execute }) {
     : null;
 
   if (allowedActions && !allowedActions.includes(cleanText(action))) {
-    return {
+    return buildExecutionEnvelope({
       ok: false,
       action,
       error: "write_policy_violation",
-      message: `action "${cleanText(action) || "unknown"}" is not allowed`,
+      data: {
+        message: `action "${cleanText(action) || "unknown"}" is not allowed`,
+      },
       meta: {
         execution_mode: context?.execution_mode || "passthrough",
         duration_ms: 0,
@@ -260,18 +274,20 @@ export async function runMutation({ action, payload, context, execute }) {
         },
         write_policy: writePolicy,
       },
-    };
+    });
   }
 
   const requiredAuthority = cleanText(writePolicy?.authority) || null;
   const currentAuthority = cleanText(context?.authority) || null;
 
   if (requiredAuthority && currentAuthority !== requiredAuthority) {
-    return {
+    return buildExecutionEnvelope({
       ok: false,
       action,
       error: "authority_mismatch",
-      message: `requires authority "${requiredAuthority}" but got "${currentAuthority}"`,
+      data: {
+        message: `requires authority "${requiredAuthority}" but got "${currentAuthority}"`,
+      },
       meta: {
         execution_mode: context?.execution_mode || "passthrough",
         duration_ms: 0,
@@ -284,7 +300,7 @@ export async function runMutation({ action, payload, context, execute }) {
         write_policy: writePolicy,
         authority: currentAuthority,
       },
-    };
+    });
   }
 
   const idempotencyKey = cleanText(context?.idempotency_key) || null;
@@ -294,10 +310,11 @@ export async function runMutation({ action, payload, context, execute }) {
 
     if (existing) {
       if (existing.__status === "pending") {
-        return {
+        return buildExecutionEnvelope({
           ok: false,
+          action,
           error: "idempotency_in_progress",
-        };
+        });
       }
       return existing.__status === "done" && existing.response
         ? existing.response
@@ -322,11 +339,11 @@ export async function runMutation({ action, payload, context, execute }) {
     try {
       canonicalRequest = assertCanonicalMutationRequestSchema(canonicalRequestInput);
     } catch {
-      return failSoft({
+      return failSoft(buildExecutionEnvelope({
         ok: false,
         action,
         error: "invalid_canonical_request",
-      });
+      }));
     }
   }
 
@@ -450,7 +467,7 @@ export async function runMutation({ action, payload, context, execute }) {
       };
     }
 
-    return failSoft({
+    return failSoft(buildExecutionEnvelope({
       ok: false,
       action,
       error: "execution_failed",
@@ -461,7 +478,7 @@ export async function runMutation({ action, payload, context, execute }) {
         audit,
         preVerification,
       }),
-    });
+    }));
   }
 
   const postVerification = runMutationVerification({
@@ -490,10 +507,10 @@ export async function runMutation({ action, payload, context, execute }) {
     });
   }
 
-  const response = {
+  const response = buildExecutionEnvelope({
     ok: true,
     action,
-    result,
+    data: result,
     meta: buildMutationMeta({
       mode,
       start,
@@ -505,7 +522,7 @@ export async function runMutation({ action, payload, context, execute }) {
       postVerification,
       includePolicyFields: true,
     }),
-  };
+  });
 
   if (idempotencyKey) {
     getMutationIdempotencyStore().set(idempotencyKey, {

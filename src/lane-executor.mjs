@@ -541,12 +541,12 @@ async function executeLaneLarkWrite({
     performWrite,
   });
   if (!execution.ok) {
-    const error = new Error(execution.message || execution.error || "lark_write_blocked");
+    const error = new Error(execution.data?.message || execution.error || "lark_write_blocked");
     error.code = execution.error || "write_guard_denied";
-    error.write_guard = execution.write_guard || null;
+    error.write_guard = execution.data?.write_guard || null;
     throw error;
   }
-  return execution.result;
+  return execution.data;
 }
 
 function isLaneWriteBlockedError(error) {
