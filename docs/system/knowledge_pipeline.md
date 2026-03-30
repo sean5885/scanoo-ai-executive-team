@@ -62,7 +62,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - API-created docx files can also carry a minimal lifecycle in `lark_documents`: `status`, `indexed_at`, `verified_at`, `failure_reason`
 - lifecycle rows can be queried from `/api/doc/lifecycle?status=...`, and only `index_failed` / `verify_failed` may be retried through `/api/doc/lifecycle/retry`
 - `/api/doc/lifecycle/summary` returns the current count of each tracked lifecycle status for one account
-- when an API-created doc reaches `status=verified`, a non-blocking mirror row is also upserted into `company_brain_docs` with `{ doc_id, title, source, created_at, creator }`; this is still only a minimal ingestion surface, not a full company-brain governance layer
+- when an API-created doc reaches `status=verified`, `/api/doc/create` and `/api/doc/lifecycle/retry` now await the mirror ingest plus the follow-up review sync before returning full success; the mirrored row still uses `{ doc_id, title, source, created_at, creator }` and remains only a minimal ingestion surface, not a full company-brain governance layer
 - planner/runtime can now additionally create a simplified learned sidecar row in `company_brain_learning_state`, but only through explicit bounded agent actions; verified mirror ingest alone does not auto-promote documents into learned state
 - `/Users/seanhan/Documents/Playground/src/company-brain-learning.mjs` now also mirrors the latest persisted per-doc learning state into the same process-local memory authority under `company_brain_learning:${account_id}:${doc_id}` after SQLite upsert; this helper does not replace the durable learning-state store
 - review/approval persistence is now stored separately from both mirror and learning:

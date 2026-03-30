@@ -33,7 +33,7 @@ Current write/intake-adjacent paths already in code:
 - document lifecycle inside `/api/doc/create` and `/api/doc/lifecycle/retry`
   - `created -> indexed -> verified`
   - plus failure states
-- non-blocking mirror write into `company_brain_docs` when lifecycle reaches `verified`
+- request-scoped mirror write into `company_brain_docs` when lifecycle reaches `verified`; `/api/doc/create` and `/api/doc/lifecycle/retry` now await ingest plus follow-up review sync before returning full success
 - an internal write-intake policy helper now classifies:
   - whether verified ingest may stay `direct_intake`
   - whether the path should be treated as `review_required`
@@ -76,6 +76,7 @@ Partially grounded in code through:
   - `review_required=conditional` because overlap detection still stages review at the mirror-intake boundary when applicable
   - `required_entry_fields=["source","owner","intent","type"]` at the agent/planner entry boundary, with planner-managed defaults for the controlled planner path
 - successful create can later feed lifecycle and mirror ingest
+- once create reaches `verified`, the route now waits for company-brain ingest plus review sync before it can return full success
 
 ### what it is not
 
@@ -98,6 +99,7 @@ Partially grounded in code through:
 - bounded update path exists
 - write path is not free-form and already sits behind controlled document/runtime rules
 - runtime now classifies `update_doc` as review-gated before any stable company-brain promotion
+- `POST /api/doc/update` now fails closed when its follow-up company-brain review sync is blocked or returns `success=false`; route success requires both the document write and the review-sync helper to succeed
 
 ### what it is not
 
@@ -121,7 +123,7 @@ Partially grounded in code through:
 ### what is already grounded
 
 - verified documents can be mirrored into `company_brain_docs`
-- ingest is non-blocking relative to lifecycle success
+- verified mirror ingest plus follow-up review sync now stay inside the request lifecycle for `/api/doc/create` and `/api/doc/lifecycle/retry`
 - verified mirror ingest now enters through `runMutation(...)`; the helper no longer performs its own route-local/internal allow-deny
 - verified ingest now resolves a minimum intake boundary before mirror upsert:
   - no overlap signal -> `direct_intake_allowed=true`

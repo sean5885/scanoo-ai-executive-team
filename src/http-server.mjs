@@ -1031,9 +1031,13 @@ async function runCompanyBrainReviewSyncMutation({
 // Company-brain approval-adjacent mirror-ingest helper
 // ---------------------------------------------------------------------------
 
-function ingestVerifiedDocumentToCompanyBrain({ account, row, logger = noopHttpLogger }) {
+async function ingestVerifiedDocumentToCompanyBrain({ account, row, logger = noopHttpLogger }) {
   if (!account?.id || !row?.document_id) {
-    return null;
+    return {
+      success: false,
+      stage: "ingest",
+      error: "missing_account_or_document",
+    };
   }
 
   let metadata = null;
@@ -1060,7 +1064,7 @@ function ingestVerifiedDocumentToCompanyBrain({ account, row, logger = noopHttpL
     },
   });
 
-  return runMutation({
+  const mutationExecution = await runMutation({
     action: "ingest_doc",
     payload,
     context: {
@@ -1111,70 +1115,113 @@ function ingestVerifiedDocumentToCompanyBrain({ account, row, logger = noopHttpL
         };
       }
     },
-  }).then(async (mutationExecution) => {
-    if (!mutationExecution?.ok) {
-      logger.warn("document_company_brain_ingest_blocked_by_runtime", {
-        stage: "company_brain_ingest",
-        account_id: account.id,
-        doc_id: payload.doc_id,
-        error: mutationExecution?.error || "mutation_verifier_blocked",
-        verifier: getRuntimeExecutionData(mutationExecution)?.verifier || null,
-      });
-      return null;
-    }
-    const result = getRuntimeExecutionData(mutationExecution);
-    if (result?.success !== true) {
-      return null;
-    }
-    const reviewSyncExecution = await runCompanyBrainReviewSyncMutation({
-      accountId: account.id,
-      docId: payload.doc_id,
-      title: payload.title,
-      action: "ingest_doc",
-      targetStage: "mirror",
-      pathname: "internal:company-brain/verified-ingest/review",
-      logger,
-    });
-    if (reviewSyncExecution?.ok) {
-      const reviewResult = getRuntimeExecutionData(reviewSyncExecution);
-      const intakeBoundary = reviewResult?.data?.intake_boundary || null;
-      logger.info("document_company_brain_intake_classified", {
-        stage: "company_brain_intake_boundary",
-        account_id: account.id,
-        doc_id: payload.doc_id,
-        intake_state: intakeBoundary?.intake_state || null,
-        review_status: intakeBoundary?.review_status || null,
-        direct_intake_allowed: intakeBoundary?.direct_intake_allowed === true,
-        review_required: intakeBoundary?.review_required === true,
-        conflict_check_required: intakeBoundary?.conflict_check_required === true,
-        approval_required_for_formal_source: intakeBoundary?.approval_required_for_formal_source === true,
-        matched_docs: Array.isArray(intakeBoundary?.matched_docs)
-          ? intakeBoundary.matched_docs.map((item) => ({
-              doc_id: item.doc_id,
-              title: item.title,
-              match_type: item.match_type,
-            }))
-          : [],
-      });
-      if (reviewResult?.data?.review_state?.status) {
-        logger.info("document_company_brain_review_staged", {
-          stage: "company_brain_review_state",
-          account_id: account.id,
-          doc_id: payload.doc_id,
-          review_status: reviewResult.data.review_state.status,
-        });
-      }
-    } else {
-      logger.warn("document_company_brain_review_sync_blocked", {
-        stage: "company_brain_review_state",
-        account_id: account.id,
-        doc_id: payload.doc_id,
-        error: reviewSyncExecution?.error || "mutation_verifier_blocked",
-        verifier: getRuntimeExecutionData(reviewSyncExecution)?.verifier || null,
-      });
-    }
-    return result.data?.ingested || null;
   });
+  if (!mutationExecution?.ok) {
+    logger.warn("document_company_brain_ingest_blocked_by_runtime", {
+      stage: "company_brain_ingest",
+      account_id: account.id,
+      doc_id: payload.doc_id,
+      error: mutationExecution?.error || "mutation_verifier_blocked",
+      verifier: getRuntimeExecutionData(mutationExecution)?.verifier || null,
+    });
+    return {
+      success: false,
+      stage: "ingest",
+      error: mutationExecution?.error || "mutation_verifier_blocked",
+      runtime_execution: mutationExecution,
+    };
+  }
+  const result = getRuntimeExecutionData(mutationExecution);
+  if (result?.success !== true) {
+    logger.warn("document_company_brain_ingest_failed", {
+      stage: "company_brain_ingest",
+      account_id: account.id,
+      doc_id: payload.doc_id,
+      error: result?.error || "business_error",
+    });
+    return {
+      success: false,
+      stage: "ingest",
+      error: result?.error || "mirror_ingest_failed",
+      business_result: result,
+    };
+  }
+  const reviewSyncExecution = await runCompanyBrainReviewSyncMutation({
+    accountId: account.id,
+    docId: payload.doc_id,
+    title: payload.title,
+    action: "ingest_doc",
+    targetStage: "mirror",
+    pathname: "internal:company-brain/verified-ingest/review",
+    logger,
+  });
+  if (!reviewSyncExecution?.ok) {
+    logger.warn("document_company_brain_review_sync_blocked", {
+      stage: "company_brain_review_state",
+      account_id: account.id,
+      doc_id: payload.doc_id,
+      error: reviewSyncExecution?.error || "mutation_verifier_blocked",
+      verifier: getRuntimeExecutionData(reviewSyncExecution)?.verifier || null,
+    });
+    return {
+      success: false,
+      stage: "review_sync",
+      error: reviewSyncExecution?.error || "mutation_verifier_blocked",
+      runtime_execution: reviewSyncExecution,
+      ingested: result.data?.ingested || null,
+    };
+  }
+  const reviewResult = getRuntimeExecutionData(reviewSyncExecution);
+  if (reviewResult?.success !== true) {
+    logger.warn("document_company_brain_review_sync_failed", {
+      stage: "company_brain_review_state",
+      account_id: account.id,
+      doc_id: payload.doc_id,
+      error: reviewResult?.error || "business_error",
+      review_state: reviewResult?.data?.review_state || null,
+      approval_state: reviewResult?.data?.approval_state || null,
+    });
+    return {
+      success: false,
+      stage: "review_sync",
+      error: reviewResult?.error || "company_brain_review_sync_failed",
+      business_result: reviewResult,
+      ingested: result.data?.ingested || null,
+    };
+  }
+  const intakeBoundary = reviewResult?.data?.intake_boundary || null;
+  logger.info("document_company_brain_intake_classified", {
+    stage: "company_brain_intake_boundary",
+    account_id: account.id,
+    doc_id: payload.doc_id,
+    intake_state: intakeBoundary?.intake_state || null,
+    review_status: intakeBoundary?.review_status || null,
+    direct_intake_allowed: intakeBoundary?.direct_intake_allowed === true,
+    review_required: intakeBoundary?.review_required === true,
+    conflict_check_required: intakeBoundary?.conflict_check_required === true,
+    approval_required_for_formal_source: intakeBoundary?.approval_required_for_formal_source === true,
+    matched_docs: Array.isArray(intakeBoundary?.matched_docs)
+      ? intakeBoundary.matched_docs.map((item) => ({
+          doc_id: item.doc_id,
+          title: item.title,
+          match_type: item.match_type,
+        }))
+      : [],
+  });
+  if (reviewResult?.data?.review_state?.status) {
+    logger.info("document_company_brain_review_staged", {
+      stage: "company_brain_review_state",
+      account_id: account.id,
+      doc_id: payload.doc_id,
+      review_status: reviewResult.data.review_state.status,
+    });
+  }
+  return {
+    success: true,
+    stage: "review_sync",
+    ingested: result.data?.ingested || null,
+    business_result: reviewResult,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1306,6 +1353,50 @@ function respondWriteExecutionFailure(res, execution, fallbackStatusCode = 409) 
     write_guard: executionData?.write_guard || null,
     ...(Array.isArray(executionData?.violation_types) ? { violation_types: executionData.violation_types } : {}),
   });
+}
+
+function respondCompanyBrainSyncFailure(res, syncResult, {
+  message = "",
+  extra = {},
+} = {}) {
+  if (!syncResult || syncResult.success === true) {
+    return false;
+  }
+
+  if (syncResult.runtime_execution && syncResult.runtime_execution.ok !== true) {
+    const execution = syncResult.runtime_execution;
+    const executionData = getRuntimeExecutionData(execution);
+    jsonResponse(res, Number(executionData?.statusCode || (execution.error === "execution_failed" ? 500 : 409)), {
+      ok: false,
+      error: execution.error || syncResult.error || "company_brain_sync_failed",
+      ...(executionData?.message ? { message: executionData.message } : (message ? { message } : {})),
+      write_guard: executionData?.write_guard || null,
+      ...(Array.isArray(executionData?.violation_types) ? { violation_types: executionData.violation_types } : {}),
+      company_brain_stage: syncResult.stage || null,
+      ...extra,
+    });
+    return true;
+  }
+
+  const businessResult =
+    syncResult.business_result && typeof syncResult.business_result === "object" && !Array.isArray(syncResult.business_result)
+      ? syncResult.business_result
+      : {
+          success: false,
+          data: {},
+          error: syncResult.error || "company_brain_sync_failed",
+        };
+
+  jsonResponse(res, getCompanyBrainAgentStatusCode(businessResult), {
+    ok: false,
+    error: businessResult.error || syncResult.error || "company_brain_sync_failed",
+    ...(message ? { message } : {}),
+    review_state: businessResult?.data?.review_state || null,
+    approval_state: businessResult?.data?.approval_state || null,
+    company_brain_stage: syncResult.stage || null,
+    ...extra,
+  });
+  return true;
 }
 
 function getRuntimeExecutionData(execution = null) {
@@ -1702,19 +1793,19 @@ async function handleDocumentCreateIndexBoundary({
       folderToken,
       content,
     });
+    const companyBrainSync = indexedDocument?.verified
+      ? await ingestVerifiedDocumentToCompanyBrain({
+          account: context.account,
+          row: indexedDocument?.document_row,
+          logger,
+        })
+      : null;
     logDocumentIndexLifecycleResult({
       logger,
       account: context.account,
       created,
       indexedDocument,
     });
-    if (indexedDocument?.verified) {
-      ingestVerifiedDocumentToCompanyBrain({
-        account: context.account,
-        row: indexedDocument?.document_row,
-        logger,
-      });
-    }
     logger.info("document_create_indexed", {
       stage: "document_index_schema_normalized",
       account_id: context.account.id,
@@ -1726,8 +1817,9 @@ async function handleDocumentCreateIndexBoundary({
       ok: true,
       indexed: true,
       verified: indexedDocument?.verified === true,
-      ingested: indexedDocument?.verified === true,
+      ingested: companyBrainSync?.success === true,
       indexed_document_id: indexedDocument?.document_row?.id || null,
+      company_brain_sync: companyBrainSync,
     };
   } catch (error) {
     await persistIndexFailureLifecycleRecord({
@@ -3887,6 +3979,7 @@ async function handleDocumentCreate(
           writeResult,
           initialContentWriteFailed,
           initialContentWriteError,
+          indexBoundary,
         };
       },
   });
@@ -3986,7 +4079,29 @@ async function handleDocumentCreate(
     writeResult,
     initialContentWriteFailed,
     initialContentWriteError,
+    indexBoundary,
   } = execution.result;
+
+  if (indexBoundary?.verified === true && indexBoundary?.company_brain_sync?.success !== true) {
+    logger.error("document_create_company_brain_sync_failed", {
+      stage: "company_brain_ingest",
+      account_id: context.account.id,
+      document_id: created?.document_id || null,
+      error: indexBoundary?.company_brain_sync?.error || "company_brain_sync_failed",
+      company_brain_stage: indexBoundary?.company_brain_sync?.stage || null,
+    });
+    if (respondCompanyBrainSyncFailure(res, indexBoundary.company_brain_sync, {
+      message: "Document create completed, but company-brain ingest/review sync failed.",
+      extra: {
+        account_id: context.account.id,
+        auth_mode: "user_access_token",
+        action: "document_create",
+        document_id: created?.document_id || null,
+      },
+    })) {
+      return;
+    }
+  }
 
   respondDocumentWriteSuccess(res, 200, buildDocumentCreateResult({
     context,
@@ -4542,28 +4657,53 @@ async function handleAgentCheckCompanyBrainConflicts(res, requestUrl, body, logg
       replacesExisting: body?.replaces_existing === true || body?.candidate?.replaces_existing === true,
     }),
   });
-  const result = mutationExecution.ok
-    ? getRuntimeExecutionData(mutationExecution)
-    : buildCompanyBrainRuntimeBlockedResult({
-        docId,
-        error: mutationExecution.error,
-      });
-  const statusCode = mutationExecution.ok
-    ? getCompanyBrainAgentStatusCode(result)
-    : 409;
+  if (!mutationExecution.ok) {
+    const result = buildCompanyBrainRuntimeBlockedResult({
+      docId,
+      error: mutationExecution.error,
+    });
+    logger.warn("company_brain_conflict_check", {
+      stage: "company_brain_conflict_check",
+      action: "check_company_brain_conflicts",
+      account_id: context.account.id,
+      doc_id: docId || null,
+      ok: false,
+      status_code: 409,
+      error: mutationExecution.error || "mutation_verifier_blocked",
+    });
+    jsonResponse(res, 409, buildCompanyBrainAgentResult(res, "check_company_brain_conflicts", result));
+    return;
+  }
+  const result = getRuntimeExecutionData(mutationExecution);
+  if (result?.success !== true) {
+    const statusCode = getCompanyBrainAgentStatusCode(result);
+    logger.warn("company_brain_conflict_check", {
+      stage: "company_brain_conflict_check",
+      action: "check_company_brain_conflicts",
+      account_id: context.account.id,
+      doc_id: docId || null,
+      ok: false,
+      status_code: statusCode,
+      error: result?.error || "business_error",
+      conflict_state: result?.data?.conflict_state || null,
+      conflict_items: Array.isArray(result?.data?.conflict_items) ? result.data.conflict_items.length : 0,
+    });
+    jsonResponse(res, statusCode, buildCompanyBrainAgentResult(res, "check_company_brain_conflicts", result));
+    return;
+  }
 
   logger.info("company_brain_conflict_check", {
     stage: "company_brain_conflict_check",
     action: "check_company_brain_conflicts",
     account_id: context.account.id,
     doc_id: docId || null,
-    ok: result.success === true,
-    status_code: statusCode,
+    ok: true,
+    status_code: 200,
     conflict_state: result?.data?.conflict_state || null,
     conflict_items: Array.isArray(result?.data?.conflict_items) ? result.data.conflict_items.length : 0,
   });
 
-  jsonResponse(res, statusCode, buildCompanyBrainAgentResult(res, "check_company_brain_conflicts", result));
+  jsonResponse(res, 200, buildCompanyBrainAgentResult(res, "check_company_brain_conflicts", result));
 }
 
 async function handleAgentCompanyBrainApprovalTransition(res, requestUrl, body, logger = noopHttpLogger) {
@@ -5080,12 +5220,32 @@ async function handleDocumentLifecycleRetry(res, requestUrl, body, logger = noop
   });
 
   const refreshed = getDocumentByExternalKey(context.account.id, row.external_key) || row;
-  if (finalState === "verified") {
-    ingestVerifiedDocumentToCompanyBrain({
-      account: context.account,
-      row: refreshed,
-      logger,
+  const companyBrainSync = finalState === "verified"
+    ? await ingestVerifiedDocumentToCompanyBrain({
+        account: context.account,
+        row: refreshed,
+        logger,
+      })
+    : null;
+  if (finalState === "verified" && companyBrainSync?.success !== true) {
+    logger.error("document_lifecycle_retry_company_brain_sync_failed", {
+      stage: "company_brain_ingest",
+      account_id: context.account.id,
+      document_id: row.document_id || null,
+      error: companyBrainSync?.error || "company_brain_sync_failed",
+      company_brain_stage: companyBrainSync?.stage || null,
     });
+    if (respondCompanyBrainSyncFailure(res, companyBrainSync, {
+      message: "Document lifecycle retry verified the document, but company-brain ingest/review sync failed.",
+      extra: {
+        account_id: context.account.id,
+        auth_mode: "user_access_token",
+        action: "document_lifecycle_retry",
+        item: buildDocumentLifecycleView(refreshed),
+      },
+    })) {
+      return;
+    }
   }
   jsonResponse(res, 200, {
     ok: true,
@@ -5418,29 +5578,55 @@ async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogg
     logger,
     traceId: res.__trace_id || null,
   });
-  if (reviewSyncExecution?.ok) {
-    const reviewResult = getRuntimeExecutionData(reviewSyncExecution);
-    const intakeBoundary = reviewResult?.data?.intake_boundary || null;
-    logger.info("document_company_brain_update_boundary", {
-      stage: "company_brain_write_intake_boundary",
-      account_id: context.account.id,
-      doc_id: finalDocumentId,
-      intake_state: intakeBoundary?.intake_state || null,
-      review_status: intakeBoundary?.review_status || null,
-      review_required: intakeBoundary?.review_required === true,
-      conflict_check_required: intakeBoundary?.conflict_check_required === true,
-      approval_required_for_formal_source: intakeBoundary?.approval_required_for_formal_source === true,
-      target_stage: intakeBoundary?.target_stage || null,
-    });
-  } else {
-    logger.warn("document_company_brain_update_review_stage_failed", {
+  if (!reviewSyncExecution?.ok) {
+    logger.error("document_company_brain_update_review_stage_failed", {
       stage: "company_brain_review_state",
       account_id: context.account.id,
       doc_id: finalDocumentId,
       error: reviewSyncExecution?.error || "mutation_verifier_blocked",
-      verifier: reviewSyncExecution?.verifier || null,
+      verifier: getRuntimeExecutionData(reviewSyncExecution)?.verifier || null,
     });
+    respondWriteExecutionFailure(
+      res,
+      reviewSyncExecution,
+      reviewSyncExecution?.error === "execution_failed" ? 500 : 409,
+    );
+    return;
   }
+  const reviewResult = getRuntimeExecutionData(reviewSyncExecution);
+  if (reviewResult?.success !== true) {
+    logger.error("document_company_brain_update_review_stage_failed", {
+      stage: "company_brain_review_state",
+      account_id: context.account.id,
+      doc_id: finalDocumentId,
+      error: reviewResult?.error || "business_error",
+      review_state: reviewResult?.data?.review_state || null,
+      approval_state: reviewResult?.data?.approval_state || null,
+    });
+    respondDocumentWriteFailure(
+      res,
+      getCompanyBrainAgentStatusCode(reviewResult),
+      reviewResult?.error || "company_brain_review_sync_failed",
+      {
+        message: "Document update completed, but company-brain review sync failed.",
+        review_state: reviewResult?.data?.review_state || null,
+        approval_state: reviewResult?.data?.approval_state || null,
+      },
+    );
+    return;
+  }
+  const intakeBoundary = reviewResult?.data?.intake_boundary || null;
+  logger.info("document_company_brain_update_boundary", {
+    stage: "company_brain_write_intake_boundary",
+    account_id: context.account.id,
+    doc_id: finalDocumentId,
+    intake_state: intakeBoundary?.intake_state || null,
+    review_status: intakeBoundary?.review_status || null,
+    review_required: intakeBoundary?.review_required === true,
+    conflict_check_required: intakeBoundary?.conflict_check_required === true,
+    approval_required_for_formal_source: intakeBoundary?.approval_required_for_formal_source === true,
+    target_stage: intakeBoundary?.target_stage || null,
+  });
   respondDocumentWriteSuccess(res, 200, buildDocumentUpdateResult({
     context,
     mode: resolvedMode,

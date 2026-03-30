@@ -41,11 +41,14 @@ Neighboring grounded runtime behavior remains:
 
 - bounded document create path:
   - `POST /api/doc/create`
+  - when lifecycle verification reaches `verified`, the route now awaits mirror ingest plus the follow-up review sync before returning 200
 - bounded document update path:
   - `POST /api/doc/update`
+  - the route now treats its follow-up review sync as blocking; runtime failure or `success=false` in that sync prevents a 200 response
 - document lifecycle and lifecycle retry:
   - `created -> indexed -> verified`
   - plus failure states
+  - `POST /api/doc/lifecycle/retry` now also awaits verified mirror ingest plus review sync before returning success
 - verified mirror ingest into `company_brain_docs`
 - persisted company-brain review state in `company_brain_review_state`
 - persisted approved-only admission boundary in `company_brain_approved_knowledge`
@@ -101,6 +104,7 @@ Grounded as a direct bounded runtime over read-side overlap evidence.
   - performs the explicit conflict-check step
   - returns `conflict_state=none|possible|confirmed`
   - returns `conflict_items`
+  - now fails closed if the optional `conflict_detected` review-state staging fails; caller-side success requires both runtime `ok` and business `success=true`
   - keeps the bounded evidence source separate from apply
 
 ### what is still not grounded

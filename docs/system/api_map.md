@@ -76,6 +76,7 @@ Important boundary:
 - these routes use `runMutation(...)`
 - they do not become external Lark writes
 - they do not prove a broader generic company-brain approval runtime beyond the checked-in mirror/review/apply path
+- optional review-state paths no longer treat runtime `ok` as sufficient on their own; callers now also require business `success=true`, so `/agent/company-brain/conflicts` and internal review-sync helpers fail closed on business errors
 
 ## 5. Doc and Comment Surfaces
 
@@ -98,6 +99,8 @@ Current write truth:
 - preview and confirmation are route-level user experience surfaces
 - final external mutation still routes through `lark-mutation-runtime -> mutation-runtime -> execute-lark-write`
 - heading-targeted update exists at preview/planning level, but doc write materialization is still bounded by the current doc update adapter
+- `POST /api/doc/create` and `POST /api/doc/lifecycle/retry` now keep verified company-brain ingest/review sync inside the request lifecycle; if that internal sync fails, the route does not return full success
+- `POST /api/doc/update` now treats the follow-up company-brain review sync as part of the route success boundary; if review sync fails at runtime or returns `success=false`, the route returns an error instead of `ok=true`
 
 ## 6. Drive and Wiki Surfaces
 

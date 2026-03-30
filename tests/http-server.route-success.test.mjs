@@ -1234,6 +1234,72 @@ test("agent company-brain review conflict approval apply slice is end-to-end ver
   assert.equal(approvedDetailPayload.data.data.knowledge_state.stage, "approved");
 });
 
+test("agent company-brain conflicts stages conflict_detected when overlap exists", async (t) => {
+  const timestamp = Date.now();
+  const title = `Shared Launch Checklist ${timestamp}`;
+  const primaryDocId = `doc-agent-company-brain-conflict-a-${timestamp}`;
+  const conflictingDocId = `doc-agent-company-brain-conflict-b-${timestamp}`;
+  insertCompanyBrainFixture({
+    docId: primaryDocId,
+    title,
+    rawText: [
+      "# Shared Launch Checklist",
+      "Owner A",
+    ].join("\n"),
+  });
+  insertCompanyBrainFixture({
+    docId: conflictingDocId,
+    title,
+    rawText: [
+      "# Shared Launch Checklist",
+      "Owner B",
+    ].join("\n"),
+  });
+  t.after(() => {
+    db.prepare("DELETE FROM company_brain_review_state WHERE account_id = ? AND doc_id IN (?, ?)").run(
+      "acct-1",
+      primaryDocId,
+      conflictingDocId,
+    );
+    db.prepare("DELETE FROM company_brain_docs WHERE account_id = ? AND doc_id IN (?, ?)").run(
+      "acct-1",
+      primaryDocId,
+      conflictingDocId,
+    );
+    db.prepare("DELETE FROM lark_documents WHERE account_id = ? AND document_id IN (?, ?)").run(
+      "acct-1",
+      primaryDocId,
+      conflictingDocId,
+    );
+  });
+
+  const { server } = await startTestServer(t, {});
+  const { port } = server.address();
+
+  const conflictResponse = await fetch(`http://127.0.0.1:${port}/agent/company-brain/conflicts`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...createExplicitPlannerAuthHeaders(),
+    },
+    body: JSON.stringify({
+      doc_id: primaryDocId,
+      title,
+      target_stage: "approved_knowledge",
+    }),
+  });
+  const conflictPayload = await conflictResponse.json();
+
+  assert.equal(conflictResponse.status, 200);
+  assert.equal(conflictPayload.ok, true);
+  assert.equal(conflictPayload.action, "check_company_brain_conflicts");
+  assert.equal(conflictPayload.data.success, true);
+  assert.equal(conflictPayload.data.data.conflict_state, "confirmed");
+  assert.equal(conflictPayload.data.data.review_state.status, "conflict_detected");
+  assert.equal(conflictPayload.data.data.conflict_items.length, 1);
+  assert.equal(conflictPayload.data.data.conflict_items[0].doc_id, conflictingDocId);
+});
+
 test("agent company-brain learning state update routes through the runtime and persists learning metadata", async (t) => {
   const docId = `doc-agent-company-brain-learning-${Date.now()}`;
   insertCompanyBrainFixture({
@@ -1585,14 +1651,31 @@ test("document update can preview a heading-targeted insert", async (t) => {
 
 test("document update can apply a heading-targeted insert after confirmation", async (t) => {
   const snapshot = await snapshotFile(docUpdateConfirmationStorePath);
+  const documentId = `doc-update-heading-${Date.now()}`;
   t.after(async () => {
     await restoreFile(docUpdateConfirmationStorePath, snapshot);
+    db.prepare("DELETE FROM company_brain_docs WHERE account_id = ? AND doc_id = ?").run("acct-1", documentId);
+    db.prepare("DELETE FROM lark_documents WHERE account_id = ? AND document_id = ?").run("acct-1", documentId);
+  });
+  insertCompanyBrainFixture({
+    docId: documentId,
+    title: "Spec",
+    rawText: [
+      "# 第一部分",
+      "Alpha",
+      "",
+      "# 第二部分",
+      "Beta",
+      "",
+      "# 第三部分",
+      "Gamma",
+    ].join("\n"),
   });
 
   const calls = [];
   const { server } = await startTestServer(t, {
     getDocument: async () => ({
-      document_id: "doc-1",
+      document_id: documentId,
       revision_id: "rev-1",
       title: "Spec",
       content: [
@@ -1622,7 +1705,7 @@ test("document update can apply a heading-targeted insert after confirmation", a
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      document_url: "https://larksuite.com/docx/doc-1",
+      document_url: `https://larksuite.com/docx/${documentId}`,
       content: "New line",
       section_heading: "第二部分",
     }),
@@ -1636,7 +1719,7 @@ test("document update can apply a heading-targeted insert after confirmation", a
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      document_id: "doc-1",
+      document_id: documentId,
       content: "New line",
       section_heading: "第二部分",
       confirm: true,
@@ -1650,7 +1733,7 @@ test("document update can apply a heading-targeted insert after confirmation", a
   assert.equal(applyPayload.targeting?.matched_heading, "第二部分");
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0], {
-    documentId: "doc-1",
+    documentId,
     content: [
       "# 第一部分",
       "Alpha",
@@ -1665,6 +1748,75 @@ test("document update can apply a heading-targeted insert after confirmation", a
     ].join("\n"),
     mode: "replace",
   });
+});
+
+test("document update fails closed when company-brain review sync does not find a mirrored doc", async (t) => {
+  const snapshot = await snapshotFile(docUpdateConfirmationStorePath);
+  const documentId = `doc-update-review-miss-${Date.now()}`;
+  t.after(async () => {
+    await restoreFile(docUpdateConfirmationStorePath, snapshot);
+    db.prepare("DELETE FROM company_brain_docs WHERE account_id = ? AND doc_id = ?").run("acct-1", documentId);
+    db.prepare("DELETE FROM lark_documents WHERE account_id = ? AND document_id = ?").run("acct-1", documentId);
+  });
+
+  const calls = [];
+  const { server } = await startTestServer(t, {
+    getDocument: async () => ({
+      document_id: documentId,
+      revision_id: "rev-1",
+      title: "Spec",
+      content: [
+        "# 第一部分",
+        "Alpha",
+        "",
+        "# 第二部分",
+        "Beta",
+      ].join("\n"),
+    }),
+    updateDocument: async (_accessToken, incomingDocumentId, content, mode) => {
+      calls.push({ documentId: incomingDocumentId, content, mode });
+      return {
+        document_id: incomingDocumentId,
+        mode,
+        root_block_id: "blk-root",
+        appended_blocks: 1,
+      };
+    },
+  });
+
+  const { port } = server.address();
+  const previewResponse = await fetch(`http://127.0.0.1:${port}/api/doc/update`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      document_url: `https://larksuite.com/docx/${documentId}`,
+      content: "New line",
+      section_heading: "第二部分",
+    }),
+  });
+  const previewPayload = await previewResponse.json();
+
+  assert.equal(previewResponse.status, 200);
+  assert.equal(previewPayload.preview_required, true);
+
+  const applyResponse = await fetch(`http://127.0.0.1:${port}/api/doc/update`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      document_id: documentId,
+      content: "New line",
+      section_heading: "第二部分",
+      confirm: true,
+      confirmation_id: previewPayload.confirmation_id,
+    }),
+  });
+  const applyPayload = await applyResponse.json();
+
+  assert.equal(applyResponse.status, 404);
+  assert.equal(applyPayload.ok, false);
+  assert.equal(applyPayload.error, "not_found");
+  assert.match(applyPayload.message || "", /company-brain review sync failed/i);
+  assert.equal(calls.length, 1);
 });
 
 test("document update apply rejects writes without explicit document_id and section_heading", async (t) => {

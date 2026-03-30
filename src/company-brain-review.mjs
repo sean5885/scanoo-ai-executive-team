@@ -413,9 +413,18 @@ export function checkCompanyBrainConflictAction({
       conflictItems,
       reviewNotes: "explicit conflict_check detected overlap before company-brain admission",
     });
-    if (staged.success === true) {
-      reviewState = staged.data.review_state;
+    if (staged.success !== true) {
+      return buildUnifiedResult(false, {
+        doc_id: normalizedDocId,
+        title: effectiveTitle,
+        conflict_state: conflictState,
+        conflict_items: conflictItems,
+        intake_boundary: intakeBoundary,
+        review_state: reviewState,
+        approval_state: buildApprovalStateEnvelope(normalizedAccountId, normalizedDocId),
+      }, staged.error || "review_state_write_failed");
     }
+    reviewState = staged.data.review_state;
   }
 
   return buildUnifiedResult(true, {

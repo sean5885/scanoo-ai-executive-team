@@ -26,7 +26,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 ## Used By Agents
 
 - Current usage is still bounded, but planner-facing query paths now exist:
-  - route-side non-blocking ingestion on verified API-created docs
+  - route-side ingestion on verified API-created docs now stays inside the request lifecycle for `/api/doc/create` and `/api/doc/lifecycle/retry`
   - a small write-intake policy helper that classifies direct mirror intake vs review/conflict-required promotion paths
   - read-only public HTTP routes:
     - `GET /api/company-brain/docs`
@@ -87,11 +87,15 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
       - conflict checking
       - approval decision transition
       - explicit approved-knowledge apply
+    - conflict-check no longer silently ignores failed `conflict_detected` staging; if that optional review-state write fails, the action now returns `success=false`
     - promotes only `approved` review results into `company_brain_approved_knowledge`
     - keeps approval storage separate from both mirror and learning sidecar
   - `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`
     - is now the shared write entry for agent-facing company-brain review / conflict / approval-transition / apply / learning-ingest / learning-state-update writes
     - also backs the follow-up review-state sync that can happen after verified mirror ingest and document update
+    - verified ingest from `/api/doc/create` and `/api/doc/lifecycle/retry` is now awaited by those routes, so ingest/review-sync failure prevents a full-success response even though rollback is still not attempted
+    - document update now fails closed at the HTTP route boundary when that follow-up review sync runtime blocks or returns `success=false`
+    - callers on `review_state_optional` paths now also require business `success=true` instead of treating runtime `ok` as sufficient
     - runs `knowledge_write_v1` pre/post verification around those internal writes
     - confirms review/apply/learning writes by checking durable SQLite state after execute, and allows `conflict_check` / intake review sync to skip post-verifier only when no review-state mutation is required
   - `/Users/seanhan/Documents/Playground/src/company-brain-memory-authority.mjs`
