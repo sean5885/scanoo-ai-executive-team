@@ -101,15 +101,33 @@ Current path:
 Current truth:
 
 - this path is implemented
+- `create_doc` and `/agent/docs/create` stay in this document/runtime write family
 - direct `executeLarkWrite(...)` from route or lane modules is no longer the checked-in primary pattern
 - runtime-local idempotency exists in `mutation-runtime.mjs`
 - persisted HTTP idempotency also exists at the HTTP layer
 
-### 2B. Internal Company-Brain Governance Write Path
+### 2B. Verified Mirror Ingest Path
 
 Current path:
 
-1. mirror ingest or explicit company-brain governance route builds a canonical request
+1. controlled document create/update path advances lifecycle state
+2. when lifecycle reaches `verified`, mirror ingest builds a canonical internal request
+3. `runMutation(...)` is used for admission and verification
+4. internal action upserts the verified mirror row into `company_brain_docs`
+5. intake helper classifies whether follow-up review/conflict staging is required
+
+Current truth:
+
+- this is implemented
+- this is the bridge from document flow into company-brain mirror state
+- verified mirror ingest and approved/apply are distinct states
+- mirror ingest is not formal approval
+
+### 2C. Internal Company-Brain Governance Write Path
+
+Current path:
+
+1. explicit company-brain governance route builds a canonical request
 2. `runMutation(...)` is used for admission and verification
 3. internal action writes review state, conflict state, approval state, learning state, or applied knowledge state
 
@@ -117,7 +135,8 @@ Current truth:
 
 - this is implemented
 - this is an internal governance write path, not an external Lark write path
-- verified mirror ingest and approved/apply are distinct states
+- it is downstream of document flow plus mirror ingest, not a replacement for them
+- approved/apply remains separate from both mirror and learning-state writes
 
 ## 3. Answer Path
 

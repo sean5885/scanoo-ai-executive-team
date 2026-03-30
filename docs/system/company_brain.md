@@ -4,7 +4,12 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 ## Existence
 
-- No full company_brain module or tenant-wide governance layer was found in this repo.
+- No full tenant-wide `company_brain` governance layer or autonomous company-brain server was found in this repo.
+- What is landed is a bounded company-brain slice:
+  - verified mirror ingest into `company_brain_docs`
+  - mirror read routes
+  - separate review-state, approved-knowledge, and learning-state persistence
+  - explicit agent-facing review/conflict/approval-transition/apply routes
 - A minimal mirror table now exists in `/Users/seanhan/Documents/Playground/src/db.mjs`:
   - `company_brain_docs`
 - A separate simplified learning sidecar table now also exists:
@@ -25,14 +30,14 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 ## Used By Agents
 
-- Current usage is still bounded, but planner-facing query paths now exist:
+- Current usage is still bounded, but repo-visible company-brain paths now exist:
   - route-side non-blocking ingestion on verified API-created docs
   - a small write-intake policy helper that classifies direct mirror intake vs review/conflict-required promotion paths
   - read-only public HTTP routes:
     - `GET /api/company-brain/docs`
     - `GET /api/company-brain/docs/:doc_id`
     - `GET /api/company-brain/search?q=...`
-  - planner-facing agent routes:
+  - agent-facing runtime routes:
     - `GET /agent/company-brain/docs`
     - `GET /agent/company-brain/search`
     - `GET /agent/company-brain/docs/:doc_id`
@@ -46,7 +51,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
     - `POST /agent/company-brain/learning/ingest`
     - `POST /agent/company-brain/learning/state`
   - `/Users/seanhan/Documents/Playground/src/company-brain-query.mjs`
-    - centralizes planner-facing list/search/detail actions
+    - centralizes current mirror and approved company-brain query actions
     - joins `company_brain_docs` with mirrored `lark_documents.raw_text`
     - joins optional `company_brain_learning_state`
     - lets planner-side search rank with a composite score over keyword match, semantic-lite similarity, learned `key_concepts` / `tags`, and document recency from mirror timestamps
@@ -110,6 +115,21 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
     - now also exposes approved-knowledge list/search/detail actions that only read from `company_brain_approved_knowledge`
     - keeps the existing mirror read-side actions unchanged and separate
 
+## Boundary At A Glance
+
+- document flow:
+  - `/api/doc/create`, `/api/doc/update`, and `/agent/docs/create` remain controlled document-write paths
+  - they are not company-brain-native write endpoints
+- company-brain mirror:
+  - verified document lifecycle can mirror into `company_brain_docs`
+  - mirror ingest is not formal approval
+- company-brain governance slice:
+  - `review -> conflict -> approval-transition -> apply` now exists as bounded agent-facing runtime behavior
+  - approved knowledge is stored separately from mirror and learning sidecars
+- planner contract:
+  - planner tooling currently uses `create_doc`, company-brain mirror list/search/detail, learning-state writes, and runtime info
+  - the existence of agent-facing review/apply routes does not mean planner owns or auto-runs the full company-brain lifecycle
+
 ## Completeness
 
 - Minimal only.
@@ -128,7 +148,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `source`
   - `created_at`
   - `creator`
-- Planner-facing agent routes additionally return:
+- Agent-facing company-brain routes additionally return:
   - structured `summary`
   - `learning_state`
   - search-time `match` metadata including composite `score` plus simplified `ranking_basis`
@@ -177,6 +197,6 @@ Observed sources:
 
 ## Conclusion
 
-At scan time, this repo still does not have a full company_brain governance system. It now has a small `company_brain_docs` mirror for verified API-created docs, a separate simplified `company_brain_learning_state` sidecar for planner-facing learning metadata, and a minimal agent-facing `review -> conflict -> approval-transition -> apply` runtime backed by `company_brain_review_state` plus `company_brain_approved_knowledge`. Retrieval knowledge and lifecycle/indexing remain the primary implemented layers, and company-brain governance is still bounded rather than full-fidelity.
+At scan time, this repo still does not have a full `company_brain` governance system. It does have a landed bounded slice: `company_brain_docs` mirror ingest for verified API-created docs, agent-facing mirror/approved reads with planner currently using the mirror read subset, a simplified `company_brain_learning_state` sidecar, and a minimal agent-facing `review -> conflict -> approval-transition -> apply` runtime backed by `company_brain_review_state` plus `company_brain_approved_knowledge`. Retrieval knowledge and lifecycle/indexing remain the primary implemented layers, and company-brain governance is still partial rather than full-fidelity.
 
 The current primary system is Playground's request-triggered flow, not ai-server background automation.

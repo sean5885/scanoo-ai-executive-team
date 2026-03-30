@@ -9,10 +9,12 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 ## Core Capabilities
 
-- system audit report for external architecture review:
+- system audit report for external architecture review (historical baseline, not the primary current-truth mirror):
   - [Lobster AI Executive System Audit Report v1](/Users/seanhan/Documents/Playground/docs/system/Lobster%20AI%20Executive%20System%20Audit%20Report%20v1.md)
 - capability gap analysis:
-  - [capability_gap_map.md](/Users/seanhan/Documents/Playground/docs/system/capability_gap_map.md)
+  - consolidated current-gap view now lives across:
+    - [open_questions.md](/Users/seanhan/Documents/Playground/docs/system/open_questions.md)
+    - [truth_matrix.md](/Users/seanhan/Documents/Playground/docs/system/truth_matrix.md)
 - skill governance mirrors:
   - [Skill Routing Map](/Users/seanhan/Documents/Playground/docs/system/skill_routing_map.md)
   - [Skill Audit Summary](/Users/seanhan/Documents/Playground/docs/system/skill_audit_summary.md)
@@ -35,6 +37,8 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - timer/manual poll workflow for watched comment suggestion cards
 - OpenClaw plugin exposure
 - guarded local action bridge
+- company-brain verified mirror ingest plus bounded mirror/approved read surfaces
+- company-brain review/conflict/approval/apply vertical slice with separate approved-only storage
 - binding / session / workspace runtime foundation
 - capability-lane routing for DM / group / doc / knowledge requests
 - closed-loop executive planner with shared multi-turn task state, evidence-based verification, reflection, and agent-to-agent handoff across registered agents
@@ -116,13 +120,19 @@ AI-like components exist, and now include:
 - assistant-like workflows around messages/comments/tasks
 - stronger write safety
 - runtime contract hardening between Node and `lobster_security`
+- company-brain governance is now a bounded vertical slice:
+  - controlled doc/runtime write path
+  - verified mirror ingest
+  - explicit review/conflict/approval/apply routes
+  - separate approved-only read boundary
+  - but still no tenant-wide canonical memory governance or autonomous runtime
 - provider-side prompt caching cannot be confirmed from repo code, so the repo now uses stable prompt templates plus external checkpoints instead of re-sending large historical context each round
 - the executive planner is still thin and synchronous; it does not yet run parallel subagents or a background queue
 - the local `docs/system` knowledge helpers remain read-side utilities only; they are not the SQLite/company-brain retrieval pipeline or an approval-governed knowledge source
 
 ## Not Implemented
 
-- company_brain
+- full autonomous company-brain server or tenant-wide canonical memory graph
 - agent learning pipeline
 - unread-only semantics
 - send-as-user

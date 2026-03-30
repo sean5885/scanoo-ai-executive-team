@@ -8,6 +8,15 @@ This document is a minimum status snapshot of the current system surface and a p
 
 It is intentionally limited to capabilities that are already grounded in checked-in code and validated docs.
 
+Current note:
+
+- this file is a planning/status snapshot, not the primary current-truth mirror
+- for current company-brain boundary truth after the landed review/conflict/approval/apply slice, prefer:
+  - `/Users/seanhan/Documents/Playground/docs/system/company_brain.md`
+  - `/Users/seanhan/Documents/Playground/docs/system/modules.md`
+  - `/Users/seanhan/Documents/Playground/docs/system/data_flow.md`
+  - `/Users/seanhan/Documents/Playground/docs/system/api_map.md`
+
 ## 1. planner_agent
 
 ### Current Status

@@ -6,6 +6,15 @@
 
 ---
 
+> Note
+> 這份報告是 `2026-03-18` 的 audit baseline，不是目前 `docs/system` 的 primary current-truth mirror。
+> 若 company-brain / doc flow / planner contract 與本文有落差，請以
+> `/Users/seanhan/Documents/Playground/docs/system/company_brain.md`、
+> `/Users/seanhan/Documents/Playground/docs/system/modules.md`、
+> `/Users/seanhan/Documents/Playground/docs/system/data_flow.md`、
+> `/Users/seanhan/Documents/Playground/docs/system/api_map.md`
+> 與 checked-in code 為準。
+
 ## 1. 系統總覽
 
 ### 1.1 系統目標

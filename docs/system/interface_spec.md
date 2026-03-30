@@ -159,10 +159,48 @@ It is intentionally narrow:
   - handoff does not transfer workflow ownership away from the planner/kernel
   - current repo only has minimal planner/runtime stop boundaries, not a full handoff mesh
 
+## 5. `company_brain_governance_interface`
+
+- purpose:
+  - expose the current bounded company-brain runtime slice without conflating it with document creation or a full knowledge-governance system
+- caller:
+  - agent-facing HTTP bridges and runtime-governed company-brain helpers
+- callee:
+  - `read-runtime.mjs` for mirror/approved reads
+  - `mutation-runtime.mjs` for review/conflict/approval/apply and learning-state writes
+- input shape:
+  ```json
+  {
+    "action": "string",
+    "account_id": "string",
+    "payload": "object",
+    "context": "object|null"
+  }
+  ```
+- output shape:
+  ```json
+  {
+    "ok": "boolean",
+    "action": "string",
+    "data": "object|null",
+    "trace_id": "string|null"
+  }
+  ```
+- failure handling:
+  - fail-soft
+  - mirror/approved reads return normalized `{ success, data, error }` style payloads through the agent bridge
+  - governance writes return controlled mutation/runtime failures instead of route-local completion claims
+- boundary:
+  - `create_doc` is outside this interface and remains a document-flow action through `/agent/docs/create`
+  - verified mirror ingest is not formal approval
+  - `apply` is a separate step and only succeeds after checked-in approval-state gates pass
+  - this interface is a bounded runtime slice, not a full tenant-wide company-brain operating system
+
 ## Current Boundary Summary
 
 - planner -> action/preset selection exists in code today
 - agent-facing bridge routes exist for a narrow subset of document/runtime actions
-- company-brain routes exist as minimal read/write mirrors, not a full knowledge operating system
+- `create_doc` is a document-flow bridge over controlled doc creation, not a company-brain write interface
+- company-brain runtime now has separate mirror read, approved read, and governance-write boundaries
 - skill/tool usage is governed by checked-in policy and route contracts, but not yet by a single runtime interface module
 - escalation/handoff is currently specified as a boundary contract, not a full runtime subsystem

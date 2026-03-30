@@ -23,7 +23,7 @@ What exists:
 What does not exist in current code:
 
 - autonomous long-running planner queue
-- company_brain
+- full tenant-wide company-brain server
 - tenant-wide shared memory service
 - memory orchestration layer
 
@@ -41,6 +41,7 @@ What now exists in current code:
 - evidence-based verifier, reflection records, and improvement proposal generation
 - monitoring-backed learning summaries that can draft routing/tool improvement proposals for human review
 - proposal-first knowledge writeback path for uncertain meeting/executive conclusions
+- bounded company-brain runtime slice with mirror reads, approved-only reads, and review/conflict/approval/apply routes
 
 ## Current Agent-Like Components
 
@@ -75,6 +76,15 @@ What now exists in current code:
   - `GET /agent/company-brain/docs`
   - `GET /agent/company-brain/search`
   - `GET /agent/company-brain/docs/:doc_id`
+  - `GET /agent/company-brain/approved/docs`
+  - `GET /agent/company-brain/approved/search`
+  - `GET /agent/company-brain/approved/docs/:doc_id`
+  - `POST /agent/company-brain/review`
+  - `POST /agent/company-brain/conflicts`
+  - `POST /agent/company-brain/approval-transition`
+  - `POST /agent/company-brain/docs/:doc_id/apply`
+  - `POST /agent/company-brain/learning/ingest`
+  - `POST /agent/company-brain/learning/state`
   - `GET /agent/system/runtime-info`
 - Logging:
   - `stage=agent_bridge`
@@ -224,11 +234,13 @@ What now exists in current code:
     - normalized `結論 / 重點 / 下一步` structure
     - supporting-agent context absorbed into one single-voice final reply instead of separate visible agent blocks
   - reject JSON-like specialist or merge replies before they are parsed as executive brief text, keeping structured blobs out of the visible single-voice answer
-  - expose a minimal planner-callable tool registry for five agent-bridge actions:
+  - expose a minimal planner-callable tool registry for seven checked-in actions:
     - `create_doc`
     - `list_company_brain_docs`
     - `search_company_brain_docs`
     - `get_company_brain_doc_detail`
+    - `ingest_learning_doc`
+    - `update_learning_state`
     - `get_runtime_info`
   - route those tool calls through the existing `/agent/*` HTTP bridges instead of duplicating document/runtime logic
 - Boundaries:
@@ -236,6 +248,7 @@ What now exists in current code:
   - does not run parallel supporting-agent execution; Thread103 baseline is sequential only
   - does not maintain a tenant-wide memory graph
   - does not yet auto-apply high-risk prompt/governance proposals without review
+  - planner tool exposure is narrower than the full agent-bridge surface; company-brain review/conflict/approval/apply routes exist, but they are not the same thing as planner-owned lifecycle automation
 
 ### Image Understanding Adapter
 
@@ -352,7 +365,8 @@ What now exists in current code:
   - SQLite repository
   - optional LLM API
 - Called by:
-  - `/answer`
+  - internal retrieval-answer helpers
+  - tests and fallback paths that still call `answer-service.mjs` directly
 - Calls:
   - repository and optional LLM endpoint
 
@@ -430,9 +444,13 @@ What now exists in current code:
 - Knowledge pipeline:
   - yes, SQLite-backed sync and FTS retrieval
 - Memory system:
-  - no agent memory layer found
+  - no tenant-wide shared memory service or canonical memory graph
 - company_brain:
-  - not present
+  - partial landed runtime only
+  - verified mirror ingest into `company_brain_docs`
+  - bounded review/conflict/approval/apply slice
+  - separate approved-only storage and read boundary
+  - not a full autonomous company-brain server
 
 ## Fallback Behavior
 
@@ -450,4 +468,4 @@ What now exists in current code:
 
 - tool layer: implemented
 - semantic classification: implemented, quality-sensitive
-- planner/router/specialist collaboration: not implemented in this repo
+- planner/router/specialist collaboration: partially implemented through the checked-in executive planner, but still sequential and bounded rather than a full agent team runtime

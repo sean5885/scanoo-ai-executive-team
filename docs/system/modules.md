@@ -159,14 +159,18 @@ Current-truth docs for onboarding are:
 - Implemented mirror/read side:
   - `/Users/seanhan/Documents/Playground/src/company-brain-write-intake.mjs`
   - `/Users/seanhan/Documents/Playground/src/company-brain-query.mjs`
+  - `/Users/seanhan/Documents/Playground/src/derived-read-authority.mjs`
   - `/Users/seanhan/Documents/Playground/src/company-brain-review.mjs`
   - `/Users/seanhan/Documents/Playground/src/company-brain-lifecycle-contract.mjs`
+  - `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`
 - Current truth:
   - verified mirror ingest exists
   - read-side list/detail/search exists
+  - approved-only list/detail/search exists as a separate derived read surface
   - review, conflict check, approval transition, and apply routes exist
   - approved knowledge is a separate derived/applied surface
 - Important boundary:
+  - `create_doc` and `/agent/docs/create` stay in the controlled document-write path; they are not company-brain-native write endpoints
   - this is not a full generic company-brain runtime
   - mirror ingest is not equivalent to formal approval
   - apply is gated by the checked-in lifecycle contract, not by a broader autonomous workflow engine

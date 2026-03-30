@@ -74,7 +74,7 @@ Resolved documentation drift and frozen-baseline clarifications were removed fro
      - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
      - `/Users/seanhan/Documents/Playground/src/external-mutation-registry.mjs`
 
-11. The repo has a checked-in executive orchestration layer, but not background workers, parallel subagent execution, or a tenant-wide memory graph.
+11. The repo has a checked-in executive orchestration layer and a bounded company-brain slice, but not background workers, parallel subagent execution, or a tenant-wide memory graph.
    - Why it matters:
      - future docs must keep describing the current scope accurately
 
@@ -99,13 +99,12 @@ Resolved documentation drift and frozen-baseline clarifications were removed fro
      - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
      - `/Users/seanhan/Documents/Playground/src/planner-runtime-info-flow.mjs`
 
-16. Read-runtime unification is incomplete; some review/verification helpers still read state directly.
+16. Company-brain conflict evidence is still narrow; current overlap checks are mostly title/doc-match based, not semantic conflict resolution.
+   - Why it matters:
+     - contributors must not describe the current company-brain conflict path as a rich resolver or approval workflow
    - Current code evidence:
+     - `/Users/seanhan/Documents/Playground/src/company-brain-write-intake.mjs`
      - `/Users/seanhan/Documents/Playground/src/company-brain-review.mjs`
-     - `/Users/seanhan/Documents/Playground/src/company-brain-learning.mjs`
-     - `/Users/seanhan/Documents/Playground/src/mutation-verifier.mjs`
-     - `/Users/seanhan/Documents/Playground/src/knowledge/knowledge-service.mjs`
-     - `/Users/seanhan/Documents/Playground/src/planner/knowledge-bridge.mjs`
 
 17. Runtime-local mutation idempotency and persisted HTTP idempotency still use different scopes.
    - Why it matters:

@@ -75,6 +75,7 @@ Important boundary:
 - these routes use `runMutation(...)`
 - they do not become external Lark writes
 - they do not prove a broader generic company-brain approval runtime beyond the checked-in mirror/review/apply path
+- they are separate from `/agent/docs/create`, which remains a document-flow wrapper over controlled doc creation
 
 ## 5. Doc and Comment Surfaces
 
@@ -95,8 +96,10 @@ Important boundary:
 Current write truth:
 
 - preview and confirmation are route-level user experience surfaces
+- `/agent/docs/create` is a planner-facing wrapper over this document path, not a company-brain governance route
 - final external mutation still routes through `lark-mutation-runtime -> mutation-runtime -> execute-lark-write`
 - heading-targeted update exists at preview/planning level, but doc write materialization is still bounded by the current doc update adapter
+- verified docs may later feed company-brain mirror ingest, but that happens after lifecycle verification rather than inside the create route itself
 
 ## 6. Drive and Wiki Surfaces
 
