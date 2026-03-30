@@ -4044,7 +4044,7 @@ async function handleRuntimeInfo(res, requestUrl, body, logger = noopHttpLogger)
   logger.info("runtime_info", {
     stage: "runtime_info",
     action: "get_runtime_info",
-    kind: "runtime_info",
+    kind: "get_runtime_info",
     ...payload,
   });
 

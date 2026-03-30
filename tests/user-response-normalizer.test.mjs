@@ -253,6 +253,29 @@ test("chat reply suggests comparison-oriented next step for decision-style queri
   assert.ok(userResponse.limitations.length <= 3);
 });
 
+test("chat reply accepts canonical get_runtime_info kind without leaking machine naming", () => {
+  const userResponse = normalizeUserResponse({
+    plannerEnvelope: {
+      ok: true,
+      action: "get_runtime_info",
+      execution_result: {
+        ok: true,
+        kind: "get_runtime_info",
+        db_path: "/tmp/runtime-normalizer.sqlite",
+        node_pid: 4321,
+        cwd: "/tmp/runtime-normalizer",
+        service_start_time: "2026-03-27T15:00:00.000Z",
+      },
+    },
+  });
+  const text = renderUserResponseText(userResponse);
+
+  assert.equal(userResponse.ok, true);
+  assert.match(userResponse.answer || "", /runtime|PID|工作目錄|資料庫路徑/);
+  assert.doesNotMatch(JSON.stringify(userResponse), /get_runtime_info|runtime_info/);
+  assert.doesNotMatch(text, /get_runtime_info|runtime_info/);
+});
+
 test("chat reply maps canonical payload sources through the shared answer source mapper", () => {
   const userResponse = normalizeUserResponse({
     payload: {

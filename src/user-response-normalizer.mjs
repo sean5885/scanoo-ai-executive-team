@@ -393,7 +393,7 @@ export function buildPlannerSuccessUserResponse(envelope = {}) {
     maxSources: MAX_USER_FACING_SOURCES,
   });
 
-  if (kind === "runtime_info") {
+  if (kind === "get_runtime_info" || kind === "runtime_info") {
     const summary = [
       "目前 runtime 有正常回應。",
       execution.db_path ? `資料庫路徑在 ${execution.db_path}。` : null,
