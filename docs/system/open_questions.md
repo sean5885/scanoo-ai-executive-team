@@ -2,98 +2,104 @@
 
 Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
-This file only keeps unresolved, code-backed gaps.
+This file keeps only unresolved, code-backed gaps that still deserve closure work.
 
-Resolved documentation drift, stale-read-boundary notes, and frozen-baseline clarifications were removed from this list.
+For this closure-planning pass:
 
-## High
+- duplicate items were merged into one thread when they describe the same boundary
+- deployment-only unknowns were moved out of the ranked list
+- roadmap-style expansion items were removed from the closure set
 
-1. Dual-responder risk still exists if another local responder is started after Playground.
-   - Why it matters:
-     - reply ownership and trace correlation can drift across processes
-   - Current code evidence:
-     - `/Users/seanhan/Documents/Playground/src/runtime-conflict-guard.mjs`
-   - Remaining gap:
-     - the guard only runs when Playground starts; it cannot prevent later manual re-enable
+## Disposition Of Previous Items
 
-2. `http-server.mjs` is still the dominant integration file.
-   - Why it matters:
-     - route behavior is implemented and tested, but comprehension cost remains high
-   - Current code evidence:
-     - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
-     - `/Users/seanhan/Documents/Playground/src/http-route-contracts.mjs`
+1. Dual-responder risk: still real; merged into `Thread B` because it is another single-machine coordination gap.
+2. `http-server.mjs` dominance: still real; merged into `Thread C`.
+3. Targeted preview vs replace-based final doc apply: still real; merged into `Thread A`.
+4. OAuth scope truth partly external: removed from the ranked list; this is deployment truth, not a repo-closable code gap.
+5. Token/account persistence local-first: still real; merged into `Thread B`.
+6. Sandbox/live tenant mapping lives in deployed env: removed from the ranked list; this is fail-closed in code but not provable from the repo alone.
+7. `lobster_security` separate boundary: still real, but cut from the next-three closure order.
+8. Semantic fallback quality parity: removed from the closure list; there is no checked-in parity contract to close against yet.
+9. Bitable/spreadsheet workflow contracts remain thin: removed from the closure list; this is feature-surface expansion, not closure of a current contract gap.
+10. Comment suggestion ingress is polling/manual only: still real; merged into `Thread A`.
+11. Workflow/planner state is local JSON: still real; merged into `Thread B`.
+12. Generic runtime questions do not reliably enter planner mode from the lane layer: still real; merged into `Thread C`.
+13. HTTP and mutation-runtime idempotency use different scopes: still real, but cut from the next-three closure order.
 
-3. Targeted doc update exists at preview/planning level, but final doc mutation is still replace-oriented in the current write adapter.
-   - Why it matters:
-     - contributors must not describe the current doc write runtime as block-level mutation
+## Ranked Closure Threads
+
+### P0
+
+1. `Thread A — comment/doc workflow closure`
+   - Why it stays:
+     - targeted planning exists, but final doc materialization is still replace-based
+     - comment suggestion ingress is still poll/manual driven, so the comment workflow is not end-to-end native
    - Current code evidence:
      - `/Users/seanhan/Documents/Playground/src/doc-targeting.mjs`
      - `/Users/seanhan/Documents/Playground/src/doc-comment-rewrite.mjs`
      - `/Users/seanhan/Documents/Playground/src/lark-content.mjs`
+     - `/Users/seanhan/Documents/Playground/src/comment-suggestion-workflow.mjs`
+     - `/Users/seanhan/Documents/Playground/src/comment-suggestion-poller.mjs`
+   - Closure target:
+     - make the docs and planning surface describe one truthful boundary for comment-driven doc updates instead of split preview/apply semantics plus polling-only ingress
 
-4. OAuth scope truth is still partly external to the repo.
-   - Why it matters:
-     - the repo documents scope families, but tenant-console grants remain outside version control
-   - Current code evidence:
-     - `/Users/seanhan/Documents/Playground/src/config.mjs`
-     - `/Users/seanhan/Documents/Playground/.env.example`
+### P1
 
-5. Token and account persistence remain local-first.
-   - Why it matters:
-     - encryption and permissions improved, but this is still not a managed secret store
+2. `Thread B — single-machine runtime coordination closure`
+   - Why it stays:
+     - responder conflict prevention only runs at startup
+     - token/account state remains local-first
+     - workflow and planner lifecycle state still live in local JSON stores
    - Current code evidence:
+     - `/Users/seanhan/Documents/Playground/src/runtime-conflict-guard.mjs`
      - `/Users/seanhan/Documents/Playground/src/db.mjs`
      - `/Users/seanhan/Documents/Playground/src/secret-crypto.mjs`
-
-6. Sandbox/live tenant isolation still depends on deployed environment variables, not a checked-in canonical tenant mapping.
-   - Why it matters:
-     - the code is fail-closed, but the intended tenant boundary is not provable from the repo alone
-   - Current code evidence:
-     - `/Users/seanhan/Documents/Playground/src/lark-write-guard.mjs`
-
-## Medium
-
-7. `lobster_security` remains a separate architecture boundary.
-   - Why it matters:
-     - contract drift can still happen between the Node bridge and the Python runtime
-   - Current code evidence:
-     - `/Users/seanhan/Documents/Playground/src/lobster-security-bridge.mjs`
-     - `/Users/seanhan/Documents/Playground/lobster_security`
-
-8. Semantic organization has a local fallback, but quality parity with OpenClaw-backed classification is not guaranteed.
-   - Current code evidence:
-     - `/Users/seanhan/Documents/Playground/src/lark-drive-semantic-classifier.mjs`
-
-9. Bitable and spreadsheet write primitives are implemented, but higher-level product workflow contracts remain thin.
-   - Current code evidence:
-     - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
-     - `/Users/seanhan/Documents/Playground/src/external-mutation-registry.mjs`
-
-10. Comment suggestion cards support manual/timer polling only; there is still no native Lark comment event entering this repo.
-   - Current code evidence:
-     - `/Users/seanhan/Documents/Playground/src/comment-suggestion-poller.mjs`
-     - `/Users/seanhan/Documents/Playground/src/comment-suggestion-workflow.mjs`
-
-11. Workflow checkpoints and planner lifecycle stores are still local JSON state, not a shared multi-runtime store.
-   - Current code evidence:
      - `/Users/seanhan/Documents/Playground/src/agent-workflow-state.mjs`
      - `/Users/seanhan/Documents/Playground/src/planner-task-lifecycle-v1.mjs`
+   - Closure target:
+     - reduce the number of places where correctness still depends on one local machine staying the only writer/runtime
 
-12. Planner-side runtime-info support exists, but top-level lane routing still does not guarantee every generic runtime question reaches planner mode.
+### P2
+
+3. `Thread C — planner ingress and edge-surface convergence`
+   - Why it stays:
+     - `http-server.mjs` remains a 9k+ line integration surface
+     - the lane layer still does not reliably send generic runtime-health questions into planner/runtime-info flow
    - Current code evidence:
+     - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
+     - `/Users/seanhan/Documents/Playground/src/http-route-contracts.mjs`
      - `/Users/seanhan/Documents/Playground/src/capability-lane.mjs`
      - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
      - `/Users/seanhan/Documents/Playground/src/planner-runtime-info-flow.mjs`
+   - Closure target:
+     - make planner entry conditions and edge-route ownership explicit enough that runtime-info and adjacent planner reads do not depend on lane heuristics plus one dominant integration file
 
-13. Runtime-local mutation idempotency and persisted HTTP idempotency still use different scopes.
-   - Why it matters:
-     - contributors should not assume there is only one idempotency layer
-   - Current code evidence:
-     - `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`
-     - `/Users/seanhan/Documents/Playground/src/http-idempotency-store.mjs`
+## Real But Outside The Next-Three Cut
+
+- `lobster_security` remains a separate Node-to-Python runtime boundary.
+  - Evidence:
+    - `/Users/seanhan/Documents/Playground/src/lobster-security-bridge.mjs`
+    - `/Users/seanhan/Documents/Playground/lobster_security`
+- HTTP idempotency and mutation-runtime idempotency still use different scopes.
+  - Evidence:
+    - `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`
+    - `/Users/seanhan/Documents/Playground/src/http-idempotency-store.mjs`
+
+## Minimal Closure Order
+
+1. Start with `Thread A`.
+   - It sits on a declared high-risk area: comment-driven document rewrite.
+   - It also removes the biggest current overclaim risk in docs and runtime descriptions.
+
+2. Then do `Thread B`.
+   - It groups the remaining single-machine assumptions into one closure pass instead of treating responder guard, token persistence, and planner/workflow state as separate threads.
+
+3. Finish with `Thread C`.
+   - It is worth doing after the first two boundaries are clear, because route extraction and planner-ingress cleanup are safer once doc-write and state boundaries are no longer ambiguous.
 
 ## Cannot Be Confirmed From Code Alone
 
 - whether any hosted deployment exists outside the local machine
 - whether OpenClaw is always available in production usage
 - the exact Lark app permissions currently granted in tenant console
+- the exact sandbox/live tenant allowlists and folder mapping currently active in deployed environment variables
