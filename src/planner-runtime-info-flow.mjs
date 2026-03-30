@@ -136,6 +136,11 @@ export function syncPlannerRuntimeInfoContext() {
 
 const plannerRuntimeInfoFlow = createPlannerFlow({
   id: "runtime_info",
+  ownership: {
+    family: "runtime",
+    contract: "single_owner",
+    domain: "runtime_info",
+  },
   supportsAction: supportsRuntimeInfoAction,
   readContext() {
     return getPlannerRuntimeInfoContext();

@@ -1,6 +1,11 @@
 import { cleanText } from "./message-intent-utils.mjs";
 import { ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
 
+const COMPANY_BRAIN_DOC_FAMILY = "company_brain_doc";
+const THEMED_DOC_FLOW_CONTRACT = "single_owner_theme";
+const GENERIC_DOC_FLOW_CONTRACT = "generic_owner";
+const SINGLE_OWNER_CONTRACT = "single_owner";
+
 function normalizePlannerFlow(flow = null) {
   if (!flow || typeof flow !== "object") {
     return null;
@@ -10,19 +15,6 @@ function normalizePlannerFlow(flow = null) {
     return null;
   }
   return flow;
-}
-
-function normalizePlannerFlowPriority(flow = null) {
-  return Number.isFinite(flow?.priority) ? Number(flow.priority) : 0;
-}
-
-function normalizePlannerFlowKeywords(flow = null) {
-  if (!Array.isArray(flow?.matchKeywords)) {
-    return [];
-  }
-  return flow.matchKeywords
-    .map((keyword) => cleanText(String(keyword || "").toLowerCase()))
-    .filter(Boolean);
 }
 
 function normalizePlannerFlows(flows = []) {
@@ -64,34 +56,127 @@ function normalizePlannerRouteDecision(route = null) {
   };
 }
 
-function countPlannerFlowKeywordHits(userIntent = "", keywords = []) {
-  const normalizedIntent = cleanText(String(userIntent || "").toLowerCase());
-  if (!normalizedIntent || !Array.isArray(keywords) || keywords.length === 0) {
-    return 0;
+function normalizePlannerFlowOwnership(flow = null) {
+  if (!flow?.ownership || typeof flow.ownership !== "object" || Array.isArray(flow.ownership)) {
+    return {
+      family: null,
+      contract: null,
+      domain: null,
+      overlap_owner: null,
+    };
   }
-
-  return keywords.reduce((count, keyword) => (
-    normalizedIntent.includes(keyword) ? count + 1 : count
-  ), 0);
+  return {
+    family: cleanText(flow.ownership.family) || null,
+    contract: cleanText(flow.ownership.contract) || null,
+    domain: cleanText(flow.ownership.domain) || null,
+    overlap_owner: cleanText(flow.ownership.overlap_owner) || null,
+  };
 }
 
-function comparePlannerFlowCandidates(left = null, right = null) {
-  if (!left) {
-    return right;
+export function getPlannerFlowOwnership(flow = null) {
+  return normalizePlannerFlowOwnership(flow);
+}
+
+function buildPlannerSyntheticDocSearchPayload(userIntent = "", payload = {}) {
+  const normalizedPayload = normalizePlannerPayload(payload);
+  const normalizedIntent = cleanText(String(userIntent || ""));
+  if (!cleanText(normalizedPayload.q) && normalizedIntent) {
+    normalizedPayload.q = normalizedIntent;
   }
-  if (!right) {
-    return left;
+  if (!cleanText(normalizedPayload.query) && normalizedIntent) {
+    normalizedPayload.query = normalizedIntent;
+  }
+  return normalizedPayload;
+}
+
+function buildPlannerSyntheticDocOverlapCandidate({
+  evaluations = [],
+  userIntent = "",
+  payload = {},
+} = {}) {
+  const docQueryEvaluation = evaluations.find((evaluation) => cleanText(evaluation?.flow?.id) === "doc_query");
+  if (!docQueryEvaluation) {
+    return null;
+  }
+  return {
+    ...docQueryEvaluation,
+    action: "search_company_brain_docs",
+    preset: "",
+    routeDecision: {
+      action: "search_company_brain_docs",
+      preset: "",
+      error: "",
+      target: "search_company_brain_docs",
+      target_kind: "action",
+      routing_reason: "selector_search_company_brain_docs",
+    },
+    payload: buildPlannerSyntheticDocSearchPayload(userIntent, payload),
+    synthetic_owner_resolution: "themed_overlap_fallback",
+  };
+}
+
+function resolveCompanyBrainDocFamilyCandidate({
+  evaluations = [],
+  routedEvaluations = [],
+  userIntent = "",
+  payload = {},
+} = {}) {
+  const themedCandidates = routedEvaluations.filter(
+    (evaluation) => evaluation.ownership.contract === THEMED_DOC_FLOW_CONTRACT,
+  );
+  const genericCandidate = routedEvaluations.find(
+    (evaluation) => evaluation.ownership.contract === GENERIC_DOC_FLOW_CONTRACT,
+  );
+
+  if (themedCandidates.length === 1) {
+    return themedCandidates[0];
+  }
+  if (themedCandidates.length > 1) {
+    return genericCandidate || buildPlannerSyntheticDocOverlapCandidate({
+      evaluations,
+      userIntent,
+      payload,
+    });
+  }
+  if (genericCandidate) {
+    return genericCandidate;
+  }
+  return routedEvaluations[0] || null;
+}
+
+function selectPlannerFlowCandidate({
+  evaluations = [],
+  userIntent = "",
+  payload = {},
+} = {}) {
+  const routedEvaluations = evaluations.filter((evaluation) => cleanText(evaluation?.routeDecision?.target));
+  if (routedEvaluations.length === 0) {
+    return null;
+  }
+  if (routedEvaluations.length === 1) {
+    return routedEvaluations[0];
   }
 
-  if ((right.priority || 0) !== (left.priority || 0)) {
-    return (right.priority || 0) > (left.priority || 0) ? right : left;
+  const singleOwnerCandidate = routedEvaluations.find(
+    (evaluation) => evaluation.ownership.contract === SINGLE_OWNER_CONTRACT,
+  );
+  if (singleOwnerCandidate) {
+    return singleOwnerCandidate;
   }
 
-  if ((right.keywordHitCount || 0) !== (left.keywordHitCount || 0)) {
-    return (right.keywordHitCount || 0) > (left.keywordHitCount || 0) ? right : left;
+  const companyBrainDocCandidates = routedEvaluations.filter(
+    (evaluation) => evaluation.ownership.family === COMPANY_BRAIN_DOC_FAMILY,
+  );
+  if (companyBrainDocCandidates.length > 0) {
+    return resolveCompanyBrainDocFamilyCandidate({
+      evaluations,
+      routedEvaluations: companyBrainDocCandidates,
+      userIntent,
+      payload,
+    });
   }
 
-  return (right.index || 0) < (left.index || 0) ? right : left;
+  return routedEvaluations[0];
 }
 
 export function createPlannerFlow(flow = {}) {
@@ -110,7 +195,7 @@ export function resolvePlannerFlowRoute({
   logger = console,
   sessionKey = "",
 } = {}) {
-  let bestCandidate = null;
+  const evaluations = [];
 
   for (const [index, flow] of normalizePlannerFlows(flows).entries()) {
     const context = flow.readContext?.({ sessionKey }) || {};
@@ -121,32 +206,35 @@ export function resolvePlannerFlowRoute({
       logger,
     });
     const routeDecision = normalizePlannerRouteDecision(route);
-    if (routeDecision.target) {
-      bestCandidate = comparePlannerFlowCandidates(bestCandidate, {
-        flow,
-        action: routeDecision.action || routeDecision.target,
-        preset: routeDecision.preset || "",
-        routeDecision,
-        payload: normalizePlannerPayload(route.payload),
-        context,
-        priority: normalizePlannerFlowPriority(flow),
-        keywordHitCount: countPlannerFlowKeywordHits(userIntent, normalizePlannerFlowKeywords(flow)),
-        index,
-      });
-    }
+    evaluations.push({
+      flow,
+      action: routeDecision.action || routeDecision.target,
+      preset: routeDecision.preset || "",
+      routeDecision,
+      payload: normalizePlannerPayload(route.payload),
+      context,
+      ownership: normalizePlannerFlowOwnership(flow),
+      index,
+    });
   }
 
-  if (bestCandidate) {
+  const selectedCandidate = selectPlannerFlowCandidate({
+    evaluations,
+    userIntent,
+    payload,
+  });
+
+  if (selectedCandidate) {
     return {
-      flow: bestCandidate.flow,
-      action: bestCandidate.action,
-      ...(bestCandidate.preset ? { preset: bestCandidate.preset } : {}),
-      selected_target: bestCandidate.routeDecision?.target || bestCandidate.action || null,
-      target_kind: cleanText(bestCandidate.routeDecision?.target_kind || "")
-        || (bestCandidate.preset ? "preset" : bestCandidate.action ? "action" : "error"),
-      routing_reason: cleanText(bestCandidate.routeDecision?.routing_reason || "") || "routing_no_match",
-      payload: bestCandidate.payload,
-      context: bestCandidate.context,
+      flow: selectedCandidate.flow,
+      action: selectedCandidate.action,
+      ...(selectedCandidate.preset ? { preset: selectedCandidate.preset } : {}),
+      selected_target: selectedCandidate.routeDecision?.target || selectedCandidate.action || null,
+      target_kind: cleanText(selectedCandidate.routeDecision?.target_kind || "")
+        || (selectedCandidate.preset ? "preset" : selectedCandidate.action ? "action" : "error"),
+      routing_reason: cleanText(selectedCandidate.routeDecision?.routing_reason || "") || "routing_no_match",
+      payload: selectedCandidate.payload,
+      context: selectedCandidate.context,
     };
   }
 

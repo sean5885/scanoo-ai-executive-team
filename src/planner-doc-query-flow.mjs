@@ -711,6 +711,11 @@ function supportsDocQueryAction(action = "") {
 
 const plannerDocQueryFlow = createPlannerFlow({
   id: "doc_query",
+  ownership: {
+    family: "company_brain_doc",
+    contract: "generic_owner",
+    domain: "doc_query",
+  },
   supportsAction: supportsDocQueryAction,
   readContext({ sessionKey = "" } = {}) {
     return getPlannerDocQueryContext({ sessionKey });

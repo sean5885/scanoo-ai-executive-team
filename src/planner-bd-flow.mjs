@@ -238,6 +238,12 @@ export async function formatBdExecutionResult({
 
 const plannerBdFlow = createPlannerFlow({
   id: "bd",
+  ownership: {
+    family: "company_brain_doc",
+    contract: "single_owner_theme",
+    domain: "bd",
+    overlap_owner: "doc_query",
+  },
   supportsAction: supportsBdAction,
   readContext({ sessionKey = "" } = {}) {
     return getPlannerDocQueryContext({ sessionKey });

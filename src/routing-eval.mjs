@@ -42,69 +42,11 @@ const noopLogger = {
 };
 
 const plannerFlows = [
-  plannerRuntimeInfoFlow && {
-    ...plannerRuntimeInfoFlow,
-    priority: 100,
-    matchKeywords: [
-      "runtime",
-      "db path",
-      "pid",
-      "cwd",
-      "service start",
-      "service_start",
-      "運行資訊",
-      "运行信息",
-    ],
-  },
-  plannerOkrFlow && {
-    ...plannerOkrFlow,
-    priority: 80,
-    matchKeywords: [
-      "okr",
-      "目標",
-      "kr",
-      "關鍵結果",
-      "关键结果",
-      "週進度",
-      "周进度",
-      "本週 todo",
-      "本周 todo",
-      "本週todo",
-      "本周todo",
-    ],
-  },
-  plannerBdFlow && {
-    ...plannerBdFlow,
-    priority: 80,
-    matchKeywords: [
-      "bd",
-      "商機",
-      "商机",
-      "客戶",
-      "客户",
-      "跟進",
-      "跟进",
-      "demo",
-      "提案",
-    ],
-  },
-  plannerDeliveryFlow && {
-    ...plannerDeliveryFlow,
-    priority: 80,
-    matchKeywords: [
-      "交付",
-      "sop",
-      "驗收",
-      "验收",
-      "導入",
-      "导入",
-      "onboarding",
-    ],
-  },
-  plannerDocQueryFlow && {
-    ...plannerDocQueryFlow,
-    priority: 10,
-  },
+  plannerRuntimeInfoFlow,
+  plannerOkrFlow,
+  plannerBdFlow,
+  plannerDeliveryFlow,
+  plannerDocQueryFlow,
 ].filter(Boolean);
 
 const executiveStartSignals = [

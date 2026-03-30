@@ -1500,10 +1500,14 @@ test("planner conversation memory persists latest summary across restart", () =>
         ]);
         memory.compactPlannerConversationMemory({
           flows: [
-            { id: "okr", priority: 80, context: {} },
+            {
+              id: "okr",
+              ownership: { family: "company_brain_doc", contract: "single_owner_theme", domain: "okr" },
+              context: {},
+            },
             {
               id: "doc_query",
-              priority: 10,
+              ownership: { family: "company_brain_doc", contract: "generic_owner", domain: "doc_query" },
               context: {
                 activeDoc: { doc_id: "okr_1", title: "OKR Weekly Review" },
                 activeCandidates: [],
@@ -2727,7 +2731,7 @@ test("planner flow runtime resolves runtime info query to runtime-info flow", ()
   assert.deepEqual(resolved.payload, {});
 });
 
-test("planner flow runtime keeps doc query on doc flow when multiple flows coexist", () => {
+test("planner flow runtime keeps OKR single-owner routing when only OKR theme matches", () => {
   const resolved = resolvePlannerFlowRoute({
     flows: [plannerRuntimeInfoFlow, plannerOkrFlow, plannerDeliveryFlow, plannerDocQueryFlow],
     userIntent: "幫我找 OKR 文件",
@@ -2743,7 +2747,7 @@ test("planner flow runtime keeps doc query on doc flow when multiple flows coexi
   });
 });
 
-test("planner flow runtime routes general file query to doc query flow when multiple flows coexist", () => {
+test("planner flow runtime routes single delivery-themed file query to delivery flow", () => {
   const resolved = resolvePlannerFlowRoute({
     flows: [plannerRuntimeInfoFlow, plannerOkrFlow, plannerBdFlow, plannerDeliveryFlow, plannerDocQueryFlow],
     userIntent: "幫我找 onboarding 文件",
@@ -2824,64 +2828,65 @@ test("planner flow runtime routes BD summary query to bd flow", () => {
   });
 });
 
-test("planner flow runtime prefers higher keyword hit count when OKR and delivery could both match", () => {
+test("planner flow runtime falls back to doc query when OKR and delivery both claim the same summary query", () => {
   const resolved = resolvePlannerFlowRoute({
-    flows: [
-      { ...plannerRuntimeInfoFlow, priority: 100, matchKeywords: ["runtime", "db path", "pid", "cwd"] },
-      {
-        ...plannerOkrFlow,
-        priority: 80,
-        matchKeywords: ["okr", "目標", "kr", "關鍵結果", "週進度", "本週 todo"],
-      },
-      {
-        ...plannerBdFlow,
-        priority: 80,
-        matchKeywords: ["bd", "商機", "客戶", "跟進", "demo", "提案"],
-      },
-      {
-        ...plannerDeliveryFlow,
-        priority: 80,
-        matchKeywords: ["交付", "sop", "驗收", "導入", "onboarding"],
-      },
-      { ...plannerDocQueryFlow, priority: 10, matchKeywords: [] },
-    ],
+    flows: [plannerRuntimeInfoFlow, plannerOkrFlow, plannerBdFlow, plannerDeliveryFlow, plannerDocQueryFlow],
     userIntent: "幫我整理 OKR 關鍵結果與 onboarding 進度",
     payload: {},
     logger: console,
   });
 
-  assert.equal(resolved.flow?.id, "okr");
-  assert.equal(resolved.action, "search_and_detail_doc");
+  assert.equal(resolved.flow?.id, "doc_query");
+  assert.equal(resolved.preset, "search_and_detail_doc");
 });
 
-test("planner flow runtime prefers delivery flow when delivery keyword hits exceed OKR hits", () => {
+test("planner flow runtime falls back to doc query search when multiple themed flows overlap without a generic doc route", () => {
   const resolved = resolvePlannerFlowRoute({
-    flows: [
-      { ...plannerRuntimeInfoFlow, priority: 100, matchKeywords: ["runtime", "db path", "pid", "cwd"] },
-      {
-        ...plannerOkrFlow,
-        priority: 80,
-        matchKeywords: ["okr", "目標", "kr", "關鍵結果", "週進度", "本週 todo"],
-      },
-      {
-        ...plannerBdFlow,
-        priority: 80,
-        matchKeywords: ["bd", "商機", "客戶", "跟進", "demo", "提案"],
-      },
-      {
-        ...plannerDeliveryFlow,
-        priority: 80,
-        matchKeywords: ["交付", "sop", "驗收", "導入", "onboarding"],
-      },
-      { ...plannerDocQueryFlow, priority: 10, matchKeywords: [] },
-    ],
-    userIntent: "幫我整理交付 onboarding 驗收流程與 OKR",
+    flows: [plannerRuntimeInfoFlow, plannerOkrFlow, plannerBdFlow, plannerDeliveryFlow, plannerDocQueryFlow],
+    userIntent: "OKR onboarding",
     payload: {},
     logger: console,
   });
 
-  assert.equal(resolved.flow?.id, "delivery");
-  assert.equal(resolved.action, "search_and_detail_doc");
+  assert.equal(resolved.flow?.id, "doc_query");
+  assert.equal(resolved.action, "search_company_brain_docs");
+  assert.deepEqual(resolved.payload, {
+    q: "OKR onboarding",
+    query: "OKR onboarding",
+  });
+});
+
+test("planner flow runtime keeps generic doc query ownership when no active theme is seeded", () => {
+  const resolved = resolvePlannerFlowRoute({
+    flows: [plannerRuntimeInfoFlow, plannerOkrFlow, plannerBdFlow, plannerDeliveryFlow, plannerDocQueryFlow],
+    userIntent: "這份文件的重點是什麼",
+    payload: {},
+    sessionKey: "planner-flow-overlap-followup",
+    logger: console,
+  });
+
+  assert.equal(resolved.flow?.id, "doc_query");
+  resetPlannerDocQueryRuntimeContext({ sessionKey: "planner-flow-overlap-followup" });
+});
+
+test("planner flow runtime keeps OKR owner for same-theme follow-up once active theme is seeded", () => {
+  hydratePlannerDocQueryRuntimeContext({
+    activeDoc: { doc_id: "okr_followup_1", title: "OKR Weekly Review" },
+    activeTheme: "okr",
+    sessionKey: "planner-flow-okr-followup-owner",
+  });
+
+  const resolved = resolvePlannerFlowRoute({
+    flows: [plannerRuntimeInfoFlow, plannerOkrFlow, plannerBdFlow, plannerDeliveryFlow, plannerDocQueryFlow],
+    userIntent: "這份文件的重點是什麼",
+    payload: {},
+    sessionKey: "planner-flow-okr-followup-owner",
+    logger: console,
+  });
+
+  assert.equal(resolved.flow?.id, "okr");
+  assert.equal(resolved.action, "get_company_brain_doc_detail");
+  resetPlannerDocQueryRuntimeContext({ sessionKey: "planner-flow-okr-followup-owner" });
 });
 
 test("planner flow runtime routes runtime query ahead of bd flow", () => {

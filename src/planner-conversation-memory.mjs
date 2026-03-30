@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { cleanText } from "./message-intent-utils.mjs";
+import { getPlannerFlowOwnership } from "./planner-flow-runtime.mjs";
 
 const PLANNER_SUMMARY_TRIGGER_TURNS = 6;
 const PLANNER_SUMMARY_TRIGGER_CHARS = 2400;
@@ -155,7 +156,7 @@ function normalizePlannerFlowSnapshot(flow = null) {
   }
   return {
     id: cleanText(flow.id) || null,
-    priority: Number.isFinite(flow.priority) ? Number(flow.priority) : 0,
+    ownership: getPlannerFlowOwnership(flow),
     context: flow.context && typeof flow.context === "object" && !Array.isArray(flow.context)
       ? cloneJsonSafe(flow.context)
       : {},
@@ -290,13 +291,13 @@ export function buildPlannerConversationSummary({
     system_architecture_status: summarizeSystemArchitectureStatus(),
     completed_features: [
       "planner flow runtime with runtime-info / okr / delivery / doc-query flows",
-      "dynamic flow selection by priority then keyword-hit count",
+      "explicit flow ownership contract for runtime_info / doc_query / okr / bd / delivery",
       "company-brain doc query pipeline with active_doc, active_candidates, and active_theme",
       "fail-soft planner dispatch, retry, self-heal, and preset execution",
     ],
     current_flows: normalizedFlows.map((flow) => ({
       id: flow.id,
-      priority: flow.priority,
+      ownership: flow.ownership,
     })),
     active_doc: activeDoc && typeof activeDoc === "object" ? activeDoc : null,
     active_candidates: activeCandidates,

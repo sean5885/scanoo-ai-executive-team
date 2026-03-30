@@ -241,6 +241,12 @@ export async function formatOkrExecutionResult({
 
 const plannerOkrFlow = createPlannerFlow({
   id: "okr",
+  ownership: {
+    family: "company_brain_doc",
+    contract: "single_owner_theme",
+    domain: "okr",
+    overlap_owner: "doc_query",
+  },
   supportsAction: supportsOkrAction,
   readContext({ sessionKey = "" } = {}) {
     return getPlannerDocQueryContext({ sessionKey });

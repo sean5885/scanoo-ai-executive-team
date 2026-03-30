@@ -90,6 +90,7 @@ Current-truth docs for onboarding are:
 - Current truth:
   - `GET /answer` no longer uses `answer-service.mjs` as its primary route
   - public answer generation goes through planner execution first
+  - planner flow ownership between `runtime_info`, `doc_query`, `okr`, `bd`, and `delivery` is now explicit in code rather than inferred from flow priority or registration order
   - final HTTP/chat response is normalized into `answer -> sources -> limitations`
   - `user-response-normalizer.mjs` now only reads canonical `execution_result.data.answer / sources / limitations`
   - `renderUserResponseText(...)` renders an already-canonical `{ answer, sources, limitations }` object directly without re-normalizing legacy payload shapes

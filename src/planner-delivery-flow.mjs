@@ -236,6 +236,12 @@ export async function formatDeliveryExecutionResult({
 
 const plannerDeliveryFlow = createPlannerFlow({
   id: "delivery",
+  ownership: {
+    family: "company_brain_doc",
+    contract: "single_owner_theme",
+    domain: "delivery",
+    overlap_owner: "doc_query",
+  },
   supportsAction: supportsDeliveryAction,
   readContext({ sessionKey = "" } = {}) {
     return getPlannerDocQueryContext({ sessionKey });
