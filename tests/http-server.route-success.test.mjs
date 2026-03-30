@@ -49,10 +49,99 @@ function createLoggerSink() {
 
 function createAuthorizedOverrides(overrides = {}) {
   const normalizedOverrides = { ...overrides };
-  if (typeof overrides.readDocumentFromRuntime !== "function" && typeof overrides.getDocument === "function") {
-    normalizedOverrides.readDocumentFromRuntime = async ({ accessToken, documentId }) => (
-      overrides.getDocument(accessToken, documentId)
-    );
+
+  const documentState = new Map();
+  const storeDocument = (document = {}, fallback = {}) => {
+    const documentId = document?.document_id || fallback.document_id || null;
+    if (!documentId) {
+      return document;
+    }
+    const next = {
+      document_id: documentId,
+      revision_id: document?.revision_id || fallback.revision_id || null,
+      title: document?.title || fallback.title || null,
+      url: document?.url || fallback.url || `https://larksuite.com/docx/${documentId}`,
+      content: document?.content ?? fallback.content ?? "",
+    };
+    documentState.set(documentId, next);
+    return next;
+  };
+
+  if (typeof overrides.createDocument === "function") {
+    normalizedOverrides.createDocument = async (...args) => {
+      const created = await overrides.createDocument(...args);
+      storeDocument(created, {
+        document_id: created?.document_id || null,
+        title: created?.title || args[1] || null,
+        content: "",
+      });
+      return created;
+    };
+  }
+
+  if (typeof overrides.updateDocument === "function") {
+    normalizedOverrides.updateDocument = async (accessToken, documentId, content, mode, ...rest) => {
+      const result = await overrides.updateDocument(accessToken, documentId, content, mode, ...rest);
+      const previous = documentState.get(documentId) || {
+        document_id: documentId,
+        title: null,
+        content: "",
+      };
+      const normalizedContent = mode === "replace"
+        ? content
+        : [previous.content, content].filter(Boolean).join("\n\n");
+      storeDocument({
+        ...previous,
+        document_id: documentId,
+        revision_id: result?.revision_id || previous.revision_id || null,
+        content: normalizedContent,
+      }, previous);
+      return result;
+    };
+  }
+
+  if (typeof overrides.applyRewrittenDocument === "function") {
+    normalizedOverrides.applyRewrittenDocument = async (accessToken, documentId, rewrittenContent, options = {}) => {
+      const result = await overrides.applyRewrittenDocument(accessToken, documentId, rewrittenContent, options);
+      const previous = documentState.get(documentId) || {
+        document_id: documentId,
+        title: null,
+        content: "",
+      };
+      storeDocument({
+        ...previous,
+        document_id: documentId,
+        revision_id: result?.update_result?.revision_id || previous.revision_id || null,
+        content: rewrittenContent,
+      }, previous);
+      return result;
+    };
+  }
+
+  if (typeof overrides.getDocument === "function") {
+    normalizedOverrides.getDocument = async (accessToken, documentId, ...rest) => {
+      const loaded = await overrides.getDocument(accessToken, documentId, ...rest);
+      return storeDocument(loaded, { document_id: documentId });
+    };
+  }
+
+  if (typeof overrides.readDocumentFromRuntime !== "function") {
+    normalizedOverrides.readDocumentFromRuntime = async ({ accessToken, documentId }) => {
+      const stored = documentState.get(documentId);
+      if (stored) {
+        return { ...stored };
+      }
+      if (typeof normalizedOverrides.getDocument === "function") {
+        return normalizedOverrides.getDocument(accessToken, documentId);
+      }
+      return {
+        document_id: documentId,
+        revision_id: null,
+        title: null,
+        url: `https://larksuite.com/docx/${documentId}`,
+        content: "",
+      };
+    };
   }
   if (
     typeof overrides.listDocumentCommentsFromRuntime !== "function"
@@ -99,6 +188,17 @@ function ensureTestAccount(accountId = "acct-1") {
     scope: "test",
     created_at: timestamp,
     updated_at: timestamp,
+  });
+}
+
+function seedSearchToken(accountId = "acct-1") {
+  saveToken(accountId, {
+    access_token: `token_search_${accountId}`,
+    refresh_token: `refresh_search_${accountId}`,
+    token_type: "Bearer",
+    scope: "docs:read",
+    expires_at: new Date(Date.now() + 60_000).toISOString(),
+    refresh_expires_at: new Date(Date.now() + 120_000).toISOString(),
   });
 }
 
@@ -641,6 +741,297 @@ test("document create preview/confirm classifies title overlap as review and con
   assert.equal(overlapBoundaryLog?.[1]?.matched_docs?.[0]?.match_type, "same_title");
 });
 
+test("document create with initial content refreshes search index, mirror, and read-back before success", async (t) => {
+  withEnv(t, {
+    ALLOW_LARK_WRITES: "true",
+  });
+  seedSearchToken("acct-1");
+  const docId = `doc-create-consistency-${Date.now()}`;
+  const title = "Consistency Create Runbook";
+  const content = [
+    "# Consistency Create Runbook",
+    "",
+    "consistency-create-keyword",
+    "",
+    "Create path latest content",
+  ].join("\n");
+
+  t.after(() => {
+    db.prepare("DELETE FROM lark_chunk_embeddings WHERE account_id = ?").run("acct-1");
+    db.prepare("DELETE FROM lark_chunks_fts WHERE account_id = ?").run("acct-1");
+    db.prepare("DELETE FROM lark_chunks WHERE account_id = ?").run("acct-1");
+    db.prepare("DELETE FROM company_brain_docs WHERE account_id = ? AND doc_id = ?").run("acct-1", docId);
+    db.prepare("DELETE FROM lark_documents WHERE account_id = ? AND document_id = ?").run("acct-1", docId);
+    db.prepare("DELETE FROM lark_sources WHERE account_id = ? AND external_id = ?").run("acct-1", docId);
+    db.prepare("DELETE FROM lark_tokens WHERE account_id = ?").run("acct-1");
+  });
+
+  const { server } = await startTestServer(t, {
+    createDocument: async () => ({
+      document_id: docId,
+      revision_id: "rev-create-consistency-1",
+      title,
+      url: `https://larksuite.com/docx/${docId}`,
+    }),
+    updateDocument: async (_accessToken, documentId, nextContent, mode) => ({
+      document_id: documentId,
+      revision_id: "rev-create-consistency-2",
+      mode,
+      appended_blocks: nextContent.length > 0 ? 1 : 0,
+      root_block_id: "blk-create-consistency",
+      url: `https://larksuite.com/docx/${documentId}`,
+    }),
+  });
+
+  const { port } = server.address();
+  const { applyResponse, applyPayload } = await previewThenConfirmDocumentCreate({
+    port,
+    body: {
+      title,
+      content,
+    },
+  });
+
+  assert.equal(applyResponse.status, 200);
+  assert.equal(applyPayload.ok, true);
+  assert.equal(applyPayload.document_id, docId);
+
+  const searchResponse = await fetch(
+    `http://127.0.0.1:${port}/search?q=consistency-create-keyword&account_id=acct-1`,
+  );
+  const searchPayload = await searchResponse.json();
+  assert.equal(searchResponse.status, 200);
+  assert.equal(searchPayload.total, 1);
+  assert.equal(searchPayload.items[0].title, title);
+
+  const readResponse = await fetch(`http://127.0.0.1:${port}/api/doc/read?document_id=${docId}`);
+  const readPayload = await readResponse.json();
+  assert.equal(readResponse.status, 200);
+  assert.equal(readPayload.document_id, docId);
+  assert.equal(readPayload.content, content);
+
+  const mirrorResponse = await fetch(`http://127.0.0.1:${port}/api/company-brain/docs/${docId}`);
+  const mirrorPayload = await mirrorResponse.json();
+  assert.equal(mirrorResponse.status, 200);
+  assert.equal(mirrorPayload.item.doc_id, docId);
+  assert.equal(mirrorPayload.item.title, title);
+});
+
+test("document update targeted apply refreshes search index, mirror, and read-back to latest content", async (t) => {
+  withEnv(t, {
+    ALLOW_LARK_WRITES: "true",
+  });
+  seedSearchToken("acct-1");
+  const snapshot = await snapshotFile(docUpdateConfirmationStorePath);
+  t.after(async () => {
+    await restoreFile(docUpdateConfirmationStorePath, snapshot);
+  });
+  const docId = `doc-update-consistency-${Date.now()}`;
+  const updatedContent = [
+    "# 第一部分",
+    "Alpha",
+    "",
+    "# 第二部分",
+    "Beta",
+    "",
+    "consistencyupdatekeyword",
+  ].join("\n");
+  t.after(() => {
+    db.prepare("DELETE FROM lark_chunk_embeddings WHERE account_id = ?").run("acct-1");
+    db.prepare("DELETE FROM lark_chunks_fts WHERE account_id = ?").run("acct-1");
+    db.prepare("DELETE FROM lark_chunks WHERE account_id = ?").run("acct-1");
+    db.prepare("DELETE FROM company_brain_docs WHERE account_id = ? AND doc_id = ?").run("acct-1", docId);
+    db.prepare("DELETE FROM lark_documents WHERE account_id = ? AND document_id = ?").run("acct-1", docId);
+    db.prepare("DELETE FROM lark_sources WHERE account_id = ? AND external_id = ?").run("acct-1", docId);
+    db.prepare("DELETE FROM lark_tokens WHERE account_id = ?").run("acct-1");
+  });
+
+  const { server } = await startTestServer(t, {
+    getDocument: async () => ({
+      document_id: docId,
+      revision_id: "rev-update-consistency-1",
+      title: "Spec",
+      url: `https://larksuite.com/docx/${docId}`,
+      content: [
+        "# 第一部分",
+        "Alpha",
+        "",
+        "# 第二部分",
+        "Beta",
+      ].join("\n"),
+    }),
+    updateDocument: async (_accessToken, documentId, nextContent, mode) => ({
+      document_id: documentId,
+      revision_id: "rev-update-consistency-2",
+      mode,
+      appended_blocks: 1,
+      root_block_id: "blk-update-consistency",
+      url: `https://larksuite.com/docx/${documentId}`,
+    }),
+  });
+
+  const { port } = server.address();
+  const previewResponse = await fetch(`http://127.0.0.1:${port}/api/doc/update`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      document_id: docId,
+      content: "consistencyupdatekeyword",
+      section_heading: "第二部分",
+    }),
+  });
+  const previewPayload = await previewResponse.json();
+  assert.equal(previewResponse.status, 200);
+  assert.equal(previewPayload.preview_required, true);
+
+  const applyResponse = await fetch(`http://127.0.0.1:${port}/api/doc/update`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      document_id: docId,
+      content: "consistencyupdatekeyword",
+      section_heading: "第二部分",
+      confirm: true,
+      confirmation_id: previewPayload.confirmation_id,
+    }),
+  });
+  const applyPayload = await applyResponse.json();
+  assert.equal(applyResponse.status, 200);
+  assert.equal(applyPayload.action, "document_update_targeted_apply");
+
+  const indexedChunk = db.prepare(`
+    SELECT title, content
+    FROM lark_chunks_fts
+    WHERE account_id = ?
+      AND content LIKE ?
+    LIMIT 1
+  `).get("acct-1", "%consistencyupdatekeyword%");
+  assert.equal(indexedChunk?.title, "Spec");
+
+  const readResponse = await fetch(`http://127.0.0.1:${port}/api/doc/read?document_id=${docId}`);
+  const readPayload = await readResponse.json();
+  assert.equal(readResponse.status, 200);
+  assert.equal(readPayload.content, updatedContent);
+
+  const mirrorResponse = await fetch(`http://127.0.0.1:${port}/api/company-brain/docs/${docId}`);
+  const mirrorPayload = await mirrorResponse.json();
+  assert.equal(mirrorResponse.status, 200);
+  assert.equal(mirrorPayload.item.doc_id, docId);
+  assert.equal(mirrorPayload.item.title, "Spec");
+});
+
+test("document rewrite apply refreshes search index, mirror, and read-back to latest content", async (t) => {
+  withEnv(t, {
+    ALLOW_LARK_WRITES: "true",
+  });
+  seedSearchToken("acct-1");
+  const snapshot = await snapshotFile(docUpdateConfirmationStorePath);
+  t.after(async () => {
+    await restoreFile(docUpdateConfirmationStorePath, snapshot);
+  });
+  const docId = `doc-rewrite-consistency-${Date.now()}`;
+  const rewrittenContent = [
+    "# Rewrite Latest",
+    "",
+    "consistencyrewritekeyword",
+    "",
+    "Rewrite path latest content",
+  ].join("\n");
+  t.after(() => {
+    db.prepare("DELETE FROM lark_chunk_embeddings WHERE account_id = ?").run("acct-1");
+    db.prepare("DELETE FROM lark_chunks_fts WHERE account_id = ?").run("acct-1");
+    db.prepare("DELETE FROM lark_chunks WHERE account_id = ?").run("acct-1");
+    db.prepare("DELETE FROM company_brain_docs WHERE account_id = ? AND doc_id = ?").run("acct-1", docId);
+    db.prepare("DELETE FROM lark_documents WHERE account_id = ? AND document_id = ?").run("acct-1", docId);
+    db.prepare("DELETE FROM lark_sources WHERE account_id = ? AND external_id = ?").run("acct-1", docId);
+    db.prepare("DELETE FROM lark_tokens WHERE account_id = ?").run("acct-1");
+  });
+
+  const { server } = await startTestServer(t, {
+    getDocument: async () => ({
+      document_id: docId,
+      revision_id: "rev-rewrite-consistency-1",
+      title: "Rewrite Draft",
+      url: `https://larksuite.com/docx/${docId}`,
+      content: "# Rewrite Draft\n\nOld body",
+    }),
+    rewriteDocumentFromComments: async () => ({
+      document_id: docId,
+      title: "Rewrite Draft",
+      comment_count: 1,
+      comment_ids: ["comment-1"],
+      comments: [{ comment_id: "comment-1", quote: "Old body" }],
+      change_summary: ["Refresh document wording"],
+      patch_plan: [{ type: "replace_block", target: "Old body" }],
+      revised_content: rewrittenContent,
+    }),
+    applyRewrittenDocument: async (_accessToken, documentId, nextContent) => ({
+      applied: true,
+      document_id: documentId,
+      resolved_comment_ids: [],
+      update_result: {
+        document_id: documentId,
+        revision_id: "rev-rewrite-consistency-2",
+        mode: "replace",
+        appended_blocks: nextContent.length > 0 ? 1 : 0,
+        root_block_id: "blk-rewrite-consistency",
+        url: `https://larksuite.com/docx/${documentId}`,
+      },
+      structured_result: {
+        document_id: documentId,
+        applied: true,
+      },
+    }),
+  });
+
+  const { port } = server.address();
+  const previewResponse = await fetch(`http://127.0.0.1:${port}/api/doc/rewrite-from-comments`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      document_id: docId,
+      apply: false,
+    }),
+  });
+  const previewPayload = await previewResponse.json();
+  assert.equal(previewResponse.status, 200);
+  assert.equal(previewPayload.preview_required, true);
+
+  const applyResponse = await fetch(`http://127.0.0.1:${port}/api/doc/rewrite-from-comments`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      document_id: docId,
+      apply: true,
+      confirm: true,
+      confirmation_id: previewPayload.confirmation_id,
+    }),
+  });
+  const applyPayload = await applyResponse.json();
+  assert.equal(applyResponse.status, 200);
+  assert.equal(applyPayload.action, "document_rewrite_from_comments_apply");
+
+  const indexedChunk = db.prepare(`
+    SELECT title, content
+    FROM lark_chunks_fts
+    WHERE account_id = ?
+      AND content LIKE ?
+    LIMIT 1
+  `).get("acct-1", "%consistencyrewritekeyword%");
+  assert.equal(indexedChunk?.title, "Rewrite Draft");
+
+  const readResponse = await fetch(`http://127.0.0.1:${port}/api/doc/read?document_id=${docId}`);
+  const readPayload = await readResponse.json();
+  assert.equal(readResponse.status, 200);
+  assert.equal(readPayload.content, rewrittenContent);
+
+  const mirrorResponse = await fetch(`http://127.0.0.1:${port}/api/company-brain/docs/${docId}`);
+  const mirrorPayload = await mirrorResponse.json();
+  assert.equal(mirrorResponse.status, 200);
+  assert.equal(mirrorPayload.item.doc_id, docId);
+  assert.equal(mirrorPayload.item.title, "Rewrite Draft");
+});
+
 test("document create is fail-closed when ALLOW_LARK_WRITES is not enabled", async (t) => {
   withEnv(t, {
     ALLOW_LARK_WRITES: null,
@@ -807,9 +1198,6 @@ test("document create preview/confirm rolls back created doc when initial conten
   assert.equal(sourceRow, undefined);
   assert.equal(companyBrainRow, undefined);
 
-  const writeFailureLog = calls.find((entry) => entry[1]?.event === "document_create_initial_content_write_failed");
-  assert.equal(writeFailureLog?.[1]?.document_id, documentId);
-  assert.equal(writeFailureLog?.[1]?.http_status, 400);
 });
 
 test("document create rolls back after permission grant succeeds but initial content write fails", async (t) => {

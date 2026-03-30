@@ -131,6 +131,8 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `/Users/seanhan/Documents/Playground/src/doc-comment-rewrite.mjs`
 - direct doc creation through `/Users/seanhan/Documents/Playground/src/http-server.mjs` can now append a non-blocking `document_index` step into the same retrieval index; this still does not create a separate company-brain layer
 - direct doc creation can additionally mirror verified API-created docs into `company_brain_docs`, but this remains a lightweight verified-doc registry rather than a canonical tenant-wide memory graph
+- successful doc create/update/rewrite apply routes now re-read the live document before returning success, refresh the local `lark_documents` snapshot plus `lark_chunks` / `lark_chunks_fts` from that read-back, and fail closed on stale / empty / not-found read-back results
+- API doc create no longer leaves verified mirror ingest asynchronous on the success path; the route now waits for that refresh boundary before returning success
 
 ## Current Gaps
 

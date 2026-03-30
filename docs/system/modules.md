@@ -147,6 +147,8 @@ Current-truth docs for onboarding are:
   - public route or lane code builds a canonical request and write policy
   - `mutation-runtime.mjs` owns admission, verification, and mutation journal generation
   - `execute-lark-write.mjs` is the only checked-in `executeLarkWrite(...)` callsite authority
+  - successful doc create/update/rewrite HTTP writes now additionally pass a post-write live read-back consistency check before the route returns success
+  - that read-back snapshot is now reused to refresh local document/chunk/FTS state, and create waits for verified mirror ingest instead of leaving it asynchronous
 - Evidence:
   - `/Users/seanhan/Documents/Playground/tests/mutation-admission.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/write-policy-contract.test.mjs`
@@ -186,6 +188,7 @@ Current-truth docs for onboarding are:
   - comment rewrite uses preview plus confirmation, but final materialization is still doc replace based
   - meeting confirmation writes are runtime-governed external writes
   - meeting capture document create/update/delete actions are already registry-backed external writes
+  - doc rewrite apply now also refreshes local retrieval/mirror state from a read-back snapshot before surfacing success
 - Evidence:
   - `/Users/seanhan/Documents/Playground/tests/doc-comment-rewrite.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/control-unification-phase2-doc-rewrite.test.mjs`

@@ -29,9 +29,11 @@ import {
 } from "./lark-user-auth.mjs";
 import { isOAuthReauthRequiredError } from "./lark-request-auth.mjs";
 import {
+  getCompanyBrainDoc,
   getDocumentByDocumentId,
   getDocumentByExternalKey,
   listDocumentsByStatus,
+  refreshDocumentIndexSnapshot,
   runRepositoryTransaction,
   summarizeDocumentLifecycle,
   upsertCompanyBrainDoc,
@@ -728,6 +730,209 @@ function buildCompanyBrainDocView(row) {
   };
 }
 
+const DOCUMENT_WRITE_READ_FAILURES = Object.freeze({
+  document_write_read_not_found: {
+    statusCode: 404,
+    message: "Post-write read could not find the updated document.",
+  },
+  document_write_read_empty: {
+    statusCode: 409,
+    message: "Post-write read returned empty content for a non-empty write.",
+  },
+  document_write_read_stale: {
+    statusCode: 409,
+    message: "Post-write read did not return the latest document content.",
+  },
+});
+
+function normalizeWriteReadContent(content = "") {
+  return String(content || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .trim();
+}
+
+function parseJsonObject(value = null) {
+  if (!value) {
+    return null;
+  }
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? { ...value }
+    : null;
+}
+
+function parseCreatorSeed(value = null) {
+  const parsed = parseJsonObject(value);
+  return {
+    account_id: cleanText(parsed?.account_id) || null,
+    open_id: cleanText(parsed?.open_id) || null,
+  };
+}
+
+function buildDocumentWriteReadError(code, extra = {}) {
+  const resolvedCode = cleanText(code) || "document_write_read_stale";
+  const failure = DOCUMENT_WRITE_READ_FAILURES[resolvedCode] || DOCUMENT_WRITE_READ_FAILURES.document_write_read_stale;
+  const error = new Error(resolvedCode);
+  error.code = resolvedCode;
+  error.statusCode = failure.statusCode;
+  error.userMessage = failure.message;
+  error.details = extra;
+  return error;
+}
+
+function resolveDocumentWriteReadFailure(execution = null) {
+  const journalError = cleanText(execution?.meta?.journal?.error);
+  if (!journalError || !(journalError in DOCUMENT_WRITE_READ_FAILURES)) {
+    return null;
+  }
+  const failure = DOCUMENT_WRITE_READ_FAILURES[journalError];
+  return {
+    statusCode: failure.statusCode,
+    error: journalError,
+    message: failure.message,
+  };
+}
+
+async function refreshDocumentConsistencyAfterWrite({
+  context,
+  documentId,
+  expectedContent = null,
+  comparison = "exact",
+  pathname = "internal:document_write/read_back",
+  refreshMirror = true,
+  logger = noopHttpLogger,
+} = {}) {
+  const normalizedDocumentId = cleanText(documentId);
+  if (!context?.account?.id || !normalizedDocumentId) {
+    throw buildDocumentWriteReadError("document_write_read_not_found");
+  }
+
+  const normalizedExpected = normalizeWriteReadContent(expectedContent || "");
+  const requireNonEmpty = normalizedExpected.length > 0;
+  let lastError = buildDocumentWriteReadError("document_write_read_not_found");
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    let liveDocument = null;
+    try {
+      liveDocument = await getHttpService("readDocumentFromRuntime", readDocumentFromRuntime)({
+        accountId: context.account.id,
+        accessToken: context.token,
+        documentId: normalizedDocumentId,
+        pathname,
+        logger: null,
+      });
+    } catch {
+      liveDocument = null;
+    }
+
+    const normalizedActual = normalizeWriteReadContent(liveDocument?.content || "");
+    if (!liveDocument?.document_id) {
+      lastError = buildDocumentWriteReadError("document_write_read_not_found", {
+        document_id: normalizedDocumentId,
+      });
+    } else if (requireNonEmpty && !normalizedActual) {
+      lastError = buildDocumentWriteReadError("document_write_read_empty", {
+        document_id: normalizedDocumentId,
+      });
+    } else if (
+      normalizedExpected
+      && (
+        (comparison === "contains" && !normalizedActual.includes(normalizedExpected))
+        || (comparison !== "contains" && normalizedActual !== normalizedExpected)
+      )
+    ) {
+      lastError = buildDocumentWriteReadError("document_write_read_stale", {
+        document_id: normalizedDocumentId,
+      });
+    } else {
+      const existingDocument = getDocumentByDocumentId(context.account.id, normalizedDocumentId);
+      const existingMeta = parseJsonObject(existingDocument?.meta_json);
+      const indexedAt = nowIso();
+      const verifiedAt = nowIso();
+      const documentRow = refreshDocumentIndexSnapshot({
+        account_id: context.account.id,
+        document_id: normalizedDocumentId,
+        external_key: existingDocument?.external_key || `drive:${normalizedDocumentId}`,
+        source_id: existingDocument?.source_id ?? null,
+        source_type: existingDocument?.source_type || "docx",
+        external_id: existingDocument?.external_id || normalizedDocumentId,
+        file_token: existingDocument?.file_token || normalizedDocumentId,
+        node_id: existingDocument?.node_id ?? null,
+        space_id: existingDocument?.space_id ?? null,
+        title: liveDocument.title || existingDocument?.title || null,
+        url: liveDocument.url || existingDocument?.url || null,
+        parent_path: existingDocument?.parent_path || "/",
+        revision: liveDocument.revision_id || existingDocument?.revision || null,
+        updated_at_remote: indexedAt,
+        raw_text: liveDocument.content || "",
+        acl_json: parseJsonObject(existingDocument?.acl_json),
+        meta_json: existingMeta,
+        active: 1,
+        status: "verified",
+        indexed_at: indexedAt,
+        verified_at: verifiedAt,
+        failure_reason: null,
+      });
+
+      let mirrorRow = null;
+      if (refreshMirror) {
+        const existingMirror = getCompanyBrainDoc(context.account.id, normalizedDocumentId);
+        const mirrorCreator = parseCreatorSeed(existingMirror?.creator_json);
+        const metaCreator = parseCreatorSeed(existingMeta?.creator);
+        const resolvedCreator = mirrorCreator.account_id || mirrorCreator.open_id
+          ? mirrorCreator
+          : metaCreator.account_id || metaCreator.open_id
+            ? metaCreator
+            : {
+                account_id: context.account.id,
+                open_id: context.account.open_id || null,
+              };
+        mirrorRow = upsertCompanyBrainDoc({
+          account_id: context.account.id,
+          doc_id: normalizedDocumentId,
+          title: liveDocument.title || existingMirror?.title || existingDocument?.title || null,
+          source: existingMirror?.source || existingMeta?.source || "api",
+          created_at: existingMirror?.created_at || existingMeta?.created_at || documentRow?.created_at || nowIso(),
+          creator: resolvedCreator,
+        });
+      }
+
+      logger.info("document_write_read_consistency_refreshed", {
+        stage: "document_write_read_consistency",
+        account_id: context.account.id,
+        document_id: normalizedDocumentId,
+        comparison,
+        refreshed_mirror: refreshMirror === true,
+      });
+      return {
+        live_document: liveDocument,
+        document_row: documentRow,
+        mirror_row: mirrorRow,
+      };
+    }
+
+    if (attempt < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 80 * (attempt + 1)));
+    }
+  }
+
+  logger.warn("document_write_read_consistency_failed", {
+    stage: "document_write_read_consistency",
+    account_id: context.account.id,
+    document_id: normalizedDocumentId,
+    error: lastError.code || "document_write_read_stale",
+  });
+  throw lastError;
+}
+
 function parseCompanyBrainLimit(requestUrl, body, fallback = 50) {
   const limitRaw = Number.parseInt(
     String(
@@ -1297,10 +1502,11 @@ function respondDocumentWriteFailure(res, statusCode, error, extra = {}) {
 }
 
 function respondWriteExecutionFailure(res, execution, fallbackStatusCode = 409) {
-  jsonResponse(res, Number(execution?.statusCode || fallbackStatusCode), {
+  const consistencyFailure = resolveDocumentWriteReadFailure(execution);
+  jsonResponse(res, Number(consistencyFailure?.statusCode || execution?.statusCode || fallbackStatusCode), {
     ok: false,
-    error: execution?.error || "write_guard_denied",
-    ...(execution?.message ? { message: execution.message } : {}),
+    error: consistencyFailure?.error || execution?.error || "write_guard_denied",
+    ...((consistencyFailure?.message || execution?.message) ? { message: consistencyFailure?.message || execution?.message } : {}),
     write_guard: execution?.write_guard || null,
     ...(Array.isArray(execution?.violation_types) ? { violation_types: execution.violation_types } : {}),
   });
@@ -1680,6 +1886,7 @@ async function handleDocumentCreateIndexBoundary({
   created,
   folderToken,
   content,
+  liveDocument = null,
   createdAt,
   logger = noopHttpLogger,
 }) {
@@ -1689,6 +1896,7 @@ async function handleDocumentCreateIndexBoundary({
       created,
       folderToken,
       content,
+      liveDocument,
     });
     logDocumentIndexLifecycleResult({
       logger,
@@ -1696,12 +1904,14 @@ async function handleDocumentCreateIndexBoundary({
       created,
       indexedDocument,
     });
+    let ingested = false;
     if (indexedDocument?.verified) {
-      ingestVerifiedDocumentToCompanyBrain({
+      const ingestedDoc = await ingestVerifiedDocumentToCompanyBrain({
         account: context.account,
         row: indexedDocument?.document_row,
         logger,
       });
+      ingested = Boolean(ingestedDoc);
     }
     logger.info("document_create_indexed", {
       stage: "document_index_schema_normalized",
@@ -1714,7 +1924,7 @@ async function handleDocumentCreateIndexBoundary({
       ok: true,
       indexed: true,
       verified: indexedDocument?.verified === true,
-      ingested: indexedDocument?.verified === true,
+      ingested,
       indexed_document_id: indexedDocument?.document_row?.id || null,
     };
   } catch (error) {
@@ -1938,6 +2148,7 @@ async function indexApiCreatedDocument({
   created,
   folderToken,
   content,
+  liveDocument = null,
 }) {
   if (!account?.id || !created?.document_id) {
     return null;
@@ -1954,10 +2165,13 @@ async function indexApiCreatedDocument({
 
   const createdAt = existingMeta?.created_at || nowIso();
   const indexedAt = nowIso();
+  const documentSnapshot = liveDocument && typeof liveDocument === "object"
+    ? liveDocument
+    : created;
   const metadata = buildApiDocumentMetadata({
     account,
     documentId: created.document_id,
-    title: created.title,
+    title: documentSnapshot.title || created.title,
     folderToken,
     createdAt,
   });
@@ -1998,23 +2212,34 @@ async function indexApiCreatedDocument({
       source_type: "drive",
       external_key: externalKey,
       external_id: created.document_id,
-      title: created.title || null,
-      url: created.url || null,
+      title: documentSnapshot.title || created.title || null,
+      url: documentSnapshot.url || created.url || null,
       parent_external_key: folderToken ? `drive:${folderToken}` : null,
       parent_path: "/",
       updated_at_remote: indexedAt,
       meta_json: metadata,
     });
 
-    const indexedDocument = upsertApiLifecycleDocument({
-      account,
-      externalKey,
-      created,
-      folderToken,
-      content,
+    const indexedDocument = refreshDocumentIndexSnapshot({
+      account_id: account.id,
+      document_id: created.document_id,
+      external_key: externalKey,
+      source_id: sourceRow?.id || null,
+      source_type: "docx",
+      external_id: created.document_id,
+      file_token: created.document_id,
+      title: documentSnapshot.title || created.title || null,
+      url: documentSnapshot.url || created.url || null,
+      parent_path: "/",
+      revision: documentSnapshot.revision_id || created.revision_id || null,
+      updated_at_remote: indexedAt,
+      raw_text: liveDocument?.content ?? content ?? "",
+      meta_json: metadata,
+      active: 1,
       status: "indexed",
-      indexedAt,
-      createdAt,
+      indexed_at: indexedAt,
+      verified_at: null,
+      failure_reason: null,
     });
 
     const sourceMeta = sourceRow?.meta_json ? JSON.parse(sourceRow.meta_json) : null;
@@ -2025,17 +2250,26 @@ async function indexApiCreatedDocument({
       missingKeys(documentMeta, requiredShape).length === 0;
 
     if (!verified) {
-      const failedDocument = upsertApiLifecycleDocument({
-        account,
-        externalKey,
-        created,
-        folderToken,
-        content,
+      const failedDocument = refreshDocumentIndexSnapshot({
+        account_id: account.id,
+        document_id: created.document_id,
+        external_key: externalKey,
+        source_id: sourceRow?.id || null,
+        source_type: "docx",
+        external_id: created.document_id,
+        file_token: created.document_id,
+        title: documentSnapshot.title || created.title || null,
+        url: documentSnapshot.url || created.url || null,
+        parent_path: "/",
+        revision: documentSnapshot.revision_id || created.revision_id || null,
+        updated_at_remote: indexedAt,
+        raw_text: liveDocument?.content ?? content ?? "",
+        meta_json: metadata,
+        active: 1,
         status: "verify_failed",
-        indexedAt,
-        verifiedAt: null,
-        failureReason: "metadata_mismatch",
-        createdAt,
+        indexed_at: indexedAt,
+        verified_at: null,
+        failure_reason: "metadata_mismatch",
       });
       return {
         source_row: sourceRow,
@@ -2046,16 +2280,26 @@ async function indexApiCreatedDocument({
     }
 
     const verifiedAt = nowIso();
-    const verifiedDocument = upsertApiLifecycleDocument({
-      account,
-      externalKey,
-      created,
-      folderToken,
-      content,
+    const verifiedDocument = refreshDocumentIndexSnapshot({
+      account_id: account.id,
+      document_id: created.document_id,
+      external_key: externalKey,
+      source_id: sourceRow?.id || null,
+      source_type: "docx",
+      external_id: created.document_id,
+      file_token: created.document_id,
+      title: documentSnapshot.title || created.title || null,
+      url: documentSnapshot.url || created.url || null,
+      parent_path: "/",
+      revision: documentSnapshot.revision_id || created.revision_id || null,
+      updated_at_remote: indexedAt,
+      raw_text: liveDocument?.content ?? content ?? "",
+      meta_json: metadata,
+      active: 1,
       status: "verified",
-      indexedAt,
-      verifiedAt,
-      createdAt,
+      indexed_at: indexedAt,
+      verified_at: verifiedAt,
+      failure_reason: null,
     });
 
     return {
@@ -3800,7 +4044,7 @@ async function handleDocumentCreate(
         let writeResult = null;
         let initialContentWriteFailed = false;
         let initialContentWriteError = null;
-        let indexedContent = content || null;
+        let consistencyRefresh = null;
         if (content && created.document_id) {
           try {
             writeResult = await getHttpService("updateDocument", updateDocument)(
@@ -3830,11 +4074,22 @@ async function handleDocumentCreate(
           });
         }
 
+        consistencyRefresh = await refreshDocumentConsistencyAfterWrite({
+          context,
+          documentId: created.document_id,
+          expectedContent: content || null,
+          comparison: "exact",
+          pathname: "internal:document_create/read_back",
+          refreshMirror: false,
+          logger,
+        });
+
         const indexBoundary = await handleDocumentCreateIndexBoundary({
           context,
           created,
           folderToken,
-          content: indexedContent,
+          content: consistencyRefresh?.live_document?.content ?? content ?? null,
+          liveDocument: consistencyRefresh?.live_document || null,
           createdAt,
           logger,
         });
@@ -5349,12 +5604,30 @@ async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogg
         target_position: targetPosition || null,
       },
     },
-    performWrite: async ({ accessToken }) => getHttpService("updateDocument", updateDocument)(
-      accessToken,
-      finalDocumentId,
-      resolvedContent,
-      resolvedMode,
-    ),
+    performWrite: async ({ accessToken }) => {
+      const updateResult = await getHttpService("updateDocument", updateDocument)(
+        accessToken,
+        finalDocumentId,
+        resolvedContent,
+        resolvedMode,
+      );
+      const consistencyRefresh = await refreshDocumentConsistencyAfterWrite({
+        context,
+        documentId: finalDocumentId,
+        expectedContent: resolvedContent,
+        comparison: resolvedMode === "replace" ? "exact" : "contains",
+        pathname: "internal:document_update/read_back",
+        refreshMirror: true,
+        logger,
+      });
+      return {
+        ...updateResult,
+        consistency_refresh: {
+          refreshed: true,
+          document_id: consistencyRefresh?.live_document?.document_id || finalDocumentId,
+        },
+      };
+    },
   });
   if (!mutationExecution.ok) {
     respondWriteExecutionFailure(
@@ -5379,7 +5652,7 @@ async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogg
   const reviewSyncExecution = await runCompanyBrainReviewSyncMutation({
     accountId: context.account.id,
     docId: finalDocumentId,
-    title: currentDocument?.title || null,
+    title: result?.title || currentDocument?.title || null,
     action: "update_doc",
     targetStage: "mirror",
     pathname: "internal:company-brain/update-doc-review",
@@ -5569,6 +5842,11 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
     boundary: "document_comment_rewrite_apply",
     nested_mutations: [],
   };
+  const pendingConfirmation = await peekCommentRewriteConfirmation({
+    confirmationId,
+    accountId: context.account.id,
+    documentId,
+  });
   const mutationExecution = await runCanonicalLarkMutation({
     action: "document_comment_rewrite_apply",
     pathname: "/api/doc/rewrite-from-comments",
@@ -5578,15 +5856,19 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
     traceId: res.__trace_id || null,
     canonicalRequest,
     audit: mutationAudit,
-    rollback: async () => rollbackRewrittenDocument(context.token, documentId, {
-      rollbackState: rewriteRollbackState,
-      mutationAudit,
-    }),
+    rollback: async () => getHttpService("rollbackRewrittenDocument", rollbackRewrittenDocument)(
+      context.token,
+      documentId,
+      {
+        rollbackState: rewriteRollbackState,
+        mutationAudit,
+      },
+    ),
     payload: {
       document_id: documentId,
       confirmation_id: confirmationId,
-      comment_ids: pendingConfirmation.comment_ids || [],
-      resolve_comments: pendingConfirmation.resolve_comments === true,
+      comment_ids: pendingConfirmation?.comment_ids || [],
+      resolve_comments: pendingConfirmation?.resolve_comments === true,
     },
     confirmation: {
       kind: "comment_rewrite",
@@ -5648,33 +5930,54 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
       essential: true,
     }),
     performWrite: async ({ accessToken, confirmation }) => {
-        await markDocRewriteApplying({
-          accountId: context.account.id,
-          scope: workflowScope,
-          meta: buildDocumentRewriteTaskMeta("document_rewrite_from_comments_apply", {
-            confirmation_id: confirmationId,
-          }),
-        });
+      await markDocRewriteApplying({
+        accountId: context.account.id,
+        scope: workflowScope,
+        meta: buildDocumentRewriteTaskMeta("document_rewrite_from_comments_apply", {
+          confirmation_id: confirmationId,
+        }),
+      });
 
-        return applyRewrittenDocument(
-          accessToken,
-          documentId,
-          confirmation.rewritten_content,
-          {
-            patchPlan: confirmation.patch_plan || [],
-            resolveCommentIds: confirmation.resolve_comments ? confirmation.comment_ids : [],
-            rollbackState: rewriteRollbackState,
-            mutationAudit,
-          },
-        );
-      },
+      const applied = await getHttpService("applyRewrittenDocument", applyRewrittenDocument)(
+        accessToken,
+        documentId,
+        confirmation.rewritten_content,
+        {
+          patchPlan: confirmation.patch_plan || [],
+          resolveCommentIds: confirmation.resolve_comments ? confirmation.comment_ids : [],
+          rollbackState: rewriteRollbackState,
+          mutationAudit,
+        },
+      );
+      const consistencyRefresh = await refreshDocumentConsistencyAfterWrite({
+        context,
+        documentId,
+        expectedContent: confirmation.rewritten_content,
+        comparison: "exact",
+        pathname: "internal:document_rewrite/read_back",
+        refreshMirror: true,
+        logger,
+      });
+      return {
+        ...applied,
+        consistency_refresh: {
+          refreshed: true,
+          document_id: consistencyRefresh?.live_document?.document_id || documentId,
+        },
+      };
+    },
   });
   if (!mutationExecution.ok) {
+    const consistencyFailure = resolveDocumentWriteReadFailure(mutationExecution);
     respondDocumentRewriteFailure(
       res,
-      Number(mutationExecution.statusCode || (mutationExecution.error === "execution_failed" ? 500 : 409)),
-      mutationExecution.error,
-      mutationExecution.message,
+      Number(
+        consistencyFailure?.statusCode
+        || mutationExecution.statusCode
+        || (mutationExecution.error === "execution_failed" ? 500 : 409),
+      ),
+      consistencyFailure?.error || mutationExecution.error,
+      consistencyFailure?.message || mutationExecution.message,
       {
         write_guard: mutationExecution.write_guard || null,
         ...(Array.isArray(mutationExecution.violation_types)
@@ -5686,17 +5989,32 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
   }
   const execution = mutationExecution.result;
   if (!execution?.ok) {
+    const consistencyFailure = resolveDocumentWriteReadFailure(execution);
     respondDocumentRewriteFailure(
       res,
-      Number(execution.statusCode || (execution.error === "execution_failed" ? 500 : 409)),
-      execution.error,
-      execution.message,
+      Number(
+        consistencyFailure?.statusCode
+        || execution.statusCode
+        || (execution.error === "execution_failed" ? 500 : 409),
+      ),
+      consistencyFailure?.error || execution.error,
+      consistencyFailure?.message || execution.message,
       { write_guard: execution.write_guard || null },
     );
     return;
   }
   const confirmation = pendingConfirmation;
   const applied = execution.result;
+  await runCompanyBrainReviewSyncMutation({
+    accountId: context.account.id,
+    docId: documentId,
+    title: confirmation?.title || null,
+    action: "update_doc",
+    targetStage: "mirror",
+    pathname: "internal:company-brain/doc-rewrite-review",
+    logger,
+    traceId: res.__trace_id || null,
+  });
   const finalized = await finalizeDocRewriteWorkflowTask({
     accountId: context.account.id,
     scope: workflowScope,

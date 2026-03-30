@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import db from "./db.mjs";
+import { chunkText } from "./chunking.mjs";
 import { embeddingDimensions, tokenEncryptionSecret } from "./config.mjs";
 import { decryptSecretValue, encryptSecretValue } from "./secret-crypto.mjs";
 import { cosineSimilarity, embedTextLocally } from "./semantic-embeddings.mjs";
@@ -930,6 +931,90 @@ export function replaceDocumentChunks(document, chunks) {
   });
 
   tx();
+}
+
+function parseDocumentMeta(meta = null) {
+  if (!meta) {
+    return null;
+  }
+  if (typeof meta === "string") {
+    try {
+      return JSON.parse(meta);
+    } catch {
+      return null;
+    }
+  }
+  return meta && typeof meta === "object" && !Array.isArray(meta)
+    ? { ...meta }
+    : null;
+}
+
+export function refreshDocumentIndexSnapshot({
+  account_id,
+  document_id,
+  external_key = "",
+  source_id = null,
+  source_type = "docx",
+  external_id = null,
+  file_token = null,
+  node_id = null,
+  space_id = null,
+  title = null,
+  url = null,
+  parent_path = "/",
+  revision = null,
+  updated_at_remote = null,
+  raw_text = "",
+  acl_json = null,
+  meta_json = null,
+  active = 1,
+  status = "verified",
+  indexed_at = null,
+  verified_at = null,
+  failure_reason = null,
+} = {}) {
+  const normalizedAccountId = String(account_id || "").trim();
+  const normalizedDocumentId = String(document_id || "").trim();
+  if (!normalizedAccountId || !normalizedDocumentId) {
+    return null;
+  }
+
+  const existingDocument = getDocumentByDocumentId(normalizedAccountId, normalizedDocumentId);
+  const resolvedExternalKey = String(
+    external_key
+    || existingDocument?.external_key
+    || `drive:${normalizedDocumentId}`,
+  ).trim();
+  const normalizedText = String(raw_text || "");
+  const parsedMeta = parseDocumentMeta(meta_json) || parseDocumentMeta(existingDocument?.meta_json);
+  const document = upsertDocument({
+    account_id: normalizedAccountId,
+    source_id: source_id ?? existingDocument?.source_id ?? null,
+    source_type: source_type || existingDocument?.source_type || "docx",
+    external_key: resolvedExternalKey,
+    external_id: external_id || existingDocument?.external_id || normalizedDocumentId,
+    file_token: file_token || existingDocument?.file_token || normalizedDocumentId,
+    node_id: node_id ?? existingDocument?.node_id ?? null,
+    document_id: normalizedDocumentId,
+    space_id: space_id ?? existingDocument?.space_id ?? null,
+    title: title ?? existingDocument?.title ?? null,
+    url: url ?? existingDocument?.url ?? null,
+    parent_path: parent_path || existingDocument?.parent_path || "/",
+    revision: revision ?? existingDocument?.revision ?? null,
+    updated_at_remote: updated_at_remote || nowIso(),
+    content_hash: existingDocument?.content_hash || null,
+    raw_text: normalizedText,
+    acl_json: acl_json ?? parseDocumentMeta(existingDocument?.acl_json),
+    meta_json: parsedMeta,
+    active,
+    status: status || existingDocument?.status || "verified",
+    indexed_at: indexed_at || nowIso(),
+    verified_at: verified_at ?? existingDocument?.verified_at ?? null,
+    failure_reason: failure_reason || null,
+  });
+
+  replaceDocumentChunks(document, chunkText(normalizedText));
+  return document;
 }
 
 export function markMissingDocumentsInactive(accountId, syncStartedAt) {

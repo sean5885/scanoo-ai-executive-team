@@ -98,6 +98,8 @@ Current write truth:
 - preview and confirmation are route-level user experience surfaces
 - final external mutation still routes through `lark-mutation-runtime -> mutation-runtime -> execute-lark-write`
 - heading-targeted update exists at preview/planning level, but doc write materialization is still bounded by the current doc update adapter
+- successful doc create/update/rewrite apply routes now fail closed unless a post-write live read can observe the latest expected content
+- that same success path now refreshes the local retrieval index snapshot before returning, and doc create also waits for mirror ingest to finish
 
 ## 6. Drive and Wiki Surfaces
 
