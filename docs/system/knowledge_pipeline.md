@@ -130,7 +130,10 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `/Users/seanhan/Documents/Playground/src/lark-content.mjs`
   - `/Users/seanhan/Documents/Playground/src/doc-comment-rewrite.mjs`
 - direct doc creation through `/Users/seanhan/Documents/Playground/src/http-server.mjs` can now append a non-blocking `document_index` step into the same retrieval index; this still does not create a separate company-brain layer
+- successful direct doc creation now also rebuilds local chunks immediately, so `/search` can observe the new content without waiting for a later sync
+- successful `update_doc` and `rewrite_apply` paths now also refresh the local `lark_documents` snapshot plus chunk index from the latest live document content
 - direct doc creation can additionally mirror verified API-created docs into `company_brain_docs`, but this remains a lightweight verified-doc registry rather than a canonical tenant-wide memory graph
+- company-brain mirror read/list/search now exclude metadata-only or ghost docs unless there is an active local text body backing that mirror row
 
 ## Current Gaps
 

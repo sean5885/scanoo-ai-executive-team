@@ -76,6 +76,7 @@ Partially grounded in code through:
   - `review_required=conditional` because overlap detection still stages review at the mirror-intake boundary when applicable
   - `required_entry_fields=["source","owner","intent","type"]` at the agent/planner entry boundary, with planner-managed defaults for the controlled planner path
 - successful create can later feed lifecycle and mirror ingest
+- successful create now also refreshes the local `lark_documents` text snapshot plus chunk index in the same request, so immediate `/search` reads can observe the new content before any later sync
 
 ### what it is not
 
@@ -98,6 +99,7 @@ Partially grounded in code through:
 - bounded update path exists
 - write path is not free-form and already sits behind controlled document/runtime rules
 - runtime now classifies `update_doc` as review-gated before any stable company-brain promotion
+- after a successful write, the route now refreshes the local text snapshot plus chunk index and refreshes an already-verified/already-mirrored company-brain row so immediate detail/search reads see the latest content
 
 ### what it is not
 

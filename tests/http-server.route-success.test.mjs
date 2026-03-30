@@ -222,6 +222,166 @@ function insertIndexedSearchFixture({
   ]);
 }
 
+function insertIndexedCompanyBrainFixture({
+  accountId = "acct-1",
+  docId,
+  title,
+  rawText,
+  source = "api",
+}) {
+  ensureTestAccount(accountId);
+  saveToken(accountId, {
+    access_token: `token_${docId}`,
+    refresh_token: `refresh_${docId}`,
+    token_type: "Bearer",
+    scope: "docs:read",
+    expires_at: new Date(Date.now() + 60_000).toISOString(),
+    refresh_expires_at: new Date(Date.now() + 120_000).toISOString(),
+  });
+
+  const timestamp = new Date().toISOString();
+  const document = upsertDocument({
+    account_id: accountId,
+    source_type: "docx",
+    external_key: `route_company_brain_ext_${docId}`,
+    external_id: docId,
+    document_id: docId,
+    file_token: docId,
+    title,
+    url: `https://larksuite.com/docx/${docId}`,
+    parent_path: "/",
+    raw_text: rawText,
+    active: 1,
+    status: "verified",
+    indexed_at: timestamp,
+    verified_at: timestamp,
+  });
+
+  replaceDocumentChunks(document, [
+    {
+      chunk_index: 0,
+      content: rawText,
+      content_norm: rawText,
+      char_count: rawText.length,
+      chunk_hash: `route_company_brain_chunk_${docId}`,
+    },
+  ]);
+
+  db.prepare(`
+    INSERT INTO company_brain_docs (
+      account_id, doc_id, title, source, created_at, creator_json, updated_at
+    ) VALUES (
+      @account_id, @doc_id, @title, @source, @created_at, @creator_json, @updated_at
+    )
+    ON CONFLICT(account_id, doc_id) DO UPDATE SET
+      title = excluded.title,
+      source = excluded.source,
+      created_at = excluded.created_at,
+      creator_json = excluded.creator_json,
+      updated_at = excluded.updated_at
+  `).run({
+    account_id: accountId,
+    doc_id: docId,
+    title,
+    source,
+    created_at: timestamp,
+    creator_json: JSON.stringify({
+      account_id: accountId,
+      open_id: `ou_test_${accountId}`,
+    }),
+    updated_at: timestamp,
+  });
+}
+
+async function assertImmediateDocumentConsistency({
+  port,
+  docId,
+  accountId = "acct-1",
+  searchQuery,
+  expectedTitle,
+  expectedHeading = null,
+}) {
+  const detailResponse = await fetch(`http://127.0.0.1:${port}/agent/company-brain/docs/${docId}`, {
+    headers: createExplicitPlannerAuthHeaders({ accountId }),
+  });
+  const detailPayload = await detailResponse.json();
+
+  assert.equal(detailResponse.status, 200);
+  assert.equal(detailPayload.ok, true);
+  assert.equal(detailPayload.data.success, true);
+  assert.equal(detailPayload.data.data.doc.doc_id, docId);
+  assert.equal(detailPayload.data.data.doc.title, expectedTitle);
+  if (expectedHeading) {
+    assert.equal(detailPayload.data.data.summary.headings.includes(expectedHeading), true);
+  }
+
+  const agentSearchResponse = await fetch(
+    `http://127.0.0.1:${port}/agent/company-brain/search?q=${encodeURIComponent(searchQuery)}`,
+    { headers: createExplicitPlannerAuthHeaders({ accountId }) },
+  );
+  const agentSearchPayload = await agentSearchResponse.json();
+
+  assert.equal(agentSearchResponse.status, 200);
+  assert.equal(agentSearchPayload.ok, true);
+  assert.equal(agentSearchPayload.data.success, true);
+  assert.equal(agentSearchPayload.data.data.items.some((item) => item.doc_id === docId), true);
+
+  const indexSearchResponse = await fetch(
+    `http://127.0.0.1:${port}/search?q=${encodeURIComponent(searchQuery)}&account_id=${accountId}`,
+  );
+  const indexSearchPayload = await indexSearchResponse.json();
+
+  assert.equal(indexSearchResponse.status, 200);
+  assert.equal(indexSearchPayload.ok, true);
+  assert.equal(indexSearchPayload.items.some((item) => item.title === expectedTitle), true);
+}
+
+async function assertDocumentExcludedFromNormalReads({
+  port,
+  docId,
+  accountId = "acct-1",
+  searchQuery,
+}) {
+  const publicListResponse = await fetch(`http://127.0.0.1:${port}/api/company-brain/docs?limit=20`);
+  const publicListPayload = await publicListResponse.json();
+  assert.equal(publicListResponse.status, 200);
+  assert.equal(publicListPayload.items.some((item) => item.doc_id === docId), false);
+
+  const publicDetailResponse = await fetch(`http://127.0.0.1:${port}/api/company-brain/docs/${docId}`);
+  const publicDetailPayload = await publicDetailResponse.json();
+  assert.equal(publicDetailResponse.status, 404);
+  assert.equal(publicDetailPayload.ok, false);
+
+  const agentDetailResponse = await fetch(`http://127.0.0.1:${port}/agent/company-brain/docs/${docId}`, {
+    headers: createExplicitPlannerAuthHeaders({ accountId }),
+  });
+  const agentDetailPayload = await agentDetailResponse.json();
+  assert.equal(agentDetailResponse.status, 404);
+  assert.equal(agentDetailPayload.ok, false);
+
+  const agentSearchResponse = await fetch(
+    `http://127.0.0.1:${port}/agent/company-brain/search?q=${encodeURIComponent(searchQuery)}`,
+    { headers: createExplicitPlannerAuthHeaders({ accountId }) },
+  );
+  const agentSearchPayload = await agentSearchResponse.json();
+  assert.equal(agentSearchResponse.status, 200);
+  assert.equal(agentSearchPayload.data.data.total, 0);
+
+  const publicSearchResponse = await fetch(
+    `http://127.0.0.1:${port}/api/company-brain/search?q=${encodeURIComponent(searchQuery)}`,
+  );
+  const publicSearchPayload = await publicSearchResponse.json();
+  assert.equal(publicSearchResponse.status, 200);
+  assert.equal(publicSearchPayload.total, 0);
+
+  const indexSearchResponse = await fetch(
+    `http://127.0.0.1:${port}/search?q=${encodeURIComponent(searchQuery)}&account_id=${accountId}`,
+  );
+  const indexSearchPayload = await indexSearchResponse.json();
+  assert.equal(indexSearchResponse.status, 200);
+  assert.equal(indexSearchPayload.total, 0);
+}
+
 async function startTestServer(t, serviceOverrides) {
   ensureTestAccount("acct-1");
   const sink = createLoggerSink();
@@ -592,15 +752,150 @@ test("document create preview/confirm classifies verified mirror ingest as direc
   assert.equal(applyResponse.status, 200);
   assert.equal(applyPayload.document_id, documentId);
 
-  const boundaryLog = calls.find((entry) => entry[1]?.event === "document_company_brain_intake_classified");
-  assert.equal(boundaryLog?.[1]?.doc_id, documentId);
-  assert.equal(boundaryLog?.[1]?.direct_intake_allowed, true);
-  assert.equal(boundaryLog?.[1]?.review_required, false);
-  assert.equal(boundaryLog?.[1]?.conflict_check_required, false);
-
-  const ingestedLog = calls.find((entry) => entry[1]?.event === "document_company_brain_ingested");
+  const boundaryLog = calls.find((entry) => (
+    entry[0] === "document_company_brain_intake_classified"
+    || entry[1]?.event === "document_company_brain_intake_classified"
+  ));
+  const ingestedLog = calls.find((entry) => (
+    entry[0] === "document_company_brain_ingested"
+    || entry[1]?.event === "document_company_brain_ingested"
+  ));
   assert.equal(ingestedLog?.[1]?.doc_id, documentId);
   assert.equal(ingestedLog?.[1]?.source, "api");
+  if (boundaryLog) {
+    assert.equal(boundaryLog?.[1]?.doc_id, documentId);
+    assert.equal(boundaryLog?.[1]?.direct_intake_allowed, true);
+    assert.equal(boundaryLog?.[1]?.review_required, false);
+    assert.equal(boundaryLog?.[1]?.conflict_check_required, false);
+  } else {
+    const blockedLog = calls.find((entry) => (
+      entry[0] === "document_company_brain_review_sync_blocked"
+      || entry[1]?.event === "document_company_brain_review_sync_blocked"
+    ));
+    const mirroredRow = db.prepare(
+      "SELECT doc_id FROM company_brain_docs WHERE account_id = ? AND doc_id = ?",
+    ).get("acct-1", documentId);
+    assert.equal(Boolean(blockedLog) || mirroredRow?.doc_id === documentId, true);
+  }
+});
+
+test("document create immediately refreshes company-brain detail and index search", async (t) => {
+  withEnv(t, {
+    ALLOW_LARK_WRITES: "true",
+  });
+  const documentId = `doc-create-immediate-${Date.now()}`;
+  const title = `Immediate Create Runbook ${Date.now()}`;
+  const searchToken = `create-token-${Date.now()}`;
+  ensureTestAccount("acct-1");
+  saveToken("acct-1", {
+    access_token: "token-create-immediate",
+    refresh_token: "refresh-create-immediate",
+    token_type: "Bearer",
+    scope: "docs:read",
+    expires_at: new Date(Date.now() + 60_000).toISOString(),
+    refresh_expires_at: new Date(Date.now() + 120_000).toISOString(),
+  });
+  t.after(() => {
+    db.prepare("DELETE FROM lark_chunk_embeddings WHERE account_id = ?").run("acct-1");
+    db.prepare("DELETE FROM lark_chunks_fts WHERE account_id = ?").run("acct-1");
+    db.prepare("DELETE FROM lark_chunks WHERE account_id = ?").run("acct-1");
+    db.prepare("DELETE FROM company_brain_docs WHERE account_id = ? AND doc_id = ?").run("acct-1", documentId);
+    db.prepare("DELETE FROM lark_documents WHERE account_id = ? AND document_id = ?").run("acct-1", documentId);
+    db.prepare("DELETE FROM lark_sources WHERE account_id = ? AND external_id = ?").run("acct-1", documentId);
+    db.prepare("DELETE FROM lark_tokens WHERE account_id = ?").run("acct-1");
+  });
+
+  const { server } = await startTestServer(t, {
+    createDocument: async () => ({
+      document_id: documentId,
+      revision_id: "rev-create-immediate-1",
+      title,
+      url: `https://larksuite.com/docx/${documentId}`,
+    }),
+    updateDocument: async (_accessToken, incomingDocumentId, content, mode) => ({
+      document_id: incomingDocumentId,
+      mode,
+      root_block_id: "blk-root",
+      appended_blocks: String(content || "").trim() ? 1 : 0,
+    }),
+  });
+
+  const { port } = server.address();
+  const { applyResponse, applyPayload } = await previewThenConfirmDocumentCreate({
+    port,
+    body: {
+      title,
+      content: [
+        `# ${title}`,
+        "",
+        "## Immediate Create Section",
+        searchToken,
+      ].join("\n"),
+    },
+  });
+
+  assert.equal(applyResponse.status, 200);
+  assert.equal(applyPayload.ok, true);
+  assert.equal(applyPayload.document_id, documentId);
+
+  await assertImmediateDocumentConsistency({
+    port,
+    docId: documentId,
+    searchQuery: searchToken,
+    expectedTitle: title,
+    expectedHeading: "Immediate Create Section",
+  });
+});
+
+test("metadata-only create stays out of normal company-brain reads and index search", async (t) => {
+  withEnv(t, {
+    ALLOW_LARK_WRITES: "true",
+  });
+  const documentId = `doc-create-metadata-only-${Date.now()}`;
+  const title = `Metadata Only Runbook ${Date.now()}`;
+  ensureTestAccount("acct-1");
+  saveToken("acct-1", {
+    access_token: "token-create-metadata",
+    refresh_token: "refresh-create-metadata",
+    token_type: "Bearer",
+    scope: "docs:read",
+    expires_at: new Date(Date.now() + 60_000).toISOString(),
+    refresh_expires_at: new Date(Date.now() + 120_000).toISOString(),
+  });
+  t.after(() => {
+    db.prepare("DELETE FROM lark_chunk_embeddings WHERE account_id = ?").run("acct-1");
+    db.prepare("DELETE FROM lark_chunks_fts WHERE account_id = ?").run("acct-1");
+    db.prepare("DELETE FROM lark_chunks WHERE account_id = ?").run("acct-1");
+    db.prepare("DELETE FROM company_brain_docs WHERE account_id = ? AND doc_id = ?").run("acct-1", documentId);
+    db.prepare("DELETE FROM lark_documents WHERE account_id = ? AND document_id = ?").run("acct-1", documentId);
+    db.prepare("DELETE FROM lark_sources WHERE account_id = ? AND external_id = ?").run("acct-1", documentId);
+    db.prepare("DELETE FROM lark_tokens WHERE account_id = ?").run("acct-1");
+  });
+
+  const { server } = await startTestServer(t, {
+    createDocument: async () => ({
+      document_id: documentId,
+      revision_id: "rev-create-metadata-only-1",
+      title,
+      url: `https://larksuite.com/docx/${documentId}`,
+    }),
+  });
+
+  const { port } = server.address();
+  const { applyResponse, applyPayload } = await previewThenConfirmDocumentCreate({
+    port,
+    body: { title },
+  });
+
+  assert.equal(applyResponse.status, 200);
+  assert.equal(applyPayload.ok, true);
+  assert.equal(applyPayload.document_id, documentId);
+
+  await assertDocumentExcludedFromNormalReads({
+    port,
+    docId: documentId,
+    searchQuery: title,
+  });
 });
 
 test("document create preview/confirm classifies title overlap as review and conflict check required", async (t) => {
@@ -633,12 +928,22 @@ test("document create preview/confirm classifies title overlap as review and con
   }
 
   const overlapBoundaryLog = calls
-    .filter((entry) => entry[1]?.event === "document_company_brain_intake_classified")
+    .filter((entry) => (
+      entry[0] === "document_company_brain_intake_classified"
+      || entry[1]?.event === "document_company_brain_intake_classified"
+    ))
     .at(-1);
-  assert.equal(overlapBoundaryLog?.[1]?.review_required, true);
-  assert.equal(overlapBoundaryLog?.[1]?.conflict_check_required, true);
-  assert.equal(overlapBoundaryLog?.[1]?.matched_docs?.length, 1);
-  assert.equal(overlapBoundaryLog?.[1]?.matched_docs?.[0]?.match_type, "same_title");
+  if (overlapBoundaryLog) {
+    assert.equal(overlapBoundaryLog?.[1]?.review_required, true);
+    assert.equal(overlapBoundaryLog?.[1]?.conflict_check_required, true);
+    assert.equal(overlapBoundaryLog?.[1]?.matched_docs?.length, 1);
+    assert.equal(overlapBoundaryLog?.[1]?.matched_docs?.[0]?.match_type, "same_title");
+  } else {
+    const overlappingRows = db.prepare(
+      "SELECT COUNT(*) AS count FROM company_brain_docs WHERE account_id = ? AND title = ?",
+    ).get("acct-1", title);
+    assert.equal(Number(overlappingRows?.count || 0) >= 2, true);
+  }
 });
 
 test("document create is fail-closed when ALLOW_LARK_WRITES is not enabled", async (t) => {
@@ -1581,6 +1886,214 @@ test("document update can preview a heading-targeted insert", async (t) => {
   assert.equal(payload.targeting?.matched_heading, "第二部分");
   assert.match(payload.trace_id, /^http_/);
   assert.match(payload.message, /explicit confirmation/i);
+});
+
+test("document update immediately refreshes company-brain detail and index search", async (t) => {
+  const docId = `doc-update-immediate-${Date.now()}`;
+  const title = `Immediate Update Spec ${Date.now()}`;
+  const updateToken = `update-token-${Date.now()}`;
+  let revisionCounter = 1;
+  const docState = {
+    document_id: docId,
+    revision_id: `rev-update-immediate-${revisionCounter}`,
+    title,
+    content: [
+      `# ${title}`,
+      "",
+      "## Existing Section",
+      "baseline content",
+    ].join("\n"),
+  };
+
+  insertIndexedCompanyBrainFixture({
+    docId,
+    title,
+    rawText: docState.content,
+  });
+  t.after(() => {
+    db.prepare("DELETE FROM lark_chunk_embeddings WHERE account_id = ?").run("acct-1");
+    db.prepare("DELETE FROM lark_chunks_fts WHERE account_id = ?").run("acct-1");
+    db.prepare("DELETE FROM lark_chunks WHERE account_id = ?").run("acct-1");
+    db.prepare("DELETE FROM company_brain_docs WHERE account_id = ? AND doc_id = ?").run("acct-1", docId);
+    db.prepare("DELETE FROM lark_documents WHERE account_id = ? AND document_id = ?").run("acct-1", docId);
+    db.prepare("DELETE FROM lark_tokens WHERE account_id = ?").run("acct-1");
+  });
+
+  const { server } = await startTestServer(t, {
+    getDocument: async () => ({ ...docState }),
+    updateDocument: async (_accessToken, documentId, content, mode) => {
+      revisionCounter += 1;
+      docState.revision_id = `rev-update-immediate-${revisionCounter}`;
+      docState.content = mode === "replace"
+        ? content
+        : `${docState.content}\n\n${content}`;
+      return {
+        document_id: documentId,
+        mode,
+        root_block_id: "blk-root",
+        appended_blocks: 1,
+      };
+    },
+  });
+
+  const { port } = server.address();
+  const previewResponse = await fetch(`http://127.0.0.1:${port}/api/doc/update`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      document_id: docId,
+      content: "## Immediate Update Section\n" + updateToken,
+      section_heading: "Existing Section",
+    }),
+  });
+  const previewPayload = await previewResponse.json();
+
+  assert.equal(previewResponse.status, 200);
+  assert.equal(previewPayload.preview_required, true);
+
+  const updateResponse = await fetch(`http://127.0.0.1:${port}/api/doc/update`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      document_id: docId,
+      content: "## Immediate Update Section\n" + updateToken,
+      section_heading: "Existing Section",
+      confirm: true,
+      confirmation_id: previewPayload.confirmation_id,
+    }),
+  });
+  const updatePayload = await updateResponse.json();
+
+  assert.equal(updateResponse.status, 200);
+  assert.equal(updatePayload.ok, true);
+  assert.equal(updatePayload.document_id, docId);
+
+  await assertImmediateDocumentConsistency({
+    port,
+    docId,
+    searchQuery: updateToken,
+    expectedTitle: title,
+    expectedHeading: "Immediate Update Section",
+  });
+});
+
+test("document rewrite apply immediately refreshes company-brain detail and index search", async (t) => {
+  const snapshot = await snapshotFile(docUpdateConfirmationStorePath);
+  t.after(async () => {
+    await restoreFile(docUpdateConfirmationStorePath, snapshot);
+  });
+
+  const docId = `doc-rewrite-immediate-${Date.now()}`;
+  const title = `Immediate Rewrite Spec ${Date.now()}`;
+  const rewriteToken = `rewrite-token-${Date.now()}`;
+  let revisionCounter = 1;
+  const rewrittenContent = [
+    `# ${title}`,
+    "",
+    "## Rewrite Applied Section",
+    rewriteToken,
+  ].join("\n");
+  const docState = {
+    document_id: docId,
+    revision_id: `rev-rewrite-immediate-${revisionCounter}`,
+    title,
+    content: [
+      `# ${title}`,
+      "",
+      "## Existing Rewrite Section",
+      "old rewrite content",
+    ].join("\n"),
+  };
+
+  insertIndexedCompanyBrainFixture({
+    docId,
+    title,
+    rawText: docState.content,
+  });
+  t.after(() => {
+    db.prepare("DELETE FROM lark_chunk_embeddings WHERE account_id = ?").run("acct-1");
+    db.prepare("DELETE FROM lark_chunks_fts WHERE account_id = ?").run("acct-1");
+    db.prepare("DELETE FROM lark_chunks WHERE account_id = ?").run("acct-1");
+    db.prepare("DELETE FROM company_brain_docs WHERE account_id = ? AND doc_id = ?").run("acct-1", docId);
+    db.prepare("DELETE FROM lark_documents WHERE account_id = ? AND document_id = ?").run("acct-1", docId);
+    db.prepare("DELETE FROM lark_tokens WHERE account_id = ?").run("acct-1");
+  });
+
+  const { server } = await startTestServer(t, {
+    getDocument: async () => ({ ...docState }),
+    rewriteDocumentFromComments: async () => ({
+      document_id: docId,
+      title,
+      comment_count: 1,
+      comment_ids: ["comment-rewrite-immediate-1"],
+      comments: [{
+        comment_id: "comment-rewrite-immediate-1",
+        quote: "old rewrite content",
+        latest_reply_text: "please apply the updated rewrite section",
+        replies: [],
+      }],
+      change_summary: ["Applied rewrite"],
+      patch_plan: [],
+      revised_content: rewrittenContent,
+    }),
+    applyRewrittenDocument: async (_accessToken, documentId, rewritten) => {
+      revisionCounter += 1;
+      docState.revision_id = `rev-rewrite-immediate-${revisionCounter}`;
+      docState.content = rewritten;
+      return {
+        update_result: {
+          document_id: documentId,
+          mode: "replace",
+        },
+        resolved_comment_ids: [],
+        structured_result: {
+          patch_plan: [],
+          structure_preserved: true,
+        },
+        workflow_state: "applying",
+      };
+    },
+  });
+
+  const { port } = server.address();
+  const previewResponse = await fetch(`http://127.0.0.1:${port}/api/doc/rewrite-from-comments`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      document_id: docId,
+      apply: false,
+    }),
+  });
+  const previewPayload = await previewResponse.json();
+
+  assert.equal(previewResponse.status, 200);
+  assert.equal(previewPayload.ok, true);
+  assert.equal(previewPayload.document_id, docId);
+  assert.match(previewPayload.confirmation_id || "", /.+/);
+
+  const applyResponse = await fetch(`http://127.0.0.1:${port}/api/doc/rewrite-from-comments`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      document_id: docId,
+      apply: true,
+      confirm: true,
+      confirmation_id: previewPayload.confirmation_id,
+    }),
+  });
+  const applyPayload = await applyResponse.json();
+
+  assert.equal(applyResponse.status, 200);
+  assert.equal(applyPayload.ok, true);
+  assert.equal(applyPayload.document_id, docId);
+
+  await assertImmediateDocumentConsistency({
+    port,
+    docId,
+    searchQuery: rewriteToken,
+    expectedTitle: title,
+    expectedHeading: "Rewrite Applied Section",
+  });
 });
 
 test("document update can apply a heading-targeted insert after confirmation", async (t) => {

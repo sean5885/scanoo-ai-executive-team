@@ -635,13 +635,14 @@ function buildCompanyBrainQuerySelectSql(whereClause, suffix = "") {
     SELECT
       ${companyBrainDocQueryFields}
     FROM company_brain_docs cb
-    LEFT JOIN company_brain_learning_state cls
-      ON cls.account_id = cb.account_id
-      AND cls.doc_id = cb.doc_id
-    LEFT JOIN lark_documents d
+    INNER JOIN lark_documents d
       ON d.account_id = cb.account_id
       AND d.document_id = cb.doc_id
       AND d.active = 1
+      AND COALESCE(TRIM(d.raw_text), '') <> ''
+    LEFT JOIN company_brain_learning_state cls
+      ON cls.account_id = cb.account_id
+      AND cls.doc_id = cb.doc_id
     WHERE ${whereClause}
     ${suffix}
   `;
@@ -655,13 +656,14 @@ function buildCompanyBrainApprovedQuerySelectSql(whereClause, suffix = "") {
     INNER JOIN company_brain_docs cb
       ON cb.account_id = cak.account_id
       AND cb.doc_id = cak.doc_id
-    LEFT JOIN company_brain_learning_state cls
-      ON cls.account_id = cb.account_id
-      AND cls.doc_id = cb.doc_id
-    LEFT JOIN lark_documents d
+    INNER JOIN lark_documents d
       ON d.account_id = cb.account_id
       AND d.document_id = cb.doc_id
       AND d.active = 1
+      AND COALESCE(TRIM(d.raw_text), '') <> ''
+    LEFT JOIN company_brain_learning_state cls
+      ON cls.account_id = cb.account_id
+      AND cls.doc_id = cb.doc_id
     WHERE ${whereClause}
     ${suffix}
   `;

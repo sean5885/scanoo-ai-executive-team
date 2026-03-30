@@ -29,9 +29,14 @@ import {
 } from "./lark-user-auth.mjs";
 import { isOAuthReauthRequiredError } from "./lark-request-auth.mjs";
 import {
+  chunkText,
+} from "./chunking.mjs";
+import {
   getDocumentByDocumentId,
   getDocumentByExternalKey,
+  getCompanyBrainDoc,
   listDocumentsByStatus,
+  replaceDocumentChunks,
   runRepositoryTransaction,
   summarizeDocumentLifecycle,
   upsertCompanyBrainDoc,
@@ -694,6 +699,210 @@ function buildCompanyBrainPayload(row, metadata) {
       open_id: null,
     },
   };
+}
+
+function parseStoredJson(value) {
+  if (!value || typeof value !== "string") {
+    return null;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function parseStoredCreator(value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return {
+      account_id: cleanText(value.account_id) || null,
+      open_id: cleanText(value.open_id) || null,
+    };
+  }
+
+  const parsed = parseStoredJson(value);
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    return {
+      account_id: cleanText(parsed.account_id) || null,
+      open_id: cleanText(parsed.open_id) || null,
+    };
+  }
+
+  return {
+    account_id: null,
+    open_id: null,
+  };
+}
+
+function buildDocumentUrl(documentId, fallbackUrl = "") {
+  return cleanText(fallbackUrl) || (cleanText(documentId) ? `https://larksuite.com/docx/${documentId}` : null);
+}
+
+function buildDocumentRefreshMetadata({
+  account,
+  documentId,
+  title,
+  folderToken = "",
+  existingDocument = null,
+  existingMirror = null,
+} = {}) {
+  const existingMeta = parseStoredJson(existingDocument?.meta_json);
+  const existingCreator = parseStoredCreator(existingMeta?.creator || existingMirror?.creator_json);
+  const creator = existingCreator.account_id || existingCreator.open_id
+    ? existingCreator
+    : {
+        account_id: cleanText(account?.id) || null,
+        open_id: cleanText(account?.open_id) || null,
+      };
+
+  return {
+    ...(existingMeta && typeof existingMeta === "object" && !Array.isArray(existingMeta) ? existingMeta : {}),
+    doc_id: cleanText(documentId) || cleanText(existingMeta?.doc_id) || cleanText(existingDocument?.document_id) || null,
+    source: cleanText(existingMeta?.source) || cleanText(existingMirror?.source) || "api",
+    created_at:
+      cleanText(existingMeta?.created_at)
+      || cleanText(existingMirror?.created_at)
+      || cleanText(existingDocument?.created_at)
+      || nowIso(),
+    creator,
+    title:
+      cleanText(title)
+      || cleanText(existingMeta?.title)
+      || cleanText(existingDocument?.title)
+      || cleanText(existingMirror?.title)
+      || null,
+    folder_token: cleanText(folderToken) || cleanText(existingMeta?.folder_token) || null,
+  };
+}
+
+function refreshDocumentReadModels({
+  account,
+  documentId,
+  title = "",
+  url = "",
+  content = "",
+  revisionId = "",
+  folderToken = "",
+  status = null,
+  indexedAt = null,
+  verifiedAt = null,
+  failureReason = null,
+  logger = noopHttpLogger,
+} = {}) {
+  const normalizedAccountId = cleanText(account?.id);
+  const normalizedDocumentId = cleanText(documentId);
+  if (!normalizedAccountId || !normalizedDocumentId) {
+    return {
+      document_row: null,
+      mirror_row: null,
+    };
+  }
+
+  const existingDocument = getDocumentByDocumentId(normalizedAccountId, normalizedDocumentId);
+  const existingMirror = getCompanyBrainDoc(normalizedAccountId, normalizedDocumentId);
+  const metadata = buildDocumentRefreshMetadata({
+    account,
+    documentId: normalizedDocumentId,
+    title,
+    folderToken,
+    existingDocument,
+    existingMirror,
+  });
+  const existingAcl = parseStoredJson(existingDocument?.acl_json);
+  const effectiveStatus =
+    cleanText(status)
+    || cleanText(existingDocument?.status)
+    || null;
+  const effectiveIndexedAt = cleanText(indexedAt) || cleanText(existingDocument?.indexed_at) || null;
+  const effectiveVerifiedAt =
+    cleanText(verifiedAt)
+    || cleanText(existingDocument?.verified_at)
+    || null;
+
+  const documentRow = upsertDocument({
+    account_id: normalizedAccountId,
+    source_id: existingDocument?.source_id || null,
+    source_type: cleanText(existingDocument?.source_type) || "docx",
+    external_key: cleanText(existingDocument?.external_key) || `drive:${normalizedDocumentId}`,
+    external_id: cleanText(existingDocument?.external_id) || normalizedDocumentId,
+    file_token: cleanText(existingDocument?.file_token) || normalizedDocumentId,
+    node_id: cleanText(existingDocument?.node_id) || null,
+    document_id: normalizedDocumentId,
+    space_id: cleanText(existingDocument?.space_id) || null,
+    title: cleanText(title) || cleanText(existingDocument?.title) || cleanText(existingMirror?.title) || null,
+    url: buildDocumentUrl(normalizedDocumentId, url || existingDocument?.url || ""),
+    parent_path: cleanText(existingDocument?.parent_path) || "/",
+    revision: cleanText(revisionId) || cleanText(existingDocument?.revision) || null,
+    updated_at_remote: nowIso(),
+    content_hash: cleanText(existingDocument?.content_hash) || null,
+    raw_text: cleanText(content) || null,
+    acl_json: existingAcl,
+    meta_json: metadata,
+    active: 1,
+    status: effectiveStatus,
+    indexed_at: effectiveIndexedAt,
+    verified_at: effectiveVerifiedAt,
+    failure_reason: cleanText(failureReason) || null,
+  });
+
+  replaceDocumentChunks(documentRow, chunkText(content || ""));
+
+  const shouldRefreshMirror = Boolean(existingMirror) || effectiveStatus === "verified";
+  const mirrorRow = shouldRefreshMirror
+    ? upsertCompanyBrainDoc({
+        account_id: normalizedAccountId,
+        ...buildCompanyBrainPayload(documentRow, metadata),
+      })
+    : null;
+
+  logger.info("document_read_models_refreshed", {
+    stage: "document_read_models_refreshed",
+    account_id: normalizedAccountId,
+    document_id: normalizedDocumentId,
+    mirror_refreshed: Boolean(mirrorRow),
+    indexed: true,
+  });
+
+  return {
+    document_row: documentRow,
+    mirror_row: mirrorRow,
+  };
+}
+
+async function refreshDocumentReadModelsFromLive({
+  account,
+  accessToken,
+  documentId,
+  pathname = "internal:document/read-model-refresh",
+  folderToken = "",
+  logger = noopHttpLogger,
+} = {}) {
+  if (!account?.id || !accessToken || !documentId) {
+    return {
+      document_row: null,
+      mirror_row: null,
+    };
+  }
+
+  const liveDocument = await getHttpService("readDocumentFromRuntime", readDocumentFromRuntime)({
+    accountId: account.id,
+    accessToken,
+    documentId,
+    pathname,
+    logger: null,
+  });
+
+  return refreshDocumentReadModels({
+    account,
+    documentId,
+    title: liveDocument?.title || "",
+    url: liveDocument?.url || "",
+    content: liveDocument?.content || "",
+    revisionId: liveDocument?.revision_id || "",
+    folderToken,
+    logger,
+  });
 }
 
 function buildCompanyBrainDocView(row) {
@@ -2004,7 +2213,7 @@ async function indexApiCreatedDocument({
     return misses;
   }
 
-  return runRepositoryTransaction(() => {
+  const result = runRepositoryTransaction(() => {
     const sourceRow = upsertSource({
       account_id: account.id,
       source_type: "drive",
@@ -2076,6 +2285,12 @@ async function indexApiCreatedDocument({
       verified: true,
     };
   });
+
+  if (result?.document_row) {
+    replaceDocumentChunks(result.document_row, chunkText(content || ""));
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -5408,6 +5623,22 @@ async function handleDocumentUpdate(res, requestUrl, body, logger = noopHttpLogg
     mode: resolvedMode,
     target_heading: targetHeading || null,
   });
+  try {
+    await refreshDocumentReadModelsFromLive({
+      account: context.account,
+      accessToken: context.token,
+      documentId: finalDocumentId,
+      pathname: "internal:doc/update/read-model-refresh",
+      logger,
+    });
+  } catch (error) {
+    logger.warn("document_update_read_model_refresh_failed", {
+      stage: "document_read_models_refreshed",
+      account_id: context.account.id,
+      document_id: finalDocumentId,
+      error: logger.compactError(error),
+    });
+  }
   const reviewSyncExecution = await runCompanyBrainReviewSyncMutation({
     accountId: context.account.id,
     docId: finalDocumentId,
@@ -5601,6 +5832,20 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
     boundary: "document_comment_rewrite_apply",
     nested_mutations: [],
   };
+  const pendingConfirmation = await peekCommentRewriteConfirmation({
+    confirmationId,
+    accountId: context.account.id,
+    documentId,
+  });
+  if (!pendingConfirmation) {
+    respondDocumentRewriteFailure(
+      res,
+      400,
+      "invalid_or_expired_confirmation",
+      "The rewrite confirmation is missing or expired. Generate a fresh preview first.",
+    );
+    return;
+  }
   const mutationExecution = await runCanonicalLarkMutation({
     action: "document_comment_rewrite_apply",
     pathname: "/api/doc/rewrite-from-comments",
@@ -5688,7 +5933,7 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
           }),
         });
 
-        return applyRewrittenDocument(
+        return getHttpService("applyRewrittenDocument", applyRewrittenDocument)(
           accessToken,
           documentId,
           confirmation.rewritten_content,
@@ -5729,6 +5974,22 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
   }
   const confirmation = pendingConfirmation;
   const applied = execution.result;
+  try {
+    await refreshDocumentReadModelsFromLive({
+      account: context.account,
+      accessToken: context.token,
+      documentId,
+      pathname: "internal:doc/rewrite/read-model-refresh",
+      logger,
+    });
+  } catch (error) {
+    logger.warn("document_rewrite_read_model_refresh_failed", {
+      stage: "document_read_models_refreshed",
+      account_id: context.account.id,
+      document_id: documentId,
+      error: logger.compactError(error),
+    });
+  }
   const finalized = await finalizeDocRewriteWorkflowTask({
     accountId: context.account.id,
     scope: workflowScope,

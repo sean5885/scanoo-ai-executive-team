@@ -13,6 +13,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `company_brain_review_state`
   - `company_brain_approved_knowledge`
 - This table is only populated by verified API-created documents from `/Users/seanhan/Documents/Playground/src/http-server.mjs`.
+- successful `update_doc` and `rewrite_apply` write paths now also refresh the local read model (`lark_documents` + chunks) and refresh an already-mirrored or already-verified doc row so immediate company-brain detail/search can observe the latest content without waiting for a later sync
 - Verified mirror ingest now also passes through `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs` before the `company_brain_docs` upsert is accepted, and any follow-up review-state staging from that ingest now re-enters the same runtime instead of writing directly from the route helper.
 
 ## Storage Location
@@ -48,6 +49,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `/Users/seanhan/Documents/Playground/src/company-brain-query.mjs`
     - centralizes planner-facing list/search/detail actions
     - joins `company_brain_docs` with mirrored `lark_documents.raw_text`
+    - only surfaces docs that still have an active local `lark_documents` row with non-empty `raw_text`
     - joins optional `company_brain_learning_state`
     - lets planner-side search rank with a composite score over keyword match, semantic-lite similarity, learned `key_concepts` / `tags`, and document recency from mirror timestamps
     - supports `top_k` search limiting with a default of `5` while keeping `limit` as a compatibility alias
@@ -128,6 +130,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `source`
   - `created_at`
   - `creator`
+- metadata-only or ghost mirror rows are now excluded from those normal read/list/search surfaces until an active local text body exists
 - Planner-facing agent routes additionally return:
   - structured `summary`
   - `learning_state`

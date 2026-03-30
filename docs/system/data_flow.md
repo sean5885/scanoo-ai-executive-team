@@ -104,6 +104,10 @@ Current truth:
 - direct `executeLarkWrite(...)` from route or lane modules is no longer the checked-in primary pattern
 - runtime-local idempotency exists in `mutation-runtime.mjs`
 - persisted HTTP idempotency also exists at the HTTP layer
+- the current checked-in doc write closures now also refresh the local read models that back immediate reads:
+  - `create_doc` rebuilds the local chunk/index snapshot before verified mirror ingest
+  - `update_doc` refreshes `lark_documents`, chunk index, and any already-verified/already-mirrored company-brain row after the write succeeds
+  - `rewrite_apply` now does the same refresh after apply succeeds
 
 ### 2B. Internal Company-Brain Governance Write Path
 
@@ -191,6 +195,7 @@ Current truth:
 
 - implemented
 - still ends in replace-based doc materialization
+- successful apply now also refreshes the local document row, chunk index, and an existing verified/mirrored company-brain row so immediate detail/search reads see the rewritten content
 
 ### 4C. Meeting Workflow
 
