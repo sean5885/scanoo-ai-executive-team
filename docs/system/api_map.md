@@ -128,4 +128,5 @@ Current write truth:
 
 - treating `/answer` as a direct `answer-service.mjs` wrapper is outdated
 - treating company-brain read routes as approval-runtime surfaces is outdated
+- treating `company_brain` as entirely unimplemented is outdated; the current repo has a bounded mirror/read/review/apply path, not a full autonomous memory runtime
 - treating preview routes as completed write paths is outdated

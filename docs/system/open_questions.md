@@ -4,7 +4,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 This file only keeps unresolved, code-backed gaps.
 
-Resolved documentation drift and frozen-baseline clarifications were removed from this list.
+Resolved documentation drift, stale-read-boundary notes, and frozen-baseline clarifications were removed from this list.
 
 ## High
 
@@ -53,74 +53,44 @@ Resolved documentation drift and frozen-baseline clarifications were removed fro
 
 ## Medium
 
-7. Retrieval uses local semantic-lite embeddings, not an external vector store.
-   - Current code evidence:
-     - `/Users/seanhan/Documents/Playground/src/rag-repository.mjs`
-     - `/Users/seanhan/Documents/Playground/src/semantic-embeddings.mjs`
-
-8. `lobster_security` remains a separate architecture boundary.
+7. `lobster_security` remains a separate architecture boundary.
    - Why it matters:
      - contract drift can still happen between the Node bridge and the Python runtime
    - Current code evidence:
      - `/Users/seanhan/Documents/Playground/src/lobster-security-bridge.mjs`
      - `/Users/seanhan/Documents/Playground/lobster_security`
 
-9. Semantic organization has a local fallback, but quality parity with OpenClaw-backed classification is not guaranteed.
+8. Semantic organization has a local fallback, but quality parity with OpenClaw-backed classification is not guaranteed.
    - Current code evidence:
      - `/Users/seanhan/Documents/Playground/src/lark-drive-semantic-classifier.mjs`
 
-10. Bitable and spreadsheet write primitives are implemented, but higher-level product workflow contracts remain thin.
+9. Bitable and spreadsheet write primitives are implemented, but higher-level product workflow contracts remain thin.
    - Current code evidence:
      - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
      - `/Users/seanhan/Documents/Playground/src/external-mutation-registry.mjs`
 
-11. The repo has a checked-in executive orchestration layer, but not background workers, parallel subagent execution, or a tenant-wide memory graph.
-   - Why it matters:
-     - future docs must keep describing the current scope accurately
-
-12. Comment suggestion cards support manual/timer polling only; there is still no native Lark comment event entering this repo.
+10. Comment suggestion cards support manual/timer polling only; there is still no native Lark comment event entering this repo.
    - Current code evidence:
      - `/Users/seanhan/Documents/Playground/src/comment-suggestion-poller.mjs`
      - `/Users/seanhan/Documents/Playground/src/comment-suggestion-workflow.mjs`
 
-13. Workflow checkpoints and planner lifecycle stores are still local JSON state, not a shared multi-runtime store.
+11. Workflow checkpoints and planner lifecycle stores are still local JSON state, not a shared multi-runtime store.
    - Current code evidence:
      - `/Users/seanhan/Documents/Playground/src/agent-workflow-state.mjs`
      - `/Users/seanhan/Documents/Playground/src/planner-task-lifecycle-v1.mjs`
 
-14. `/meeting` is implemented, but it remains a specialized workflow rather than a generic planner-managed subtask framework.
-   - Current code evidence:
-     - `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`
-     - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
-
-15. Planner-side runtime-info support exists, but top-level lane routing still does not guarantee every generic runtime question reaches planner mode.
+12. Planner-side runtime-info support exists, but top-level lane routing still does not guarantee every generic runtime question reaches planner mode.
    - Current code evidence:
      - `/Users/seanhan/Documents/Playground/src/capability-lane.mjs`
      - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
      - `/Users/seanhan/Documents/Playground/src/planner-runtime-info-flow.mjs`
 
-16. Read-runtime unification is incomplete; some review/verification helpers still read state directly.
-   - Current code evidence:
-     - `/Users/seanhan/Documents/Playground/src/company-brain-review.mjs`
-     - `/Users/seanhan/Documents/Playground/src/company-brain-learning.mjs`
-     - `/Users/seanhan/Documents/Playground/src/mutation-verifier.mjs`
-     - `/Users/seanhan/Documents/Playground/src/knowledge/knowledge-service.mjs`
-     - `/Users/seanhan/Documents/Playground/src/planner/knowledge-bridge.mjs`
-
-17. Runtime-local mutation idempotency and persisted HTTP idempotency still use different scopes.
+13. Runtime-local mutation idempotency and persisted HTTP idempotency still use different scopes.
    - Why it matters:
      - contributors should not assume there is only one idempotency layer
    - Current code evidence:
      - `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`
      - `/Users/seanhan/Documents/Playground/src/http-idempotency-store.mjs`
-
-18. Planner envelope formatting and answer normalization are still on different seams.
-   - Why it matters:
-     - `execution_result` now stays raw while planner-facing `formatted_output` is exposed separately, and the checked-in answer normalizer now only reads canonical `execution_result.data.answer / sources / limitations`
-   - Current code evidence:
-     - `/Users/seanhan/Documents/Playground/src/executive-planner.mjs`
-     - `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
-     - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
 
 ## Cannot Be Confirmed From Code Alone
 

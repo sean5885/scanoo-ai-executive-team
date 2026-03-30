@@ -224,6 +224,6 @@ Current truth:
 
 ## 5. Policy-Only or Incomplete Areas
 
-- no full repo-wide read unification; some verification/review helpers still perform direct reads
+- no full generic repo-wide read abstraction; the audited company-brain/review/verification/system-knowledge helpers now re-enter `read-runtime.mjs`, but other repository-local reads still exist outside one universal surface
 - no full targeted doc block mutation runtime
 - no background worker mesh or autonomous company-brain server

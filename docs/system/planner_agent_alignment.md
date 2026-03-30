@@ -89,6 +89,7 @@ Still out of scope for current runtime:
 - generic agent-to-agent router
 - full handoff engine
 - generic multi-skill planner runtime
+- parallel supporting-agent execution or background task queue
 - skill chaining
 - preset step-level validation
 - externalized policy/config system

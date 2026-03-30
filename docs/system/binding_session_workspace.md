@@ -6,8 +6,8 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 Translate the OpenClaw-style concepts into a Lark Lobster runtime shape that this repository can actually implement now.
 
-This repo still does not have planner/specialist agents.
-What this spec does provide is:
+This repo now has checked-in planner, registered-agent, and bounded company-brain surfaces.
+What this spec provides is the scoping foundation underneath those runtime layers:
 
 - stable binding keys
 - stable session keys
@@ -196,9 +196,9 @@ This should not be the default now.
 
 ## What This Does Not Claim
 
-- no planner exists here
-- no specialist agent registry exists here
-- no company_brain exists here
+- this file is not the primary mirror for planner/executive behavior
+- this file does not define specialist routing policy or workflow ownership
+- these workspace/session keys do not turn the repo into a tenant-wide company-brain memory graph
 - no long-term personal memory model exists yet
 
 This is a runtime scoping and capability-lane foundation, not a full agent orchestration architecture.

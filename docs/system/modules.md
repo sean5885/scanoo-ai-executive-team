@@ -122,7 +122,7 @@ Current-truth docs for onboarding are:
   - skill definitions must now declare `skill_class` and `runtime_access`
   - the runtime validates input, output, and side effects
   - the runtime rejects non-serializable input/output and nested skill execution
-  - the checked-in sample skill is read-only and goes through `read-runtime`
+  - the checked-in sample skills are read-only and go through `read-runtime`
   - planner can consume a skill result through a bridge envelope
   - planner-visible skill selection is deterministic-only and conflict-fail-closed
   - planner-visible skill rollout now has a checked-in observability/rollback watch over selector, tool execution, and answer-boundary evidence
@@ -162,13 +162,15 @@ Current-truth docs for onboarding are:
 - Implemented mirror/read side:
   - `/Users/seanhan/Documents/Playground/src/company-brain-write-intake.mjs`
   - `/Users/seanhan/Documents/Playground/src/company-brain-query.mjs`
+  - `/Users/seanhan/Documents/Playground/src/company-brain-learning.mjs`
   - `/Users/seanhan/Documents/Playground/src/company-brain-review.mjs`
   - `/Users/seanhan/Documents/Playground/src/company-brain-lifecycle-contract.mjs`
 - Current truth:
   - verified mirror ingest exists
   - read-side list/detail/search exists
-  - review, conflict check, approval transition, and apply routes exist
+  - review, conflict check, approval transition, apply, and learning-state routes exist
   - approved knowledge is a separate derived/applied surface
+  - the audited company-brain review/learning/verifier helpers now re-enter `read-runtime.mjs` for mirror/derived reads
 - Important boundary:
   - this is not a full generic company-brain runtime
   - mirror ingest is not equivalent to formal approval
@@ -225,9 +227,9 @@ Current-truth docs for onboarding are:
 
 - no checked-in background worker mesh
 - no full autonomous company-brain server
-- no repo-wide universal read unification; some review/verification helpers still read state directly
+- no full generic repo-wide read abstraction; the audited company-brain/review/verification/system-knowledge helper set now re-enters `read-runtime.mjs`, but other repository-local reads still exist outside one universal surface
 - no targeted block-level doc mutation runtime; targeted preview exists, final apply is still replace-based in the doc write adapter
-- no checked-in live planner-visible telemetry emitter, production telemetry sink, or runtime rollback flag carrier yet; current live design is spec-only in `/Users/seanhan/Documents/Playground/docs/system/planner_visible_live_telemetry_design.md`
+- no production telemetry sink or runtime rollback flag carrier for planner-visible live telemetry; the checked-in emitter/adapters stay local-only (`in-memory` or mock structured-log) and the broader rollout design remains in `/Users/seanhan/Documents/Playground/docs/system/planner_visible_live_telemetry_design.md`
 
 ## Historical or Frozen References
 

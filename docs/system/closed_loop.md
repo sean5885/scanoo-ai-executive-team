@@ -24,6 +24,7 @@ Implemented through:
 - the same planner/runtime line now also treats `create_doc` as an entry-governed write: checked-in governance requires `source / owner / intent / type`, the agent bridge blocks missing fields with `entry_governance_required`, and planner dispatch auto-fills stable values for the controlled planner path so governed runtime behavior does not regress
 - `src/executive-planner.mjs` now also keeps the planner-generation prompt more deterministic for MiniMax-style low-variance text models by requiring a single JSON object, tightening `clarify` / `handoff` usage, constraining `pending_questions` / `work_items`, and explicitly separating company-brain `list` / `search` / `detail` intent classes so the model is told to prefer tool use before fail-soft stop when the user is asking to find or read documents
 - `src/executive-planner.mjs` now also applies deterministic agent-selection hardening after planner JSON normalization: simple single-intent requests collapse back to `/generalist`, multi-agent is reserved for compound requests that actually imply distinct specialist roles, explicit slash-agent requests do not auto-expand extra specialists, and the planner-visible role set is capped at three total roles (`1 primary + up to 2 supporting`) without changing the public decision shape
+- downstream supporting-agent work items still run sequentially inside `src/executive-orchestrator.mjs`; this is a bounded in-process collaboration path, not a parallel worker mesh
 - `src/executive-planner.mjs` now also validates planner-tool input and successful output against [planner_contract.json](/Users/seanhan/Documents/Playground/docs/system/planner_contract.json) before and after dispatch; the current runtime check is intentionally minimal (`required` + simple `string/object/number` type checks) and fails soft by returning `ok=false` with `error=contract_violation` instead of throwing
 - `src/executive-planner.mjs` now also validates final preset output against [planner_contract.json](/Users/seanhan/Documents/Playground/docs/system/planner_contract.json) only when the preset itself reports success; this check is also fail-soft (`ok=false`, `error=contract_violation`, `phase=preset_output`) and does not yet validate individual step outputs
 - `src/executive-planner.mjs` now also normalizes planner action/preset failures into a minimal taxonomy (`contract_violation`, `tool_error`, `runtime_exception`, `business_error`, `not_found`, `permission_denied`) without overwriting an existing `error` value; planner runtime still fails soft and does not throw for these controlled error paths
@@ -111,7 +112,7 @@ Implemented through:
 - `src/control-kernel.mjs` 現在收斂 `lane-executor.mjs` 的 follow-up owner 決策，輸出固定 `decision / matched_task_id / precedence_source / routing_reason / guard / final_owner`。
 - `executive-orchestrator.mjs` 不再用 direct status patch 把 task 標成 `completed`；完成只能經 `executive-closed-loop.mjs` 的 verifier gate。
 - `lane-executor.mjs` 現在先呼叫 `decideIntent(...)`，依 `final_owner` 決定 follow-up 應回 `executive`、`doc-editor` 或既有 lane；同 scope 的 cloud-doc 才能延續原 workflow，否則回既有 lane 決策。
-- 第二階段才會把 meeting / 文件整理 / doc rewrite 完整接到 workflow-state machine。
+- meeting / doc rewrite / cloud-doc 已接到最小 workflow-state machine；其他 workflow 仍待後續整合。
 
 ## Phase-2 Meeting Workflow Control
 

@@ -44,7 +44,7 @@ Read it together with:
 | --- | --- | --- |
 | background worker mesh | policy-only | no checked-in worker runtime or scheduler mesh |
 | full autonomous company-brain server | policy-only | current repo has mirror ingest, read-side views, and partial governance paths only |
-| repo-wide complete read unification | incomplete | some review/verification helpers still read state directly |
+| repo-wide complete read unification | incomplete | the audited company-brain/review/verification/system-knowledge helper set now re-enters `read-runtime.mjs`, but the repo still does not collapse every local read into one generic abstraction |
 | targeted block-level doc mutation | incomplete | preview/planning exists, final write path is still bounded by current doc replace/update adapter |
 | single universal idempotency model | incomplete | HTTP persisted idempotency and runtime-local mutation idempotency are separate layers |
 

@@ -2,185 +2,123 @@
 
 Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
-## Existence
+## Scope
 
-- No full company_brain module or tenant-wide governance layer was found in this repo.
-- A minimal mirror table now exists in `/Users/seanhan/Documents/Playground/src/db.mjs`:
-  - `company_brain_docs`
-- A separate simplified learning sidecar table now also exists:
-  - `company_brain_learning_state`
-- A minimal review/approval persistence layer now also exists:
-  - `company_brain_review_state`
-  - `company_brain_approved_knowledge`
-- This table is only populated by verified API-created documents from `/Users/seanhan/Documents/Playground/src/http-server.mjs`.
-- Verified mirror ingest now also passes through `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs` before the `company_brain_docs` upsert is accepted, and any follow-up review-state staging from that ingest now re-enters the same runtime instead of writing directly from the route helper.
+This repo has a bounded partial company-brain runtime.
 
-## Storage Location
+It does not have:
 
-- SQLite:
-  - `company_brain_docs`
-  - `company_brain_learning_state`
-  - `company_brain_review_state`
-  - `company_brain_approved_knowledge`
+- a tenant-wide memory graph
+- a standalone autonomous company-brain server
+- a human review UI
+- a generic approval engine beyond the checked-in mirror/review/apply path
 
-## Used By Agents
+What is implemented today:
 
-- Current usage is still bounded, but planner-facing query paths now exist:
-  - route-side ingestion on verified API-created docs now stays inside the request lifecycle for `/api/doc/create` and `/api/doc/lifecycle/retry`
-  - a small write-intake policy helper that classifies direct mirror intake vs review/conflict-required promotion paths
-  - read-only public HTTP routes:
-    - `GET /api/company-brain/docs`
-    - `GET /api/company-brain/docs/:doc_id`
-    - `GET /api/company-brain/search?q=...`
-  - planner-facing agent routes:
-    - `GET /agent/company-brain/docs`
-    - `GET /agent/company-brain/search`
-    - `GET /agent/company-brain/docs/:doc_id`
-    - `GET /agent/company-brain/approved/docs`
-    - `GET /agent/company-brain/approved/search`
-    - `GET /agent/company-brain/approved/docs/:doc_id`
-    - `POST /agent/company-brain/review`
-    - `POST /agent/company-brain/conflicts`
-    - `POST /agent/company-brain/approval-transition`
-    - `POST /agent/company-brain/docs/:doc_id/apply`
-    - `POST /agent/company-brain/learning/ingest`
-    - `POST /agent/company-brain/learning/state`
-  - `/Users/seanhan/Documents/Playground/src/company-brain-query.mjs`
-    - centralizes planner-facing list/search/detail actions
-    - joins `company_brain_docs` with mirrored `lark_documents.raw_text`
-    - joins optional `company_brain_learning_state`
-    - lets planner-side search rank with a composite score over keyword match, semantic-lite similarity, learned `key_concepts` / `tags`, and document recency from mirror timestamps
-    - supports `top_k` search limiting with a default of `5` while keeping `limit` as a compatibility alias
-    - returns unified `{ success, data, error }` payloads
-    - keeps results as structured summaries instead of raw full text
-  - `/Users/seanhan/Documents/Playground/src/read-runtime.mjs`
-    - is now the unified read-runtime entry for single-authority reads
-    - accepts canonical read requests `{ action, account_id, payload, context }`
-    - also exposes a separate `primary_authority = "index"` branch for retrieval/search-hit reads backed by `/Users/seanhan/Documents/Playground/src/index-read-authority.mjs`
-    - keeps verified-doc mirror list/search/detail on `primary_authority = "mirror"`
-    - now exposes a separate `primary_authority = "derived"` branch for approved knowledge and learning-state reads backed by `/Users/seanhan/Documents/Playground/src/derived-read-authority.mjs`
-    - also exposes a separate `primary_authority = "live"` branch for direct doc/comment reads backed by `lark-content.mjs`, but only when `freshness = "live_required"`
-    - routes `/search` plus answer-service retrieval through the index branch while still keeping one single primary authority per read
-    - now also provides bounded sync helpers for internal mirror/derived/index runtime callers that must keep existing synchronous contracts
-    - delegates mirror list/search/detail plus internal mirror doc-record reads to `company-brain-query.mjs`
-    - delegates approved list/search/detail, internal learning-state detail/list reads, and internal approval-state reads to `derived-read-authority.mjs`
-    - delegates local checked-in `docs/system` keyword/snippet/context search actions to the index branch through `index-read-authority.mjs`
-    - returns one canonical runtime envelope and does not mix index, mirror, live, or derived fallback in the same read
-  - `/Users/seanhan/Documents/Playground/src/derived-read-authority.mjs`
-    - owns the current derived readers for:
-      - approved company-brain list/search/detail
-      - internal learning-state list/detail
-    - keeps the derived branch on one fixed `primary_authority = "derived"`
-  - `/Users/seanhan/Documents/Playground/src/company-brain-learning.mjs`
-    - derives deterministic `structured_summary`, `key_concepts`, and `tags`
-    - writes simplified per-doc `learning_state`
-    - also mirrors the latest persisted per-doc learning state into the process-local memory authority under `company_brain_learning:${account_id}:${doc_id}`
-    - does not perform approval/governance admission
-  - `/Users/seanhan/Documents/Playground/src/company-brain-review.mjs`
-    - persists bounded per-doc review state with:
-      - `pending_review`
-      - `conflict_detected`
-      - `approved`
-      - `rejected`
-    - exposes bounded actions for:
-      - review staging
-      - conflict checking
-      - approval decision transition
-      - explicit approved-knowledge apply
-    - conflict-check no longer silently ignores failed `conflict_detected` staging; if that optional review-state write fails, the action now returns `success=false`
-    - promotes only `approved` review results into `company_brain_approved_knowledge`
-    - keeps approval storage separate from both mirror and learning sidecar
-  - `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`
-    - is now the shared write entry for agent-facing company-brain review / conflict / approval-transition / apply / learning-ingest / learning-state-update writes
-    - also backs the follow-up review-state sync that can happen after verified mirror ingest and document update
-    - verified ingest from `/api/doc/create` and `/api/doc/lifecycle/retry` is now awaited by those routes, so ingest/review-sync failure prevents a full-success response even though rollback is still not attempted
-    - document update now fails closed at the HTTP route boundary when that follow-up review sync runtime blocks or returns `success=false`
-    - callers on `review_state_optional` paths now also require business `success=true` instead of treating runtime `ok` as sufficient
-    - runs `knowledge_write_v1` pre/post verification around those internal writes
-    - confirms review/apply/learning writes by checking durable SQLite state after execute, and allows `conflict_check` / intake review sync to skip post-verifier only when no review-state mutation is required
-  - `/Users/seanhan/Documents/Playground/src/company-brain-memory-authority.mjs`
-    - exposes a tiny process-local `{ writeMemory, readMemory, listMemoryByPrefix }` helper backed by `globalThis.__company_brain_memory__`
-    - no checked-in runtime route, planner flow, read-runtime branch, or mutation-runtime path depends on it as a canonical authority
-    - local helper callers now also include `/Users/seanhan/Documents/Playground/src/session-scope-store.mjs` and `/Users/seanhan/Documents/Playground/src/executive-memory.mjs` for process-local authority-first writes plus read-through caching over their existing file-backed stores
-    - its contents are lost on process restart and it is not part of the current SQLite-backed company-brain persistence boundary
-  - `/Users/seanhan/Documents/Playground/src/memory-write-guard.mjs`
-    - exposes `guardedMemorySet(...)` as a tiny wrapper over the process-local memory authority
-    - currently normalizes key/source and is used only by local process-memory helper paths
-  - `/Users/seanhan/Documents/Playground/src/memory-write-detector.mjs`
-    - exposes a dev-time `installMemoryWriteDetector()` helper that monkey-patches `Map.prototype.set`
-    - only warns when direct writes target the current `globalThis.__company_brain_memory__` map outside `company-brain-memory-authority.mjs`
-    - is installed from `/Users/seanhan/Documents/Playground/src/http-server.mjs` during non-production HTTP bootstrap and is not a runtime write-policy enforcement layer
-  - `/Users/seanhan/Documents/Playground/src/company-brain-query.mjs`
-    - now also exposes approved-knowledge list/search/detail actions that only read from `company_brain_approved_knowledge`
-    - keeps the existing mirror read-side actions unchanged and separate
+- verified mirror ingest into `company_brain_docs`
+- mirror list/search/detail reads
+- approved derived list/search/detail reads
+- review/conflict/approval-transition/apply writes
+- simplified learning-doc ingest and learning-state update
 
-## Completeness
+## Storage
 
-- Minimal only.
-- It stores a verified-doc mirror, not a canonical memory graph or approval-governed knowledge layer.
-- the learning sidecar is also minimal; it is not approved long-term memory
-- a minimal agent-facing review/conflict/approval/apply runtime now exists, and its current internal write gating is routed through mutation-runtime rather than route-local allow/deny
-- the simplified learning sidecar write routes now also use that same runtime boundary instead of direct route-local persistence
-- the process-local `company-brain-memory-authority.mjs` helper is not a canonical memory authority, not durable storage, and not part of the approval-governed company-brain path
-- `memory-write-guard.mjs` only wraps process-local cache writes; it does not replace SQLite learning-state persistence, review/apply flows, or approved-knowledge admission
-- `memory-write-detector.mjs` is only a development-time warning surface for direct writes to the process-local map; it does not block writes, replace approval/runtime policy, or change durable storage semantics
-- the same helper may now receive authority-first session explicit-auth snapshots and executive memory rows in-process, but those readers still fall back to their original file-backed stores and do not turn company-brain memory into a durable source of truth
-- there is still no standalone company-brain-owned verifier, human review UI, or semantic conflict resolver
-- Public list/detail/search routes only return:
-  - `doc_id`
-  - `title`
-  - `source`
-  - `created_at`
-  - `creator`
-- Planner-facing agent routes additionally return:
-  - structured `summary`
-  - `learning_state`
-  - search-time `match` metadata including composite `score` plus simplified `ranking_basis`
-  - no raw full-text body
-- approved company-brain routes now return through the same canonical envelope, but their read authority is `derived` rather than `mirror`
-- planner doc formatting now also stays mirror-only for the same read and no longer supplements company-brain detail reads with `/api/doc/read`
-- approved knowledge is now stored separately and can only be queried through approved-only agent/query routes after explicit review approval plus apply
+SQLite tables in `/Users/seanhan/Documents/Playground/src/db.mjs`:
 
-## Final Audit Prep
+- `company_brain_docs`
+- `company_brain_learning_state`
+- `company_brain_review_state`
+- `company_brain_approved_knowledge`
 
-The previously flagged bypass callers now re-enter `read-runtime.mjs` through bounded internal actions:
+## Runtime Anchors
 
-- mutation-side company-brain lifecycle helpers:
-  - `/Users/seanhan/Documents/Playground/src/company-brain-review.mjs`
-  - `/Users/seanhan/Documents/Playground/src/company-brain-learning.mjs`
-  - `/Users/seanhan/Documents/Playground/src/mutation-verifier.mjs`
-- local checked-in docs/system knowledge helpers:
-  - `/Users/seanhan/Documents/Playground/src/knowledge/knowledge-service.mjs`
-  - `/Users/seanhan/Documents/Playground/src/planner/knowledge-bridge.mjs`
+- `/Users/seanhan/Documents/Playground/src/http-server.mjs`
+- `/Users/seanhan/Documents/Playground/src/read-runtime.mjs`
+- `/Users/seanhan/Documents/Playground/src/company-brain-query.mjs`
+- `/Users/seanhan/Documents/Playground/src/derived-read-authority.mjs`
+- `/Users/seanhan/Documents/Playground/src/company-brain-write-intake.mjs`
+- `/Users/seanhan/Documents/Playground/src/company-brain-review.mjs`
+- `/Users/seanhan/Documents/Playground/src/company-brain-learning.mjs`
+- `/Users/seanhan/Documents/Playground/src/company-brain-lifecycle-contract.mjs`
+- `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`
 
-Current status in this scan:
+## Read Surface
 
-- no remaining caller from those five modules was found reading mirror/derived/index state without first entering `read-runtime.mjs`
-- write-side persistence still happens in the owning write modules or repository helpers after the runtime-gated read step; `read-runtime.mjs` remains a read boundary, not a write runtime
+Public minimal mirror routes:
+
+- `GET /api/company-brain/docs`
+- `GET /api/company-brain/docs/:doc_id`
+- `GET /api/company-brain/search`
+
+Planner/runtime routes:
+
+- `GET /agent/company-brain/docs`
+- `GET /agent/company-brain/docs/:doc_id`
+- `GET /agent/company-brain/search`
+- `GET /agent/company-brain/approved/docs`
+- `GET /agent/company-brain/approved/docs/:doc_id`
+- `GET /agent/company-brain/approved/search`
+
+Current read truth:
+
+- `read-runtime.mjs` is the single-authority read entry for audited company-brain flows
+- `mirror` authority serves verified mirror list/search/detail through `company-brain-query.mjs`
+- `derived` authority serves approved knowledge and internal learning-state reads through `derived-read-authority.mjs`
+- mirror search joins `company_brain_docs` with mirrored `lark_documents.raw_text` plus optional `company_brain_learning_state`
+- planner-facing reads return bounded summaries and learning metadata, not raw full text
+
+## Governance and Learning Writes
+
+Agent-facing governance routes:
+
+- `POST /agent/company-brain/review`
+- `POST /agent/company-brain/conflicts`
+- `POST /agent/company-brain/approval-transition`
+- `POST /agent/company-brain/docs/:doc_id/apply`
+- `POST /agent/company-brain/learning/ingest`
+- `POST /agent/company-brain/learning/state`
+
+Current write truth:
+
+- these routes use `runMutation(...)`
+- these routes are internal governance writes, not external Lark writes
+- `mutation-runtime.mjs` runs `knowledge_write_v1` pre/post verification around these writes
+- verified doc ingest from `/api/doc/create` and `/api/doc/lifecycle/retry` is awaited inside the request lifecycle
+- `/api/doc/update` now treats follow-up company-brain review sync as part of route success; sync failure returns an error instead of `ok=true`
+
+## State Boundaries
+
+Current state boundaries are explicit:
+
+- `mirror` is not `approved`
+- `approved` is not `applied`
+- `learning_state` is not formal approved knowledge
+- mirror ingest does not bypass review/conflict/approval/apply
+- approved knowledge is stored separately in `company_brain_approved_knowledge`
+
+`company-brain-memory-authority.mjs` and its guard/detector helpers are process-local only:
+
+- they are not durable storage
+- they are not a canonical read authority
+- they are not part of the approval-governed company-brain path
+
+## Reconciliation Status
+
+This scan confirmed that the previously flagged helper set now re-enters `read-runtime.mjs` instead of bypassing it for audited company-brain/system-knowledge reads:
+
+- `/Users/seanhan/Documents/Playground/src/company-brain-review.mjs`
+- `/Users/seanhan/Documents/Playground/src/company-brain-learning.mjs`
+- `/Users/seanhan/Documents/Playground/src/mutation-verifier.mjs`
+- `/Users/seanhan/Documents/Playground/src/knowledge/knowledge-service.mjs`
+- `/Users/seanhan/Documents/Playground/src/planner/knowledge-bridge.mjs`
 
 No remaining public company-brain list/search/detail route was found bypassing `read-runtime.mjs` in this scan.
 
-## Knowledge Sources That Do Exist
+## Evidence
 
-This repo does have a knowledge pipeline, but it is document sync and retrieval, not company-brain governance.
-
-Observed sources:
-
-- Lark Drive
-- Lark Wiki
-- Lark docx documents
-- local SQLite index and chunk store
-
-## Indexing
-
-- yes, but only for synced document knowledge
-- implemented through:
-  - `/Users/seanhan/Documents/Playground/src/db.mjs`
-  - `/Users/seanhan/Documents/Playground/src/rag-repository.mjs`
-  - `/Users/seanhan/Documents/Playground/src/lark-sync-service.mjs`
-
-## Conclusion
-
-At scan time, this repo still does not have a full company_brain governance system. It now has a small `company_brain_docs` mirror for verified API-created docs, a separate simplified `company_brain_learning_state` sidecar for planner-facing learning metadata, and a minimal agent-facing `review -> conflict -> approval-transition -> apply` runtime backed by `company_brain_review_state` plus `company_brain_approved_knowledge`. Retrieval knowledge and lifecycle/indexing remain the primary implemented layers, and company-brain governance is still bounded rather than full-fidelity.
-
-The current primary system is Playground's request-triggered flow, not ai-server background automation.
+- `/Users/seanhan/Documents/Playground/tests/company-brain-query.test.mjs`
+- `/Users/seanhan/Documents/Playground/tests/company-brain-write-intake.test.mjs`
+- `/Users/seanhan/Documents/Playground/tests/company-brain-review-approval.test.mjs`
+- `/Users/seanhan/Documents/Playground/tests/company-brain-lifecycle-contract.test.mjs`
+- `/Users/seanhan/Documents/Playground/tests/read-runtime.test.mjs`
+- `/Users/seanhan/Documents/Playground/tests/http-server.route-success.test.mjs`
