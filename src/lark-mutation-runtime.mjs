@@ -200,7 +200,7 @@ export async function runDocumentCreateMutation({
   confirm = false,
   confirmationId = "",
   idempotencyKey = null,
-  autoConfirmWithoutConfirmation = false,
+  previewOnMissingConfirmation = true,
   createConfirmation = createDocumentCreateConfirmation,
   peekConfirmation = peekDocumentCreateConfirmation,
   consumeConfirmation = consumeDocumentCreateConfirmation,
@@ -236,48 +236,44 @@ export async function runDocumentCreateMutation({
     folderToken,
     idempotencyKey,
   });
-  const shouldAutoConfirm = autoConfirmWithoutConfirmation === true && !cleanText(confirmationId);
-  let effectiveConfirm = confirm === true;
-  let effectiveConfirmationId = cleanText(confirmationId);
+  const effectiveConfirm = confirm === true;
+  const effectiveConfirmationId = cleanText(confirmationId);
 
-  if (!effectiveConfirm && !shouldAutoConfirm) {
-    const preview = await createConfirmation({
-      accountId,
-      title,
-      requestedFolderToken,
-      resolvedFolderToken: folderToken,
-      content,
-      source,
-      owner,
-      intent,
-      type,
-    });
+  if (!effectiveConfirm) {
+    if (previewOnMissingConfirmation !== false) {
+      const preview = await createConfirmation({
+        accountId,
+        title,
+        requestedFolderToken,
+        resolvedFolderToken: folderToken,
+        content,
+        source,
+        owner,
+        intent,
+        type,
+      });
+      return {
+        ok: true,
+        stage: "preview_ready",
+        preview,
+        create_guard: createGuard,
+        write_policy: writePolicy,
+        requested_folder_token: requestedFolderToken || null,
+        resolved_folder_token: folderToken || null,
+      };
+    }
+
     return {
-      ok: true,
-      stage: "preview_ready",
-      auto_confirmed: false,
-      preview,
+      ok: false,
+      stage: "confirmation_required",
+      error: "lark_write_confirmation_required",
+      message: "Document creation requires explicit confirmation. Preview first, then re-submit with confirm=true and confirmation_id.",
+      statusCode: 409,
       create_guard: createGuard,
       write_policy: writePolicy,
       requested_folder_token: requestedFolderToken || null,
       resolved_folder_token: folderToken || null,
     };
-  }
-
-  if (shouldAutoConfirm) {
-    const preview = await createConfirmation({
-      accountId,
-      title,
-      requestedFolderToken,
-      resolvedFolderToken: folderToken,
-      content,
-      source,
-      owner,
-      intent,
-      type,
-    });
-    effectiveConfirm = true;
-    effectiveConfirmationId = cleanText(preview.confirmation_id);
   }
 
   const canonicalRequest = buildCreateDocCanonicalRequest({
@@ -364,7 +360,6 @@ export async function runDocumentCreateMutation({
   return {
     ok: mutationExecution?.ok === true,
     stage: "mutation_executed",
-    auto_confirmed: shouldAutoConfirm,
     mutation_execution: mutationExecution,
     create_guard: createGuard,
     write_policy: writePolicy,

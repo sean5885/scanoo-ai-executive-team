@@ -70,6 +70,7 @@ What now exists in current code:
   - provide thin agent-facing wrappers over selected document/runtime/query routes
   - preserve the underlying route or query logic instead of re-implementing it
   - normalize agent-facing responses to `{ ok, action, data, trace_id }`
+  - keep write-side confirmation boundaries intact instead of auto-confirming agent creates
 - Current bridges:
   - `POST /agent/docs/create`
   - `GET /agent/company-brain/docs`
@@ -78,6 +79,7 @@ What now exists in current code:
   - `GET /agent/system/runtime-info`
 - Logging:
   - `stage=agent_bridge`
+  - `POST /agent/docs/create` now fail-closes on missing confirmation and requires the same `confirmation_id` artifact used by the public create-doc preview/apply flow
 
 ### Binding / Session Runtime
 

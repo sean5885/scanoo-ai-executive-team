@@ -923,7 +923,74 @@ test("agent create_doc blocks when entry governance metadata is missing", async 
   assert.deepEqual(payload.data.missing_fields, ["owner", "type"]);
 });
 
-test("agent create_doc succeeds when entry governance metadata is present", async (t) => {
+test("agent create_doc fails closed when confirmation is missing even if entry governance metadata is present", async (t) => {
+  withEnv(t, {
+    ALLOW_LARK_WRITES: "true",
+  });
+  let createCalls = 0;
+  const { server } = await startTestServer(t, {
+    createDocument: async () => {
+      createCalls += 1;
+      throw new Error("should_not_create");
+    },
+  });
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/agent/docs/create`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      title: "Planner Controlled Create",
+      source: "api_doc_create",
+      owner: "planner_agent",
+      intent: "create_doc",
+      type: "document_create",
+    }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 409);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.action, "create_doc");
+  assert.equal(payload.data.error, "lark_write_confirmation_required");
+  assert.equal(createCalls, 0);
+});
+
+test("agent create_doc rejects confirm=true when confirmation_id is missing", async (t) => {
+  withEnv(t, {
+    ALLOW_LARK_WRITES: "true",
+  });
+  let createCalls = 0;
+  const { server } = await startTestServer(t, {
+    createDocument: async () => {
+      createCalls += 1;
+      throw new Error("should_not_create");
+    },
+  });
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/agent/docs/create`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      title: "Planner Controlled Create",
+      confirm: true,
+      source: "api_doc_create",
+      owner: "planner_agent",
+      intent: "create_doc",
+      type: "document_create",
+    }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.action, "create_doc");
+  assert.equal(payload.data.error, "missing_confirmation_id");
+  assert.equal(createCalls, 0);
+});
+
+test("agent create_doc succeeds with a valid confirmation artifact and entry governance metadata", async (t) => {
   withEnv(t, {
     ALLOW_LARK_WRITES: "true",
   });
@@ -938,12 +1005,31 @@ test("agent create_doc succeeds when entry governance metadata is present", asyn
   });
 
   const { port } = server.address();
+  const previewResponse = await fetch(`http://127.0.0.1:${port}/api/doc/create`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      title: "Planner Controlled Create",
+      source: "api_doc_create",
+      owner: "planner_agent",
+      intent: "create_doc",
+      type: "document_create",
+    }),
+  });
+  const previewPayload = await previewResponse.json();
+
+  assert.equal(previewResponse.status, 200);
+  assert.equal(previewPayload.ok, true);
+  assert.equal(previewPayload.action, "document_create_preview");
+  assert.match(previewPayload.confirmation_id || "", /.+/);
+
   const response = await fetch(`http://127.0.0.1:${port}/agent/docs/create`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       title: "Planner Controlled Create",
       confirm: true,
+      confirmation_id: previewPayload.confirmation_id,
       source: "api_doc_create",
       owner: "planner_agent",
       intent: "create_doc",

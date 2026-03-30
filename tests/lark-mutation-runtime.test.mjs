@@ -88,3 +88,44 @@ test("runDocumentCreateMutation carries create_doc audit and rollback details in
     }
   }
 });
+
+test("runDocumentCreateMutation can fail closed instead of issuing a preview when confirmation is required at entry", async (t) => {
+  const previousAllowWrites = process.env.ALLOW_LARK_WRITES;
+  process.env.ALLOW_LARK_WRITES = "true";
+  let createConfirmationCalls = 0;
+
+  try {
+    const result = await runDocumentCreateMutation({
+      pathname: "/agent/docs/create",
+      accountId: "acct-1",
+      account: {
+        id: "acct-1",
+      },
+      accessToken: "token-1",
+      title: "Fail Closed",
+      confirm: false,
+      previewOnMissingConfirmation: false,
+      createConfirmation: async () => {
+        createConfirmationCalls += 1;
+        return {
+          confirmation_id: "should-not-be-created",
+        };
+      },
+      performWrite: async () => {
+        throw new Error("should_not_write");
+      },
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.stage, "confirmation_required");
+    assert.equal(result.error, "lark_write_confirmation_required");
+    assert.equal(result.statusCode, 409);
+    assert.equal(createConfirmationCalls, 0);
+  } finally {
+    if (previousAllowWrites === undefined) {
+      delete process.env.ALLOW_LARK_WRITES;
+    } else {
+      process.env.ALLOW_LARK_WRITES = previousAllowWrites;
+    }
+  }
+});

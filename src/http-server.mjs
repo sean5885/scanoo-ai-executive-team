@@ -3696,7 +3696,6 @@ async function handleDocumentCreate(
     }
   }
 
-  const autoConfirmLegacyAgentCreate = requireEntryGovernance === true && !confirmationId;
   const createRollbackState = {};
   const mutationAudit = {
     boundary: "create_doc",
@@ -3720,7 +3719,7 @@ async function handleDocumentCreate(
     confirm,
     confirmationId,
     idempotencyKey,
-    autoConfirmWithoutConfirmation: autoConfirmLegacyAgentCreate,
+    previewOnMissingConfirmation: requireEntryGovernance !== true,
     rollback: async () => rollbackCreatedDocumentTransaction({
       accessToken: context.token,
       accountId: context.account.id,
@@ -3913,16 +3912,22 @@ async function handleDocumentCreate(
     return;
   }
 
-  if (createRuntime.auto_confirmed) {
-    logger.info("document_create_agent_bridge_auto_confirmed", {
+  if (createRuntime.stage === "confirmation_required") {
+    logger.warn("document_create_confirmation_required", {
       account_id: context.account.id,
       requested_folder_token: createRuntime.requested_folder_token,
       resolved_folder_token: createRuntime.resolved_folder_token,
-      confirmation_id: createRuntime.confirmation_id || null,
       has_initial_content: Boolean(content),
       demo_like: createGuard?.classification?.demo_like === true,
       write_policy: resolvedWritePolicy,
     });
+    respondDocumentWriteFailure(res, createRuntime.statusCode, createRuntime.error, {
+      message: createRuntime.message,
+      requested_folder_token: createRuntime.requested_folder_token,
+      resolved_folder_token: createRuntime.resolved_folder_token,
+      demo_like: createGuard?.classification?.demo_like === true,
+    });
+    return;
   }
 
   logger.info("document_create_started", {

@@ -1739,6 +1739,21 @@ const plannerExecutionPolicy = {
     retry: 0,
     stop_reason: "business_error",
   },
+  lark_write_confirmation_required: {
+    self_heal: 0,
+    retry: 0,
+    stop_reason: "lark_write_confirmation_required",
+  },
+  missing_confirmation_id: {
+    self_heal: 0,
+    retry: 0,
+    stop_reason: "missing_confirmation_id",
+  },
+  invalid_or_expired_confirmation: {
+    self_heal: 0,
+    retry: 0,
+    stop_reason: "invalid_or_expired_confirmation",
+  },
   entry_governance_required: {
     self_heal: 0,
     retry: 0,

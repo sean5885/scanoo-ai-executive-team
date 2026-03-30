@@ -2501,6 +2501,45 @@ test("dispatchPlannerTool preserves entry governance failures without retry", as
   }
 });
 
+test("dispatchPlannerTool preserves create_doc confirmation failures without retry", async () => {
+  const originalFetch = globalThis.fetch;
+  let callCount = 0;
+  globalThis.fetch = async () => {
+    callCount += 1;
+    return {
+      status: 409,
+      async text() {
+        return JSON.stringify({
+          ok: false,
+          action: "create_doc",
+          error: "lark_write_confirmation_required",
+          data: {
+            message: "Document creation requires explicit confirmation. Preview first, then re-submit with confirm=true and confirmation_id.",
+          },
+          trace_id: "trace_confirmation_required",
+        });
+      },
+    };
+  };
+
+  try {
+    const result = await dispatchPlannerTool({
+      action: "create_doc",
+      payload: { title: "demo" },
+      logger: console,
+      baseUrl: "http://localhost:3333",
+    });
+
+    assert.equal(callCount, 1);
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "lark_write_confirmation_required");
+    assert.equal(result.trace_id, "trace_confirmation_required");
+    assert.equal(result.data.stop_reason, "lark_write_confirmation_required");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("runPlannerPreset returns contract_violation on invalid success output without throwing", async () => {
   const result = await runPlannerPreset({
     preset: "create_and_list_doc",

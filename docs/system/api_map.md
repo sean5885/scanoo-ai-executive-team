@@ -82,7 +82,7 @@ Important boundary:
 | --- | --- | --- | --- |
 | `/api/doc/read` | `GET` | live document read | implemented |
 | `/api/doc/create` | `POST` | preview-first document create, then confirmed write | implemented |
-| `/agent/docs/create` | `POST` | planner-facing wrapper over document create | implemented |
+| `/agent/docs/create` | `POST` | planner-facing confirmed create-doc bridge | implemented |
 | `/api/doc/update` | `POST` | append or confirmed replace/heading-targeted update | implemented |
 | `/api/doc/comments` | `GET` | list document comments | implemented |
 | `/api/doc/rewrite-from-comments` | `POST` | preview/apply comment rewrite workflow | implemented |
@@ -95,6 +95,7 @@ Important boundary:
 Current write truth:
 
 - preview and confirmation are route-level user experience surfaces
+- `/agent/docs/create` is fail-closed when `confirm=true` or a valid `confirmation_id` is missing; planner/agent callers must reuse a confirmation artifact minted by `/api/doc/create`
 - final external mutation still routes through `lark-mutation-runtime -> mutation-runtime -> execute-lark-write`
 - heading-targeted update exists at preview/planning level, but doc write materialization is still bounded by the current doc update adapter
 

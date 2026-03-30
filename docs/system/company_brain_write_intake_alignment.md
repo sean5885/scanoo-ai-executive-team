@@ -69,6 +69,8 @@ Partially grounded in code through:
 - controlled document creation exists
 - creation returns bounded success/failure shape
 - write path remains inside auth + route + adapter governance
+- `/api/doc/create` remains the preview-first public surface that mints `document_create` confirmation artifacts
+- `/agent/docs/create` now shares the same runtime mutation path but fail-closes when explicit confirmation is required and missing; it no longer auto-confirms planner/agent creates
 - when post-create initial content fails to write, the route now fail-soft returns the created document while surfacing the structured write failure separately; unconfirmed initial content is not mirrored into local `raw_text`
 - the current checked-in planner/runtime governance for `create_doc` is:
   - `external_write=true`

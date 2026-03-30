@@ -46,6 +46,18 @@
       "category": "runtime",
       "public": true
     },
+    "lark_write_confirmation_required": {
+      "category": "runtime",
+      "public": true
+    },
+    "missing_confirmation_id": {
+      "category": "runtime",
+      "public": true
+    },
+    "invalid_or_expired_confirmation": {
+      "category": "runtime",
+      "public": true
+    },
     "entry_governance_required": {
       "category": "runtime",
       "public": true
@@ -204,6 +216,9 @@
         }
       },
       "error_codes": [
+        "lark_write_confirmation_required",
+        "missing_confirmation_id",
+        "invalid_or_expired_confirmation",
         "entry_governance_required",
         "missing_user_access_token",
         "internal_error"
