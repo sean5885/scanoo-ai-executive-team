@@ -156,7 +156,7 @@ Boundary:
 `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` now consumes that helper in a bounded way:
 
 - `runPlannerToolFlow(...)` returns:
-  - `{ "selected_action": "string|null", "execution_result": "object|null", "synthetic_agent_hint": "object", "trace_id": "string|null" }`
+  - `{ "selected_action": "string|null", "execution_result": "object|null", "formatted_output": "object|null", "synthetic_agent_hint": "object", "trace_id": "string|null" }`
 - `synthetic_agent_hint` prefers explicit `payload.lane` or `taskType`
 - otherwise it only infers a small checked-in mapping from known planner actions/presets
 - the derived execution is then wrapped through `runAgentExecution(...)`, so current planner output can also carry deterministic placeholder `result` payloads for the checked-in lane/agent pairs
@@ -722,7 +722,7 @@ The planner envelope built for lane execution now also exposes a minimal trace s
 }
 ```
 
-`execution_result` may now also carry an additional `formatted_output` field for successful company-brain read flows; this is a presentation-layer enrichment on top of the raw tool result, not a replacement for the bounded route output.
+Planner-facing formatter output is now carried in sibling `formatted_output` fields on `runPlannerToolFlow(...)` / `buildPlannedUserInputEnvelope(...)`; `execution_result` stays as the raw runtime result instead of being replaced by formatted planner output.
 
 When `runPlannerToolFlow(...)` cannot resolve either a hard route or a selector target, it now keeps `routing_reason = "routing_no_match"` internally and returns a stopped `execution_result.error = "business_error"` with that routing reason preserved in structured detail. User-facing callers such as the knowledge lane and `/answer` are expected to convert that controlled failure into natural language and keep `trace_id` in headers/runtime only.
 

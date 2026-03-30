@@ -1215,10 +1215,11 @@
     },
     "planner_tool_flow_output": {
       "type": "object",
-      "required": ["selected_action", "execution_result", "routing_reason", "synthetic_agent_hint", "trace_id"],
+      "required": ["selected_action", "execution_result", "formatted_output", "routing_reason", "synthetic_agent_hint", "trace_id"],
       "properties": {
         "selected_action": { "type": ["string", "null"] },
         "execution_result": { "type": ["object", "null"] },
+        "formatted_output": { "type": ["object", "null"] },
         "routing_reason": { "type": ["string", "null"] },
         "synthetic_agent_hint": { "type": ["object", "null"] },
         "trace_id": { "type": ["string", "null"] }
@@ -1226,7 +1227,7 @@
     },
     "planned_user_input_envelope": {
       "type": "object",
-      "required": ["ok", "error", "trace_id", "trace"],
+      "required": ["ok", "error", "formatted_output", "trace_id", "trace"],
       "properties": {
         "ok": { "type": "boolean" },
         "action": { "type": ["string", "null"] },
@@ -1234,6 +1235,7 @@
         "steps": { "type": "array" },
         "error": { "type": ["string", "null"] },
         "execution_result": { "type": ["object", "null"] },
+        "formatted_output": { "type": ["object", "null"] },
         "why": { "type": ["string", "null"] },
         "alternative": {
           "type": "object",

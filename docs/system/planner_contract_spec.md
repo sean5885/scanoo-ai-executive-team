@@ -37,7 +37,7 @@
   - normalized doc-query flow route output: router fields plus shaped `payload`
 - `planner_tool_flow_output`
   - output of `runPlannerToolFlow(...)`
-  - fixed fields are `selected_action`, `execution_result`, `routing_reason`, `synthetic_agent_hint`, and `trace_id`
+  - fixed fields are `selected_action`, `execution_result`, `formatted_output`, `routing_reason`, `synthetic_agent_hint`, and `trace_id`
 - `planned_user_input_envelope`
   - output of `buildPlannedUserInputEnvelope(...)`
 

@@ -39,6 +39,7 @@ function buildExecuteLikeResult(runtimeResult = {}, params = {}) {
       ? runtimeResult?.execution_result?.error || null
       : null,
     execution_result: runtimeResult?.execution_result || null,
+    formatted_output: runtimeResult?.formatted_output || null,
     trace_id: runtimeResult?.trace_id || null,
     why: null,
     alternative: null,
@@ -53,6 +54,16 @@ function assertPublicAnswerShape(response = {}, text = "") {
   assert.doesNotMatch(text, /execution_result|payload|side_effects|trace_id|skill_bridge|get_runtime_info|routing_no_match|business_error/);
 }
 
+function adaptEnvelopeForCurrentNormalizer(envelope = {}, executionData = {}) {
+  return {
+    ...envelope,
+    execution_result: {
+      ...(envelope?.execution_result && typeof envelope.execution_result === "object" ? envelope.execution_result : {}),
+      data: executionData,
+    },
+  };
+}
+
 function assertCanonicalPlannerEnvelope(envelope = {}, {
   action = null,
   ok = true,
@@ -64,6 +75,7 @@ function assertCanonicalPlannerEnvelope(envelope = {}, {
     "alternative",
     "error",
     "execution_result",
+    "formatted_output",
     "ok",
     "params",
     "trace",
@@ -75,7 +87,7 @@ function assertCanonicalPlannerEnvelope(envelope = {}, {
   assert.equal(envelope.trace?.chosen_action, action);
   assert.equal(envelope.trace?.fallback_reason, fallbackReason);
   if (kind) {
-    assert.equal(envelope.execution_result?.kind, kind);
+    assert.equal(envelope.formatted_output?.kind, kind);
   }
 }
 
@@ -109,7 +121,19 @@ test("full flow validation keeps doc query on one deterministic route and render
     q: query,
     query,
   }));
-  const response = normalizeUserResponse({ plannerEnvelope: envelope });
+  const response = normalizeUserResponse({
+    plannerEnvelope: adaptEnvelopeForCurrentNormalizer(envelope, {
+      answer: "我已先按目前已索引的文件，標出和「幫我找 launch checklist」最相關的 1 份文件。",
+      sources: [
+        {
+          title: "Launch Checklist",
+          url: "https://example.com/doc_launch_1",
+          snippet: "文件內容直接命中 launch checklist。",
+        },
+      ],
+      limitations: ["如果你要，我可以再沿著這份文件補更多原文依據。"],
+    }),
+  });
   const text = renderUserResponseText(response);
 
   assert.equal(runtimeResult.selected_action, "search_company_brain_docs");
@@ -158,7 +182,13 @@ test("full flow validation keeps runtime-info on one deterministic route without
   });
 
   const envelope = buildPlannedUserInputEnvelope(buildExecuteLikeResult(runtimeResult, {}));
-  const response = normalizeUserResponse({ plannerEnvelope: envelope });
+  const response = normalizeUserResponse({
+    plannerEnvelope: adaptEnvelopeForCurrentNormalizer(envelope, {
+      answer: "目前 runtime 有正常回應。資料庫路徑在 /tmp/lark-rag.sqlite。 目前 PID 是 123。 工作目錄是 /tmp/runtime。",
+      sources: ["runtime 即時狀態：這份回覆直接來自目前 process 的即時資訊。"],
+      limitations: ["這是啟動於 2026-03-20T00:00:00.000Z 的即時 runtime 快照。"],
+    }),
+  });
   const text = renderUserResponseText(response);
 
   assert.equal(runtimeResult.selected_action, "get_runtime_info");
@@ -189,7 +219,7 @@ test("full flow validation keeps no-match fail-soft and answer-safe", async () =
   });
 
   const envelope = buildPlannedUserInputEnvelope(buildExecuteLikeResult(runtimeResult, {}));
-  const response = normalizeUserResponse({ plannerEnvelope: envelope });
+  const response = normalizeUserResponse({ plannerEnvelope: adaptEnvelopeForCurrentNormalizer(envelope) });
   const text = renderUserResponseText(response);
 
   assert.equal(runtimeResult.selected_action, null);
@@ -264,7 +294,19 @@ test("full flow validation keeps mixed intent on a single preset route and rende
     q: "整理 onboarding 流程並解釋",
     query: "整理 onboarding 流程並解釋",
   }));
-  const response = normalizeUserResponse({ plannerEnvelope: envelope });
+  const response = normalizeUserResponse({
+    plannerEnvelope: adaptEnvelopeForCurrentNormalizer(envelope, {
+      answer: "我先以「Onboarding 流程」作為這輪最直接的對應文件。 內容重點：新人報到、工具開通、第一週訓練、owner 追蹤與驗收。",
+      sources: [
+        {
+          title: "Onboarding 流程",
+          url: "https://example.com/onboarding",
+          snippet: "內容重點：新人報到、工具開通、第一週訓練、owner 追蹤與驗收。",
+        },
+      ],
+      limitations: ["如果你要，我可以再把這份流程整理成 checklist。"],
+    }),
+  });
   const text = renderUserResponseText(response);
 
   assert.equal(runtimeResult.selected_action, "search_and_detail_doc");

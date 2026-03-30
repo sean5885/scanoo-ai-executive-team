@@ -33,6 +33,7 @@ It is intentionally narrow:
   {
     "selected_action": "string|null",
     "execution_result": "object|null",
+    "formatted_output": "object|null",
     "trace_id": "string|null"
   }
   ```

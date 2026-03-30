@@ -138,6 +138,7 @@ Current truth:
 - this path is implemented
 - `/answer` is planner-first, not answer-service-first
 - answer evidence is surfaced through canonical source mapping before public rendering
+- the checked-in normalizer now reads only canonical `execution_result.data.answer / sources / limitations`
 
 ### Secondary Retrieval-Answer Helper
 

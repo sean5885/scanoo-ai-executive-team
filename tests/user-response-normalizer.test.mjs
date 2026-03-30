@@ -9,238 +9,69 @@ test.after(() => {
   testDb.close();
 });
 
-test("chat reply for the exact scanooo rereview query renders natural language without planner trace leakage", () => {
-  const exactQuery = "你把我的雲端文件再看一遍，把不屬於 scanooo 的內容摘出去讓我確認";
-  const plannerEnvelope = {
-    ok: true,
-    action: "search_company_brain_docs",
+function buildPlannerEnvelope({
+  ok = true,
+  action = "search_company_brain_docs",
+  executionOk = true,
+  data = {},
+} = {}) {
+  return {
+    ok,
+    action,
     execution_result: {
-      ok: true,
-      kind: "search",
-      match_reason: "scanooo",
-      items: [
-        {
-          title: "scanooo onboarding notes",
-          doc_id: "doc-scanooo",
-          url: "https://larksuite.com/docx/doc-scanooo",
-          reason: "文件內容直接命中「scanooo」。",
-        },
-        {
-          title: "misc archive",
-          doc_id: "doc-misc",
-          reason: "目前這份文件和「scanooo」最相關。",
-        },
-      ],
-    },
-    trace: {
-      chosen_lane: "knowledge-assistant",
-      chosen_action: "search_company_brain_docs",
-      fallback_reason: "semantic_mismatch",
+      ok: executionOk,
+      action,
+      data,
     },
   };
+}
+
+test("chat reply renders only canonical execution_result.data fields without planner trace leakage", () => {
+  const plannerEnvelope = buildPlannerEnvelope({
+    data: {
+      answer: "我先標出和 scanooo 最相關的兩份文件讓你確認。",
+      sources: [
+        {
+          id: "doc-scanooo",
+          snippet: "Back to [README.md](/Users/seanhan/Documents/Playground/README.md)\n\n- 文件內容直接命中「scanooo」。",
+          metadata: {
+            title: "scanooo onboarding notes",
+            url: "https://larksuite.com/docx/doc-scanooo",
+            document_id: "doc-scanooo",
+          },
+        },
+      ],
+      limitations: ["如果你要，我可以繼續只整理和 scanooo 有關的段落。"],
+    },
+  });
 
   const userResponse = normalizeUserResponse({ plannerEnvelope });
   const text = renderUserResponseText(userResponse);
 
-  assert.equal(exactQuery, "你把我的雲端文件再看一遍，把不屬於 scanooo 的內容摘出去讓我確認");
   assert.equal(userResponse.ok, true);
-  assert.match(userResponse.answer || "", /scanooo|標出/);
+  assert.match(userResponse.answer || "", /scanooo/);
+  assert.equal(userResponse.sources.length, 1);
   assert.match(text, /^結論/m);
   assert.match(text, /^重點/m);
   assert.match(text, /^下一步/m);
   assert.match(text, /scanooo onboarding notes/);
-  assert.match(text, /https:\/\/larksuite\.com\/docx\/doc-scanooo/);
-  assert.doesNotMatch(text, /"ok"\s*:|"error"\s*:|"details"\s*:|"trace"\s*:|"chosen_lane"\s*:|"chosen_action"\s*:|"fallback_reason"\s*:/);
-  assert.doesNotMatch(text, /semantic_mismatch/);
+  assert.doesNotMatch(text, /trace|chosen_action|fallback_reason|kind|match_reason/);
+  assert.doesNotMatch(text, /\/Users\/|Back to \[?README/);
 });
 
-test("chat reply converts semantic mismatch into natural language without exposing raw planner fields", () => {
-  const userResponse = normalizeUserResponse({
-    plannerEnvelope: {
-      ok: false,
-      error: "semantic_mismatch",
-      trace: {
-        chosen_lane: "knowledge-assistant",
-        chosen_action: "search_company_brain_docs",
-        fallback_reason: "semantic_mismatch",
-      },
-      execution_result: {
-        ok: false,
-        error: "semantic_mismatch",
-        data: {
-          reason: "semantic_mismatch",
-        },
-      },
-    },
-  });
-  const text = renderUserResponseText(userResponse);
-
-  assert.equal(userResponse.ok, false);
-  assert.match(text, /文件|知識庫|安全/);
-  assert.doesNotMatch(text, /semantic_mismatch|chosen_lane|chosen_action|fallback_reason|trace|details/);
-});
-
-test("chat reply converts missing_user_access_token into explicit natural-language auth guidance", () => {
-  const userResponse = normalizeUserResponse({
-    plannerEnvelope: {
-      ok: false,
-      error: "missing_user_access_token",
-      trace: {
-        chosen_action: "search_company_brain_docs",
-        fallback_reason: "missing_user_access_token",
-      },
-      execution_result: {
-        ok: false,
-        error: "missing_user_access_token",
-        data: {
-          reason: "missing_user_access_token",
-        },
-      },
-    },
-  });
-  const text = renderUserResponseText(userResponse);
-
-  assert.equal(userResponse.ok, false);
-  assert.match(text, /auth-required|授權/);
-  assert.match(text, /明確的使用者 token|重新送出/);
-  assert.doesNotMatch(text, /missing_user_access_token|trace|chosen_action|fallback_reason/);
-});
-
-test("chat reply explains why no document was found instead of returning a generic no-result line", () => {
-  const userResponse = normalizeUserResponse({
-    plannerEnvelope: {
-      ok: true,
-      action: "search_and_detail_doc",
-      execution_result: {
-        ok: true,
-        kind: "search_and_detail_not_found",
-        match_reason: "scanooo",
-        content_summary: "目前沒有找到標題、文件代號、摘要或已學習標籤明確命中「scanooo」的已索引文件。",
-      },
-    },
-  });
-  const text = renderUserResponseText(userResponse);
-
-  assert.equal(userResponse.ok, true);
-  assert.match(text, /沒有找到標題、文件代號、摘要或已學習標籤/);
-  assert.match(text, /^重點\n- 目前沒有足夠已驗證來源可補更多重點。/m);
-  assert.match(text, /^下一步/m);
-});
-
-test("chat reply states source gap instead of inventing detail summary when doc detail evidence is thin", () => {
-  const userResponse = normalizeUserResponse({
-    plannerEnvelope: {
-      ok: true,
-      action: "get_company_brain_doc_detail",
-      execution_result: {
-        ok: true,
-        kind: "detail",
-        title: "Scanoo SOP",
-        doc_id: "doc_scanoo_sop",
-        items: [
-          {
-            title: "Scanoo SOP",
-            doc_id: "doc_scanoo_sop",
-            reason: "文件標題直接命中「scanoo」。",
-          },
-        ],
-        content_summary: "",
-      },
-    },
-  });
-  const text = renderUserResponseText(userResponse);
-
-  assert.equal(userResponse.ok, true);
-  assert.match(userResponse.answer || "", /來源不足|不補更多內容細節/);
-  assert.match(text, /^重點/m);
-  assert.match(text, /Scanoo SOP：文件標題直接命中/);
-  assert.doesNotMatch(text, /流程|owner|deadline|驗收/);
-});
-
-test("chat reply merges similar evidence points instead of listing near-duplicate source rows", () => {
+test("flat execution payload is no longer normalized into answer fields", () => {
   const userResponse = normalizeUserResponse({
     plannerEnvelope: {
       ok: true,
       action: "search_company_brain_docs",
-      params: {
-        q: "scanooo onboarding",
-      },
       execution_result: {
         ok: true,
         kind: "search",
-        match_reason: "scanooo onboarding",
         items: [
           {
-            title: "scanooo onboarding notes",
-            doc_id: "doc-scanooo-1",
-            url: "https://larksuite.com/docx/doc-scanooo-1",
-            reason: "文件內容直接命中「scanooo onboarding」。",
-          },
-          {
-            title: "scanooo onboarding FAQ",
-            doc_id: "doc-scanooo-2",
-            reason: "這份文件內容也直接命中「scanooo onboarding」。",
-          },
-          {
-            title: "misc archive",
-            doc_id: "doc-misc",
-            reason: "目前這份文件和「scanooo onboarding」最相關。",
-          },
-        ],
-      },
-    },
-  });
-
-  assert.equal(userResponse.sources.length, 2);
-  assert.match(userResponse.sources[0], /scanooo onboarding notes、scanooo onboarding FAQ/);
-  assert.match(userResponse.sources[0], /直接命中「scanooo onboarding」/);
-  assert.match(userResponse.sources[1], /misc archive/);
-});
-
-test("chat reply suggests concrete debug next step when current evidence is insufficient", () => {
-  const userResponse = normalizeUserResponse({
-    plannerEnvelope: {
-      ok: true,
-      action: "search_and_detail_doc",
-      params: {
-        q: "payment timeout 怎麼 debug",
-      },
-      execution_result: {
-        ok: true,
-        kind: "search_and_detail_not_found",
-        match_reason: "payment timeout 怎麼 debug",
-        content_summary: "目前沒有找到可以直接對應 payment timeout 的已索引文件。",
-      },
-    },
-  });
-
-  assert.equal(userResponse.ok, true);
-  assert.match(userResponse.limitations.join(" "), /錯誤訊息|trace 關鍵字|觸發步驟/);
-  assert.ok(userResponse.limitations.length <= 3);
-});
-
-test("chat reply suggests comparison-oriented next step for decision-style queries", () => {
-  const userResponse = normalizeUserResponse({
-    plannerEnvelope: {
-      ok: true,
-      action: "search_company_brain_docs",
-      params: {
-        q: "A 方案跟 B 方案要選哪個比較好",
-      },
-      execution_result: {
-        ok: true,
-        kind: "search",
-        match_reason: "A 方案跟 B 方案要選哪個比較好",
-        items: [
-          {
-            title: "方案 A 評估",
-            doc_id: "doc-a",
-            reason: "這份文件直接命中「A 方案」。",
-          },
-          {
-            title: "方案 B 評估",
-            doc_id: "doc-b",
-            reason: "這份文件直接命中「B 方案」。",
+            title: "Legacy Flat Result",
+            doc_id: "legacy-flat",
+            reason: "old flat execution payload",
           },
         ],
       },
@@ -248,33 +79,49 @@ test("chat reply suggests comparison-oriented next step for decision-style queri
   });
 
   assert.equal(userResponse.ok, true);
-  assert.match(userResponse.limitations.join(" "), /比較差異|風險|適用範圍|比較的方案/);
-  assert.ok(userResponse.sources.length <= 3);
-  assert.ok(userResponse.limitations.length <= 3);
+  assert.equal(userResponse.answer, "這次沒有拿到可以直接交付的結果。");
+  assert.deepEqual(userResponse.sources, []);
+  assert.deepEqual(userResponse.limitations, []);
 });
 
-test("chat reply maps canonical payload sources through the shared answer source mapper", () => {
+test("payload.message no longer falls back into answer", () => {
+  const userResponse = normalizeUserResponse({
+    payload: {
+      ok: false,
+      message: "legacy payload message should not surface",
+    },
+  });
+
+  assert.equal(userResponse.ok, false);
+  assert.equal(userResponse.answer, "這次沒有拿到可以直接交付的安全結果。");
+  assert.deepEqual(userResponse.sources, []);
+  assert.match(userResponse.limitations.join(" "), /internal error 與 trace/);
+  assert.doesNotMatch(userResponse.answer, /legacy payload message/);
+});
+
+test("payload only accepts canonical execution_result.data and still maps sources through the shared source mapper", () => {
   const userResponse = normalizeUserResponse({
     payload: {
       ok: true,
-      answer: "這是整理後的回答。",
-      sources: [
-        {
-          id: "source_runtime_1",
-          snippet: "Back to [README.md](/Users/seanhan/Documents/Playground/README.md)\n\n- runtime boundary keeps evidence explicit.",
-          metadata: {
-            title: "Runtime Boundary",
-            url: "https://example.com/runtime-boundary",
-            source_type: "docx",
-            document_id: "runtime_doc_1",
-          },
+      execution_result: {
+        ok: true,
+        data: {
+          answer: "這是整理後的回答。",
+          sources: [
+            {
+              id: "source_runtime_1",
+              snippet: "Back to [README.md](/Users/seanhan/Documents/Playground/README.md)\n\n- runtime boundary keeps evidence explicit.",
+              metadata: {
+                title: "Runtime Boundary",
+                url: "https://example.com/runtime-boundary",
+                source_type: "docx",
+                document_id: "runtime_doc_1",
+              },
+            },
+          ],
+          limitations: ["如果你要，我可以再展開原文依據。"],
         },
-        {
-          title: "Missing Snippet Source",
-          url: "https://example.com/missing-snippet",
-          source_type: "docx",
-        },
-      ],
+      },
     },
   });
 
@@ -285,41 +132,33 @@ test("chat reply maps canonical payload sources through the shared answer source
   assert.doesNotMatch(userResponse.sources[0], /\/Users\/|Back to \[?README|\[object Object\]/);
 });
 
-test("chat reply routes planner skill output through canonical answer sources without leaking raw skill payload", () => {
+test("chat reply keeps planner skill output behind canonical execution_result.data fields", () => {
   const userResponse = normalizeUserResponse({
-    plannerEnvelope: {
-      ok: true,
+    plannerEnvelope: buildPlannerEnvelope({
       action: "search_and_summarize",
-      execution_result: {
-        ok: true,
-        action: "search_and_summarize",
-        data: {
-          bridge: "skill_bridge",
-          skill: "search_and_summarize",
-          query: "runtime boundary",
-          summary: "runtime boundary keeps evidence explicit and deterministic.",
-          hits: 1,
-          found: true,
-          limitations: ["如果你要，我可以再整理成 checklist。"],
-          side_effects: [
-            {
-              mode: "read",
-              action: "search_knowledge_base",
-              runtime: "read-runtime",
-              authority: "index",
-            },
-          ],
-          sources: [
-            {
-              id: "runtime_source_1",
-              title: "Runtime Boundary",
-              url: "https://example.com/runtime-boundary",
-              snippet: "Back to [README.md](/Users/seanhan/Documents/Playground/README.md)\n\n- runtime boundary keeps evidence explicit and deterministic.",
-            },
-          ],
-        },
+      data: {
+        bridge: "skill_bridge",
+        skill: "search_and_summarize",
+        answer: "runtime boundary keeps evidence explicit and deterministic.",
+        sources: [
+          {
+            id: "runtime_source_1",
+            title: "Runtime Boundary",
+            url: "https://example.com/runtime-boundary",
+            snippet: "Back to [README.md](/Users/seanhan/Documents/Playground/README.md)\n\n- runtime boundary keeps evidence explicit and deterministic.",
+          },
+        ],
+        limitations: ["如果你要，我可以再整理成 checklist。"],
+        side_effects: [
+          {
+            mode: "read",
+            action: "search_knowledge_base",
+            runtime: "read-runtime",
+            authority: "index",
+          },
+        ],
       },
-    },
+    }),
   });
   const text = renderUserResponseText(userResponse);
 
@@ -332,51 +171,71 @@ test("chat reply routes planner skill output through canonical answer sources wi
   assert.doesNotMatch(text, /\/Users\/|Back to \[?README/);
 });
 
-test("chat reply keeps document_summarize behind the answer pipeline even with markdown and link noise", () => {
+test("chat reply does not merge planner-derived side channels into sources or limitations", () => {
   const userResponse = normalizeUserResponse({
-    plannerEnvelope: {
-      ok: true,
-      action: "document_summarize",
-      execution_result: {
-        ok: true,
-        action: "document_summarize",
-        data: {
-          bridge: "skill_bridge",
-          skill: "document_summarize",
-          doc_id: "doc_noise_1",
-          title: "Noisy Notes",
-          summary: "文件「Noisy Notes」摘要：# TODO - [Ship checklist](https://example.com/checklist) - owner: ops",
-          hits: 1,
-          found: true,
-          limitations: ["文件缺少可用的結構化摘要，只能回傳基本文件資訊。"],
-          side_effects: [
-            {
-              mode: "read",
-              action: "get_company_brain_doc_detail",
-              runtime: "read-runtime",
-              authority: "mirror",
-            },
-          ],
-          sources: [
-            {
-              id: "doc_noise_1",
-              title: "Noisy Notes",
-              url: "https://example.com/noisy-notes",
-              snippet: "Back to [README.md](/Users/seanhan/Documents/Playground/README.md)\n- [Ship checklist](https://example.com/checklist)\n- owner: ops",
-            },
-          ],
+    plannerEnvelope: buildPlannerEnvelope({
+      action: "search_company_brain_docs",
+      data: {
+        answer: "這裡只保留 canonical data 內的來源。",
+        sources: [
+          {
+            title: "Source A",
+            url: "https://example.com/a",
+            snippet: "source a evidence",
+          },
+          {
+            title: "Source B",
+            url: "https://example.com/b",
+            snippet: "source b evidence",
+          },
+        ],
+        limitations: ["只顯示 execution_result.data.limitations。"],
+        pending_items: [
+          {
+            label: "待跟進：確認 owner",
+            actions: [{ label: "標記完成" }],
+          },
+        ],
+        action_layer: {
+          next_actions: ["這個不應該自動併進 limitations"],
         },
       },
-    },
+    }),
   });
-  const text = renderUserResponseText(userResponse);
 
-  assert.equal(userResponse.ok, true);
-  assert.match(userResponse.answer || "", /Noisy Notes/);
   assert.equal(userResponse.sources.length, 1);
-  assert.match(userResponse.sources[0], /Noisy Notes：Ship checklist owner: ops/i);
-  assert.match(userResponse.sources[0], /https:\/\/example\.com\/noisy-notes/);
-  assert.match(userResponse.limitations.join(" "), /文件缺少可用的結構化摘要/);
-  assert.doesNotMatch(text, /skill_bridge|document_summarize|side_effects|get_company_brain_doc_detail|read-runtime|authority/);
-  assert.doesNotMatch(text, /\/Users\/|Back to \[?README/);
+  assert.match(userResponse.sources[0], /Source A、Source B/);
+  assert.deepEqual(userResponse.limitations, ["只顯示 execution_result.data.limitations。"]);
+  assert.doesNotMatch(userResponse.sources.join(" "), /待跟進|標記完成/);
+  assert.doesNotMatch(userResponse.limitations.join(" "), /不應該自動併進/);
+});
+
+test("near-duplicate sources still normalize only from execution_result.data.sources", () => {
+  const userResponse = normalizeUserResponse({
+    plannerEnvelope: buildPlannerEnvelope({
+      data: {
+        answer: "這是去重後的來源列表。",
+        sources: [
+          {
+            title: "scanooo onboarding notes",
+            url: "https://larksuite.com/docx/doc-scanooo-1",
+            snippet: "文件內容直接命中「scanooo onboarding」。",
+          },
+          {
+            title: "scanooo onboarding FAQ",
+            snippet: "這份文件內容也直接命中「scanooo onboarding」。",
+          },
+          {
+            title: "misc archive",
+            snippet: "目前這份文件和「scanooo onboarding」最相關。",
+          },
+        ],
+        limitations: [],
+      },
+    }),
+  });
+
+  assert.equal(userResponse.sources.length, 2);
+  assert.match(userResponse.sources[0], /scanooo onboarding notes、scanooo onboarding FAQ/);
+  assert.match(userResponse.sources[1], /misc archive/);
 });

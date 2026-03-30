@@ -195,7 +195,7 @@ Current checked-in answer:
 Current checked-in effect:
 
 - raw skill fields such as `bridge`, `side_effects`, selector metadata, and internal trace state are not rendered directly to users
-- deterministic skill summaries are adapted into canonical `answer / sources / limitations`
+- user-facing replies must come from canonical `execution_result.data.answer / sources / limitations`
 
 ## Isolation Rules
 

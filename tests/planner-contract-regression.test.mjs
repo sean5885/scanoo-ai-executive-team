@@ -307,6 +307,7 @@ for (const fixture of fixtures) {
       assertSchema(record.contractName, record.value);
       if (record.contractName === "planner_tool_flow_output") {
         assert.equal("synthetic_agent_hint" in record.value, true, "planner_tool_flow_output missing synthetic_agent_hint");
+        assert.equal("formatted_output" in record.value, true, "planner_tool_flow_output missing formatted_output");
         assert.equal("agent_execution" in record.value, false, "planner_tool_flow_output should not expose agent_execution");
       }
       assertKnownRoutingReason(record.value?.routing_reason);

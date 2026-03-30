@@ -91,6 +91,8 @@ Current-truth docs for onboarding are:
   - `GET /answer` no longer uses `answer-service.mjs` as its primary route
   - public answer generation goes through planner execution first
   - final HTTP/chat response is normalized into `answer -> sources -> limitations`
+  - `user-response-normalizer.mjs` now only reads canonical `execution_result.data.answer / sources / limitations`
+  - `renderUserResponseText(...)` renders an already-canonical `{ answer, sources, limitations }` object directly without re-normalizing legacy payload shapes
   - planner/read evidence is converted into public `sources[]` lines through canonical source mapping
 - Secondary implemented path:
   - `/Users/seanhan/Documents/Playground/src/answer-service.mjs`

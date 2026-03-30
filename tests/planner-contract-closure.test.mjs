@@ -69,6 +69,16 @@ function makeSourceItem(title, url, snippet) {
   };
 }
 
+function adaptEnvelopeForCurrentNormalizer(envelope = {}, executionData = {}) {
+  return {
+    ...envelope,
+    execution_result: {
+      ...(envelope?.execution_result && typeof envelope.execution_result === "object" ? envelope.execution_result : {}),
+      data: executionData,
+    },
+  };
+}
+
 test("planner contract closure keeps every router literal target and routing reason declared", () => {
   const routingReasons = scanLiteralFieldValues(routerSource, "routingReason");
   const actions = scanLiteralFieldValues(routerSource, "action");
@@ -90,6 +100,15 @@ test("runtime-info naming stays canonical across planner envelope and answer bou
     params: {},
     execution_result: {
       ok: true,
+      action: "get_runtime_info",
+      data: {
+        db_path: "/tmp/runtime-closure.sqlite",
+        node_pid: 4321,
+        cwd: "/tmp/runtime-closure",
+        service_start_time: "2026-03-27T15:00:00.000Z",
+      },
+    },
+    formatted_output: {
       kind: "runtime_info",
       db_path: "/tmp/runtime-closure.sqlite",
       node_pid: 4321,
@@ -109,11 +128,17 @@ test("runtime-info naming stays canonical across planner envelope and answer bou
     "selected_action",
     "chosen_action",
   ]);
-  const userResponse = normalizeUserResponse({ plannerEnvelope });
+  const userResponse = normalizeUserResponse({
+    plannerEnvelope: adaptEnvelopeForCurrentNormalizer(plannerEnvelope, {
+      answer: "目前 runtime 有正常回應。資料庫路徑在 /tmp/runtime-closure.sqlite。 目前 PID 是 4321。 工作目錄是 /tmp/runtime-closure。",
+      sources: ["runtime 即時狀態：這份回覆直接來自目前 process 的即時資訊。"],
+      limitations: ["這是啟動於 2026-03-27T15:00:00.000Z 的即時 runtime 快照。"],
+    }),
+  });
   const text = renderUserResponseText(userResponse);
 
   assert.equal(plannerEnvelope.action, "get_runtime_info");
-  assert.equal(plannerEnvelope.execution_result?.kind, "runtime_info");
+  assert.equal(plannerEnvelope.formatted_output?.kind, "runtime_info");
   assert.ok(actionSlots.includes("get_runtime_info"));
   assert.equal(actionSlots.includes("runtime_info"), false);
   assert.equal(JSON.stringify(userResponse).includes("get_runtime_info"), false);
@@ -131,6 +156,19 @@ test("canonical planner envelope survives planner -> answer -> registered-agent 
     },
     execution_result: {
       ok: true,
+      action: "search_company_brain_docs",
+      data: {
+        items: [
+          {
+            title: "Launch Checklist",
+            doc_id: "doc_launch_checklist",
+            url: "https://example.com/launch-checklist",
+            reason: "文件內容直接命中「launch checklist」，且 owner / deadline 欄位都有明確列出。",
+          },
+        ],
+      },
+    },
+    formatted_output: {
       kind: "search",
       match_reason: "launch checklist",
       items: [
@@ -149,7 +187,19 @@ test("canonical planner envelope survives planner -> answer -> registered-agent 
     },
     trace_id: "trace_search_closure",
   });
-  const userResponse = normalizeUserResponse({ plannerEnvelope });
+  const userResponse = normalizeUserResponse({
+    plannerEnvelope: adaptEnvelopeForCurrentNormalizer(plannerEnvelope, {
+      answer: "我已先按目前已索引的文件，標出和「launch checklist」最相關的 1 份文件。",
+      sources: [
+        {
+          title: "Launch Checklist",
+          url: "https://example.com/launch-checklist",
+          snippet: "文件內容直接命中 launch checklist，且 owner / deadline 欄位都有明確列出。",
+        },
+      ],
+      limitations: ["如果你要，我可以再沿著這份文件補更多原文依據。"],
+    }),
+  });
   const agent = getRegisteredAgent("cmo");
   const result = await executeRegisteredAgent({
     accountId: "acct-1",
@@ -168,12 +218,12 @@ test("canonical planner envelope survives planner -> answer -> registered-agent 
       };
     },
     async textGenerator() {
-      return JSON.stringify(userResponse);
+      return renderUserResponseText(userResponse);
     },
   });
 
   assert.equal(plannerEnvelope.action, "search_company_brain_docs");
-  assert.equal(plannerEnvelope.execution_result?.kind, "search");
+  assert.equal(plannerEnvelope.formatted_output?.kind, "search");
   assert.equal(userResponse.ok, true);
   assert.equal(Array.isArray(userResponse.sources), true);
   assert.equal(Array.isArray(userResponse.limitations), true);

@@ -919,6 +919,7 @@ export function buildPlannedUserInputUserFacingReply(result = {}) {
 function derivePlannerUnfinishedItems({
   selection = {},
   executionResult = null,
+  formattedOutput = null,
 } = {}) {
   const items = [];
   if (!cleanText(selection?.selected_action)) {
@@ -942,7 +943,10 @@ function derivePlannerUnfinishedItems({
     return items;
   }
 
-  const formatterKind = cleanText(executionResult?.formatted_output?.kind || "");
+  const effectiveFormattedOutput = formattedOutput && typeof formattedOutput === "object" && !Array.isArray(formattedOutput)
+    ? formattedOutput
+    : executionResult?.formatted_output;
+  const formatterKind = cleanText(effectiveFormattedOutput?.kind || "");
   if (formatterKind === "search_and_detail_candidates") {
     items.push({
       type: "candidate_selection",
@@ -2001,6 +2005,7 @@ export function resolvePlannerAgentExecution({
 function buildPlannerAgentOutput({
   selectedAction = null,
   executionResult = null,
+  formattedOutput = null,
   traceId = null,
   routingReason = null,
   taskType = "",
@@ -2009,6 +2014,7 @@ function buildPlannerAgentOutput({
   return {
     selected_action: selectedAction,
     execution_result: executionResult,
+    formatted_output: normalizePlannerFormattedOutput(formattedOutput),
     routing_reason: normalizePlannerRoutingReason(routingReason) || null,
     synthetic_agent_hint: resolvePlannerAgentExecution({
       taskType,
@@ -2019,35 +2025,24 @@ function buildPlannerAgentOutput({
   };
 }
 
-function attachPlannerPendingItems({
-  executionResult = null,
-  lifecycleSnapshot = null,
-} = {}) {
-  if (!executionResult || typeof executionResult !== "object") {
-    return executionResult;
+function normalizePlannerFormattedOutput(formattedOutput = null) {
+  if (formattedOutput && typeof formattedOutput === "object" && !Array.isArray(formattedOutput)) {
+    return { ...formattedOutput };
   }
-  const formattedOutput = executionResult?.formatted_output;
-  if (!formattedOutput || typeof formattedOutput !== "object") {
-    return executionResult;
-  }
-
-  const pendingItems = buildPlannerLifecycleUnfinishedItems(lifecycleSnapshot);
-  return {
-    ...executionResult,
-    formatted_output: {
-      ...formattedOutput,
-      pending_items: pendingItems,
-    },
-  };
+  return null;
 }
 
-export function buildPlannerPendingItemActionResult({
+function extractPlannerFormattedOutput(executionResult = null) {
+  return normalizePlannerFormattedOutput(executionResult?.formatted_output);
+}
+
+function buildPlannerPendingItemActionFormattedOutput({
   actionResult = null,
   task = null,
   userIntent = "",
 } = {}) {
   if (!actionResult || typeof actionResult !== "object") {
-    return actionResult;
+    return null;
   }
   const title = cleanText(task?.title) || "未命名 pending item";
   const pendingItems = Array.isArray(actionResult?.data?.pending_items) ? actionResult.data.pending_items : [];
@@ -2055,36 +2050,78 @@ export function buildPlannerPendingItemActionResult({
     ? `已將「${title}」標記完成。`
     : "已將這個 pending item 標記完成。";
   return {
-    ...actionResult,
-    formatted_output: {
-      kind: "pending_item_action",
+    kind: "pending_item_action",
+    title,
+    doc_id: cleanText(task?.id) || null,
+    items: pendingItems
+      .map((item) => ({
+        title: cleanText(item?.label || ""),
+        doc_id: cleanText(item?.item_id || item?.id || "") || null,
+      }))
+      .filter((item) => item.title || item.doc_id)
+      .slice(0, 5),
+    match_reason: cleanText(userIntent) || null,
+    content_summary: summary,
+    found: true,
+    resolved_item: {
       title,
-      doc_id: cleanText(task?.id) || null,
-      items: pendingItems
-        .map((item) => ({
-          title: cleanText(item?.label || ""),
-          doc_id: cleanText(item?.item_id || item?.id || "") || null,
-        }))
-        .filter((item) => item.title || item.doc_id)
-        .slice(0, 5),
-      match_reason: cleanText(userIntent) || null,
-      content_summary: summary,
-      found: true,
-      resolved_item: {
-        title,
-        item_id: cleanText(task?.id) || null,
-        status: cleanText(actionResult?.data?.status || "") || "resolved",
-      },
-      pending_items: pendingItems,
-      action_layer: {
-        summary,
-        next_actions: pendingItems.map((item) => cleanText(item?.label)).filter(Boolean).slice(0, 5),
-        owner: cleanText(task?.owner) || null,
-        deadline: cleanText(task?.deadline) || null,
-        risks: Array.isArray(task?.risks) ? task.risks : [],
-        status: cleanText(actionResult?.data?.status || "") || "resolved",
-      },
+      item_id: cleanText(task?.id) || null,
+      status: cleanText(actionResult?.data?.status || "") || "resolved",
     },
+    pending_items: pendingItems,
+    action_layer: {
+      summary,
+      next_actions: pendingItems.map((item) => cleanText(item?.label)).filter(Boolean).slice(0, 5),
+      owner: cleanText(task?.owner) || null,
+      deadline: cleanText(task?.deadline) || null,
+      risks: Array.isArray(task?.risks) ? task.risks : [],
+      status: cleanText(actionResult?.data?.status || "") || "resolved",
+    },
+  };
+}
+
+function buildPlannerFormattedOutput({
+  executionResult = null,
+  formattedOutput = null,
+  lifecycleSnapshot = null,
+} = {}) {
+  const baseFormattedOutput = normalizePlannerFormattedOutput(formattedOutput)
+    || extractPlannerFormattedOutput(executionResult);
+  const pendingItems = buildPlannerLifecycleUnfinishedItems(lifecycleSnapshot);
+
+  if (!baseFormattedOutput) {
+    return null;
+  }
+
+  if (pendingItems.length === 0) {
+    return baseFormattedOutput;
+  }
+
+  return {
+    ...baseFormattedOutput,
+    pending_items: pendingItems,
+  };
+}
+
+export function buildPlannerPendingItemActionResult({
+  actionResult = null,
+  task = null,
+  userIntent = "",
+  embedFormattedOutput = true,
+} = {}) {
+  if (!actionResult || typeof actionResult !== "object") {
+    return actionResult;
+  }
+  if (embedFormattedOutput !== true) {
+    return actionResult;
+  }
+  return {
+    ...actionResult,
+    formatted_output: buildPlannerPendingItemActionFormattedOutput({
+      actionResult,
+      task,
+      userIntent,
+    }),
   };
 }
 
@@ -3906,6 +3943,7 @@ export async function runPlannerToolFlow({
   });
 
   let executionResult = null;
+  let formattedOutput = null;
   let traceId = null;
   let lifecycleSnapshot = taskLifecycleFollowUp?.snapshot || null;
   const selectionAction = cleanText(selection?.selected_action || "");
@@ -3945,6 +3983,7 @@ export async function runPlannerToolFlow({
   if (!executionResult && selection.selected_action) {
     if (taskLifecycleFollowUp?.execution_result) {
       executionResult = taskLifecycleFollowUp.execution_result;
+      formattedOutput = extractPlannerFormattedOutput(executionResult);
       traceId = executionResult?.trace_id || null;
     } else if (selection.selected_action === "mark_resolved") {
       const pendingItemAction = taskLifecycleFollowUp?.pending_item_action || null;
@@ -3954,6 +3993,12 @@ export async function runPlannerToolFlow({
       });
       if (actionResult?.ok === true) {
         executionResult = buildPlannerPendingItemActionResult({
+          actionResult,
+          task: pendingItemAction?.task || null,
+          userIntent: agentInput.user_intent,
+          embedFormattedOutput: false,
+        });
+        formattedOutput = buildPlannerPendingItemActionFormattedOutput({
           actionResult,
           task: pendingItemAction?.task || null,
           userIntent: agentInput.user_intent,
@@ -4050,6 +4095,8 @@ export async function runPlannerToolFlow({
       logger,
       sessionKey,
     });
+    formattedOutput = normalizePlannerFormattedOutput(formattedOutput)
+      || extractPlannerFormattedOutput(executionResult);
   }
   throwIfPlannerSignalAborted(signal);
   traceId = executionResult?.trace_id || traceId || null;
@@ -4097,8 +4144,9 @@ export async function runPlannerToolFlow({
   if (selection.selected_action === "mark_resolved") {
     lifecycleSnapshot = await getLatestPlannerTaskLifecycleSnapshot();
   }
-  executionResult = attachPlannerPendingItems({
+  formattedOutput = buildPlannerFormattedOutput({
     executionResult,
+    formattedOutput,
     lifecycleSnapshot,
   });
 
@@ -4113,6 +4161,7 @@ export async function runPlannerToolFlow({
       derivePlannerUnfinishedItems({
         selection,
         executionResult,
+        formattedOutput,
       }),
       buildPlannerLifecycleUnfinishedItems(lifecycleSnapshot),
     ),
@@ -4126,6 +4175,7 @@ export async function runPlannerToolFlow({
   const plannerOutput = buildPlannerAgentOutput({
     selectedAction: selection.selected_action,
     executionResult,
+    formattedOutput,
     traceId,
     routingReason: selectionRoutingReason,
     taskType,
@@ -6524,6 +6574,7 @@ export async function executePlannedUserInput({
       ok: false,
       error: preAbortInfo.code,
       execution_result: null,
+      formatted_output: null,
       trace_id: null,
       why: null,
       alternative: normalizeDecisionAlternative(null),
@@ -6583,6 +6634,7 @@ export async function executePlannedUserInput({
           reroutedResult = buildPlannerAgentOutput({
             selectedAction: null,
             executionResult: abortedResult,
+            formattedOutput: null,
             traceId: abortedResult.trace_id || null,
             routingReason: "semantic_mismatch_reroute_aborted",
           });
@@ -6608,6 +6660,9 @@ export async function executePlannedUserInput({
               params: null,
               error: cleanText(reroutedResult?.execution_result?.error || "") || null,
               execution_result: reroutedResult?.execution_result || null,
+              formatted_output: normalizePlannerFormattedOutput(
+                reroutedResult?.formatted_output || extractPlannerFormattedOutput(reroutedResult?.execution_result),
+              ),
               synthetic_agent_hint: reroutedResult?.synthetic_agent_hint || null,
               trace_id: reroutedResult?.trace_id || null,
               why: "原始 decision 與這輪需求不一致，所以先改走 reroute。",
@@ -6631,6 +6686,7 @@ export async function executePlannedUserInput({
       ok: false,
       ...decision,
       execution_result: null,
+      formatted_output: null,
       trace_id: null,
     };
   }
@@ -6683,6 +6739,7 @@ export async function executePlannedUserInput({
       steps: decision.steps,
       error: cleanText(runtimeResult?.error || "") || null,
       execution_result: runtimeResult || null,
+      formatted_output: null,
       trace_id: runtimeResult?.trace_id || null,
       why: cleanText(decision?.why || "") || null,
       alternative: normalizeDecisionAlternative(decision?.alternative),
@@ -6734,6 +6791,9 @@ export async function executePlannedUserInput({
     params: decision.params,
     error: cleanText(runtimeResult?.execution_result?.error || "") || null,
     execution_result: runtimeResult?.execution_result || null,
+    formatted_output: normalizePlannerFormattedOutput(
+      runtimeResult?.formatted_output || extractPlannerFormattedOutput(runtimeResult?.execution_result),
+    ),
     synthetic_agent_hint: runtimeResult?.synthetic_agent_hint || null,
     trace_id: runtimeResult?.trace_id || null,
     why: cleanText(decision?.why || "") || null,
@@ -6764,6 +6824,7 @@ export function buildPlannedUserInputEnvelope(result = {}) {
     return {
       ok: false,
       error: "planner_failed",
+      formatted_output: null,
       trace_id: null,
       trace: {
         chosen_action: null,
@@ -6802,6 +6863,7 @@ export function buildPlannedUserInputEnvelope(result = {}) {
       ...(result.semantics ? { semantics: result.semantics } : {}),
       why: reasoning.why,
       alternative: reasoning.alternative,
+      formatted_output: null,
       trace_id: result.trace_id || null,
       trace: {
         chosen_action: chosenAction,
@@ -6828,7 +6890,10 @@ export function buildPlannedUserInputEnvelope(result = {}) {
         }
       : {}),
     error: cleanText(result.error || "") || null,
-    execution_result: result.execution_result?.formatted_output || result.execution_result || null,
+    execution_result: result.execution_result || null,
+    formatted_output: normalizePlannerFormattedOutput(
+      result.formatted_output || extractPlannerFormattedOutput(result.execution_result),
+    ),
     why: reasoning.why,
     alternative: reasoning.alternative,
     trace_id: result.trace_id || null,

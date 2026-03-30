@@ -114,6 +114,14 @@ Resolved documentation drift and frozen-baseline clarifications were removed fro
      - `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`
      - `/Users/seanhan/Documents/Playground/src/http-idempotency-store.mjs`
 
+18. Planner envelope formatting and answer normalization are still on different seams.
+   - Why it matters:
+     - `execution_result` now stays raw while planner-facing `formatted_output` is exposed separately, and the checked-in answer normalizer now only reads canonical `execution_result.data.answer / sources / limitations`
+   - Current code evidence:
+     - `/Users/seanhan/Documents/Playground/src/executive-planner.mjs`
+     - `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
+     - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
+
 ## Cannot Be Confirmed From Code Alone
 
 - whether any hosted deployment exists outside the local machine

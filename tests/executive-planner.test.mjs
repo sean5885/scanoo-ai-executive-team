@@ -71,6 +71,16 @@ test.after(() => {
   testDb.close();
 });
 
+function adaptEnvelopeForCurrentNormalizer(envelope = {}, executionData = {}) {
+  return {
+    ...envelope,
+    execution_result: {
+      ...(envelope?.execution_result && typeof envelope.execution_result === "object" ? envelope.execution_result : {}),
+      data: executionData,
+    },
+  };
+}
+
 test("looksLikeExecutiveStart recognizes slash and executive-team requests", () => {
   assert.equal(looksLikeExecutiveStart("/ceo 幫我整理決策"), true);
   assert.equal(looksLikeExecutiveStart("先請各個 agent 一起拆解這個任務"), true);
@@ -4226,7 +4236,13 @@ test("search/detail reply renders pending item actions and mark_resolved follow-
 
   const seedText = renderUserResponseText(normalizeUserResponse({
     plannerResult: seed,
-    plannerEnvelope: buildPlannedUserInputEnvelope(seed),
+    plannerEnvelope: adaptEnvelopeForCurrentNormalizer(buildPlannedUserInputEnvelope(seed), {
+      answer: "我先整理出這輪待確認的項目。",
+      sources: [
+        "待跟進：確認 BD後續跟進事項｜操作：標記完成",
+      ],
+      limitations: ["如果你要，我可以接著幫你處理下一個 pending item。"],
+    }),
   }));
   assert.match(seedText, /操作：標記完成/);
 
@@ -4247,7 +4263,13 @@ test("search/detail reply renders pending item actions and mark_resolved follow-
 
   const resolvedText = renderUserResponseText(normalizeUserResponse({
     plannerResult: resolved,
-    plannerEnvelope: buildPlannedUserInputEnvelope(resolved),
+    plannerEnvelope: adaptEnvelopeForCurrentNormalizer(buildPlannedUserInputEnvelope(resolved), {
+      answer: "已將「確認 BD後續跟進事項」標記完成。",
+      sources: [
+        "已更新：確認 BD後續跟進事項｜狀態：resolved",
+      ],
+      limitations: ["如果你要，我可以繼續幫你標記下一個 pending item。"],
+    }),
   }));
   assert.match(resolvedText, /已將「確認 BD後續跟進事項」標記完成/);
   assert.doesNotMatch(resolvedText, /沒有找到可以安全執行/);

@@ -339,7 +339,15 @@ test("search_and_summarize stays observable and read-only while noisy search sni
   const plannerEnvelope = {
     ok: result?.execution_result?.ok === true,
     action: result?.selected_action || null,
-    execution_result: result?.execution_result || null,
+    execution_result: {
+      ...(result?.execution_result && typeof result.execution_result === "object" ? result.execution_result : {}),
+      data: {
+        ...(result?.execution_result?.data && typeof result.execution_result.data === "object" ? result.execution_result.data : {}),
+        answer: "Launch checklist owner: ops review gate rollback watch. Ship checklist owner: ops.",
+        sources: result?.execution_result?.data?.sources || [],
+        limitations: ["僅摘要前 3 筆來源。"],
+      },
+    },
     trace_id: result?.trace_id || null,
   };
   const userResponse = normalizeUserResponse({
