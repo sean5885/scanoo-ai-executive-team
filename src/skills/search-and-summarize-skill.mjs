@@ -188,7 +188,7 @@ export const searchAndSummarizeSkill = createSkillDefinition({
         mode: "read",
         action: "search_knowledge_base",
         runtime: "read-runtime",
-        authority: cleanText(readExecution?.primary_authority) || null,
+        authority: cleanText(readExecution?.meta?.primary_authority) || null,
       },
     ];
 
@@ -199,15 +199,15 @@ export const searchAndSummarizeSkill = createSkillDefinition({
         side_effects: sideEffects,
         details: {
           phase: "read_runtime",
-          authorities_attempted: Array.isArray(readExecution?.authorities_attempted)
-            ? readExecution.authorities_attempted
+          authorities_attempted: Array.isArray(readExecution?.meta?.authorities_attempted)
+            ? readExecution.meta.authorities_attempted
             : [],
         },
       };
     }
 
-    const items = Array.isArray(readExecution?.result?.data?.items)
-      ? readExecution.result.data.items
+    const items = Array.isArray(readExecution?.data?.data?.items)
+      ? readExecution.data.data.items
       : [];
     const sources = items
       .slice(0, DEFAULT_SOURCE_PREVIEW_LIMIT)

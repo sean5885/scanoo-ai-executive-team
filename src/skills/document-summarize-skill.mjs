@@ -185,7 +185,7 @@ export const documentSummarizeSkill = createSkillDefinition({
         mode: "read",
         action: "get_company_brain_doc_detail",
         runtime: "read-runtime",
-        authority: cleanText(readExecution?.primary_authority) || null,
+        authority: cleanText(readExecution?.meta?.primary_authority) || null,
       },
     ];
 
@@ -196,15 +196,15 @@ export const documentSummarizeSkill = createSkillDefinition({
         side_effects: sideEffects,
         details: {
           phase: "read_runtime",
-          authorities_attempted: Array.isArray(readExecution?.authorities_attempted)
-            ? readExecution.authorities_attempted
+          authorities_attempted: Array.isArray(readExecution?.meta?.authorities_attempted)
+            ? readExecution.meta.authorities_attempted
             : [],
         },
       };
     }
 
-    const detail = readExecution?.result?.data && typeof readExecution.result.data === "object"
-      ? readExecution.result.data
+    const detail = readExecution?.data?.data && typeof readExecution.data.data === "object"
+      ? readExecution.data.data
       : {};
     const title = summarizeText(detail?.doc?.title, docId);
     const sources = [buildSourcePreview(detail)].slice(0, DEFAULT_SOURCE_PREVIEW_LIMIT);

@@ -404,14 +404,12 @@ export function buildPlannerSuccessUserResponse(envelope = {}) {
       ok: true,
       answer: summary || "目前 runtime 有正常回應。",
       sources: ["runtime 即時狀態：這份回覆直接來自目前 process 的即時資訊。"],
-      limitations: buildPlannerNextSteps({
-        envelope,
-        execution,
-        fallbacks: [
-        execution.service_start_time ? `這是啟動於 ${execution.service_start_time} 的即時 runtime 快照。` : "這是目前 runtime 的即時快照。",
-        ],
-        hasEvidence: true,
-      }),
+      limitations: normalizeUserResponseList([
+        execution.service_start_time
+          ? `這是啟動於 ${execution.service_start_time} 的即時 runtime 快照。`
+          : "這是目前 runtime 的即時快照。",
+        "如果你要，我可以接著幫你檢查最近錯誤、監控指標或目前有哪些受控路由可用。",
+      ]).slice(0, MAX_USER_FACING_NEXT_STEPS),
     };
   }
 

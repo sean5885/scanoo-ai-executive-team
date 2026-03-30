@@ -7,7 +7,7 @@ import {
   formatDocQueryExecutionResult,
   getPlannerDocQueryContext,
   resetPlannerDocQueryRuntimeContext,
-  selectDocQueryAction,
+  resolveDocQueryRoute,
   syncPlannerDocQueryContext,
 } from "./planner-doc-query-flow.mjs";
 
@@ -58,38 +58,56 @@ function isOkrQuery(userIntent = "") {
   return okrKeywords.some((keyword) => normalizedIntent.includes(keyword.toLowerCase()));
 }
 
-function selectOkrAction(userIntent = "", {
+function selectOkrRoute(userIntent = "", {
   activeTheme = "",
   activeDoc = null,
   activeCandidates = [],
+  logger = console,
 } = {}) {
   const normalizedIntent = cleanText(String(userIntent || ""));
-  const followupAction = selectDocQueryAction(normalizedIntent, {
+  const docQueryRoute = resolveDocQueryRoute({
+    userIntent: normalizedIntent,
+    payload: {},
     activeDoc,
     activeCandidates,
+    logger,
   });
+  const followupAction = cleanText(docQueryRoute?.selected_target || "");
+  const followupRoutingReason = cleanText(docQueryRoute?.routing_reason || "");
 
   if (!isOkrQuery(normalizedIntent)) {
     if (cleanText(activeTheme) === "okr") {
       if (followupAction === "get_company_brain_doc_detail" || followupAction === "search_and_detail_doc") {
-        return followupAction;
+        return {
+          action: followupAction,
+          routing_reason: followupRoutingReason || "doc_query_search_and_detail",
+        };
       }
     }
     return null;
   }
 
   if (followupAction === "get_company_brain_doc_detail" || followupAction === "search_and_detail_doc") {
-    return followupAction;
+    return {
+      action: followupAction,
+      routing_reason: followupRoutingReason || "doc_query_search_and_detail",
+    };
   }
 
   if (
     !hasDocSearchIntent(normalizedIntent)
     && /整理|解釋|说明|說明|重點|重点|進度|进度|todo|待辦|待办/.test(normalizedIntent)
   ) {
-    return "search_and_detail_doc";
+    return {
+      action: "search_and_detail_doc",
+      routing_reason: "doc_query_search_and_detail",
+    };
   }
 
-  return "search_company_brain_docs";
+  return {
+    action: "search_company_brain_docs",
+    routing_reason: "selector_search_company_brain_docs",
+  };
 }
 
 function buildOkrQuery(userIntent = "", payload = {}) {
@@ -131,11 +149,14 @@ export function resolveOkrFlowRoute({
   context = {},
   logger = console,
 } = {}) {
-  const action = selectOkrAction(userIntent, {
+  const selection = selectOkrRoute(userIntent, {
     activeTheme: context?.activeTheme,
     activeDoc: context?.activeDoc,
     activeCandidates: context?.activeCandidates,
+    logger,
   });
+  const action = cleanText(selection?.action || "");
+  const routingReason = cleanText(selection?.routing_reason || "") || "routing_no_match";
   const normalizedPayload = payload && typeof payload === "object" && !Array.isArray(payload) ? { ...payload } : {};
   if (action && !cleanText(normalizedPayload.q) && !cleanText(normalizedPayload.query)) {
     const okrQuery = buildOkrQuery(userIntent, normalizedPayload);
@@ -152,6 +173,7 @@ export function resolveOkrFlowRoute({
 
   return {
     ...buildOkrRouteResult(action, normalizedPayload),
+    routing_reason: routingReason,
   };
 }
 

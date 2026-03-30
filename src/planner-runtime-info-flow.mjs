@@ -81,6 +81,7 @@ export function resolveRuntimeInfoRoute({
   logger = console,
 } = {}) {
   const action = looksLikeRuntimeInfoQuery(userIntent) ? "get_runtime_info" : null;
+  const routingReason = action ? "selector_get_runtime_info" : "routing_no_match";
   logRuntimeInfoTrace(logger, buildRuntimeInfoTraceEvent({
     eventType: "runtime_info_route",
     userQuery: userIntent,
@@ -89,6 +90,7 @@ export function resolveRuntimeInfoRoute({
   }));
   return {
     action,
+    routing_reason: routingReason,
     payload: payload && typeof payload === "object" && !Array.isArray(payload) ? { ...payload } : {},
   };
 }

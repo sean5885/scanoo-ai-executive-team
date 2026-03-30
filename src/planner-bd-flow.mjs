@@ -7,7 +7,7 @@ import {
   formatDocQueryExecutionResult,
   getPlannerDocQueryContext,
   resetPlannerDocQueryRuntimeContext,
-  selectDocQueryAction,
+  resolveDocQueryRoute,
   syncPlannerDocQueryContext,
 } from "./planner-doc-query-flow.mjs";
 
@@ -56,35 +56,53 @@ function isBdQuery(userIntent = "") {
   return bdKeywords.some((keyword) => normalizedIntent.includes(keyword.toLowerCase()));
 }
 
-function selectBdAction(userIntent = "", {
+function selectBdRoute(userIntent = "", {
   activeTheme = "",
   activeDoc = null,
   activeCandidates = [],
+  logger = console,
 } = {}) {
   const normalizedIntent = cleanText(String(userIntent || ""));
-  const followupAction = selectDocQueryAction(normalizedIntent, {
+  const docQueryRoute = resolveDocQueryRoute({
+    userIntent: normalizedIntent,
+    payload: {},
     activeDoc,
     activeCandidates,
+    logger,
   });
+  const followupAction = cleanText(docQueryRoute?.selected_target || "");
+  const followupRoutingReason = cleanText(docQueryRoute?.routing_reason || "");
 
   if (!isBdQuery(normalizedIntent)) {
     if (cleanText(activeTheme) === "bd") {
       if (followupAction === "get_company_brain_doc_detail" || followupAction === "search_and_detail_doc") {
-        return followupAction;
+        return {
+          action: followupAction,
+          routing_reason: followupRoutingReason || "doc_query_search_and_detail",
+        };
       }
     }
     return null;
   }
 
   if (followupAction === "get_company_brain_doc_detail" || followupAction === "search_and_detail_doc") {
-    return followupAction;
+    return {
+      action: followupAction,
+      routing_reason: followupRoutingReason || "doc_query_search_and_detail",
+    };
   }
 
   if (!hasDocSearchIntent(normalizedIntent) && /整理|進度|进度|跟進|跟进|分析/.test(normalizedIntent)) {
-    return "search_and_detail_doc";
+    return {
+      action: "search_and_detail_doc",
+      routing_reason: "doc_query_search_and_detail",
+    };
   }
 
-  return "search_company_brain_docs";
+  return {
+    action: "search_company_brain_docs",
+    routing_reason: "selector_search_company_brain_docs",
+  };
 }
 
 function buildBdQuery(userIntent = "", payload = {}) {
@@ -126,11 +144,14 @@ export function resolveBdFlowRoute({
   context = {},
   logger = console,
 } = {}) {
-  const action = selectBdAction(userIntent, {
+  const selection = selectBdRoute(userIntent, {
     activeTheme: context?.activeTheme,
     activeDoc: context?.activeDoc,
     activeCandidates: context?.activeCandidates,
+    logger,
   });
+  const action = cleanText(selection?.action || "");
+  const routingReason = cleanText(selection?.routing_reason || "") || "routing_no_match";
   const normalizedPayload = payload && typeof payload === "object" && !Array.isArray(payload) ? { ...payload } : {};
 
   if (action && !cleanText(normalizedPayload.q) && !cleanText(normalizedPayload.query)) {
@@ -148,6 +169,7 @@ export function resolveBdFlowRoute({
 
   return {
     ...buildBdRouteResult(action, normalizedPayload),
+    routing_reason: routingReason,
   };
 }
 
