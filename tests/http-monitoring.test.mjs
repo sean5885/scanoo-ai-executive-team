@@ -180,6 +180,7 @@ test("answer route normalizes the exact leaking runtime query into natural-langu
 
   assert.equal(response.status, 200);
   assert.equal(payload.ok, true);
+  assert.equal(payload.kind, "get_runtime_info");
   assert.match(payload.answer || "", /runtime|PID|工作目錄|資料庫路徑/);
   assert.equal(Array.isArray(payload.sources), true);
   assert.equal(Array.isArray(payload.limitations), true);

@@ -42,6 +42,7 @@ This is the grouped HTTP surface mirror for the current repo.
 
 - the public route calls `executePlannedUserInput(...)`, not `answer-service.mjs` directly
 - the public body is shaped by `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
+- during runtime-shape-normalization, runtime-info answers also preserve a top-level canonical `kind = "get_runtime_info"` field while keeping the existing natural-language `answer -> sources -> limitations` body
 - public `sources[]` lines are derived from canonical source objects through `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`
 - `answer-service.mjs` still exists as a secondary retrieval-answer helper, but it is not the primary HTTP answer surface
 

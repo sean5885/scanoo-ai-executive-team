@@ -116,8 +116,8 @@ test("runtime-info naming stays canonical across planner envelope and answer bou
   assert.equal(plannerEnvelope.execution_result?.kind, "get_runtime_info");
   assert.ok(actionSlots.includes("get_runtime_info"));
   assert.equal(actionSlots.includes("runtime_info"), false);
-  assert.equal(JSON.stringify(userResponse).includes("get_runtime_info"), false);
-  assert.equal(JSON.stringify(userResponse).includes("runtime_info"), false);
+  assert.equal(userResponse.kind, "get_runtime_info");
+  assert.doesNotMatch(JSON.stringify(userResponse), /"action":"get_runtime_info"|"action":"runtime_info"|"kind":"runtime_info"/);
   assert.match(text, /runtime|PID|工作目錄|資料庫路徑/);
   assert.doesNotMatch(text, /get_runtime_info|runtime_info/);
 });

@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
 const testDb = await createTestDbHarness();
-const { db } = testDb;
 const [
   { startHttpServer },
   {
@@ -11,13 +10,13 @@ const [
     resetPlannerRuntimeContext,
     runPlannerToolFlow,
   },
-  { dispatchRegisteredAgentCommand },
-  { saveToken },
+  { executeRegisteredAgent },
+  { getRegisteredAgent },
 ] = await Promise.all([
   import("../src/http-server.mjs"),
   import("../src/executive-planner.mjs"),
   import("../src/agent-dispatcher.mjs"),
-  import("../src/rag-repository.mjs"),
+  import("../src/agent-registry.mjs"),
 ]);
 
 test.after(() => {
@@ -31,35 +30,6 @@ function createLogger() {
     warn() {},
     error() {},
   };
-}
-
-function insertAgentDispatchAccount(accountId) {
-  const timestamp = new Date().toISOString();
-  db.prepare(`
-    INSERT INTO lark_accounts (
-      id, open_id, user_id, union_id, tenant_key, name, email, scope, created_at, updated_at
-    ) VALUES (
-      @id, @open_id, NULL, NULL, NULL, @name, NULL, @scope, @created_at, @updated_at
-    )
-    ON CONFLICT(id) DO UPDATE SET
-      updated_at = excluded.updated_at
-  `).run({
-    id: accountId,
-    open_id: `ou_test_${accountId}`,
-    name: "Runtime Shape Test",
-    scope: "test",
-    created_at: timestamp,
-    updated_at: timestamp,
-  });
-
-  saveToken(accountId, {
-    access_token: `token_${accountId}`,
-    refresh_token: `refresh_${accountId}`,
-    token_type: "Bearer",
-    scope: "docs:read",
-    expires_at: new Date(Date.now() + 60_000).toISOString(),
-    refresh_expires_at: new Date(Date.now() + 120_000).toISOString(),
-  });
 }
 
 async function startAnswerServer(t) {
@@ -115,15 +85,35 @@ async function collectRuntimeShapeFixtures(t) {
   );
   const answer = await answerResponse.json();
 
-  const accountId = `acct_runtime_shape_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  insertAgentDispatchAccount(accountId);
-  const agent = await dispatchRegisteredAgentCommand({
-    accountId,
-    event: {
-      text: "/ceo 查 runtime info",
-    },
+  const agent = await executeRegisteredAgent({
+    accountId: "acct_runtime_shape_test",
+    agent: getRegisteredAgent("ceo"),
+    requestText: "查 runtime info",
     scope: {
-      session_key: `runtime-shape-${accountId}`,
+      session_key: "runtime-shape-agent-boundary",
+    },
+    searchFn() {
+      return {
+        items: [
+          {
+            id: "runtime-shape-source",
+            snippet: "runtime boundary source",
+            metadata: {
+              title: "Runtime Boundary",
+              url: "https://example.com/runtime-boundary",
+            },
+          },
+        ],
+      };
+    },
+    async textGenerator() {
+      return JSON.stringify({
+        ok: true,
+        kind: "get_runtime_info",
+        answer: "目前 runtime 有正常回應。",
+        sources: ["Runtime Boundary：runtime boundary source。"],
+        limitations: ["這是目前 runtime 的即時快照。"],
+      });
     },
   });
 
@@ -156,6 +146,23 @@ test("runtime shape normalization forbids mixed get_runtime_info/runtime_info na
   );
 });
 
-test.todo("runtime shape normalization requires execution_result.kind to match across planner http and agent flows");
+test("runtime shape normalization requires execution_result.kind to match across planner http and agent flows", async (t) => {
+  const { planner, answer, answerStatus, agent } = await collectRuntimeShapeFixtures(t);
+
+  assert.equal(answerStatus, 200);
+  assert.equal(planner?.execution_result?.formatted_output?.kind, "get_runtime_info");
+  assert.equal(answer?.kind, "get_runtime_info");
+  assert.equal(agent?.kind, "get_runtime_info");
+  assert.equal(
+    planner?.execution_result?.formatted_output?.kind,
+    answer?.kind,
+    `planner/http kind drift: planner=${planner?.execution_result?.formatted_output?.kind} http=${answer?.kind}`,
+  );
+  assert.equal(
+    answer?.kind,
+    agent?.kind,
+    `http/agent kind drift: http=${answer?.kind} agent=${agent?.kind}`,
+  );
+});
 
 test.todo("runtime shape normalization requires answer planner and agent to share one response envelope");

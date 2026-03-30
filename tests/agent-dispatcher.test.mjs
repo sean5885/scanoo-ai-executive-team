@@ -161,6 +161,35 @@ test("executeRegisteredAgent intercepts raw JSON object payload and keeps machin
   assert.equal("error" in result, false);
 });
 
+test("executeRegisteredAgent keeps canonical runtime kind on structured boundary while hiding it from text", async () => {
+  const agent = getRegisteredAgent("cmo");
+  const result = await executeRegisteredAgent({
+    accountId: "acct-1",
+    agent,
+    requestText: "查 runtime info",
+    scope: { session_key: "session-runtime-kind" },
+    searchFn() {
+      return {
+        items: [
+          makeSourceItem("Runtime Boundary", "https://example.com/runtime-boundary", "runtime boundary source"),
+        ],
+      };
+    },
+    async textGenerator() {
+      return {
+        kind: "get_runtime_info",
+        answer: "目前 runtime 有正常回應。",
+        sources: ["Runtime Boundary：runtime boundary source。"],
+        limitations: ["這是目前 runtime 的即時快照。"],
+      };
+    },
+  });
+
+  assert.equal(result.kind, "get_runtime_info");
+  assert.match(result.text, /^結論/m);
+  assert.doesNotMatch(result.text, /get_runtime_info|runtime_info/);
+});
+
 test("executeRegisteredAgent fallback reply no longer exposes extractive wording", async () => {
   const agent = getRegisteredAgent("cmo");
   const result = await executeRegisteredAgent({

@@ -271,8 +271,9 @@ test("chat reply accepts canonical get_runtime_info kind without leaking machine
   const text = renderUserResponseText(userResponse);
 
   assert.equal(userResponse.ok, true);
+  assert.equal(userResponse.kind, "get_runtime_info");
   assert.match(userResponse.answer || "", /runtime|PID|工作目錄|資料庫路徑/);
-  assert.doesNotMatch(JSON.stringify(userResponse), /get_runtime_info|runtime_info/);
+  assert.doesNotMatch(JSON.stringify(userResponse), /"action":"get_runtime_info"|"action":"runtime_info"|"kind":"runtime_info"/);
   assert.doesNotMatch(text, /get_runtime_info|runtime_info/);
 });
 

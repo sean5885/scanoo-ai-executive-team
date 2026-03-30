@@ -309,6 +309,7 @@ function buildRegisteredAgentStructuredBoundaryResult({
   const normalized = normalizeUserResponse({
     payload: {
       ok: objectPayload?.ok !== false,
+      kind: objectPayload?.kind,
       answer: cleanText(
         objectPayload?.answer
         || objectPayload?.message
@@ -335,6 +336,9 @@ function buildRegisteredAgentStructuredBoundaryResult({
 
   return {
     text: renderPlannerUserFacingReplyText(normalized),
+    ...(Object.prototype.hasOwnProperty.call(normalized, "kind")
+      ? { kind: normalized.kind }
+      : {}),
     ...(objectPayload && Object.prototype.hasOwnProperty.call(objectPayload, "error")
       ? { error: cleanText(objectPayload.error || "") || null }
       : {}),
@@ -505,6 +509,9 @@ export async function executeRegisteredAgent({
       text: boundaryResult.text,
       agentId: agent.id,
       context_governance: promptInput.governance,
+      ...(Object.prototype.hasOwnProperty.call(boundaryResult, "kind")
+        ? { kind: boundaryResult.kind }
+        : {}),
       ...(Object.prototype.hasOwnProperty.call(boundaryResult, "error")
         ? { error: boundaryResult.error }
         : {}),

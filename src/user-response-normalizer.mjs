@@ -402,6 +402,7 @@ export function buildPlannerSuccessUserResponse(envelope = {}) {
     ].filter(Boolean).join(" ");
     return {
       ok: true,
+      kind: "get_runtime_info",
       answer: summary || "目前 runtime 有正常回應。",
       sources: ["runtime 即時狀態：這份回覆直接來自目前 process 的即時資訊。"],
       limitations: buildPlannerNextSteps({
@@ -613,8 +614,12 @@ export function normalizeUserResponse({
 
   const objectPayload = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
   if (normalizeText(objectPayload.answer || "")) {
+    const normalizedKind = normalizeText(objectPayload.kind || "");
     const normalizedPayload = {
       ok: objectPayload.ok !== false,
+      ...(normalizedKind === "get_runtime_info" || normalizedKind === "runtime_info"
+        ? { kind: "get_runtime_info" }
+        : {}),
       answer: normalizeText(objectPayload.answer || ""),
       sources: normalizeUserFacingAnswerSources(objectPayload.sources, {
         maxSources: MAX_USER_FACING_SOURCES,
