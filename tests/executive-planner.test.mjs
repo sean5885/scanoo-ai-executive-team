@@ -2564,7 +2564,7 @@ test("runPlannerPreset does not misclassify controlled preset failure as contrac
   assert.equal(result.data.stop_reason, "business_error");
 });
 
-test("runPlannerToolFlow returns fallback when no planner tool matches", async () => {
+test("runPlannerToolFlow returns deterministic routing error when no planner tool matches", async () => {
   let dispatcherCalled = false;
   const result = await runPlannerToolFlow({
     userIntent: "幫我看看",
@@ -2578,12 +2578,11 @@ test("runPlannerToolFlow returns fallback when no planner tool matches", async (
 
   assert.equal(result.selected_action, null);
   assert.equal(result.routing_reason, "routing_no_match");
-  assert.equal(result.execution_result?.ok, false);
-  assert.equal(result.execution_result?.error, "business_error");
-  assert.equal(result.execution_result?.data?.reason, "routing_no_match");
-  assert.equal(result.execution_result?.data?.routing_reason, "routing_no_match");
-  assert.equal(result.execution_result?.data?.stopped, true);
-  assert.equal(result.execution_result?.data?.stop_reason, "business_error");
+  assert.deepEqual(result.execution_result, {
+    ok: false,
+    error: "ROUTING_NO_MATCH",
+    message: "No deterministic route matched",
+  });
   assert.equal(result.trace_id, null);
   assert.equal(dispatcherCalled, false);
 });

@@ -185,7 +185,7 @@ export const documentSummarizeSkill = createSkillDefinition({
         mode: "read",
         action: "get_company_brain_doc_detail",
         runtime: "read-runtime",
-        authority: cleanText(readExecution?.primary_authority) || null,
+        authority: cleanText(readExecution?.meta?.primary_authority) || null,
       },
     ];
 

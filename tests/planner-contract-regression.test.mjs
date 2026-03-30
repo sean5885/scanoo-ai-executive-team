@@ -215,9 +215,11 @@ const fixtures = [
       const result = records[0].value;
       assert.equal(result.selected_action, null);
       assert.equal(result.routing_reason, "routing_no_match");
-      assert.equal(result.execution_result?.error, "business_error");
-      assert.equal(result.execution_result?.data?.reason, "routing_no_match");
-      assert.equal(result.execution_result?.data?.routing_reason, "routing_no_match");
+      assert.deepEqual(result.execution_result, {
+        ok: false,
+        error: "ROUTING_NO_MATCH",
+        message: "No deterministic route matched",
+      });
     },
   },
   {

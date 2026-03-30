@@ -25,7 +25,7 @@ import {
 import { getDocumentCreateGovernanceContract } from "./lark-write-guard.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import { callOpenClawTextGeneration } from "./openclaw-text-service.mjs";
-import { FALLBACK_DISABLED, INVALID_ACTION, ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
+import { buildRoutingNoMatchError, FALLBACK_DISABLED, INVALID_ACTION, ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
 import { hasDocSearchIntent, hasScopedDocExclusionSearchIntent } from "./router.js";
 import { createRequestId, emitRateLimitedAlert, emitToolExecutionLog } from "./runtime-observability.mjs";
 import {
@@ -3915,17 +3915,7 @@ export async function runPlannerToolFlow({
       from: "planner_selection",
       reason: selectionRoutingReason || ROUTING_NO_MATCH,
     });
-    executionResult = buildPlannerStoppedResult({
-      action: null,
-      error: "business_error",
-      data: {
-        reason: selectionRoutingReason,
-        message: "未命中受控工具規則，保持空選擇。",
-        routing_reason: selectionRoutingReason,
-      },
-      traceId: null,
-      stopReason: "business_error",
-    });
+    executionResult = buildRoutingNoMatchError();
   } else if (
     !taskLifecycleFollowUp?.execution_result
     && !getPlannerActionContract(selectionAction)
@@ -4029,7 +4019,7 @@ export async function runPlannerToolFlow({
 
   const selectedFlow = routedFlow.flow || getPlannerFlowForAction(plannerFlows, selection.selected_action);
   throwIfPlannerSignalAborted(signal);
-  if (!taskLifecycleFollowUp?.execution_result) {
+  if (!taskLifecycleFollowUp?.execution_result && selection.selected_action) {
     executionResult = await formatPlannerFlowResult({
       flow: selectedFlow,
       selectedAction: selection.selected_action,
@@ -4074,7 +4064,7 @@ export async function runPlannerToolFlow({
     },
   }));
 
-  if (!taskLifecycleFollowUp?.execution_result && selection.selected_action !== "mark_resolved") {
+  if (!taskLifecycleFollowUp?.execution_result && selection.selected_action && selection.selected_action !== "mark_resolved") {
     syncPlannerFlowContext({
       flow: selectedFlow,
       selectedAction: selection.selected_action,
@@ -4084,7 +4074,7 @@ export async function runPlannerToolFlow({
     });
   }
 
-  if (!taskLifecycleFollowUp?.execution_result && selection.selected_action !== "mark_resolved") {
+  if (!taskLifecycleFollowUp?.execution_result && selection.selected_action && selection.selected_action !== "mark_resolved") {
     lifecycleSnapshot = await syncPlannerActionLayerTaskLifecycle({
       flow: selectedFlow,
       context: selectedFlow?.readContext?.({ sessionKey }) || {},

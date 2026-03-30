@@ -180,15 +180,13 @@ test("executeRegisteredAgent fallback reply no longer exposes extractive wording
     },
   });
 
-  assert.doesNotMatch(result.text, /extractive/);
-  assert.doesNotMatch(result.text, /FALLBACK_DISABLED|registered_agent_generation_fallback_disabled|\"ok\"|\"error\"|\"details\"/);
-  if (result.metadata.fallback_used === false) {
-    assert.match(result.text, /沒有可用的生成路徑|內部錯誤/);
-    assert.equal(result.metadata.fallback_used, false);
-  } else {
-    assert.match(result.text, /先按目前找到的資料替你整理/);
-    assert.equal(result.metadata.fallback_used, true);
-  }
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "FALLBACK_DISABLED");
+  assert.equal(result.message, "registered_agent_generation_fallback_disabled");
+  assert.deepEqual(result.details, {
+    agent_id: "cmo",
+  });
+  assert.equal(result.metadata.fallback_used, false);
 });
 
 test("executeRegisteredAgent intercepts fenced JSON error blob and preserves program-facing error details", async () => {
@@ -250,7 +248,7 @@ test("executeRegisteredAgent leaves ordinary JSON string output on the normal su
   assert.equal("context" in result, false);
 });
 
-test("dispatchRegisteredAgentCommand no-match reply is natural language instead of raw JSON", async () => {
+test("dispatchRegisteredAgentCommand no-match returns deterministic structured error", async () => {
   const result = await dispatchRegisteredAgentCommand({
     accountId: "acct-1",
     scope: {
@@ -267,8 +265,9 @@ test("dispatchRegisteredAgentCommand no-match reply is natural language instead 
     },
   });
 
-  assert.ok(result);
-  assert.match(result.text, /^結論/m);
-  assert.match(result.text, /registered agent|slash 指令/);
-  assert.doesNotMatch(result.text, /ROUTING_NO_MATCH|registered_agent_command_no_match|\"ok\"|\"error\"|\"details\"/);
+  assert.deepEqual(result, {
+    ok: false,
+    error: "ROUTING_NO_MATCH",
+    message: "No deterministic route matched",
+  });
 });

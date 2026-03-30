@@ -188,7 +188,7 @@ export const searchAndSummarizeSkill = createSkillDefinition({
         mode: "read",
         action: "search_knowledge_base",
         runtime: "read-runtime",
-        authority: cleanText(readExecution?.primary_authority) || null,
+        authority: cleanText(readExecution?.meta?.primary_authority) || null,
       },
     ];
 

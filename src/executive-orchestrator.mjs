@@ -14,7 +14,7 @@ import {
   planExecutiveTurn,
   renderPlannerUserFacingReplyText,
 } from "./executive-planner.mjs";
-import { FALLBACK_DISABLED, ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
+import { buildRoutingNoMatchError, FALLBACK_DISABLED, ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
 import {
   appendExecutiveAgentOutput,
   appendExecutiveTaskHandoff,
@@ -1558,15 +1558,7 @@ export async function executeExecutiveTurn({
 
   const slashCommand = parseRegisteredAgentCommand(text);
   if (slashCommand?.error === ROUTING_NO_MATCH) {
-    return {
-      text: [
-        "結論",
-        "這個 slash 指令沒有命中任何已註冊的 registered agent。",
-        "",
-        "重點",
-        "請改用已存在的 `/generalist`、`/ceo`、`/product`、`/prd`、`/cmo`、`/consult`、`/cdo`、`/delivery`、`/ops`、`/tech` 或既有 `/knowledge *` 子指令。",
-      ].join("\n"),
-    };
+    return buildRoutingNoMatchError();
   }
   if (!slashCommand && !activeTask && !looksLikeExecutiveStart(text)) {
     return null;

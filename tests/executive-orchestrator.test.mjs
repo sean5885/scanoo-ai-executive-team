@@ -275,7 +275,7 @@ test("executeWorkItemsSequentially keeps ordinary JSON string literal on the nor
   assert.equal(result.reply?.text, "結論：已整合支援輸出。");
 });
 
-test("executeExecutiveTurn slash-command no-match reply is natural language instead of raw JSON", async () => {
+test("executeExecutiveTurn slash-command no-match returns deterministic structured error", async () => {
   const result = await executeExecutiveTurn({
     accountId: "acct-executive-1",
     scope: {
@@ -292,10 +292,11 @@ test("executeExecutiveTurn slash-command no-match reply is natural language inst
     },
   });
 
-  assert.ok(result);
-  assert.match(result.text, /^結論/m);
-  assert.match(result.text, /registered agent|slash 指令/);
-  assert.doesNotMatch(result.text, /ROUTING_NO_MATCH|registered_agent_command_no_match|\"ok\"|\"error\"|\"details\"/);
+  assert.deepEqual(result, {
+    ok: false,
+    error: "ROUTING_NO_MATCH",
+    message: "No deterministic route matched",
+  });
 });
 
 test("executeExecutiveTurn planner fallback-disabled reply is natural language and keeps structured fields", async () => {
