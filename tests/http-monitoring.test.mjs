@@ -180,7 +180,7 @@ test("answer route normalizes the exact leaking runtime query into natural-langu
 
   assert.equal(response.status, 200);
   assert.equal(payload.ok, true);
-  assert.equal(payload.kind, "get_runtime_info");
+  assert.deepEqual(Object.keys(payload).sort(), ["answer", "limitations", "ok", "sources"]);
   assert.match(payload.answer || "", /runtime|PID|工作目錄|資料庫路徑/);
   assert.equal(Array.isArray(payload.sources), true);
   assert.equal(Array.isArray(payload.limitations), true);
@@ -191,6 +191,24 @@ test("answer route normalizes the exact leaking runtime query into natural-langu
   assert.equal("trace_id" in payload, false);
   assert.equal("details" in payload, false);
   assert.equal("execution_result" in payload, false);
+  assert.equal("kind" in payload, false);
+});
+
+test("public runtime-info route returns the same canonical answer envelope", async (t) => {
+  const server = await startTestServer(t);
+  const { port } = server.address();
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/system/runtime-info`);
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(Object.keys(payload).sort(), ["answer", "limitations", "ok", "sources"]);
+  assert.equal(payload.ok, true);
+  assert.match(payload.answer || "", /runtime|PID|工作目錄|資料庫路徑/);
+  assert.equal(Array.isArray(payload.sources), true);
+  assert.equal(Array.isArray(payload.limitations), true);
+  assert.equal("kind" in payload, false);
+  assert.equal("action" in payload, false);
 });
 
 test("answer route keeps sources on the shared canonical mapper and strips snippet noise", async (t) => {

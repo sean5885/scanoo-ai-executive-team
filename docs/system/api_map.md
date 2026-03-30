@@ -19,7 +19,7 @@ This is the grouped HTTP surface mirror for the current repo.
 | `/oauth/lark/login` | `GET` | start user OAuth | implemented |
 | `/oauth/lark/callback` | `GET` | exchange code and persist token state | implemented |
 | `/api/auth/status` | `GET` | inspect current auth state | implemented |
-| `/api/system/runtime-info` | `GET` | expose live process facts | implemented |
+| `/api/system/runtime-info` | `GET` | expose live process facts through the shared public answer envelope | implemented |
 | `/api/runtime/resolve-scopes` | `POST` | resolve binding/session/workspace/sandbox scope | implemented |
 | `/api/runtime/sessions` | `GET` | inspect persisted runtime sessions | implemented |
 | `/api/monitoring/requests` | `GET` | recent request summaries | implemented |
@@ -42,9 +42,15 @@ This is the grouped HTTP surface mirror for the current repo.
 
 - the public route calls `executePlannedUserInput(...)`, not `answer-service.mjs` directly
 - the public body is shaped by `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
-- during runtime-shape-normalization, runtime-info answers also preserve a top-level canonical `kind = "get_runtime_info"` field while keeping the existing natural-language `answer -> sources -> limitations` body
+- the public answer envelope is now a single canonical object: `ok`, `answer`, `sources`, `limitations`
+- runtime-info keeps `execution_result.kind = "get_runtime_info"` only inside planner/runtime state; the user-facing `/answer` body no longer exposes a top-level `kind`
 - public `sources[]` lines are derived from canonical source objects through `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`
 - `answer-service.mjs` still exists as a secondary retrieval-answer helper, but it is not the primary HTTP answer surface
+
+### Current `/api/system/runtime-info` Truth
+
+- `/api/system/runtime-info` now returns the same public canonical answer envelope as `/answer`
+- `/agent/system/runtime-info` stays on the internal planner tool contract (`ok`, `action`, `data`, `trace_id`) so planner dispatch does not lose machine-readable runtime facts
 
 ## 3. Company-Brain Read Surfaces
 

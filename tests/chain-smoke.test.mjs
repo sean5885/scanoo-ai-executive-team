@@ -55,6 +55,10 @@ test("registered agent smoke path returns stable schema", async () => {
     },
   });
 
+  assert.equal(result.ok, true);
+  assert.equal(typeof result.answer, "string");
+  assert.equal(Array.isArray(result.sources), true);
+  assert.equal(Array.isArray(result.limitations), true);
   assert.equal(result.agentId, "ceo");
   assert.match(result.text, /beta/);
 });

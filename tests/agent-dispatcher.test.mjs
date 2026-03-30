@@ -92,6 +92,10 @@ test("executeRegisteredAgent can use injected text generator without direct LLM 
   });
 
   assert.match(result.text, /正式回答/);
+  assert.equal(result.ok, true);
+  assert.equal(typeof result.answer, "string");
+  assert.equal(Array.isArray(result.sources), true);
+  assert.equal(Array.isArray(result.limitations), true);
   assert.equal(result.agentId, "cmo");
   assert.equal(result.metadata.retrieval_count, 1);
   assert.equal(result.metadata.fallback_used, false);
@@ -123,6 +127,10 @@ test("executeRegisteredAgent intercepts raw JSON string payload before it reache
 
   assert.match(result.text, /^結論/m);
   assert.match(result.text, /最缺 owner、deadline/);
+  assert.equal(result.ok, true);
+  assert.equal(result.answer, "目前最缺 owner、deadline，還有跨部門依賴欄位。");
+  assert.deepEqual(result.sources, ["OKR 運作方式說明：目前流程只描述週會，沒有 owner/deadline 欄位要求。"]);
+  assert.deepEqual(result.limitations, ["如果你要，我可以直接整理成缺欄 checklist。"]);
   assert.doesNotMatch(result.text, /^{|```json|\"ok\"|\"answer\"|\"sources\"|\"limitations\"/);
 });
 
@@ -151,6 +159,10 @@ test("executeRegisteredAgent intercepts raw JSON object payload and keeps machin
 
   assert.match(result.text, /^結論/m);
   assert.match(result.text, /先補 owner 與驗收條件/);
+  assert.equal(result.ok, true);
+  assert.equal(result.answer, "這輪先補 owner 與驗收條件，否則 OKR 追蹤會持續鬆散。");
+  assert.equal(Array.isArray(result.sources), true);
+  assert.equal(Array.isArray(result.limitations), true);
   assert.doesNotMatch(result.text, /missing_fields|mock-structured-object|^{|\"details\"|\"context\"/);
   assert.deepEqual(result.details, {
     missing_fields: ["owner", "acceptance_criteria"],
@@ -161,7 +173,7 @@ test("executeRegisteredAgent intercepts raw JSON object payload and keeps machin
   assert.equal("error" in result, false);
 });
 
-test("executeRegisteredAgent keeps canonical runtime kind on structured boundary while hiding it from text", async () => {
+test("executeRegisteredAgent keeps canonical runtime envelope on structured boundary while hiding machine naming from text", async () => {
   const agent = getRegisteredAgent("cmo");
   const result = await executeRegisteredAgent({
     accountId: "acct-1",
@@ -185,7 +197,15 @@ test("executeRegisteredAgent keeps canonical runtime kind on structured boundary
     },
   });
 
-  assert.equal(result.kind, "get_runtime_info");
+  assert.deepEqual(
+    Object.keys(result).filter((key) => ["ok", "answer", "sources", "limitations"].includes(key)).sort(),
+    ["answer", "limitations", "ok", "sources"],
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.answer, "目前 runtime 有正常回應。");
+  assert.deepEqual(result.sources, ["Runtime Boundary：runtime boundary source。"]);
+  assert.deepEqual(result.limitations, ["這是目前 runtime 的即時快照。"]);
+  assert.equal("kind" in result, false);
   assert.match(result.text, /^結論/m);
   assert.doesNotMatch(result.text, /get_runtime_info|runtime_info/);
 });
@@ -211,8 +231,12 @@ test("executeRegisteredAgent fallback reply no longer exposes extractive wording
 
   assert.doesNotMatch(result.text, /extractive/);
   assert.doesNotMatch(result.text, /FALLBACK_DISABLED|registered_agent_generation_fallback_disabled|\"ok\"|\"error\"|\"details\"/);
+  assert.equal(typeof result.answer, "string");
+  assert.equal(Array.isArray(result.sources), true);
+  assert.equal(Array.isArray(result.limitations), true);
   if (result.metadata.fallback_used === false) {
     assert.match(result.text, /沒有可用的生成路徑|內部錯誤/);
+    assert.equal(result.ok, false);
     assert.equal(result.metadata.fallback_used, false);
   } else {
     assert.match(result.text, /先按目前找到的資料替你整理/);
@@ -243,6 +267,9 @@ test("executeRegisteredAgent intercepts fenced JSON error blob and preserves pro
 
   assert.match(result.text, /^結論/m);
   assert.match(result.text, /結構化錯誤結果|自然語言摘要/);
+  assert.equal(result.ok, false);
+  assert.equal(Array.isArray(result.sources), true);
+  assert.equal(Array.isArray(result.limitations), true);
   assert.doesNotMatch(result.text, /```json|registered_agent_generation_failed|schema_invalid|\"error\"|\"details\"|\"context\"/);
   assert.equal(result.error, "registered_agent_generation_failed");
   assert.deepEqual(result.details, {
@@ -274,6 +301,10 @@ test("executeRegisteredAgent leaves ordinary JSON string output on the normal su
 
   assert.doesNotMatch(result.text, /^結論/m);
   assert.match(result.text, /這是一段直接可讀的回答/);
+  assert.equal(result.ok, true);
+  assert.equal(result.answer, "\"這是一段直接可讀的回答\"");
+  assert.equal(Array.isArray(result.sources), true);
+  assert.equal(Array.isArray(result.limitations), true);
   assert.equal("error" in result, false);
   assert.equal("details" in result, false);
   assert.equal("context" in result, false);
@@ -299,5 +330,8 @@ test("dispatchRegisteredAgentCommand no-match reply is natural language instead 
   assert.ok(result);
   assert.match(result.text, /^結論/m);
   assert.match(result.text, /registered agent|slash 指令/);
+  assert.equal(result.ok, false);
+  assert.equal(Array.isArray(result.sources), true);
+  assert.equal(Array.isArray(result.limitations), true);
   assert.doesNotMatch(result.text, /ROUTING_NO_MATCH|registered_agent_command_no_match|\"ok\"|\"error\"|\"details\"/);
 });

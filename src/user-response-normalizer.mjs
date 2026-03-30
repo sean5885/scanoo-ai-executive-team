@@ -147,6 +147,49 @@ export function normalizeUserResponseList(items = []) {
   )];
 }
 
+export function buildCanonicalUserResponseEnvelope({
+  ok = true,
+  answer = "",
+  sources = [],
+  limitations = [],
+  query = "",
+  maxSources = MAX_USER_FACING_SOURCES,
+} = {}) {
+  return {
+    ok: ok !== false,
+    answer: normalizeText(answer || ""),
+    sources: normalizeUserFacingAnswerSources(sources, {
+      query,
+      maxSources,
+    }),
+    limitations: normalizeUserResponseList(limitations),
+  };
+}
+
+export function buildRuntimeInfoUserResponse({
+  ok = true,
+  db_path = "",
+  node_pid = null,
+  cwd = "",
+  service_start_time = "",
+} = {}) {
+  const summary = [
+    "目前 runtime 有正常回應。",
+    db_path ? `資料庫路徑在 ${db_path}。` : null,
+    Number.isFinite(node_pid) ? `目前 PID 是 ${node_pid}。` : null,
+    cwd ? `工作目錄是 ${cwd}。` : null,
+  ].filter(Boolean).join(" ");
+
+  return buildCanonicalUserResponseEnvelope({
+    ok,
+    answer: summary || "目前 runtime 有正常回應。",
+    sources: ["runtime 即時狀態：這份回覆直接來自目前 process 的即時資訊。"],
+    limitations: [
+      service_start_time ? `這是啟動於 ${service_start_time} 的即時 runtime 快照。` : "這是目前 runtime 的即時快照。",
+    ],
+  });
+}
+
 function normalizePlannerDocumentItems(items = []) {
   return Array.from(
     new Map(
@@ -394,26 +437,23 @@ export function buildPlannerSuccessUserResponse(envelope = {}) {
   });
 
   if (kind === "get_runtime_info" || kind === "runtime_info") {
-    const summary = [
-      "目前 runtime 有正常回應。",
-      execution.db_path ? `資料庫路徑在 ${execution.db_path}。` : null,
-      Number.isFinite(execution.node_pid) ? `目前 PID 是 ${execution.node_pid}。` : null,
-      execution.cwd ? `工作目錄是 ${execution.cwd}。` : null,
-    ].filter(Boolean).join(" ");
-    return {
-      ok: true,
-      kind: "get_runtime_info",
-      answer: summary || "目前 runtime 有正常回應。",
-      sources: ["runtime 即時狀態：這份回覆直接來自目前 process 的即時資訊。"],
+    return buildCanonicalUserResponseEnvelope({
+      ...buildRuntimeInfoUserResponse({
+        ok: true,
+        db_path: execution.db_path,
+        node_pid: execution.node_pid,
+        cwd: execution.cwd,
+        service_start_time: execution.service_start_time,
+      }),
       limitations: buildPlannerNextSteps({
         envelope,
         execution,
         fallbacks: [
-        execution.service_start_time ? `這是啟動於 ${execution.service_start_time} 的即時 runtime 快照。` : "這是目前 runtime 的即時快照。",
+          execution.service_start_time ? `這是啟動於 ${execution.service_start_time} 的即時 runtime 快照。` : "這是目前 runtime 的即時快照。",
         ],
         hasEvidence: true,
       }),
-    };
+    });
   }
 
   if (kind === "search") {
@@ -614,18 +654,13 @@ export function normalizeUserResponse({
 
   const objectPayload = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
   if (normalizeText(objectPayload.answer || "")) {
-    const normalizedKind = normalizeText(objectPayload.kind || "");
-    const normalizedPayload = {
+    const normalizedPayload = buildCanonicalUserResponseEnvelope({
       ok: objectPayload.ok !== false,
-      ...(normalizedKind === "get_runtime_info" || normalizedKind === "runtime_info"
-        ? { kind: "get_runtime_info" }
-        : {}),
-      answer: normalizeText(objectPayload.answer || ""),
-      sources: normalizeUserFacingAnswerSources(objectPayload.sources, {
-        maxSources: MAX_USER_FACING_SOURCES,
-      }),
-      limitations: normalizeUserResponseList(objectPayload.limitations),
-    };
+      answer: objectPayload.answer,
+      sources: objectPayload.sources,
+      limitations: objectPayload.limitations,
+      maxSources: MAX_USER_FACING_SOURCES,
+    });
     emitBoundaryLog({
       logger,
       traceId,

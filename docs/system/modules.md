@@ -90,7 +90,8 @@ Current-truth docs for onboarding are:
 - Current truth:
   - `GET /answer` no longer uses `answer-service.mjs` as its primary route
   - public answer generation goes through planner execution first
-  - final HTTP/chat response is normalized into `answer -> sources -> limitations`
+  - final HTTP/chat response is normalized into one canonical envelope: `ok`, `answer`, `sources`, `limitations`
+  - runtime-info replies no longer expose a top-level `kind`; that machine label stays internal on `execution_result.kind`
   - planner/read evidence is converted into public `sources[]` lines through canonical source mapping
 - Secondary implemented path:
   - `/Users/seanhan/Documents/Playground/src/answer-service.mjs`

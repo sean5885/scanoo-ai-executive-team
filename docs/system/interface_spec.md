@@ -72,7 +72,7 @@ It is intentionally narrow:
     "trace_id": "string|null"
   }
   ```
-- current registered-agent structured boundary may also preserve a bounded top-level `kind` field for normalized runtime-info style replies while still hiding raw planner/action envelopes from user-facing text
+- current registered-agent structured boundary normalizes successful replies onto the shared canonical envelope (`ok`, `answer`, `sources`, `limitations`) while still hiding raw planner/action envelopes from user-facing text
 - failure handling:
   - fail-soft
   - missing skill, invalid capability use, or controlled refusal should return `ok=false`

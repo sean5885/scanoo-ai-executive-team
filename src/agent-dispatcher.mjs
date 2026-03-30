@@ -209,17 +209,31 @@ function buildRegisteredAgentUserFacingErrorText({
   answer = "",
   limitations = [],
 } = {}) {
-  const normalized = normalizeUserResponse({
+  const normalized = buildRegisteredAgentEnvelope({
+    ok: false,
+    answer,
+    sources: [],
+    limitations,
+  });
+  return renderPlannerUserFacingReplyText(normalized);
+}
+
+function buildRegisteredAgentEnvelope({
+  ok = true,
+  answer = "",
+  sources = [],
+  limitations = [],
+} = {}) {
+  return normalizeUserResponse({
     payload: {
-      ok: false,
+      ok,
       answer,
-      sources: [],
+      sources,
       limitations,
     },
     logger: noopLogger,
     handlerName: "registeredAgentDispatcher",
   });
-  return renderPlannerUserFacingReplyText(normalized);
 }
 
 function looksLikeNestedRegisteredAgentJson(text = "") {
@@ -309,7 +323,6 @@ function buildRegisteredAgentStructuredBoundaryResult({
   const normalized = normalizeUserResponse({
     payload: {
       ok: objectPayload?.ok !== false,
-      kind: objectPayload?.kind,
       answer: cleanText(
         objectPayload?.answer
         || objectPayload?.message
@@ -335,10 +348,11 @@ function buildRegisteredAgentStructuredBoundaryResult({
   });
 
   return {
+    ok: normalized.ok,
+    answer: normalized.answer,
+    sources: normalized.sources,
+    limitations: normalized.limitations,
     text: renderPlannerUserFacingReplyText(normalized),
-    ...(Object.prototype.hasOwnProperty.call(normalized, "kind")
-      ? { kind: normalized.kind }
-      : {}),
     ...(objectPayload && Object.prototype.hasOwnProperty.call(objectPayload, "error")
       ? { error: cleanText(objectPayload.error || "") || null }
       : {}),
@@ -407,6 +421,20 @@ export async function executeRegisteredAgent({
       },
     });
     return {
+      ...buildRegisteredAgentEnvelope({
+        ok: false,
+        answer: [
+          `${agent.label} 現在還沒有足夠的來源可以把這題答實。`,
+          imageContext ? `我已先看過圖片內容：${trimTextForBudget(imageContext, 180)}` : null,
+          supportingContext ? "我也有收到其他角色的補充，但目前還缺可落地的知識來源。" : null,
+          "你如果補一兩個關鍵文檔、關鍵詞，或先同步資料，我就能直接接著整理。",
+        ].filter(Boolean).join("\n\n"),
+        sources: [],
+        limitations: [
+          "目前還缺可落地的已驗證知識來源。",
+          "你可以補一兩個關鍵文檔、關鍵詞，或先同步資料後再試。",
+        ],
+      }),
       text: [
         `${agent.label} 現在還沒有足夠的來源可以把這題答實。`,
         imageContext ? `我已先看過圖片內容：${trimTextForBudget(imageContext, 180)}` : null,
@@ -460,6 +488,15 @@ export async function executeRegisteredAgent({
         },
       };
       return {
+        ...buildRegisteredAgentEnvelope({
+          ok: false,
+          answer: `${agent.label} 這輪暫時沒有可用的生成路徑，所以我先不直接輸出未整理的系統錯誤。`,
+          sources: [],
+          limitations: [
+            "內部錯誤已保留在 runtime / log，這裡先不直接暴露 raw JSON 或 trace。",
+            "如果你要，我可以先按目前找到的資料替你整理重點，再補上需要確認的缺口。",
+          ],
+        }),
         text: buildRegisteredAgentUserFacingErrorText({
           answer: `${agent.label} 這輪暫時沒有可用的生成路徑，所以我先不直接輸出未整理的系統錯誤。`,
           limitations: [
@@ -508,10 +545,11 @@ export async function executeRegisteredAgent({
     return {
       text: boundaryResult.text,
       agentId: agent.id,
+      ok: boundaryResult.ok,
+      answer: boundaryResult.answer,
+      sources: boundaryResult.sources,
+      limitations: boundaryResult.limitations,
       context_governance: promptInput.governance,
-      ...(Object.prototype.hasOwnProperty.call(boundaryResult, "kind")
-        ? { kind: boundaryResult.kind }
-        : {}),
       ...(Object.prototype.hasOwnProperty.call(boundaryResult, "error")
         ? { error: boundaryResult.error }
         : {}),
@@ -532,6 +570,12 @@ export async function executeRegisteredAgent({
   }
 
   return {
+    ...buildRegisteredAgentEnvelope({
+      ok: true,
+      answer,
+      sources: items.slice(0, 3),
+      limitations: [],
+    }),
     text: `${answer}${buildSourceFooter(items)}`,
     agentId: agent.id,
     context_governance: promptInput.governance,
@@ -557,6 +601,14 @@ export async function dispatchRegisteredAgentCommand({ accountId, event, scope }
       },
     };
     return {
+      ...buildRegisteredAgentEnvelope({
+        ok: false,
+        answer: "這個 slash 指令目前沒有命中任何已註冊的 registered agent。",
+        sources: [],
+        limitations: [
+          "請改用已存在的 `/generalist`、`/ceo`、`/product`、`/prd`、`/cmo`、`/consult`、`/cdo`、`/delivery`、`/ops`、`/tech`，或既有 `/knowledge *` 子指令。",
+        ],
+      }),
       text: buildRegisteredAgentUserFacingErrorText({
         answer: "這個 slash 指令目前沒有命中任何已註冊的 registered agent。",
         limitations: [

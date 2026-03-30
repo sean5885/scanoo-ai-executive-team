@@ -125,17 +125,21 @@ async function collectRuntimeShapeFixtures(t) {
   };
 }
 
+function pickCanonicalEnvelope(payload = {}) {
+  return {
+    ok: payload?.ok ?? null,
+    answer: payload?.answer ?? null,
+    sources: Array.isArray(payload?.sources) ? payload.sources : null,
+    limitations: Array.isArray(payload?.limitations) ? payload.limitations : null,
+  };
+}
+
 test("runtime shape normalization forbids mixed get_runtime_info/runtime_info naming across real flows", async (t) => {
   const { planner, answer, agent } = await collectRuntimeShapeFixtures(t);
   const identifiers = new Set([
     planner?.selected_action,
     planner?.execution_result?.action,
     planner?.execution_result?.formatted_output?.kind,
-    answer?.action,
-    answer?.planner_action,
-    answer?.kind,
-    agent?.action,
-    agent?.kind,
     agent?.agentId,
   ].filter(Boolean));
 
@@ -146,23 +150,31 @@ test("runtime shape normalization forbids mixed get_runtime_info/runtime_info na
   );
 });
 
-test("runtime shape normalization requires execution_result.kind to match across planner http and agent flows", async (t) => {
+test("runtime shape normalization keeps execution_result.kind internal while answer and agent use the canonical envelope", async (t) => {
   const { planner, answer, answerStatus, agent } = await collectRuntimeShapeFixtures(t);
 
   assert.equal(answerStatus, 200);
   assert.equal(planner?.execution_result?.formatted_output?.kind, "get_runtime_info");
-  assert.equal(answer?.kind, "get_runtime_info");
-  assert.equal(agent?.kind, "get_runtime_info");
-  assert.equal(
-    planner?.execution_result?.formatted_output?.kind,
-    answer?.kind,
-    `planner/http kind drift: planner=${planner?.execution_result?.formatted_output?.kind} http=${answer?.kind}`,
-  );
-  assert.equal(
-    answer?.kind,
-    agent?.kind,
-    `http/agent kind drift: http=${answer?.kind} agent=${agent?.kind}`,
-  );
+  assert.equal("kind" in answer, false);
+  assert.equal("kind" in agent, false);
+  const answerEnvelope = pickCanonicalEnvelope(answer);
+  const agentEnvelope = pickCanonicalEnvelope(agent);
+  assert.equal(answerEnvelope.ok, true);
+  assert.match(answerEnvelope.answer || "", /runtime|PID|工作目錄|資料庫路徑/);
+  assert.equal(Array.isArray(answerEnvelope.sources), true);
+  assert.equal(Array.isArray(answerEnvelope.limitations), true);
+  assert.equal(agentEnvelope.ok, true);
+  assert.equal(agentEnvelope.answer, "目前 runtime 有正常回應。");
+  assert.deepEqual(agentEnvelope.sources, ["Runtime Boundary：runtime boundary source。"]);
+  assert.deepEqual(agentEnvelope.limitations, ["這是目前 runtime 的即時快照。"]);
 });
 
-test.todo("runtime shape normalization requires answer planner and agent to share one response envelope");
+test("runtime shape normalization requires answer and agent boundaries to expose the same canonical envelope keys", async (t) => {
+  const { answer, agent } = await collectRuntimeShapeFixtures(t);
+
+  assert.deepEqual(Object.keys(answer).sort(), ["answer", "limitations", "ok", "sources"]);
+  assert.deepEqual(
+    Object.keys(agent).filter((key) => ["answer", "limitations", "ok", "sources"].includes(key)).sort(),
+    ["answer", "limitations", "ok", "sources"],
+  );
+});

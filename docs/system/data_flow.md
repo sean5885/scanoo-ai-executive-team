@@ -132,6 +132,7 @@ Current public `/answer` path:
 3. `executive-planner.mjs` resolves planner action or controlled failure
 4. planner reads and tool results remain internal runtime state
 5. `user-response-normalizer.mjs` converts the planner envelope into the public response shape:
+   - `ok`
    - `answer`
    - `sources`
    - `limitations`

@@ -180,7 +180,7 @@ What now exists in current code:
   - reuse retrieval grounding and compact workflow checkpoints for persona answers
   - when direct text-model credentials are absent, call the dedicated `lobster-backend` OpenClaw MiniMax text path before dropping to extractive retrieval-only output
   - keep chat-facing slash-agent fallback/no-match replies on the shared natural-language reply boundary instead of exposing raw error envelopes
-  - reject JSON-like success payloads at the registered-agent output boundary and summarize them into visible natural language while keeping machine-readable fields in runtime data
+  - reject JSON-like success payloads at the registered-agent output boundary and normalize them onto the shared `ok / answer / sources / limitations` envelope before rendering visible natural language
 - Input:
   - slash command text
   - retrieved snippets

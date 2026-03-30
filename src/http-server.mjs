@@ -211,7 +211,7 @@ import {
   recordHttpRequest,
   sanitizeTracePayload,
 } from "./monitoring-store.mjs";
-import { normalizeUserResponse } from "./user-response-normalizer.mjs";
+import { buildRuntimeInfoUserResponse, normalizeUserResponse } from "./user-response-normalizer.mjs";
 import db from "./db.mjs";
 import { withLarkWriteExecutionContext } from "./execute-lark-write.mjs";
 
@@ -4288,25 +4288,46 @@ async function handleDocumentLifecycleSummary(res, requestUrl, body, logger = no
   });
 }
 
-async function handleRuntimeInfo(res, requestUrl, body, logger = noopHttpLogger) {
-  const payload = {
+function buildRuntimeInfoPayload() {
+  return {
     db_path: getDbPath(),
     node_pid: process.pid,
     cwd: process.cwd(),
     service_start_time: serviceStartTime,
   };
+}
 
+function logRuntimeInfoPayload(logger = noopHttpLogger, payload = {}) {
   logger.info("runtime_info", {
     stage: "runtime_info",
     action: "get_runtime_info",
     kind: "get_runtime_info",
     ...payload,
   });
+}
 
+async function handleRuntimeInfoTool(res, requestUrl, body, logger = noopHttpLogger) {
+  const payload = buildRuntimeInfoPayload();
+  logRuntimeInfoPayload(logger, payload);
   jsonResponse(res, 200, {
     ok: true,
     action: "get_runtime_info",
     ...payload,
+  });
+}
+
+async function handleRuntimeInfo(res, requestUrl, body, logger = noopHttpLogger) {
+  const payload = buildRuntimeInfoPayload();
+  logRuntimeInfoPayload(logger, payload);
+  const userResponse = normalizeUserResponse({
+    payload: buildRuntimeInfoUserResponse(payload),
+    logger,
+    traceId: res?.__trace_id || null,
+    handlerName: "handleRuntimeInfo",
+  });
+  jsonResponse(res, 200, {
+    ...userResponse,
+    __hide_trace_id: true,
   });
 }
 
@@ -5084,7 +5105,7 @@ async function handleAgentUpdateLearningState(res, requestUrl, body, logger = no
 }
 
 async function handleAgentRuntimeInfo(res, requestUrl, body, logger = noopHttpLogger) {
-  await invokeAgentBridge(handleRuntimeInfo, {
+  await invokeAgentBridge(handleRuntimeInfoTool, {
     requestUrl,
     body,
     logger,
