@@ -5,6 +5,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 ## 目的
 
 這份文件是外部 skill 層（位於 `~/.agents` 與 `~/.codex`）在 repo 內的技術鏡像。
+它描述的是 external operator skill mirror，不是 `/Users/seanhan/Documents/Playground/src/skill-registry.mjs` 的 repo-local runtime skill registry。
 它記錄：
 
 - Lobster 面對常見任務時應優先用哪些 skill

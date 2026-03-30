@@ -4,14 +4,44 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 ## Agent Architecture Status
 
-An AI-enabled system exists here, and it now includes a closed-loop executive orchestration layer on top of checked-in slash agents. It is still not a fully autonomous company-brain server.
+An AI-enabled system exists here, and it now includes a closed-loop executive orchestration layer on top of checked-in registered slash/persona surfaces plus bounded executors. It is still not a fully autonomous company-brain server.
+
+## Canonical Terminology
+
+- `registered agent surface`
+  - a checked-in slash/persona entry in `/Users/seanhan/Documents/Playground/src/agent-registry.mjs`
+  - it defines slash routing, role prompt, and output contract
+  - it is not by itself a standalone runtime executor module
+- `bounded executor`
+  - a checked-in runtime path that actually performs work under a contract
+  - current examples include `/Users/seanhan/Documents/Playground/src/agent-dispatcher.mjs`, `/Users/seanhan/Documents/Playground/src/executive-orchestrator.mjs`, `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`, and the placeholder `/Users/seanhan/Documents/Playground/src/planner/agent-runtime.mjs`
+- `repo-local runtime skill`
+  - a checked-in skill definition from `/Users/seanhan/Documents/Playground/src/skill-registry.mjs` executed through `/Users/seanhan/Documents/Playground/src/skill-runtime.mjs`
+  - current checked-in examples are `search_and_summarize` and `document_summarize`
+- `external operator skill mirror`
+  - docs-only mirrors for skills stored under `~/.agents` or `~/.codex`
+  - these mirrors guide operator workflows, but they are not loaded by the repo runtime today
+
+## Current Landed State vs Future Target
+
+- Current landed state:
+  - registered slash/persona surfaces exist and can be routed deterministically
+  - bounded executors exist for slash replies, executive orchestration, meeting workflow, and planner placeholder lane execution
+  - repo-local runtime skills exist as a separate narrow contract layer
+  - external operator skill mirrors exist only as checked-in documentation/governance mirrors
+- Future target state, not current code truth:
+  - dedicated specialist executor modules beyond the shared slash/persona dispatcher
+  - broader skill families beyond the current repo-local read-only skill baseline
+  - any runtime loading or direct execution path for external mirrored skills
+  - background worker or parallel specialist mesh
 
 What exists:
 
 - OpenClaw plugin tools
 - binding-based capability lanes
 - closed-loop executive planner plus shared task-state orchestration
-- persona-based slash-agent registry and dispatcher
+- registered slash/persona surfaces plus a shared dispatcher
+- repo-local runtime skill contract and registry
 - input modality routing for text / image / multimodal requests
 - lane-specific execution strategies
 - command-style `/meeting` workflow built on top of the lane executor
@@ -23,26 +53,30 @@ What exists:
 What does not exist in current code:
 
 - autonomous long-running planner queue
-- company_brain
+- dedicated runtime module per slash specialist persona
+- runtime loading of external mirrored skills
+- full generic specialist runtime mesh
+- generic company-brain server
 - tenant-wide shared memory service
 - memory orchestration layer
 
 What now exists in current code:
 
-- closed-loop executive planner that can start, continue, or hand off between registered agents
+- closed-loop executive planner that can start, continue, or hand off between registered agent surfaces through bounded executors
 - shared executive task state for multi-turn continuation and agent-to-agent handoff
 - lifecycle state transitions that require evidence plus verifier pass before completion
-- checked-in slash-agent registry for `/generalist`, `/ceo`, `/product`, `/prd`, `/cmo`, `/consult`, `/cdo`, `/delivery`, `/ops`, `/tech`
+- checked-in registered slash/persona registry for `/generalist`, `/ceo`, `/product`, `/prd`, `/cmo`, `/consult`, `/cdo`, `/delivery`, `/ops`, `/tech`
 - checked-in `/knowledge audit|consistency|conflicts|distill|brain|proposals|approve|reject|ownership|learn`
-- persona-configured shared dispatcher that reuses retrieval grounding plus compact role prompts
+- persona-configured shared dispatcher that reuses retrieval grounding plus compact role prompts instead of spawning dedicated per-specialist executors
+- repo-local skill runtime for `search_and_summarize` and `document_summarize`
 - image-bearing slash requests that first use the Nano Banana-oriented adapter, then pass compact structured image context into the text model only when needed
-- explicit capability contracts for registered agents
+- explicit capability contracts for registered agent surfaces
 - self-check script plus maintainable capability/checklist documents for chain governance
 - evidence-based verifier, reflection records, and improvement proposal generation
 - monitoring-backed learning summaries that can draft routing/tool improvement proposals for human review
 - proposal-first knowledge writeback path for uncertain meeting/executive conclusions
 
-## Current Agent-Like Components
+## Current Agent and Skill Boundary Components
 
 ### OpenClaw Plugin Layer
 
@@ -166,18 +200,19 @@ What now exists in current code:
   - lane-specific service functions
   - referenced-message lookups for doc share recovery
 
-### Registered Slash Agents
+### Registered Agent Surfaces
 
 - Name:
-  - slash-agent registry and dispatcher
+  - registered slash/persona registry and dispatcher
 - Code:
   - `/Users/seanhan/Documents/Playground/src/agent-registry.mjs`
   - `/Users/seanhan/Documents/Playground/src/agent-dispatcher.mjs`
 - Role:
-  - define checked-in agent IDs, slash commands, knowledge subcommands, role prompts, and output contracts
+  - define checked-in registered agent surfaces: agent IDs, slash commands, knowledge subcommands, role prompts, and output contracts
   - expose minimum capability contracts for governance and self-check
   - dispatch `/ceo`, `/product`, `/prd`, `/cmo`, `/consult`, `/cdo`, `/delivery`, `/ops`, `/tech`, `/generalist`, and `/knowledge *` before generic lane fallback
   - reuse retrieval grounding and compact workflow checkpoints for persona answers
+  - act as routing/persona surfaces, not as standalone specialist executor modules
   - when direct text-model credentials are absent, call the dedicated `lobster-backend` OpenClaw MiniMax text path before dropping to extractive retrieval-only output
   - keep chat-facing slash-agent fallback/no-match replies on the shared natural-language reply boundary instead of exposing raw error envelopes
   - reject JSON-like success payloads at the registered-agent output boundary and summarize them into visible natural language while keeping machine-readable fields in runtime data
@@ -209,12 +244,12 @@ What now exists in current code:
   - `/Users/seanhan/Documents/Playground/src/executive-memory.mjs`
 - Role:
   - maintain one active executive task per session
-  - let registered slash agents continue across multiple turns
-  - allow planner-selected handoff between registered agents
+  - let registered agent surfaces continue across multiple turns through shared task state
+  - allow planner-selected handoff between registered agent surfaces
   - let the planner attach a bounded work plan with at most three roles total (`1 primary + up to 2 supporting`)
-  - default simple single-intent requests to `/generalist`; only expand to multi-agent when one compound request needs distinct specialist roles
-  - run supporting-agent passes sequentially, then feed their compact outputs back into the primary agent for synthesis
-  - if any specialist pass fails, keep the turn fail-soft by falling back to `/generalist` for final synthesis
+  - default simple single-intent requests to `/generalist`; only expand to multi-agent when one compound request needs distinct registered roles
+  - run supporting-role passes sequentially through the shared dispatcher, then feed their compact outputs back into the primary agent for synthesis
+  - if any supporting-role pass fails, keep the turn fail-soft by falling back to `/generalist` for final synthesis
   - support explicit exit from executive mode
   - derive task rules, success criteria, and lifecycle state on task initialization
   - collect evidence from execution, run verifier checks, and append reflection/improvement records
@@ -223,7 +258,7 @@ What now exists in current code:
     - direct answer first
     - normalized `結論 / 重點 / 下一步` structure
     - supporting-agent context absorbed into one single-voice final reply instead of separate visible agent blocks
-  - reject JSON-like specialist or merge replies before they are parsed as executive brief text, keeping structured blobs out of the visible single-voice answer
+  - reject JSON-like supporting-role or merge replies before they are parsed as executive brief text, keeping structured blobs out of the visible single-voice answer
   - expose a minimal planner-callable tool registry for five agent-bridge actions:
     - `create_doc`
     - `list_company_brain_docs`
@@ -233,9 +268,49 @@ What now exists in current code:
   - route those tool calls through the existing `/agent/*` HTTP bridges instead of duplicating document/runtime logic
 - Boundaries:
   - does not run an async worker queue
+  - does not create independent specialist executor modules for each slash/persona surface
   - does not run parallel supporting-agent execution; Thread103 baseline is sequential only
   - does not maintain a tenant-wide memory graph
   - does not yet auto-apply high-risk prompt/governance proposals without review
+
+### Repo-Local Skill Runtime
+
+- Name:
+  - repo-local runtime skills
+- Code:
+  - `/Users/seanhan/Documents/Playground/src/skill-runtime.mjs`
+  - `/Users/seanhan/Documents/Playground/src/skill-registry.mjs`
+  - `/Users/seanhan/Documents/Playground/src/skills/search-and-summarize-skill.mjs`
+  - `/Users/seanhan/Documents/Playground/src/skills/document-summarize-skill.mjs`
+  - `/Users/seanhan/Documents/Playground/src/planner/skill-bridge.mjs`
+- Role:
+  - provide bounded reusable capabilities with checked input/output/side-effect contracts
+  - stay separate from registered slash/persona surfaces
+  - allow planner-visible read-only skill actions only through deterministic bridge rules
+- Current checked-in state:
+  - only two repo-local runtime skills are registered by default
+  - both are `read_only`
+  - both run through `read-runtime`
+  - skill success is evidence, not task completion
+- Boundaries:
+  - skills are not task owners
+  - skills do not replace registered agent surfaces
+  - skills do not load from `~/.agents` or `~/.codex`
+
+### External Operator Skill Mirror
+
+- Name:
+  - external operator skill mirror
+- Docs:
+  - `/Users/seanhan/Documents/Playground/docs/system/skill_routing_map.md`
+  - `/Users/seanhan/Documents/Playground/docs/system/skill_audit_summary.md`
+  - `/Users/seanhan/Documents/Playground/docs/system/skill_addition_checklist.md`
+- Role:
+  - mirror externally stored operator skills for governance, audit, and routing guidance
+- Boundaries:
+  - mirror only; not a checked-in runtime registry
+  - not loaded by `/Users/seanhan/Documents/Playground/src/skill-runtime.mjs`
+  - does not prove external skills are executable inside this repo
 
 ### Image Understanding Adapter
 
@@ -450,4 +525,5 @@ What now exists in current code:
 
 - tool layer: implemented
 - semantic classification: implemented, quality-sensitive
-- planner/router/specialist collaboration: not implemented in this repo
+- planner/router/registered-agent collaboration: partially implemented through bounded orchestration
+- dedicated specialist runtime modules: not implemented in this repo

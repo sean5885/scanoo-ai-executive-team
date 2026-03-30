@@ -4,7 +4,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 ## Purpose
 
-This document mirrors the checked-in minimal `agent skill` runtime baseline.
+This document mirrors the checked-in minimal repo-local runtime skill baseline.
 
 Current code anchors:
 
@@ -30,6 +30,7 @@ This baseline is intentionally narrow:
 - it does not add a new public route
 - it does not change mutation/read/answer contracts
 - it keeps deterministic routing explicit and bounded
+- it does not describe the docs-only external skill mirrors under `~/.agents` or `~/.codex`
 
 ## Skill Concept
 
@@ -46,9 +47,12 @@ A skill is a bounded reusable capability with:
 
 Current checked-in meaning:
 
+- a skill is a repo-local checked-in runtime unit
 - a skill is not a task owner
 - a skill is not a planner action
 - a skill is not a raw tool
+- a skill is not a registered slash/persona agent surface
+- a skill is not an external operator skill mirror
 - a skill is a small runtime wrapper that may orchestrate one or more already-governed runtime calls under a stricter contract
 
 ### Input / Output / Side Effects

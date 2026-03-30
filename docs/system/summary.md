@@ -37,11 +37,12 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - guarded local action bridge
 - binding / session / workspace runtime foundation
 - capability-lane routing for DM / group / doc / knowledge requests
-- closed-loop executive planner with shared multi-turn task state, evidence-based verification, reflection, and agent-to-agent handoff across registered agents
+- closed-loop executive planner with shared multi-turn task state, evidence-based verification, reflection, and handoff across registered agent surfaces
 - natural-language chat output boundary for registered-agent fallback/no-match paths and executive planner fallback paths, so user-facing replies no longer expose raw JSON error envelopes
-- registered-agent success boundary guard plus executive specialist/merge reply rejection for JSON-like structured envelopes, keeping machine-readable error/details/context in runtime state while visible chat stays single-voice natural language
+- registered-agent success boundary guard plus executive supporting-role/merge reply rejection for JSON-like structured envelopes, keeping machine-readable error/details/context in runtime state while visible chat stays single-voice natural language
 - bounded planner-side task driving v1 for unfinished / blocked / in-progress tasks, using local JSON task snapshots to suggest next steps, unblock actions, and minimal action-layer reminders without changing public planner contracts
 - planner-side placeholder result envelope/formatter helpers for deterministic `meeting|doc|runtime|mixed` local result normalization
+- checked-in repo-local runtime skill layer with deterministic planner-visible read-only skills
 - lane-specific execution strategies for DM / group / doc / knowledge requests
 - structured runtime logging for long-connection event handling and doc resolution debugging
 - immediate console alerts for `oauth_reauth_required` and `planner_failed`, with in-memory rate limiting to reduce log bursts
@@ -52,11 +53,23 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - Nano Banana-oriented image understanding adapter that returns compact structured image fields before any optional text synthesis
 - DM cloud-document classification preview with recommended owner-role mapping from local indexed docs
 - `/meeting` workflow for chat-scoped meeting capture, optional calendar-backed session binding via `meeting_url`, optional local microphone recording, default local `faster-whisper` transcription, transcript compaction before summary prompting, optional meeting-image structuring, automatic per-meeting Lark doc creation, weekly/general meeting summarization, pending confirmation, doc write, and weekly todo tracking
-- repo-local mirror for externally stored skills used by Lobster operations, including audited Traditional-Chinese first-batch governance docs
+- docs-only repo-local mirror for externally stored operator skills used by Lobster operations, including audited Traditional-Chinese first-batch governance docs
 
 ## Architecture Overview
 
 This repo is a local Node service with a Python security subproject. It is not a browser app and not a fully autonomous multi-agent executive server, but it now includes a closed-loop executive orchestration layer for checked-in agents.
+
+Canonical terminology for this summary:
+
+- `registered agent surface`
+  - checked-in slash/persona entry from `/Users/seanhan/Documents/Playground/src/agent-registry.mjs`
+  - routing/persona surface, not a standalone executor module
+- `bounded executor`
+  - checked-in runtime path that actually performs work, such as `/Users/seanhan/Documents/Playground/src/agent-dispatcher.mjs`, `/Users/seanhan/Documents/Playground/src/executive-orchestrator.mjs`, or `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`
+- `repo-local runtime skill`
+  - checked-in skill from `/Users/seanhan/Documents/Playground/src/skill-registry.mjs` executed by `/Users/seanhan/Documents/Playground/src/skill-runtime.mjs`
+- `external operator skill mirror`
+  - docs-only mirror for skills stored outside the repo under `~/.agents` or `~/.codex`
 
 Main runtime shape:
 
@@ -85,10 +98,12 @@ AI-like components exist, and now include:
 - shared token-governance / checkpoint layer for those AI paths
 - malformed JSON retry for MiniMax/OpenClaw semantic classification and meeting-summary JSON responses
 - command-scoped `/meeting` workflow inside the capability-lane runtime
-- checked-in slash-agent registry
-- closed-loop executive planner
+- checked-in registered slash/persona surfaces
+- closed-loop executive planner plus bounded executors over those surfaces
 - shared per-session executive task state
-- multi-turn continuation and agent handoff for registered agents
+- multi-turn continuation and agent handoff for registered agent surfaces
+- repo-local runtime skill layer with two checked-in read-only skills
+- external operator skill mirror as documentation only
 
 ## Repo Scale
 
@@ -117,13 +132,15 @@ AI-like components exist, and now include:
 - stronger write safety
 - runtime contract hardening between Node and `lobster_security`
 - provider-side prompt caching cannot be confirmed from repo code, so the repo now uses stable prompt templates plus external checkpoints instead of re-sending large historical context each round
-- the executive planner is still thin and synchronous; it does not yet run parallel subagents or a background queue
+- the executive planner is still thin and synchronous; it does not yet run parallel subagents, a background queue, or dedicated per-specialist executor modules
 - the local `docs/system` knowledge helpers remain read-side utilities only; they are not the SQLite/company-brain retrieval pipeline or an approval-governed knowledge source
 
 ## Not Implemented
 
 - company_brain
 - agent learning pipeline
+- dedicated specialist runtime modules behind each slash/persona surface
+- runtime loading of external mirrored skills
 - unread-only semantics
 - send-as-user
 - task subtasks

@@ -31,6 +31,19 @@ Current-truth docs for onboarding are:
   - the normalized evidence item used before public answer rendering
   - current shape is `{ id, snippet, metadata }`
   - code: `/Users/seanhan/Documents/Playground/src/read-source-schema.mjs`, `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`
+- `registered agent surface`
+  - a checked-in slash/persona definition in `/Users/seanhan/Documents/Playground/src/agent-registry.mjs`
+  - it defines routing/persona contract and output expectations
+  - it is not by itself a standalone executor module
+- `bounded executor`
+  - a checked-in runtime path that actually executes work under a narrow contract
+  - current examples include `/Users/seanhan/Documents/Playground/src/agent-dispatcher.mjs`, `/Users/seanhan/Documents/Playground/src/executive-orchestrator.mjs`, `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`, and the placeholder `/Users/seanhan/Documents/Playground/src/planner/agent-runtime.mjs`
+- `repo-local runtime skill`
+  - a checked-in skill definition from `/Users/seanhan/Documents/Playground/src/skill-registry.mjs` executed by `/Users/seanhan/Documents/Playground/src/skill-runtime.mjs`
+  - current examples are `search_and_summarize` and `document_summarize`
+- `external operator skill mirror`
+  - docs-only mirror for operator skills stored under `~/.agents` or `~/.codex`
+  - not loaded by the checked-in repo runtime
 - `mapping`
   - a checked-in route, authority, or action mapping that drives runtime behavior
   - examples:
@@ -101,7 +114,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/tests/user-response-normalizer.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/answer-service.test.mjs`
 
-### 4. Skill Runtime
+### 4. Repo-Local Skill Runtime
 
 - Implemented:
   - `/Users/seanhan/Documents/Playground/src/skill-governance.mjs`
@@ -116,6 +129,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-runtime.mjs`
 - Current truth:
   - a checked-in minimal skill contract now exists
+  - this module group is separate from registered slash/persona agent surfaces
   - skill definitions must now declare `skill_class` and `runtime_access`
   - the runtime validates input, output, and side effects
   - the runtime rejects non-serializable input/output and nested skill execution
@@ -127,6 +141,7 @@ Current-truth docs for onboarding are:
   - the default adapter is a bounded in-memory buffer and the checked-in mock structured-log adapter can write JSON lines to console or a local file stub
   - no external telemetry pipeline is wired from this module set yet
   - skill existence does not add a new public route or planner routing target by itself
+  - external operator skill mirrors are not executable runtime modules here
 - Evidence:
   - `/Users/seanhan/Documents/Playground/tests/skill-runtime.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/planner-visible-skill-observability.test.mjs`
@@ -210,6 +225,8 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/answer-service.mjs`
   - `/Users/seanhan/Documents/Playground/src/knowledge/knowledge-service.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner/knowledge-bridge.mjs`
+  - `/Users/seanhan/Documents/Playground/src/planner/agent-executor.mjs`
+  - `/Users/seanhan/Documents/Playground/src/planner/agent-runtime.mjs`
 - `experimental / process-local`
   - `/Users/seanhan/Documents/Playground/src/company-brain-memory-authority.mjs`
   - `/Users/seanhan/Documents/Playground/src/memory-write-guard.mjs`
@@ -217,11 +234,14 @@ Current-truth docs for onboarding are:
 - Current truth:
   - these files exist and are tested
   - they are not the canonical public read/write surfaces for the current system
+  - `planner/agent-runtime.mjs` is currently a placeholder bounded executor for deterministic lane result normalization, not a generic specialist runtime
 
 ## Policy-Only or Not Fully Landed
 
 - no checked-in background worker mesh
 - no full autonomous company-brain server
+- no dedicated specialist runtime module per registered slash/persona agent
+- no checked-in runtime loading path for external mirrored skills
 - no repo-wide universal read unification; some review/verification helpers still read state directly
 - no targeted block-level doc mutation runtime; targeted preview exists, final apply is still replace-based in the doc write adapter
 - no checked-in live planner-visible telemetry emitter, production telemetry sink, or runtime rollback flag carrier yet; current live design is spec-only in `/Users/seanhan/Documents/Playground/docs/system/planner_visible_live_telemetry_design.md`

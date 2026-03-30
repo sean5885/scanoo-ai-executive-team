@@ -4,7 +4,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 ## Purpose
 
-This document defines the current minimum interface layer for the Lobster planner / agent / skill / tool chain.
+This document defines the current minimum interface layer for the Lobster planner / agent-surface / executor / skill / tool chain.
 
 It is intentionally narrow:
 
@@ -45,14 +45,14 @@ It is intentionally narrow:
   - this interface does not define new workflow ownership
   - preset-level validation is final-output only; no step-level validation yet
 
-## 2. `agent_skill_interface`
+## 2. `executor_skill_interface`
 
 - purpose:
-  - let an agent invoke a skill as a bounded capability instead of treating the skill as a task owner
+  - let a bounded executor invoke a repo-local runtime skill as a bounded capability instead of treating the skill as a task owner
 - caller:
-  - planner-selected agent path, agent bridge, or workflow-controlled agent execution
+  - planner-selected bounded executor, planner skill bridge, or workflow-controlled runtime execution
 - callee:
-  - a checked-in skill definition under `$CODEX_HOME/skills` or `$HOME/.agents/skills`
+  - a checked-in repo-local skill definition from `/Users/seanhan/Documents/Playground/src/skill-registry.mjs` executed by `/Users/seanhan/Documents/Playground/src/skill-runtime.mjs`
 - input shape:
   ```json
   {
@@ -80,6 +80,7 @@ It is intentionally narrow:
   - skills are tools/capabilities, never task owners
   - skill success does not imply workflow completion
   - approval/write/verification gates remain outside this interface
+  - external skill mirrors under `~/.agents` or `~/.codex` are outside this interface unless a checked-in runtime loader is added later
 
 ## 3. `skill_tool_interface`
 
@@ -162,7 +163,10 @@ It is intentionally narrow:
 ## Current Boundary Summary
 
 - planner -> action/preset selection exists in code today
+- registered slash/persona agents are routing surfaces; bounded execution lives in dispatcher/orchestrator/workflow modules
 - agent-facing bridge routes exist for a narrow subset of document/runtime actions
+- repo-local runtime skills exist as a separate checked-in layer and are not the same thing as registered agents
+- external operator skill mirrors are docs/governance artifacts, not runtime callees
 - company-brain routes exist as minimal read/write mirrors, not a full knowledge operating system
 - skill/tool usage is governed by checked-in policy and route contracts, but not yet by a single runtime interface module
 - escalation/handoff is currently specified as a boundary contract, not a full runtime subsystem

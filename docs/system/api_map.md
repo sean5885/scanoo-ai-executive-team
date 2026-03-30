@@ -9,6 +9,8 @@ This is the grouped HTTP surface mirror for the current repo.
 - exhaustive behavior still lives in `/Users/seanhan/Documents/Playground/src/http-server.mjs`
 - route-level write policy and method contracts are enforced from `/Users/seanhan/Documents/Playground/src/http-route-contracts.mjs`
 - this document groups routes by runtime role so newcomers can find the real entrypoints quickly
+- `/agent/*` routes are bounded planner/agent-facing wrappers, not proof of a generic specialist runtime mesh
+- there is no generic HTTP route for repo-local skill execution or external skill mirrors
 
 ## 1. Runtime, Auth, and Monitoring
 
@@ -123,5 +125,7 @@ Current write truth:
 ## 8. Deprecated or Non-Primary Readings
 
 - treating `/answer` as a direct `answer-service.mjs` wrapper is outdated
+- treating `/agent/*` wrappers as dedicated specialist executor surfaces is outdated
+- treating external skill mirror docs as API-backed runtime surfaces is outdated
 - treating company-brain read routes as approval-runtime surfaces is outdated
 - treating preview routes as completed write paths is outdated

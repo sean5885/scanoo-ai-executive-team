@@ -93,6 +93,8 @@ function createKnowledgeAgent({
   };
 }
 
+// Registered agents are slash/persona surfaces consumed by the shared
+// dispatcher/orchestrator. They are not standalone executor modules.
 export const agentRegistry = Object.freeze({
   generalist: createPersonaAgent({
     id: "generalist",

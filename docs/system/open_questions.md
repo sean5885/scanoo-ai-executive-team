@@ -74,9 +74,9 @@ Resolved documentation drift and frozen-baseline clarifications were removed fro
      - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
      - `/Users/seanhan/Documents/Playground/src/external-mutation-registry.mjs`
 
-11. The repo has a checked-in executive orchestration layer, but not background workers, parallel subagent execution, or a tenant-wide memory graph.
+11. The repo has a checked-in executive orchestration layer over registered slash/persona surfaces, but not dedicated specialist runtime modules, background workers, parallel subagent execution, runtime loading of external mirrored skills, or a tenant-wide memory graph.
    - Why it matters:
-     - future docs must keep describing the current scope accurately
+     - future docs must keep describing the current scope accurately and must not collapse persona surfaces, bounded executors, repo-local skills, and external skill mirrors into one term
 
 12. Comment suggestion cards support manual/timer polling only; there is still no native Lark comment event entering this repo.
    - Current code evidence:

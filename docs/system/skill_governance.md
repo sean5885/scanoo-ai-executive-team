@@ -6,6 +6,8 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 This document mirrors the checked-in governance boundary for planner-integrated skills.
 
+Here `skills` means repo-local runtime skills checked into this repository, not the docs-only external skill mirrors under `~/.agents` or `~/.codex`.
+
 Current code anchors:
 
 - `/Users/seanhan/Documents/Playground/src/skill-governance.mjs`
@@ -140,6 +142,7 @@ Current checked-in choice rule is intentionally narrow:
   - planner still dispatches a planner action first, then reaches the skill only through `planner/skill-bridge.mjs`
 - use an agent / preset:
   - when the work is multi-step, role-oriented, or not representable as one bounded deterministic skill action
+  - in current code, this usually means a registered agent surface plus a bounded executor, not a dedicated per-specialist runtime module
 
 Current non-goals:
 

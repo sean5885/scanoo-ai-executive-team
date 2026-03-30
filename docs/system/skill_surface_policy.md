@@ -6,6 +6,8 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 This document defines how checked-in repo skills may surface outward without changing the public response boundary.
 
+This file is about repo-local runtime skills only. External operator skill mirrors under `~/.agents` or `~/.codex` are outside this policy unless a checked-in runtime loader is added later.
+
 Current code anchors:
 
 - `/Users/seanhan/Documents/Playground/src/skill-governance.mjs`

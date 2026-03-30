@@ -8,6 +8,12 @@ This document defines the minimum common spec for checked-in agents in the Lobst
 
 It is a template/spec document, not a claim that every agent below already exists as a dedicated runtime module.
 
+Current terminology boundary:
+
+- registered slash agents in `/Users/seanhan/Documents/Playground/src/agent-registry.mjs` are routing/persona surfaces
+- bounded execution currently lives in shared executors such as `/Users/seanhan/Documents/Playground/src/agent-dispatcher.mjs` and `/Users/seanhan/Documents/Playground/src/executive-orchestrator.mjs`
+- this spec does not imply one dedicated specialist runtime module per slash/persona entry
+
 ## Agent Template
 
 Every agent should define at least:
@@ -185,4 +191,5 @@ Every agent should define at least:
 
 - `planner_agent` is grounded in checked-in code today.
 - `company_brain_agent` is currently best understood as a minimal read-oriented interface contract over existing company-brain routes.
+- registered slash/persona entries should be read as agent surfaces unless a dedicated executor module is explicitly identified in code.
 - This document does not claim a full independent agent runtime for every spec entry.
