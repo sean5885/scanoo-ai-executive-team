@@ -137,7 +137,7 @@ export const EXTERNAL_MUTATION_SPECS = Object.freeze([
     policyActionType: "replace",
     resourceType: "doc",
     confirmRequired: true,
-    reviewRequired: "never",
+    reviewRequired: "always",
     routeFixtures: [
       {
         pathname: "/api/doc/rewrite-from-comments",

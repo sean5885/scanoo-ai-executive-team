@@ -78,6 +78,7 @@ import {
   replyMessage,
   replaceSpreadsheetCells,
   replaceSpreadsheetCellsBatch,
+  resolveDocumentComment,
   resolveDriveRootFolderToken,
   searchCalendarEvents,
   searchBitableRecords,
@@ -119,12 +120,17 @@ import { applyHeadingTargetedInsert, DocumentTargetingError } from "./doc-target
 import { listUnseenDocumentComments, markDocumentCommentsSeen } from "./comment-watch-store.mjs";
 import { generateDocumentCommentSuggestionCard } from "./comment-suggestion-workflow.mjs";
 import { runCommentSuggestionPollOnce } from "./comment-suggestion-poller.mjs";
+import {
+  buildDocumentRewriteTaskMeta,
+  buildDocumentRewriteWorkflowScope,
+  loadDocumentCommentRewriteApplyState,
+  prepareDocumentCommentRewritePreview,
+} from "./comment-doc-workflow.mjs";
 import { buildCloudDocStructuredResult, buildCloudDocWorkflowScopeKey } from "./cloud-doc-organization-workflow.mjs";
 import {
   consumeCommentRewriteConfirmation,
   consumeDocumentReplaceConfirmation,
   consumeMeetingWriteConfirmation,
-  createCommentRewriteConfirmation,
   createDocumentReplaceConfirmation,
   createMeetingWriteConfirmation,
   peekCommentRewriteConfirmation,
@@ -172,7 +178,6 @@ import {
   buildWikiOrganizeApplyCanonicalRequest,
 } from "./mutation-admission.mjs";
 import {
-  ensureDocRewriteWorkflowTask,
   ensureCloudDocWorkflowTask,
   finalizeDocRewriteWorkflowTask,
   finalizeCloudDocWorkflowTask,
@@ -2255,20 +2260,6 @@ async function ensureCloudDocPreviewReviewTasks({
 
 function hasCloudDocPreviewPlan(previewPlan = null) {
   return Array.isArray(previewPlan?.moves) && Array.isArray(previewPlan?.target_folders);
-}
-
-function buildDocumentRewriteWorkflowScope(documentId) {
-  return {
-    session_key: `doc-rewrite:${documentId}`,
-    trace_id: createTraceId(),
-  };
-}
-
-function buildDocumentRewriteTaskMeta(route, extra = {}) {
-  return {
-    route,
-    ...extra,
-  };
 }
 
 function buildDocumentRewritePreviewResponse({
@@ -5688,41 +5679,19 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
   const workflowScope = buildDocumentRewriteWorkflowScope(documentId);
 
   if (!apply) {
-    const current = await getHttpService("readDocumentFromRuntime", readDocumentFromRuntime)({
+    const preview = await getHttpService("prepareDocumentCommentRewritePreview", prepareDocumentCommentRewritePreview)({
       accountId: context.account.id,
       accessToken: context.token,
       documentId,
-      pathname: requestUrl?.pathname || "/api/doc/rewrite-from-comments",
-      logger: null,
-    });
-    await ensureDocRewriteWorkflowTask({
-      accountId: context.account.id,
-      documentId,
-      documentTitle: current.title,
       scope: workflowScope,
-      workflowState: "loading_source",
-      routingHint: "doc_rewrite_loading_source",
-      meta: buildDocumentRewriteTaskMeta("document_rewrite_from_comments_preview"),
+      includeSolved: Boolean(body.include_solved),
+      commentIds,
+      resolveComments,
+      route: "document_rewrite_from_comments_preview",
+      readDocumentFn: getHttpService("readDocumentFromRuntime", readDocumentFromRuntime),
+      rewriteDocumentFn: getHttpService("rewriteDocumentFromComments", rewriteDocumentFromComments),
     });
-    const result = await getHttpService("rewriteDocumentFromComments", rewriteDocumentFromComments)(
-      context.token,
-      documentId,
-      {
-        includeSolved: Boolean(body.include_solved),
-        commentIds,
-        apply: false,
-        resolveComments,
-      },
-    );
-    await ensureDocRewriteWorkflowTask({
-      accountId: context.account.id,
-      documentId,
-      documentTitle: current.title,
-      scope: workflowScope,
-      workflowState: "drafting",
-      routingHint: "doc_rewrite_drafting",
-      meta: buildDocumentRewriteTaskMeta("document_rewrite_from_comments_preview"),
-    });
+    const { result, confirmation } = preview;
     if (!result.comment_count) {
       jsonResponse(res, 200, {
         ok: true,
@@ -5733,31 +5702,6 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
       });
       return;
     }
-    const confirmation = await createCommentRewriteConfirmation({
-      accountId: context.account.id,
-      documentId,
-      title: result.title,
-      currentRevisionId: current.revision_id,
-      currentContent: current.content,
-      rewrittenContent: result.revised_content || "",
-      patchPlan: result.patch_plan || [],
-      changeSummary: result.change_summary || [],
-      commentIds: result.comment_ids || commentIds,
-      comments: result.comments || [],
-      resolveComments,
-    });
-    await ensureDocRewriteWorkflowTask({
-      accountId: context.account.id,
-      documentId,
-      documentTitle: current.title,
-      scope: workflowScope,
-      workflowState: "awaiting_review",
-      routingHint: "doc_rewrite_review_pending",
-      meta: buildDocumentRewriteTaskMeta("document_rewrite_from_comments_preview", {
-        confirmation_id: confirmation.confirmation_id,
-      }),
-    });
-
     jsonResponse(res, 200, buildDocumentRewritePreviewResponse({
       context,
       result,
@@ -5766,6 +5710,12 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
     }));
     return;
   }
+  const applyState = await loadDocumentCommentRewriteApplyState({
+    accountId: context.account.id,
+    documentId,
+    confirmationId,
+    scope: workflowScope,
+  });
 
   const canonicalRequest = buildDocumentCommentRewriteApplyCanonicalRequest({
     pathname: "/api/doc/rewrite-from-comments",
@@ -5777,8 +5727,8 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
     context: {
       idempotencyKey: getRequestIdempotencyKey(body),
       confirmed: confirm === true && Boolean(confirmationId),
-      verifierCompleted: confirm === true && Boolean(confirmationId),
-      reviewRequiredActive: false,
+      verifierCompleted: applyState.reviewReady,
+      reviewRequiredActive: true,
     },
     originalRequest: body,
   });
@@ -5799,12 +5749,14 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
     rollback: async () => rollbackRewrittenDocument(context.token, documentId, {
       rollbackState: rewriteRollbackState,
       mutationAudit,
+      updateDocumentFn: getHttpService("updateDocument", updateDocument),
+      resolveCommentFn: getHttpService("resolveDocumentComment", resolveDocumentComment),
     }),
     payload: {
       document_id: documentId,
       confirmation_id: confirmationId,
-      comment_ids: pendingConfirmation.comment_ids || [],
-      resolve_comments: pendingConfirmation.resolve_comments === true,
+      comment_ids: applyState.pendingConfirmation?.comment_ids || [],
+      resolve_comments: applyState.pendingConfirmation?.resolve_comments === true,
     },
     confirmation: {
       kind: "comment_rewrite",
@@ -5812,6 +5764,7 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
       confirm,
       requireConfirmationId: true,
       confirmationId,
+      pending: applyState.pendingConfirmation,
       peek: async () => peekCommentRewriteConfirmation({
         confirmationId,
         accountId: context.account.id,
@@ -5866,13 +5819,17 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
       essential: true,
     }),
     performWrite: async ({ accessToken, confirmation }) => {
-        await markDocRewriteApplying({
+        const applyingTask = await markDocRewriteApplying({
           accountId: context.account.id,
           scope: workflowScope,
+          confirmationId,
           meta: buildDocumentRewriteTaskMeta("document_rewrite_from_comments_apply", {
             confirmation_id: confirmationId,
           }),
         });
+        if (!applyingTask?.id) {
+          throw new Error("doc_rewrite_review_not_ready");
+        }
 
         return applyRewrittenDocument(
           accessToken,
@@ -5883,6 +5840,9 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
             resolveCommentIds: confirmation.resolve_comments ? confirmation.comment_ids : [],
             rollbackState: rewriteRollbackState,
             mutationAudit,
+            readDocument: getHttpService("readDocumentFromRuntime", readDocumentFromRuntime),
+            updateDocumentFn: getHttpService("updateDocument", updateDocument),
+            resolveCommentFn: getHttpService("resolveDocumentComment", resolveDocumentComment),
           },
         );
       },
@@ -5913,7 +5873,7 @@ async function handleDocumentRewriteFromComments(res, requestUrl, body, logger =
     );
     return;
   }
-  const confirmation = pendingConfirmation;
+  const confirmation = applyState.pendingConfirmation;
   const applied = execution.result;
   const finalized = await finalizeDocRewriteWorkflowTask({
     accountId: context.account.id,

@@ -320,7 +320,7 @@ test("control diagnostics reporting emits stable top regression cases without ch
     missing_scope_key: 33,
     missing_idempotency_key: 2,
     confirm_required: 7,
-    review_required: 5,
+    review_required: 6,
   });
   assert.equal(report.write_summary.rollout_advice.upgrade_ready_routes.some((route) => route.action === "document_comment_rewrite_apply"), false);
   assert.equal(report.write_summary.rollout_advice.high_risk_routes.some((route) => route.action === "meeting_confirm_write"), true);

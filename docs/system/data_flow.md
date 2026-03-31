@@ -183,14 +183,15 @@ Current truth:
 
 Current path:
 
-1. preview route reads doc and comments
-2. rewrite proposal is generated
-3. apply route requires confirmation
-4. final apply enters the shared mutation runtime
+1. preview ingress enters the shared preview helper from either `/api/doc/rewrite-from-comments` or comment-suggestion card/poller
+2. helper reads the doc, generates the rewrite proposal, creates one confirmation artifact, and moves the same workflow task to `awaiting_review`
+3. only `/api/doc/rewrite-from-comments` may apply, and it requires the matching confirmation plus the matching `awaiting_review` task
+4. final apply enters the shared mutation runtime and verifier gate before completion
 
 Current truth:
 
 - implemented
+- comment suggestion ingress no longer owns a parallel preview/apply path
 - still ends in replace-based doc materialization
 
 ### 4C. Meeting Workflow

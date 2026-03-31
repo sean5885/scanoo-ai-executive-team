@@ -185,15 +185,21 @@ Current-truth docs for onboarding are:
 
 - Implemented:
   - comment rewrite: `/Users/seanhan/Documents/Playground/src/doc-comment-rewrite.mjs`
+  - comment/doc workflow closure helper: `/Users/seanhan/Documents/Playground/src/comment-doc-workflow.mjs`
+  - comment suggestion ingress: `/Users/seanhan/Documents/Playground/src/comment-suggestion-workflow.mjs`
   - meeting workflow: `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs`
   - capture/update/delete during meeting capture: `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
 - Current truth:
-  - comment rewrite uses preview plus confirmation, but final materialization is still doc replace based
+  - comment/doc preview now has one checked-in owner path: preview is prepared by `comment-doc-workflow.mjs`, review is represented by one `awaiting_review` task plus one confirmation artifact, and apply is only allowed from `/api/doc/rewrite-from-comments`
+  - comment suggestion card and poller are ingress-only surfaces into that same preview/review path; they do not own a separate apply or completion path
+  - comment rewrite final materialization still uses doc replace-based apply inside the shared runtime gate
   - meeting confirmation writes are runtime-governed external writes
   - meeting capture document create/update/delete actions are already registry-backed external writes
 - Evidence:
   - `/Users/seanhan/Documents/Playground/tests/doc-comment-rewrite.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/control-unification-phase2-doc-rewrite.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/comment-suggestion-workflow.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/http-server.route-success.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/meeting-agent.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/control-unification-phase2-meeting.test.mjs`
 

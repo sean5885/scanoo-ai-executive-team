@@ -14,14 +14,14 @@ For this closure-planning pass:
 
 1. Dual-responder risk: still real; merged into `Thread B` because it is another single-machine coordination gap.
 2. `http-server.mjs` dominance: still real; merged into `Thread C`.
-3. Targeted preview vs replace-based final doc apply: still real; merged into `Thread A`.
+3. Targeted preview vs replace-based final doc apply: resolved for workflow closure tracking; replace-based apply remains documented truth, but preview/review/apply ownership is now single-path.
 4. OAuth scope truth partly external: removed from the ranked list; this is deployment truth, not a repo-closable code gap.
 5. Token/account persistence local-first: still real; merged into `Thread B`.
 6. Sandbox/live tenant mapping lives in deployed env: removed from the ranked list; this is fail-closed in code but not provable from the repo alone.
 7. `lobster_security` separate boundary: still real, but cut from the next-three closure order.
 8. Semantic fallback quality parity: removed from the closure list; there is no checked-in parity contract to close against yet.
 9. Bitable/spreadsheet workflow contracts remain thin: removed from the closure list; this is feature-surface expansion, not closure of a current contract gap.
-10. Comment suggestion ingress is polling/manual only: still real; merged into `Thread A`.
+10. Comment suggestion ingress is polling/manual only: no longer a workflow-closure gap; ingress is still poll/manual, but it now lands on the same checked-in preview/review/apply path.
 11. Workflow/planner state is local JSON: still real; merged into `Thread B`.
 12. Generic runtime questions do not reliably enter planner mode from the lane layer: still real; merged into `Thread C`.
 13. HTTP and mutation-runtime idempotency use different scopes: still real, but cut from the next-three closure order.
@@ -30,22 +30,7 @@ For this closure-planning pass:
 
 ### P0
 
-1. `Thread A — comment/doc workflow closure`
-   - Why it stays:
-     - targeted planning exists, but final doc materialization is still replace-based
-     - comment suggestion ingress is still poll/manual driven, so the comment workflow is not end-to-end native
-   - Current code evidence:
-     - `/Users/seanhan/Documents/Playground/src/doc-targeting.mjs`
-     - `/Users/seanhan/Documents/Playground/src/doc-comment-rewrite.mjs`
-     - `/Users/seanhan/Documents/Playground/src/lark-content.mjs`
-     - `/Users/seanhan/Documents/Playground/src/comment-suggestion-workflow.mjs`
-     - `/Users/seanhan/Documents/Playground/src/comment-suggestion-poller.mjs`
-   - Closure target:
-     - make the docs and planning surface describe one truthful boundary for comment-driven doc updates instead of split preview/apply semantics plus polling-only ingress
-
-### P1
-
-2. `Thread B — single-machine runtime coordination closure`
+1. `Thread B — single-machine runtime coordination closure`
    - Why it stays:
      - responder conflict prevention only runs at startup
      - token/account state remains local-first
@@ -59,9 +44,9 @@ For this closure-planning pass:
    - Closure target:
      - reduce the number of places where correctness still depends on one local machine staying the only writer/runtime
 
-### P2
+### P1
 
-3. `Thread C — planner ingress and edge-surface convergence`
+2. `Thread C — planner ingress and edge-surface convergence`
    - Why it stays:
      - `http-server.mjs` remains a 9k+ line integration surface
      - the lane layer still does not reliably send generic runtime-health questions into planner/runtime-info flow
@@ -87,14 +72,10 @@ For this closure-planning pass:
 
 ## Minimal Closure Order
 
-1. Start with `Thread A`.
-   - It sits on a declared high-risk area: comment-driven document rewrite.
-   - It also removes the biggest current overclaim risk in docs and runtime descriptions.
-
-2. Then do `Thread B`.
+1. Start with `Thread B`.
    - It groups the remaining single-machine assumptions into one closure pass instead of treating responder guard, token persistence, and planner/workflow state as separate threads.
 
-3. Finish with `Thread C`.
+2. Then do `Thread C`.
    - It is worth doing after the first two boundaries are clear, because route extraction and planner-ingress cleanup are safer once doc-write and state boundaries are no longer ambiguous.
 
 ## Cannot Be Confirmed From Code Alone

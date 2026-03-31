@@ -920,6 +920,7 @@ export async function markDocRewriteApplying({
   accountId = "",
   scope = {},
   event = {},
+  confirmationId = "",
   meta = {},
 } = {}) {
   const sessionKey = sessionKeyFromScope(scope, accountId);
@@ -930,13 +931,26 @@ export async function markDocRewriteApplying({
   if (!task?.id || task.workflow !== "doc_rewrite") {
     return null;
   }
+  if (task.workflow_state !== "awaiting_review") {
+    return null;
+  }
+  if (
+    cleanText(confirmationId)
+    && cleanText(task?.meta?.confirmation_id) !== cleanText(confirmationId)
+  ) {
+    return null;
+  }
   return updateExecutiveTask(task.id, {
     workflow: "doc_rewrite",
     workflow_state: "applying",
     routing_hint: "doc_rewrite_apply",
     trace_id: cleanText(scope?.trace_id || event?.trace_id || task.trace_id),
     status: "active",
-    meta,
+    meta: {
+      document_id: cleanText(task?.meta?.document_id || ""),
+      ...(task?.meta && typeof task.meta === "object" && !Array.isArray(task.meta) ? task.meta : {}),
+      ...meta,
+    },
   });
 }
 

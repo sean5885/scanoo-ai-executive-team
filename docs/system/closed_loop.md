@@ -129,10 +129,13 @@ Implemented through:
 ## Phase-2 Doc Rewrite Workflow Control
 
 - `doc rewrite` 已沿用同一套 `active_task` 控制骨架，不另開新的 workflow store。
+- comment suggestion card / poller 只作為 ingress，現在也會落到同一個 preview helper、同一個 `awaiting_review` task、同一個 confirmation artifact。
 - 最小 state 已落地：
   - `created -> loading_source -> drafting -> awaiting_review -> applying -> verifying -> completed|blocked`
 - rewrite preview 只會停在 `awaiting_review`，未 review / confirm 前不得 apply，也不得進 `completed`。
+- `/api/doc/rewrite-from-comments` 是唯一 apply 入口；沒有同 document + 同 confirmation 的 `awaiting_review` task，就必須 fail-closed。
 - apply 成功後仍需進 verifier gate；只有同時具備 rewrite diff、apply evidence、且未破壞結構，才可 `completed`。
+- comment suggestion notification 成功前不得先 `mark_seen`；任何通知失敗都不得留下 partial success。
 
 ## Phase-2 Cloud-Doc Workflow Control
 

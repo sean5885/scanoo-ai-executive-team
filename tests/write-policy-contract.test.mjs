@@ -80,6 +80,7 @@ test("write policy builders normalize phase1 metadata with stable contract field
   assert.equal(wikiPolicy.scope_key, "wiki:space_123");
   assert.equal(rewritePolicy.scope_key, "doc-rewrite:doc_123");
   assert.equal(rewritePolicy.action_type, "replace");
+  assert.equal(rewritePolicy.review_required, "always");
   assert.equal(meetingPolicy.scope_key, "doc:doc_meeting");
   assert.equal(meetingPolicy.action_type, "writeback");
   assert.equal(updatePolicy.scope_key, "document:doc_update");

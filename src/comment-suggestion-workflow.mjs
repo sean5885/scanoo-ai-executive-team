@@ -1,10 +1,8 @@
-import { rewriteDocumentFromComments } from "./doc-comment-rewrite.mjs";
+import { prepareDocumentCommentRewritePreview } from "./comment-doc-workflow.mjs";
 import { listUnseenDocumentComments, markDocumentCommentsSeen } from "./comment-watch-store.mjs";
-import { createCommentRewriteConfirmation } from "./doc-update-confirmations.mjs";
 import { executeCanonicalLarkMessageReply } from "./lark-mutation-runtime.mjs";
 import {
   listDocumentCommentsFromRuntime,
-  readDocumentFromRuntime,
 } from "./read-runtime.mjs";
 
 async function listAllUnresolvedDocumentComments(accessToken, documentId) {
@@ -39,9 +37,14 @@ export async function generateDocumentCommentSuggestionCard({
   replyInThread = false,
   resolveComments = false,
   markSeen = true,
+  listCommentsFn = listAllUnresolvedDocumentComments,
+  listUnseenDocumentCommentsFn = listUnseenDocumentComments,
+  executeMessageReplyFn = executeCanonicalLarkMessageReply,
+  markDocumentCommentsSeenFn = markDocumentCommentsSeen,
+  preparePreviewFn = prepareDocumentCommentRewritePreview,
 }) {
-  const unresolvedComments = await listAllUnresolvedDocumentComments(accessToken, documentId);
-  const unseenComments = await listUnseenDocumentComments({
+  const unresolvedComments = await listCommentsFn(accessToken, documentId);
+  const unseenComments = await listUnseenDocumentCommentsFn({
     accountId,
     documentId,
     comments: unresolvedComments,
@@ -56,44 +59,28 @@ export async function generateDocumentCommentSuggestionCard({
     };
   }
 
-  const current = await readDocumentFromRuntime({
+  const preview = await preparePreviewFn({
     accountId,
     accessToken,
     documentId,
-    pathname: "internal:comment_suggestion/read_document",
-  });
-  const result = await rewriteDocumentFromComments(accessToken, documentId, {
     commentIds: unseenComments.map((item) => item.comment_id).filter(Boolean),
-    apply: false,
     resolveComments: Boolean(resolveComments),
+    route: "document_comment_suggestion_card",
   });
-
-  const confirmation = await createCommentRewriteConfirmation({
-    accountId,
-    documentId,
-    title: result.title,
-    currentRevisionId: current.revision_id,
-    currentContent: current.content,
-    rewrittenContent: result.revised_content || "",
-    patchPlan: result.patch_plan || [],
-    changeSummary: result.change_summary || [],
-    commentIds: result.comment_ids || unseenComments.map((item) => item.comment_id).filter(Boolean),
-    comments: unseenComments,
-    resolveComments: Boolean(resolveComments),
-  });
-
-  let seenResult = null;
-  if (markSeen) {
-    seenResult = await markDocumentCommentsSeen({
-      accountId,
-      documentId,
-      comments: unseenComments,
-    });
+  const confirmation = preview.confirmation;
+  if (!confirmation) {
+    return {
+      ok: true,
+      document_id: documentId,
+      has_new_comments: false,
+      message: "目前沒有新的未處理評論需要生成改稿建議卡。",
+    };
   }
 
+  let seenResult = null;
   let notification = null;
   if (String(messageId || "").trim()) {
-    const execution = await executeCanonicalLarkMessageReply({
+    const runtimePayload = {
       pathname: "/runtime/comment-suggestion/reply-preview-card",
       accountId,
       accessToken,
@@ -101,11 +88,23 @@ export async function generateDocumentCommentSuggestionCard({
       content: confirmation.preview_card.content,
       replyInThread: Boolean(replyInThread),
       cardTitle: confirmation.preview_card.title,
-    });
+    };
+    const execution = executeMessageReplyFn === executeCanonicalLarkMessageReply
+      ? await executeCanonicalLarkMessageReply({
+          ...runtimePayload,
+        })
+      : await executeMessageReplyFn(runtimePayload);
     if (execution.ok !== true) {
       throw new Error(execution.data?.message || execution.error || "comment_suggestion_reply_failed");
     }
     notification = execution.result;
+  }
+  if (markSeen) {
+    seenResult = await markDocumentCommentsSeenFn({
+      accountId,
+      documentId,
+      comments: unseenComments,
+    });
   }
 
   return {

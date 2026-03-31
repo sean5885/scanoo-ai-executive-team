@@ -13,6 +13,9 @@ const [
   { setupExecutiveTaskStateTestHarness },
   { EXPLICIT_USER_AUTH_HEADERS },
   { replaceDocumentChunks, saveToken, upsertDocument },
+  { ensureDocRewriteWorkflowTask },
+  { clearActiveExecutiveTask },
+  { createCommentRewriteConfirmation },
 ] = await Promise.all([
   import("../src/http-idempotency-store.mjs"),
   import("../src/http-server.mjs"),
@@ -20,6 +23,9 @@ const [
   import("./helpers/executive-task-state-harness.mjs"),
   import("../src/explicit-user-auth.mjs"),
   import("../src/rag-repository.mjs"),
+  import("../src/executive-orchestrator.mjs"),
+  import("../src/executive-task-state.mjs"),
+  import("../src/doc-update-confirmations.mjs"),
 ]);
 
 setupExecutiveTaskStateTestHarness();
@@ -562,6 +568,178 @@ test("document rewrite preview accepts nested target document links", async (t) 
   assert.equal(payload.document_id, documentId);
   assert.equal(seen.read, documentId);
   assert.equal(seen.rewrite, documentId);
+});
+
+test("document rewrite apply succeeds only with the matching awaiting_review confirmation", async (t) => {
+  const snapshot = await snapshotFile(docUpdateConfirmationStorePath);
+  const documentId = `doc-rewrite-apply-${Date.now()}`;
+  const accountId = "acct-1";
+  const scope = {
+    session_key: `doc-rewrite:${documentId}`,
+    trace_id: "trace-doc-rewrite-1",
+  };
+  t.after(async () => {
+    await restoreFile(docUpdateConfirmationStorePath, snapshot);
+    await clearActiveExecutiveTask(accountId, scope.session_key);
+  });
+
+  const confirmation = await createCommentRewriteConfirmation({
+    accountId,
+    documentId,
+    title: "Rewrite Target",
+    currentRevisionId: "rev-apply-1",
+    currentContent: "# 背景\n\n舊內容",
+    rewrittenContent: "# 背景\n\n新內容",
+    patchPlan: [
+      {
+        patch_type: "replace",
+        start_index: 0,
+        end_index: 1,
+        before: ["# 背景\n\n舊內容"],
+        after: ["# 背景\n\n新內容"],
+      },
+    ],
+    changeSummary: ["補上最新限制"],
+    commentIds: ["comment-1"],
+    comments: [{ comment_id: "comment-1", latest_reply_text: "請更新" }],
+    resolveComments: false,
+  });
+  await ensureDocRewriteWorkflowTask({
+    accountId,
+    documentId,
+    documentTitle: "Rewrite Target",
+    scope,
+    workflowState: "awaiting_review",
+    routingHint: "doc_rewrite_review_pending",
+    meta: {
+      confirmation_id: confirmation.confirmation_id,
+    },
+  });
+
+  const updates = [];
+  const { server } = await startTestServer(t, {
+    getDocument: async () => ({
+      document_id: documentId,
+      title: "Rewrite Target",
+      content: "# 背景\n\n舊內容",
+      revision_id: "rev-apply-1",
+    }),
+    updateDocument: async (_accessToken, incomingDocumentId, content, mode) => {
+      updates.push({ documentId: incomingDocumentId, content, mode });
+      return {
+        document_id: incomingDocumentId,
+        revision_id: "rev-apply-2",
+        mode,
+      };
+    },
+  });
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/doc/rewrite-from-comments`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      document_id: documentId,
+      apply: true,
+      confirm: true,
+      confirmation_id: confirmation.confirmation_id,
+    }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.action, "document_rewrite_from_comments_apply");
+  assert.equal(payload.workflow_state, "completed");
+  assert.equal(payload.verification?.pass, true);
+  assert.equal(updates.length, 1);
+  assert.equal(payload.resolve_comments, false);
+});
+
+test("document rewrite apply fails closed when confirmation no longer matches awaiting_review task", async (t) => {
+  const snapshot = await snapshotFile(docUpdateConfirmationStorePath);
+  const documentId = `doc-rewrite-stale-${Date.now()}`;
+  const accountId = "acct-1";
+  const scope = {
+    session_key: `doc-rewrite:${documentId}`,
+    trace_id: "trace-doc-rewrite-2",
+  };
+  t.after(async () => {
+    await restoreFile(docUpdateConfirmationStorePath, snapshot);
+    await clearActiveExecutiveTask(accountId, scope.session_key);
+  });
+
+  const staleConfirmation = await createCommentRewriteConfirmation({
+    accountId,
+    documentId,
+    title: "Rewrite Target",
+    currentRevisionId: "rev-stale-1",
+    currentContent: "# 背景\n\n舊內容",
+    rewrittenContent: "# 背景\n\n舊內容 A",
+    patchPlan: [{ patch_type: "replace", start_index: 0, end_index: 1, before: ["舊內容"], after: ["舊內容 A"] }],
+    changeSummary: ["第一版"],
+    commentIds: ["comment-1"],
+    comments: [{ comment_id: "comment-1", latest_reply_text: "請更新 A" }],
+  });
+  const currentConfirmation = await createCommentRewriteConfirmation({
+    accountId,
+    documentId,
+    title: "Rewrite Target",
+    currentRevisionId: "rev-stale-1",
+    currentContent: "# 背景\n\n舊內容",
+    rewrittenContent: "# 背景\n\n舊內容 B",
+    patchPlan: [{ patch_type: "replace", start_index: 0, end_index: 1, before: ["舊內容"], after: ["舊內容 B"] }],
+    changeSummary: ["第二版"],
+    commentIds: ["comment-2"],
+    comments: [{ comment_id: "comment-2", latest_reply_text: "請更新 B" }],
+  });
+  await ensureDocRewriteWorkflowTask({
+    accountId,
+    documentId,
+    documentTitle: "Rewrite Target",
+    scope,
+    workflowState: "awaiting_review",
+    routingHint: "doc_rewrite_review_pending",
+    meta: {
+      confirmation_id: currentConfirmation.confirmation_id,
+    },
+  });
+
+  const updates = [];
+  const { server } = await startTestServer(t, {
+    getDocument: async () => ({
+      document_id: documentId,
+      title: "Rewrite Target",
+      content: "# 背景\n\n舊內容",
+      revision_id: "rev-stale-1",
+    }),
+    updateDocument: async (_accessToken, incomingDocumentId, content, mode) => {
+      updates.push({ documentId: incomingDocumentId, content, mode });
+      return {
+        document_id: incomingDocumentId,
+        revision_id: "rev-stale-2",
+        mode,
+      };
+    },
+  });
+
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/api/doc/rewrite-from-comments`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      document_id: documentId,
+      apply: true,
+      confirm: true,
+      confirmation_id: staleConfirmation.confirmation_id,
+    }),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 409);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.error, "write_guard_denied");
+  assert.equal(payload.write_guard?.reason, "verifier_incomplete");
+  assert.equal(updates.length, 0);
 });
 
 test("document create preview/confirm classifies verified mirror ingest as direct intake", async (t) => {
