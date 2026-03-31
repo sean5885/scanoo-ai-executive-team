@@ -157,6 +157,37 @@ test("最近對話總結需求不會被誤導到 knowledge-assistant", () => {
   assert.equal(lane.capability_lane, "personal-assistant");
 });
 
+test("泛化風險問句不會被硬路由到 runtime lane", () => {
+  const lane = resolveCapabilityLane(
+    { chat_type: "p2p" },
+    {
+      message: {
+        content: JSON.stringify({
+          text: "這個方案風險",
+        }),
+      },
+    },
+  );
+
+  assert.equal(lane.capability_lane, "personal-assistant");
+  assert.equal(lane.lane_reason, "direct_message_default_lane");
+});
+
+test("泛化整理問句不會因為整理一詞被硬路由到文件 lane", () => {
+  const lane = resolveCapabilityLane(
+    { chat_type: "p2p" },
+    {
+      message: {
+        content: JSON.stringify({
+          text: "幫我整理會議",
+        }),
+      },
+    },
+  );
+
+  assert.equal(lane.capability_lane, "personal-assistant");
+});
+
 test("detectDocBoundaryIntent 會把分類與保留視為高置信 doc-boundary", () => {
   const intent = detectDocBoundaryIntent("把知識庫文件分類後保留產品相關的");
 

@@ -187,6 +187,25 @@ const recentConversationSummarySignals = [
   "整理聊天",
 ];
 
+const lightweightSummarySignals = [
+  "整理",
+  "總結",
+  "总结",
+  "摘要",
+  "重點",
+  "重点",
+];
+
+const meetingSummarySignals = [
+  "會議",
+  "会议",
+  "meeting",
+  "會議紀要",
+  "会议纪要",
+  "會議記錄",
+  "会议记录",
+];
+
 function looksLikeExplicitDocOrKnowledgeRoutingRequest(text = "") {
   const normalized = cleanText(text);
   if (!normalized) {
@@ -195,6 +214,22 @@ function looksLikeExplicitDocOrKnowledgeRoutingRequest(text = "") {
 
   const cloudDocAction = resolveCloudOrganizationAction({ text: normalized });
   return looksLikePlannerIngressRequest(normalized) || cloudDocAction !== "none";
+}
+
+function looksLikeMeetingSummaryRequest(text = "") {
+  const normalized = cleanText(text);
+  if (!normalized) {
+    return false;
+  }
+  return hasAny(normalized, lightweightSummarySignals) && hasAny(normalized, meetingSummarySignals);
+}
+
+function looksLikeGreeting(text = "") {
+  return /^(你好|哈囉|哈啰|hello|hi|hey)\b/i.test(cleanText(text));
+}
+
+function looksLikeClosingAck(text = "") {
+  return /^(謝謝|谢谢|感謝|感谢|收到|知道了|好喔|好的|ok|okay)\b/i.test(cleanText(text));
 }
 
 function buildLaneTrace({
@@ -248,15 +283,14 @@ function buildLaneStructuredErrorEnvelope({
 function buildLaneRoutingNoMatchReply({ scope, lanePlan, message = "no_supported_lane_action" } = {}) {
   return {
     text: [
-      "答案",
-      "我這次沒有找到可以安全執行的對應操作，所以先不回 internal routing 錯誤。",
+      "結論",
+      "我先接住這題，但你這句還不夠明確，我還不知道要直接幫你整理、查資料，還是安排事情。",
       "",
-      "來源",
-      "- 這次沒有對外提供可引用來源。",
+      "重點",
+      "- 你可以直接說要我整理什麼、看哪份文件，或查今天的日程與待辦。",
       "",
-      "待確認/限制",
-      `- 目前 lane=${cleanText(scope?.capability_lane || "personal-assistant") || "personal-assistant"} 需要更明確的指令才能接續處理。`,
-      "- 詳細 routing reason 與 trace 已保留在 runtime/log，不直接暴露給使用者。",
+      "下一步",
+      "- 例如：幫我整理這段會議、看今天待辦、讀這份文件重點。",
     ].join("\n"),
   };
 }
@@ -264,15 +298,14 @@ function buildLaneRoutingNoMatchReply({ scope, lanePlan, message = "no_supported
 function buildLaneSemanticMismatchReply() {
   return {
     text: [
-      "答案",
-      "這則訊息比較像文件、知識或 runtime 查詢，所以我先不在 personal lane 亂回。",
+      "結論",
+      "這句比較像是在找文件、查知識，或看系統狀態。",
       "",
-      "來源",
-      "- 這次沒有對外提供可引用來源。",
+      "重點",
+      "- 我可以處理，但還需要你把目標說得再完整一點。",
       "",
-      "待確認/限制",
-      "- 請直接說要我找文件、打開某份文件、整理某份文件重點，或查 runtime 狀態，我會改走對應的 planner 路徑。",
-      "- internal semantic trace 仍保留在 runtime/log，不會直接暴露在回覆裡。",
+      "下一步",
+      "- 例如：整理這份文件重點、幫我看 company brain 裡有哪些文件、或幫我看目前系統狀態。",
     ].join("\n"),
   };
 }
@@ -280,15 +313,59 @@ function buildLaneSemanticMismatchReply() {
 function buildLanePermissionDeniedReply() {
   return {
     text: [
-      "答案",
-      "要整理最近對話，我現在還需要你的 user OAuth 才能安全讀取個人對話內容。",
+      "結論",
+      "要整理最近對話，我現在還拿不到你的個人對話存取權限。",
       "",
-      "來源",
-      "- 這次沒有對外提供可引用來源。",
+      "重點",
+      "- 所以我這輪先沒辦法直接讀你的私聊歷史來整理。",
       "",
-      "待確認/限制",
-      "- 目前不會把 internal permission error 或 trace 直接回給你。",
-      "- 等 user OAuth 恢復後，我就能繼續整理最近對話。",
+      "下一步",
+      "- 等你重新登入後，我就能直接幫你整理；如果你現在先貼內容，我也可以先幫你整理重點。",
+    ].join("\n"),
+  };
+}
+
+function buildGeneralAssistantReply(text = "") {
+  if (looksLikeGreeting(text)) {
+    return {
+      text: [
+        "結論",
+        "你好，我在。",
+        "",
+        "重點",
+        "- 你可以直接把要處理的事丟給我，不用先切模式。",
+        "",
+        "下一步",
+        "- 例如：幫我整理這段會議、看今天待辦、或讀這份文件重點。",
+      ].join("\n"),
+    };
+  }
+
+  if (looksLikeClosingAck(text)) {
+    return {
+      text: [
+        "結論",
+        "好，我在這裡。",
+        "",
+        "重點",
+        "- 接下來你直接說要我處理什麼就行。",
+        "",
+        "下一步",
+        "- 你可以叫我整理內容、看日程、列待辦，或讀一份文件。",
+      ].join("\n"),
+    };
+  }
+
+  return {
+    text: [
+      "結論",
+      "我可以先幫你把這件事接住。",
+      "",
+      "重點",
+      "- 你可以直接說要我整理什麼、查什麼，或幫你起草什麼內容。",
+      "",
+      "下一步",
+      "- 如果你願意，我可以先從這段對話、今天的日程、最近待辦，或一份文件開始。",
     ].join("\n"),
   };
 }
@@ -333,6 +410,13 @@ export function resolveLaneExecutionPlan({ event, scope } = {}) {
     });
   }
 
+  if (looksLikeMeetingSummaryRequest(text)) {
+    return buildLaneTrace({
+      scope,
+      chosenAction: "summarize_recent_dialogue",
+    });
+  }
+
   if (hasAny(text, ["日程", "行程", "calendar", "會議", "会议"])) {
     return buildLaneTrace({
       scope,
@@ -366,8 +450,8 @@ export function resolveLaneExecutionPlan({ event, scope } = {}) {
 
   return buildLaneTrace({
     scope,
-    chosenAction: null,
-    fallbackReason: ROUTING_NO_MATCH,
+    chosenAction: "general_assistant_action",
+    fallbackReason: null,
   });
 }
 
@@ -2420,11 +2504,11 @@ async function executePersonalAssistant({ event, scope, logger = noopLogger }) {
     };
   }
 
-  return buildLaneRoutingNoMatchReply({
-    scope,
-    lanePlan,
-    message: "personal_lane_requires_explicit_supported_action",
-  });
+  if (lanePlan.chosen_action === "general_assistant_action") {
+    return buildGeneralAssistantReply(text);
+  }
+
+  return buildGeneralAssistantReply(text);
 }
 
 async function executeGroupSharedAssistant({ event, scope, logger = noopLogger }) {

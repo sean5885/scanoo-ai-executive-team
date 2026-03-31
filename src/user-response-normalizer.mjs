@@ -140,12 +140,12 @@ function buildGenericUserResponse({ ok = false } = {}) {
   return {
     ok: ok === true,
     answer: ok === true
-      ? "這次沒有拿到可以直接交付的結果。"
-      : "這次沒有拿到可以直接交付的安全結果。",
+      ? "這次我先沒有整理出可直接交付的內容。"
+      : "這次我先沒有整理出足夠內容，但不會亂補。",
     sources: [],
     limitations: ok === true
       ? []
-      : ["詳細 internal error 與 trace 已保留在 runtime/log，不直接暴露給使用者。"],
+      : ["如果你願意，可以換個說法、補一點上下文，或直接把目標資料貼給我。"],
   };
 }
 
@@ -175,9 +175,15 @@ function buildExecutionDataUserResponse({
   };
 
   if (!normalizedResponse.answer) {
-    normalizedResponse.answer = normalizedResponse.ok === true
-      ? "這次沒有拿到可以直接交付的結果。"
-      : "這次沒有拿到可以直接交付的安全結果。";
+    const hasSources = normalizedResponse.sources.length > 0;
+    const hasLimitations = normalizedResponse.limitations.length > 0;
+    normalizedResponse.answer = hasSources || hasLimitations
+      ? normalizedResponse.ok === true
+        ? "我先把目前能確認的部分整理給你。"
+        : "我先把目前能確認的部分整理給你，還沒確認的放在下一步。"
+      : normalizedResponse.ok === true
+        ? "這次我先沒有整理出可直接交付的內容。"
+        : "這次我先沒有整理出足夠內容，但不會亂補。";
   }
 
   return normalizedResponse;

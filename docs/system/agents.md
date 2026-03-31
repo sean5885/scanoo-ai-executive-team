@@ -117,6 +117,7 @@ What now exists in current code:
   - `/Users/seanhan/Documents/Playground/src/capability-lane.mjs`
 - Role:
   - map peer scope plus message intent into one practical assistant lane
+  - only promote high-confidence document / company-brain / runtime reads into `knowledge-assistant`; generic wording such as standalone "整理" or "風險" no longer hard-routes by itself
 - Input:
   - chat type
   - session scope
@@ -149,6 +150,9 @@ What now exists in current code:
   - route image-only and image+text requests through the image-understanding adapter before normal text-lane handling
   - also intercept `/meeting` as a command workflow before default lane replies
   - preflight shared Bitable links so the bot can inspect base/table structure without asking the user to copy tokens manually
+  - keep `personal-assistant` fail-soft with a deterministic general-assistant catch-all instead of dropping benign direct messages into no-match
+  - treat "整理會議" style wording as summary work before calendar lookup when the request is clearly asking for整理/摘要
+  - keep fallback copy user-facing and avoid exposing routing/runtime/log wording in chat replies
 - Input:
   - long-connection event
   - resolved lane scope

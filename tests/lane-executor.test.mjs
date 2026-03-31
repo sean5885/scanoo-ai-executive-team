@@ -332,3 +332,39 @@ test("lane execution plan keeps runtime-info queries out of personal lane", () =
   assert.equal(plan.chosen_action, null);
   assert.equal(plan.fallback_reason, "semantic_mismatch_document_request_in_personal_lane");
 });
+
+test("lane execution plan treats meeting summary requests as summary work instead of calendar lookup", () => {
+  const plan = resolveLaneExecutionPlan({
+    scope: {
+      capability_lane: "personal-assistant",
+    },
+    event: {
+      message: {
+        content: JSON.stringify({
+          text: "幫我整理會議",
+        }),
+      },
+    },
+  });
+
+  assert.equal(plan.chosen_action, "summarize_recent_dialogue");
+  assert.equal(plan.fallback_reason, null);
+});
+
+test("lane execution plan gives personal assistant a general catch-all for greetings", () => {
+  const plan = resolveLaneExecutionPlan({
+    scope: {
+      capability_lane: "personal-assistant",
+    },
+    event: {
+      message: {
+        content: JSON.stringify({
+          text: "你好",
+        }),
+      },
+    },
+  });
+
+  assert.equal(plan.chosen_action, "general_assistant_action");
+  assert.equal(plan.fallback_reason, null);
+});

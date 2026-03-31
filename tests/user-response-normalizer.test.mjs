@@ -79,7 +79,7 @@ test("flat execution payload is no longer normalized into answer fields", () => 
   });
 
   assert.equal(userResponse.ok, true);
-  assert.equal(userResponse.answer, "這次沒有拿到可以直接交付的結果。");
+  assert.equal(userResponse.answer, "這次我先沒有整理出可直接交付的內容。");
   assert.deepEqual(userResponse.sources, []);
   assert.deepEqual(userResponse.limitations, []);
 });
@@ -93,10 +93,34 @@ test("payload.message no longer falls back into answer", () => {
   });
 
   assert.equal(userResponse.ok, false);
-  assert.equal(userResponse.answer, "這次沒有拿到可以直接交付的安全結果。");
+  assert.equal(userResponse.answer, "這次我先沒有整理出足夠內容，但不會亂補。");
   assert.deepEqual(userResponse.sources, []);
-  assert.match(userResponse.limitations.join(" "), /internal error 與 trace/);
+  assert.match(userResponse.limitations.join(" "), /換個說法|上下文|目標資料/);
   assert.doesNotMatch(userResponse.answer, /legacy payload message/);
+});
+
+test("partial execution data degrades gracefully into a usable user reply", () => {
+  const userResponse = normalizeUserResponse({
+    plannerEnvelope: buildPlannerEnvelope({
+      ok: false,
+      executionOk: false,
+      data: {
+        sources: [
+          {
+            title: "Meeting Notes",
+            url: "https://example.com/meeting",
+            snippet: "已確認的重點包含 owner 與 deadline。",
+          },
+        ],
+        limitations: ["還缺最後一段結論，若你要我可以繼續補。"],
+      },
+    }),
+  });
+
+  assert.equal(userResponse.ok, false);
+  assert.equal(userResponse.answer, "我先把目前能確認的部分整理給你，還沒確認的放在下一步。");
+  assert.equal(userResponse.sources.length, 1);
+  assert.match(userResponse.limitations.join(" "), /最後一段結論/);
 });
 
 test("payload only accepts canonical execution_result.data and still maps sources through the shared source mapper", () => {

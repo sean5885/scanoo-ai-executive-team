@@ -405,9 +405,10 @@ test("buildPlannedUserInputUserFacingReply hides internal planner codes and trac
   assert.equal(reply?.ok, false);
   assert.equal("error" in reply, false);
   assert.equal("trace_id" in reply, false);
-  assert.match(reply?.answer || "", /安全執行|自然語言/);
+  assert.match(reply?.answer || "", /一般助理|目前狀態|能確認/);
   assert.doesNotMatch(reply?.answer || "", /business_error|routing_no_match|trace_hidden_value/);
   assert.equal(Array.isArray(reply?.limitations), true);
+  assert.doesNotMatch(reply?.limitations.join("\n") || "", /internal|trace|runtime|log/);
 });
 
 test("executePlannedUserInput reroutes semantic mismatch before surfacing failure", async () => {

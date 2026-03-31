@@ -725,10 +725,10 @@ function buildPlannerUserFacingAnswer({
     || normalizedFallbackReason === "routing_no_match"
     || normalizedFallbackReason === ROUTING_NO_MATCH
   ) {
-    return "我這次沒有找到可以安全執行的受控操作，所以先用自然語言接住這個請求。";
+    return "這題我先沒走到合適的處理方式，所以先用一般助理的方式接住你。";
   }
   if (normalizedError === "invalid_action" || normalizedError === INVALID_ACTION) {
-    return "我這次沒有採用那個內部動作，因為它不在目前允許直接執行的受控範圍內。";
+    return "這題我先不直接往下做，因為目前還缺一個明確的處理方向。";
   }
   if (normalizedError === "request_timeout") {
     return "這次處理逾時了，我還沒有拿到可以安全交付的結果。";
@@ -737,9 +737,9 @@ function buildPlannerUserFacingAnswer({
     return "這次處理被中斷了，所以我先不回傳不完整結果。";
   }
   if (normalizedError === "business_error") {
-    return "這次操作沒有安全完成，所以我先用人話說明目前狀態。";
+    return "這次沒有完整處理好，所以我先把目前狀態整理給你。";
   }
-  return "這次沒有拿到可以直接交付的安全結果，所以我先用自然語言說明目前狀態。";
+  return "這次還沒拿到完整結果，所以我先把目前能確認的部分整理給你。";
 }
 
 function buildPlannerUserFacingLimitations({
@@ -765,8 +765,8 @@ function buildPlannerUserFacingLimitations({
   }
   if (normalizedError === "semantic_mismatch") {
     return normalizePlannerUserFacingList([
-      "系統已先嘗試改走較合理的 reroute；如果仍然沒命中，就不會把內部錯誤直接丟給你。",
-      "如果你是要找文件、看文件內容、查 runtime 或建立文件，可以直接把目標說得更明確一點。",
+      "這題看起來像是另一種處理需求，所以我先不亂猜。",
+      "如果你是要找文件、看文件內容、查系統狀態，或建立文件，可以把目標再說清楚一點。",
     ]);
   }
   if (
@@ -776,20 +776,19 @@ function buildPlannerUserFacingLimitations({
     || normalizedFallbackReason === ROUTING_NO_MATCH
   ) {
     return normalizePlannerUserFacingList([
-      "目前這條受控路徑主要支援文件查找、文件閱讀、runtime 查詢與部分文件建立流程。",
-      "這次沒有把 internal routing reason、error code 或 trace 直接暴露到對外回覆。",
+      "你可以直接說想整理什麼、查哪份文件，或要我看什麼狀態，我會改用更合適的方式處理。",
+      "如果你補一句目標或範圍，我通常就能直接往下做。",
     ]);
   }
   if (normalizedError === "invalid_action" || normalizedError === INVALID_ACTION) {
     return normalizePlannerUserFacingList([
-      normalizedAction ? `內部動作 ${normalizedAction} 不會直接暴露給使用者。` : "這類 internal action 不會直接暴露給使用者。",
-      "請直接描述你要完成的事，系統會再走受控 action 選擇。",
+      normalizedAction ? `這次先不直接採用「${normalizedAction}」這種做法。` : "這次先不直接採用原本那種做法。",
+      "直接描述你想完成的事就好，我會換成更合適的方式處理。",
     ]);
   }
   if (normalizedError === "request_timeout") {
     return normalizePlannerUserFacingList([
-      "詳細 trace 仍保留在 runtime 與 logs，但不會直接出現在對外回覆。",
-      "可以稍後重試，或把需求再縮小一點。",
+      "可以稍後再試一次，或把需求縮小一點，我會先從最可交付的部分開始。",
     ]);
   }
   if (normalizedError === "request_cancelled") {
@@ -798,7 +797,7 @@ function buildPlannerUserFacingLimitations({
     ]);
   }
   return normalizePlannerUserFacingList([
-    "詳細 internal trace 仍保留在 runtime 與 logs，但不會直接出現在對外回覆。",
+    "如果你願意，可以換個說法、補一點背景，或把目標資料直接貼給我。",
   ]);
 }
 

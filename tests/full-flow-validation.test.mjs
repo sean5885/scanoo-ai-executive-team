@@ -233,7 +233,7 @@ test("full flow validation keeps no-match fail-soft and answer-safe", async () =
     fallbackReason: "routing_no_match",
   });
   assert.equal(response.ok, false);
-  assert.match(response.answer || "", /自然語言|安全/);
+  assert.match(response.answer || "", /一般助理|不會亂補|目前狀態|能確認/);
   assertPublicAnswerShape(response, text);
 });
 

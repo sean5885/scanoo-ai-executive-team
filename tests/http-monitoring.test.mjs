@@ -265,7 +265,7 @@ test("answer route converts planner errors into natural-language fallback withou
 
   assert.equal(response.status, 200);
   assert.equal(payload.ok, false);
-  assert.match(payload.answer || "", /自然語言|安全完成|安全執行/);
+  assert.match(payload.answer || "", /一般助理|目前狀態|能確認/);
   assert.equal("error" in payload, false);
   assert.equal("trace_id" in payload, false);
   assert.equal("details" in payload, false);
