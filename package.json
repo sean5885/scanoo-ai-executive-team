@@ -15,6 +15,7 @@
     "test:workflow:doc-rewrite": "node scripts/run-workflow-baseline.mjs doc-rewrite",
     "test:workflow:cloud-doc": "node scripts/run-workflow-baseline.mjs cloud-doc",
     "test:workflow:all": "node scripts/run-workflow-baseline.mjs all",
+    "test:real-user-usability": "node --test tests/real-user-usability-regression.test.mjs",
     "eval:long-task": "node scripts/evaluate-long-task-governance.mjs",
     "routing:closed-loop": "node scripts/routing-eval-closed-loop.mjs",
     "routing:diagnostics": "node scripts/routing-diagnostics.mjs",
