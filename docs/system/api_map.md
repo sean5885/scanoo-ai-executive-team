@@ -34,7 +34,7 @@ This is the grouped HTTP surface mirror for the current repo.
 | Route | Method | Current role | Status |
 | --- | --- | --- | --- |
 | `/search` | `GET` | retrieval search over index authority | implemented |
-| `/answer` | `GET` | planner-first answer surface; final response normalized to `answer -> sources -> limitations` | implemented |
+| `/answer` | `GET` | planner-first answer surface; final response normalized to `answer -> sources -> limitations`, with minimal partial-success decomposition when a mixed request contains at least one answer-boundary-doable subtask | implemented |
 | `/sync/full` | `POST` | full sync | implemented |
 | `/sync/incremental` | `POST` | incremental sync | implemented |
 

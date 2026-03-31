@@ -237,6 +237,51 @@ test("full flow validation keeps no-match fail-soft and answer-safe", async () =
   assertPublicAnswerShape(response, text);
 });
 
+test("full flow validation turns mixed copy plus unsupported asks into partial success at the answer boundary", async () => {
+  resetPlannerRuntimeContext();
+  const requestText = "幫我寫新品上線的 FB 貼文、做一張圖片並發送出去";
+  const runtimeResult = await runPlannerToolFlow({
+    userIntent: requestText,
+    logger: quietLogger,
+  });
+
+  const envelope = buildPlannedUserInputEnvelope(buildExecuteLikeResult(runtimeResult, {}));
+  const response = normalizeUserResponse({
+    plannerEnvelope: adaptEnvelopeForCurrentNormalizer(envelope),
+    requestText,
+  });
+  const text = renderUserResponseText(response);
+
+  assert.equal(runtimeResult.execution_result?.ok, false);
+  assert.equal(response.ok, true);
+  assert.match(response.answer || "", /貼文草稿/);
+  assert.match(response.answer || "", /新品上線/);
+  assert.match(response.limitations.join("\n"), /圖片/);
+  assert.match(response.limitations.join("\n"), /發送或發布/);
+  assertPublicAnswerShape(response, text);
+  assert.doesNotMatch(text, /internal|routing|lane|trace|fallback_reason/i);
+});
+
+test("full flow validation does not fake partial success when every requested subtask is unavailable", async () => {
+  resetPlannerRuntimeContext();
+  const requestText = "幫我做一張圖片並直接發送給客戶";
+  const runtimeResult = await runPlannerToolFlow({
+    userIntent: requestText,
+    logger: quietLogger,
+  });
+
+  const envelope = buildPlannedUserInputEnvelope(buildExecuteLikeResult(runtimeResult, {}));
+  const response = normalizeUserResponse({
+    plannerEnvelope: adaptEnvelopeForCurrentNormalizer(envelope),
+    requestText,
+  });
+
+  assert.equal(runtimeResult.execution_result?.ok, false);
+  assert.equal(response.ok, false);
+  assert.equal(response.sources.length, 0);
+  assert.match(response.limitations.join(" "), /換個說法|上下文|目標資料/);
+});
+
 test("full flow validation keeps mixed intent on a single preset route and renders from the same envelope", async () => {
   resetPlannerRuntimeContext();
   const presetCalls = [];

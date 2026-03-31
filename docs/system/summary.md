@@ -18,7 +18,7 @@ Use these files first when you need the checked-in runtime truth:
 
 - local Node HTTP service with optional Lark long connection
 - SQLite-backed auth, sync, retrieval, workflow, and company-brain-adjacent state
-- planner-first `/answer` path with canonical `answer -> sources -> limitations` normalization
+- planner-first `/answer` path with canonical `answer -> sources -> limitations` normalization and minimal partial-success decomposition at the answer boundary
 - shared mutation runtime for external Lark writes and internal company-brain governance writes
 - checked-in closed-loop executive orchestration with verifier, reflection, and improvement proposal paths
 - bounded partial company-brain runtime:

@@ -8065,7 +8065,9 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger) {
       planner_error: envelope.error || null,
     });
     const responseError = envelope.error || envelope.execution_result?.error || null;
-    const statusCode = responseError === "request_timeout"
+    const statusCode = userResponse.ok === true
+      ? 200
+      : responseError === "request_timeout"
       ? 504
       : responseError === "missing_user_access_token" || responseError === "oauth_reauth_required"
         ? 401
@@ -8099,11 +8101,12 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger) {
             "詳細 internal error 與 trace 已保留在 runtime/log，不直接暴露給使用者。",
           ],
         },
+        requestText: q,
         logger,
         traceId: res?.__trace_id || null,
         handlerName: "handleAnswer",
       });
-      jsonResponse(res, abortInfo.code === "request_timeout" ? 504 : REQUEST_CANCELLED_STATUS_CODE, {
+      jsonResponse(res, userResponse.ok === true ? 200 : abortInfo.code === "request_timeout" ? 504 : REQUEST_CANCELLED_STATUS_CODE, {
         ...userResponse,
         __hide_trace_id: true,
       });
@@ -8122,11 +8125,12 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger) {
           "詳細 internal error 與 trace 已保留在 runtime/log，不直接暴露給使用者。",
         ],
       },
+      requestText: q,
       logger,
       traceId: res?.__trace_id || null,
       handlerName: "handleAnswer",
     });
-    jsonResponse(res, 500, {
+    jsonResponse(res, userResponse.ok === true ? 200 : 500, {
       ...userResponse,
       __hide_trace_id: true,
     });

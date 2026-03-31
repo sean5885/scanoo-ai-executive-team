@@ -142,6 +142,7 @@ Current truth:
 - `/answer` is planner-first, not answer-service-first
 - `/answer` and the `knowledge-assistant` lane now share the same planner answer-edge helper instead of re-assembling `execute -> envelope -> normalize` separately
 - that shared edge helper also absorbs current legacy planner result shapes into canonical `answer / sources / limitations` before the public boundary
+- before the public boundary returns a generic failure, the checked-in normalizer now does a minimal mixed-request decomposition for copy/image/send-style asks and returns partial success when at least one text-draft subtask is still doable
 - answer evidence is surfaced through canonical source mapping before public rendering
 - the checked-in normalizer now reads only canonical `execution_result.data.answer / sources / limitations`
 

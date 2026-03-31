@@ -102,6 +102,7 @@ Current-truth docs for onboarding are:
   - final HTTP/chat response is normalized into `answer -> sources -> limitations`
   - `user-response-normalizer.mjs` now only reads canonical `execution_result.data.answer / sources / limitations`
   - canonical user replies now degrade gracefully when only partial `sources / limitations` are present, instead of collapsing straight to a full-failure generic reply
+  - when the planner result would otherwise degrade to a generic failure, `user-response-normalizer.mjs` now performs a minimal mixed-request decomposition for copy/image/send-style asks and upgrades the reply to partial success if a text-draft subtask is still doable
   - `renderUserResponseText(...)` renders an already-canonical `{ answer, sources, limitations }` object directly without re-normalizing legacy payload shapes
   - planner/read evidence is converted into public `sources[]` lines through canonical source mapping
 - Secondary implemented path:

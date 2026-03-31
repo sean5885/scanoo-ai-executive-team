@@ -49,7 +49,7 @@ test("runPlannerUserInputEdge keeps planner execute -> envelope -> normalize on 
       };
     },
     responseNormalizer(args) {
-      calls.push(["normalize", args.plannerEnvelope.trace.edge_surface, args.traceId, args.handlerName]);
+      calls.push(["normalize", args.plannerEnvelope.trace.edge_surface, args.requestText, args.traceId, args.handlerName]);
       return {
         ok: true,
         answer: "runtime 正常",
@@ -71,6 +71,6 @@ test("runPlannerUserInputEdge keeps planner execute -> envelope -> normalize on 
     ["execute", "幫我看 runtime", null],
     ["envelope", "get_runtime_info"],
     ["decorate", "get_runtime_info"],
-    ["normalize", "shared", "trace-edge-1", "planner-edge-test"],
+    ["normalize", "shared", "幫我看 runtime", "trace-edge-1", "planner-edge-test"],
   ]);
 });

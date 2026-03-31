@@ -150,6 +150,7 @@ export async function runPlannerUserInputEdge({
   const userResponse = responseNormalizer({
     plannerResult,
     plannerEnvelope,
+    requestText: text,
     logger,
     traceId,
     handlerName,

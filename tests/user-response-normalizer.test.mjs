@@ -263,3 +263,56 @@ test("near-duplicate sources still normalize only from execution_result.data.sou
   assert.match(userResponse.sources[0], /scanooo onboarding notes、scanooo onboarding FAQ/);
   assert.match(userResponse.sources[1], /misc archive/);
 });
+
+test("multi-intent fallback returns partial success when copy is doable but image and delivery are not", () => {
+  const userResponse = normalizeUserResponse({
+    requestText: "幫我寫新品上線的 FB 貼文、做一張圖片並發送出去",
+    plannerEnvelope: buildPlannerEnvelope({
+      ok: false,
+      executionOk: false,
+      data: {},
+    }),
+  });
+  const text = renderUserResponseText(userResponse);
+
+  assert.equal(userResponse.ok, true);
+  assert.match(userResponse.answer || "", /FB|Facebook|貼文草稿/);
+  assert.match(userResponse.answer || "", /新品上線/);
+  assert.match(userResponse.sources.join("\n"), /已先完成：.*貼文草稿/);
+  assert.match(userResponse.limitations.join("\n"), /圖片/);
+  assert.match(userResponse.limitations.join("\n"), /發送或發布/);
+  assert.doesNotMatch(text, /internal|routing|lane|trace|chosen_action|fallback_reason/i);
+});
+
+test("multi-intent fallback works for another mixed capability request", () => {
+  const userResponse = normalizeUserResponse({
+    requestText: "幫我寫招募 email、做一張 banner 再寄給客戶",
+    plannerEnvelope: buildPlannerEnvelope({
+      ok: false,
+      executionOk: false,
+      data: {},
+    }),
+  });
+
+  assert.equal(userResponse.ok, true);
+  assert.match(userResponse.answer || "", /Email 草稿/);
+  assert.match(userResponse.answer || "", /招募/);
+  assert.match(userResponse.limitations.join("\n"), /圖片|banner/i);
+  assert.match(userResponse.limitations.join("\n"), /不能直接替你送出|手動貼上/);
+});
+
+test("fallback stays fail-soft when no subtask is actually completable", () => {
+  const userResponse = normalizeUserResponse({
+    requestText: "幫我做一張圖片並直接發送給客戶",
+    plannerEnvelope: buildPlannerEnvelope({
+      ok: false,
+      executionOk: false,
+      data: {},
+    }),
+  });
+
+  assert.equal(userResponse.ok, false);
+  assert.equal(userResponse.answer, "這次我先沒有整理出足夠內容，但不會亂補。");
+  assert.deepEqual(userResponse.sources, []);
+  assert.match(userResponse.limitations.join(" "), /換個說法|上下文|目標資料/);
+});
