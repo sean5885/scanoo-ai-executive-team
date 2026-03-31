@@ -16,6 +16,8 @@ Sync, meeting, comment-rewrite, and the minimal skill layer are adjacent workflo
 
 For the checked-in executive/workflow surfaces, same-account same-session entrypoints are now serialized in-process by `/Users/seanhan/Documents/Playground/src/single-machine-runtime-coordination.mjs` before task start/continue/apply/finalize logic runs.
 
+The Lark long-connection reply path is a bounded adjacent flow: inbound `im.message.receive_v1` events enter `/Users/seanhan/Documents/Playground/src/index.mjs`, lane selection happens before reply materialization, and `/Users/seanhan/Documents/Playground/src/runtime-message-reply.mjs` now treats the downstream Lark send as complete only when the message mutation response includes a concrete `message_id`.
+
 ## 1. Read Path
 
 ### 1A. Retrieval Index Read
@@ -106,6 +108,8 @@ Current truth:
 - direct `executeLarkWrite(...)` from route or lane modules is no longer the checked-in primary pattern
 - runtime-local idempotency exists in `mutation-runtime.mjs`
 - persisted HTTP idempotency also exists at the HTTP layer
+- long-connection chat replies now reuse this same guarded write path and keep request/event/target/message evidence in the reply-send logs; awaiting the send call without a `message_id` is not treated as success
+- message send/reply budget dedupe now distinguishes target plus reply content/card payload, so different replies in the same chat are not collapsed into one `duplicate_write_same_session` block
 
 ### 2B. Internal Company-Brain Governance Write Path
 

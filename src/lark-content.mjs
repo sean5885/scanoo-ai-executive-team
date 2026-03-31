@@ -12,6 +12,7 @@ import { assertLarkWriteExecutionAllowed } from "./execute-lark-write.mjs";
 
 const userClient = new Lark.Client(baseConfig);
 const contentLogger = createRuntimeLogger({ logger: console, component: "lark_content" });
+let activeLarkContentServiceOverrides = {};
 const WIKI_PAGE_SIZE = 50;
 const DRIVE_PAGE_SIZE = 200;
 const DOC_BLOCK_PAGE_SIZE = 500;
@@ -34,6 +35,15 @@ export function disposeLarkContentClientForTests() {
   const httpDefaults = userClient?.httpInstance?.defaults || {};
   destroyAgent(httpDefaults.httpAgent);
   destroyAgent(httpDefaults.httpsAgent);
+}
+
+export function setLarkContentServiceOverridesForTests(overrides = {}) {
+  activeLarkContentServiceOverrides = overrides && typeof overrides === "object" ? overrides : {};
+}
+
+function getLarkContentService(name, fallback) {
+  const override = activeLarkContentServiceOverrides?.[name];
+  return typeof override === "function" ? override : fallback;
 }
 
 function withAccessToken(accessToken, tokenType = "user") {
@@ -65,6 +75,208 @@ function unwrapResponse(response, fallbackMessage) {
   }
 
   return response.data || {};
+}
+
+function extractLarkResponseHttpStatus(response) {
+  const candidates = [
+    response?.response?.status,
+    response?.statusCode,
+    response?.status,
+    response?.http_status,
+  ];
+  for (const candidate of candidates) {
+    const value = Number(candidate);
+    if (Number.isFinite(value) && value > 0) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function extractLarkResponseRequestId(response) {
+  const candidates = [
+    response?.request_id,
+    response?.requestId,
+    response?.RequestID,
+    response?.headers?.["x-request-id"],
+    response?.headers?.["X-Request-Id"],
+    response?.response?.headers?.["x-request-id"],
+    response?.response?.headers?.["X-Request-Id"],
+  ];
+  for (const candidate of candidates) {
+    const text = typeof candidate === "string" ? candidate.trim() : "";
+    if (text) {
+      return text;
+    }
+  }
+  return null;
+}
+
+function summarizeLarkMessageMutationResponse(response, { operation = "" } = {}) {
+  const data = response?.data && typeof response.data === "object" && !Array.isArray(response.data)
+    ? response.data
+    : {};
+  return {
+    operation: String(operation || "").trim() || null,
+    code: Number.isFinite(Number(response?.code)) ? Number(response.code) : null,
+    msg: typeof response?.msg === "string" ? response.msg : null,
+    log_id: typeof response?.log_id === "string"
+      ? response.log_id
+      : typeof data?.log_id === "string"
+        ? data.log_id
+        : null,
+    request_id: extractLarkResponseRequestId(response),
+    http_status: extractLarkResponseHttpStatus(response),
+    data: {
+      message_id: typeof data?.message_id === "string" ? data.message_id : null,
+      chat_id: typeof data?.chat_id === "string" ? data.chat_id : null,
+      root_id: typeof data?.root_id === "string" ? data.root_id : null,
+      parent_id: typeof data?.parent_id === "string" ? data.parent_id : null,
+      thread_id: typeof data?.thread_id === "string" ? data.thread_id : null,
+      upper_message_id: typeof data?.upper_message_id === "string" ? data.upper_message_id : null,
+      msg_type: typeof data?.msg_type === "string" ? data.msg_type : null,
+      create_time: typeof data?.create_time === "string" ? data.create_time : null,
+      update_time: typeof data?.update_time === "string" ? data.update_time : null,
+      deleted: Boolean(data?.deleted),
+      updated: Boolean(data?.updated),
+    },
+  };
+}
+
+class LarkMessageMutationError extends Error {
+  constructor(message, { code = "lark_message_send_failed", details = null } = {}) {
+    super(message);
+    this.name = "LarkMessageMutationError";
+    this.code = code;
+    this.details = details;
+  }
+}
+
+function attachLarkMessageSendEvidence(item, evidence = null) {
+  if (!item || typeof item !== "object" || Array.isArray(item) || !evidence) {
+    return item;
+  }
+  Object.defineProperty(item, "__send_evidence", {
+    value: evidence,
+    enumerable: false,
+    configurable: true,
+    writable: false,
+  });
+  return item;
+}
+
+function buildLarkMessageFailureDetails({
+  operation = "",
+  responseSummary = null,
+  tokenType = "user",
+  receiveId = "",
+  receiveIdType = "",
+  targetMessageId = "",
+  msgType = "",
+} = {}) {
+  return {
+    operation: String(operation || "").trim() || null,
+    token_type: String(tokenType || "").trim() || "user",
+    receive_id: String(receiveId || "").trim() || null,
+    receive_id_type: String(receiveIdType || "").trim() || null,
+    target_message_id: String(targetMessageId || "").trim() || null,
+    msg_type: String(msgType || "").trim() || null,
+    raw_response: responseSummary,
+    http_status: responseSummary?.http_status ?? null,
+  };
+}
+
+function isChatReceiveIdType(receiveIdType = "") {
+  const normalized = String(receiveIdType || "").trim().toLowerCase();
+  return normalized === "chat" || normalized === "chat_id";
+}
+
+function assertLarkMessageMutationSuccess({
+  response = null,
+  fallbackMessage = "",
+  operation = "",
+  tokenType = "user",
+  receiveId = "",
+  receiveIdType = "",
+  targetMessageId = "",
+  msgType = "",
+} = {}) {
+  const responseSummary = summarizeLarkMessageMutationResponse(response, { operation });
+  if (response?.code !== 0) {
+    throw new LarkMessageMutationError(response?.msg || fallbackMessage, {
+      code: "lark_message_api_failed",
+      details: buildLarkMessageFailureDetails({
+        operation,
+        responseSummary,
+        tokenType,
+        receiveId,
+        receiveIdType,
+        targetMessageId,
+        msgType,
+      }),
+    });
+  }
+
+  const normalized = normalizeMessageItem(response?.data || {});
+  if (!normalized.message_id) {
+    throw new LarkMessageMutationError(`${String(operation || "message_send").trim() || "message_send"} returned without message_id`, {
+      code: "lark_message_missing_message_id",
+      details: buildLarkMessageFailureDetails({
+        operation,
+        responseSummary,
+        tokenType,
+        receiveId,
+        receiveIdType,
+        targetMessageId,
+        msgType,
+      }),
+    });
+  }
+
+  if (
+    receiveId
+    && isChatReceiveIdType(receiveIdType)
+    && normalized.chat_id
+    && normalized.chat_id !== receiveId
+  ) {
+    throw new LarkMessageMutationError(`${String(operation || "message_send").trim() || "message_send"} returned mismatched chat_id`, {
+      code: "lark_message_target_mismatch",
+      details: buildLarkMessageFailureDetails({
+        operation,
+        responseSummary,
+        tokenType,
+        receiveId,
+        receiveIdType,
+        targetMessageId,
+        msgType,
+      }),
+    });
+  }
+
+  if (msgType && normalized.msg_type && normalized.msg_type !== msgType) {
+    throw new LarkMessageMutationError(`${String(operation || "message_send").trim() || "message_send"} returned mismatched msg_type`, {
+      code: "lark_message_msg_type_mismatch",
+      details: buildLarkMessageFailureDetails({
+        operation,
+        responseSummary,
+        tokenType,
+        receiveId,
+        receiveIdType,
+        targetMessageId,
+        msgType,
+      }),
+    });
+  }
+
+  return attachLarkMessageSendEvidence(normalized, {
+    operation: String(operation || "").trim() || null,
+    token_type: String(tokenType || "").trim() || "user",
+    receive_id: String(receiveId || "").trim() || null,
+    receive_id_type: String(receiveIdType || "").trim() || null,
+    target_message_id: String(targetMessageId || "").trim() || null,
+    raw_response: responseSummary,
+    http_status: responseSummary.http_status ?? null,
+  });
 }
 
 function shouldRetryLarkMessageError(error) {
@@ -1339,11 +1551,11 @@ export async function replyMessage(
   accessToken,
   messageId,
   content,
-  { replyInThread = false, cardTitle, cardPayload } = {},
+  { replyInThread = false, cardTitle, cardPayload, tokenType = "user" } = {},
 ) {
   assertLarkWriteAllowed();
   assertLarkWriteExecutionAllowed("replyMessage");
-  ({ accessToken } = await resolveContentAuth(accessToken));
+  ({ accessToken, tokenType } = await resolveContentAuth(accessToken, tokenType));
   const normalized = String(content || "").trim();
   if (!normalized && !cardPayload) {
     throw new Error("missing_message_content");
@@ -1359,37 +1571,43 @@ export async function replyMessage(
       )
     : JSON.stringify({ text: normalized });
 
-  const data = await withMessageRetry(async () =>
-    unwrapResponse(
-      await userClient.im.v1.message.reply(
-        {
-          path: {
-            message_id: messageId,
-          },
-          data: {
-            msg_type: isCard ? "interactive" : "text",
-            content: payloadContent,
-            reply_in_thread: replyInThread,
-          },
+  const operation = "reply_message";
+  const msgType = isCard ? "interactive" : "text";
+  const response = await withMessageRetry(async () =>
+    getLarkContentService("replyMessageApi", userClient.im.v1.message.reply.bind(userClient.im.v1.message))(
+      {
+        path: {
+          message_id: messageId,
         },
-        Lark.withUserAccessToken(accessToken),
-      ),
-      "Failed to reply to Lark message",
-    ),
+        data: {
+          msg_type: msgType,
+          content: payloadContent,
+          reply_in_thread: replyInThread,
+        },
+      },
+      withAccessToken(accessToken, tokenType),
+    )
   );
 
-  return normalizeMessageItem(data);
+  return assertLarkMessageMutationSuccess({
+    response,
+    fallbackMessage: "Failed to reply to Lark message",
+    operation,
+    tokenType,
+    targetMessageId: messageId,
+    msgType,
+  });
 }
 
 export async function sendMessage(
   accessToken,
   receiveId,
   content,
-  { receiveIdType = "chat", cardTitle, cardPayload } = {},
+  { receiveIdType = "chat", cardTitle, cardPayload, tokenType = "user" } = {},
 ) {
   assertLarkWriteAllowed();
   assertLarkWriteExecutionAllowed("sendMessage");
-  ({ accessToken } = await resolveContentAuth(accessToken));
+  ({ accessToken, tokenType } = await resolveContentAuth(accessToken, tokenType));
   const normalized = String(content || "").trim();
   if (!normalized && !cardPayload) {
     throw new Error("missing_message_content");
@@ -1405,26 +1623,33 @@ export async function sendMessage(
       )
     : JSON.stringify({ text: normalized });
 
-  const data = await withMessageRetry(async () =>
-    unwrapResponse(
-      await userClient.im.v1.message.create(
-        {
-          params: {
-            receive_id_type: receiveIdType,
-          },
-          data: {
-            receive_id: receiveId,
-            msg_type: isCard ? "interactive" : "text",
-            content: payloadContent,
-          },
+  const operation = "send_message";
+  const msgType = isCard ? "interactive" : "text";
+  const response = await withMessageRetry(async () =>
+    getLarkContentService("sendMessageApi", userClient.im.v1.message.create.bind(userClient.im.v1.message))(
+      {
+        params: {
+          receive_id_type: receiveIdType,
         },
-        Lark.withUserAccessToken(accessToken),
-      ),
-      "Failed to send Lark message",
-    ),
+        data: {
+          receive_id: receiveId,
+          msg_type: msgType,
+          content: payloadContent,
+        },
+      },
+      withAccessToken(accessToken, tokenType),
+    )
   );
 
-  return normalizeMessageItem(data);
+  return assertLarkMessageMutationSuccess({
+    response,
+    fallbackMessage: "Failed to send Lark message",
+    operation,
+    tokenType,
+    receiveId,
+    receiveIdType,
+    msgType,
+  });
 }
 
 export async function getPrimaryCalendar(accessToken, tokenType = "user") {

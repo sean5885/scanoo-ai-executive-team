@@ -153,6 +153,12 @@ All minimum trace/log events should align around these fields:
   - `planner_skill_boundary = "answer_pipeline"`
   - `planner_skill_answer_pipeline_enforced = true`
   - `planner_skill_raw_payload_blocked = true`
+- long-connection bot reply logs now also expose:
+  - `reply_send_attempted`
+  - `reply_send_succeeded`
+  - `reply_send_failed`
+  - with correlated fields such as `request_id`, `event_id`, `chat_id`, `receive_id`, `receive_id_type`, `msg_type`, thread/root/parent identifiers when present, `api_http_status`, and a summarized `api_raw_response`
+- `reply_send_succeeded` is now evidence-bearing only when the Lark message mutation response contains a concrete `message_id`; resolved promises without that field are not treated as success
 
 ### Fields not yet consistently runtimeized
 

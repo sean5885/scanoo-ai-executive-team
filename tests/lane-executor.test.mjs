@@ -368,3 +368,21 @@ test("lane execution plan gives personal assistant a general catch-all for greet
   assert.equal(plan.chosen_action, "general_assistant_action");
   assert.equal(plan.fallback_reason, null);
 });
+
+test("lane execution plan keeps mixed workflow plus copy request in the general assistant lane", () => {
+  const plan = resolveLaneExecutionPlan({
+    scope: {
+      capability_lane: "personal-assistant",
+    },
+    event: {
+      message: {
+        content: JSON.stringify({
+          text: "我希望你可以建立工作流，比如幫我寫 facebook 的貼文、做好圖片並發送，請問你可以做到嗎？",
+        }),
+      },
+    },
+  });
+
+  assert.equal(plan.chosen_action, "general_assistant_action");
+  assert.equal(plan.fallback_reason, null);
+});

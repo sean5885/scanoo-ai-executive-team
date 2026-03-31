@@ -51,6 +51,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/index.mjs`
   - `/Users/seanhan/Documents/Playground/src/runtime-conflict-guard.mjs`
   - `/Users/seanhan/Documents/Playground/src/runtime-message-deduper.mjs`
+  - `/Users/seanhan/Documents/Playground/src/runtime-message-reply.mjs`
   - `/Users/seanhan/Documents/Playground/src/single-machine-runtime-coordination.mjs`
   - `/Users/seanhan/Documents/Playground/src/runtime-observability.mjs`
 - What they do now:
@@ -59,6 +60,7 @@ Current-truth docs for onboarding are:
   - enforce duplicate-message suppression
   - guard against competing local responders
   - serialize same-account same-session workflow/executive entrypoints inside one process so one session keeps one active coordination owner at a time
+  - send long-connection bot replies only through the mutation runtime, and only treat the send as successful when the Lark message response returns a concrete `message_id`; the runtime reply helper now emits `reply_send_attempted`, `reply_send_succeeded`, and `reply_send_failed` instead of a generic post-await success log
 - Evidence:
   - `/Users/seanhan/Documents/Playground/tests/http-server.route-success.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/http-server.trace.test.mjs`
