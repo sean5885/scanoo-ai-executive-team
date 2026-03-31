@@ -4,6 +4,7 @@ import {
   extractDocumentId,
   normalizeMessageText,
 } from "./message-intent-utils.mjs";
+import { resolvePlannerKnowledgeAssistantIngress } from "./planner-ingress-contract.mjs";
 
 function hasAny(text, keywords) {
   return keywords.some((keyword) => text.includes(keyword));
@@ -73,25 +74,6 @@ export function resolveCapabilityLane(scope, input = {}) {
     "评论区",
   ];
 
-  const knowledgeKeywords = [
-    "知識",
-    "知识",
-    "查一下",
-    "查詢",
-    "查询",
-    "搜尋",
-    "搜索",
-    "整理一下資料",
-    "根據文件",
-    "根据文件",
-    "根據知識",
-    "根据知识",
-    "search",
-    "answer",
-    "wiki 空間",
-    "drive",
-  ];
-
   const wantsDocEdit =
     hasDirectDocumentReference ||
     hasAny(text, ["評論", "评论", "評論區", "评论区"]) ||
@@ -100,6 +82,7 @@ export function resolveCapabilityLane(scope, input = {}) {
 
   const wantsConversationSummary = hasAny(text, conversationSummaryKeywords);
   const wantsDocumentSummary = docBoundaryIntent.wants_document_summary;
+  const plannerKnowledgeIngress = resolvePlannerKnowledgeAssistantIngress(text);
 
   if (wantsDocEdit) {
     return {
@@ -129,43 +112,11 @@ export function resolveCapabilityLane(scope, input = {}) {
     };
   }
 
-  if (wantsDocumentSummary) {
+  if (plannerKnowledgeIngress) {
     return {
-      capability_lane: "knowledge-assistant",
-      lane_label: "知識助手",
-      lane_reason: "message_mentions_document_summary_or_lookup",
-      recommended_tools: [
-        "lark_kb_search",
-        "lark_kb_answer",
-        "lark_doc_read",
-        "lark_drive_list",
-        "lark_wiki_spaces",
-        "lark_wiki_nodes",
-      ],
-    };
-  }
-
-  if (docBoundaryIntent.mentions_company_brain) {
-    return {
-      capability_lane: "knowledge-assistant",
-      lane_label: "知識助手",
-      lane_reason: "message_mentions_company_brain_doc_boundary",
-      recommended_tools: [
-        "lark_kb_search",
-        "lark_kb_answer",
-        "lark_doc_read",
-        "lark_drive_list",
-        "lark_wiki_spaces",
-        "lark_wiki_nodes",
-      ],
-    };
-  }
-
-  if (hasAny(text, knowledgeKeywords)) {
-    return {
-      capability_lane: "knowledge-assistant",
-      lane_label: "知識助手",
-      lane_reason: "message_mentions_search_answer_or_knowledge_lookup",
+      capability_lane: plannerKnowledgeIngress.capability_lane,
+      lane_label: plannerKnowledgeIngress.lane_label,
+      lane_reason: plannerKnowledgeIngress.lane_reason,
       recommended_tools: [
         "lark_kb_search",
         "lark_kb_answer",

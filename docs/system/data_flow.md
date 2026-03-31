@@ -126,19 +126,22 @@ Current truth:
 Current public `/answer` path:
 
 1. request enters `GET /answer`
-2. `http-server.mjs` calls `executePlannedUserInput(...)`
-3. `executive-planner.mjs` resolves planner action or controlled failure
-4. planner reads and tool results remain internal runtime state
-5. `user-response-normalizer.mjs` converts the planner envelope into the public response shape:
+2. `http-server.mjs` calls `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs`
+3. `planner-user-input-edge.mjs` calls `executePlannedUserInput(...)`
+4. `executive-planner.mjs` resolves planner action or controlled failure
+5. planner reads and tool results remain internal runtime state
+6. `user-response-normalizer.mjs` converts the planner envelope into the public response shape:
    - `answer`
    - `sources`
    - `limitations`
-6. `answer-source-mapper.mjs` converts canonical source objects into bounded public `sources[]` lines
+7. `answer-source-mapper.mjs` converts canonical source objects into bounded public `sources[]` lines
 
 Current truth:
 
 - this path is implemented
 - `/answer` is planner-first, not answer-service-first
+- `/answer` and the `knowledge-assistant` lane now share the same planner answer-edge helper instead of re-assembling `execute -> envelope -> normalize` separately
+- that shared edge helper also absorbs current legacy planner result shapes into canonical `answer / sources / limitations` before the public boundary
 - answer evidence is surfaced through canonical source mapping before public rendering
 - the checked-in normalizer now reads only canonical `execution_result.data.answer / sources / limitations`
 
@@ -227,6 +230,7 @@ Current truth:
 
 ## 5. Policy-Only or Incomplete Areas
 
+- no single universal planner ingress for every lane/workflow in the repo; the checked-in shared ingress contract only covers current planner doc/knowledge/runtime reads plus the shared `/answer` and `knowledge-assistant` edge surfaces
 - no full generic repo-wide read abstraction; the audited company-brain/review/verification/system-knowledge helpers now re-enter `read-runtime.mjs`, but other repository-local reads still exist outside one universal surface
 - no full targeted doc block mutation runtime
 - no background worker mesh or autonomous company-brain server

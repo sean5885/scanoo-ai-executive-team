@@ -108,7 +108,6 @@ import {
   rollbackRewrittenDocument,
 } from "./doc-comment-rewrite.mjs";
 import {
-  buildPlannedUserInputEnvelope,
   executePlannedUserInput,
 } from "./executive-planner.mjs";
 import {
@@ -215,6 +214,7 @@ import {
   sanitizeTracePayload,
 } from "./monitoring-store.mjs";
 import { normalizeUserResponse } from "./user-response-normalizer.mjs";
+import { runPlannerUserInputEdge } from "./planner-user-input-edge.mjs";
 import db from "./db.mjs";
 import { buildExecutionEnvelope } from "./execution-envelope.mjs";
 import { withLarkWriteExecutionContext } from "./execute-lark-write.mjs";
@@ -8048,21 +8048,16 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger) {
       account_id: getAccountId(requestUrl, body) || null,
       q_len: q.trim().length,
     });
-    const result = await getHttpService("executePlannedUserInput", executePlannedUserInput)({
+    const { plannerResult: result, plannerEnvelope: envelope, userResponse } = await runPlannerUserInputEdge({
       text: q,
       logger,
       baseUrl: oauthBaseUrl,
       authContext: resolveExplicitPlannerAuthContext(res, requestUrl, body),
       signal: logger?.__abort_signal || res?.__abort_signal || null,
       requestId: res?.__request_id || null,
-    });
-    const envelope = buildPlannedUserInputEnvelope(result);
-    const userResponse = normalizeUserResponse({
-      plannerResult: result,
-      plannerEnvelope: envelope,
-      logger,
       traceId: res?.__trace_id || null,
       handlerName: "handleAnswer",
+      plannerExecutor: getHttpService("executePlannedUserInput", executePlannedUserInput),
     });
     logger.info("knowledge_answer_completed", {
       selected_action: envelope.action || null,

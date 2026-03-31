@@ -1,4 +1,5 @@
 import { cleanText } from "./message-intent-utils.mjs";
+import { looksLikePlannerRuntimeInfoIntent } from "./planner-ingress-contract.mjs";
 import { createPlannerFlow } from "./planner-flow-runtime.mjs";
 
 const plannerRuntimeInfoContext = Object.freeze({});
@@ -26,29 +27,6 @@ function buildRuntimeInfoTraceEvent({
 
 function logRuntimeInfoTrace(logger = console, event = {}) {
   logger?.debug?.("planner_runtime_info_flow", event);
-}
-
-function looksLikeRuntimeInfoQuery(userIntent = "") {
-  const normalizedIntent = cleanText(String(userIntent || "").toLowerCase());
-  if (!normalizedIntent) {
-    return false;
-  }
-
-  return (
-    normalizedIntent.includes("runtime")
-    || normalizedIntent.includes("runtime status")
-    || normalizedIntent.includes("db path")
-    || normalizedIntent.includes("pid")
-    || normalizedIntent.includes("cwd")
-    || normalizedIntent.includes("service start")
-    || normalizedIntent.includes("service_start")
-    || normalizedIntent.includes("穩不穩")
-    || normalizedIntent.includes("風險")
-    || normalizedIntent.includes("運行情況")
-    || normalizedIntent.includes("系統狀態")
-    || normalizedIntent.includes("運行資訊")
-    || normalizedIntent.includes("运行信息")
-  );
 }
 
 function buildRuntimeInfoFormattedOutput(result = null) {
@@ -80,7 +58,7 @@ export function resolveRuntimeInfoRoute({
   payload = {},
   logger = console,
 } = {}) {
-  const action = looksLikeRuntimeInfoQuery(userIntent) ? "get_runtime_info" : null;
+  const action = looksLikePlannerRuntimeInfoIntent(userIntent) ? "get_runtime_info" : null;
   const routingReason = action ? "selector_get_runtime_info" : "routing_no_match";
   logRuntimeInfoTrace(logger, buildRuntimeInfoTraceEvent({
     eventType: "runtime_info_route",

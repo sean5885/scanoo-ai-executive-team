@@ -314,3 +314,21 @@ test("lane execution plan keeps doc-boundary keep requests out of personal lane"
   assert.equal(plan.chosen_action, null);
   assert.equal(plan.fallback_reason, "semantic_mismatch_document_request_in_personal_lane");
 });
+
+test("lane execution plan keeps runtime-info queries out of personal lane", () => {
+  const plan = resolveLaneExecutionPlan({
+    scope: {
+      capability_lane: "personal-assistant",
+    },
+    event: {
+      message: {
+        content: JSON.stringify({
+          text: "現在 runtime 穩不穩？順便告訴我 cwd 跟 db path",
+        }),
+      },
+    },
+  });
+
+  assert.equal(plan.chosen_action, null);
+  assert.equal(plan.fallback_reason, "semantic_mismatch_document_request_in_personal_lane");
+});

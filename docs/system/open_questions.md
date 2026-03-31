@@ -13,7 +13,7 @@ For this closure-planning pass:
 ## Disposition Of Previous Items
 
 1. Dual-responder risk: single-process same-session coordination is now closed in checked-in code; startup-time competing-responder suppression still exists, but it is no longer an active-task ownership gap.
-2. `http-server.mjs` dominance: still real; merged into `Thread C`.
+2. `http-server.mjs` dominance: the planner ingress / answer-edge part is now resolved through `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs`; the file remains large, but it is no longer an unresolved planner-ingress ownership gap.
 3. Targeted preview vs replace-based final doc apply: resolved for workflow closure tracking; replace-based apply remains documented truth, but preview/review/apply ownership is now single-path.
 4. OAuth scope truth partly external: removed from the ranked list; this is deployment truth, not a repo-closable code gap.
 5. Token/account persistence local-first: still real, but no longer grouped with the now-closed same-session orchestration path.
@@ -23,25 +23,19 @@ For this closure-planning pass:
 9. Bitable/spreadsheet workflow contracts remain thin: removed from the closure list; this is feature-surface expansion, not closure of a current contract gap.
 10. Comment suggestion ingress is polling/manual only: no longer a workflow-closure gap; ingress is still poll/manual, but it now lands on the same checked-in preview/review/apply path.
 11. Workflow/planner state is local JSON: same-session orchestration is now serialized in-process for the checked-in executive/workflow path, but other local JSON stores still remain local-first facts.
-12. Generic runtime questions do not reliably enter planner mode from the lane layer: still real; merged into `Thread C`.
+12. Generic runtime questions do not reliably enter planner mode from the lane layer: resolved through `/Users/seanhan/Documents/Playground/src/planner-ingress-contract.mjs`, which is now shared by lane admission, personal-lane edge guarding, and `/Users/seanhan/Documents/Playground/src/planner-runtime-info-flow.mjs`.
 13. HTTP and mutation-runtime idempotency use different scopes: still real, but cut from the next-three closure order.
 
 ## Ranked Closure Threads
 
-### P0
+No ranked closure thread remains from this pass.
 
-1. `Thread C — planner ingress and edge-surface convergence`
-   - Why it stays:
-     - `http-server.mjs` remains a 9k+ line integration surface
-     - the lane layer still does not reliably send generic runtime-health questions into planner/runtime-info flow
-   - Current code evidence:
-     - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
-     - `/Users/seanhan/Documents/Playground/src/http-route-contracts.mjs`
-     - `/Users/seanhan/Documents/Playground/src/capability-lane.mjs`
-     - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
-     - `/Users/seanhan/Documents/Playground/src/planner-runtime-info-flow.mjs`
-   - Closure target:
-     - make planner entry conditions and edge-route ownership explicit enough that runtime-info and adjacent planner reads do not depend on lane heuristics plus one dominant integration file
+Thread C is now closed in checked-in code:
+
+- `/Users/seanhan/Documents/Playground/src/planner-ingress-contract.mjs` is the shared planner ingress rule for document-summary / company-brain / knowledge / runtime-info reads
+- `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs` is the shared `/answer` and `knowledge-assistant` answer edge
+- `/Users/seanhan/Documents/Playground/src/planner-runtime-info-flow.mjs` now reuses the same runtime-info predicate as lane admission
+- `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` now uses that same ingress contract to keep personal-lane planner mismatches fail-soft and explicit
 
 ## Real But Outside The Next-Three Cut
 
@@ -64,8 +58,7 @@ For this closure-planning pass:
 
 ## Minimal Closure Order
 
-1. Start with `Thread C`.
-   - The checked-in same-session orchestration path is now single-owner and verifier-gated, so the next unresolved boundary is planner ingress and edge-surface convergence.
+No remaining ranked closure order is defined in this file after Thread C.
 
 ## Cannot Be Confirmed From Code Alone
 

@@ -1,8 +1,6 @@
 import { generateDocumentCommentSuggestionCard } from "./comment-suggestion-workflow.mjs";
 import {
   buildPlannerPendingItemActionResult,
-  buildPlannedUserInputEnvelope,
-  executePlannedUserInput,
 } from "./executive-planner.mjs";
 import {
   ensureMeetingWorkflowTask,
@@ -69,6 +67,7 @@ import { decideIntent } from "./control-kernel.mjs";
 import { ensureCloudDocWorkflowTask } from "./executive-orchestrator.mjs";
 import { formatIdentifierHint } from "./runtime-observability.mjs";
 import { ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
+import { looksLikePlannerIngressRequest } from "./planner-ingress-contract.mjs";
 import {
   handlePlannerPendingItemAction,
   maybeRunPlannerTaskLifecycleFollowUp,
@@ -105,6 +104,7 @@ import {
   getResolvedSessionExplicitAuth,
   setResolvedSessionExplicitAuth,
 } from "./session-scope-store.mjs";
+import { runPlannerUserInputEdge } from "./planner-user-input-edge.mjs";
 import { normalizeUserResponse, renderUserResponseText } from "./user-response-normalizer.mjs";
 import { runCanonicalLarkMutation } from "./lark-mutation-runtime.mjs";
 
@@ -194,9 +194,7 @@ function looksLikeExplicitDocOrKnowledgeRoutingRequest(text = "") {
   }
 
   const cloudDocAction = resolveCloudOrganizationAction({ text: normalized });
-  const docBoundaryIntent = detectDocBoundaryIntent(normalized);
-
-  return docBoundaryIntent.is_high_confidence_doc_boundary || cloudDocAction !== "none";
+  return looksLikePlannerIngressRequest(normalized) || cloudDocAction !== "none";
 }
 
 function buildLaneTrace({
@@ -267,13 +265,13 @@ function buildLaneSemanticMismatchReply() {
   return {
     text: [
       "答案",
-      "這則訊息比較像文件或知識庫請求，所以我先不在 personal lane 亂回。",
+      "這則訊息比較像文件、知識或 runtime 查詢，所以我先不在 personal lane 亂回。",
       "",
       "來源",
       "- 這次沒有對外提供可引用來源。",
       "",
       "待確認/限制",
-      "- 請直接說要我找文件、打開某份文件，或整理某份文件重點，我會改走對應的知識/文件路徑。",
+      "- 請直接說要我找文件、打開某份文件、整理某份文件重點，或查 runtime 狀態，我會改走對應的 planner 路徑。",
       "- internal semantic trace 仍保留在 runtime/log，不會直接暴露在回覆裡。",
     ].join("\n"),
   };
@@ -727,24 +725,16 @@ async function executeKnowledgeAssistant({ event, scope, logger = noopLogger, tr
     logger,
   });
 
-  const plannedResult = await executePlannedUserInput({
+  const { plannerResult: plannedResult, plannerEnvelope, userResponse } = await runPlannerUserInputEdge({
     text,
     logger,
     authContext: explicitAuth,
     sessionKey: cleanText(scope?.session_key || scope?.chat_id || event?.message?.chat_id || ""),
-  });
-  const plannerEnvelope = attachLaneTrace(
-    buildPlannedUserInputEnvelope(plannedResult),
-    {
-      scope,
-    },
-  );
-  const userResponse = normalizeUserResponse({
-    plannerResult: plannedResult,
-    plannerEnvelope,
-    logger,
     traceId,
     handlerName: "executeKnowledgeAssistant",
+    envelopeDecorator(envelope) {
+      return attachLaneTrace(envelope, { scope });
+    },
   });
   if (userResponse.ok === false) {
     logger.info("lane_execution_user_fallback", {

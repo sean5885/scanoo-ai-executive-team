@@ -126,6 +126,22 @@ test("company_brain 語意會直接進 knowledge-assistant", () => {
   assert.equal(lane.capability_lane, "knowledge-assistant");
 });
 
+test("runtime 健康查詢會直接進 knowledge-assistant", () => {
+  const lane = resolveCapabilityLane(
+    { chat_type: "p2p" },
+    {
+      message: {
+        content: JSON.stringify({
+          text: "現在 runtime 穩不穩？順便告訴我 db path 跟 pid",
+        }),
+      },
+    },
+  );
+
+  assert.equal(lane.capability_lane, "knowledge-assistant");
+  assert.equal(lane.lane_reason, "message_mentions_runtime_info");
+});
+
 test("最近對話總結需求不會被誤導到 knowledge-assistant", () => {
   const lane = resolveCapabilityLane(
     { chat_type: "p2p" },

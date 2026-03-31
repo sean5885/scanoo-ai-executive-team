@@ -228,6 +228,20 @@ export function normalizeUserResponse({
   }
 
   const objectPayload = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
+  if (isCanonicalUserFacingResponse(objectPayload)) {
+    emitBoundaryLog({
+      logger,
+      traceId,
+      handlerName,
+      ok: objectPayload.ok,
+    });
+    return {
+      ok: objectPayload.ok === true,
+      answer: normalizeText(objectPayload.answer || ""),
+      sources: normalizeUserResponseList(objectPayload.sources),
+      limitations: normalizeUserResponseList(objectPayload.limitations),
+    };
+  }
   const execution = objectPayload?.execution_result && typeof objectPayload.execution_result === "object"
     ? objectPayload.execution_result
     : {};

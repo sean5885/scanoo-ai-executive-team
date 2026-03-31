@@ -86,12 +86,17 @@ Current-truth docs for onboarding are:
 
 - Main implemented public path:
   - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
+  - `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs`
   - `/Users/seanhan/Documents/Playground/src/executive-planner.mjs`
+  - `/Users/seanhan/Documents/Playground/src/planner-ingress-contract.mjs`
   - `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
   - `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`
 - Current truth:
   - `GET /answer` no longer uses `answer-service.mjs` as its primary route
   - public answer generation goes through planner execution first
+  - `/answer` and the `knowledge-assistant` lane now share one checked-in answer-edge helper instead of rebuilding `execute -> envelope -> normalize` separately
+  - that shared answer-edge helper also lifts current legacy planner result shapes into canonical `answer / sources / limitations` before public rendering
+  - `planner-ingress-contract.mjs` is the checked-in ingress rule for doc/knowledge/runtime planner admission and the personal-lane planner edge guard
   - planner flow ownership between `runtime_info`, `doc_query`, `okr`, `bd`, and `delivery` is now explicit in code rather than inferred from flow priority or registration order
   - final HTTP/chat response is normalized into `answer -> sources -> limitations`
   - `user-response-normalizer.mjs` now only reads canonical `execution_result.data.answer / sources / limitations`

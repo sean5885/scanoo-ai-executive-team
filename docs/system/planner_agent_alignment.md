@@ -19,6 +19,8 @@ It is an alignment document:
 Current runtime anchor:
 
 - `/Users/seanhan/Documents/Playground/src/executive-planner.mjs`
+- `/Users/seanhan/Documents/Playground/src/planner-ingress-contract.mjs`
+- `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-flow-runtime.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-runtime-info-flow.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-okr-flow.mjs`
@@ -32,6 +34,8 @@ Current runtime anchor:
 
 Current minimum runtime responsibilities already implemented there:
 
+- planner ingress admission for doc/knowledge/runtime reads
+- shared answer-edge composition for planner user input
 - planner-side intent selection
 - planner action dispatch
 - planner multi-step execution
@@ -60,6 +64,15 @@ This means `planner_agent` currently maps to a runtime module, not just a pure s
 - running ordered multi-step plans and presets
 - applying minimal runtime checks before and after dispatch
 - returning a normalized result shape instead of throwing
+
+The checked-in user-input ingress/edge surfaces around that core are now explicit:
+
+- `GET /answer` enters planner through `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs`
+- the `knowledge-assistant` lane in `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` enters planner through that same helper
+- `/Users/seanhan/Documents/Playground/src/planner-ingress-contract.mjs` is the shared ingress rule for:
+  - knowledge/document-summary/company-brain admission into the knowledge lane
+  - runtime-info admission into planner/runtime-info flow
+  - personal-lane edge guarding when a request really belongs to planner
 
 ## In Scope
 
@@ -165,6 +178,18 @@ Boundary:
 - this field is metadata only and must not be promoted into verifier/evidence as if a real tool or specialist execution had happened
 
 ## Input Shape
+
+Planner ingress classification now also has one checked-in contract:
+
+- `resolvePlannerKnowledgeAssistantIngress(...)`
+  - shared by `capability-lane.mjs`
+  - promotes document-summary/company-brain/knowledge/runtime-info requests into `knowledge-assistant`
+- `looksLikePlannerRuntimeInfoIntent(...)`
+  - shared by `planner-runtime-info-flow.mjs`
+  - keeps runtime-info admission aligned between lane ingress and planner flow routing
+- `looksLikePlannerIngressRequest(...)`
+  - shared by `lane-executor.mjs`
+  - keeps personal-lane edge fallback from silently absorbing planner-owned runtime/doc/knowledge requests
 
 Current planner-facing input shape in runtime is effectively:
 
