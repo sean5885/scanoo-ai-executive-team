@@ -14,6 +14,8 @@ The three main paths are:
 
 Sync, meeting, comment-rewrite, and the minimal skill layer are adjacent workflows built on top of those paths.
 
+For the checked-in executive/workflow surfaces, same-account same-session entrypoints are now serialized in-process by `/Users/seanhan/Documents/Playground/src/single-machine-runtime-coordination.mjs` before task start/continue/apply/finalize logic runs.
+
 ## 1. Read Path
 
 ### 1A. Retrieval Index Read

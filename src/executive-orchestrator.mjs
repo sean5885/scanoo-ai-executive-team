@@ -25,6 +25,7 @@ import {
   startExecutiveTask,
   updateExecutiveTask,
 } from "./executive-task-state.mjs";
+import { runInSingleMachineRuntimeSession } from "./single-machine-runtime-coordination.mjs";
 import { normalizeUserResponse } from "./user-response-normalizer.mjs";
 
 const noopLogger = {
@@ -133,6 +134,22 @@ const EXECUTIVE_NEXT_STEP_HEADINGS = new Set([
 
 function sessionKeyFromScope(scope = {}, accountId = "") {
   return cleanText(scope?.session_key || scope?.chat_id || accountId);
+}
+
+async function runWithSessionCoordination({
+  accountId = "",
+  sessionKey = "",
+  workflow = "",
+  reason = "",
+  logger = noopLogger,
+} = {}, work = async () => null) {
+  return runInSingleMachineRuntimeSession({
+    accountId,
+    sessionKey,
+    workflow,
+    reason,
+    logger,
+  }, work);
 }
 
 function resolveWorkPlanPrimaryAgentId(task = null, decision = null) {
@@ -670,7 +687,7 @@ async function advanceTaskLifecycle(task, steps = [], reason = "workflow_state_a
   return current;
 }
 
-export async function ensureMeetingWorkflowTask({
+async function ensureMeetingWorkflowTaskUnlocked({
   accountId = "",
   event = {},
   scope = {},
@@ -752,7 +769,17 @@ export async function ensureMeetingWorkflowTask({
   return task;
 }
 
-export async function markMeetingWorkflowWritingBack({
+export async function ensureMeetingWorkflowTask(args = {}) {
+  const sessionKey = sessionKeyFromScope(args.scope, args.accountId);
+  return runWithSessionCoordination({
+    accountId: args.accountId,
+    sessionKey,
+    workflow: "meeting",
+    reason: "ensure_meeting_workflow_task",
+  }, () => ensureMeetingWorkflowTaskUnlocked(args));
+}
+
+async function markMeetingWorkflowWritingBackUnlocked({
   accountId = "",
   scope = {},
   event = {},
@@ -776,7 +803,17 @@ export async function markMeetingWorkflowWritingBack({
   });
 }
 
-export async function finalizeMeetingWorkflowTask({
+export async function markMeetingWorkflowWritingBack(args = {}) {
+  const sessionKey = sessionKeyFromScope(args.scope, args.accountId);
+  return runWithSessionCoordination({
+    accountId: args.accountId,
+    sessionKey,
+    workflow: "meeting",
+    reason: "mark_meeting_workflow_writing_back",
+  }, () => markMeetingWorkflowWritingBackUnlocked(args));
+}
+
+async function finalizeMeetingWorkflowTaskUnlocked({
   accountId = "",
   scope = {},
   taskId = "",
@@ -816,7 +853,7 @@ export async function finalizeMeetingWorkflowTask({
       status: "completed",
     });
     if (accountId && sessionKey) {
-      await clearActiveExecutiveTask(accountId, sessionKey);
+      await clearActiveExecutiveTask(accountId, sessionKey, { expectedTaskId: current.id });
     }
   } else {
     if (current.lifecycle_state !== "blocked") {
@@ -835,7 +872,17 @@ export async function finalizeMeetingWorkflowTask({
   };
 }
 
-export async function ensureDocRewriteWorkflowTask({
+export async function finalizeMeetingWorkflowTask(args = {}) {
+  const sessionKey = sessionKeyFromScope(args.scope, args.accountId);
+  return runWithSessionCoordination({
+    accountId: args.accountId,
+    sessionKey,
+    workflow: "meeting",
+    reason: "finalize_meeting_workflow_task",
+  }, () => finalizeMeetingWorkflowTaskUnlocked(args));
+}
+
+async function ensureDocRewriteWorkflowTaskUnlocked({
   accountId = "",
   documentId = "",
   documentTitle = "",
@@ -916,7 +963,17 @@ export async function ensureDocRewriteWorkflowTask({
   return task;
 }
 
-export async function markDocRewriteApplying({
+export async function ensureDocRewriteWorkflowTask(args = {}) {
+  const sessionKey = sessionKeyFromScope(args.scope, args.accountId);
+  return runWithSessionCoordination({
+    accountId: args.accountId,
+    sessionKey,
+    workflow: "doc_rewrite",
+    reason: "ensure_doc_rewrite_workflow_task",
+  }, () => ensureDocRewriteWorkflowTaskUnlocked(args));
+}
+
+async function markDocRewriteApplyingUnlocked({
   accountId = "",
   scope = {},
   event = {},
@@ -954,7 +1011,17 @@ export async function markDocRewriteApplying({
   });
 }
 
-export async function finalizeDocRewriteWorkflowTask({
+export async function markDocRewriteApplying(args = {}) {
+  const sessionKey = sessionKeyFromScope(args.scope, args.accountId);
+  return runWithSessionCoordination({
+    accountId: args.accountId,
+    sessionKey,
+    workflow: "doc_rewrite",
+    reason: "mark_doc_rewrite_applying",
+  }, () => markDocRewriteApplyingUnlocked(args));
+}
+
+async function finalizeDocRewriteWorkflowTaskUnlocked({
   accountId = "",
   scope = {},
   taskId = "",
@@ -992,7 +1059,7 @@ export async function finalizeDocRewriteWorkflowTask({
       status: "completed",
     });
     if (accountId && sessionKey) {
-      await clearActiveExecutiveTask(accountId, sessionKey);
+      await clearActiveExecutiveTask(accountId, sessionKey, { expectedTaskId: current.id });
     }
   } else {
     if (current.lifecycle_state !== "blocked") {
@@ -1011,7 +1078,17 @@ export async function finalizeDocRewriteWorkflowTask({
   };
 }
 
-export async function ensureDocumentReviewWorkflowTask({
+export async function finalizeDocRewriteWorkflowTask(args = {}) {
+  const sessionKey = sessionKeyFromScope(args.scope, args.accountId);
+  return runWithSessionCoordination({
+    accountId: args.accountId,
+    sessionKey,
+    workflow: "doc_rewrite",
+    reason: "finalize_doc_rewrite_workflow_task",
+  }, () => finalizeDocRewriteWorkflowTaskUnlocked(args));
+}
+
+async function ensureDocumentReviewWorkflowTaskUnlocked({
   accountId = "",
   requestText = "",
   event = {},
@@ -1087,7 +1164,17 @@ export async function ensureDocumentReviewWorkflowTask({
   return task;
 }
 
-export async function finalizeDocumentReviewWorkflowTask({
+export async function ensureDocumentReviewWorkflowTask(args = {}) {
+  const sessionKey = sessionKeyFromScope(args.scope, args.accountId);
+  return runWithSessionCoordination({
+    accountId: args.accountId,
+    sessionKey,
+    workflow: "document_review",
+    reason: "ensure_document_review_workflow_task",
+  }, () => ensureDocumentReviewWorkflowTaskUnlocked(args));
+}
+
+async function finalizeDocumentReviewWorkflowTaskUnlocked({
   accountId = "",
   scope = {},
   taskId = "",
@@ -1134,7 +1221,7 @@ export async function finalizeDocumentReviewWorkflowTask({
       status: "completed",
     });
     if (accountId && sessionKey) {
-      await clearActiveExecutiveTask(accountId, sessionKey);
+      await clearActiveExecutiveTask(accountId, sessionKey, { expectedTaskId: current.id });
     }
   } else {
     if (current.lifecycle_state !== "blocked") {
@@ -1153,7 +1240,17 @@ export async function finalizeDocumentReviewWorkflowTask({
   };
 }
 
-export async function executeDocumentReviewWorkflow({
+export async function finalizeDocumentReviewWorkflowTask(args = {}) {
+  const sessionKey = sessionKeyFromScope(args.scope, args.accountId);
+  return runWithSessionCoordination({
+    accountId: args.accountId,
+    sessionKey,
+    workflow: "document_review",
+    reason: "finalize_document_review_workflow_task",
+  }, () => finalizeDocumentReviewWorkflowTaskUnlocked(args));
+}
+
+async function executeDocumentReviewWorkflowUnlocked({
   accountId = "",
   requestText = "",
   documents = [],
@@ -1161,7 +1258,7 @@ export async function executeDocumentReviewWorkflow({
   scope = {},
   meta = {},
 } = {}) {
-  const task = await ensureDocumentReviewWorkflowTask({
+  const task = await ensureDocumentReviewWorkflowTaskUnlocked({
     accountId,
     requestText,
     event,
@@ -1178,7 +1275,7 @@ export async function executeDocumentReviewWorkflow({
     requestText,
     documents,
   });
-  const finalized = await finalizeDocumentReviewWorkflowTask({
+  const finalized = await finalizeDocumentReviewWorkflowTaskUnlocked({
     accountId,
     scope,
     taskId: task.id,
@@ -1193,7 +1290,17 @@ export async function executeDocumentReviewWorkflow({
   };
 }
 
-export async function ensureCloudDocWorkflowTask({
+export async function executeDocumentReviewWorkflow(args = {}) {
+  const sessionKey = sessionKeyFromScope(args.scope, args.accountId);
+  return runWithSessionCoordination({
+    accountId: args.accountId,
+    sessionKey,
+    workflow: "document_review",
+    reason: "execute_document_review_workflow",
+  }, () => executeDocumentReviewWorkflowUnlocked(args));
+}
+
+async function ensureCloudDocWorkflowTaskUnlocked({
   accountId = "",
   scope = {},
   event = {},
@@ -1275,7 +1382,17 @@ export async function ensureCloudDocWorkflowTask({
   return task;
 }
 
-export async function markCloudDocApplying({
+export async function ensureCloudDocWorkflowTask(args = {}) {
+  const sessionKey = cleanText(args.scope?.session_key || args.scopeKey);
+  return runWithSessionCoordination({
+    accountId: args.accountId,
+    sessionKey,
+    workflow: "cloud_doc",
+    reason: "ensure_cloud_doc_workflow_task",
+  }, () => ensureCloudDocWorkflowTaskUnlocked(args));
+}
+
+async function markCloudDocApplyingUnlocked({
   accountId = "",
   scope = {},
   scopeKey = "",
@@ -1306,7 +1423,17 @@ export async function markCloudDocApplying({
   });
 }
 
-export async function finalizeCloudDocWorkflowTask({
+export async function markCloudDocApplying(args = {}) {
+  const sessionKey = cleanText(args.scope?.session_key || args.scopeKey);
+  return runWithSessionCoordination({
+    accountId: args.accountId,
+    sessionKey,
+    workflow: "cloud_doc",
+    reason: "mark_cloud_doc_applying",
+  }, () => markCloudDocApplyingUnlocked(args));
+}
+
+async function finalizeCloudDocWorkflowTaskUnlocked({
   accountId = "",
   scope = {},
   scopeKey = "",
@@ -1339,7 +1466,7 @@ export async function finalizeCloudDocWorkflowTask({
       routing_hint: "",
       status: "completed",
     });
-    await clearActiveExecutiveTask(accountId, sessionKey);
+    await clearActiveExecutiveTask(accountId, sessionKey, { expectedTaskId: current.id });
   } else {
     if (current.lifecycle_state !== "blocked") {
       current = await transitionTaskLifecycle(current, "blocked", "cloud_doc_verification_failed");
@@ -1355,6 +1482,16 @@ export async function finalizeCloudDocWorkflowTask({
     ...finalized,
     task: current,
   };
+}
+
+export async function finalizeCloudDocWorkflowTask(args = {}) {
+  const sessionKey = cleanText(args.scope?.session_key || args.scopeKey);
+  return runWithSessionCoordination({
+    accountId: args.accountId,
+    sessionKey,
+    workflow: "cloud_doc",
+    reason: "finalize_cloud_doc_workflow_task",
+  }, () => finalizeCloudDocWorkflowTaskUnlocked(args));
 }
 
 export async function executeWorkItemsSequentially({
@@ -1533,7 +1670,7 @@ export async function executeWorkItemsSequentially({
   };
 }
 
-export async function executeExecutiveTurn({
+async function executeExecutiveTurnUnlocked({
   accountId,
   event,
   scope,
@@ -1559,7 +1696,7 @@ export async function executeExecutiveTurn({
         closed_by_user: true,
       },
     });
-    await clearActiveExecutiveTask(accountId, sessionKey);
+    await clearActiveExecutiveTask(accountId, sessionKey, { expectedTaskId: activeTask.id });
     return {
       text: [
         "Executive Team",
@@ -1808,4 +1945,15 @@ export async function executeExecutiveTurn({
       primaryReplyText: reply.text,
     }),
   };
+}
+
+export async function executeExecutiveTurn(args = {}) {
+  const sessionKey = sessionKeyFromScope(args.scope, args.accountId);
+  return runWithSessionCoordination({
+    accountId: args.accountId,
+    sessionKey,
+    workflow: "executive",
+    reason: "execute_executive_turn",
+    logger: args.logger || noopLogger,
+  }, () => executeExecutiveTurnUnlocked(args));
 }

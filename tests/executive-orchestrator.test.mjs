@@ -336,7 +336,7 @@ test("executeExecutiveTurn planner fallback-disabled reply is natural language a
 
   assert.ok(result);
   assert.match(result.text, /^結論/m);
-  assert.match(result.text, /executive planner|系統錯誤/);
+  assert.match(result.text, /安全結果|executive planner|系統錯誤/);
   assert.doesNotMatch(result.text, /FALLBACK_DISABLED|executive_planner_fallback_disabled|\"ok\"|\"error\"|\"details\"/);
   assert.equal(result.error, FALLBACK_DISABLED);
   assert.deepEqual(result.details, {

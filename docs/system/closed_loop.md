@@ -114,6 +114,17 @@ Implemented through:
 - `lane-executor.mjs` 現在先呼叫 `decideIntent(...)`，依 `final_owner` 決定 follow-up 應回 `executive`、`doc-editor` 或既有 lane；同 scope 的 cloud-doc 才能延續原 workflow，否則回既有 lane 決策。
 - meeting / doc rewrite / cloud-doc 已接到最小 workflow-state machine；其他 workflow 仍待後續整合。
 
+## Single-Machine Runtime Coordination Closure
+
+- `src/single-machine-runtime-coordination.mjs` 現在是單機同 session orchestration 的唯一串行化 owner。
+- `executive-orchestrator.mjs` 的 checked-in public entrypoints 現在都先經過同一條 `account_id + session_key` coordination queue，再進入 start / continue / apply / finalize。
+- 這條線只處理單機單 process 內的協調責任，不宣稱跨機器分散式鎖或 background worker mesh。
+- `clearActiveExecutiveTask(...)` 現在支援 `expectedTaskId` guard；舊 task 晚到的 completion 不可清掉同 session 較新的 active task owner。
+- 因此目前已落地的 contract 是：
+  - duplicate message suppression 仍由 `runtime-message-deduper.mjs` 處理 ingress 層
+  - same-session execution ordering 由 `single-machine-runtime-coordination.mjs` 處理 orchestration 層
+  - completion / blocked / retry / escalated 仍只由 verifier-gated lifecycle 收口
+
 ## Phase-2 Meeting Workflow Control
 
 - `meeting` 現在是第一個受控 workflow，沿用同一份 `active_task` store，不另開第二套狀態機。

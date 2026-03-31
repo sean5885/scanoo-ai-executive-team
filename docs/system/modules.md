@@ -51,12 +51,14 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/index.mjs`
   - `/Users/seanhan/Documents/Playground/src/runtime-conflict-guard.mjs`
   - `/Users/seanhan/Documents/Playground/src/runtime-message-deduper.mjs`
+  - `/Users/seanhan/Documents/Playground/src/single-machine-runtime-coordination.mjs`
   - `/Users/seanhan/Documents/Playground/src/runtime-observability.mjs`
 - What they do now:
   - start the HTTP service and the Lark long-connection listener
   - create per-request and per-event trace records
   - enforce duplicate-message suppression
   - guard against competing local responders
+  - serialize same-account same-session workflow/executive entrypoints inside one process so one session keeps one active coordination owner at a time
 - Evidence:
   - `/Users/seanhan/Documents/Playground/tests/http-server.route-success.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/http-server.trace.test.mjs`
@@ -195,6 +197,8 @@ Current-truth docs for onboarding are:
   - comment rewrite final materialization still uses doc replace-based apply inside the shared runtime gate
   - meeting confirmation writes are runtime-governed external writes
   - meeting capture document create/update/delete actions are already registry-backed external writes
+  - the checked-in workflow/executive entrypoints now also pass through one single-machine coordination helper keyed by `account_id + session_key`, so overlapping local turns do not each create or finish their own competing same-session owner path
+  - active-task cleanup is now owner-aware: terminal workflow completion clears the session pointer only when the finishing task still owns that session slot
 - Evidence:
   - `/Users/seanhan/Documents/Playground/tests/doc-comment-rewrite.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/control-unification-phase2-doc-rewrite.test.mjs`

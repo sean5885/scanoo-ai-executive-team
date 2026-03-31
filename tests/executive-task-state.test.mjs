@@ -75,3 +75,33 @@ test("executive task state test reset clears prior active task", async () => {
 
   assert.equal(await getActiveExecutiveTask(accountId, sessionKey), null);
 });
+
+test("stale active-task clear does not remove a newer session owner", async () => {
+  const accountId = "stale-clear-account";
+  const sessionKey = "stale-clear-session";
+
+  const first = await startExecutiveTask({
+    accountId,
+    sessionKey,
+    objective: "first task",
+    primaryAgentId: "ceo",
+  });
+  const second = await startExecutiveTask({
+    accountId,
+    sessionKey,
+    objective: "second task",
+    primaryAgentId: "product",
+  });
+
+  const cleared = await clearActiveExecutiveTask(accountId, sessionKey, {
+    expectedTaskId: first.id,
+  });
+  const active = await getActiveExecutiveTask(accountId, sessionKey);
+
+  assert.equal(cleared, false);
+  assert.equal(active?.id, second.id);
+
+  await clearActiveExecutiveTask(accountId, sessionKey, {
+    expectedTaskId: second.id,
+  });
+});

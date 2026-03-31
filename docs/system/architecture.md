@@ -73,6 +73,7 @@ Use [deployment.md](/Users/seanhan/Documents/Playground/docs/system/deployment.m
   - `/Users/seanhan/Documents/Playground/src/executive-reflection.mjs`
   - `/Users/seanhan/Documents/Playground/src/executive-improvement.mjs`
   - `/Users/seanhan/Documents/Playground/src/executive-memory.mjs`
+  - `/Users/seanhan/Documents/Playground/src/single-machine-runtime-coordination.mjs`
 - sync orchestration
   - `/Users/seanhan/Documents/Playground/src/lark-sync-service.mjs`
 - comment suggestion workflow and poller
@@ -169,6 +170,10 @@ These describe code structure and responsibility, not how many processes are run
 
 - `executive-closed-loop.mjs`
   - turns execution output into evidence, verification, reflection, and improvement proposals
+
+- `single-machine-runtime-coordination.mjs`
+  - serializes same-account same-session executive/workflow entrypoints inside one local process
+  - keeps start/continue/finalize ownership on one in-process coordination line instead of letting overlapping session turns race each other
 
 - `meeting-agent.mjs`
   - emits structured meeting artifacts and proposal-first knowledge writeback

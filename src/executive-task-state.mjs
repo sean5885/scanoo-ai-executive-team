@@ -599,12 +599,17 @@ export async function updateExecutiveTaskImprovementProposal(taskId = "", propos
   return updateExecutiveTask(taskId, { improvement_proposals: nextProposals });
 }
 
-export async function clearActiveExecutiveTask(accountId = "", sessionKey = "") {
+export async function clearActiveExecutiveTask(accountId = "", sessionKey = "", { expectedTaskId = "" } = {}) {
   const indexKey = sessionIndexKey(accountId, sessionKey);
   if (!indexKey) {
     return null;
   }
   const store = await loadStore();
+  const activeTaskId = normalizeText(store.active_by_session[indexKey] || "");
+  const expected = normalizeText(expectedTaskId);
+  if (expected && activeTaskId && activeTaskId !== expected) {
+    return false;
+  }
   delete store.active_by_session[indexKey];
   await saveStore(store);
   return true;
