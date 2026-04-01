@@ -17,6 +17,7 @@ Sync, meeting, comment-rewrite, and the minimal skill layer are adjacent workflo
 For the checked-in executive/workflow surfaces, same-account same-session entrypoints are now serialized in-process by `/Users/seanhan/Documents/Playground/src/single-machine-runtime-coordination.mjs` before task start/continue/apply/finalize logic runs.
 
 The Lark long-connection reply path is a bounded adjacent flow: inbound `im.message.receive_v1` events enter `/Users/seanhan/Documents/Playground/src/index.mjs`, lane selection happens before reply materialization, and `/Users/seanhan/Documents/Playground/src/runtime-message-reply.mjs` now treats the downstream Lark send as complete only when the message mutation response includes a concrete `message_id`.
+That same ingress surface now also tracks websocket lifecycle activity through `/Users/seanhan/Documents/Playground/src/long-connection-lifecycle-monitor.mjs`; the checked-in monitor now classifies decoded websocket control/data frames before `eventDispatcher.invoke(...)`, records the parsed callback/event type plus handler presence, and if the socket stays `ready` but has no inbound message or heartbeat activity past the watchdog window, the process exits so the local LaunchAgent can rebuild the persistent connection.
 
 ## 1. Read Path
 
@@ -109,6 +110,7 @@ Current truth:
 - runtime-local idempotency exists in `mutation-runtime.mjs`
 - persisted HTTP idempotency also exists at the HTTP layer
 - long-connection chat replies now reuse this same guarded write path and keep request/event/target/message evidence in the reply-send logs; awaiting the send call without a `message_id` is not treated as success
+- long-connection chat replies now also reuse the incoming Lark `message_id` as the write idempotency key, so repeated canned reply text on different inbound messages does not trip `duplicate_write_same_session`
 - message send/reply budget dedupe now distinguishes target plus reply content/card payload, so different replies in the same chat are not collapsed into one `duplicate_write_same_session` block
 
 ### 2B. Internal Company-Brain Governance Write Path
@@ -219,7 +221,44 @@ Current truth:
 - structured meeting output exists
 - `/meeting` is still a specialized workflow, not proof of a generic delegated subagent framework
 
-### 4D. Sync
+### 4D. Personal DM Skill Tasks
+
+Current path:
+
+1. inbound `im.message.receive_v1` event enters `/Users/seanhan/Documents/Playground/src/index.mjs`
+2. `/Users/seanhan/Documents/Playground/src/binding-runtime.mjs` resolves the chat as direct-message scope
+3. `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` keeps the request in `personal-assistant`
+4. only when the personal lane would otherwise fall to `general_assistant_action`, the checked-in helper now runs `/Users/seanhan/Documents/Playground/src/planner/personal-dm-skill-intent.mjs`
+5. the MiniMax text path classifies the DM into exactly one of:
+   - `skill_find_request`
+   - `skill_install_request`
+   - `skill_verify_request`
+   - `not_skill_task`
+6. only the three explicit skill intents may continue into `/Users/seanhan/Documents/Playground/src/local-skill-actions.mjs`
+7. the bounded skill action checks controlled local catalogs first, and for find/install may also call the checked-in `skill-installer` helper scripts under `$CODEX_HOME/skills/.system/skill-installer`
+8. the bounded action returns canonical `answer / sources / limitations`
+9. `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs` renders the final text reply
+10. `/Users/seanhan/Documents/Playground/src/runtime-message-reply.mjs` sends the reply through the existing guarded Lark mutation path
+
+Current truth:
+
+- implemented only for personal DM / direct-message scope
+- this does not widen the existing planner-visible read-only skill bridge in `/Users/seanhan/Documents/Playground/src/planner/skill-bridge.mjs`
+- current bounded actions are:
+  - `find_local_skill`
+  - `install_local_skill`
+  - `verify_local_skill`
+- skill actions are fail-closed and source-bounded:
+  - local discovery reads only from `~/.codex/skills` and `~/.agents/skills`
+  - remote find/install is limited to the checked-in curated catalog helper scripts under `$CODEX_HOME/skills/.system/skill-installer`
+  - remote install is limited to `openai/skills` `skills/.curated`
+  - install writes only to `~/.codex/skills`
+  - no arbitrary command surface, no arbitrary path writes, no package-manager install path
+- `not_skill_task` keeps the old personal-lane behavior unchanged; it does not bypass the existing fallback / tenant-token / meeting / cloud-doc precedence
+- `find-skills` remains an agent skill/spec in the Codex environment; this runtime path does not directly execute that skill as a generic task owner
+- this minimal version covers controlled skill find / install / verify and should not be described as a generic write-capable planner execution surface
+
+### 4E. Sync
 
 Current path:
 
