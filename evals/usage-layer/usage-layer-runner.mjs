@@ -171,8 +171,15 @@ function inferExecutedTarget({ envelope = {}, route = {} } = {}) {
 }
 
 function classifyReplyMode({ userResponse = {}, route = {}, replyText = "" } = {}) {
+  const failureClass = normalizeText(userResponse?.failure_class || "");
   if (userResponse?.ok !== true) {
+    if (failureClass) {
+      return "fail_soft";
+    }
     return isClarificationReply(replyText) ? "clarify" : "fail_soft";
+  }
+  if (failureClass === "partial_success") {
+    return "partial_success";
   }
   if (isPartialSuccessReply(replyText)) {
     return "partial_success";
@@ -212,6 +219,44 @@ function isControlledTarget(target = "") {
     || normalizedTarget.startsWith("preset:");
 }
 
+function resolveFailureClass({
+  testCase = {},
+  userResponse = {},
+  route = {},
+  plannerEnvelope = {},
+  executedTarget = "",
+} = {}) {
+  if (
+    normalizeText(route?.planner_action || "") === "ROUTING_NO_MATCH"
+    || normalizeText(route?.agent_or_tool || "") === "error:ROUTING_NO_MATCH"
+  ) {
+    return "routing_no_match";
+  }
+  const normalizedUserFailureClass = normalizeText(userResponse?.failure_class || "");
+  if (normalizedUserFailureClass) {
+    return normalizedUserFailureClass;
+  }
+  if (userResponse?.ok === true && isPartialSuccessReply(renderUserResponseText(userResponse))) {
+    return "partial_success";
+  }
+  if (testCase.tool_required === true && !isControlledTarget(executedTarget)) {
+    return "tool_omission";
+  }
+  const envelopeError = normalizeText(plannerEnvelope?.error || "");
+  if (
+    envelopeError === "missing_user_access_token"
+    || envelopeError === "oauth_reauth_required"
+    || envelopeError === "permission_denied"
+    || envelopeError === "entry_governance_required"
+  ) {
+    return "permission_denied";
+  }
+  if (envelopeError === "planner_failed") {
+    return "planner_failed";
+  }
+  return userResponse?.ok === false ? "generic_fallback" : null;
+}
+
 function summarizeFailReasons(result = {}) {
   const reasons = [];
   if (result.first_turn_success !== true) {
@@ -245,18 +290,27 @@ async function runUsageLayerEvalCase(testCase = {}) {
     requestId: `usage-layer-eval:${testCase.id}`,
   });
   const replyText = renderUserResponseText(userResponse);
-  const replyMode = classifyReplyMode({ userResponse, route, replyText });
-  const actualSuccessType = classifySuccessType(replyMode);
-  const generic = looksGenericReply({
-    replyText,
-    requestText: testCase.user_text,
-  });
-  const unnecessaryClarification = actualSuccessType === "clarify"
-    && !requestLikelyNeedsClarification(testCase.user_text);
   const executedTarget = inferExecutedTarget({
     envelope: plannerEnvelope,
     route,
   });
+  const failureClass = resolveFailureClass({
+    testCase,
+    userResponse,
+    route,
+    plannerEnvelope,
+    executedTarget,
+  });
+  const replyMode = classifyReplyMode({ userResponse, route, replyText });
+  const actualSuccessType = classifySuccessType(replyMode);
+  const generic = failureClass && failureClass !== "generic_fallback"
+    ? false
+    : looksGenericReply({
+        replyText,
+        requestText: testCase.user_text,
+      });
+  const unnecessaryClarification = actualSuccessType === "clarify"
+    && !requestLikelyNeedsClarification(testCase.user_text);
   const wrongRoute = normalizeText(route?.lane || "") !== normalizeText(testCase.expected_lane || "")
     || normalizeText(route?.planner_action || "") !== normalizeText(testCase.expected_planner_action || "")
     || normalizeText(route?.agent_or_tool || "") !== normalizeText(testCase.expected_agent_or_tool || "");
@@ -283,6 +337,7 @@ async function runUsageLayerEvalCase(testCase = {}) {
     reply_text: replyText,
     actual_reply_mode: replyMode,
     actual_success_type: actualSuccessType,
+    failure_class: failureClass,
     generic,
     unnecessary_clarification: unnecessaryClarification,
     first_turn_success: firstTurnSuccess,
@@ -309,6 +364,16 @@ function summarizeResults(results = []) {
     .filter((item) => item.fail_reasons.length > 0)
     .sort((left, right) => right.fail_reasons.length - left.fail_reasons.length)
     .slice(0, 5);
+  const failureBreakdown = results.reduce((acc, item) => {
+    const key = normalizeText(item.failure_class || "") || "none";
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+  const topFailureCategories = Object.entries(failureBreakdown)
+    .filter(([key]) => key !== "none")
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 5)
+    .map(([failureClass, count]) => ({ failure_class: failureClass, count }));
 
   return {
     total,
@@ -331,6 +396,8 @@ function summarizeResults(results = []) {
       unnecessary_clarification: unnecessaryClarificationCount,
       reply_discipline_logged_cases: total,
     },
+    failure_breakdown: failureBreakdown,
+    top_failure_categories: topFailureCategories,
     top_fail_cases: failCases,
   };
 }
@@ -344,6 +411,15 @@ function printSummary(summary = {}) {
   console.log(`GRR: ${summary.metrics.GRR}`);
   console.log(`UCR: ${summary.metrics.UCR}`);
   console.log(`RDR: ${summary.metrics.RDR} (${summary.counts.reply_discipline_logged_cases} cases logged for manual reply-discipline review)`);
+  console.log("");
+  console.log("Top failure categories:");
+  if (!Array.isArray(summary.top_failure_categories) || summary.top_failure_categories.length === 0) {
+    console.log("- none");
+  } else {
+    for (const item of summary.top_failure_categories) {
+      console.log(`- ${item.failure_class}: ${item.count}`);
+    }
+  }
   console.log("");
   console.log("Top 5 fail cases:");
   if (!Array.isArray(summary.top_fail_cases) || summary.top_fail_cases.length === 0) {

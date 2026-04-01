@@ -51,7 +51,7 @@ function withCanonicalExecutionData(result = {}, data = {}) {
   };
 }
 
-function adaptPlannerResultForEdge(result = {}) {
+function adaptPlannerResultForEdge(result = {}, { requestText = "" } = {}) {
   if (!result || typeof result !== "object" || Array.isArray(result) || hasCanonicalExecutionData(result)) {
     return result;
   }
@@ -62,7 +62,7 @@ function adaptPlannerResultForEdge(result = {}) {
   const action = String(result?.action || execution?.action || "").trim();
 
   if (result?.ok === false || execution?.ok === false) {
-    const reply = buildPlannedUserInputUserFacingReply(result);
+    const reply = buildPlannedUserInputUserFacingReply(result, { requestText });
     return reply
       ? withCanonicalExecutionData(result, {
           answer: reply.answer,
@@ -141,7 +141,9 @@ export async function runPlannerUserInputEdge({
     sessionKey,
     requestId,
     telemetryAdapter,
-  }));
+  }), {
+    requestText: text,
+  });
 
   const baseEnvelope = envelopeBuilder(plannerResult);
   const plannerEnvelope = typeof envelopeDecorator === "function"

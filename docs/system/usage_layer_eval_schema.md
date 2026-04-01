@@ -6,7 +6,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 這份文件定義 usage-layer baseline v1 的資料 schema。
 
-它不是新的 public API，也不是新的 runtime contract；它是給下一輪 implementation/quick-fix 使用的 eval authoring contract。
+它不是新的 public API，也不是新的 runtime contract；它是給 usage-layer baseline authoring 與 runner 使用的 eval contract。
 
 這份 schema 直接站在現有 deterministic routing eval 之上：
 
@@ -249,6 +249,24 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 4. 不要在 baseline 檔裡發明 repo 不存在的 lane、action、agent、tool、preset 名稱。
 5. 若後續發現某條 baseline 與 code truth 不符，先修正 baseline 或註記 repo reality，不要在文件中偷渡新能力名稱。
 
+## Current Checked-In Runner
+
+目前 repo 已先落地一個最小 runner：
+
+- dataset: `/Users/seanhan/Documents/Playground/evals/usage-layer/usage-layer-evals.mjs`
+- runner: `/Users/seanhan/Documents/Playground/evals/usage-layer/usage-layer-runner.mjs`
+- CLI: `npm run eval:usage-layer`
+
+本輪只先放 10 條 seed case 驗證 runner，沒有一次補滿 40 條。  
+判讀方式維持保守：
+
+- `lane / planner_action / agent_or_tool` 仍沿用既有 routing resolver
+- answer edge 仍維持 public `answer / sources / limitations` contract，但 `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs` 現在會在 runtime object 上附加非 public、non-enumerable 的 `failure_class`
+- 目前 checked-in `failure_class` 最少可區分：`routing_no_match`、`tool_omission`、`planner_failed`、`permission_denied`、`partial_success`、`generic_fallback`
+- runner 會優先讀這層 classification，再退回 `generic` / `clarify` / `partial_success` heuristic
+- summary 會輸出 `failure_breakdown` 與 top failure categories，避免所有 fail-soft case 都被誤壓成同一種 generic clarify
+- `RDR` 目前先保留 TODO，只做 case log，不宣稱已收斂成穩定自動 judge
+
 ## 結論
 
 這份 schema 已經足夠直接拿去做 usage-layer 40 條 baseline：
@@ -257,5 +275,6 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - enum 已收斂
 - judge 口徑已定義
 - 40 條 seed pack 已排好
+- 最小 runner 已可先用 10 條 seed case 實跑
 
-下一輪只需要把它落成實際資料檔與 runner，不需要再回頭重談 schema。
+下一步是把 checked-in seed pack 擴到完整 40 條並收斂 `RDR` judge，不需要回頭重談 schema。

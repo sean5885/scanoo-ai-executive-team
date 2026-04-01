@@ -703,12 +703,106 @@ function normalizePlannerUserFacingList(items = []) {
   )];
 }
 
+const PLANNER_CONTROLLED_EXECUTION_HINT_PATTERNS = [
+  /(?:文件|文檔|doc|company brain|runtime|db path|pid|scanoo|okr|雲文檔|云文档)/i,
+  /(?:評論|评论).{0,8}(?:改稿|改寫|改写|rewrite)/i,
+  /(?:分類|分类|指派|預覽|预览|review|rereview|會議|会议|capture|日程|行程|calendar|待辦|待办|task|todo|對話|对话)/i,
+];
+
+function requestLikelyNeedsControlledExecution(requestText = "") {
+  const normalized = cleanText(requestText);
+  if (!normalized) {
+    return false;
+  }
+  if (/^\s*\/[a-z0-9_-]+/i.test(normalized) || /\bagent\b/i.test(normalized)) {
+    return false;
+  }
+  return PLANNER_CONTROLLED_EXECUTION_HINT_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+function buildPlannerRetryHint(requestText = "") {
+  const normalized = cleanText(requestText).replace(/\s+/g, " ").slice(0, 36);
+  if (!normalized) {
+    return "你可以直接把第一步說成可執行動作，我會先從那一步開始。";
+  }
+  if (/(?:runtime|db path|pid)/i.test(normalized)) {
+    return "例如直接說：先查 runtime db path。";
+  }
+  if (/(?:雲文檔|云文档|分類|分类|指派|review|rereview)/i.test(normalized)) {
+    return "例如直接說：先預覽雲文檔分類結果，或先告訴我哪一批文檔要複查。";
+  }
+  if (/(?:會議|会议|capture)/i.test(normalized)) {
+    return "例如直接說：先開始會議記錄，或先幫我看目前是否在持續記錄。";
+  }
+  if (/(?:文件|文檔|doc|company brain|okr)/i.test(normalized)) {
+    return `例如把「${normalized}」拆成先查文件，再整理重點。`;
+  }
+  return `例如把「${normalized}」先拆成第一個可執行步驟。`;
+}
+
+function isPlannerPermissionDeniedError(errorCode = "") {
+  const normalized = cleanText(errorCode);
+  return normalized === "missing_user_access_token"
+    || normalized === "oauth_reauth_required"
+    || normalized === "permission_denied"
+    || normalized === "entry_governance_required";
+}
+
+function isPlannerRoutingNoMatch({ error = "", fallbackReason = "" } = {}) {
+  const normalizedError = cleanText(error);
+  const normalizedFallbackReason = cleanText(fallbackReason);
+  return normalizedError === "routing_error"
+    || normalizedFallbackReason === "routing_error"
+    || normalizedFallbackReason === "routing_no_match"
+    || normalizedFallbackReason === ROUTING_NO_MATCH
+    || normalizedError === ROUTING_NO_MATCH;
+}
+
+export function resolvePlannerUserFacingFailureClass({
+  error = "",
+  fallbackReason = "",
+  requestText = "",
+  action = "",
+} = {}) {
+  const normalizedError = cleanText(error);
+  const normalizedAction = cleanText(action);
+
+  if (isPlannerPermissionDeniedError(normalizedError)) {
+    return "permission_denied";
+  }
+  if (isPlannerRoutingNoMatch({ error: normalizedError, fallbackReason })) {
+    return "routing_no_match";
+  }
+  if (
+    requestLikelyNeedsControlledExecution(requestText)
+    && !normalizedAction
+    && (
+      normalizedError === "planner_failed"
+      || normalizedError === "tool_error"
+      || normalizedError === "runtime_exception"
+      || normalizedError === "business_error"
+      || normalizedError === "contract_violation"
+    )
+  ) {
+    return "tool_omission";
+  }
+  if (normalizedError === "planner_failed") {
+    return "planner_failed";
+  }
+  return "generic_fallback";
+}
+
 function buildPlannerUserFacingAnswer({
   error = "",
   fallbackReason = "",
+  requestText = "",
 } = {}) {
   const normalizedError = cleanText(error);
-  const normalizedFallbackReason = cleanText(fallbackReason);
+  const failureClass = resolvePlannerUserFacingFailureClass({
+    error: normalizedError,
+    fallbackReason,
+    requestText,
+  });
 
   if (normalizedError === "missing_user_access_token") {
     return "這次我先不直接查文件，因為目前這條文件路徑是 auth-required，而這輪請求沒有帶到可驗證的 Lark 使用者授權。";
@@ -716,16 +810,17 @@ function buildPlannerUserFacingAnswer({
   if (normalizedError === "oauth_reauth_required") {
     return "這次我先不直接查文件，因為目前這條文件路徑是 auth-required，而現有的 Lark 使用者授權已失效，需要重新登入授權。";
   }
+  if (normalizedError === "entry_governance_required") {
+    return "這個動作還卡在受控治理邊界，所以我現在不能直接替你寫入或建立。";
+  }
   if (normalizedError === "semantic_mismatch") {
     return "我先沒有直接執行原本那個內部動作，因為它和你這輪的需求不一致。";
   }
-  if (
-    normalizedError === "routing_error"
-    || normalizedFallbackReason === "routing_error"
-    || normalizedFallbackReason === "routing_no_match"
-    || normalizedFallbackReason === ROUTING_NO_MATCH
-  ) {
+  if (failureClass === "routing_no_match") {
     return "這題我先沒走到合適的處理方式，所以先用一般助理的方式接住你。";
+  }
+  if (failureClass === "tool_omission") {
+    return "這題本來應該先走對應的查詢或流程，但這輪還沒真的執行到那個步驟，所以我先不亂補答案。";
   }
   if (normalizedError === "invalid_action" || normalizedError === INVALID_ACTION) {
     return "這題我先不直接往下做，因為目前還缺一個明確的處理方向。";
@@ -735,6 +830,9 @@ function buildPlannerUserFacingAnswer({
   }
   if (normalizedError === "request_cancelled") {
     return "這次處理被中斷了，所以我先不回傳不完整結果。";
+  }
+  if (failureClass === "planner_failed") {
+    return "這輪不是你問題不清楚，而是我這邊沒有順利排出安全可執行的步驟，所以先不亂做。";
   }
   if (normalizedError === "business_error") {
     return "這次沒有完整處理好，所以我先把目前狀態整理給你。";
@@ -746,10 +844,16 @@ function buildPlannerUserFacingLimitations({
   error = "",
   fallbackReason = "",
   action = "",
+  requestText = "",
 } = {}) {
   const normalizedError = cleanText(error);
-  const normalizedFallbackReason = cleanText(fallbackReason);
   const normalizedAction = cleanText(action);
+  const failureClass = resolvePlannerUserFacingFailureClass({
+    error: normalizedError,
+    fallbackReason,
+    requestText,
+    action: normalizedAction,
+  });
 
   if (normalizedError === "missing_user_access_token") {
     return normalizePlannerUserFacingList([
@@ -763,21 +867,28 @@ function buildPlannerUserFacingLimitations({
       `請先重新登入授權：${oauthBaseUrl}/oauth/lark/login`,
     ]);
   }
+  if (normalizedError === "entry_governance_required") {
+    return normalizePlannerUserFacingList([
+      "這類建立/寫入動作還需要補齊受控治理欄位或額外核准，現在不能直接跳過。",
+      "如果你要，我可以先幫你整理建立目的、owner 和內容骨架，再進下一步。",
+    ]);
+  }
   if (normalizedError === "semantic_mismatch") {
     return normalizePlannerUserFacingList([
       "這題看起來像是另一種處理需求，所以我先不亂猜。",
       "如果你是要找文件、看文件內容、查系統狀態，或建立文件，可以把目標再說清楚一點。",
     ]);
   }
-  if (
-    normalizedError === "routing_error"
-    || normalizedFallbackReason === "routing_error"
-    || normalizedFallbackReason === "routing_no_match"
-    || normalizedFallbackReason === ROUTING_NO_MATCH
-  ) {
+  if (failureClass === "routing_no_match") {
     return normalizePlannerUserFacingList([
       "你可以直接說想整理什麼、查哪份文件，或要我看什麼狀態，我會改用更合適的方式處理。",
       "如果你補一句目標或範圍，我通常就能直接往下做。",
+    ]);
+  }
+  if (failureClass === "tool_omission") {
+    return normalizePlannerUserFacingList([
+      "這類需求要先真的跑到對應工具或 workflow，不能只停在泛化說明。",
+      buildPlannerRetryHint(requestText),
     ]);
   }
   if (normalizedError === "invalid_action" || normalizedError === INVALID_ACTION) {
@@ -794,6 +905,12 @@ function buildPlannerUserFacingLimitations({
   if (normalizedError === "request_cancelled") {
     return normalizePlannerUserFacingList([
       "這次請求在完成前被取消，所以沒有可安全交付的最終結果。",
+    ]);
+  }
+  if (failureClass === "planner_failed") {
+    return normalizePlannerUserFacingList([
+      "這輪卡在我這邊的規劃步驟，不代表你的需求本身一定不清楚。",
+      `你可以直接重試同一句；如果要更穩，${buildPlannerRetryHint(requestText)}`,
     ]);
   }
   return normalizePlannerUserFacingList([
@@ -821,7 +938,7 @@ export function renderPlannerUserFacingReplyText({
   ].join("\n");
 }
 
-export function buildPlannedUserInputUserFacingReply(result = {}) {
+export function buildPlannedUserInputUserFacingReply(result = {}, { requestText = "" } = {}) {
   const envelope = buildPlannedUserInputEnvelope(result);
   const executionError = cleanText(envelope?.execution_result?.error || "");
   const topLevelError = cleanText(envelope?.error || "");
@@ -843,12 +960,14 @@ export function buildPlannedUserInputUserFacingReply(result = {}) {
     answer: buildPlannerUserFacingAnswer({
       error: errorCode,
       fallbackReason,
+      requestText,
     }),
     sources: [],
     limitations: buildPlannerUserFacingLimitations({
       error: errorCode,
       fallbackReason,
       action: envelope?.action || envelope?.trace?.chosen_action || "",
+      requestText,
     }),
   };
 }

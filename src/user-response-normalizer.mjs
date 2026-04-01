@@ -1,6 +1,7 @@
 import {
   buildPlannedUserInputEnvelope,
   renderPlannerUserFacingReplyText,
+  resolvePlannerUserFacingFailureClass,
 } from "./executive-planner.mjs";
 import { getPlannerSkillAction } from "./planner/skill-bridge.mjs";
 import {
@@ -241,6 +242,71 @@ function buildTaskDecompositionLimitations(blocked = []) {
   return normalizeUserResponseList(entries);
 }
 
+function attachHiddenUserResponseMetadata(response = {}, metadata = {}) {
+  if (!response || typeof response !== "object" || Array.isArray(response)) {
+    return response;
+  }
+  for (const [key, value] of Object.entries(metadata)) {
+    Object.defineProperty(response, key, {
+      value,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return response;
+}
+
+function isPartialSuccessResponse(response = {}) {
+  const answer = normalizeText(response?.answer || "");
+  const sources = Array.isArray(response?.sources) ? response.sources.join("\n") : "";
+  return response?.ok === true
+    && (
+      /我先把可直接交付的.*完成/i.test(answer)
+      || /已先完成[:：]/i.test(sources)
+    );
+}
+
+function deriveFailureClassFromEnvelope({
+  envelope = null,
+  requestText = "",
+  response = null,
+} = {}) {
+  if (isPartialSuccessResponse(response)) {
+    return "partial_success";
+  }
+  if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) {
+    return response?.ok === false ? "generic_fallback" : null;
+  }
+
+  const execution = envelope?.execution_result && typeof envelope.execution_result === "object"
+    ? envelope.execution_result
+    : {};
+  const executionData = resolvePlannerExecutionData(execution);
+  const error = normalizeText(
+    execution?.error
+    || envelope?.error
+    || executionData?.error
+    || "",
+  );
+  const fallbackReason = normalizeText(
+    envelope?.trace?.fallback_reason
+    || executionData?.stop_reason
+    || executionData?.reason
+    || executionData?.routing_reason
+    || error,
+  );
+  if (!error && response?.ok !== false) {
+    return null;
+  }
+  return resolvePlannerUserFacingFailureClass({
+    error,
+    fallbackReason,
+    requestText,
+    action: normalizeText(envelope?.action || envelope?.trace?.chosen_action || execution?.action || ""),
+  });
+}
+
 function maybeApplyTaskDecompositionFallback({
   response = null,
   requestText = "",
@@ -263,7 +329,7 @@ function maybeApplyTaskDecompositionFallback({
   }
 
   const draft = buildDraftCopyContent(requestText);
-  return {
+  return attachHiddenUserResponseMetadata({
     ok: true,
     answer: [
       `我先把可直接交付的文字部分完成，下面是一版${draft.label}：`,
@@ -277,7 +343,10 @@ function maybeApplyTaskDecompositionFallback({
         : "",
     ]),
     limitations: buildTaskDecompositionLimitations(decomposition.blocked),
-  };
+  }, {
+    failure_class: "partial_success",
+    reply_mode: "partial_success",
+  });
 }
 
 function emitBoundaryLog({
@@ -487,6 +556,19 @@ export function normalizeUserResponse({
       response: buildPlannerSuccessUserResponse(envelope),
       requestText,
     });
+    const failureClass = deriveFailureClassFromEnvelope({
+      envelope,
+      requestText,
+      response: normalizedResponse,
+    });
+    attachHiddenUserResponseMetadata(normalizedResponse, {
+      failure_class: failureClass,
+      reply_mode: failureClass === "partial_success"
+        ? "partial_success"
+        : normalizedResponse.ok === true
+          ? "success"
+          : "fail_soft",
+    });
     maybeEmitPlannerVisibleAnswerTelemetry({
       envelope,
       normalizedResponse,
@@ -529,6 +611,18 @@ export function normalizeUserResponse({
       ok: objectPayload.ok !== false && execution?.ok !== false,
     }),
     requestText,
+  });
+  attachHiddenUserResponseMetadata(normalizedPayload, {
+    failure_class: deriveFailureClassFromEnvelope({
+      envelope: objectPayload,
+      requestText,
+      response: normalizedPayload,
+    }),
+    reply_mode: isPartialSuccessResponse(normalizedPayload)
+      ? "partial_success"
+      : normalizedPayload.ok === true
+        ? "success"
+        : "fail_soft",
   });
 
   emitBoundaryLog({

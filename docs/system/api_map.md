@@ -43,6 +43,7 @@ This is the grouped HTTP surface mirror for the current repo.
 - the public route calls `executePlannedUserInput(...)`, not `answer-service.mjs` directly
 - the public body is shaped by `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
 - public `answer / sources / limitations` now only read from canonical `execution_result.data`
+- the public `/answer` payload still does not expose raw planner errors, but the in-process normalized object now carries a non-enumerable `failure_class` for usage-layer eval / telemetry classification
 - public `sources[]` lines are derived from canonical source objects through `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`
 - `answer-service.mjs` still exists as a secondary retrieval-answer helper, but it is not the primary HTTP answer surface
 
