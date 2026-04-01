@@ -73,6 +73,7 @@ The checked-in user-input ingress/edge surfaces around that core are now explici
   - knowledge/document-summary/company-brain admission into the knowledge lane
   - runtime-info admission into planner/runtime-info flow
   - personal-lane edge guarding when a request really belongs to planner
+- the same planner user-input edge now also canonicalizes checked-in `search`, `search_and_detail`, and `runtime_info` formatted outputs into stable user-facing `answer / sources / limitations` fields instead of falling back to generic text when those flows already returned bounded structured output
 
 ## In Scope
 
@@ -257,7 +258,17 @@ This path is bounded by the checked-in planner contract:
     - `search_and_summarize` and `document_summarize` are promoted in the current baseline
     - `search_and_summarize` promotion is additionally narrowed by a query-bound admission boundary that fails closed on ambiguity and preserves the original generic search path
     - current two-skill coexistence watch is mirrored in `/Users/seanhan/Documents/Playground/docs/system/planner_visible_multi_skill_observability.md`
-  - strict user-input planner `target_catalog` admits `document_summarize` only on direct detail-summary semantics, and admits `search_and_summarize` only when its admission boundary passes
+- strict user-input planner `target_catalog` admits `document_summarize` only on direct detail-summary semantics, and admits `search_and_summarize` only when its admission boundary passes
+- when strict user-input planning fails with `planner_failed`, execution now has one bounded deterministic fallback path for obvious read-only targets only:
+  - `list_company_brain_docs`
+  - `search_company_brain_docs`
+  - `get_company_brain_doc_detail`
+  - `search_and_detail_doc`
+  - `get_runtime_info`
+- this fallback does not change planner policy or prompt shape:
+  - it runs only after strict JSON planning failed
+  - it stays inside existing checked-in read/runtime actions or preset
+  - if the HTTP bridge is unavailable, the same read-only family may fall back again to checked-in local mirror/runtime readers instead of widening to new actions or generic text completion
   - strict planner decision validation may admit `search_and_summarize` only inside that admission boundary, and may admit `document_summarize` only on its own non-overlapping detail-summary boundary; explicit same-task follow-up references fail closed out of planner-visible admission
   - deterministic selection now resolves through the checked-in skill selector registry in `planner/skill-bridge.mjs`
   - if more than one planner-visible skill claims the same deterministic selector key, selection fails closed as `selector_skill_conflict`

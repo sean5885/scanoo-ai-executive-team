@@ -45,7 +45,23 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - 不把 multi-skill mesh、worker mesh、autonomous company-brain 納入本輪範圍。
 - 不重寫整套系統。
 
-下一輪才依這兩份文件做實作與快修。
+目前 repo 已有一個最小 checked-in runner：
+
+- dataset: `/Users/seanhan/Documents/Playground/evals/usage-layer/usage-layer-evals.mjs`
+- runner: `/Users/seanhan/Documents/Playground/evals/usage-layer/usage-layer-runner.mjs`
+- CLI: `npm run eval:usage-layer`
+
+這個 runner 只做 read-only eval：
+
+- `knowledge_assistant` case 重用既有 planner answer edge 取真實 user-facing reply
+- `doc_editor` case 走既有 lane intro / preview boundary，不再被 planner answer edge 吞掉成 generic fallback
+- `cloud_doc_workflow` case 走已 checked-in 的本地 preview/review/why reply builder，避免把明顯 workflow case 錯送到 planner answer edge
+- 重用既有 routing resolver 取 `lane / planner_action / agent_or_tool`
+- `tool_omission` 判定會優先看是否已命中 checked-in controlled executor；對 `doc_editor` / `meeting_workflow` / `cloud_doc_workflow` 這類非 planner-owner lane，不再把 runner 自己沒走到 owner surface 誤算成 omission
+- 用簡單 heuristic 統計 `FTHR / WRR / TOR / GRR / UCR`
+- `RDR` 目前先保留 TODO，僅把 reply discipline case log 出來
+
+它不修改 runtime / planner / routing，也不補 prompt 或新增能力。
 
 ## 問題定義
 
@@ -301,7 +317,7 @@ flowchart TD
 
 ### 60 天
 
-- 把 40 條 baseline 接進 repo 既有 eval runner 或鄰近 runner
+- 把 40 條 baseline 從目前的 10 條 seed pack 擴滿
 - 補上 deterministic comparison 與報表輸出
 - 依 metric 分 bucket 做 quick fix：
   - `WRR` 高先修入口理解
@@ -343,4 +359,4 @@ flowchart TD
 
 - 問題不是缺一套全新系統，而是缺一組能量到「第一輪有沒有幫到人」的 usage baseline。
 - 最適合 repo reality 的路線是方案 B：沿用既有 routing / planner / answer boundary，補 usage-layer 40-case eval 與六個 metric。
-- 下一輪才是依這份 PRD 和 eval schema 做實作與快修。
+- 目前已先有 10 條 seed pack 與最小 runner；下一步是擴滿 40 條並把 `RDR` judge 收斂，而不是改 runtime 本體。

@@ -3,6 +3,13 @@ import { runPlannerUserInputEdge } from "../../src/planner-user-input-edge.mjs";
 import { renderUserResponseText } from "../../src/user-response-normalizer.mjs";
 import { resolveRoutingEvalCase } from "../../src/routing-eval.mjs";
 import { cleanText } from "../../src/message-intent-utils.mjs";
+import {
+  buildCloudOrganizationPreviewReply,
+  buildCloudOrganizationReviewReplyCached,
+  buildCloudOrganizationWhyReply,
+} from "../../src/cloud-doc-organization-workflow.mjs";
+import { getStoredAccountContext } from "../../src/lark-user-auth.mjs";
+import { buildLaneIntroReply } from "../../src/capability-lane.mjs";
 
 const noopLogger = {
   debug() {},
@@ -42,6 +49,19 @@ const GENERIC_PATTERNS = [
   /請提供更多/i,
   /請再提供/i,
   /需要更多資訊/i,
+];
+const STRUCTURED_REPLY_EXEMPT_PATTERNS = [
+  /待處理清單/u,
+  /審核方式/u,
+  /分類預覽/u,
+  /角色審核/u,
+  /正文、評論和待改位置/u,
+  /最相關的文件/u,
+  /已索引文件/u,
+  /目前沒有找到/u,
+  /資料庫路徑/u,
+  /工作目錄/u,
+  /目前 pid 是/u,
 ];
 const CLARIFICATION_PATTERNS = [
   /補一點背景/i,
@@ -119,6 +139,9 @@ function looksGenericReply({ replyText = "", requestText = "" } = {}) {
   if (GENERIC_PATTERNS.some((pattern) => pattern.test(normalizedReply))) {
     return true;
   }
+  if (STRUCTURED_REPLY_EXEMPT_PATTERNS.some((pattern) => pattern.test(normalizedReply))) {
+    return false;
+  }
   return !hasKeywordOverlap(normalizedReply, requestText);
 }
 
@@ -148,6 +171,10 @@ function normalizeEvalCase(testCase = {}) {
 function inferExecutedTarget({ envelope = {}, route = {} } = {}) {
   const action = normalizeText(envelope?.action || "");
   if (!action) {
+    const routeTarget = normalizeText(route?.agent_or_tool || "");
+    if (isControlledTarget(routeTarget) && isNonPlannerOwnedRoute(route)) {
+      return routeTarget;
+    }
     return normalizeText(envelope?.error || "") ? `error:${normalizeText(envelope.error)}` : null;
   }
   if (PRESET_ACTIONS.has(action)) {
@@ -168,6 +195,18 @@ function inferExecutedTarget({ envelope = {}, route = {} } = {}) {
     return normalizeText(route?.agent_or_tool || "") || "agent:generalist";
   }
   return `tool:${action}`;
+}
+
+function isNonPlannerOwnedRoute(route = {}) {
+  const lane = normalizeText(route?.lane || "");
+  return lane === "doc_editor"
+    || lane === "cloud_doc_workflow"
+    || lane === "meeting_workflow";
+}
+
+function hasRouteSelectedControlledExecutor(route = {}) {
+  return isNonPlannerOwnedRoute(route)
+    && isControlledTarget(normalizeText(route?.agent_or_tool || ""));
 }
 
 function classifyReplyMode({ userResponse = {}, route = {}, replyText = "" } = {}) {
@@ -233,6 +272,10 @@ function resolveFailureClass({
     return "routing_no_match";
   }
   const normalizedUserFailureClass = normalizeText(userResponse?.failure_class || "");
+  if (normalizedUserFailureClass === "tool_omission" && hasRouteSelectedControlledExecutor(route)) {
+    const envelopeError = normalizeText(plannerEnvelope?.error || "");
+    return envelopeError === "planner_failed" ? "planner_failed" : envelopeError || "planner_failed";
+  }
   if (normalizedUserFailureClass) {
     return normalizedUserFailureClass;
   }
@@ -255,6 +298,114 @@ function resolveFailureClass({
     return "planner_failed";
   }
   return userResponse?.ok === false ? "generic_fallback" : null;
+}
+
+async function runCloudDocWorkflowEvalCase(testCase = {}, route = {}) {
+  const storedContext = await getStoredAccountContext("");
+  const accountId = normalizeText(storedContext?.account?.id || "");
+  if (!accountId) {
+    return {
+      plannerEnvelope: {
+        ok: false,
+        error: "permission_denied",
+        action: normalizeText(route?.planner_action || "") || null,
+      },
+      userResponse: {
+        ok: false,
+        failure_class: "permission_denied",
+      },
+      replyText: [
+        "結論",
+        "目前沒有可用的本地帳號上下文，所以這條 workflow 先停在受控邊界。",
+        "",
+        "下一步",
+        "- 先補可用帳號或重新登入，之後再跑這條文檔工作流。",
+      ].join("\n"),
+    };
+  }
+
+  const sessionKey = `usage-layer-eval:${testCase.id}`;
+  const action = normalizeText(route?.planner_action || "");
+  let reply;
+  if (action === "preview") {
+    reply = await buildCloudOrganizationPreviewReply({
+      accountId,
+      logger: noopLogger,
+    });
+  } else if (action === "review" || action === "rereview") {
+    reply = await buildCloudOrganizationReviewReplyCached({
+      accountId,
+      sessionKey,
+      forceReReview: action === "rereview",
+      logger: noopLogger,
+    });
+  } else if (action === "why") {
+    reply = await buildCloudOrganizationWhyReply({
+      accountId,
+      sessionKey,
+      logger: noopLogger,
+    });
+  } else if (action === "exit") {
+    reply = {
+      text: [
+        "結論",
+        "我已退出雲文檔分類/角色分配模式。",
+        "",
+        "下一步",
+        "- 你現在可以直接換話題，或之後再重新開始分類。",
+      ].join("\n"),
+    };
+  }
+
+  return {
+    plannerEnvelope: {
+      ok: Boolean(reply?.text),
+      action: action || null,
+      execution_result: {
+        ok: Boolean(reply?.text),
+        data: {
+          answer: reply?.text || "",
+          sources: [],
+          limitations: [],
+        },
+      },
+    },
+    userResponse: {
+      ok: Boolean(reply?.text),
+    },
+    replyText: normalizeText(reply?.text || ""),
+  };
+}
+
+async function runDocEditorEvalCase(testCase = {}, route = {}) {
+  const lane = {
+    capability_lane: "doc-editor",
+    lane_label: "文檔編輯助手",
+  };
+  const scope = {
+    capability_lane: "doc-editor",
+    session_key: `usage-layer-eval:${testCase.id}`,
+    workspace_key: "usage-layer-eval",
+  };
+  const replyText = buildLaneIntroReply(scope, lane);
+  return {
+    plannerEnvelope: {
+      ok: true,
+      action: normalizeText(route?.planner_action || "") || "comment_rewrite_preview",
+      execution_result: {
+        ok: true,
+        data: {
+          answer: replyText,
+          sources: [],
+          limitations: [],
+        },
+      },
+    },
+    userResponse: {
+      ok: true,
+    },
+    replyText,
+  };
 }
 
 function summarizeFailReasons(result = {}) {
@@ -282,14 +433,23 @@ function summarizeFailReasons(result = {}) {
 async function runUsageLayerEvalCase(testCase = {}) {
   const route = resolveRoutingEvalCase(normalizeEvalCase(testCase));
   const signal = typeof AbortSignal?.timeout === "function" ? AbortSignal.timeout(15_000) : null;
-  const { plannerEnvelope, userResponse } = await runPlannerUserInputEdge({
-    text: testCase.user_text,
-    logger: noopLogger,
-    signal,
-    sessionKey: `usage-layer-eval:${testCase.id}`,
-    requestId: `usage-layer-eval:${testCase.id}`,
-  });
-  const replyText = renderUserResponseText(userResponse);
+  let execution;
+  if (normalizeText(route?.lane || "") === "cloud_doc_workflow") {
+    execution = await runCloudDocWorkflowEvalCase(testCase, route);
+  } else if (normalizeText(route?.lane || "") === "doc_editor") {
+    execution = await runDocEditorEvalCase(testCase, route);
+  } else {
+    execution = await runPlannerUserInputEdge({
+      text: testCase.user_text,
+      logger: noopLogger,
+      signal,
+      sessionKey: `usage-layer-eval:${testCase.id}`,
+      requestId: `usage-layer-eval:${testCase.id}`,
+    });
+  }
+  const plannerEnvelope = execution?.plannerEnvelope || {};
+  const userResponse = execution?.userResponse || {};
+  const replyText = normalizeText(execution?.replyText || renderUserResponseText(userResponse));
   const executedTarget = inferExecutedTarget({
     envelope: plannerEnvelope,
     route,

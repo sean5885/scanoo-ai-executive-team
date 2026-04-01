@@ -111,6 +111,35 @@ function adaptPlannerResultForEdge(result = {}, { requestText = "" } = {}) {
     });
   }
 
+  if (kind === "search") {
+    const matchReason = String(legacyShape?.match_reason || execution?.match_reason || requestText || "").trim();
+    const subject = matchReason ? `「${matchReason}」` : "這輪查詢";
+    const contentSummary = String(legacyShape?.content_summary || execution?.content_summary || "").trim();
+    return withCanonicalExecutionData(result, {
+      answer: contentSummary || `目前沒有找到和 ${subject} 直接對應的已索引文件。`,
+      sources: [],
+      limitations: [],
+    });
+  }
+
+  if (kind === "search_and_detail") {
+    const primaryItem = items[0] || null;
+    const title = String(legacyShape?.title || primaryItem?.title || "").trim();
+    const matchReason = String(legacyShape?.match_reason || execution?.match_reason || requestText || "").trim();
+    const subject = matchReason ? `「${matchReason}」` : "這輪查詢";
+    const contentSummary = String(legacyShape?.content_summary || execution?.content_summary || "").trim();
+    const answer = contentSummary
+      ? `${title ? `我先找到最相關的文件「${title}」。` : "我先找到目前最相關的文件。"} ${contentSummary}`.trim()
+      : title
+        ? `我先找到最相關的文件「${title}」，目前看起來它和 ${subject} 最相關。`
+        : `我先找到目前最相關的文件，先作為 ${subject} 的第一個候選來源。`;
+    return withCanonicalExecutionData(result, {
+      answer,
+      sources: items,
+      limitations: [],
+    });
+  }
+
   return result;
 }
 
