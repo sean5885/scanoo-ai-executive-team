@@ -82,6 +82,14 @@ import {
   hasPlannerVisibleTelemetryEvent,
   updatePlannerVisibleTelemetryContext,
 } from "./planner-visible-live-telemetry-runtime.mjs";
+import { buildExecutionEnvelope } from "./execution-envelope.mjs";
+import {
+  getCompanyBrainDocDetailAction,
+  listCompanyBrainDocsAction,
+  searchCompanyBrainDocsAction,
+} from "./company-brain-query.mjs";
+import { getStoredAccountContext } from "./lark-user-auth.mjs";
+import { getDbPath } from "./db.mjs";
 
 const executiveStartSignals = [
   "agent",
@@ -118,6 +126,20 @@ const EXECUTIVE_MAX_ROLES = 3;
 const EXECUTIVE_MAX_SUPPORTING_ROLES = EXECUTIVE_MAX_ROLES - 1;
 const PLANNER_CONTEXT_WINDOW_MAX_CHARS = 2400;
 const PLANNER_CONTEXT_WINDOW_SUMMARY_MAX_CHARS = 640;
+const LOCAL_PLANNER_RUNTIME_INFO_STARTED_AT = new Date().toISOString();
+const LOCAL_PLANNER_READONLY_FALLBACK_ACTIONS = new Set([
+  "list_company_brain_docs",
+  "search_company_brain_docs",
+  "get_company_brain_doc_detail",
+  "get_runtime_info",
+]);
+const PLANNER_FAILED_DETERMINISTIC_FALLBACK_ACTIONS = new Set([
+  "list_company_brain_docs",
+  "search_company_brain_docs",
+  "get_company_brain_doc_detail",
+  "get_runtime_info",
+  "search_and_detail_doc",
+]);
 const PLANNER_RECENT_STEP_LIMIT = 6;
 const PLANNER_HIGH_WEIGHT_DOC_LIMIT = 3;
 const PLANNER_FAILED_ALERT_KEY = "planner_failed:user_input_planner";
@@ -236,6 +258,96 @@ function actionRequiresExplicitUserAuth(action = "") {
 
 function normalizePlannerAuthContext(authContext = null) {
   return normalizeExplicitUserAuthContext(authContext);
+}
+
+async function resolvePlannerLocalFallbackAccountId(authContext = null) {
+  const explicitAccountId = cleanText(authContext?.account_id || authContext?.accountId || "");
+  if (explicitAccountId) {
+    return explicitAccountId;
+  }
+  const storedContext = await getStoredAccountContext("");
+  return cleanText(storedContext?.account?.id || "");
+}
+
+function buildLocalPlannerRuntimeInfoResult() {
+  return buildExecutionEnvelope({
+    ok: true,
+    action: "get_runtime_info",
+    data: {
+      db_path: getDbPath(),
+      node_pid: process.pid,
+      cwd: process.cwd(),
+      service_start_time: LOCAL_PLANNER_RUNTIME_INFO_STARTED_AT,
+    },
+    meta: {
+      source: "local_readonly_fallback",
+    },
+  });
+}
+
+function buildLocalPlannerCompanyBrainEnvelope(action = "", result = null) {
+  const ok = result?.success === true;
+  return buildExecutionEnvelope({
+    ok,
+    action,
+    data: result && typeof result === "object" && !Array.isArray(result)
+      ? result
+      : {
+          success: false,
+          data: {},
+          error: "runtime_exception",
+        },
+    meta: {
+      source: "local_readonly_fallback",
+    },
+    error: ok ? null : cleanText(result?.error || "") || "runtime_exception",
+  });
+}
+
+async function attemptLocalPlannerReadonlyFallback({
+  action = "",
+  payload = {},
+  authContext = null,
+} = {}) {
+  const normalizedAction = cleanText(action);
+  if (!LOCAL_PLANNER_READONLY_FALLBACK_ACTIONS.has(normalizedAction)) {
+    return null;
+  }
+
+  if (normalizedAction === "get_runtime_info") {
+    return buildLocalPlannerRuntimeInfoResult();
+  }
+
+  const accountId = await resolvePlannerLocalFallbackAccountId(authContext);
+  if (!accountId) {
+    return null;
+  }
+
+  if (normalizedAction === "list_company_brain_docs") {
+    return buildLocalPlannerCompanyBrainEnvelope(normalizedAction, listCompanyBrainDocsAction({
+      accountId,
+      limit: payload?.limit,
+    }));
+  }
+
+  if (normalizedAction === "search_company_brain_docs") {
+    return buildLocalPlannerCompanyBrainEnvelope(normalizedAction, searchCompanyBrainDocsAction({
+      accountId,
+      q: payload?.q,
+      limit: payload?.limit,
+      top_k: payload?.top_k,
+      ranking_weights: payload?.ranking_weights,
+    }));
+  }
+
+  if (normalizedAction === "get_company_brain_doc_detail") {
+    return buildLocalPlannerCompanyBrainEnvelope(normalizedAction, getCompanyBrainDocDetailAction({
+      accountId,
+      docId: payload?.doc_id,
+    }));
+  }
+
+  return null;
 }
 
 function normalizePlannerRoutingReason(routingReason = "", fallback = "") {
@@ -703,12 +815,106 @@ function normalizePlannerUserFacingList(items = []) {
   )];
 }
 
+const PLANNER_CONTROLLED_EXECUTION_HINT_PATTERNS = [
+  /(?:文件|文檔|doc|company brain|runtime|db path|pid|scanoo|okr|雲文檔|云文档)/i,
+  /(?:評論|评论).{0,8}(?:改稿|改寫|改写|rewrite)/i,
+  /(?:分類|分类|指派|預覽|预览|review|rereview|會議|会议|capture|日程|行程|calendar|待辦|待办|task|todo|對話|对话)/i,
+];
+
+function requestLikelyNeedsControlledExecution(requestText = "") {
+  const normalized = cleanText(requestText);
+  if (!normalized) {
+    return false;
+  }
+  if (/^\s*\/[a-z0-9_-]+/i.test(normalized) || /\bagent\b/i.test(normalized)) {
+    return false;
+  }
+  return PLANNER_CONTROLLED_EXECUTION_HINT_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+function buildPlannerRetryHint(requestText = "") {
+  const normalized = cleanText(requestText).replace(/\s+/g, " ").slice(0, 36);
+  if (!normalized) {
+    return "你可以直接把第一步說成可執行動作，我會先從那一步開始。";
+  }
+  if (/(?:runtime|db path|pid)/i.test(normalized)) {
+    return "例如直接說：先查 runtime db path。";
+  }
+  if (/(?:雲文檔|云文档|分類|分类|指派|review|rereview)/i.test(normalized)) {
+    return "例如直接說：先預覽雲文檔分類結果，或先告訴我哪一批文檔要複查。";
+  }
+  if (/(?:會議|会议|capture)/i.test(normalized)) {
+    return "例如直接說：先開始會議記錄，或先幫我看目前是否在持續記錄。";
+  }
+  if (/(?:文件|文檔|doc|company brain|okr)/i.test(normalized)) {
+    return `例如把「${normalized}」拆成先查文件，再整理重點。`;
+  }
+  return `例如把「${normalized}」先拆成第一個可執行步驟。`;
+}
+
+function isPlannerPermissionDeniedError(errorCode = "") {
+  const normalized = cleanText(errorCode);
+  return normalized === "missing_user_access_token"
+    || normalized === "oauth_reauth_required"
+    || normalized === "permission_denied"
+    || normalized === "entry_governance_required";
+}
+
+function isPlannerRoutingNoMatch({ error = "", fallbackReason = "" } = {}) {
+  const normalizedError = cleanText(error);
+  const normalizedFallbackReason = cleanText(fallbackReason);
+  return normalizedError === "routing_error"
+    || normalizedFallbackReason === "routing_error"
+    || normalizedFallbackReason === "routing_no_match"
+    || normalizedFallbackReason === ROUTING_NO_MATCH
+    || normalizedError === ROUTING_NO_MATCH;
+}
+
+export function resolvePlannerUserFacingFailureClass({
+  error = "",
+  fallbackReason = "",
+  requestText = "",
+  action = "",
+} = {}) {
+  const normalizedError = cleanText(error);
+  const normalizedAction = cleanText(action);
+
+  if (isPlannerPermissionDeniedError(normalizedError)) {
+    return "permission_denied";
+  }
+  if (isPlannerRoutingNoMatch({ error: normalizedError, fallbackReason })) {
+    return "routing_no_match";
+  }
+  if (
+    requestLikelyNeedsControlledExecution(requestText)
+    && !normalizedAction
+    && (
+      normalizedError === "planner_failed"
+      || normalizedError === "tool_error"
+      || normalizedError === "runtime_exception"
+      || normalizedError === "business_error"
+      || normalizedError === "contract_violation"
+    )
+  ) {
+    return "tool_omission";
+  }
+  if (normalizedError === "planner_failed") {
+    return "planner_failed";
+  }
+  return "generic_fallback";
+}
+
 function buildPlannerUserFacingAnswer({
   error = "",
   fallbackReason = "",
+  requestText = "",
 } = {}) {
   const normalizedError = cleanText(error);
-  const normalizedFallbackReason = cleanText(fallbackReason);
+  const failureClass = resolvePlannerUserFacingFailureClass({
+    error: normalizedError,
+    fallbackReason,
+    requestText,
+  });
 
   if (normalizedError === "missing_user_access_token") {
     return "這次我先不直接查文件，因為目前這條文件路徑是 auth-required，而這輪請求沒有帶到可驗證的 Lark 使用者授權。";
@@ -716,16 +922,17 @@ function buildPlannerUserFacingAnswer({
   if (normalizedError === "oauth_reauth_required") {
     return "這次我先不直接查文件，因為目前這條文件路徑是 auth-required，而現有的 Lark 使用者授權已失效，需要重新登入授權。";
   }
+  if (normalizedError === "entry_governance_required") {
+    return "這個動作還卡在受控治理邊界，所以我現在不能直接替你寫入或建立。";
+  }
   if (normalizedError === "semantic_mismatch") {
     return "我先沒有直接執行原本那個內部動作，因為它和你這輪的需求不一致。";
   }
-  if (
-    normalizedError === "routing_error"
-    || normalizedFallbackReason === "routing_error"
-    || normalizedFallbackReason === "routing_no_match"
-    || normalizedFallbackReason === ROUTING_NO_MATCH
-  ) {
+  if (failureClass === "routing_no_match") {
     return "這題我先沒走到合適的處理方式，所以先用一般助理的方式接住你。";
+  }
+  if (failureClass === "tool_omission") {
+    return "這題本來應該先走對應的查詢或流程，但這輪還沒真的執行到那個步驟，所以我先不亂補答案。";
   }
   if (normalizedError === "invalid_action" || normalizedError === INVALID_ACTION) {
     return "這題我先不直接往下做，因為目前還缺一個明確的處理方向。";
@@ -735,6 +942,9 @@ function buildPlannerUserFacingAnswer({
   }
   if (normalizedError === "request_cancelled") {
     return "這次處理被中斷了，所以我先不回傳不完整結果。";
+  }
+  if (failureClass === "planner_failed") {
+    return "這輪不是你問題不清楚，而是我這邊沒有順利排出安全可執行的步驟，所以先不亂做。";
   }
   if (normalizedError === "business_error") {
     return "這次沒有完整處理好，所以我先把目前狀態整理給你。";
@@ -746,10 +956,16 @@ function buildPlannerUserFacingLimitations({
   error = "",
   fallbackReason = "",
   action = "",
+  requestText = "",
 } = {}) {
   const normalizedError = cleanText(error);
-  const normalizedFallbackReason = cleanText(fallbackReason);
   const normalizedAction = cleanText(action);
+  const failureClass = resolvePlannerUserFacingFailureClass({
+    error: normalizedError,
+    fallbackReason,
+    requestText,
+    action: normalizedAction,
+  });
 
   if (normalizedError === "missing_user_access_token") {
     return normalizePlannerUserFacingList([
@@ -763,21 +979,28 @@ function buildPlannerUserFacingLimitations({
       `請先重新登入授權：${oauthBaseUrl}/oauth/lark/login`,
     ]);
   }
+  if (normalizedError === "entry_governance_required") {
+    return normalizePlannerUserFacingList([
+      "這類建立/寫入動作還需要補齊受控治理欄位或額外核准，現在不能直接跳過。",
+      "如果你要，我可以先幫你整理建立目的、owner 和內容骨架，再進下一步。",
+    ]);
+  }
   if (normalizedError === "semantic_mismatch") {
     return normalizePlannerUserFacingList([
       "這題看起來像是另一種處理需求，所以我先不亂猜。",
       "如果你是要找文件、看文件內容、查系統狀態，或建立文件，可以把目標再說清楚一點。",
     ]);
   }
-  if (
-    normalizedError === "routing_error"
-    || normalizedFallbackReason === "routing_error"
-    || normalizedFallbackReason === "routing_no_match"
-    || normalizedFallbackReason === ROUTING_NO_MATCH
-  ) {
+  if (failureClass === "routing_no_match") {
     return normalizePlannerUserFacingList([
       "你可以直接說想整理什麼、查哪份文件，或要我看什麼狀態，我會改用更合適的方式處理。",
       "如果你補一句目標或範圍，我通常就能直接往下做。",
+    ]);
+  }
+  if (failureClass === "tool_omission") {
+    return normalizePlannerUserFacingList([
+      "這類需求要先真的跑到對應工具或 workflow，不能只停在泛化說明。",
+      buildPlannerRetryHint(requestText),
     ]);
   }
   if (normalizedError === "invalid_action" || normalizedError === INVALID_ACTION) {
@@ -794,6 +1017,12 @@ function buildPlannerUserFacingLimitations({
   if (normalizedError === "request_cancelled") {
     return normalizePlannerUserFacingList([
       "這次請求在完成前被取消，所以沒有可安全交付的最終結果。",
+    ]);
+  }
+  if (failureClass === "planner_failed") {
+    return normalizePlannerUserFacingList([
+      "這輪卡在我這邊的規劃步驟，不代表你的需求本身一定不清楚。",
+      `你可以直接重試同一句；如果要更穩，${buildPlannerRetryHint(requestText)}`,
     ]);
   }
   return normalizePlannerUserFacingList([
@@ -821,7 +1050,7 @@ export function renderPlannerUserFacingReplyText({
   ].join("\n");
 }
 
-export function buildPlannedUserInputUserFacingReply(result = {}) {
+export function buildPlannedUserInputUserFacingReply(result = {}, { requestText = "" } = {}) {
   const envelope = buildPlannedUserInputEnvelope(result);
   const executionError = cleanText(envelope?.execution_result?.error || "");
   const topLevelError = cleanText(envelope?.error || "");
@@ -843,12 +1072,14 @@ export function buildPlannedUserInputUserFacingReply(result = {}) {
     answer: buildPlannerUserFacingAnswer({
       error: errorCode,
       fallbackReason,
+      requestText,
     }),
     sources: [],
     limitations: buildPlannerUserFacingLimitations({
       error: errorCode,
       fallbackReason,
       action: envelope?.action || envelope?.trace?.chosen_action || "",
+      requestText,
     }),
   };
 }
@@ -3622,6 +3853,14 @@ export async function dispatchPlannerTool({
       });
       if (abortResult) {
         return abortResult;
+      }
+      const localFallback = await attemptLocalPlannerReadonlyFallback({
+        action: tool.action,
+        payload: effectivePayload,
+        authContext: normalizedAuthContext,
+      });
+      if (localFallback) {
+        return localFallback;
       }
       return normalizeError({
         ok: false,
@@ -6485,6 +6724,75 @@ export async function planUserInputAction({
   return errorResult;
 }
 
+function resolveDeterministicPlannerFallbackSelection({
+  text = "",
+  logger = console,
+  sessionKey = "",
+} = {}) {
+  const agentInput = buildPlannerAgentInput({
+    userIntent: text,
+    taskType: "",
+    payload: {},
+  });
+  const routedFlow = resolvePlannerFlowRoute({
+    flows: plannerFlows,
+    userIntent: agentInput.user_intent,
+    payload: agentInput.payload,
+    logger,
+    sessionKey,
+  });
+  const selectorSelection = selectPlannerTool({
+    userIntent: agentInput.user_intent,
+    taskType: agentInput.task_type,
+    logger,
+  });
+  const prefersSelectorSelection = shouldPreferSelectorAction({
+    hardRoutedAction: routedFlow.action,
+    selectorAction: selectorSelection?.selected_action,
+  });
+  const selection = prefersSelectorSelection
+    ? {
+        ...selectorSelection,
+        reason: selectorSelection?.reason || "命中更具體的 selector 規則，覆蓋 generic search hard route。",
+        routing_reason: normalizePlannerRoutingReason(
+          cleanText(selectorSelection?.routing_reason || ""),
+          "selector_override_generic_search_route",
+        ) || "selector_override_generic_search_route",
+      }
+    : routedFlow.action
+      ? {
+          selected_action: routedFlow.action,
+          reason: "命中硬路由規則。",
+          routing_reason: normalizePlannerRoutingReason(
+            cleanText(routedFlow?.routing_reason || ""),
+            "hard_route_match",
+          ) || "hard_route_match",
+        }
+      : selectorSelection;
+  const selectedAction = cleanText(selection?.selected_action || "");
+  if (!PLANNER_FAILED_DETERMINISTIC_FALLBACK_ACTIONS.has(selectedAction)) {
+    return null;
+  }
+  return {
+    selection: {
+      selected_action: selectedAction,
+      reason: cleanText(selection?.reason || "") || "deterministic_planner_failed_fallback",
+      routing_reason: normalizePlannerRoutingReason(
+        cleanText(selection?.routing_reason || ""),
+        "deterministic_planner_failed_fallback",
+      ) || "deterministic_planner_failed_fallback",
+    },
+    payload: buildPlannerFlowPayload({
+      flow: routedFlow.flow,
+      action: selectedAction,
+      userIntent: agentInput.user_intent,
+      payload: routedFlow.payload,
+      logger,
+      sessionKey,
+    }),
+  };
+}
+
 export async function executePlannedUserInput({
   text = "",
   requester = requestPlannerJson,
@@ -6613,6 +6921,67 @@ export async function executePlannedUserInput({
     }
 
     if (decision.error === "planner_failed") {
+      const deterministicFallback = resolveDeterministicPlannerFallbackSelection({
+        text,
+        logger,
+        sessionKey,
+      });
+      if (deterministicFallback?.selection?.selected_action) {
+        let reroutedResult;
+        try {
+          reroutedResult = await toolFlowRunner({
+            userIntent: text,
+            payload: deterministicFallback.payload || {},
+            logger,
+            contentReader,
+            baseUrl,
+            authContext,
+            forcedSelection: deterministicFallback.selection,
+            disableAutoRouting: true,
+            signal,
+            sessionKey,
+            requestId: plannerVisibleMonitor?.context?.request_id || requestId,
+            telemetryContext: plannerVisibleMonitor?.context || null,
+            telemetryAdapter,
+          });
+        } catch (error) {
+          const abortedResult = buildPlannerAbortResult({
+            action: deterministicFallback.selection.selected_action,
+            signal,
+            error,
+          });
+          if (abortedResult) {
+            reroutedResult = buildPlannerAgentOutput({
+              selectedAction: deterministicFallback.selection.selected_action,
+              executionResult: abortedResult,
+              traceId: abortedResult.trace_id || null,
+              routingReason: deterministicFallback.selection.routing_reason,
+              payload: deterministicFallback.payload || {},
+            });
+          } else {
+            throw error;
+          }
+        }
+
+        if (reroutedResult?.execution_result) {
+          const output = {
+            ok: reroutedResult?.execution_result?.ok === true,
+            action: cleanText(reroutedResult?.selected_action || deterministicFallback.selection.selected_action) || null,
+            params: deterministicFallback.payload || {},
+            error: cleanText(reroutedResult?.execution_result?.error || "") || null,
+            execution_result: reroutedResult?.execution_result || null,
+            formatted_output: normalizePlannerFormattedOutput(
+              reroutedResult?.formatted_output || extractPlannerFormattedOutput(reroutedResult?.execution_result),
+            ),
+            synthetic_agent_hint: reroutedResult?.synthetic_agent_hint || null,
+            trace_id: reroutedResult?.trace_id || null,
+            why: "strict planner decision 缺失時，改走 bounded deterministic read/runtime fallback。",
+            alternative: normalizeDecisionAlternative(decision?.alternative),
+          };
+          copyPlannerVisibleTelemetryContext(reroutedResult, output);
+          return output;
+        }
+      }
       emitPlannerFailedAlert({
         text,
         reason: "invalid_planned_decision",

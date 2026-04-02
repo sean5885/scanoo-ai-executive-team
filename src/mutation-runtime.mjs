@@ -442,6 +442,7 @@ export async function runMutation({ action, payload, context, execute }) {
   } catch (err) {
     journal.status = "failed";
     journal.error = err?.message || "execution_failed";
+    maybeAttachJournalValue(journal, "error_details", err?.details);
     if (typeof rollback === "function") {
       try {
         const rollbackResult = await rollback({

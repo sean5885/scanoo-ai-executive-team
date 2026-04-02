@@ -14,15 +14,19 @@ function buildPlannerEnvelope({
   action = "search_company_brain_docs",
   executionOk = true,
   data = {},
+  error = null,
+  trace = null,
 } = {}) {
   return {
     ok,
     action,
+    ...(error ? { error } : {}),
     execution_result: {
       ok: executionOk,
       action,
       data,
     },
+    ...(trace ? { trace } : {}),
   };
 }
 
@@ -276,12 +280,84 @@ test("multi-intent fallback returns partial success when copy is doable but imag
   const text = renderUserResponseText(userResponse);
 
   assert.equal(userResponse.ok, true);
+  assert.equal(userResponse.failure_class, "partial_success");
   assert.match(userResponse.answer || "", /FB|Facebook|貼文草稿/);
   assert.match(userResponse.answer || "", /新品上線/);
   assert.match(userResponse.sources.join("\n"), /已先完成：.*貼文草稿/);
   assert.match(userResponse.limitations.join("\n"), /圖片/);
   assert.match(userResponse.limitations.join("\n"), /發送或發布/);
   assert.doesNotMatch(text, /internal|routing|lane|trace|chosen_action|fallback_reason/i);
+});
+
+test("planner failure on a controlled-execution request is classified as tool_omission without leaking raw errors", () => {
+  const userResponse = normalizeUserResponse({
+    requestText: "幫我整理 OKR 文件重點",
+    plannerEnvelope: buildPlannerEnvelope({
+      ok: false,
+      action: "",
+      executionOk: false,
+      error: "planner_failed",
+      data: {
+        answer: "這輪不是你問題不清楚，而是我這邊沒有順利排出安全可執行的步驟，所以先不亂做。",
+        sources: [],
+        limitations: ["你可以直接重試同一句；如果要更穩，例如把「幫我整理 OKR 文件重點」拆成先查文件，再整理重點。"],
+      },
+      trace: {
+        chosen_action: null,
+        fallback_reason: "planner_failed",
+      },
+    }),
+  });
+
+  assert.equal(userResponse.ok, false);
+  assert.equal(userResponse.failure_class, "tool_omission");
+  assert.doesNotMatch(userResponse.answer || "", /planner_failed/i);
+});
+
+test("routing no match stays classified without exposing internal routing code in reply text", () => {
+  const userResponse = normalizeUserResponse({
+    requestText: "晚點提醒我一下",
+    plannerEnvelope: buildPlannerEnvelope({
+      ok: false,
+      executionOk: false,
+      error: "business_error",
+      data: {
+        answer: "這題我先沒走到合適的處理方式，所以先用一般助理的方式接住你。",
+        sources: [],
+        limitations: ["你可以直接說想整理什麼、查哪份文件，或要我看什麼狀態，我會改用更合適的方式處理。"],
+      },
+      trace: {
+        chosen_action: null,
+        fallback_reason: "ROUTING_NO_MATCH",
+      },
+    }),
+  });
+
+  assert.equal(userResponse.failure_class, "routing_no_match");
+  assert.doesNotMatch(renderUserResponseText(userResponse), /ROUTING_NO_MATCH|routing/i);
+});
+
+test("auth-required failures are classified as permission_denied", () => {
+  const userResponse = normalizeUserResponse({
+    requestText: "幫我查詢 OKR 文件",
+    plannerEnvelope: buildPlannerEnvelope({
+      ok: false,
+      executionOk: false,
+      error: "missing_user_access_token",
+      data: {
+        answer: "這次我先不直接查文件，因為目前這條文件路徑是 auth-required，而這輪請求沒有帶到可驗證的 Lark 使用者授權。",
+        sources: [],
+        limitations: ["請從有帶授權的 Lark 對話重新送出這輪需求，或先完成登入授權。"],
+      },
+      trace: {
+        chosen_action: "search_company_brain_docs",
+        fallback_reason: "missing_user_access_token",
+      },
+    }),
+  });
+
+  assert.equal(userResponse.failure_class, "permission_denied");
+  assert.match(userResponse.answer || "", /授權/);
 });
 
 test("multi-intent fallback works for another mixed capability request", () => {

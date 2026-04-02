@@ -81,6 +81,16 @@ test("routing eval keeps personal-lane doc-intent exclusion pack in cloud-doc re
   }
 });
 
+test("routing eval fail-closes unsupported personal reminder requests", () => {
+  const actual = resolveRoutingEvalCase({
+    text: "晚點提醒我一下",
+  });
+
+  assert.equal(actual.lane, "personal_assistant");
+  assert.equal(actual.planner_action, ROUTING_NO_MATCH);
+  assert.equal(actual.agent_or_tool, `error:${ROUTING_NO_MATCH}`);
+});
+
 test("routing eval CLI supports json output", () => {
   const archiveDir = path.join(os.tmpdir(), `routing-diagnostics-${Date.now()}-json`);
   const raw = execFileSync("node", ["scripts/routing-eval.mjs", "--json"], {

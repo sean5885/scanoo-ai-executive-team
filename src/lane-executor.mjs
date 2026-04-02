@@ -105,8 +105,10 @@ import {
   setResolvedSessionExplicitAuth,
 } from "./session-scope-store.mjs";
 import { runPlannerUserInputEdge } from "./planner-user-input-edge.mjs";
+import { executeLocalSkillTask } from "./local-skill-actions.mjs";
 import { normalizeUserResponse, renderUserResponseText } from "./user-response-normalizer.mjs";
 import { runCanonicalLarkMutation } from "./lark-mutation-runtime.mjs";
+import { planPersonalDMSkillIntent } from "./planner/personal-dm-skill-intent.mjs";
 
 function incomingText(event) {
   return buildVisibleMessageText(event);
@@ -230,6 +232,26 @@ function looksLikeGreeting(text = "") {
 
 function looksLikeClosingAck(text = "") {
   return /^(謝謝|谢谢|感謝|感谢|收到|知道了|好喔|好的|ok|okay)\b/i.test(cleanText(text));
+}
+
+function looksLikeUnsupportedReminderRequest(text = "") {
+  const normalized = cleanText(text);
+  if (!normalized) {
+    return false;
+  }
+  if (!/(?:提醒|remind)/i.test(normalized)) {
+    return false;
+  }
+  return /(?:晚點|晚点|待會|待会|等下|等會|等会|之後|之后|稍後|稍后|\blater\b|提醒我)/i.test(normalized);
+}
+
+function looksLikeAmbiguousDeicticDocumentRequest(text = "") {
+  const normalized = cleanText(text);
+  if (!normalized) {
+    return false;
+  }
+  return /(?:這份|这份|這個|这个).{0,6}(?:文件|文檔|文档|內容|内容)/u.test(normalized)
+    || /(?:打開|打开|讀|读|看|看看).{0,4}(?:這份|这份|這個|这个)/u.test(normalized);
 }
 
 function buildLaneTrace({
@@ -445,6 +467,22 @@ export function resolveLaneExecutionPlan({ event, scope } = {}) {
       scope,
       chosenAction: null,
       fallbackReason: "semantic_mismatch_document_request_in_personal_lane",
+    });
+  }
+
+  if (looksLikeUnsupportedReminderRequest(text)) {
+    return buildLaneTrace({
+      scope,
+      chosenAction: null,
+      fallbackReason: ROUTING_NO_MATCH,
+    });
+  }
+
+  if (looksLikeAmbiguousDeicticDocumentRequest(text)) {
+    return buildLaneTrace({
+      scope,
+      chosenAction: null,
+      fallbackReason: ROUTING_NO_MATCH,
     });
   }
 
@@ -2095,6 +2133,78 @@ async function executeDocEditor({ event, scope, logger = noopLogger }) {
   };
 }
 
+export async function maybeExecutePersonalDMSkillTask({
+  event,
+  scope,
+  logger = noopLogger,
+  traceId = null,
+  intentPlanner = planPersonalDMSkillIntent,
+  skillActionExecutor = executeLocalSkillTask,
+} = {}) {
+  if (cleanText(scope?.capability_lane || "personal-assistant") !== "personal-assistant") {
+    return null;
+  }
+  if (cleanText(scope?.chat_type || "") !== "dm") {
+    return null;
+  }
+
+  const lanePlan = resolveLaneExecutionPlan({ event, scope });
+  if (lanePlan.chosen_action !== "general_assistant_action") {
+    return null;
+  }
+
+  const text = normalizeMessageText(event);
+  if (!cleanText(text)) {
+    return null;
+  }
+
+  const plannerDecision = await intentPlanner({
+    text,
+    logger,
+  });
+  logger.info("personal_dm_skill_planner_decision", {
+    intent: cleanText(plannerDecision?.intent || "") || "not_skill_task",
+    is_delegated_task: plannerDecision?.is_delegated_task === true,
+    skill_query: cleanText(plannerDecision?.skill_query || "") || null,
+    reason: cleanText(plannerDecision?.reason || "") || null,
+  });
+
+  if (cleanText(plannerDecision?.intent || "") === "not_skill_task") {
+    return null;
+  }
+
+  const actionResult = await skillActionExecutor({
+    intent: plannerDecision.intent,
+    query: cleanText(plannerDecision.skill_query || text),
+  });
+  logger.info("personal_dm_skill_action_result", {
+    intent: cleanText(plannerDecision?.intent || "") || null,
+    action: cleanText(actionResult?.action || "") || null,
+    ok: actionResult?.ok === true,
+  });
+
+  const normalized = normalizeUserResponse({
+    payload: {
+      ok: actionResult?.ok === true,
+      action: cleanText(actionResult?.action || "") || null,
+      execution_result: {
+        ok: actionResult?.ok === true,
+        data: actionResult?.public_reply || {},
+      },
+    },
+    requestText: text,
+    logger,
+    traceId,
+    handlerName: "executePersonalAssistant.personalDMSkillTask",
+  });
+
+  return {
+    text: renderUserResponseText(normalized),
+    handlerName: "executePersonalAssistant.personalDMSkillTask",
+    traceId,
+  };
+}
+
 async function executePersonalAssistant({ event, scope, logger = noopLogger }) {
   const context = await resolveAuthContext(event, logger, { allowTenantFallback: true });
   if (!context) {
@@ -2428,6 +2538,16 @@ async function executePersonalAssistant({ event, scope, logger = noopLogger }) {
       },
     });
     return reply;
+  }
+
+  const personalDMSkillTaskReply = await maybeExecutePersonalDMSkillTask({
+    event,
+    scope,
+    logger,
+    traceId: cleanText(scope?.trace_id || event?.trace_id || ""),
+  });
+  if (personalDMSkillTaskReply) {
+    return personalDMSkillTaskReply;
   }
 
   if (context.tokenKind === "tenant") {

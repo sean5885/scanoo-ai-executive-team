@@ -4,59 +4,15 @@ import { resolveLarkBindingRuntime } from "./binding-runtime.mjs";
 import { startCommentSuggestionPoller } from "./comment-suggestion-poller.mjs";
 import { buildLaneFailureReply } from "./capability-lane.mjs";
 import { executeCapabilityLane } from "./lane-executor.mjs";
-import {
-  executeCanonicalLarkMessageReply,
-  executeCanonicalLarkMessageSend,
-} from "./lark-mutation-runtime.mjs";
 import { createRuntimeLogger, createTraceId, summarizeLarkEvent } from "./runtime-observability.mjs";
 import { startHttpServer } from "./http-server.mjs";
 import { enforceSingleLarkResponderRuntime } from "./runtime-conflict-guard.mjs";
 import { createMessageEventDeduper } from "./runtime-message-deduper.mjs";
+import { sendLaneReply } from "./runtime-message-reply.mjs";
 import { touchResolvedSession } from "./session-scope-store.mjs";
 
 const runtimeLogger = createRuntimeLogger({ logger: console, component: "long_connection" });
 const messageEventDeduper = createMessageEventDeduper();
-
-async function sendLaneReply(event, reply = {}) {
-  const chatId = event?.message?.chat_id;
-  const messageId = event?.message?.message_id;
-  const text = String(reply.text || "").trim();
-  const accountId = event?.sender?.sender_id?.open_id || event?.sender?.sender_id?.union_id || chatId || null;
-  const eventLogger = runtimeLogger.child("message_runtime", {
-    action: "lane_reply",
-    chat_id: chatId || null,
-    message_id: messageId || null,
-  });
-
-  if (!chatId || !text) {
-    return null;
-  }
-
-  if (reply.replyMode === "card" && messageId && reply.accessToken) {
-    const execution = await executeCanonicalLarkMessageReply({
-      pathname: "/runtime/index/lane-reply-card",
-      accountId,
-      accessToken: reply.accessToken,
-      logger: eventLogger,
-      messageId,
-      content: text,
-      replyInThread: true,
-      cardTitle: reply.cardTitle || botName,
-    });
-    return execution.ok === true ? execution.result : execution;
-  }
-
-  const execution = await executeCanonicalLarkMessageSend({
-    pathname: "/runtime/index/lane-reply",
-    accountId,
-    accessToken: reply.accessToken,
-    logger: eventLogger,
-    receiveId: chatId,
-    receiveIdType: "chat_id",
-    content: text,
-  });
-  return execution.ok === true ? execution.result : execution;
-}
 
 const eventDispatcher = new Lark.EventDispatcher({}).register({
   "im.message.receive_v1": async (data) => {
@@ -64,7 +20,11 @@ const eventDispatcher = new Lark.EventDispatcher({}).register({
     const senderType = data?.sender?.sender_type;
     const eventSummary = summarizeLarkEvent(data);
     const traceId = createTraceId("evt");
-    const eventLogger = runtimeLogger.child("event", { trace_id: traceId, ...eventSummary });
+    const eventLogger = runtimeLogger.child("event", {
+      trace_id: traceId,
+      event_id: data?.message?.message_id || null,
+      ...eventSummary,
+    });
 
     if (!chatId || senderType === "app") {
       eventLogger.info("event_skipped", {
@@ -113,18 +73,31 @@ const eventDispatcher = new Lark.EventDispatcher({}).register({
         eventLogger.warn("lane_returned_empty_reply", {
           capability_lane: scope.capability_lane,
         });
-        await sendLaneReply(data, {
-          text: `${botName} 已連上長連接，之後我會按對話 scope 自動分到對應能力模式。`,
-          accessToken: scope?.accessToken || null,
+        await sendLaneReply({
+          event: data,
+          reply: {
+            text: `${botName} 已連上長連接，之後我會按對話 scope 自動分到對應能力模式。`,
+          },
+          traceId,
+          logger: runtimeLogger.child("message_runtime", {
+            trace_id: traceId,
+            ...eventSummary,
+            action: "lane_reply",
+          }),
         });
         return;
       }
 
-      await sendLaneReply(data, reply);
-      eventLogger.info("reply_sent", {
-        capability_lane: scope.capability_lane,
-        reply_mode: reply.replyMode || "text",
-        card_title: reply.cardTitle || null,
+      await sendLaneReply({
+        event: data,
+        reply,
+        traceId,
+        logger: runtimeLogger.child("message_runtime", {
+          trace_id: traceId,
+          ...eventSummary,
+          action: "lane_reply",
+          capability_lane: scope.capability_lane,
+        }),
       });
     } catch (error) {
       eventLogger.error("event_processing_failed", {
@@ -137,12 +110,18 @@ const eventDispatcher = new Lark.EventDispatcher({}).register({
       }
 
       try {
-        await sendLaneReply(data, {
-          text: buildLaneFailureReply(scope, scope),
-          accessToken: scope?.accessToken || null,
-        });
-        eventLogger.warn("error_reply_sent", {
-          capability_lane: scope?.capability_lane || null,
+        await sendLaneReply({
+          event: data,
+          reply: {
+            text: buildLaneFailureReply(scope, scope),
+          },
+          traceId,
+          logger: runtimeLogger.child("message_runtime", {
+            trace_id: traceId,
+            ...eventSummary,
+            action: "lane_reply",
+            capability_lane: scope?.capability_lane || null,
+          }),
         });
       } catch (replyError) {
         eventLogger.error("error_reply_failed", {
