@@ -256,6 +256,10 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - dataset: `/Users/seanhan/Documents/Playground/evals/usage-layer/usage-layer-evals.mjs`
 - runner: `/Users/seanhan/Documents/Playground/evals/usage-layer/usage-layer-runner.mjs`
 - CLI: `npm run eval:usage-layer`
+- runner 目前會沿用 routing eval 的 owner truth：
+  - `cloud_doc_workflow` 走既有 workflow reply surface
+  - `doc_editor` 走既有 lane intro / preview surface
+  - `registered_agent -> dispatch_registered_agent` 走 checked-in slash-agent dispatcher boundary，而不是再退回 planner edge generic fallback
 
 本輪只先放 10 條 seed case 驗證 runner，沒有一次補滿 40 條。  
 判讀方式維持保守：

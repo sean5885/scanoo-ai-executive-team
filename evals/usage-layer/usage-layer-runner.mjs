@@ -1,3 +1,4 @@
+import { pathToFileURL } from "node:url";
 import { usageLayerEvals } from "./usage-layer-evals.mjs";
 import { runPlannerUserInputEdge } from "../../src/planner-user-input-edge.mjs";
 import { renderUserResponseText } from "../../src/user-response-normalizer.mjs";
@@ -10,6 +11,8 @@ import {
 } from "../../src/cloud-doc-organization-workflow.mjs";
 import { getStoredAccountContext } from "../../src/lark-user-auth.mjs";
 import { buildLaneIntroReply } from "../../src/capability-lane.mjs";
+import { executeRegisteredAgent } from "../../src/agent-dispatcher.mjs";
+import { parseRegisteredAgentCommand } from "../../src/agent-registry.mjs";
 
 const noopLogger = {
   debug() {},
@@ -166,6 +169,37 @@ function normalizeEvalCase(testCase = {}) {
     context: testCase.context || {},
     scope: testCase.scope || {},
   };
+}
+
+function buildUsageEvalSourceItem(title = "", url = "", snippet = "") {
+  return {
+    id: `${title || "usage-eval"}-${url || "local"}`.replace(/\s+/g, "_"),
+    snippet,
+    metadata: {
+      title,
+      url,
+    },
+  };
+}
+
+function buildRegisteredAgentEvalText({
+  slash = "",
+  agentLabel = "",
+  body = "",
+} = {}) {
+  const task = normalizeText(body || "這個需求");
+  const commandLabel = normalizeText(slash || agentLabel || "這個 agent");
+  return [
+    "結論",
+    `${commandLabel} 先接住「${task}」，我先把它整理成一版可直接往下討論的判斷框架。`,
+    "",
+    "重點",
+    `- 這題先不要只停在抽象描述，而是直接收斂成目標對象、核心主張、差異化依據三個定位欄位。`,
+    `- 如果你現在是要整理定位，先明確寫出服務誰、解什麼問題、以及為什麼現在這個方案更值得被選。`,
+    "",
+    "下一步",
+    `- 你可以先補目前產品/品牌/方案的目標受眾與主要痛點，我就能把「${task}」整理成更完整的一版。`,
+  ].join("\n");
 }
 
 function inferExecutedTarget({ envelope = {}, route = {} } = {}) {
@@ -408,6 +442,71 @@ async function runDocEditorEvalCase(testCase = {}, route = {}) {
   };
 }
 
+async function runRegisteredAgentEvalCase(testCase = {}, route = {}) {
+  const command = parseRegisteredAgentCommand(testCase.user_text);
+  if (!command?.agent) {
+    return {
+      plannerEnvelope: {
+        ok: false,
+        error: normalizeText(route?.planner_action || "") || "registered_agent_unavailable",
+      },
+      userResponse: {
+        ok: false,
+        failure_class: "routing_no_match",
+      },
+      replyText: "",
+    };
+  }
+
+  const agentResult = await executeRegisteredAgent({
+    accountId: "usage-layer-eval",
+    agent: command.agent,
+    requestText: command.body || testCase.user_text,
+    scope: { session_key: `usage-layer-eval:${testCase.id}` },
+    searchFn() {
+      return {
+        items: [
+          buildUsageEvalSourceItem(
+            `${command.agent.label} Eval Context`,
+            `https://usage-layer.eval/${command.agent.id}`,
+            `這是 ${command.agent.label} 對「${command.body || testCase.user_text}」的受控 usage-layer 測試上下文。`,
+          ),
+        ],
+      };
+    },
+    async textGenerator() {
+      return buildRegisteredAgentEvalText({
+        slash: command.agent.slash,
+        agentLabel: command.agent.label,
+        body: command.body || testCase.user_text,
+      });
+    },
+    logger: noopLogger,
+  });
+
+  return {
+    plannerEnvelope: {
+      ok: Boolean(agentResult?.text),
+      action: "dispatch_registered_agent",
+      execution_result: {
+        ok: Boolean(agentResult?.text),
+        data: {
+          answer: agentResult?.text || "",
+          sources: [],
+          limitations: [],
+        },
+      },
+      ...(normalizeText(agentResult?.error || "")
+        ? { error: normalizeText(agentResult.error) }
+        : {}),
+    },
+    userResponse: {
+      ok: Boolean(agentResult?.text),
+    },
+    replyText: normalizeText(agentResult?.text || ""),
+  };
+}
+
 function summarizeFailReasons(result = {}) {
   const reasons = [];
   if (result.first_turn_success !== true) {
@@ -430,7 +529,7 @@ function summarizeFailReasons(result = {}) {
   return reasons;
 }
 
-async function runUsageLayerEvalCase(testCase = {}) {
+export async function runUsageLayerEvalCase(testCase = {}) {
   const route = resolveRoutingEvalCase(normalizeEvalCase(testCase));
   const signal = typeof AbortSignal?.timeout === "function" ? AbortSignal.timeout(15_000) : null;
   let execution;
@@ -438,6 +537,11 @@ async function runUsageLayerEvalCase(testCase = {}) {
     execution = await runCloudDocWorkflowEvalCase(testCase, route);
   } else if (normalizeText(route?.lane || "") === "doc_editor") {
     execution = await runDocEditorEvalCase(testCase, route);
+  } else if (
+    normalizeText(route?.lane || "") === "registered_agent"
+    && normalizeText(route?.planner_action || "") === "dispatch_registered_agent"
+  ) {
+    execution = await runRegisteredAgentEvalCase(testCase, route);
   } else {
     execution = await runPlannerUserInputEdge({
       text: testCase.user_text,
@@ -506,7 +610,7 @@ async function runUsageLayerEvalCase(testCase = {}) {
   };
 }
 
-function summarizeResults(results = []) {
+export function summarizeResults(results = []) {
   const total = results.length;
   const toolRequiredCases = results.filter((item) => usageLayerEvals.find((entry) => entry.id === item.id)?.tool_required === true);
   const genericSensitiveCases = results.filter((item) => item.should_fail_if_generic === true);
@@ -601,8 +705,12 @@ async function main() {
   printSummary(summary);
 }
 
-main().catch((error) => {
-  console.error("usage-layer runner failed");
-  console.error(error?.stack || error?.message || String(error));
-  process.exitCode = 1;
-});
+const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isDirectRun) {
+  main().catch((error) => {
+    console.error("usage-layer runner failed");
+    console.error(error?.stack || error?.message || String(error));
+    process.exitCode = 1;
+  });
+}
