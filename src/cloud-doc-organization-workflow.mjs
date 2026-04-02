@@ -169,6 +169,16 @@ function normalizedText(text = "") {
   return cleanText(String(text || "").toLowerCase());
 }
 
+function isAbortLikeError(error) {
+  const code = cleanText(error?.code || "");
+  const name = cleanText(error?.name || "");
+  const message = cleanText(error?.message || "");
+  return code === "abort_err"
+    || code === "request_cancelled"
+    || name === "aborterror"
+    || message === "request_cancelled";
+}
+
 function normalizeCloudOrganizationScopedSubject(value = "") {
   return cleanText(String(value || ""))
     .replace(/^(?:跟|与|與|和)\s*/u, "")
@@ -872,6 +882,7 @@ export async function buildCloudOrganizationReviewReply({
   sessionKey = "",
   forceReReview = false,
   logger = null,
+  signal = null,
   replyBuilderName = "buildCloudOrganizationReviewReply",
 } = {}) {
   const cached = !forceReReview ? readCloudOrganizationReviewCache(accountId, sessionKey) : null;
@@ -1022,8 +1033,12 @@ export async function buildCloudOrganizationReviewReply({
           text: item.raw_text || "",
           content_source: item.source_type || "docx",
         })),
+        { signal },
       );
-    } catch {
+    } catch (error) {
+      if (signal?.aborted || isAbortLikeError(error)) {
+        throw error;
+      }
       semanticClassified = new Map();
     }
   }
@@ -1134,12 +1149,14 @@ export async function buildCloudOrganizationReviewReplyCached({
   sessionKey = "",
   forceReReview = false,
   logger = null,
+  signal = null,
 } = {}) {
   const reply = await buildCloudOrganizationReviewReply({
     accountId,
     sessionKey,
     forceReReview,
     logger,
+    signal,
     replyBuilderName: "buildCloudOrganizationReviewReplyCached",
   });
   if (reply?.text && sessionKey) {

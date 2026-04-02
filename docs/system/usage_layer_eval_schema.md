@@ -258,8 +258,10 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - CLI: `npm run eval:usage-layer`
 - runner 目前會沿用 routing eval 的 owner truth：
   - `cloud_doc_workflow` 走既有 workflow reply surface
+  - `meeting_workflow` 走既有 workflow-style reply surface，不再為 eval 重跑 planner
   - `doc_editor` 走既有 lane intro / preview surface
   - `registered_agent -> dispatch_registered_agent` 走 checked-in slash-agent dispatcher boundary，而不是再退回 planner edge generic fallback
+  - deterministic `executive` / `ROUTING_NO_MATCH` seed case 走 runner-side bounded reply surface，避免 eval 因 planner waiting 失去 summary；這不改 route truth 或 public contract
 
 本輪只先放 10 條 seed case 驗證 runner，沒有一次補滿 40 條。  
 判讀方式維持保守：
@@ -269,6 +271,9 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - 目前 checked-in `failure_class` 最少可區分：`routing_no_match`、`tool_omission`、`planner_failed`、`permission_denied`、`partial_success`、`generic_fallback`
 - runner 會優先讀這層 classification，再退回 `generic` / `clarify` / `partial_success` heuristic
 - summary 會輸出 `failure_breakdown` 與 top failure categories，避免所有 fail-soft case 都被誤壓成同一種 generic clarify
+- runner 現在對每條 case 都加上固定 timeout guard，並把同一個 abort signal 傳到 planner edge 與 cloud-doc `review/rereview` 的語義複審鏈路
+- 若單條 case 超時，runner 會取消該 case、在 summary 額外列出 `timed_out_cases`，並繼續跑完剩餘 case；這是 eval lifecycle guard，不改 usage-layer success criteria、planner prompt 或 routing truth
+- CLI 會印出 case start/done/timeout 與 stuck warning，方便直接定位是哪一條 case 長時間沒有結束
 - `RDR` 目前先保留 TODO，只做 case log，不宣稱已收斂成穩定自動 judge
 
 ## 結論

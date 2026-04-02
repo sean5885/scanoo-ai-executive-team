@@ -53,3 +53,41 @@ test("semantic classifier retries malformed and incomplete JSON before succeedin
     ["doc-1", "doc-2"],
   );
 });
+
+test("semantic classifier stops retrying when aborted", async () => {
+  const controller = new AbortController();
+  const items = [
+    {
+      id: "doc-timeout-1",
+      title: "待複審文件",
+      type: "docx",
+      parent_path: "/Scanoo/雲文檔",
+      text: "這是一份需要語義分類的文件。",
+    },
+  ];
+  let attempts = 0;
+  const abortError = Object.assign(new Error("request_cancelled"), {
+    name: "AbortError",
+    code: "request_cancelled",
+  });
+
+  await assert.rejects(
+    classifyPendingItemsWithRetries(items, {
+      signal: controller.signal,
+      classifier: async (_prompt, { signal }) => {
+        attempts += 1;
+        await new Promise((resolve, reject) => {
+          if (signal.aborted) {
+            reject(signal.reason);
+            return;
+          }
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          setImmediate(() => controller.abort(abortError));
+        });
+      },
+    }),
+    /request_cancelled/,
+  );
+
+  assert.equal(attempts, 1);
+});

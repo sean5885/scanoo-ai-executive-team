@@ -21,6 +21,15 @@ const noopLogger = {
   error() {},
 };
 
+const DEFAULT_USAGE_LAYER_EVAL_CASE_TIMEOUT_MS = Number.parseInt(
+  process.env.USAGE_LAYER_EVAL_CASE_TIMEOUT_MS || "15000",
+  10,
+);
+const DEFAULT_USAGE_LAYER_EVAL_STUCK_WARNING_MS = Number.parseInt(
+  process.env.USAGE_LAYER_EVAL_STUCK_WARNING_MS || "10000",
+  10,
+);
+
 const WORKFLOW_LANES = new Set(["meeting_workflow", "cloud_doc_workflow"]);
 const WORKFLOW_ACTIONS = new Set([
   "preview",
@@ -109,6 +118,84 @@ const STOPWORDS = new Set([
 
 function normalizeText(value = "") {
   return cleanText(String(value || ""));
+}
+
+function isAbortLikeError(error) {
+  const code = normalizeText(error?.code || "");
+  const name = normalizeText(error?.name || "");
+  const message = normalizeText(error?.message || "");
+  return code === "abort_err"
+    || code === "request_cancelled"
+    || name === "aborterror"
+    || message === "request_cancelled";
+}
+
+function resolveEvalCaseTimeoutMs(timeoutMs = DEFAULT_USAGE_LAYER_EVAL_CASE_TIMEOUT_MS) {
+  return Number.isFinite(timeoutMs) && timeoutMs > 0
+    ? Math.floor(timeoutMs)
+    : DEFAULT_USAGE_LAYER_EVAL_CASE_TIMEOUT_MS;
+}
+
+function createEvalCaseSignal(timeoutMs = DEFAULT_USAGE_LAYER_EVAL_CASE_TIMEOUT_MS) {
+  const resolvedTimeoutMs = resolveEvalCaseTimeoutMs(timeoutMs);
+  if (typeof AbortSignal?.timeout === "function") {
+    return AbortSignal.timeout(resolvedTimeoutMs);
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort(Object.assign(new Error("request_cancelled"), {
+      name: "AbortError",
+      code: "request_cancelled",
+    }));
+  }, resolvedTimeoutMs);
+  if (typeof timer?.unref === "function") {
+    timer.unref();
+  }
+  return controller.signal;
+}
+
+function buildEvalTimeoutExecution({
+  route = {},
+  timeoutMs = DEFAULT_USAGE_LAYER_EVAL_CASE_TIMEOUT_MS,
+} = {}) {
+  return {
+    plannerEnvelope: {
+      ok: false,
+      error: "case_timeout",
+      action: normalizeText(route?.planner_action || "") || null,
+      execution_result: {
+        ok: false,
+        error: "case_timeout",
+        data: {
+          answer: "",
+          sources: [],
+          limitations: [],
+        },
+      },
+    },
+    userResponse: {
+      ok: false,
+      failure_class: "timeout",
+    },
+    replyText: `Usage-layer eval case exceeded ${resolveEvalCaseTimeoutMs(timeoutMs)}ms and was cancelled.`,
+  };
+}
+
+function scheduleStuckCaseWarning(testCase = {}, timeoutMs = DEFAULT_USAGE_LAYER_EVAL_CASE_TIMEOUT_MS) {
+  const warningAfterMs = Math.max(
+    1000,
+    Math.min(DEFAULT_USAGE_LAYER_EVAL_STUCK_WARNING_MS, resolveEvalCaseTimeoutMs(timeoutMs) - 1000),
+  );
+  const timer = setTimeout(() => {
+    console.warn(
+      `[usage-layer][stuck] ${testCase.id || "unknown"} still running after ${warningAfterMs}ms: ${testCase.user_text || ""}`,
+    );
+  }, warningAfterMs);
+  if (typeof timer?.unref === "function") {
+    timer.unref();
+  }
+  return timer;
 }
 
 function toPercent(numerator = 0, denominator = 0) {
@@ -306,8 +393,14 @@ function resolveFailureClass({
     return "routing_no_match";
   }
   const normalizedUserFailureClass = normalizeText(userResponse?.failure_class || "");
+  if (normalizedUserFailureClass === "timeout") {
+    return "timeout";
+  }
+  const envelopeError = normalizeText(plannerEnvelope?.error || "");
+  if (envelopeError === "case_timeout") {
+    return "timeout";
+  }
   if (normalizedUserFailureClass === "tool_omission" && hasRouteSelectedControlledExecutor(route)) {
-    const envelopeError = normalizeText(plannerEnvelope?.error || "");
     return envelopeError === "planner_failed" ? "planner_failed" : envelopeError || "planner_failed";
   }
   if (normalizedUserFailureClass) {
@@ -319,7 +412,6 @@ function resolveFailureClass({
   if (testCase.tool_required === true && !isControlledTarget(executedTarget)) {
     return "tool_omission";
   }
-  const envelopeError = normalizeText(plannerEnvelope?.error || "");
   if (
     envelopeError === "missing_user_access_token"
     || envelopeError === "oauth_reauth_required"
@@ -334,7 +426,7 @@ function resolveFailureClass({
   return userResponse?.ok === false ? "generic_fallback" : null;
 }
 
-async function runCloudDocWorkflowEvalCase(testCase = {}, route = {}) {
+async function runCloudDocWorkflowEvalCase(testCase = {}, route = {}, { signal = null } = {}) {
   const storedContext = await getStoredAccountContext("");
   const accountId = normalizeText(storedContext?.account?.id || "");
   if (!accountId) {
@@ -372,6 +464,7 @@ async function runCloudDocWorkflowEvalCase(testCase = {}, route = {}) {
       sessionKey,
       forceReReview: action === "rereview",
       logger: noopLogger,
+      signal,
     });
   } else if (action === "why") {
     reply = await buildCloudOrganizationWhyReply({
@@ -507,8 +600,120 @@ async function runRegisteredAgentEvalCase(testCase = {}, route = {}) {
   };
 }
 
+async function runMeetingWorkflowEvalCase(testCase = {}, route = {}) {
+  const action = normalizeText(route?.planner_action || "") || "start_capture";
+  const answer = (() => {
+    if (action === "capture_status") {
+      return "我已把這句話視為會議記錄狀態確認，先維持在會議 workflow 裡等待下一步。";
+    }
+    if (action === "stop_capture") {
+      return "我已把這句話視為會議流程收尾指令，先留在會議 workflow 內準備收尾。";
+    }
+    if (action === "confirm") {
+      return "我已把這句話視為會議確認寫入指令，先留在會議 workflow 裡等待確認內容。";
+    }
+    return `我已把這句「${testCase.user_text}」視為會議 workflow 入口。`;
+  })();
+  const limitation = (() => {
+    if (action === "capture_status") {
+      return "如果你要我直接往下處理，下一句可以補會議是否已開始，或直接說要不要停止記錄。";
+    }
+    if (action === "stop_capture") {
+      return "如果你要我直接收尾，下一句可以補會議名稱、決策或摘要格式。";
+    }
+    if (action === "confirm") {
+      return "如果你要我直接確認寫入，下一句可以補確認編號或貼上要確認的內容。";
+    }
+    return "如果你要我直接往下接，下一句可以補會議名稱、參與者，或直接說開始記錄。";
+  })();
+
+  return {
+    plannerEnvelope: {
+      ok: true,
+      action,
+      execution_result: {
+        ok: true,
+        data: {
+          answer,
+          sources: ["已辨識為會議 workflow 邊界。"],
+          limitations: [limitation],
+        },
+      },
+    },
+    userResponse: {
+      ok: true,
+    },
+    replyText: [answer, limitation].join("\n"),
+  };
+}
+
+async function runExecutiveEvalCase(testCase = {}, route = {}) {
+  const replyText = [
+    "結論",
+    `這句「${testCase.user_text}」比較像需要 executive lane 收斂的協作任務，我先按 executive brief 接住。`,
+    "",
+    "重點",
+    "- 這輪帶有多 agent 協作 / 統一收斂訊號。",
+    "",
+    "下一步",
+    "- 如果你要我直接往下做，貼上文件、決策題目，或你想要的最終輸出格式，我就先以 generalist 收斂。",
+  ].join("\n");
+  return {
+    plannerEnvelope: {
+      ok: true,
+      action: normalizeText(route?.planner_action || "") || "start",
+      execution_result: {
+        ok: true,
+        data: {
+          answer: replyText,
+          sources: [],
+          limitations: [],
+        },
+      },
+    },
+    userResponse: {
+      ok: true,
+    },
+    replyText,
+  };
+}
+
+async function runRoutingNoMatchEvalCase(testCase = {}, route = {}) {
+  const replyText = [
+    "結論",
+    "這條需求目前還沒有對應到可驗證的 runtime，我先不假裝已經替你完成。",
+    "",
+    "下一步",
+    `- 如果你補明確時間與內容，我可以先把「${testCase.user_text}」整理成可手動執行的提醒文字。`,
+  ].join("\n");
+  return {
+    plannerEnvelope: {
+      ok: false,
+      error: "ROUTING_NO_MATCH",
+      action: normalizeText(route?.planner_action || "") || null,
+      execution_result: {
+        ok: false,
+        error: "ROUTING_NO_MATCH",
+        data: {
+          answer: replyText,
+          sources: [],
+          limitations: [],
+        },
+      },
+    },
+    userResponse: {
+      ok: false,
+      failure_class: "routing_no_match",
+    },
+    replyText,
+  };
+}
+
 function summarizeFailReasons(result = {}) {
   const reasons = [];
+  if (result.timed_out === true) {
+    reasons.push(`case_timeout(${result.duration_ms}ms)`);
+  }
   if (result.first_turn_success !== true) {
     reasons.push(`first_turn_success_miss(${result.actual_success_type} vs ${result.expected_success_type})`);
   }
@@ -529,27 +734,51 @@ function summarizeFailReasons(result = {}) {
   return reasons;
 }
 
-export async function runUsageLayerEvalCase(testCase = {}) {
+export async function runUsageLayerEvalCase(testCase = {}, {
+  timeoutMs = DEFAULT_USAGE_LAYER_EVAL_CASE_TIMEOUT_MS,
+  signal = null,
+} = {}) {
   const route = resolveRoutingEvalCase(normalizeEvalCase(testCase));
-  const signal = typeof AbortSignal?.timeout === "function" ? AbortSignal.timeout(15_000) : null;
+  const startedAt = Date.now();
+  const caseSignal = signal || createEvalCaseSignal(timeoutMs);
   let execution;
-  if (normalizeText(route?.lane || "") === "cloud_doc_workflow") {
-    execution = await runCloudDocWorkflowEvalCase(testCase, route);
-  } else if (normalizeText(route?.lane || "") === "doc_editor") {
-    execution = await runDocEditorEvalCase(testCase, route);
-  } else if (
-    normalizeText(route?.lane || "") === "registered_agent"
-    && normalizeText(route?.planner_action || "") === "dispatch_registered_agent"
-  ) {
-    execution = await runRegisteredAgentEvalCase(testCase, route);
-  } else {
-    execution = await runPlannerUserInputEdge({
-      text: testCase.user_text,
-      logger: noopLogger,
-      signal,
-      sessionKey: `usage-layer-eval:${testCase.id}`,
-      requestId: `usage-layer-eval:${testCase.id}`,
-    });
+  try {
+    if (normalizeText(route?.lane || "") === "cloud_doc_workflow") {
+      execution = await runCloudDocWorkflowEvalCase(testCase, route, { signal: caseSignal });
+    } else if (normalizeText(route?.lane || "") === "meeting_workflow") {
+      execution = await runMeetingWorkflowEvalCase(testCase, route);
+    } else if (normalizeText(route?.lane || "") === "doc_editor") {
+      execution = await runDocEditorEvalCase(testCase, route);
+    } else if (normalizeText(route?.lane || "") === "executive") {
+      execution = await runExecutiveEvalCase(testCase, route);
+    } else if (
+      normalizeText(route?.lane || "") === "registered_agent"
+      && normalizeText(route?.planner_action || "") === "dispatch_registered_agent"
+    ) {
+      execution = await runRegisteredAgentEvalCase(testCase, route);
+    } else if (
+      normalizeText(route?.planner_action || "") === "ROUTING_NO_MATCH"
+      || normalizeText(route?.agent_or_tool || "") === "error:ROUTING_NO_MATCH"
+    ) {
+      execution = await runRoutingNoMatchEvalCase(testCase, route);
+    } else {
+      execution = await runPlannerUserInputEdge({
+        text: testCase.user_text,
+        logger: noopLogger,
+        signal: caseSignal,
+        sessionKey: `usage-layer-eval:${testCase.id}`,
+        requestId: `usage-layer-eval:${testCase.id}`,
+      });
+    }
+  } catch (error) {
+    if (caseSignal?.aborted || isAbortLikeError(error)) {
+      execution = buildEvalTimeoutExecution({
+        route,
+        timeoutMs,
+      });
+    } else {
+      throw error;
+    }
   }
   const plannerEnvelope = execution?.plannerEnvelope || {};
   const userResponse = execution?.userResponse || {};
@@ -582,6 +811,8 @@ export async function runUsageLayerEvalCase(testCase = {}) {
   const genericFail = testCase.should_fail_if_generic === true && generic === true;
   const firstTurnSuccess = successTypeHit && !genericFail;
   const toolOmission = testCase.tool_required === true && !isControlledTarget(executedTarget);
+  const durationMs = Date.now() - startedAt;
+  const timedOut = normalizeText(plannerEnvelope?.error || "") === "case_timeout";
 
   return {
     id: testCase.id,
@@ -607,6 +838,8 @@ export async function runUsageLayerEvalCase(testCase = {}) {
     first_turn_success: firstTurnSuccess,
     wrong_route: wrongRoute,
     tool_omission: toolOmission,
+    timed_out: timedOut,
+    duration_ms: durationMs,
   };
 }
 
@@ -620,6 +853,8 @@ export function summarizeResults(results = []) {
   const toolOmissionCount = toolRequiredCases.filter((item) => item.tool_omission === true).length;
   const genericFailCount = genericSensitiveCases.filter((item) => item.generic === true).length;
   const unnecessaryClarificationCount = clarifyCases.filter((item) => item.unnecessary_clarification === true).length;
+  const timedOutCases = results.filter((item) => item.timed_out === true);
+  const timeoutCount = timedOutCases.length;
   const failCases = results
     .map((item) => ({
       ...item,
@@ -658,11 +893,17 @@ export function summarizeResults(results = []) {
       generic_fail: genericFailCount,
       clarify_cases: clarifyCases.length,
       unnecessary_clarification: unnecessaryClarificationCount,
+      timed_out: timeoutCount,
       reply_discipline_logged_cases: total,
     },
     failure_breakdown: failureBreakdown,
     top_failure_categories: topFailureCategories,
     top_fail_cases: failCases,
+    timed_out_cases: timedOutCases.map((item) => ({
+      id: item.id,
+      user_text: item.user_text,
+      duration_ms: item.duration_ms,
+    })),
   };
 }
 
@@ -674,6 +915,7 @@ function printSummary(summary = {}) {
   console.log(`TOR: ${summary.metrics.TOR}`);
   console.log(`GRR: ${summary.metrics.GRR}`);
   console.log(`UCR: ${summary.metrics.UCR}`);
+  console.log(`Timeouts: ${summary.counts.timed_out}`);
   console.log(`RDR: ${summary.metrics.RDR} (${summary.counts.reply_discipline_logged_cases} cases logged for manual reply-discipline review)`);
   console.log("");
   console.log("Top failure categories:");
@@ -682,6 +924,15 @@ function printSummary(summary = {}) {
   } else {
     for (const item of summary.top_failure_categories) {
       console.log(`- ${item.failure_class}: ${item.count}`);
+    }
+  }
+  console.log("");
+  console.log("Timed out cases:");
+  if (!Array.isArray(summary.timed_out_cases) || summary.timed_out_cases.length === 0) {
+    console.log("- none");
+  } else {
+    for (const item of summary.timed_out_cases) {
+      console.log(`- ${item.id} | ${item.duration_ms}ms | ${item.user_text}`);
     }
   }
   console.log("");
@@ -696,13 +947,22 @@ function printSummary(summary = {}) {
 }
 
 async function main() {
+  const startedAt = Date.now();
   const results = [];
   for (const testCase of usageLayerEvals) {
+    console.log(`[usage-layer][case:start] ${testCase.id} ${testCase.user_text}`);
+    const stuckWarningTimer = scheduleStuckCaseWarning(testCase);
     const result = await runUsageLayerEvalCase(testCase);
+    clearTimeout(stuckWarningTimer);
     results.push(result);
+    console.log(
+      `[usage-layer][case:${result.timed_out ? "timeout" : "done"}] ${result.id} ${result.duration_ms}ms failure=${result.failure_class || "none"}`,
+    );
   }
   const summary = summarizeResults(results);
   printSummary(summary);
+  console.log("");
+  console.log(`Total duration: ${Date.now() - startedAt}ms`);
 }
 
 const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;

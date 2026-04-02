@@ -46,6 +46,33 @@ const OPENCLAW_AGENT_ID = process.env.SEMANTIC_CLASSIFIER_OPENCLAW_AGENT || "mai
 const OPENCLAW_SESSION_ID =
   process.env.SEMANTIC_CLASSIFIER_OPENCLAW_SESSION || "lark-semantic-classifier-v1";
 
+function normalizeAbortSignal(signal) {
+  if (typeof AbortSignal !== "undefined" && signal instanceof AbortSignal) {
+    return signal;
+  }
+  return undefined;
+}
+
+function isAbortLikeError(error) {
+  const code = String(error?.code || "").trim();
+  const name = String(error?.name || "").trim();
+  const message = String(error?.message || "").trim();
+  return code === "ABORT_ERR"
+    || code === "request_cancelled"
+    || name === "AbortError"
+    || message === "request_cancelled";
+}
+
+function throwIfAborted(signal) {
+  if (!signal?.aborted) {
+    return;
+  }
+  throw signal.reason || Object.assign(new Error("request_cancelled"), {
+    name: "AbortError",
+    code: "request_cancelled",
+  });
+}
+
 function ensureCacheDir() {
   fs.mkdirSync(path.dirname(CACHE_PATH), { recursive: true });
 }
@@ -243,7 +270,9 @@ function buildRepairPrompt(items, malformedResponse, reason) {
   return governed.prompt;
 }
 
-async function callViaOpenClaw(prompt) {
+async function callViaOpenClaw(prompt, { signal = null } = {}) {
+  const abortSignal = normalizeAbortSignal(signal);
+  throwIfAborted(abortSignal);
   const { stdout } = await execFile(
     "openclaw",
     [
@@ -264,9 +293,11 @@ async function callViaOpenClaw(prompt) {
       cwd: process.cwd(),
       timeout: REQUEST_TIMEOUT_MS + 3000,
       maxBuffer: 1024 * 1024 * 8,
+      ...(abortSignal ? { signal: abortSignal } : {}),
     },
   );
 
+  throwIfAborted(abortSignal);
   const outer = JSON.parse(stdout);
   const payloadText = outer?.result?.payloads?.[0]?.text || "";
   if (!payloadText) {
@@ -275,25 +306,34 @@ async function callViaOpenClaw(prompt) {
   return payloadText;
 }
 
-async function callClassifier(prompt) {
+async function callClassifier(prompt, { signal = null } = {}) {
   if (PROVIDER !== "openclaw") {
     throw new Error(`Unsupported semantic classifier provider: ${PROVIDER}`);
   }
-  return callViaOpenClaw(prompt);
+  return callViaOpenClaw(prompt, { signal });
 }
 
-export async function classifyPendingItemsWithRetries(items, { classifier = callClassifier } = {}) {
+export async function classifyPendingItemsWithRetries(items, {
+  classifier = callClassifier,
+  signal = null,
+} = {}) {
   let prompt = buildPrompt(items);
   let lastError = null;
+  const abortSignal = normalizeAbortSignal(signal);
 
   for (let attempt = 0; attempt <= semanticClassifierJsonRetryMax; attempt += 1) {
     let content = "";
     try {
-      content = await classifier(prompt);
+      throwIfAborted(abortSignal);
+      content = await classifier(prompt, { signal: abortSignal });
+      throwIfAborted(abortSignal);
       const rows = validateBatchRows(parseBatchResponse(content), items);
       return rows;
     } catch (error) {
       lastError = error;
+      if (abortSignal?.aborted || isAbortLikeError(error)) {
+        throw error;
+      }
       if (attempt >= semanticClassifierJsonRetryMax) {
         break;
       }
@@ -333,12 +373,14 @@ export function classifyDocumentsLocally(items) {
   return resolved;
 }
 
-export async function classifyDocumentsSemantically(items) {
+export async function classifyDocumentsSemantically(items, { signal = null } = {}) {
   const cache = loadCache();
   const resolved = new Map();
   const normalizedItems = Array.isArray(items) ? items : [];
+  const abortSignal = normalizeAbortSignal(signal);
 
   for (let start = 0; start < normalizedItems.length; start += MAX_ITEMS_PER_RUN) {
+    throwIfAborted(abortSignal);
     const pending = [];
     for (const item of normalizedItems.slice(start, start + MAX_ITEMS_PER_RUN)) {
       const text = summarizeText(item.text || "");
@@ -371,8 +413,11 @@ export async function classifyDocumentsSemantically(items) {
 
     let rows = [];
     try {
-      rows = await classifyPendingItemsWithRetries(pending);
-    } catch {
+      rows = await classifyPendingItemsWithRetries(pending, { signal: abortSignal });
+    } catch (error) {
+      if (abortSignal?.aborted || isAbortLikeError(error)) {
+        throw error;
+      }
       for (const [id, value] of classifyDocumentsLocally(pending)) {
         resolved.set(id, value);
       }
