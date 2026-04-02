@@ -101,6 +101,7 @@ test("runtime-info naming stays canonical across planner envelope and answer bou
     execution_result: {
       ok: true,
       action: "get_runtime_info",
+      kind: "get_runtime_info",
       data: {
         db_path: "/tmp/runtime-closure.sqlite",
         node_pid: 4321,
@@ -109,7 +110,7 @@ test("runtime-info naming stays canonical across planner envelope and answer bou
       },
     },
     formatted_output: {
-      kind: "runtime_info",
+      kind: "get_runtime_info",
       db_path: "/tmp/runtime-closure.sqlite",
       node_pid: 4321,
       cwd: "/tmp/runtime-closure",
@@ -138,7 +139,8 @@ test("runtime-info naming stays canonical across planner envelope and answer bou
   const text = renderUserResponseText(userResponse);
 
   assert.equal(plannerEnvelope.action, "get_runtime_info");
-  assert.equal(plannerEnvelope.formatted_output?.kind, "runtime_info");
+  assert.equal(plannerEnvelope.execution_result?.kind, "get_runtime_info");
+  assert.equal(plannerEnvelope.formatted_output?.kind, "get_runtime_info");
   assert.ok(actionSlots.includes("get_runtime_info"));
   assert.equal(actionSlots.includes("runtime_info"), false);
   assert.equal(JSON.stringify(userResponse).includes("get_runtime_info"), false);

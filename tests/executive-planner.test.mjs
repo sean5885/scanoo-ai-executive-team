@@ -3001,7 +3001,7 @@ test("runPlannerToolFlow uses runtime-info flow for runtime query without affect
 
   assert.equal(result.selected_action, "get_runtime_info");
   assert.equal(result.execution_result?.ok, true);
-  assert.equal(result.execution_result?.formatted_output?.kind, "runtime_info");
+  assert.equal(result.execution_result?.formatted_output?.kind, "get_runtime_info");
   assert.equal(result.execution_result?.formatted_output?.db_path, "/tmp/lark-rag.sqlite");
   assert.deepEqual(calls, [{
     action: "get_runtime_info",

@@ -3,6 +3,7 @@ import { looksLikePlannerRuntimeInfoIntent } from "./planner-ingress-contract.mj
 import { createPlannerFlow } from "./planner-flow-runtime.mjs";
 
 const plannerRuntimeInfoContext = Object.freeze({});
+const RUNTIME_INFO_ACTION = "get_runtime_info";
 
 function buildRuntimeInfoTraceEvent({
   eventType = "",
@@ -31,7 +32,7 @@ function logRuntimeInfoTrace(logger = console, event = {}) {
 
 function buildRuntimeInfoFormattedOutput(result = null) {
   return {
-    kind: "runtime_info",
+    kind: RUNTIME_INFO_ACTION,
     db_path: cleanText(result?.data?.db_path) || null,
     node_pid: Number.isFinite(result?.data?.node_pid) ? result.data.node_pid : null,
     cwd: cleanText(result?.data?.cwd) || null,
@@ -50,7 +51,7 @@ function withFormattedOutput(result = null, formattedOutput = null) {
 }
 
 function supportsRuntimeInfoAction(action = "") {
-  return cleanText(action) === "get_runtime_info";
+  return cleanText(action) === RUNTIME_INFO_ACTION;
 }
 
 export function resolveRuntimeInfoRoute({
@@ -58,7 +59,7 @@ export function resolveRuntimeInfoRoute({
   payload = {},
   logger = console,
 } = {}) {
-  const action = looksLikePlannerRuntimeInfoIntent(userIntent) ? "get_runtime_info" : null;
+  const action = looksLikePlannerRuntimeInfoIntent(userIntent) ? RUNTIME_INFO_ACTION : null;
   const routingReason = action ? "selector_get_runtime_info" : "routing_no_match";
   logRuntimeInfoTrace(logger, buildRuntimeInfoTraceEvent({
     eventType: "runtime_info_route",
@@ -91,7 +92,7 @@ export async function formatRuntimeInfoExecutionResult({
   logRuntimeInfoTrace(logger, buildRuntimeInfoTraceEvent({
     eventType: "runtime_info_result",
     userQuery: userIntent,
-    routedIntent: "runtime_info",
+    routedIntent: RUNTIME_INFO_ACTION,
     tool: selectedAction,
     formatterKind: result?.formatted_output?.kind,
     traceId: result?.trace_id || null,

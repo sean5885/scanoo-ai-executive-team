@@ -127,6 +127,56 @@ test("partial execution data degrades gracefully into a usable user reply", () =
   assert.match(userResponse.limitations.join(" "), /最後一段結論/);
 });
 
+test("chat reply accepts canonical get_runtime_info kind without leaking machine naming", () => {
+  const userResponse = normalizeUserResponse({
+    plannerEnvelope: {
+      ok: true,
+      action: "get_runtime_info",
+      execution_result: {
+        ok: true,
+        kind: "get_runtime_info",
+        db_path: "/tmp/runtime-normalizer.sqlite",
+        node_pid: 4321,
+        cwd: "/tmp/runtime-normalizer",
+        service_start_time: "2026-03-27T15:00:00.000Z",
+      },
+    },
+  });
+  const text = renderUserResponseText(userResponse);
+
+  assert.equal(userResponse.ok, true);
+  assert.match(userResponse.answer || "", /runtime|PID|工作目錄|資料庫路徑/);
+  assert.doesNotMatch(JSON.stringify(userResponse), /get_runtime_info|runtime_info/);
+  assert.doesNotMatch(text, /get_runtime_info|runtime_info/);
+});
+
+test("payload accepts canonical top-level answer fields and maps sources through the shared answer source mapper", () => {
+  const userResponse = normalizeUserResponse({
+    payload: {
+      ok: true,
+      answer: "這是整理後的回答。",
+      sources: [
+        {
+          id: "source_runtime_1",
+          snippet: "Back to [README.md](/Users/seanhan/Documents/Playground/README.md)\n\n- runtime boundary keeps evidence explicit.",
+          metadata: {
+            title: "Runtime Boundary",
+            url: "https://example.com/runtime-boundary",
+            source_type: "docx",
+            document_id: "runtime_doc_1",
+          },
+        },
+      ],
+    },
+  });
+
+  assert.equal(userResponse.ok, true);
+  assert.equal(userResponse.sources.length, 1);
+  assert.match(userResponse.sources[0], /Runtime Boundary：runtime boundary keeps evidence explicit\./i);
+  assert.match(userResponse.sources[0], /https:\/\/example\.com\/runtime-boundary/);
+  assert.doesNotMatch(userResponse.sources[0], /\/Users\/|Back to \[?README|\[object Object\]/);
+});
+
 test("payload only accepts canonical execution_result.data and still maps sources through the shared source mapper", () => {
   const userResponse = normalizeUserResponse({
     payload: {

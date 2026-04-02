@@ -24,7 +24,7 @@ Last verified in this repo on 2026-03-29.
 
 - `action` naming 是否完全一致：部分收口。
   最關鍵 evidence：
-  - `tests/planner-contract-closure.test.mjs:86-123,125-185` 已把 canonical planner action naming 鎖在 planner envelope 與 answer/registered-agent boundary，不允許 `runtime_info` 這類 kind 名稱冒充 action 名稱。
+  - `tests/planner-contract-closure.test.mjs:86-123,125-185` 已把 canonical planner action naming 鎖在 planner envelope 與 answer/registered-agent boundary；runtime info 這條鏈路目前也要求 `execution_result.kind` 收斂到同一個 canonical 名稱 `get_runtime_info`，不再接受舊的 `runtime_info` alias。
   - `src/executive-planner.mjs:2001-2019` 的 planner tool flow public shape 使用 `selected_action / execution_result / routing_reason`。
   - 但同檔案與多個 flow helper 仍大量使用內部 camelCase 參數 `selectedAction / executionResult / routingReason`，例如 `src/executive-planner.mjs:2001-2008`、`src/planner-flow-runtime.mjs:186-224`、`src/planner-doc-query-flow.mjs:468-760`。
   - `buildPlannedUserInputEnvelope(...)` 又把 planner-facing envelope 改寫成 `action / params / execution_result`，見 `src/executive-planner.mjs:6746-6842`。

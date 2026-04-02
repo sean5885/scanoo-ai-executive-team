@@ -164,7 +164,7 @@ test("answer route normalizes the exact leaking runtime query into natural-langu
         sources: [],
         execution_result: {
           ok: true,
-          kind: "runtime_info",
+          kind: "get_runtime_info",
           db_path: "/tmp/test-runtime.sqlite",
           node_pid: 4321,
           cwd: "/tmp/test-runtime",
