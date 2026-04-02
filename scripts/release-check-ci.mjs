@@ -6,6 +6,8 @@ function getArgValue(flag = "") {
   return process.argv[index + 1] || null;
 }
 
+const writeSummaryFixturePath = process.env.SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE || "";
+
 function printUsage() {
   console.log([
     "Usage:",
@@ -13,6 +15,19 @@ function printUsage() {
     "  npm run release-check:ci -- --compare-previous",
     "  npm run release-check:ci -- --compare-snapshot <run-id|path>",
   ].join("\n"));
+}
+
+async function resolveRuntimeOverrides() {
+  if (!writeSummaryFixturePath) {
+    return {};
+  }
+
+  const { readFile } = await import("node:fs/promises");
+  const raw = await readFile(writeSummaryFixturePath, "utf8");
+  const summary = JSON.parse(raw);
+  return {
+    writeCheck: async () => summary,
+  };
 }
 
 if (process.argv.includes("--help")) {
@@ -41,7 +56,7 @@ try {
       resolvePreviousReleaseCheckSnapshot,
       resolveReleaseCheckSnapshot,
     } = await import("../src/release-check-history.mjs"));
-    result = await runReleaseCheck();
+    result = await runReleaseCheck(await resolveRuntimeOverrides());
   } finally {
     process.stdout.write = originalWrite;
   }

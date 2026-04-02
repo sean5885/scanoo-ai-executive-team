@@ -1,6 +1,7 @@
 import { listRegisteredAgents, knowledgeAgentSubcommands } from "./agent-registry.mjs";
 import { buildControlSummary, buildWriteSummary } from "./control-diagnostics.mjs";
 import { runCompanyBrainLifecycleSelfCheck } from "./company-brain-lifecycle-contract.mjs";
+import { buildDependencySummary } from "./dependency-guardrails.mjs";
 import { getAllowedMethodsForPath, getRouteContract } from "./http-route-contracts.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import {
@@ -366,12 +367,14 @@ function buildSystemSummary({
   baseOk = false,
   companyBrainSummary = {},
   controlSummary = {},
+  dependencySummary = {},
   writeSummary = {},
   routingSummary = {},
   plannerSummary = {},
 } = {}) {
   const companyBrainStatus = cleanText(companyBrainSummary?.status) === "pass" ? "pass" : "fail";
   const controlStatus = cleanText(controlSummary?.status) === "pass" ? "pass" : "fail";
+  const dependencyStatus = cleanText(dependencySummary?.status) === "fail" ? "fail" : "pass";
   const routingStatus = routingSummary?.status || "fail";
   const plannerGate = plannerSummary?.gate || "fail";
   const hasObviousRegression = Boolean(
@@ -381,6 +384,7 @@ function buildSystemSummary({
   const status = !baseOk
     || companyBrainStatus === "fail"
     || controlStatus === "fail"
+    || dependencyStatus === "fail"
     || cleanText(writeSummary?.status) !== "pass"
     || routingStatus === "fail"
     || plannerGate === "fail"
@@ -391,6 +395,7 @@ function buildSystemSummary({
   const safeToChange = baseOk
     && companyBrainStatus === "pass"
     && controlStatus === "pass"
+    && dependencyStatus === "pass"
     && cleanText(writeSummary?.status) === "pass"
     && routingStatus === "pass"
     && plannerGate === "pass"
@@ -401,6 +406,8 @@ function buildSystemSummary({
       ? "company_brain"
     : controlStatus !== "pass"
       ? "control"
+    : dependencyStatus !== "pass"
+      ? "dependency"
     : cleanText(writeSummary?.status) !== "pass"
       ? "write_policy"
     : routingStatus !== "pass" || routingSummary?.compare?.has_obvious_regression
@@ -414,6 +421,8 @@ function buildSystemSummary({
       ? "先看 company-brain lifecycle contract：確認 review / conflict / approval / apply 與 route contract、自檢案例一致；不要改 runtime write path。"
     : reviewPriority === "control"
       ? "先看 control：優先檢查 src/control-kernel.mjs 與 src/lane-executor.mjs，先修 ownership / same-scope drift，再動 downstream workflow。"
+    : reviewPriority === "dependency"
+      ? "先看 dependency guardrails：package-lock 不可解析到 axios 1.14.1 / 0.30.4；先跑 npm run check:dependencies，必要時調整 direct/transitive constraints 後再更新。"
     : reviewPriority === "write_policy"
       ? "先看 write governance：external write 必須統一走 canonical request -> runtime；先修 src/http-server.mjs、src/meeting-agent.mjs、src/lane-executor.mjs、src/lark-mutation-runtime.mjs 與對應 route contract/diagnostics。"
     : reviewPriority === "routing"
@@ -431,6 +440,7 @@ function buildSystemSummary({
     core_checks: baseOk ? "pass" : "fail",
     company_brain_status: companyBrainStatus,
     control_status: controlStatus,
+    dependency_status: dependencyStatus,
     write_policy_status: cleanText(writeSummary?.status) || "fail",
     routing_status: routingStatus,
     planner_gate: plannerGate,
@@ -463,11 +473,21 @@ export function normalizeSystemSelfCheckStatus(report = {}) {
     report?.system_summary?.company_brain_status || report?.company_brain_summary?.status,
   );
   const controlStatus = normalizePlannerStatus(report?.system_summary?.control_status || report?.control_summary?.status);
+  const dependencyStatus = normalizePlannerStatus(
+    report?.system_summary?.dependency_status || report?.dependency_summary?.status || "pass",
+  );
   const routingStatus = normalizeRoutingStatus(report?.system_summary?.routing_status || report?.routing_summary?.status);
   const plannerStatus = normalizePlannerStatus(report?.system_summary?.planner_gate || report?.planner_summary?.gate);
   const hasObviousRegression = Boolean(report?.system_summary?.has_obvious_regression);
 
-  if (!baseOk || companyBrainStatus === "fail" || controlStatus === "fail" || routingStatus === "fail" || plannerStatus === "fail") {
+  if (
+    !baseOk
+    || companyBrainStatus === "fail"
+    || controlStatus === "fail"
+    || dependencyStatus === "fail"
+    || routingStatus === "fail"
+    || plannerStatus === "fail"
+  ) {
     return "fail";
   }
   if (cleanText(report?.system_summary?.write_policy_status || report?.write_summary?.status) !== "pass") {
@@ -560,7 +580,7 @@ export function renderSystemSelfCheckReport(result = {}) {
   return [
     "System Self-Check",
     `現在系統能不能放心改：${systemSummary?.answer || "先不要"}`,
-    `結論：core ${systemSummary?.core_checks || "fail"} | company-brain ${systemSummary?.company_brain_status || "fail"} | control ${systemSummary?.control_status || "fail"} | write-policy ${systemSummary?.write_policy_status || "fail"} | routing ${systemSummary?.routing_status || "fail"} | planner ${systemSummary?.planner_gate || "fail"} | regression ${systemSummary?.has_obvious_regression ? "yes" : "no"}`,
+    `結論：core ${systemSummary?.core_checks || "fail"} | company-brain ${systemSummary?.company_brain_status || "fail"} | control ${systemSummary?.control_status || "fail"} | dependency ${systemSummary?.dependency_status || "pass"} | write-policy ${systemSummary?.write_policy_status || "fail"} | routing ${systemSummary?.routing_status || "fail"} | planner ${systemSummary?.planner_gate || "fail"} | regression ${systemSummary?.has_obvious_regression ? "yes" : "no"}`,
     `write policy：coverage ${Number(writeSummary?.policy_coverage?.enforced_route_count || 0)}/${Number(writeSummary?.policy_coverage?.metadata_route_count || 0)} | modes ${writeModes || "none"}`,
     `write evidence：real_only_violation ${realOnlyLine} | rollout_basis ${rolloutBasisLine}`,
     `write rollout：ready ${upgradeReady.length > 0 ? upgradeReady.join(",") : "none"} | high_risk ${highRisk.length > 0 ? highRisk.join(",") : "none"}`,
@@ -573,6 +593,8 @@ export async function runSystemSelfCheck({
   routingArchiveDir,
   plannerArchiveDir,
   selfCheckArchiveDir,
+  dependencyCheck = buildDependencySummary,
+  writeCheck = buildWriteSummary,
   plannerContractCheck = runPlannerContractConsistencyCheck,
 } = {}) {
   const agents = listRegisteredAgents();
@@ -619,9 +641,10 @@ export async function runSystemSelfCheck({
     }
   }
 
-  const [controlSummary, writeSummary, plannerSummary, routingSummary] = await Promise.all([
+  const [controlSummary, dependencySummary, writeSummary, plannerSummary, routingSummary] = await Promise.all([
     buildControlSummary(),
-    buildWriteSummary(),
+    dependencyCheck(),
+    writeCheck(),
     buildPlannerSummary({ plannerArchiveDir, plannerContractCheck }),
     buildRoutingSummary({ routingArchiveDir }),
   ]);
@@ -639,6 +662,7 @@ export async function runSystemSelfCheck({
     baseOk,
     companyBrainSummary,
     controlSummary,
+    dependencySummary,
     writeSummary,
     routingSummary,
     plannerSummary,
@@ -651,6 +675,7 @@ export async function runSystemSelfCheck({
     system_summary: systemSummary,
     company_brain_summary: companyBrainSummary,
     control_summary: controlSummary,
+    dependency_summary: dependencySummary,
     write_summary: writeSummary,
     routing_summary: routingSummary,
     planner_summary: {

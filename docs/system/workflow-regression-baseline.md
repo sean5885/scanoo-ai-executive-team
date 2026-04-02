@@ -407,9 +407,13 @@ npm run release-check:ci -- --compare-snapshot <run-id|path>
 - `planner:diagnostics` 是固定日常入口，直接根據目前 checked-in runtime / contract 狀態輸出單一 diagnostics summary，不會重跑 planner
 - `planner-contract-check` 本身是 read-only gate，不做 auto-fix
 - `check:planner-visible-skill` 是 planner-visible skill 的最小 read-only regression watch；固定檢查 selector key 命中、planner-visible/internal-only split、answer-boundary evidence、fail-closed negative probe，以及既有 non-skill routing 是否保持不變
-- `npm run self-check` 已固定包含同一個 planner contract gate，並會把 current planner 結果對最新 archived planner snapshot 做 compare（若存在）
-- `npm run release-check` 是 release / merge 前的單一 preflight 入口；它重用同一份 self-check、control、routing、planner 證據，但把 operator-facing 輸出壓成 merge/release verdict
+- `npm run self-check` 已固定包含同一個 planner contract gate，並會把 current planner 結果對最新 archived planner snapshot 做 compare（若存在）；同時也會固定帶入 lockfile dependency guardrails
+- `npm run release-check` 是 release / merge 前的單一 preflight 入口；它重用同一份 self-check、control、dependency、routing、planner 證據，但把 operator-facing 輸出壓成 merge/release verdict
 - `npm run release-check:ci` 是 CI / pipeline 專用入口；它重用同一份 report，只保留最小 JSON，並以 exit `0/1` 嚴格對應 pass/fail
+- `npm run check:dependencies` 是新的 lockfile-only gate：
+  - 掃描 repo 內所有 checked-in `package-lock.json`
+  - 目前固定阻擋 `axios@1.14.1` 與 `axios@0.30.4`
+  - 不改 runtime，不做 auto-fix，只提供 pass/fail 與最小 violation evidence
 - `npm run daily-status` 也額外暴露 read-only compare：
   - `--compare-previous`
   - `--compare-snapshot <run-id|path>`

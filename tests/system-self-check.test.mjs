@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
 const testDb = await createTestDbHarness();
@@ -32,6 +32,78 @@ const [
 test.after(() => {
   testDb.close();
 });
+
+const STABLE_WRITE_SUMMARY = {
+  status: "pass",
+  issue_count: 0,
+  summary: "write guard, runtime gate, and single-write-authority checks are aligned",
+  guidance: "write governance is aligned; keep canonical request -> runtime boundaries stable.",
+  policy_coverage: {
+    metadata_route_count: 33,
+    enforced_route_count: 33,
+    route_coverage_ratio: 1,
+  },
+  enforcement_modes: {
+    mode_counts: {
+      enforce: 27,
+      observe: 2,
+      warn: 4,
+    },
+  },
+  violation_type_stats: {
+    missing_scope_key: 33,
+    missing_idempotency_key: 2,
+    confirm_required: 7,
+    review_required: 5,
+  },
+  rollout_advice: {
+    rollout_rules: {
+      evidence_source: "real_request_backed",
+      warn_to_enforce: {
+        max_real_violation_rate: 0.01,
+        min_real_sample_size: 20,
+      },
+    },
+    basis_summary: {
+      evidence_source: "real_request_backed",
+      candidate_route_count: 1,
+      eligible_route_count: 0,
+      blocked_route_count: 1,
+      routes: [
+        {
+          pathname: "/api/meeting/confirm",
+          action: "meeting_confirm_write",
+          current_mode: "warn",
+          target_mode: "enforce",
+          eligible: false,
+          real_traffic_sample_count: 0,
+          real_traffic_violation_rate: null,
+        },
+      ],
+    },
+    upgrade_ready_routes: [],
+    high_risk_routes: [
+      {
+        pathname: "/api/meeting/confirm",
+        action: "meeting_confirm_write",
+        current_mode: "warn",
+        target_mode: "enforce",
+        recommendation: "hold_warn",
+        real_traffic_sample_count: 0,
+        real_traffic_violation_rate: null,
+      },
+      {
+        pathname: "/meeting/confirm",
+        action: "meeting_confirm_write",
+        current_mode: "warn",
+        target_mode: "enforce",
+        recommendation: "hold_warn",
+        real_traffic_sample_count: 0,
+        real_traffic_violation_rate: null,
+      },
+    ],
+  },
+};
 
 async function seedSelfCheckArchives() {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "system-self-check-"));
@@ -94,9 +166,18 @@ function writeJson(filePath, payload) {
   writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
+async function createWriteSummaryFixture(baseDir, summary = STABLE_WRITE_SUMMARY) {
+  const fixturePath = path.join(baseDir, "write-summary-fixture.json");
+  await writeFile(fixturePath, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
+  return fixturePath;
+}
+
 test("system self-check returns unified routing and planner summaries", async () => {
   const archives = await seedSelfCheckArchives();
-  const result = await runSystemSelfCheck(archives);
+  const result = await runSystemSelfCheck({
+    ...archives,
+    writeCheck: async () => STABLE_WRITE_SUMMARY,
+  });
 
   assert.equal(result.ok, true);
   assert.equal(result.doc_boundary_regression, false);
@@ -105,6 +186,7 @@ test("system self-check returns unified routing and planner summaries", async ()
   assert.equal(result.system_summary.core_checks, "pass");
   assert.equal(result.system_summary.company_brain_status, "pass");
   assert.equal(result.system_summary.control_status, "pass");
+  assert.equal(result.system_summary.dependency_status, "pass");
   assert.equal(result.system_summary.write_policy_status, "pass");
   assert.equal(result.system_summary.routing_status, "pass");
   assert.equal(result.system_summary.planner_gate, "pass");
@@ -114,6 +196,7 @@ test("system self-check returns unified routing and planner summaries", async ()
   assert.equal(result.company_brain_summary.failing_cases.length, 0);
   assert.equal(result.control_summary.status, "pass");
   assert.equal(result.control_summary.issue_count, 0);
+  assert.equal(result.dependency_summary.status, "pass");
   assert.equal(result.write_summary.status, "pass");
   assert.deepEqual(result.write_summary.enforcement_modes.mode_counts, {
     enforce: 27,
@@ -157,9 +240,11 @@ test("system self-check returns unified routing and planner summaries", async ()
   assert.equal(snapshot.system_summary.status, "pass");
   assert.equal(snapshot.system_summary.company_brain_status, "pass");
   assert.equal(snapshot.system_summary.control_status, "pass");
+  assert.equal(snapshot.system_summary.dependency_status, "pass");
   assert.equal(snapshot.system_summary.write_policy_status, "pass");
   assert.equal(snapshot.doc_boundary_regression, false);
   assert.equal(snapshot.control_summary.status, "pass");
+  assert.equal(snapshot.dependency_summary.status, "pass");
   assert.equal(snapshot.write_summary.status, "pass");
   assert.equal(snapshot.routing_summary.status, "pass");
   assert.equal(snapshot.routing_summary.doc_boundary_regression, false);
@@ -240,6 +325,7 @@ test("system self-check marks doc-boundary routing regressions and points to int
     routingArchiveDir,
     plannerArchiveDir,
     selfCheckArchiveDir,
+    writeCheck: async () => STABLE_WRITE_SUMMARY,
   });
 
   assert.equal(result.ok, false);
@@ -249,6 +335,41 @@ test("system self-check marks doc-boundary routing regressions and points to int
   assert.match(result.routing_summary.guidance, /doc-boundary 類問題/);
   assert.equal(result.system_summary.review_priority, "routing");
   assert.match(result.system_summary.guidance, /優先檢查 intent guard/);
+});
+
+test("system self-check blocks when dependency guardrails fail", async () => {
+  const archives = await seedSelfCheckArchives();
+  const result = await runSystemSelfCheck({
+    ...archives,
+    writeCheck: async () => STABLE_WRITE_SUMMARY,
+    dependencyCheck: async () => ({
+      status: "fail",
+      summary: "dependency lockfiles include blocked package versions or parse errors",
+      guidance: "先修 dependency guardrails。",
+      checked_lockfiles: ["package-lock.json"],
+      checked_package_count: 2,
+      blocked_versions: ["axios@1.14.1", "axios@0.30.4"],
+      violations: [
+        {
+          lockfile_path: "package-lock.json",
+          package_name: "axios",
+          detected_version: "1.14.1",
+          package_path: "node_modules/axios",
+          reason: "blocked due to the 2026-03-31 npm maintainer compromise",
+        },
+      ],
+      errors: [],
+    }),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.system_summary.status, "fail");
+  assert.equal(result.system_summary.safe_to_change, false);
+  assert.equal(result.system_summary.dependency_status, "fail");
+  assert.equal(result.system_summary.review_priority, "dependency");
+  assert.match(result.system_summary.guidance, /axios 1.14.1 \/ 0.30.4/);
+  assert.equal(result.dependency_summary.status, "fail");
+  assert.equal(result.dependency_summary.violations.length, 1);
 });
 
 test("system self-check surfaces planner create_doc governance mismatches", async () => {
@@ -317,6 +438,7 @@ test("system self-check surfaces planner create_doc governance mismatches", asyn
 
   const result = await runSystemSelfCheck({
     ...archives,
+    writeCheck: async () => STABLE_WRITE_SUMMARY,
     plannerContractCheck: () => plannerReport,
   });
 
@@ -330,6 +452,7 @@ test("system self-check surfaces planner create_doc governance mismatches", asyn
 
 test("self-check CLI renders concise guidance by default", async () => {
   const archives = await seedSelfCheckArchives();
+  const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.selfCheckArchiveDir));
   const output = execFileSync("node", ["scripts/self-check.mjs"], {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -338,12 +461,13 @@ test("self-check CLI renders concise guidance by default", async () => {
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+      SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
     },
   });
 
   assert.match(output, /System Self-Check/);
   assert.match(output, /現在系統能不能放心改：可以/);
-  assert.match(output, /結論：core pass \| company-brain pass \| control pass \| write-policy pass \| routing pass \| planner pass \| regression no/);
+  assert.match(output, /結論：core pass \| company-brain pass \| control pass \| dependency pass \| write-policy pass \| routing pass \| planner pass \| regression no/);
   assert.match(output, /write policy：coverage 33\/33 \| modes enforce:27,observe:2,warn:4/);
   assert.match(output, /write evidence：real_only_violation meeting_confirm_write=unknown \| rollout_basis 0\/1 ready/);
   assert.match(output, /write rollout：ready none \| high_risk meeting_confirm_write/);
@@ -353,6 +477,7 @@ test("self-check CLI renders concise guidance by default", async () => {
 
 test("self-check CLI emits unified JSON report with --json", async () => {
   const archives = await seedSelfCheckArchives();
+  const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.selfCheckArchiveDir));
   const raw = execFileSync("node", ["scripts/self-check.mjs", "--json"], {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -361,6 +486,7 @@ test("self-check CLI emits unified JSON report with --json", async () => {
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+      SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
     },
   });
   const parsed = JSON.parse(raw);
@@ -375,6 +501,7 @@ test("self-check CLI emits unified JSON report with --json", async () => {
     core_checks: "pass",
     company_brain_status: "pass",
     control_status: "pass",
+    dependency_status: "pass",
     write_policy_status: "pass",
     routing_status: "pass",
     planner_gate: "pass",
@@ -393,6 +520,7 @@ test("self-check CLI emits unified JSON report with --json", async () => {
 
 test("self-check CLI compare-previous prints the minimal compare view", async () => {
   const archives = await seedSelfCheckArchives();
+  const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.selfCheckArchiveDir));
   execFileSync("node", ["scripts/self-check.mjs", "--json"], {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -401,6 +529,7 @@ test("self-check CLI compare-previous prints the minimal compare view", async ()
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+      SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
     },
   });
 
@@ -412,6 +541,7 @@ test("self-check CLI compare-previous prints the minimal compare view", async ()
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+      SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
     },
   });
 
@@ -425,6 +555,7 @@ test("self-check CLI compare-previous prints the minimal compare view", async ()
 
 test("self-check CLI json compare_summary stays minimal", async () => {
   const archives = await seedSelfCheckArchives();
+  const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.selfCheckArchiveDir));
   const firstRaw = execFileSync("node", ["scripts/self-check.mjs", "--json"], {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -433,6 +564,7 @@ test("self-check CLI json compare_summary stays minimal", async () => {
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+      SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
     },
   });
   const firstParsed = JSON.parse(firstRaw);
@@ -469,6 +601,7 @@ test("self-check CLI json compare_summary stays minimal", async () => {
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+      SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
     },
   });
   const parsed = JSON.parse(raw);
