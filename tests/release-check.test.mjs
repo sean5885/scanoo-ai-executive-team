@@ -4,7 +4,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, mkdir } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
 const testDb = await createTestDbHarness();
@@ -165,9 +165,40 @@ const CURRENT_WRITE_GOVERNANCE = {
   ],
 };
 
+const STABLE_WRITE_SUMMARY = {
+  status: "pass",
+  issue_count: 0,
+  summary: "write guard, runtime gate, and single-write-authority checks are aligned",
+  guidance: "write governance is aligned; keep canonical request -> runtime boundaries stable.",
+  policy_coverage: {
+    metadata_route_count: CURRENT_WRITE_GOVERNANCE.metadata_route_count,
+    enforced_route_count: CURRENT_WRITE_GOVERNANCE.enforced_route_count,
+    route_coverage_ratio: CURRENT_WRITE_GOVERNANCE.route_coverage_ratio,
+  },
+  enforcement_modes: {
+    mode_counts: CURRENT_WRITE_GOVERNANCE.mode_counts,
+  },
+  violation_type_stats: CURRENT_WRITE_GOVERNANCE.violation_type_stats,
+  rollout_advice: {
+    rollout_rules: CURRENT_WRITE_GOVERNANCE.rollout_rules,
+    basis_summary: CURRENT_WRITE_GOVERNANCE.rollout_basis_summary,
+    upgrade_ready_routes: CURRENT_WRITE_GOVERNANCE.upgrade_ready_routes,
+    high_risk_routes: CURRENT_WRITE_GOVERNANCE.high_risk_routes,
+  },
+};
+
+async function createWriteSummaryFixture(baseDir, summary = STABLE_WRITE_SUMMARY) {
+  const fixturePath = path.join(baseDir, "write-summary-fixture.json");
+  await writeFile(fixturePath, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
+  return fixturePath;
+}
+
 test("release-check report passes when self-check, routing, and planner are stable", async () => {
   const archives = await seedReleaseCheckArchives();
-  const result = await runReleaseCheck(archives);
+  const result = await runReleaseCheck({
+    ...archives,
+    writeCheck: async () => STABLE_WRITE_SUMMARY,
+  });
 
   assert.deepEqual(result.report, {
     overall_status: "pass",
@@ -253,6 +284,54 @@ test("release-check report blocks on company-brain lifecycle governance failures
     action_hint: "inspect company-brain lifecycle contract and apply gate",
     failing_area: "doc",
     representative_fail_case: ["company_brain_apply_gate:missing_review"],
+    drilldown_source: ["release-check triage"],
+  });
+});
+
+test("release-check report blocks on dependency policy failures", () => {
+  const selfCheckResult = {
+    ok: false,
+    system_summary: {
+      core_checks: "pass",
+      dependency_status: "fail",
+    },
+    routing_summary: {
+      status: "pass",
+      compare: {
+        has_obvious_regression: false,
+      },
+    },
+    planner_summary: {
+      gate: "pass",
+      compare: {
+        has_obvious_regression: false,
+      },
+    },
+    dependency_summary: {
+      status: "fail",
+      violations: [
+        {
+          lockfile_path: "package-lock.json",
+          package_name: "axios",
+          detected_version: "1.14.1",
+        },
+      ],
+    },
+  };
+  const drilldown = buildReleaseCheckDrilldown({ selfCheckResult });
+  const report = buildReleaseCheckReport({
+    selfCheckResult,
+    drilldown,
+  });
+
+  assert.deepEqual(report, {
+    overall_status: "fail",
+    blocking_checks: ["dependency_policy_failure"],
+    doc_boundary_regression: false,
+    suggested_next_step: "先看 dependency guardrails：package-lock.json、scripts/dependency-guardrails.mjs、src/dependency-guardrails.mjs；禁止解析到 axios 1.14.1 / 0.30.4。",
+    action_hint: "inspect dependency guardrails and replace blocked package versions",
+    failing_area: "runtime",
+    representative_fail_case: ["axios@1.14.1 via package-lock.json"],
     drilldown_source: ["release-check triage"],
   });
 });
@@ -758,6 +837,7 @@ test("release-check human output flags doc-boundary routing regressions", () => 
 
 test("release-check CLI emits only the minimal JSON structure", async () => {
   const archives = await seedReleaseCheckArchives();
+  const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
   const raw = execFileSync("node", ["scripts/release-check.mjs", "--json"], {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -767,6 +847,7 @@ test("release-check CLI emits only the minimal JSON structure", async () => {
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+      SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
     },
   });
   const parsed = JSON.parse(raw);
@@ -816,6 +897,7 @@ test("release-check CLI emits only the minimal JSON structure", async () => {
 
 test("release-check CLI default output stays limited to the minimal write-governance view", async () => {
   const archives = await seedReleaseCheckArchives();
+  const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
   const output = execFileSync("node", ["scripts/release-check.mjs"], {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -825,6 +907,7 @@ test("release-check CLI default output stays limited to the minimal write-govern
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+      SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
     },
   });
 
@@ -845,6 +928,7 @@ test("release-check exit code maps pass/fail strictly", () => {
 
 test("release-check CLI compare-previous prints only the minimal compare view", async () => {
   const archives = await seedReleaseCheckArchives();
+  const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
   const firstRaw = execFileSync("node", ["scripts/release-check.mjs", "--json"], {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -854,6 +938,7 @@ test("release-check CLI compare-previous prints only the minimal compare view", 
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+      SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
     },
   });
   const firstReport = JSON.parse(firstRaw);
@@ -896,6 +981,7 @@ test("release-check CLI compare-previous prints only the minimal compare view", 
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+      SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
     },
   });
 
@@ -919,6 +1005,7 @@ test("release-check CLI compare-previous prints only the minimal compare view", 
 
 test("release-check CLI json compare-snapshot only returns the compare summary", async () => {
   const archives = await seedReleaseCheckArchives();
+  const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
   execFileSync("node", ["scripts/release-check.mjs", "--json"], {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -928,6 +1015,7 @@ test("release-check CLI json compare-snapshot only returns the compare summary",
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+      SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
     },
   });
 
@@ -961,6 +1049,7 @@ test("release-check CLI json compare-snapshot only returns the compare summary",
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+      SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
     },
   });
   const parsed = JSON.parse(raw);
@@ -974,6 +1063,7 @@ test("release-check CLI json compare-snapshot only returns the compare summary",
 
 test("release-check CI entry emits minimal JSON and exits 0 on pass", async () => {
   const archives = await seedReleaseCheckArchives();
+  const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
   const result = spawnSync("node", ["scripts/release-check-ci.mjs"], {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -983,6 +1073,7 @@ test("release-check CI entry emits minimal JSON and exits 0 on pass", async () =
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+      SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
     },
   });
 
@@ -1005,6 +1096,7 @@ test("release-check CI entry emits minimal JSON and exits 0 on pass", async () =
 
 test("release-check CI compare-previous emits only the compare summary JSON", async () => {
   const archives = await seedReleaseCheckArchives();
+  const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
   spawnSync("node", ["scripts/release-check-ci.mjs"], {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -1014,6 +1106,7 @@ test("release-check CI compare-previous emits only the compare summary JSON", as
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+      SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
     },
   });
 
@@ -1045,6 +1138,7 @@ test("release-check CI compare-previous emits only the compare summary JSON", as
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+      SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
     },
   });
 
@@ -1066,6 +1160,7 @@ test("release-check CI entry exits 1 on fail", async () => {
   await mkdir(routingArchiveDir, { recursive: true });
   await mkdir(plannerArchiveDir, { recursive: true });
   await mkdir(selfCheckArchiveDir, { recursive: true });
+  const writeSummaryFixturePath = await createWriteSummaryFixture(baseDir);
 
   const result = spawnSync("node", ["scripts/release-check-ci.mjs"], {
     cwd: process.cwd(),
@@ -1076,6 +1171,7 @@ test("release-check CI entry exits 1 on fail", async () => {
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: selfCheckArchiveDir,
+      SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
     },
   });
 

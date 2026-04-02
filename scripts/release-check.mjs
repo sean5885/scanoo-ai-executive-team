@@ -1,4 +1,5 @@
 const wantsJson = process.argv.includes("--json");
+const writeSummaryFixturePath = process.env.SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE || "";
 
 function getArgValue(flag = "") {
   const index = process.argv.indexOf(flag);
@@ -32,6 +33,19 @@ function printUsage() {
   ].join("\n"));
 }
 
+async function resolveRuntimeOverrides() {
+  if (!writeSummaryFixturePath) {
+    return {};
+  }
+
+  const { readFile } = await import("node:fs/promises");
+  const raw = await readFile(writeSummaryFixturePath, "utf8");
+  const summary = JSON.parse(raw);
+  return {
+    writeCheck: async () => summary,
+  };
+}
+
 if (process.argv.includes("--help")) {
   printUsage();
   process.exit(0);
@@ -60,7 +74,7 @@ try {
       resolvePreviousReleaseCheckSnapshot,
       resolveReleaseCheckSnapshot,
     } = await import("../src/release-check-history.mjs"));
-    result = await runReleaseCheck();
+    result = await runReleaseCheck(await resolveRuntimeOverrides());
   } finally {
     process.stdout.write = originalWrite;
   }

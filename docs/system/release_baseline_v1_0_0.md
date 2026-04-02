@@ -93,15 +93,19 @@ node scripts/check-auth.mjs
 
 Notes:
 
-- `npm run release-check` is the single operator-facing preflight for merge/release and only compresses self-check + control status + routing status + planner gate into one verdict
+- `npm run release-check` is the single operator-facing preflight for merge/release and only compresses self-check + control status + dependency guardrails + routing status + planner gate into one verdict
 - `npm run release-check:ci` is the CI/pipeline entry for the same verdict; it emits only the minimal JSON report and exits `0` on `pass`, `1` on `fail`
 - both entries now archive each run into `.tmp/release-check-history/manifest.json` and `.tmp/release-check-history/snapshots/<run-id>.json`
 - both entries also support read-only compare against release-check history through `--compare-previous` and `--compare-snapshot <run-id|path>`
 - the current release history checkpoint is the snapshot + manifest + compare version over the same release-check gate
 - the current release decision layer checkpoint is the CI + triage complete version:
   - CI entry = `release-check:ci`
-  - triage classes = `system_regression` / `control_regression` / `write_policy_failure` / `routing_regression` / `planner_contract_failure`
+  - triage classes = `system_regression` / `control_regression` / `dependency_policy_failure` / `write_policy_failure` / `routing_regression` / `planner_contract_failure`
   - `suggested_next_step` stays minimal but points to the first module family or file type to inspect
+- `npm run check:dependencies` is the lockfile-only dependency safety gate:
+  - it scans every checked-in `package-lock.json`
+  - it currently blocks `axios@1.14.1` and `axios@0.30.4`
+  - `npm run test:ci` now runs this gate before the broader test suite
 - `npm run self-check` and `npm run release-check` now both treat write governance as a blocking gate:
   - self-check blocks `safe_to_change` when `write_summary.status !== "pass"`
   - release-check blocks merge/release when write governance reports `write_policy_failure`
@@ -109,6 +113,9 @@ Notes:
     - 33 metadata routes
     - 33 enforced routes
     - enforcement mode split `enforce:27 / observe:2 / warn:4`
+- `npm run self-check` and `npm run release-check` also treat blocked dependency versions as a blocking gate:
+  - self-check blocks `safe_to_change` when `dependency_summary.status !== "pass"`
+  - release-check blocks merge/release when dependency guardrails report `dependency_policy_failure`
 - on this preflight line, `fail` means block merge/deploy; `pass` means this gate can release the next pipeline stage
 - recommended cadence:
   - local development: `npm run release-check`
@@ -123,6 +130,7 @@ Minimal platform-neutral CI shape:
 
 ```bash
 npm ci
+npm run check:dependencies
 npm test
 npm run release-check:ci
 ```

@@ -10,6 +10,7 @@ import { runSystemSelfCheck } from "./system-self-check.mjs";
 
 const BLOCKING_SYSTEM_REGRESSION = "system_regression";
 const BLOCKING_CONTROL_REGRESSION = "control_regression";
+const BLOCKING_DEPENDENCY_POLICY_FAILURE = "dependency_policy_failure";
 const BLOCKING_WRITE_POLICY_FAILURE = "write_policy_failure";
 const BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE = "company_brain_lifecycle_failure";
 const BLOCKING_ROUTING_REGRESSION = "routing_regression";
@@ -92,6 +93,10 @@ function buildSystemRegressionNextStep(selfCheckResult = {}) {
 
 function buildControlRegressionNextStep() {
   return "先看 control regression 的 control 模組：src/control-kernel.mjs 與 src/lane-executor.mjs。";
+}
+
+function buildDependencyRegressionNextStep() {
+  return "先看 dependency guardrails：package-lock.json、scripts/dependency-guardrails.mjs、src/dependency-guardrails.mjs；禁止解析到 axios 1.14.1 / 0.30.4。";
 }
 
 function buildCompanyBrainRegressionNextStep() {
@@ -216,6 +221,9 @@ function buildReleaseCheckActionHint({
   if (firstBlockingCheck === BLOCKING_ROUTING_REGRESSION) {
     return buildRoutingActionHint(drilldown, { docBoundaryRegression });
   }
+  if (firstBlockingCheck === BLOCKING_DEPENDENCY_POLICY_FAILURE) {
+    return "inspect dependency guardrails and replace blocked package versions";
+  }
   if (firstBlockingCheck === BLOCKING_WRITE_POLICY_FAILURE) {
     return "inspect write governance runtime and route coverage";
   }
@@ -277,6 +285,13 @@ function hasBlockingWritePolicyIssue(selfCheckResult = {}) {
     return false;
   }
   return writePolicyStatus !== "pass";
+}
+
+function hasBlockingDependencyIssue(selfCheckResult = {}) {
+  const dependencyStatus = cleanText(
+    selfCheckResult?.dependency_summary?.status || selfCheckResult?.system_summary?.dependency_status || "pass",
+  );
+  return dependencyStatus !== "pass";
 }
 
 function hasBlockingCompanyBrainIssue(selfCheckResult = {}) {
@@ -591,6 +606,28 @@ function buildCompanyBrainDrilldown(selfCheckResult = {}) {
   };
 }
 
+function buildDependencyDrilldown(selfCheckResult = {}) {
+  const dependencySummary = selfCheckResult?.dependency_summary || {};
+  const representativeFailCase = [
+    ...(Array.isArray(dependencySummary?.violations)
+      ? dependencySummary.violations.map((item) => (
+        `${cleanText(item?.package_name) || "unknown"}@${cleanText(item?.detected_version) || "unknown"} via ${cleanText(item?.lockfile_path) || "unknown"}`
+      ))
+      : []),
+    ...(Array.isArray(dependencySummary?.errors)
+      ? dependencySummary.errors.map((item) => `dependency_guardrails_error:${cleanText(item?.lockfile_path) || "unknown"}`)
+      : []),
+  ].slice(0, 2);
+
+  return {
+    failing_area: FAILING_AREA_RUNTIME,
+    representative_fail_case: representativeFailCase.length > 0
+      ? representativeFailCase
+      : ["dependency guardrails failed without representative case"],
+    drilldown_source: [RELEASE_CHECK_TRIAGE_SOURCE],
+  };
+}
+
 export function buildReleaseCheckDrilldown({
   selfCheckResult = {},
   controlSnapshot = null,
@@ -603,6 +640,7 @@ export function buildReleaseCheckDrilldown({
     : [
         ...(cleanText(selfCheckResult?.system_summary?.core_checks) !== "pass" ? [BLOCKING_SYSTEM_REGRESSION] : []),
         ...(hasBlockingControlIssue(selfCheckResult) ? [BLOCKING_CONTROL_REGRESSION] : []),
+        ...(hasBlockingDependencyIssue(selfCheckResult) ? [BLOCKING_DEPENDENCY_POLICY_FAILURE] : []),
         ...(hasBlockingCompanyBrainIssue(selfCheckResult) ? [BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE] : []),
         ...(hasBlockingRoutingIssue(selfCheckResult) ? [BLOCKING_ROUTING_REGRESSION] : []),
         ...(hasBlockingPlannerIssue(selfCheckResult) ? [BLOCKING_PLANNER_CONTRACT_FAILURE] : []),
@@ -614,6 +652,9 @@ export function buildReleaseCheckDrilldown({
   }
   if (firstBlockingCheck === BLOCKING_CONTROL_REGRESSION) {
     return buildControlDrilldown({ controlSnapshot, selfCheckResult });
+  }
+  if (firstBlockingCheck === BLOCKING_DEPENDENCY_POLICY_FAILURE) {
+    return buildDependencyDrilldown(selfCheckResult);
   }
   if (firstBlockingCheck === BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE) {
     return buildCompanyBrainDrilldown(selfCheckResult);
@@ -642,6 +683,10 @@ export function buildReleaseCheckReport({ selfCheckResult = {}, drilldown = null
     blockingChecks.push(BLOCKING_CONTROL_REGRESSION);
   }
 
+  if (hasBlockingDependencyIssue(selfCheckResult)) {
+    blockingChecks.push(BLOCKING_DEPENDENCY_POLICY_FAILURE);
+  }
+
   if (hasBlockingWritePolicyIssue(selfCheckResult)) {
     blockingChecks.push(BLOCKING_WRITE_POLICY_FAILURE);
   }
@@ -668,6 +713,8 @@ export function buildReleaseCheckReport({ selfCheckResult = {}, drilldown = null
     ? buildSystemRegressionNextStep(selfCheckResult)
     : firstBlockingCheck === BLOCKING_CONTROL_REGRESSION
       ? buildControlRegressionNextStep(selfCheckResult)
+    : firstBlockingCheck === BLOCKING_DEPENDENCY_POLICY_FAILURE
+      ? buildDependencyRegressionNextStep(selfCheckResult)
     : firstBlockingCheck === BLOCKING_WRITE_POLICY_FAILURE
       ? buildWritePolicyRegressionNextStep(selfCheckResult)
     : firstBlockingCheck === BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE
@@ -708,6 +755,9 @@ function renderBlockingLineLabel(blockingCheck = "") {
   }
   if (blockingCheck === BLOCKING_CONTROL_REGRESSION) {
     return "control regression";
+  }
+  if (blockingCheck === BLOCKING_DEPENDENCY_POLICY_FAILURE) {
+    return "dependency policy failure";
   }
   if (blockingCheck === BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE) {
     return "company-brain lifecycle failure";
@@ -850,6 +900,9 @@ export async function runReleaseCheck(options = {}) {
   }
   if (hasBlockingControlIssue(selfCheckResult)) {
     blockingChecks.push(BLOCKING_CONTROL_REGRESSION);
+  }
+  if (hasBlockingDependencyIssue(selfCheckResult)) {
+    blockingChecks.push(BLOCKING_DEPENDENCY_POLICY_FAILURE);
   }
   if (hasBlockingWritePolicyIssue(selfCheckResult)) {
     blockingChecks.push(BLOCKING_WRITE_POLICY_FAILURE);

@@ -1,4 +1,5 @@
 const wantsJson = process.argv.includes("--json");
+const writeSummaryFixturePath = process.env.SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE || "";
 
 function getArgValue(flag = "") {
   const index = process.argv.indexOf(flag);
@@ -30,6 +31,19 @@ function printUsage() {
     "  npm run self-check -- --compare-snapshot <run-id|path>",
     "  npm run self-check -- --json",
   ].join("\n"));
+}
+
+async function resolveRuntimeOverrides() {
+  if (!writeSummaryFixturePath) {
+    return {};
+  }
+
+  const { readFile } = await import("node:fs/promises");
+  const raw = await readFile(writeSummaryFixturePath, "utf8");
+  const summary = JSON.parse(raw);
+  return {
+    writeCheck: async () => summary,
+  };
 }
 
 if (process.argv.includes("--help")) {
@@ -80,7 +94,7 @@ async function resolveCompareTarget(currentRunId = "") {
 try {
   let result;
   try {
-    result = await runSystemSelfCheck();
+    result = await runSystemSelfCheck(await resolveRuntimeOverrides());
   } finally {
     process.stdout.write = originalWrite;
   }
