@@ -424,8 +424,8 @@ function buildSystemSummary({
     : reviewPriority === "dependency"
       ? "先看 dependency guardrails：package-lock 不可解析到 axios 1.14.1 / 0.30.4；先跑 npm run check:dependencies，必要時調整 direct/transitive constraints 後再更新。"
     : reviewPriority === "write_policy"
-      ? "先看 write governance：external write 必須統一走 canonical request -> runtime；先修 src/http-server.mjs、src/meeting-agent.mjs、src/lane-executor.mjs、src/lark-mutation-runtime.mjs 與對應 route contract/diagnostics。"
-    : reviewPriority === "routing"
+      ? "先看 write governance：external write 必須統一走 canonical request -> runtime；先修 src/http-server.mjs、src/runtime-message-reply.mjs、src/meeting-agent.mjs、src/lane-executor.mjs、src/lark-mutation-runtime.mjs 與對應 route contract/diagnostics。"
+      : reviewPriority === "routing"
       ? routingSummary?.doc_boundary_regression === true
         ? "這是 doc-boundary 類問題，優先檢查 intent guard；先看 src/message-intent-utils.mjs、src/lane-executor.mjs，再用 routing-eval doc-boundary pack 驗證。"
         : "先看 routing：latest snapshot 與 compare 決定是不是 regression；routing 穩定後再看 planner。"

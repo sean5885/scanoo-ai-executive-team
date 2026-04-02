@@ -336,6 +336,51 @@ test("release-check report blocks on dependency policy failures", () => {
   });
 });
 
+test("release-check drilldown derives write representative issues from self-check", () => {
+  const drilldown = buildReleaseCheckDrilldown({
+    selfCheckResult: {
+      system_summary: {
+        core_checks: "pass",
+        company_brain_status: "pass",
+      },
+      write_summary: {
+        status: "fail",
+        issues: [
+          {
+            code: "write_integration_missing:single_write_authority_message_runtime_callers",
+            file: path.join(process.cwd(), "src/runtime-message-reply.mjs"),
+          },
+          {
+            code: "write_integration_missing:single_write_authority_runtime_only",
+            file: path.join(process.cwd(), "src/http-server.mjs"),
+          },
+        ],
+      },
+      routing_summary: {
+        status: "pass",
+        compare: {
+          has_obvious_regression: false,
+        },
+      },
+      planner_summary: {
+        gate: "pass",
+        compare: {
+          has_obvious_regression: false,
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(drilldown, {
+    failing_area: "runtime",
+    representative_fail_case: [
+      "write_integration_missing:single_write_authority_message_runtime_callers via src/runtime-message-reply.mjs",
+      "write_integration_missing:single_write_authority_runtime_only via src/http-server.mjs",
+    ],
+    drilldown_source: ["release-check triage"],
+  });
+});
+
 test("release-check report prioritizes routing before planner when both block", () => {
   const report = buildReleaseCheckReport({
     selfCheckResult: {

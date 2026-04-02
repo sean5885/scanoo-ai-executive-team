@@ -68,6 +68,7 @@ const FILES = {
   httpServer: path.join(SRC_DIR, "http-server.mjs"),
   httpRouteContracts: path.join(SRC_DIR, "http-route-contracts.mjs"),
   index: path.join(SRC_DIR, "index.mjs"),
+  runtimeMessageReply: path.join(SRC_DIR, "runtime-message-reply.mjs"),
   meetingAgent: path.join(SRC_DIR, "meeting-agent.mjs"),
   commentSuggestionWorkflow: path.join(SRC_DIR, "comment-suggestion-workflow.mjs"),
   larkMutationRuntime: path.join(SRC_DIR, "lark-mutation-runtime.mjs"),
@@ -1771,6 +1772,7 @@ export async function buildWriteSummary() {
   const httpServerText = await readText(FILES.httpServer);
   const httpRouteContractsText = await readText(FILES.httpRouteContracts);
   const indexText = await readText(FILES.index);
+  const runtimeMessageReplyText = await readText(FILES.runtimeMessageReply);
   const meetingAgentText = await readText(FILES.meetingAgent);
   const commentSuggestionWorkflowText = await readText(FILES.commentSuggestionWorkflow);
   const larkMutationRuntimeText = await readText(FILES.larkMutationRuntime);
@@ -1869,7 +1871,11 @@ export async function buildWriteSummary() {
         && !meetingAgentText.includes("executeLarkWrite({")
         && !laneExecutorText.includes("executeLarkWrite({")
         && httpServerText.includes("executeCanonicalLarkMutation({")
-        && indexText.includes("executeCanonicalLarkMessage")
+        && indexText.includes("sendLaneReply({")
+        && runtimeMessageReplyText.includes("executeMessageReply = executeCanonicalLarkMessageReply")
+        && runtimeMessageReplyText.includes("executeMessageSend = executeCanonicalLarkMessageSend")
+        && runtimeMessageReplyText.includes("await executeMessageReply({")
+        && runtimeMessageReplyText.includes("await executeMessageSend({")
         && commentSuggestionWorkflowText.includes("executeCanonicalLarkMessageReply({")
         && meetingAgentText.includes("runCanonicalLarkMutation({")
         && meetingAgentText.includes("executeCanonicalLarkMessageSend")
@@ -1880,6 +1886,8 @@ export async function buildWriteSummary() {
         comment_suggestion_execute_lark_write_calls: countMatches(commentSuggestionWorkflowText, /executeLarkWrite\(\{/g),
         meeting_execute_lark_write_calls: countMatches(meetingAgentText, /executeLarkWrite\(\{/g),
         lane_execute_lark_write_calls: countMatches(laneExecutorText, /executeLarkWrite\(\{/g),
+        index_send_lane_reply_calls: countMatches(indexText, /sendLaneReply\(/g),
+        runtime_message_runtime_calls: countMatches(runtimeMessageReplyText, /executeMessage(?:Reply|Send)\(/g),
       },
     }),
     normalizeIntegrationPoint({
@@ -1905,15 +1913,19 @@ export async function buildWriteSummary() {
     }),
     normalizeIntegrationPoint({
       name: "single_write_authority_message_runtime_callers",
-      file: FILES.index,
+      file: FILES.runtimeMessageReply,
       ok:
-        indexText.includes("executeCanonicalLarkMessageReply({")
-        && indexText.includes("executeCanonicalLarkMessageSend({")
+        indexText.includes("sendLaneReply({")
+        && runtimeMessageReplyText.includes("executeMessageReply = executeCanonicalLarkMessageReply")
+        && runtimeMessageReplyText.includes("executeMessageSend = executeCanonicalLarkMessageSend")
+        && runtimeMessageReplyText.includes("await executeMessageReply({")
+        && runtimeMessageReplyText.includes("await executeMessageSend({")
         && commentSuggestionWorkflowText.includes("executeCanonicalLarkMessageReply({")
         && meetingAgentText.includes("executeCanonicalLarkMessageSend")
         && meetingAgentText.includes("deps.executeMessageSend("),
       details: {
-        index_message_runtime_calls: countMatches(indexText, /executeCanonicalLarkMessage(?:Reply|Send)\(/g),
+        index_send_lane_reply_calls: countMatches(indexText, /sendLaneReply\(/g),
+        runtime_message_runtime_calls: countMatches(runtimeMessageReplyText, /executeMessage(?:Reply|Send)\(/g),
         comment_suggestion_message_runtime_calls: countMatches(commentSuggestionWorkflowText, /executeCanonicalLarkMessageReply\(/g),
         meeting_message_runtime_calls: countMatches(meetingAgentText, /executeCanonicalLarkMessageSend|executeMessageSend\(/g),
       },
