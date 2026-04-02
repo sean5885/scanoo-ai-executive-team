@@ -38,7 +38,7 @@ test("routing eval set stays within deterministic baseline size and schema", asy
 
   assert.equal(issues.length, 0);
   assert.ok(testCases.length >= 50);
-  assert.ok(testCases.length <= 100);
+  assert.ok(testCases.length <= 110);
 });
 
 test("routing eval baseline currently has zero mismatches", async () => {
@@ -77,6 +77,26 @@ test("routing eval keeps personal-lane doc-intent exclusion pack in cloud-doc re
     assert.equal(testCase.expected.planner_action, "rereview", testCase.id);
     assert.equal(actual.lane, "cloud_doc_workflow", testCase.id);
     assert.equal(actual.planner_action, "rereview", testCase.id);
+    assert.notEqual(actual.lane, "personal_assistant", testCase.id);
+  }
+});
+
+test("routing eval keeps delivery/onboarding knowledge family on planner ingress", async () => {
+  const packIds = new Set([
+    "doc-040",
+    "doc-041",
+    "doc-042",
+  ]);
+  const packCases = (await loadRoutingEvalSet()).filter((testCase) => packIds.has(testCase.id));
+
+  assert.equal(packCases.length, packIds.size);
+
+  for (const testCase of packCases) {
+    const actual = resolveRoutingEvalCase(testCase);
+
+    assert.equal(testCase.expected.lane, "knowledge_assistant", testCase.id);
+    assert.equal(actual.lane, "knowledge_assistant", testCase.id);
+    assert.equal(actual.planner_action, testCase.expected.planner_action, testCase.id);
     assert.notEqual(actual.lane, "personal_assistant", testCase.id);
   }
 });

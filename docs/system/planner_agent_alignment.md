@@ -71,6 +71,7 @@ The checked-in user-input ingress/edge surfaces around that core are now explici
 - the `knowledge-assistant` lane in `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` enters planner through that same helper
 - `/Users/seanhan/Documents/Playground/src/planner-ingress-contract.mjs` is the shared ingress rule for:
   - knowledge/document-summary/company-brain admission into the knowledge lane
+  - bounded delivery/onboarding knowledge-lookups without explicit `文件` wording into that same knowledge lane
   - runtime-info admission into planner/runtime-info flow
   - personal-lane edge guarding when a request really belongs to planner
 - the same planner user-input edge now also canonicalizes checked-in `search`, `search_and_detail`, and `runtime_info` formatted outputs into stable user-facing `answer / sources / limitations` fields instead of falling back to generic text when those flows already returned bounded structured output
@@ -185,6 +186,7 @@ Planner ingress classification now also has one checked-in contract:
 - `resolvePlannerKnowledgeAssistantIngress(...)`
   - shared by `capability-lane.mjs`
   - promotes document-summary/company-brain/knowledge/runtime-info requests into `knowledge-assistant`
+  - also admits the checked-in delivery/onboarding knowledge family (`交付` / `onboarding` / `導入` / `SOP` plus lookup cues such as `整理` / `流程` / `在哪`) without widening generic `PRD` or standalone acceptance wording
 - `looksLikePlannerRuntimeInfoIntent(...)`
   - shared by `planner-runtime-info-flow.mjs`
   - keeps runtime-info admission aligned between lane ingress and planner flow routing

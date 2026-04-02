@@ -142,6 +142,38 @@ test("runtime 健康查詢會直接進 knowledge-assistant", () => {
   assert.equal(lane.lane_reason, "message_mentions_runtime_info");
 });
 
+test("delivery/onboarding 知識查詢即使沒寫文件也會進 knowledge-assistant", () => {
+  const lane = resolveCapabilityLane(
+    { chat_type: "p2p" },
+    {
+      message: {
+        content: JSON.stringify({
+          text: "請整理交付驗收流程",
+        }),
+      },
+    },
+  );
+
+  assert.equal(lane.capability_lane, "knowledge-assistant");
+  assert.equal(lane.lane_reason, "message_mentions_delivery_knowledge_lookup");
+});
+
+test("PRD 驗收條件問句不會被 delivery knowledge ingress 誤吸進 knowledge-assistant", () => {
+  const lane = resolveCapabilityLane(
+    { chat_type: "p2p" },
+    {
+      message: {
+        content: JSON.stringify({
+          text: "幫我整理 PRD 驗收條件",
+        }),
+      },
+    },
+  );
+
+  assert.equal(lane.capability_lane, "personal-assistant");
+  assert.equal(lane.lane_reason, "direct_message_default_lane");
+});
+
 test("最近對話總結需求不會被誤導到 knowledge-assistant", () => {
   const lane = resolveCapabilityLane(
     { chat_type: "p2p" },
