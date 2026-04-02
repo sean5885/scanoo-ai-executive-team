@@ -39,6 +39,9 @@ const RUNTIME_INFO_KEYWORDS = [
   "运行信息",
 ];
 
+const DELIVERY_KNOWLEDGE_THEME_PATTERN = /(交付|onboarding|導入|导入|\bsop\b)/i;
+const DELIVERY_KNOWLEDGE_CUE_PATTERN = /(查(?:一下|詢|询)?|搜尋|搜索|找|整理|流程|步驟|步骤|在哪(?:裡|里)?|內容|内容|講給我聽|讲给我听|怎麼做|怎么做|寫了什麼|写了什么)/i;
+
 function hasAny(text, keywords = []) {
   return keywords.some((keyword) => text.includes(keyword));
 }
@@ -56,6 +59,14 @@ export function looksLikePlannerRuntimeInfoIntent(input = {}) {
     return false;
   }
   return hasAny(text, RUNTIME_INFO_KEYWORDS);
+}
+
+function looksLikePlannerDeliveryKnowledgeIntent(input = {}) {
+  const text = normalizePlannerIngressText(input);
+  if (!text) {
+    return false;
+  }
+  return DELIVERY_KNOWLEDGE_THEME_PATTERN.test(text) && DELIVERY_KNOWLEDGE_CUE_PATTERN.test(text);
 }
 
 export function resolvePlannerKnowledgeAssistantIngress(input = {}) {
@@ -89,6 +100,15 @@ export function resolvePlannerKnowledgeAssistantIngress(input = {}) {
       lane_label: "知識助手",
       lane_reason: "message_mentions_runtime_info",
       planner_ingress_surface: "runtime_info",
+    };
+  }
+
+  if (looksLikePlannerDeliveryKnowledgeIntent(text)) {
+    return {
+      capability_lane: "knowledge-assistant",
+      lane_label: "知識助手",
+      lane_reason: "message_mentions_delivery_knowledge_lookup",
+      planner_ingress_surface: "delivery_knowledge",
     };
   }
 

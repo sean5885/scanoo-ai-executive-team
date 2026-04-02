@@ -339,6 +339,21 @@ const docCases = [
     planner_action: "ROUTING_NO_MATCH",
     agent_or_tool: "error:ROUTING_NO_MATCH",
   }),
+  createCase("doc", "040", "請整理交付驗收流程", {
+    lane: "knowledge_assistant",
+    planner_action: "search_and_detail_doc",
+    agent_or_tool: "tool:search_and_detail_doc",
+  }),
+  createCase("doc", "041", "把 onboarding 流程講給我聽", {
+    lane: "knowledge_assistant",
+    planner_action: "search_and_detail_doc",
+    agent_or_tool: "tool:search_and_detail_doc",
+  }),
+  createCase("doc", "042", "導入 SOP 在哪", {
+    lane: "knowledge_assistant",
+    planner_action: "search_company_brain_docs",
+    agent_or_tool: "tool:search_company_brain_docs",
+  }),
 ];
 
 const meetingCases = [

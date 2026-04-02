@@ -885,8 +885,8 @@ export function validateRoutingEvalSet(testCases = []) {
     return ["routing eval set must be an array"];
   }
 
-  if (testCases.length < 50 || testCases.length > 100) {
-    issues.push(`routing eval set must contain 50~100 cases, got ${testCases.length}`);
+  if (testCases.length < 50 || testCases.length > 110) {
+    issues.push(`routing eval set must contain 50~110 cases, got ${testCases.length}`);
   }
 
   const seen = new Set();
