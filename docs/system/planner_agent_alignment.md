@@ -265,6 +265,14 @@ This path is bounded by the checked-in planner contract:
   - `get_company_brain_doc_detail`
   - `search_and_detail_doc`
   - `get_runtime_info`
+- if that same strict planner path still ends at `planner_failed` after those read/runtime fallbacks, `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs` now has one extra usage-layer-only recovery boundary:
+  - meeting command family: reply with a bounded meeting-workflow handoff message
+  - executive collaboration family: reply with an owner-aware executive brief
+  - unsupported personal reminder family: fail closed as `ROUTING_NO_MATCH`
+- this edge recovery does not change planner prompt, planner contract, or actual tool/workflow execution policy:
+  - it never widens to new planner actions
+  - it does not claim that a meeting capture, executive run, or reminder write has already completed
+  - it only makes the user-facing recovery path more readable and keeps raw `planner_failed` off the surface when bounded lane knowledge is enough
 - this fallback does not change planner policy or prompt shape:
   - it runs only after strict JSON planning failed
   - it stays inside existing checked-in read/runtime actions or preset

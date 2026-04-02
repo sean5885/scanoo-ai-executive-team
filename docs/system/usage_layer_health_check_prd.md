@@ -323,6 +323,9 @@ flowchart TD
   - `WRR` 高先修入口理解
   - `TOR` 高先修 executor strategy
   - `GRR/RDR` 高先修 reply boundary
+- current third-cut usage fix keeps that same principle for the last `planner_failed` families：
+  - `meeting` and `executive` requests prefer bounded owner-aware recovery at the usage layer
+  - unsupported `personal reminder` requests stay fail-closed as explicit no-match instead of surfacing raw planner failure
 
 ### 90 天
 

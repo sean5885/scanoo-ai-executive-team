@@ -234,6 +234,26 @@ function looksLikeClosingAck(text = "") {
   return /^(謝謝|谢谢|感謝|感谢|收到|知道了|好喔|好的|ok|okay)\b/i.test(cleanText(text));
 }
 
+function looksLikeUnsupportedReminderRequest(text = "") {
+  const normalized = cleanText(text);
+  if (!normalized) {
+    return false;
+  }
+  if (!/(?:提醒|remind)/i.test(normalized)) {
+    return false;
+  }
+  return /(?:晚點|晚点|待會|待会|等下|等會|等会|之後|之后|稍後|稍后|\blater\b|提醒我)/i.test(normalized);
+}
+
+function looksLikeAmbiguousDeicticDocumentRequest(text = "") {
+  const normalized = cleanText(text);
+  if (!normalized) {
+    return false;
+  }
+  return /(?:這份|这份|這個|这个).{0,6}(?:文件|文檔|文档|內容|内容)/u.test(normalized)
+    || /(?:打開|打开|讀|读|看|看看).{0,4}(?:這份|这份|這個|这个)/u.test(normalized);
+}
+
 function buildLaneTrace({
   scope,
   chosenAction = null,
@@ -447,6 +467,22 @@ export function resolveLaneExecutionPlan({ event, scope } = {}) {
       scope,
       chosenAction: null,
       fallbackReason: "semantic_mismatch_document_request_in_personal_lane",
+    });
+  }
+
+  if (looksLikeUnsupportedReminderRequest(text)) {
+    return buildLaneTrace({
+      scope,
+      chosenAction: null,
+      fallbackReason: ROUTING_NO_MATCH,
+    });
+  }
+
+  if (looksLikeAmbiguousDeicticDocumentRequest(text)) {
+    return buildLaneTrace({
+      scope,
+      chosenAction: null,
+      fallbackReason: ROUTING_NO_MATCH,
     });
   }
 
