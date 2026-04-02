@@ -104,7 +104,7 @@ function buildCompanyBrainRegressionNextStep() {
 }
 
 function buildWritePolicyRegressionNextStep() {
-  return "先看 write governance：src/http-server.mjs、src/meeting-agent.mjs、src/lane-executor.mjs、src/lark-mutation-runtime.mjs、src/http-route-contracts.mjs、src/control-diagnostics.mjs。";
+  return "先看 write governance：src/http-server.mjs、src/runtime-message-reply.mjs、src/meeting-agent.mjs、src/lane-executor.mjs、src/lark-mutation-runtime.mjs、src/http-route-contracts.mjs、src/control-diagnostics.mjs。";
 }
 
 function buildRoutingRegressionNextStep(selfCheckResult = {}) {
@@ -364,7 +364,7 @@ function normalizeDrilldownSource(value) {
 }
 
 function inferAreaFromPathOrIdentifier(value = "") {
-  const normalized = cleanText(value).toLowerCase();
+  const normalized = cleanText(normalizeRepoPath(value) || value).toLowerCase();
   if (!normalized) {
     return null;
   }
@@ -628,6 +628,30 @@ function buildDependencyDrilldown(selfCheckResult = {}) {
   };
 }
 
+function formatWriteRepresentativeIssue(issue = {}) {
+  const code = cleanText(issue?.code) || "write_issue";
+  const file = normalizeRepoPath(issue?.file);
+  return file ? `${code} via ${file}` : code;
+}
+
+function buildWriteDrilldown(selfCheckResult = {}) {
+  const writeSummary = selfCheckResult?.write_summary || {};
+  const issues = Array.isArray(writeSummary?.issues)
+    ? writeSummary.issues.slice(0, 2)
+    : [];
+  const representativeFailCase = issues.map((issue) => formatWriteRepresentativeIssue(issue));
+  const failingArea = coalesceFailingArea(issues.map((issue) => inferAreaFromPathOrIdentifier(issue?.file || issue?.code)))
+    || FAILING_AREA_RUNTIME;
+
+  return {
+    failing_area: failingArea,
+    representative_fail_case: representativeFailCase.length > 0
+      ? representativeFailCase
+      : ["write governance failed without representative issue"],
+    drilldown_source: [RELEASE_CHECK_TRIAGE_SOURCE],
+  };
+}
+
 export function buildReleaseCheckDrilldown({
   selfCheckResult = {},
   controlSnapshot = null,
@@ -641,6 +665,7 @@ export function buildReleaseCheckDrilldown({
         ...(cleanText(selfCheckResult?.system_summary?.core_checks) !== "pass" ? [BLOCKING_SYSTEM_REGRESSION] : []),
         ...(hasBlockingControlIssue(selfCheckResult) ? [BLOCKING_CONTROL_REGRESSION] : []),
         ...(hasBlockingDependencyIssue(selfCheckResult) ? [BLOCKING_DEPENDENCY_POLICY_FAILURE] : []),
+        ...(hasBlockingWritePolicyIssue(selfCheckResult) ? [BLOCKING_WRITE_POLICY_FAILURE] : []),
         ...(hasBlockingCompanyBrainIssue(selfCheckResult) ? [BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE] : []),
         ...(hasBlockingRoutingIssue(selfCheckResult) ? [BLOCKING_ROUTING_REGRESSION] : []),
         ...(hasBlockingPlannerIssue(selfCheckResult) ? [BLOCKING_PLANNER_CONTRACT_FAILURE] : []),
@@ -655,6 +680,9 @@ export function buildReleaseCheckDrilldown({
   }
   if (firstBlockingCheck === BLOCKING_DEPENDENCY_POLICY_FAILURE) {
     return buildDependencyDrilldown(selfCheckResult);
+  }
+  if (firstBlockingCheck === BLOCKING_WRITE_POLICY_FAILURE) {
+    return buildWriteDrilldown(selfCheckResult);
   }
   if (firstBlockingCheck === BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE) {
     return buildCompanyBrainDrilldown(selfCheckResult);
@@ -758,6 +786,9 @@ function renderBlockingLineLabel(blockingCheck = "") {
   }
   if (blockingCheck === BLOCKING_DEPENDENCY_POLICY_FAILURE) {
     return "dependency policy failure";
+  }
+  if (blockingCheck === BLOCKING_WRITE_POLICY_FAILURE) {
+    return "write policy failure";
   }
   if (blockingCheck === BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE) {
     return "company-brain lifecycle failure";

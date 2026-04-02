@@ -110,7 +110,10 @@ write summary 目前重用：
 
 - high-risk doc / meeting apply family 經 `runCanonicalLarkMutation(...)`
 - public HTTP external writes 經 `executeCanonicalLarkMutation(...)`
-- runtime-only message writers in `src/index.mjs`, `src/comment-suggestion-workflow.mjs`, and `src/meeting-agent.mjs` 經 `executeCanonicalLarkMessageReply(...)` / `executeCanonicalLarkMessageSend(...)`
+- runtime-only message writers stay on the guarded mutation bridge:
+  - `/Users/seanhan/Documents/Playground/src/index.mjs` delegates to `/Users/seanhan/Documents/Playground/src/runtime-message-reply.mjs`
+  - `/Users/seanhan/Documents/Playground/src/runtime-message-reply.mjs` owns `executeCanonicalLarkMessageReply(...)` / `executeCanonicalLarkMessageSend(...)`
+  - `/Users/seanhan/Documents/Playground/src/comment-suggestion-workflow.mjs` and `/Users/seanhan/Documents/Playground/src/meeting-agent.mjs` still enter the same canonical message/runtime surface
 - lane-executor 外部寫入經 `runCanonicalLarkMutation(...)`
 - `http-server.mjs` / `index.mjs` / `comment-suggestion-workflow.mjs` / `meeting-agent.mjs` / `lane-executor.mjs` 不再直接呼叫 `executeLarkWrite(...)`
 - `runDocumentCreateMutation(...)`
@@ -316,16 +319,18 @@ human-readable compare 使用固定方向標記：
 Phase 4 起，這條 read-only diagnostics 線也會被既有 gate 直接重用，但仍不改 runtime：
 
 - `self-check` 直接重用目前 code truth 產生的 `control_summary`
-- `self-check` 也會帶出同一份 write governance summary，但目前仍是 visibility-only，不新增新的 blocking gate
-- `release-check` 的 JSON/CI report 也會帶出同一份 write governance snapshot，但目前不新增新的 release blocking 類別
+- `self-check` 也會帶出同一份 write governance summary，而且只有在 `write_summary.status !== "pass"` 時才會 block `safe_to_change`
+- `release-check` 的 JSON/CI report 也會帶出同一份 write governance snapshot，而且只有在 `write_summary.status !== "pass"` 時才會歸類成 `write_policy_failure`
 - `self-check` / `release-check` 的 human-readable summary 也會帶出：
   - `real_only_violation_rate`
   - `是否可作為 rollout 依據`
   - `upgrade_ready_routes`
   - `high_risk_routes`
+- `warn` / `observe` mode、`rollout_basis` 未成熟、或 `high_risk_routes` 存在，本身仍是 advisory evidence，不會單獨把 baseline/read-only gate 判成 fail
 - `system_summary.safe_to_change` 必須同時滿足：
   - `base`
   - `control`
+  - `write`
   - `routing`
   - `planner`
 - `release-check` 新增最小 blocking 類別 `control_regression`

@@ -109,6 +109,7 @@ Notes:
 - `npm run self-check` and `npm run release-check` now both treat write governance as a blocking gate:
   - self-check blocks `safe_to_change` when `write_summary.status !== "pass"`
   - release-check blocks merge/release when write governance reports `write_policy_failure`
+  - this block is tied to deterministic guard/runtime integration drift only; rollout advisory evidence such as `warn` / `observe`, `rollout_basis`, or `high_risk_routes` remains visible but does not block by itself
   - the checked-in baseline summary for this gate is:
     - 33 metadata routes
     - 33 enforced routes
