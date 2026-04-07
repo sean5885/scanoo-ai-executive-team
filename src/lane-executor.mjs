@@ -174,6 +174,36 @@ function hasAny(text, keywords) {
   return keywords.some((keyword) => text.includes(keyword));
 }
 
+const SCANOO_COMPARE_BRIEF = `
+你正在執行「Scanoo Compare 任務」，請嚴格依以下結構輸出，禁止自由發揮：
+
+【比較對象】
+（明確列出 A vs B；若缺，請指出缺少哪些比較對象）
+
+【比較維度】
+（至少 3 項，例如：流量 / 轉化 / 留存 / 結構）
+
+【核心差異】
+（列出 2-3 個最明顯差異）
+
+【原因假設】
+（說明為什麼產生這些差異）
+
+【證據 / 不確定性】
+（哪些是已知，哪些是推測）
+
+【建議行動】
+（給出具體下一步）
+`.trim();
+
+export function buildScanooCompareBrief(text = "") {
+  const normalizedText = cleanText(text);
+  if (!normalizedText) {
+    return SCANOO_COMPARE_BRIEF;
+  }
+  return `${SCANOO_COMPARE_BRIEF}\n\n使用者問題：\n${normalizedText}`;
+}
+
 const recentConversationSummarySignals = [
   "最近對話",
   "最近对话",
@@ -876,6 +906,7 @@ async function executeScanooCompare({ event, scope, logger = noopLogger, traceId
     logger,
     traceId,
     handlerName: "executeScanooCompare",
+    textDecorator: buildScanooCompareBrief,
   });
 }
 
@@ -885,6 +916,7 @@ async function executePlannerBackedLane({
   logger = noopLogger,
   traceId = null,
   handlerName = "executePlannerBackedLane",
+  textDecorator = null,
 } = {}) {
   const lanePlan = resolveLaneExecutionPlan({ event, scope });
   logger.info("lane_execution_planned", lanePlan);
@@ -893,10 +925,11 @@ async function executePlannerBackedLane({
     return { text: buildLaneIntroReply(scope, scope) };
   }
 
-  const text = incomingText(event);
-  if (!text) {
+  const inputText = incomingText(event);
+  if (!inputText) {
     return { text: buildLaneIntroReply(scope, scope) };
   }
+  const text = typeof textDecorator === "function" ? textDecorator(inputText) : inputText;
 
   const explicitAuth = await resolvePlannerExplicitAuthContext({
     event,

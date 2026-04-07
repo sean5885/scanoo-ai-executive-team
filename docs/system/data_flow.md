@@ -205,6 +205,14 @@ Current truth:
   - `scanoo_diagnose -> scanoo-diagnose` with `lane_mapping_source=explicit`
   - `scanoo_optimize -> knowledge-assistant` with `lane_mapping_source=fallback`
 - the dedicated `scanoo-compare` and `scanoo-diagnose` lanes are intentionally thin: adapter identity, lane trace, and execution owner are distinct, but execution still reuses the existing planner answer-edge helper
+- before `scanoo-compare` enters the shared planner answer-edge helper, `lane-executor.mjs` now prepends one fixed compare brief that requires the planner input/output to stay in the checked-in heading order:
+  - `【比較對象】`
+  - `【比較維度】`
+  - `【核心差異】`
+  - `【原因假設】`
+  - `【證據 / 不確定性】`
+  - `【建議行動】`
+- this compare brief is injected only on the `scanoo-compare` lane and does not change planner ingress, public response shape, or the `scanoo-diagnose` lane contract
 - only if `scanoo-compare` is unavailable does the adapter fall back to `knowledge-assistant`, recording `fallback_reason=missing_exact_scanoo_compare_lane_fallback_to_knowledge_assistant`
 - only if `scanoo-diagnose` is unavailable does the adapter fall back to `knowledge-assistant`, recording `fallback_reason=missing_exact_scanoo_diagnose_lane_fallback_to_knowledge_assistant`
 - `scanoo_optimize` still has no dedicated checked-in lane, so it remains a bounded fallback and still records a concrete `fallback_reason` instead of silently collapsing into one generic lane label
