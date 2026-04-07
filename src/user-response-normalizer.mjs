@@ -505,6 +505,98 @@ function buildPlannerDocumentLabel(item = {}) {
   return normalizeText(item?.title || item?.doc_id || "") || "未命名文件";
 }
 
+function normalizePlannerSummaryText(text = "") {
+  return normalizeText(String(text || ""))
+    .replace(/^內容重點[:：]\s*/u, "")
+    .replace(/^checklist 可先看\d+項[:：]\s*/iu, "")
+    .trim();
+}
+
+function isDeliveryKnowledgeQuery(queryText = "", execution = {}) {
+  const combined = normalizeCompareText([
+    queryText,
+    execution?.match_reason,
+    execution?.title,
+    execution?.content_summary,
+  ].filter(Boolean).join(" "));
+  return /(交付|onboarding|導入|导入|sop|驗收|验收|checklist)/.test(combined);
+}
+
+function isLocationStyleQuery(queryText = "") {
+  const normalized = normalizeText(queryText);
+  return /在哪|哪裡|哪里/u.test(normalized);
+}
+
+function isChecklistStyleQuery(queryText = "") {
+  const normalized = normalizeText(queryText);
+  return /checklist|清單|清单|哪些項目|哪些项目|要看什麼|要看什么|重點|重点/u.test(normalized);
+}
+
+function isStartStyleQuery(queryText = "") {
+  const normalized = normalizeText(queryText);
+  return /怎麼開始|怎么开始|第一步|怎麼走|怎么走|流程|講給我聽|讲给我听/u.test(normalized);
+}
+
+function buildDeliverySearchAnswer({
+  queryText = "",
+  documentItems = [],
+} = {}) {
+  const topItem = documentItems[0] || {};
+  const title = buildPlannerDocumentLabel(topItem);
+  const reason = normalizePlannerSummaryText(topItem?.reason || "");
+
+  if (!title || !reason) {
+    return null;
+  }
+
+  if (isLocationStyleQuery(queryText)) {
+    return `最直接的對應文件是「${title}」。${reason}`;
+  }
+
+  if (isChecklistStyleQuery(queryText)) {
+    return `我先用「${title}」回答這題。${reason}`;
+  }
+
+  if (isStartStyleQuery(queryText)) {
+    return `如果你要開始這件事，我會先從「${title}」這份文件開始。${reason}`;
+  }
+
+  return `我先用「${title}」回答這題。${reason}`;
+}
+
+function buildDeliverySearchFallbacks({
+  queryText = "",
+  documentItems = [],
+} = {}) {
+  const topLabel = buildPlannerDocumentLabel(documentItems[0] || {});
+  if (!topLabel || !isDeliveryKnowledgeQuery(queryText, { title: topLabel })) {
+    return [];
+  }
+
+  if (isLocationStyleQuery(queryText)) {
+    return [
+      `如果你要，我可以直接打開「${topLabel}」補該 SOP 的原文段落或更多位置線索。`,
+      "如果你要找的是另一份 SOP，也可以直接補部門、客戶階段或 owner，我再縮小範圍。",
+    ];
+  }
+
+  if (isChecklistStyleQuery(queryText)) {
+    return [
+      `如果你要，我可以直接把「${topLabel}」整理成可執行 checklist。`,
+    ];
+  }
+
+  if (isStartStyleQuery(queryText)) {
+    return [
+      `如果你要，我可以把「${topLabel}」拆成 3 到 5 步的導入順序與驗收點。`,
+    ];
+  }
+
+  return [
+    `如果你要，我可以沿著「${topLabel}」補更多原文依據，再整理成更短的摘要或 checklist。`,
+  ];
+}
+
 function normalizePlannerSkillSources(items = []) {
   return (Array.isArray(items) ? items : [])
     .map((item) => ({
@@ -837,18 +929,32 @@ export function buildPlannerSuccessUserResponse(envelope = {}) {
 
   if (kind === "search") {
     const query = normalizeText(presentableExecution.match_reason || "");
+    const deliverySearchAnswer = isDeliveryKnowledgeQuery(query, presentableExecution) && documentItems.length > 0
+      ? buildDeliverySearchAnswer({
+          queryText: query,
+          documentItems,
+        })
+      : null;
+    const deliverySearchFallbacks = isDeliveryKnowledgeQuery(query, presentableExecution)
+      ? buildDeliverySearchFallbacks({
+          queryText: query,
+          documentItems,
+        })
+      : [];
     return {
       ok: true,
-      answer: documentItems.length > 0
+      answer: deliverySearchAnswer || (documentItems.length > 0
         ? `我已先按目前已索引的文件，標出和「${query || "這輪需求"}」最相關的 ${documentItems.length} 份文件。`
-        : normalizeText(presentableExecution.content_summary || "") || "目前沒有找到可直接對應的已索引文件。",
+        : normalizeText(presentableExecution.content_summary || "") || "目前沒有找到可直接對應的已索引文件。"),
       sources: evidenceSourceLines,
       limitations: buildPlannerNextSteps({
         envelope,
         execution: presentableExecution,
         documentItems,
         hasEvidence: documentItems.length > 0,
-        fallbacks: documentItems.length > 0
+        fallbacks: deliverySearchFallbacks.length > 0
+          ? deliverySearchFallbacks
+          : documentItems.length > 0
           ? [
               "如果這是在做排除/重分配，也可以直接告訴我要保留或排除哪幾份。",
             ]

@@ -103,6 +103,7 @@ Current-truth docs for onboarding are:
   - planner flow ownership between `runtime_info`, `doc_query`, `okr`, `bd`, and `delivery` is now explicit in code rather than inferred from flow priority or registration order
   - final HTTP/chat response is normalized into `answer -> sources -> limitations`
   - `user-response-normalizer.mjs` now only reads canonical `execution_result.data.answer / sources / limitations`
+  - delivery/onboarding single-hit company-brain search replies now answer first with the matched document title plus bounded location/checklist/step hints from indexed snippets, instead of only repeating the generic "已索引文件" search copy
   - canonical user replies now degrade gracefully when only partial `sources / limitations` are present, instead of collapsing straight to a full-failure generic reply
   - when the planner result would otherwise degrade to a generic failure, `user-response-normalizer.mjs` now performs a minimal mixed-request decomposition for copy/image/send-style asks and upgrades the reply to partial success if a text-draft subtask is still doable
   - `renderUserResponseText(...)` renders an already-canonical `{ answer, sources, limitations }` object directly without re-normalizing legacy payload shapes
