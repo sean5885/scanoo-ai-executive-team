@@ -144,6 +144,8 @@ export const documentSummarizeSkill = createSkillDefinition({
         error: "contract_violation",
         details: {
           phase: "input_validation",
+          intent_unfulfilled: true,
+          criteria_failed: "input_validation",
           violations: [
             ...(!accountId
               ? [{
@@ -196,6 +198,8 @@ export const documentSummarizeSkill = createSkillDefinition({
         side_effects: sideEffects,
         details: {
           phase: "read_runtime",
+          intent_unfulfilled: true,
+          criteria_failed: "read_runtime",
           authorities_attempted: Array.isArray(readExecution?.meta?.authorities_attempted)
             ? readExecution.meta.authorities_attempted
             : [],

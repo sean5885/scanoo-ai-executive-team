@@ -291,8 +291,9 @@ Behavior:
 2. validates input is JSON-serializable plain data
 3. calls `read-runtime` with canonical `get_company_brain_doc_detail`
 4. records actual side effect as `read-runtime / mirror / get_company_brain_doc_detail`
-5. builds a deterministic summary from the document structured summary
-6. adapts cleanly into a planner envelope through `planner/skill-bridge.mjs`
+5. on controlled read/input failure, returns fail-closed skill details with `phase`, `intent_unfulfilled`, and `criteria_failed` so planner-side observability can record why the document-summary intent was not satisfied without changing the public reply contract
+6. builds a deterministic summary from the document structured summary
+7. adapts cleanly into a planner envelope through `planner/skill-bridge.mjs`
 
 Boundary:
 
@@ -382,6 +383,7 @@ This keeps the integration explicit:
 - planner action selection stays deterministic
 - planner dispatch still goes through one bounded registry entry
 - skill execution still stays behind `skill-bridge`
+- planner-visible skill failures may emit one process-local `skill_bridge_failure` reflection payload through `/Users/seanhan/Documents/Playground/src/reflection/skill-reflection.mjs` when the host installs `globalThis.appendReflectionLog`
 - the bridge does not expose a generic `run any skill` route
 
 ## Planner Integration Rules

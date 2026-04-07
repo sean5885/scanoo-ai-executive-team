@@ -1,4 +1,5 @@
 import { cleanText } from "../message-intent-utils.mjs";
+import { emitSkillReflection } from "../reflection/skill-reflection.mjs";
 import { defaultSkillRegistry } from "../skill-registry.mjs";
 import { runSkill } from "../skill-runtime.mjs";
 import {
@@ -750,6 +751,19 @@ export async function runPlannerSkillBridge({
     logger,
     signal,
   });
+  if (skillExecution?.ok === false) {
+    emitSkillReflection({
+      skill: cleanText(skillExecution?.skill) || skillAction.skill_name,
+      action: skillAction.action,
+      error: skillExecution?.error,
+      failure_mode: skillExecution?.failure_mode,
+      phase: skillExecution?.details?.phase,
+      intent_unfulfilled: skillExecution?.details?.intent_unfulfilled === true,
+      criteria_failed: skillExecution?.details?.criteria_failed,
+      side_effects: skillExecution?.side_effects,
+      trace_id: skillExecution?.trace_id,
+    });
+  }
   const envelope = buildPlannerSkillEnvelope(skillExecution);
   const bridgeData = envelope?.data && typeof envelope.data === "object" && !Array.isArray(envelope.data)
     ? envelope.data

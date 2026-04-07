@@ -242,6 +242,7 @@ Current-truth docs for onboarding are:
   - the checked-in replay pack runner executes every JSON spec under `evals/executive-replay/fixtures`, reports one bounded result line per case, and can also emit a single JSON summary document
   - this replay surface is offline/local reconstruction only; it does not promise raw live request replay or automatic improvement application
 - this path is process-local and file-backed through the existing reflection archive; it does not use any external telemetry service
+- adjacent planner-visible skill failures may also emit a separate process-local `skill_bridge_failure` hook through `/Users/seanhan/Documents/Playground/src/reflection/skill-reflection.mjs` when `globalThis.appendReflectionLog` is present; this is additive observability and not the same persistence path as the executive reflection archive
 - Evidence:
   - `/Users/seanhan/Documents/Playground/tests/executive-closed-loop.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/executive-evolution-metrics.test.mjs`

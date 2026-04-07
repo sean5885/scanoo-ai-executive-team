@@ -189,6 +189,8 @@ Current truth:
 - `document_summarize` uses `get_company_brain_doc_detail`
 - this does not register a new public route or planner routing target
 - both checked-in skill-backed actions stay behind `planner/skill-bridge.mjs` and the answer pipeline
+- failed skill-bridge executions may now emit one process-local `skill_bridge_failure` reflection payload through `/Users/seanhan/Documents/Playground/src/reflection/skill-reflection.mjs` when the host installs `globalThis.appendReflectionLog`
+- that hook is additive observability only; it does not create a closed-loop executive task, does not enter the executive reflection archive, and does not change the public `answer / sources / limitations` boundary
 - `document_summarize` is planner-visible on its single-document summary boundary
 - `search_and_summarize` is planner-visible only on its query-bound search-plus-summarize admission boundary and otherwise fails closed back to the original routing family
 - this does not bypass mutation-runtime for writes

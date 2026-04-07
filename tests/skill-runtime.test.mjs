@@ -737,6 +737,8 @@ test("document_summarize fail-closes retrieval misses instead of inventing a sum
     trace_id: null,
     details: {
       phase: "read_runtime",
+      intent_unfulfilled: true,
+      criteria_failed: "read_runtime",
       authorities_attempted: ["mirror"],
     },
   });
@@ -761,6 +763,59 @@ test("document_summarize fail-closes retrieval misses instead of inventing a sum
     },
     trace_id: null,
   });
+});
+
+test("planner skill bridge emits one process-local reflection record on skill failure", async () => {
+  const reflectionLog = [];
+  const previousAppendReflectionLog = globalThis.appendReflectionLog;
+  globalThis.appendReflectionLog = (entry) => {
+    reflectionLog.push(entry);
+  };
+
+  try {
+    const bridgeResult = await runPlannerSkillBridge({
+      action: "document_summarize",
+      payload: {
+        account_id: "acct_bridge_reflection",
+        doc_id: "doc_bridge_reflection_missing",
+        reader_overrides: {
+          mirror: {
+            get_company_brain_doc_detail: {
+              success: false,
+              error: "not_found",
+              data: {},
+            },
+          },
+        },
+      },
+    });
+
+    assert.equal(bridgeResult.ok, false);
+    assert.equal(reflectionLog.length, 1);
+    assert.equal(reflectionLog[0].type, "skill_bridge_failure");
+    assert.equal(reflectionLog[0].skill, "document_summarize");
+    assert.equal(reflectionLog[0].action, "document_summarize");
+    assert.equal(reflectionLog[0].error, "not_found");
+    assert.equal(reflectionLog[0].failure_mode, "fail_closed");
+    assert.equal(reflectionLog[0].phase, "read_runtime");
+    assert.equal(reflectionLog[0].intent_unfulfilled, true);
+    assert.equal(reflectionLog[0].criteria_failed, "read_runtime");
+    assert.deepEqual(reflectionLog[0].side_effects, [
+      {
+        mode: "read",
+        action: "get_company_brain_doc_detail",
+        runtime: "read-runtime",
+        authority: "mirror",
+      },
+    ]);
+    assert.equal(typeof reflectionLog[0].ts, "number");
+  } finally {
+    if (previousAppendReflectionLog === undefined) {
+      delete globalThis.appendReflectionLog;
+    } else {
+      globalThis.appendReflectionLog = previousAppendReflectionLog;
+    }
+  }
 });
 
 test("document_summarize stays stable when the document exists but its content is explicitly empty", async () => {
