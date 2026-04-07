@@ -74,19 +74,86 @@ export function normalizeTaskLayerResult(taskLayerResult = null) {
   };
 }
 
+function extractTextCandidate(value) {
+  const normalized = cleanText(value);
+  return normalized || "";
+}
+
+function pickFirstText(value, keys = []) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return "";
+  }
+
+  for (const key of keys) {
+    const candidate = extractTextCandidate(value?.[key]);
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  return "";
+}
+
+function renderCopywritingAnswer(data = {}) {
+  const raw = data.copywriting;
+  const content = typeof raw === "string"
+    ? extractTextCandidate(raw)
+    : pickFirstText(raw, ["copywriting", "answer", "content", "text", "draft", "caption", "body"]);
+
+  return content ? `文案：${content}` : "";
+}
+
+function renderImageAnswer(data = {}) {
+  const raw = data.image;
+  const asset = typeof raw === "string"
+    ? extractTextCandidate(raw)
+    : pickFirstText(raw, ["url", "image", "path", "file", "asset"]);
+
+  if (!raw) {
+    return "";
+  }
+
+  return asset
+    ? `圖片：已生成（${asset}）`
+    : "圖片：已生成（可下載或查看）";
+}
+
+function renderPublishAnswer(data = {}) {
+  const raw = data.publish;
+  if (!raw) {
+    return "";
+  }
+
+  const destination = typeof raw === "string"
+    ? extractTextCandidate(raw)
+    : pickFirstText(raw, ["channel", "platform", "destination", "target"]);
+
+  return destination
+    ? `發布：已完成（${destination}）`
+    : "發布：已完成";
+}
+
 export function toUserFacing(taskLayerResult = null) {
   const normalized = normalizeTaskLayerResult(taskLayerResult);
   const {
+    data,
     failed,
     succeeded,
     tasks,
   } = normalized;
   const taskSummary = tasks.map((task) => formatTaskLayerTaskLabel(task)).join("、");
-  const answer = failed.length === 0
-    ? `這輪先依多任務路徑拆成 ${tasks.length} 個子任務${taskSummary ? `：${taskSummary}` : ""}，並完成執行。`
-    : succeeded.length > 0
-      ? `這輪先依多任務路徑拆成 ${tasks.length} 個子任務${taskSummary ? `：${taskSummary}` : ""}，目前先完成其中 ${succeeded.length} 個。`
-      : `這輪先依多任務路徑拆出 ${tasks.length} 個子任務${taskSummary ? `：${taskSummary}` : ""}，但目前都還沒有成功完成。`;
+  const answerParts = [
+    renderCopywritingAnswer(data),
+    renderImageAnswer(data),
+    renderPublishAnswer(data),
+  ].filter(Boolean);
+  const answer = answerParts.length > 0
+    ? answerParts.join("\n")
+    : failed.length === 0
+      ? `這輪先依多任務路徑拆成 ${tasks.length} 個子任務${taskSummary ? `：${taskSummary}` : ""}，並完成執行。`
+      : succeeded.length > 0
+        ? `這輪先依多任務路徑拆成 ${tasks.length} 個子任務${taskSummary ? `：${taskSummary}` : ""}，目前先完成其中 ${succeeded.length} 個。`
+        : `這輪先依多任務路徑拆出 ${tasks.length} 個子任務${taskSummary ? `：${taskSummary}` : ""}，但目前都還沒有成功完成。`;
   const sources = [
     taskSummary ? `任務拆解：${taskSummary}。` : "",
     ...succeeded.map((item) => {
