@@ -175,8 +175,15 @@ These describe code structure and responsibility, not how many processes are run
 
 - `executive-improvement.mjs`
   - derives one lightweight pure `improvement_proposal` from `reflection_result`
-  - proposal shape is limited to `type / summary / action_suggestion`
-  - does not write knowledge or workflow state directly; workflow metadata and persistence are added downstream by the closed-loop improvement workflow
+  - task-journal proposal shape remains limited to `type / summary / action_suggestion`
+  - when a proposal is generated, it also stages one create-only JSON record under `/Users/seanhan/Documents/Playground/src/knowledge/pending/` with `id / type / summary / action_suggestion / confidence / created_at`
+  - that file staging is pending-only and does not auto-approve or promote into `/Users/seanhan/Documents/Playground/src/knowledge/approved/`; workflow metadata and improvement-review persistence are still added downstream by the closed-loop improvement workflow
+
+- `knowledge/approve.mjs`
+  - provides manual-only local helpers for staged improvement knowledge files
+  - `listPendingProposals()` reads pending JSON records from `/Users/seanhan/Documents/Playground/src/knowledge/pending/`
+  - `approve(id)` moves one pending file into `/Users/seanhan/Documents/Playground/src/knowledge/approved/` without overwriting an existing approved file
+  - `reject(id)` removes one pending file; it does not auto-archive, auto-approve, or attach itself to any runtime automation path
 
 - `single-machine-runtime-coordination.mjs`
   - serializes same-account same-session executive/workflow entrypoints inside one local process

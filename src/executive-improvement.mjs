@@ -1,3 +1,8 @@
+import crypto from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { cleanText } from "./message-intent-utils.mjs";
 
 export const EXECUTIVE_IMPROVEMENT_TYPES = Object.freeze([
@@ -15,6 +20,12 @@ const RETRYABLE_ERROR_TYPES = new Set([
   "not_found",
   "permission_denied",
 ]);
+
+const KNOWLEDGE_PENDING_DIR = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "knowledge",
+  "pending",
+);
 
 function normalizeList(values = []) {
   return Array.from(
@@ -58,6 +69,134 @@ function buildMissingElementsSummary(prefix = "", missingElements = []) {
   }
   const details = missingElements.slice(0, 3).join(", ");
   return prefix ? `${prefix} Missing: ${details}.` : `Missing: ${details}.`;
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function clampConfidence(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 0.7;
+  }
+  return Math.min(0.95, Math.max(0.5, Number(numeric.toFixed(2))));
+}
+
+function estimateImprovementConfidence(proposal = null, reflection_result = null) {
+  if (!proposal || typeof proposal !== "object") {
+    return 0.7;
+  }
+
+  const { issues, missingElements, errorType } = collectSignals(reflection_result);
+  let confidence = 0.72;
+
+  switch (cleanText(proposal.type)) {
+    case "knowledge_gap":
+      confidence = 0.8;
+      break;
+    case "routing_fix":
+      confidence = 0.84;
+      break;
+    case "retry_strategy":
+      confidence = 0.78;
+      break;
+    case "prompt_fix":
+    default:
+      confidence = 0.76;
+      break;
+  }
+
+  if (missingElements.length > 0) {
+    confidence += 0.03;
+  }
+  if (RETRYABLE_ERROR_TYPES.has(errorType)) {
+    confidence += 0.03;
+  }
+  if (issues.includes("fake_completion") || issues.includes("overclaim")) {
+    confidence += 0.04;
+  }
+  if (reflection_result?.verification_result?.pass === false) {
+    confidence += 0.02;
+  }
+
+  return clampConfidence(confidence);
+}
+
+function normalizePendingImprovementRecord(record = null) {
+  if (!record || typeof record !== "object") {
+    return null;
+  }
+
+  return {
+    id: cleanText(record.id),
+    type: cleanText(record.type),
+    summary: cleanText(record.summary),
+    action_suggestion: cleanText(record.action_suggestion),
+    confidence: clampConfidence(record.confidence),
+    created_at: cleanText(record.created_at) || nowIso(),
+  };
+}
+
+function buildPendingImprovementRecord({
+  improvement_proposal = null,
+  reflection_result = null,
+  id = "",
+  created_at = "",
+} = {}) {
+  if (!improvement_proposal || typeof improvement_proposal !== "object") {
+    return null;
+  }
+
+  return normalizePendingImprovementRecord({
+    id: cleanText(id) || crypto.randomUUID(),
+    type: improvement_proposal.type,
+    summary: improvement_proposal.summary,
+    action_suggestion: improvement_proposal.action_suggestion,
+    confidence: estimateImprovementConfidence(improvement_proposal, reflection_result),
+    created_at: cleanText(created_at) || nowIso(),
+  });
+}
+
+export async function stageImprovementProposal({
+  improvement_proposal = null,
+  reflection_result = null,
+  pending_dir = KNOWLEDGE_PENDING_DIR,
+} = {}) {
+  if (!improvement_proposal || typeof improvement_proposal !== "object") {
+    return null;
+  }
+
+  try {
+    await fs.mkdir(pending_dir, { recursive: true });
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const record = buildPendingImprovementRecord({
+        improvement_proposal,
+        reflection_result,
+      });
+      if (!record?.id) {
+        return null;
+      }
+      const filePath = path.join(pending_dir, `${record.id}.json`);
+      try {
+        await fs.writeFile(filePath, `${JSON.stringify(record, null, 2)}\n`, {
+          encoding: "utf8",
+          flag: "wx",
+        });
+        await fs.chmod(filePath, 0o600).catch(() => {});
+        return record;
+      } catch (error) {
+        if (error?.code === "EEXIST") {
+          continue;
+        }
+        return null;
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
 }
 
 export function createImprovementProposal(reflection_result = null) {

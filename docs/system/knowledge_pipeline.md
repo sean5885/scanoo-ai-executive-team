@@ -117,6 +117,23 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 - organization preview/apply exists
 - comment rewrite preview/apply exists
+- executive improvement proposal staging now exists as local file-backed pending knowledge:
+  - `/Users/seanhan/Documents/Playground/src/knowledge/pending/`
+  - `/Users/seanhan/Documents/Playground/src/knowledge/approved/`
+- `/Users/seanhan/Documents/Playground/src/executive-improvement.mjs` writes one JSON file per generated `improvement_proposal` into `src/knowledge/pending/` with:
+  - `id`
+  - `type`
+  - `summary`
+  - `action_suggestion`
+  - `confidence`
+  - `created_at`
+- those staging writes use create-only file creation and UUID-based proposal ids, so existing staged files are not overwritten
+- there is currently no automatic promotion from `src/knowledge/pending/` to `src/knowledge/approved/`
+- `/Users/seanhan/Documents/Playground/src/knowledge/approve.mjs` now provides manual-only helpers for this staging area:
+  - `listPendingProposals()`
+  - `approve(id)` moves one pending file into `src/knowledge/approved/` and refuses to overwrite an existing approved file
+  - `reject(id)` deletes one pending file
+- this helper is not wired into any scheduler, worker mesh, HTTP route, or automatic approval path; it only runs when manually imported and called
 - company-brain write-intake can now persist minimum review states:
   - `pending_review`
   - `conflict_detected`

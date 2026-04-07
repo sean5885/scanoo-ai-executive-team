@@ -10,7 +10,7 @@ import {
 } from "./executive-improvement-workflow.mjs";
 import { buildTaskRuleSet, inferTaskType, KNOWLEDGE_RULES } from "./executive-rules.mjs";
 import { createReflectionRecord } from "./executive-reflection.mjs";
-import { createImprovementProposal, createImprovementProposals } from "./executive-improvement.mjs";
+import { createImprovementProposal, createImprovementProposals, stageImprovementProposal } from "./executive-improvement.mjs";
 import { EVIDENCE_TYPES, verifyTaskCompletion } from "./executive-verifier.mjs";
 import {
   appendExecutiveTaskEvidence,
@@ -920,8 +920,12 @@ export async function finalizeExecutiveTaskTurn({
     reflection,
   });
   const improvementProposal = createImprovementProposal(reflection);
+  const stagedImprovementProposal = await stageImprovementProposal({
+    improvement_proposal: improvementProposal,
+    reflection_result: reflection,
+  });
   current = await updateExecutiveTask(task.id, {
-    execution_journal: withImprovementProposal(current?.execution_journal, improvementProposal),
+    execution_journal: withImprovementProposal(current?.execution_journal, stagedImprovementProposal || improvementProposal),
   });
   current = await applyLifecycle(current || task, "reflected", "post_task_review_completed");
 
