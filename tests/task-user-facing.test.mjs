@@ -9,7 +9,7 @@ test("normalizeTaskLayerResult rebuilds summary and errors from partial task-lay
     summary: { copywriting: "done", publish: "failed" },
     data: {
       copywriting: {
-        handledBy: "copy_agent",
+        handledBy: "document_summarize",
       },
     },
     errors: [{ task: "publish", error: "publish blocked" }],

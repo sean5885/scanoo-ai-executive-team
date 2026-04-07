@@ -212,13 +212,15 @@ Current truth:
 - implemented as an adjacent helper with an optional planner pre-pass
 - current checked-in tags are `copywriting`, `image`, and `publish`
 - current checked-in execution order is `copywriting -> image -> publish`
-- current checked-in mapped identifiers are `copy_agent`, `image_agent`, and `publish_agent`
+- current checked-in mapped identifiers are `document_summarize`, `image_generate`, and `message_send`
 - execution is sequential and callback-driven; task failures are recorded fail-soft and later tasks still run; there is no checked-in queue or checked-in skill-runtime registration on this path
+- if a task tag exists but no mapped identifier is present, the helper records `no_skill_mapped` and still returns the same fail-soft task-layer envelope
 - `executePlannedUserInput(...)` may call this helper before normal planning only when the caller explicitly supplies `runSkill`
 - when that optional pre-pass detects more than one task, planner execution returns a bounded `multi_task` result through the same canonical `answer / sources / limitations` boundary, and those user-facing fields are now derived by `task-to-answer.mjs` instead of being inlined inside `executive-planner.mjs`
 - on the current checked-in path, `task-to-answer.mjs` prefers exposing bounded per-task natural-language payloads for successful `copywriting`, `image`, and `publish` tasks inside `answer`; if no such payload can be rendered, it falls back to the prior execution-summary wording while still preserving fail-soft `limitations`
 - if the helper detects zero or one task, or if the optional pre-pass fails, execution falls back to the original planner path
 - the checked-in public `/answer` edge does not currently supply `runSkill`, so the default public route behavior is unchanged
+- `document_summarize` is backed by the checked-in skill runtime, `message_send` is backed by the checked-in write runtime, and `image_generate` is currently only a routed placeholder string on this helper path
 
 ### 4B. Comment Rewrite
 

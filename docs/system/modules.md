@@ -167,16 +167,17 @@ Current-truth docs for onboarding are:
   - a checked-in task-layer helper now exists under `src/task-layer/`
   - it performs deterministic keyword classification into `copywriting`, `image`, and `publish`
   - `task-dependency.mjs` defines the current checked-in execution order as `copywriting -> image -> publish`
-  - it maps those task tags to string skill identifiers `copy_agent`, `image_agent`, and `publish_agent`
+  - it maps those task tags to routed capability identifiers `document_summarize`, `image_generate`, and `message_send`
   - `/Users/seanhan/Documents/Playground/src/task-layer/task-aggregator.mjs` folds per-task records into a unified `{ ok, tasks, results, summary, data, errors }` envelope
   - `/Users/seanhan/Documents/Playground/src/task-layer/task-to-answer.mjs` converts that bounded task-layer envelope into canonical `answer / sources / limitations` fields for planner-facing multi-task replies, and now prefers surfacing bounded per-task natural-language content (for example copy text or generated-image location) before falling back to generic execution summary text
   - `runTaskLayer(...)` sorts detected tasks through that dependency helper, executes the provided `runSkill` callback sequentially, and returns that aggregated envelope with both raw per-task records and summarized status
+  - if a task is classified but no routed capability identifier is mapped, the helper records `no_skill_mapped` fail-soft and still keeps the same bounded result shape
   - a task failure is recorded fail-soft and does not stop later tasks from running in the same bounded pass
   - `executePlannedUserInput(...)` can now consult this helper as a planner pre-pass, but only when the caller explicitly provides a `runSkill` callback
   - if that optional pre-pass detects more than one task, planner execution short-circuits into a bounded `multi_task` result that still stays inside the canonical `answer / sources / limitations` boundary
   - if no `runSkill` callback is provided, the pre-pass errors, or at most one task is detected, the original planner flow continues unchanged
   - the checked-in public `/answer` edge does not currently provide `runSkill`, so this does not change the default public route behavior
-  - the mapped identifiers are local task-layer labels only; they are not evidence of checked-in planner-visible skill registration
+  - `document_summarize` is a checked-in skill-backed action, `message_send` is a checked-in write action, and `image_generate` is currently only a task-layer routed identifier placeholder rather than a checked-in skill-runtime registration
 - Evidence:
   - `/Users/seanhan/Documents/Playground/tests/task-dependency.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/task-layer.test.mjs`
