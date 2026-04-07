@@ -296,6 +296,14 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - 覆蓋 slash command、persona-style owner phrasing、registered-agent success、`permission_denied`、`routing_no_match`、`fail_closed`
 - 這組 pack 另外帶 optional `expected_owner_surface`，runner 會額外輸出 `actual_owner_surface`、`wrong_owner_surface`、`generic_owner_surface`，專門用來抓 explicit persona request 被 generic executive surface 吃掉的 regression
 
+這一輪另外補了一組 timeout-governance focused pack：
+
+- dataset: `/Users/seanhan/Documents/Playground/evals/usage-layer/workflow-timeout-governance-evals.mjs`
+- CLI: `npm run eval:usage-layer:workflow-timeout-governance`
+- case 數量固定 `5` 條
+- 覆蓋 `successful_but_slow`、`timeout_acceptable`、`timeout_fail_closed`、`workflow_too_slow`、`needs_fixture_mock`
+- 這組 pack 是 deterministic governance case pack，不宣稱每條都在 live runtime 真實重現；它的用途是固定 usage-layer judge、reply surface 與 fail-closed 邊界
+
 判讀方式維持保守：
 
 - `lane / planner_action / agent_or_tool` 仍沿用既有 routing resolver
@@ -307,6 +315,8 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - `knowledge_assistant` case 會重用 checked-in route truth，直接驅動 deterministic executor path 再回到同一條 answer boundary；這是 eval runner 的 bounded executor fallback，用來隔離 planner JSON latency，不改 routing truth、public contract 或 write policy
 - personal-lane `partial_success / fail_closed` case 會直接走 checked-in answer boundary normalizer，而不是讓 eval 被 planner waiting 拖成 timeout
 - runner 現在對每條 case 都加上固定 timeout guard；若單條 case 超時，會取消該 case、在 summary 額外列出 `timed_out_cases`，並繼續跑完剩餘 case
+- runner 現在也會輸出 `governance_family`、`governance_breakdown`、`governance_cases`，把 timeout/slow family 與一般 `failure_class` 分開看
+- 若 runner 看到 timeout 但無法分進明確 family，summary 會把它記到 `unclassified_timeout`
 - CLI 會印出 case start/done/timeout 與 stuck warning，方便直接定位是哪一條 case 長時間沒有結束
 - `RDR` 目前先保留 TODO，只做 case log，不宣稱已收斂成穩定自動 judge
 - 由於目前 repo 本地沒有 stored explicit user auth / account context，checked-in pack 會把 auth-required company-brain read 與 account-required cloud-doc workflow case 標成 `fail_closed`；這是當前 code truth，不是宣稱能力不存在

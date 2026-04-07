@@ -198,6 +198,17 @@ For cloud-doc follow-up replies that are focused on pending-item cleanup, the vi
 - `摘要`
 - `待處理清單`
 
+If the cloud-doc follow-up came from rereview slow-path governance:
+
+- `successful_but_slow`
+  - `摘要` should include one short line that this round was slower but completed, and the result is still usable
+- `timeout_acceptable`
+  - `摘要` should include one short line that semantic rereview timed out, but the workflow fell back to a local bounded result
+  - do not claim full semantic rereview completed
+- `request_cancelled`
+  - say the rereview was interrupted
+  - do not mislabel it as timeout
+
 In that checklist view, each pending item should keep only:
 
 - `文件名`

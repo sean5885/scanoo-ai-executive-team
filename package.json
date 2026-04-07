@@ -19,6 +19,7 @@
     "eval:long-task": "node scripts/evaluate-long-task-governance.mjs",
     "eval:usage-layer": "node evals/usage-layer/usage-layer-runner.mjs",
     "eval:usage-layer:registered-agent-family": "node evals/usage-layer/usage-layer-runner.mjs --pack registered-agent-family",
+    "eval:usage-layer:workflow-timeout-governance": "node evals/usage-layer/usage-layer-runner.mjs --pack workflow-timeout-governance",
     "routing:closed-loop": "node scripts/routing-eval-closed-loop.mjs",
     "routing:diagnostics": "node scripts/routing-diagnostics.mjs",
     "control:diagnostics": "node scripts/control-diagnostics.mjs",
