@@ -5,6 +5,7 @@ const testDb = await createTestDbHarness();
 const {
   assertRoutingDecisionFinalOwner,
   assertRoutingDecisionOwner,
+  buildScanooCompareDocsSearchReply,
   looksLikeChatOnlyFailurePreference,
   looksLikeCloudOrganizationExit,
   looksLikeCloudOrganizationPlainLanguageRequest,
@@ -16,6 +17,7 @@ const {
   looksLikeMeetingCaptureStatusQuery,
   pickCalendarMeetingEvent,
   resolveLaneExecutionPlan,
+  shouldFallbackScanooCompareToDocsSearch,
   shouldPreferActiveExecutiveTask,
   shouldFallbackImageTaskToTextLane,
 } = await import("../src/lane-executor.mjs");
@@ -279,6 +281,43 @@ test("scanoo-compare lane keeps a distinct execution identity while reusing plan
   assert.equal(plan.chosen_lane, "scanoo-compare");
   assert.equal(plan.chosen_action, "scanoo_compare_user_input");
   assert.equal(plan.fallback_reason, null);
+});
+
+test("scanoo-compare falls back to docs search when compare evidence is insufficient", () => {
+  const shouldFallback = shouldFallbackScanooCompareToDocsSearch({
+    requestText: "請幫我比較 Scanoo onboarding funnel 的新舊差異",
+    plannerResult: {
+      ok: false,
+      error: "planner_failed",
+    },
+    userResponse: {
+      ok: false,
+      answer: "這題本來應該先走對應的查詢或流程，但這輪還沒真的執行到那個步驟，所以我先不亂補答案。",
+      sources: [],
+      limitations: ["目前資料不足，還不能直接比較。"],
+      failure_class: "tool_omission",
+    },
+  });
+
+  assert.equal(shouldFallback, true);
+});
+
+test("scanoo-compare docs search fallback keeps the compare section order", () => {
+  const reply = buildScanooCompareDocsSearchReply({
+    query: "Scanoo onboarding funnel 新舊差異",
+    items: [
+      {
+        title: "Scanoo Onboarding SOP",
+        doc_id: "doc_scanoo_compare_1",
+        summary: {
+          overview: "收斂 onboarding 流程、指標與 owner。",
+        },
+      },
+    ],
+  });
+
+  assert.match(reply, /【比較對象】[\s\S]*【比較維度】[\s\S]*【核心差異】[\s\S]*【原因假設】[\s\S]*【證據 \/ 不確定性】[\s\S]*【建議行動】/);
+  assert.match(reply, /Scanoo Onboarding SOP（doc_scanoo_compare_1）/);
 });
 
 test("lane execution plan reports structured semantic mismatch instead of generic fallback for misplaced document request", () => {

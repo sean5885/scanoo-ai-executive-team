@@ -645,6 +645,32 @@ export async function searchKnowledgeBaseFromRuntime({
   return unwrapReadExecution(readExecution);
 }
 
+export async function searchCompanyBrainDocsFromRuntime({
+  accountId = "",
+  query = "",
+  limit = null,
+  pathname = "internal:search_company_brain_docs",
+  logger = null,
+  readerOverrides = null,
+} = {}) {
+  const readExecution = await runRead({
+    canonicalRequest: buildMirrorReadCanonicalRequest({
+      action: "search_company_brain_docs",
+      accountId,
+      payload: {
+        q: cleanText(query) || "",
+        limit,
+        top_k: limit,
+      },
+      pathname,
+      readerOverrides,
+    }),
+    logger,
+  });
+
+  return unwrapReadExecution(readExecution);
+}
+
 export function querySystemKnowledgeFromRuntimeSync({
   keyword = "",
   pathname = "internal:query_system_knowledge",

@@ -213,6 +213,7 @@ Current truth:
   - `【證據 / 不確定性】`
   - `【建議行動】`
 - this compare brief is injected only on the `scanoo-compare` lane and does not change planner ingress, public response shape, or the `scanoo-diagnose` lane contract
+- when that compare-lane reply still lands in an insufficient-evidence state and did not already resolve to a doc-read action, `lane-executor.mjs` now fail-soft calls the checked-in mirror read helper `searchCompanyBrainDocsFromRuntime(...)` with `action=search_company_brain_docs`; if the mirror search hits, the lane returns one deterministic compare-shaped docs-candidate reply instead of inventing a comparison conclusion
 - only if `scanoo-compare` is unavailable does the adapter fall back to `knowledge-assistant`, recording `fallback_reason=missing_exact_scanoo_compare_lane_fallback_to_knowledge_assistant`
 - only if `scanoo-diagnose` is unavailable does the adapter fall back to `knowledge-assistant`, recording `fallback_reason=missing_exact_scanoo_diagnose_lane_fallback_to_knowledge_assistant`
 - `scanoo_optimize` still has no dedicated checked-in lane, so it remains a bounded fallback and still records a concrete `fallback_reason` instead of silently collapsing into one generic lane label

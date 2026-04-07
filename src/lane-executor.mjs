@@ -23,7 +23,10 @@ import {
   listTasks,
   updateDocument,
 } from "./lark-content.mjs";
-import { readDocumentFromRuntime } from "./read-runtime.mjs";
+import {
+  readDocumentFromRuntime,
+  searchCompanyBrainDocsFromRuntime,
+} from "./read-runtime.mjs";
 import {
   extractBitableReference,
   buildMessageText,
@@ -196,12 +199,162 @@ const SCANOO_COMPARE_BRIEF = `
 （給出具體下一步）
 `.trim();
 
+const SCANOO_COMPARE_DOCS_SEARCH_FAILURE_CLASSES = new Set([
+  "generic_fallback",
+  "planner_failed",
+  "routing_no_match",
+  "tool_omission",
+  "permission_denied",
+]);
+
+const SCANOO_COMPARE_INSUFFICIENT_PATTERNS = [
+  /資料不足/u,
+  /資訊不足/u,
+  /沒有足夠/u,
+  /缺少.*比較/u,
+  /缺少.*資料/u,
+  /無法.*比較/u,
+  /不能.*比較/u,
+  /待確認/u,
+  /不確定/u,
+  /先不亂補答案/u,
+];
+
 export function buildScanooCompareBrief(text = "") {
   const normalizedText = cleanText(text);
   if (!normalizedText) {
     return SCANOO_COMPARE_BRIEF;
   }
   return `${SCANOO_COMPARE_BRIEF}\n\n使用者問題：\n${normalizedText}`;
+}
+
+function buildScanooCompareFallbackSignalText(response = {}) {
+  return [
+    cleanText(response?.answer || ""),
+    ...(Array.isArray(response?.limitations) ? response.limitations.map((item) => cleanText(item)) : []),
+  ].filter(Boolean).join("\n");
+}
+
+export function shouldFallbackScanooCompareToDocsSearch({
+  requestText = "",
+  plannerResult = {},
+  userResponse = {},
+} = {}) {
+  if (!cleanText(requestText)) {
+    return false;
+  }
+
+  const chosenAction = cleanText(
+    plannerResult?.action
+    || plannerResult?.steps?.[0]?.action
+    || plannerResult?.execution_result?.action
+    || "",
+  );
+  if (
+    chosenAction === "search_company_brain_docs"
+    || chosenAction === "search_and_detail_doc"
+    || chosenAction === "get_company_brain_doc_detail"
+  ) {
+    return false;
+  }
+
+  const sourceCount = Array.isArray(userResponse?.sources) ? userResponse.sources.length : 0;
+  const failureClass = cleanText(userResponse?.failure_class || "");
+  if (failureClass && SCANOO_COMPARE_DOCS_SEARCH_FAILURE_CLASSES.has(failureClass)) {
+    return true;
+  }
+  if (sourceCount > 0) {
+    return false;
+  }
+
+  const signalText = buildScanooCompareFallbackSignalText(userResponse);
+  return SCANOO_COMPARE_INSUFFICIENT_PATTERNS.some((pattern) => pattern.test(signalText));
+}
+
+function formatScanooCompareDocsSearchEvidenceItem(item = {}) {
+  const title = cleanText(item?.title || item?.doc_id || "未命名文件");
+  const docId = cleanText(item?.doc_id || "");
+  const summary = cleanText(item?.summary?.overview || item?.summary?.snippet || "");
+  return `- ${title}${docId ? `（${docId}）` : ""}${summary ? `：${summary}` : ""}`;
+}
+
+export function buildScanooCompareDocsSearchReply({
+  query = "",
+  items = [],
+} = {}) {
+  const normalizedItems = Array.isArray(items) ? items : [];
+  const evidenceLines = normalizedItems.length > 0
+    ? normalizedItems.slice(0, 3).map((item) => formatScanooCompareDocsSearchEvidenceItem(item))
+    : ["- 目前官方文件搜尋也還沒有命中可直接支撐比較的文件。"];
+  const normalizedQuery = cleanText(query) || "這輪需求";
+
+  return [
+    "【比較對象】",
+    `目前還缺可直接對比的 A / B 官方資料；我先改用和「${normalizedQuery}」最相關的官方文件來補足依據。`,
+    "",
+    "【比較維度】",
+    "先用文件中的目標、流程、指標與責任分工當成第一輪比較維度。",
+    "",
+    "【核心差異】",
+    "目前沒有足夠的成對資料，還不能安全下結論哪一側表現更好。",
+    "",
+    "【原因假設】",
+    "這輪主要卡在缺少可驗證的比較對象、期間或指標，所以先退回官方 read 補 evidence。",
+    "",
+    "【證據 / 不確定性】",
+    ...evidenceLines,
+    "",
+    "【建議行動】",
+    normalizedItems.length > 0
+      ? "- 先指定其中一份文件讓我往下讀 detail，或補 A/B 名稱、期間、指標，我就可以繼續做正式比較。"
+      : "- 先補 A/B 名稱、期間、指標，或同步最新文件後再查一次。",
+  ].join("\n");
+}
+
+async function maybeBuildScanooCompareDocsSearchFallback({
+  accountId = "",
+  requestText = "",
+  plannerResult = {},
+  userResponse = {},
+  logger = noopLogger,
+} = {}) {
+  if (!cleanText(accountId) || !shouldFallbackScanooCompareToDocsSearch({
+    requestText,
+    plannerResult,
+    userResponse,
+  })) {
+    return null;
+  }
+
+  const docs = await searchCompanyBrainDocsFromRuntime({
+    accountId,
+    query: requestText,
+    limit: 3,
+    pathname: "internal:scanoo_compare_docs_search_fallback",
+    logger,
+  });
+
+  logger.info("scanoo_compare_docs_search_fallback", {
+    account_id: formatIdentifierHint(accountId),
+    query: truncate(requestText, 120),
+    hit_count: Array.isArray(docs?.items) ? docs.items.length : 0,
+    failure_class: cleanText(userResponse?.failure_class || "") || null,
+    chosen_action: cleanText(
+      plannerResult?.action
+      || plannerResult?.steps?.[0]?.action
+      || plannerResult?.execution_result?.action
+      || "",
+    ) || null,
+  });
+
+  if (!Array.isArray(docs?.items) || docs.items.length === 0) {
+    return null;
+  }
+
+  return buildScanooCompareDocsSearchReply({
+    query: requestText,
+    items: docs.items,
+  });
 }
 
 const recentConversationSummarySignals = [
@@ -956,6 +1109,22 @@ async function executePlannerBackedLane({
     });
   }
   logger.info("lane_execution_result", plannerEnvelope.trace);
+  if (cleanText(scope?.capability_lane || "") === "scanoo-compare") {
+    const docsSearchFallback = await maybeBuildScanooCompareDocsSearchFallback({
+      accountId: context.account?.id || "",
+      requestText: inputText,
+      plannerResult: plannedResult,
+      userResponse,
+      logger,
+    });
+    if (docsSearchFallback) {
+      return {
+        text: docsSearchFallback,
+        handlerName,
+        traceId,
+      };
+    }
+  }
   return {
     text: renderUserResponseText(userResponse),
     handlerName,

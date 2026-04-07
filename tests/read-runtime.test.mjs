@@ -5,7 +5,7 @@ import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 const testDb = await createTestDbHarness();
 const { db } = testDb;
 const [
-  { listDocumentCommentsFromRuntime, readDocumentFromRuntime, runRead },
+  { listDocumentCommentsFromRuntime, readDocumentFromRuntime, runRead, searchCompanyBrainDocsFromRuntime },
   { replaceDocumentChunks, saveToken, upsertDocument },
 ] = await Promise.all([
   import("../src/read-runtime.mjs"),
@@ -467,6 +467,31 @@ test("readDocumentFromRuntime accepts resolved auth envelopes for live doc reads
   assert.equal(observedAccessToken, "token-live-envelope");
   assert.equal(document.document_id, "doc_live_runtime_envelope");
   assert.equal(document.title, "Envelope Live Doc");
+});
+
+test("searchCompanyBrainDocsFromRuntime uses the mirror read authority helper path", async () => {
+  const accountId = `acct_search_company_brain_from_runtime_${Date.now()}`;
+  ensureTestAccount(accountId);
+  insertDocFixture({
+    accountId,
+    docId: "doc_compare_runtime_1",
+    title: "Scanoo Compare Official Guide",
+    rawText: "scanoo compare official guide metrics owner",
+  });
+
+  try {
+    const result = await searchCompanyBrainDocsFromRuntime({
+      accountId,
+      query: "scanoo compare official",
+      limit: 3,
+    });
+
+    assert.equal(Array.isArray(result?.items), true);
+    assert.equal(result.items.length > 0, true);
+    assert.equal(result.items[0].doc_id, "doc_compare_runtime_1");
+  } finally {
+    cleanupAccountFixtures(accountId);
+  }
 });
 
 test("listDocumentCommentsFromRuntime accepts resolved auth envelopes for live comment reads", async () => {

@@ -109,6 +109,7 @@ Current-truth docs for onboarding are:
   - planner ingress now only escalates high-confidence doc/runtime phrasings; generic wording such as standalone "整理" or "風險" no longer forces document/runtime routing by itself
   - planner flow ownership between `runtime_info`, `doc_query`, `okr`, `bd`, and `delivery` is now explicit in code rather than inferred from flow priority or registration order
   - final HTTP/chat response is normalized into `answer -> sources -> limitations`
+  - `scanoo-compare` still reuses that same answer-edge helper, but now has one extra fail-soft branch in `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`: when the compare reply lacks usable evidence and did not already resolve to a doc-read action, it calls the checked-in mirror read helper `/Users/seanhan/Documents/Playground/src/read-runtime.mjs -> searchCompanyBrainDocsFromRuntime(...)` and returns a deterministic compare-shaped official-doc candidate reply
   - `user-response-normalizer.mjs` now only reads canonical `execution_result.data.answer / sources / limitations`
   - delivery/onboarding single-hit company-brain search replies now answer first with the matched document title plus bounded location/checklist/step hints from indexed snippets, instead of only repeating the generic "已索引文件" search copy
   - canonical user replies now degrade gracefully when only partial `sources / limitations` are present, instead of collapsing straight to a full-failure generic reply

@@ -215,7 +215,8 @@ These describe code structure and responsibility, not how many processes are run
     - `scanoo_diagnose -> scanoo-diagnose`
   - both lanes stay thin on purpose: they preserve distinct routing / trace / execution identity, but still reuse the existing planner answer-edge helper for stable answer/analysis execution
   - `scanoo-compare` now adds one checked-in compare brief immediately before the shared planner answer-edge call so the compare reply is constrained to the fixed section order `【比較對象】 -> 【比較維度】 -> 【核心差異】 -> 【原因假設】 -> 【證據 / 不確定性】 -> 【建議行動】`
-  - this is a wrapper-side prompt constraint only; it does not change planner ingress, the public `answer -> sources -> limitations` rendering contract, or the `scanoo-diagnose` lane behavior
+  - when that compare-lane reply still lands in an insufficient-evidence state and has not already executed a doc-read action, the same wrapper now re-enters the checked-in mirror read path via `searchCompanyBrainDocsFromRuntime(...)` and returns a deterministic compare-shaped docs-candidate reply instead of over-claiming a conclusion
+  - this remains a wrapper-side bounded fallback; it does not change planner ingress, the public `answer -> sources -> limitations` rendering contract, or the `scanoo-diagnose` lane behavior
   - only when the dedicated `scanoo-compare` lane is unavailable does the adapter fall back to `knowledge-assistant`, recording `lane_mapping_source=fallback` plus `fallback_reason=missing_exact_scanoo_compare_lane_fallback_to_knowledge_assistant`
   - only when the dedicated `scanoo-diagnose` lane is unavailable does the adapter fall back to `knowledge-assistant`, recording `lane_mapping_source=fallback` plus `fallback_reason=missing_exact_scanoo_diagnose_lane_fallback_to_knowledge_assistant`
   - `scanoo_optimize` still has no dedicated checked-in lane and continues to fall back to `knowledge-assistant`
