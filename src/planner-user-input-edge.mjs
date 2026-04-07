@@ -4,6 +4,7 @@ import {
   executePlannedUserInput,
   looksLikeExecutiveStart,
 } from "./executive-planner.mjs";
+import { resolveRegisteredAgentFamilyRequest } from "./agent-registry.mjs";
 import { parseMeetingCommand } from "./meeting-agent.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import { ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
@@ -127,12 +128,21 @@ function buildMeetingWorkflowRecoveryResult(text = "", meetingCommand = null) {
 
 function buildExecutiveBriefRecoveryResult(text = "") {
   const normalized = cleanText(text);
+  const explicitAgentRequest = resolveRegisteredAgentFamilyRequest(text, {
+    includeSlashCommand: true,
+    includePersonaMentions: true,
+    includeKnowledgeCommands: false,
+  });
+  const explicitAgentId = cleanText(explicitAgentRequest?.agent?.id || "");
   const signals = [];
   if (/各個 agent|各个 agent|一起看|協作|协作|統一|统一/u.test(normalized)) {
     signals.push("已辨識到多 agent 協作 / 收斂需求。");
   }
   if (/\/ceo|高層|高层|決策|决策|拍板/u.test(normalized)) {
     signals.push("這輪帶有明確的決策或高層協作訊號。");
+  }
+  if (explicitAgentId && explicitAgentId !== "generalist") {
+    signals.push(`這輪也帶有明確的 /${explicitAgentId} owner 訊號。`);
   }
 
   return {
@@ -142,16 +152,24 @@ function buildExecutiveBriefRecoveryResult(text = "") {
     execution_result: {
       ok: true,
       data: {
-        answer: `這句「${text}」比較像需要多人視角收斂的 executive 任務，我先按 executive brief 的方式把目標和收斂方向接住。`,
+        answer: explicitAgentId && explicitAgentId !== "generalist"
+          ? `這句「${text}」比較像要交給 /${explicitAgentId} 從專責角度處理，我先用 owner-aware executive brief 把目標和收斂方向接住。`
+          : `這句「${text}」比較像需要多人視角收斂的 executive 任務，我先按 executive brief 的方式把目標和收斂方向接住。`,
         sources: signals.length > 0 ? signals : ["這輪比較像需要由 executive lane 接手的協作任務。"],
-        limitations: ["如果你要我直接往下做，貼上這批文件、決策題目，或你想要的最終輸出格式，我就先以 generalist 收斂。"],
+        limitations: [
+          explicitAgentId && explicitAgentId !== "generalist"
+            ? `如果你要我直接往下做，貼上素材、背景或你要的輸出格式，我就先以 /${explicitAgentId} 的角度收斂。`
+            : "如果你要我直接往下做，貼上這批文件、決策題目，或你想要的最終輸出格式，我就先以 generalist 收斂。",
+        ],
       },
     },
     why: "strict planner decision 缺失時，先回到 checked-in executive lane 做 owner-aware brief recovery。",
     alternative: {
       action: null,
-      agent_id: "generalist",
-      summary: "不直接假裝已完成多 agent 執行，只先交付可判讀的 executive brief。",
+      agent_id: explicitAgentId || "generalist",
+      summary: explicitAgentId && explicitAgentId !== "generalist"
+        ? `不直接假裝已完成 /${explicitAgentId} 執行，只先交付可判讀的 owner-aware brief。`
+        : "不直接假裝已完成多 agent 執行，只先交付可判讀的 executive brief。",
     },
   };
 }

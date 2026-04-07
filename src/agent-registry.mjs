@@ -275,8 +275,39 @@ export const knowledgeAgentSubcommands = Object.freeze(
     .map((agent) => agent.subcommand),
 );
 
+export const personaAgentIds = Object.freeze(
+  Object.values(agentRegistry)
+    .filter((agent) => agent.kind === "persona")
+    .map((agent) => agent.id),
+);
+
+function findRegisteredAgentMentionIndex(text = "", agentId = "") {
+  const normalizedText = cleanText(String(text || "").toLowerCase());
+  const normalizedAgentId = cleanText(String(agentId || "").toLowerCase());
+  if (!normalizedText || !normalizedAgentId) {
+    return -1;
+  }
+
+  const slashIndex = normalizedText.indexOf(`/${normalizedAgentId}`);
+  if (slashIndex >= 0) {
+    return slashIndex;
+  }
+
+  if (/^[a-z_]+$/.test(normalizedAgentId)) {
+    const pattern = new RegExp(`(^|[^a-z0-9_])${normalizedAgentId}(?=$|[^a-z0-9_])`, "i");
+    const match = pattern.exec(normalizedText);
+    return match ? Number(match.index || 0) + match[1].length : -1;
+  }
+
+  return normalizedText.indexOf(normalizedAgentId);
+}
+
 export function listRegisteredAgents() {
   return Object.values(agentRegistry);
+}
+
+export function listRegisteredPersonaAgents() {
+  return personaAgentIds.map((agentId) => agentRegistry[agentId]).filter(Boolean);
 }
 
 export function listAgentCapabilityMatrix() {
@@ -341,5 +372,60 @@ export function parseRegisteredAgentCommand(text = "") {
     agent,
     body: rawRemainder,
     raw: normalized,
+  };
+}
+
+export function resolveRegisteredAgentFamilyRequest(text = "", {
+  includeSlashCommand = true,
+  includePersonaMentions = true,
+  includeKnowledgeCommands = true,
+} = {}) {
+  const normalized = cleanText(text);
+  if (!normalized) {
+    return null;
+  }
+
+  if (includeSlashCommand && normalized.startsWith("/")) {
+    const parsed = parseRegisteredAgentCommand(normalized);
+    if (parsed?.error) {
+      return {
+        error: parsed.error,
+        body: parsed.body || "",
+        raw: parsed.raw || normalized,
+        surface: "slash_command",
+      };
+    }
+    if (parsed?.agent && (includeKnowledgeCommands || parsed.agent.kind !== "knowledge")) {
+      return {
+        agent: parsed.agent,
+        body: parsed.body || "",
+        raw: parsed.raw || normalized,
+        surface: "slash_command",
+      };
+    }
+  }
+
+  if (!includePersonaMentions) {
+    return null;
+  }
+
+  const personaMatch = personaAgentIds
+    .map((agentId, order) => ({
+      agentId,
+      order,
+      index: findRegisteredAgentMentionIndex(normalized, agentId),
+    }))
+    .filter((item) => item.index >= 0)
+    .sort((left, right) => left.index - right.index || left.order - right.order)[0];
+
+  if (!personaMatch) {
+    return null;
+  }
+
+  return {
+    agent: getRegisteredAgent(personaMatch.agentId),
+    body: normalized,
+    raw: normalized,
+    surface: "persona_style",
   };
 }

@@ -11,7 +11,10 @@ import {
   CLOUD_DOC_ORGANIZATION_MODE,
   resolveCloudOrganizationAction,
 } from "./cloud-doc-organization-workflow.mjs";
-import { parseRegisteredAgentCommand } from "./agent-registry.mjs";
+import {
+  parseRegisteredAgentCommand,
+  resolveRegisteredAgentFamilyRequest,
+} from "./agent-registry.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import {
   looksLikeExecutiveStart,
@@ -463,30 +466,25 @@ function resolveExecutiveFallback(text = "", activeTask = null) {
     "分別看",
     "分别看",
   ]);
-  const explicitMap = [
-    ["ceo", "ceo"],
-    ["product", "product"],
-    ["prd", "prd"],
-    ["cmo", "cmo"],
-    ["consult", "consult"],
-    ["cdo", "cdo"],
-    ["delivery", "delivery"],
-    ["ops", "ops"],
-    ["tech", "tech"],
-  ];
+  const explicitAgentRequest = resolveRegisteredAgentFamilyRequest(text, {
+    includeSlashCommand: true,
+    includePersonaMentions: true,
+    includeKnowledgeCommands: false,
+  });
+  const explicitAgentId = cleanText(explicitAgentRequest?.agent?.id || "");
 
-  for (const [signal, agentId] of explicitMap) {
-    if (normalized.includes(signal)) {
-      return {
-        action: activeTask ? "handoff" : "start",
-        objective: text,
-        primary_agent_id: activeTask?.primary_agent_id || agentId,
-        next_agent_id: agentId,
-        supporting_agent_ids: activeTask?.supporting_agent_ids || [],
-        reason: `使用者明確提到 ${signal}`,
-        pending_questions: [],
-      };
-    }
+  if (explicitAgentId && explicitAgentId !== "generalist") {
+    return {
+      action: activeTask ? "handoff" : "start",
+      objective: text,
+      primary_agent_id: activeTask?.primary_agent_id || explicitAgentId,
+      next_agent_id: explicitAgentId,
+      supporting_agent_ids: activeTask?.supporting_agent_ids || [],
+      reason: explicitAgentRequest?.surface === "slash_command"
+        ? `使用者明確指定 /${explicitAgentId}`
+        : `使用者明確提到 ${explicitAgentId}`,
+      pending_questions: [],
+    };
   }
 
   if (normalized.includes("分配") || normalized.includes("分類")) {

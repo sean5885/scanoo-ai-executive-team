@@ -67,13 +67,14 @@ function createUsageLayerEval(entry = {}) {
     expected_success_type: entry.expected_success_type,
     expected_eval_outcome: entry.expected_eval_outcome,
     should_fail_if_generic: entry.should_fail_if_generic === true,
+    ...(entry.expected_owner_surface ? { expected_owner_surface: entry.expected_owner_surface } : {}),
     ...(entry.source_anchor ? { source_anchor: entry.source_anchor } : {}),
     ...(entry.context && typeof entry.context === "object" ? { context: Object.freeze({ ...entry.context }) } : {}),
     ...(entry.scope && typeof entry.scope === "object" ? { scope: Object.freeze({ ...entry.scope }) } : {}),
   });
 }
 
-function createUsageLayerEvalFromRouting({
+export function createUsageLayerEvalFromRouting({
   id,
   source_anchor: sourceAnchor,
   expected_reply_mode: expectedReplyMode = null,
@@ -81,6 +82,7 @@ function createUsageLayerEvalFromRouting({
   expected_eval_outcome: expectedEvalOutcome = null,
   should_fail_if_generic: shouldFailIfGeneric = true,
   tool_required: toolRequired = null,
+  expected_owner_surface: expectedOwnerSurface = null,
 } = {}) {
   const routingEval = routingEvalIndex.get(sourceAnchor);
   if (!routingEval) {
@@ -107,12 +109,13 @@ function createUsageLayerEvalFromRouting({
     expected_success_type: resolvedSuccessType,
     expected_eval_outcome: expectedEvalOutcome || inferEvalOutcome(resolvedSuccessType),
     should_fail_if_generic: shouldFailIfGeneric,
+    expected_owner_surface: expectedOwnerSurface,
     context: routingEval.context || null,
     scope: routingEval.scope || null,
   });
 }
 
-function createManualUsageLayerEval(entry = {}) {
+export function createManualUsageLayerEval(entry = {}) {
   const expectedReplyMode = entry.expected_reply_mode || inferReplyMode(entry);
   const expectedSuccessType = entry.expected_success_type || inferSuccessType(expectedReplyMode);
   return createUsageLayerEval({
@@ -127,7 +130,7 @@ function createManualUsageLayerEval(entry = {}) {
   });
 }
 
-function createFailClosedUsageLayerEvalFromRouting(entry = {}) {
+export function createFailClosedUsageLayerEvalFromRouting(entry = {}) {
   return createUsageLayerEvalFromRouting({
     ...entry,
     expected_reply_mode: "fail_soft",
