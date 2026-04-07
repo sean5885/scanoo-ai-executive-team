@@ -10,6 +10,11 @@ export async function runTaskLayer(input, runSkill) {
   for (const task of tasks) {
     const skill = TASK_SKILL_MAP[task];
     if (!skill) {
+      results.push({
+        task,
+        ok: false,
+        error: "no_skill_mapped",
+      });
       continue;
     }
 
