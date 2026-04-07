@@ -162,6 +162,16 @@ function normalizeReadPayload(payload = {}) {
   };
 }
 
+function normalizeReadAccessToken(accessToken = "") {
+  if (typeof accessToken === "string") {
+    return cleanText(accessToken);
+  }
+  if (accessToken && typeof accessToken === "object" && !Array.isArray(accessToken)) {
+    return cleanText(accessToken.access_token || accessToken.accessToken);
+  }
+  return "";
+}
+
 function normalizeReaderOverrides(overrides = null) {
   if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) {
     return null;
@@ -195,7 +205,7 @@ function normalizeReadContext(context = {}) {
     pathname: cleanText(context.pathname) || null,
     freshness: cleanText(context.freshness),
     primary_authority: cleanText(context.primary_authority || context.primaryAuthority),
-    access_token: cleanText(context.access_token || context.accessToken),
+    access_token: normalizeReadAccessToken(context.access_token || context.accessToken),
     reader_overrides: normalizeReaderOverrides(context.reader_overrides || context.readerOverrides),
   };
 }
@@ -494,7 +504,7 @@ function buildLiveReadCanonicalRequest({
       pathname: cleanText(pathname) || null,
       primary_authority: LIVE_AUTHORITY,
       freshness: LIVE_REQUIRED_FRESHNESS,
-      access_token: cleanText(accessToken) || "",
+      access_token: normalizeReadAccessToken(accessToken),
       reader_overrides: readerOverrides && typeof readerOverrides === "object" && !Array.isArray(readerOverrides)
         ? { ...readerOverrides }
         : undefined,

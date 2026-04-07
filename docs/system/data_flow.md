@@ -81,6 +81,7 @@ Current truth:
 
 - this path is explicit and live-only
 - it is not automatically supplemented by mirror data in the same route
+- the checked-in live-read wrappers normalize either a raw access token or a resolved auth envelope before handing the request to the live reader
 
 ## 2. Write Path
 

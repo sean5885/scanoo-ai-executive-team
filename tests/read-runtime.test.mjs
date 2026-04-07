@@ -5,7 +5,7 @@ import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 const testDb = await createTestDbHarness();
 const { db } = testDb;
 const [
-  { runRead },
+  { listDocumentCommentsFromRuntime, readDocumentFromRuntime, runRead },
   { replaceDocumentChunks, saveToken, upsertDocument },
 ] = await Promise.all([
   import("../src/read-runtime.mjs"),
@@ -433,6 +433,78 @@ test("runRead routes live document reads only when freshness is live_required", 
   assert.equal(result.meta.fallback_used, false);
   assert.equal(result.data.success, true);
   assert.equal(result.data.data.document_id, "doc_live_runtime_1");
+});
+
+test("readDocumentFromRuntime accepts resolved auth envelopes for live doc reads", async () => {
+  let observedAccessToken = null;
+
+  const document = await readDocumentFromRuntime({
+    accountId: "acct_live_runtime_envelope",
+    accessToken: {
+      access_token: "token-live-envelope",
+      account_id: "acct_live_runtime_envelope",
+    },
+    documentId: "doc_live_runtime_envelope",
+    readerOverrides: {
+      live: {
+        read_document: async ({ payload, context }) => {
+          observedAccessToken = context.access_token;
+          return {
+            success: true,
+            data: {
+              document_id: payload.doc_id,
+              title: "Envelope Live Doc",
+              content: "# envelope",
+              revision_id: "rev-envelope-1",
+            },
+            error: null,
+          };
+        },
+      },
+    },
+  });
+
+  assert.equal(observedAccessToken, "token-live-envelope");
+  assert.equal(document.document_id, "doc_live_runtime_envelope");
+  assert.equal(document.title, "Envelope Live Doc");
+});
+
+test("listDocumentCommentsFromRuntime accepts resolved auth envelopes for live comment reads", async () => {
+  let observedAccessToken = null;
+
+  const comments = await listDocumentCommentsFromRuntime({
+    accountId: "acct_live_runtime_comments",
+    accessToken: {
+      accessToken: "token-live-comments",
+      accountId: "acct_live_runtime_comments",
+    },
+    documentId: "doc_live_runtime_comments",
+    readerOverrides: {
+      live: {
+        list_document_comments: async ({ payload, context }) => {
+          observedAccessToken = context.access_token;
+          return {
+            success: true,
+            data: {
+              items: [
+                {
+                  comment_id: "comment-1",
+                  latest_reply_text: "請補上數據維度",
+                },
+              ],
+              page_token: null,
+              has_more: false,
+            },
+            error: null,
+          };
+        },
+      },
+    },
+  });
+
+  assert.equal(observedAccessToken, "token-live-comments");
+  assert.equal(comments.items[0].comment_id, "comment-1");
+  assert.equal(comments.has_more, false);
 });
 
 test("runRead rejects live document reads without live_required freshness", async () => {

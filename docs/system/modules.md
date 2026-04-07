@@ -79,6 +79,7 @@ Current-truth docs for onboarding are:
   - `mirror` handles `company_brain_docs`
   - `derived` handles approved knowledge and approval/learning-state views
   - `live` handles direct Lark doc/comment reads
+  - live read helpers accept either a raw access-token string or the checked-in resolved auth envelope shape and normalize that into the canonical live-read request before reader execution
 - Evidence:
   - `/Users/seanhan/Documents/Playground/tests/read-runtime.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/company-brain-query.test.mjs`
