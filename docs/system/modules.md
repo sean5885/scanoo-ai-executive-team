@@ -159,19 +159,23 @@ Current-truth docs for onboarding are:
 
 - Implemented:
   - `/Users/seanhan/Documents/Playground/src/task-layer/task-classifier.mjs`
+  - `/Users/seanhan/Documents/Playground/src/task-layer/task-dependency.mjs`
   - `/Users/seanhan/Documents/Playground/src/task-layer/task-skill-map.mjs`
   - `/Users/seanhan/Documents/Playground/src/task-layer/orchestrator.mjs`
 - Current truth:
   - a checked-in task-layer helper now exists under `src/task-layer/`
   - it performs deterministic keyword classification into `copywriting`, `image`, and `publish`
+  - `task-dependency.mjs` defines the current checked-in execution order as `copywriting -> image -> publish`
   - it maps those task tags to string skill identifiers `copy_agent`, `image_agent`, and `publish_agent`
-  - `runTaskLayer(...)` executes the provided `runSkill` callback sequentially per detected task and returns per-task success/failure records
+  - `runTaskLayer(...)` sorts detected tasks through that dependency helper, executes the provided `runSkill` callback sequentially, and returns per-task success/failure records
+  - a task failure is recorded fail-soft and does not stop later tasks from running in the same bounded pass
   - `executePlannedUserInput(...)` can now consult this helper as a planner pre-pass, but only when the caller explicitly provides a `runSkill` callback
   - if that optional pre-pass detects more than one task, planner execution short-circuits into a bounded `multi_task` result that still stays inside the canonical `answer / sources / limitations` boundary
   - if no `runSkill` callback is provided, the pre-pass errors, or at most one task is detected, the original planner flow continues unchanged
   - the checked-in public `/answer` edge does not currently provide `runSkill`, so this does not change the default public route behavior
   - the mapped identifiers are local task-layer labels only; they are not evidence of checked-in planner-visible skill registration
 - Evidence:
+  - `/Users/seanhan/Documents/Playground/tests/task-dependency.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/task-layer.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/task-layer-integration.test.mjs`
 
