@@ -44,6 +44,21 @@ async function saveStore(filePath, store) {
 }
 
 function normalizeReflectionEntry(entry = {}) {
+  const executionReflectionSummary =
+    entry.execution_reflection_summary && typeof entry.execution_reflection_summary === "object"
+      ? {
+          overall_status: cleanText(entry.execution_reflection_summary.overall_status || ""),
+          total_steps: Number.isFinite(Number(entry.execution_reflection_summary.total_steps))
+            ? Number(entry.execution_reflection_summary.total_steps)
+            : 0,
+          deviated_steps: Number.isFinite(Number(entry.execution_reflection_summary.deviated_steps))
+            ? Number(entry.execution_reflection_summary.deviated_steps)
+            : 0,
+          deviation_rate: Number.isFinite(Number(entry.execution_reflection_summary.deviation_rate))
+            ? Number(entry.execution_reflection_summary.deviation_rate)
+            : 0,
+        }
+      : null;
   return {
     id: cleanText(entry.id) || crypto.randomUUID(),
     task_id: cleanText(entry.task_id),
@@ -59,6 +74,10 @@ function normalizeReflectionEntry(entry = {}) {
     routing_quality: entry.routing_quality && typeof entry.routing_quality === "object" ? { ...entry.routing_quality } : null,
     response_quality: entry.response_quality && typeof entry.response_quality === "object" ? { ...entry.response_quality } : null,
     error_type: cleanText(entry.error_type),
+    execution_reflection_summary: executionReflectionSummary,
+    improvement_triggered: entry.improvement_triggered === true,
+    retry_attempted: entry.retry_attempted === true,
+    retry_succeeded: entry.retry_succeeded === true,
     created_at: entry.created_at || nowIso(),
   };
 }

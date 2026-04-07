@@ -8,6 +8,11 @@ import {
   archiveExecutiveReflection,
   registerImprovementWorkflowProposals,
 } from "./executive-improvement-workflow.mjs";
+import {
+  buildCurrentEvolutionMetrics,
+  calculateEvolutionMetrics,
+  summarizeExecutionReflection,
+} from "./executive-evolution-metrics.mjs";
 import { buildTaskRuleSet, inferTaskType, KNOWLEDGE_RULES } from "./executive-rules.mjs";
 import { createReflectionRecord } from "./executive-reflection.mjs";
 import { createImprovementProposal, createImprovementProposals, stageImprovementProposal } from "./executive-improvement.mjs";
@@ -848,6 +853,7 @@ export async function finalizeExecutiveTaskTurn({
   structuredResult = null,
   extraEvidence = [],
   plannerSteps = [],
+  logger = null,
 } = {}) {
   if (!task?.id) {
     return null;
@@ -904,6 +910,9 @@ export async function finalizeExecutiveTaskTurn({
   current = await applyLifecycle(current || task, outcome.nextState, outcome.reason);
   current = await syncTaskStatus(current || task, outcome.nextStatus);
 
+  const priorVerifications = Array.isArray(task?.verifications) ? task.verifications : [];
+  const retryAttempted = priorVerifications.length > 0;
+  const retrySucceeded = retryAttempted && outcome.nextState === "completed";
   const reflection = createReflectionRecord({
     task: current || task,
     requestText,
@@ -912,14 +921,27 @@ export async function finalizeExecutiveTaskTurn({
     verification,
     routing,
   });
+  const improvementProposal = createImprovementProposal(reflection);
+  const rawProposals = createImprovementProposals({
+    reflection_result: reflection,
+    task: current || task,
+  });
+  const evolutionCurrentMetrics = buildCurrentEvolutionMetrics({
+    executionReflection,
+    improvementTriggered: Boolean(improvementProposal || rawProposals.length),
+    retryAttempted,
+    retrySucceeded,
+  });
   current = await appendExecutiveTaskReflection(task.id, reflection);
   const archivedReflection = await archiveExecutiveReflection({
     accountId,
     sessionKey,
     taskId: task.id,
-    reflection,
+    reflection: {
+      ...reflection,
+      ...evolutionCurrentMetrics,
+    },
   });
-  const improvementProposal = createImprovementProposal(reflection);
   const stagedImprovementProposal = await stageImprovementProposal({
     improvement_proposal: improvementProposal,
     reflection_result: reflection,
@@ -929,10 +951,6 @@ export async function finalizeExecutiveTaskTurn({
   });
   current = await applyLifecycle(current || task, "reflected", "post_task_review_completed");
 
-  const rawProposals = createImprovementProposals({
-    reflection_result: reflection,
-    task: current || task,
-  });
   const proposals = await registerImprovementWorkflowProposals({
     accountId,
     sessionKey,
@@ -951,6 +969,28 @@ export async function finalizeExecutiveTaskTurn({
       current = await syncTaskStatus(current || task, "improved");
     }
   }
+
+  const evolutionMetrics = await calculateEvolutionMetrics();
+  current = await updateExecutiveTask(task.id, {
+    meta: {
+      evolution_metrics: {
+        current: evolutionCurrentMetrics,
+        rolling: evolutionMetrics,
+      },
+    },
+  });
+  logger?.info?.("executive_evolution_metrics", {
+    event_type: "executive_evolution_metrics",
+    trace_id: cleanText(current?.trace_id || task.trace_id || "") || null,
+    task_id: task.id,
+    task_type: cleanText(current?.task_type || task.task_type || "") || null,
+    lifecycle_state: cleanText(current?.lifecycle_state || task.lifecycle_state || "") || null,
+    execution_reflection_status: summarizeExecutionReflection(executionReflection).overall_status || null,
+    metrics: {
+      current: evolutionCurrentMetrics,
+      rolling: evolutionMetrics,
+    },
+  });
 
   await appendSessionMemory({
     account_id: accountId,

@@ -71,6 +71,18 @@ Implemented through:
 
 - `src/executive-reflection.mjs`
 - `src/executive-closed-loop.mjs` now also derives a lightweight execution-reflection snapshot immediately after execution and before verification/improvement persistence: the pipeline first normalizes planner-step metadata into `execution_journal.planner_steps[]` with `{ intent, success_criteria }`, prefers explicit step metadata when present, falls back to task/work-plan/task-level success criteria when fields are missing, then returns a deterministic structured object with `overall_status` plus per-step `{ intent, success, success_match, deviation, reason }`; `success_match` records matched vs unmet success criteria, `deviation` is a bounded execution delta code, and `reason` is classified into controlled values such as `tool_failure`, `planning_error`, or `missing_info` instead of natural-language prose
+- `src/executive-evolution-metrics.mjs`
+- `src/executive-evolution-replay.mjs`
+- the same closed-loop finalize path now also archives a minimal local evolution snapshot per reflection and emits one structured `executive_evolution_metrics` log event with rolling local rates for:
+  - `reflection_deviation_rate`
+  - `improvement_trigger_rate`
+  - `retry_success_rate`
+- this metrics path is local-only: it reads the checked-in reflection archive, does not call any external service, and is intended for runtime/log inspection rather than a separate telemetry backend
+- the bounded replay helper now re-runs the same task definition against two local run specs (`first_run`, `second_run`), reuses the checked-in execution-reflection and verifier rules for both passes, and returns `improvement_delta` across:
+  - `success`
+  - `steps`
+  - `deviation`
+- this replay path is reconstruction-only and local-only: it compares provided run artifacts, does not re-drive live external side effects, and does not claim exact raw-wire request replay
 
 ### Improvement Loop
 

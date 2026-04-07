@@ -1931,6 +1931,7 @@ async function executeExecutiveTurnUnlocked({
       fallback_used: execution.fallbackUsed,
       synthetic_agent_hint: null,
     },
+    logger,
   });
 
   return {

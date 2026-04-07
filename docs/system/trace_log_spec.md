@@ -159,6 +159,23 @@ All minimum trace/log events should align around these fields:
   - `reply_send_failed`
   - with correlated fields such as `request_id`, `event_id`, `chat_id`, `receive_id`, `receive_id_type`, `msg_type`, thread/root/parent identifiers when present, `api_http_status`, and a summarized `api_raw_response`
 - `reply_send_succeeded` is now evidence-bearing only when the Lark message mutation response contains a concrete `message_id`; resolved promises without that field are not treated as success
+- executive closed-loop finalize now also emits `executive_evolution_metrics` with:
+  - `trace_id`
+  - `task_id`
+  - `task_type`
+  - `lifecycle_state`
+  - `execution_reflection_status`
+  - `metrics.current`
+  - `metrics.rolling`
+- the rolling metrics are computed locally from archived reflections and currently cover:
+  - `reflection_deviation_rate`
+  - `improvement_trigger_rate`
+  - `retry_success_rate`
+- bounded executive replay can now emit `executive_evolution_replay` with:
+  - `task_type`
+  - `objective`
+  - `improvement_delta`
+- this replay event is derived from local replay inputs and checked-in verifier/reflection rules; it is not evidence of a live rerun against external services
 
 ### Fields not yet consistently runtimeized
 

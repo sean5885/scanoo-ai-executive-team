@@ -236,6 +236,44 @@ node scripts/runtime-workflow-eval.mjs
 - checked-in runtime workflow fixture dataset：`evals/runtime-workflow-set.mjs`
 - deterministic smoke runner output：PASS / FAIL 與固定 runtime mock answer 命中結果
 
+### Executive Evolution Replay
+
+用途：
+
+- 用 bounded reconstruction 比較同一個 executive task 在 improvement 前後的兩次 run spec
+- 適合在修改 `src/executive-closed-loop.mjs`、`src/executive-reflection.mjs`、`src/executive-improvement.mjs` 或 evolution metrics / replay judge 後快速確認 delta 判讀沒有退化
+- 這不是 live request replay；它不重放外部 side effects，只重用 checked-in verifier / reflection 規則
+
+命令：
+
+```bash
+npm run executive:replay -- path/to/replay-spec.json
+npm run executive:replay -- path/to/replay-spec.json --json
+```
+
+輸入最小 shape：
+
+```json
+{
+  "task": {
+    "task_type": "search",
+    "objective": "整理知識答案",
+    "success_criteria": ["有可讀結論", "有來源證據"],
+    "work_plan": []
+  },
+  "request_text": "幫我整理知識答案",
+  "first_run": {},
+  "second_run": {}
+}
+```
+
+覆蓋：
+
+- `success`
+- `steps`
+- `deviation`
+- `improvement_delta`
+
 ### Workflow Timeout Governance Focused Pack
 
 用途：

@@ -218,6 +218,28 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/tests/meeting-agent.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/control-unification-phase2-meeting.test.mjs`
 
+### 7A. Executive Closed-Loop Learning and Metrics
+
+- Implemented:
+  - `/Users/seanhan/Documents/Playground/src/executive-closed-loop.mjs`
+  - `/Users/seanhan/Documents/Playground/src/executive-reflection.mjs`
+  - `/Users/seanhan/Documents/Playground/src/executive-improvement.mjs`
+  - `/Users/seanhan/Documents/Playground/src/executive-improvement-workflow.mjs`
+  - `/Users/seanhan/Documents/Playground/src/executive-evolution-metrics.mjs`
+  - `/Users/seanhan/Documents/Playground/src/executive-evolution-replay.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/executive-evolution-replay.mjs`
+- Current truth:
+  - execution reflection remains the checked-in source for per-step `success / deviation / reason`
+  - finalized executive turns now archive a local evolution snapshot alongside the reflection record
+  - the runtime logger now emits one structured `executive_evolution_metrics` event with rolling local rates for `reflection_deviation_rate`, `improvement_trigger_rate`, and `retry_success_rate`
+  - bounded executive replay can now compare the same task across `first_run` and `second_run` run specs and output `improvement_delta` for success, steps, and deviation
+  - this replay surface is offline/local reconstruction only; it does not promise raw live request replay or automatic improvement application
+- this path is process-local and file-backed through the existing reflection archive; it does not use any external telemetry service
+- Evidence:
+  - `/Users/seanhan/Documents/Playground/tests/executive-closed-loop.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/executive-evolution-metrics.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/executive-evolution-replay.test.mjs`
+
 ### 8. Classification and Plugin Adapters
 
 - Implemented:

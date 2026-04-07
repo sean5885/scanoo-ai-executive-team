@@ -338,6 +338,7 @@ test("closed loop attaches lightweight improvement proposal to execution journal
     lifecycleState: "awaiting_result",
   });
 
+  const logs = [];
   await finalizeExecutiveTaskTurn({
     task,
     accountId: "acct-improvement-journal",
@@ -352,6 +353,11 @@ test("closed loop attaches lightweight improvement proposal to execution journal
         { action: "answer_user", status: "completed" },
       ],
     },
+    logger: {
+      info(event, payload) {
+        logs.push({ event, payload });
+      },
+    },
   });
 
   const updatedTask = await getExecutiveTask(task.id);
@@ -360,4 +366,35 @@ test("closed loop attaches lightweight improvement proposal to execution journal
     summary: "Prompt constraints did not keep the response grounded and on-contract.",
     action_suggestion: "Tighten answer-order, completion-gate, and evidence-language instructions for this failure pattern.",
   });
+  assert.deepEqual(updatedTask?.meta?.evolution_metrics?.current, {
+    execution_reflection_summary: {
+      overall_status: "success",
+      total_steps: 1,
+      deviated_steps: 0,
+      deviation_rate: 0,
+    },
+    reflection_deviation_rate: 0,
+    improvement_trigger_rate: 1,
+    retry_success_rate: null,
+    improvement_triggered: true,
+    retry_attempted: false,
+    retry_succeeded: false,
+  });
+
+  const reflectionStore = JSON.parse(await fs.readFile(executiveReflectionStorePath, "utf8"));
+  const archived = reflectionStore.items.at(-1);
+  assert.equal(archived.improvement_triggered, true);
+  assert.equal(archived.retry_attempted, false);
+  assert.equal(archived.retry_succeeded, false);
+  assert.deepEqual(archived.execution_reflection_summary, {
+    overall_status: "success",
+    total_steps: 1,
+    deviated_steps: 0,
+    deviation_rate: 0,
+  });
+
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].event, "executive_evolution_metrics");
+  assert.deepEqual(logs[0].payload.metrics.current, updatedTask?.meta?.evolution_metrics?.current);
+  assert.deepEqual(logs[0].payload.metrics.rolling, updatedTask?.meta?.evolution_metrics?.rolling);
 });
