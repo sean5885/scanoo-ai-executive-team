@@ -2335,7 +2335,7 @@ test("lark plugin dispatch route sends lane_style requests through the existing 
   assert.equal(calls.some((entry) => entry[1]?.event === "lark_plugin_dispatch_completed" && entry[1]?.fallback_reason === "lane_style_capability"), true);
 });
 
-test("lark plugin dispatch route sends explicit scanoo capability through the lane path", async (t) => {
+test("lark plugin dispatch route sends explicit scanoo compare capability through the dedicated compare lane", async (t) => {
   const plannerCalls = [];
   const laneCalls = [];
   const { server, calls } = await startTestServer(t, {
@@ -2381,16 +2381,20 @@ test("lark plugin dispatch route sends explicit scanoo capability through the la
 
   assert.equal(body.route_target, "lane_backend");
   assert.equal(body.requested_capability, "scanoo_compare");
-  assert.equal(body.mapped_lane, "knowledge-assistant");
+  assert.equal(body.mapped_lane, "scanoo-compare");
   assert.equal(body.chosen_skill, "scanoo_compare");
-  assert.equal(body.chosen_lane, "knowledge-assistant");
-  assert.equal(body.lane_mapping_source, "fallback");
-  assert.equal(body.fallback_reason, "missing_exact_scanoo_compare_lane_fallback_to_knowledge_assistant");
+  assert.equal(body.chosen_lane, "scanoo-compare");
+  assert.equal(body.lane_mapping_source, "explicit");
+  assert.equal(body.fallback_reason, null);
   assert.equal(body.response.data.answer, "這是 scanoo lane backend 的回答");
   assert.equal(plannerCalls.length, 0);
   assert.equal(laneCalls.length, 1);
-  assert.equal(laneCalls[0].scope.capability_lane, "knowledge-assistant");
-  assert.equal(calls.some((entry) => entry[1]?.event === "lark_plugin_dispatch_started" && entry[1]?.capability_source === "explicit"), true);
+  assert.equal(laneCalls[0].scope.capability_lane, "scanoo-compare");
+  assert.equal(calls.some((entry) => (
+    entry[1]?.event === "lark_plugin_dispatch_started"
+    && entry[1]?.capability_source === "explicit"
+    && entry[1]?.lane_mapping_source === "explicit"
+  )), true);
 });
 
 test("lark plugin dispatch route maps explicit scanoo_diagnose into the dedicated diagnose lane", async (t) => {

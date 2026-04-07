@@ -24,6 +24,7 @@ const KNOWLEDGE_ANSWER_TOOL_PATTERNS = [
 
 const SUPPORTED_PLUGIN_DISPATCH_LANES = new Set([
   "knowledge-assistant",
+  "scanoo-compare",
   "scanoo-diagnose",
   "doc-editor",
   "group-shared-assistant",
@@ -50,11 +51,12 @@ const REQUESTED_CAPABILITY_ROUTE_MAP = {
   },
   scanoo_compare: {
     route_target: "lane_backend",
-    mapped_lane: "knowledge-assistant",
-    chosen_lane: "knowledge-assistant",
-    lane_mapping_source: "fallback",
+    mapped_lane: "scanoo-compare",
+    chosen_lane: "scanoo-compare",
+    lane_mapping_source: "explicit",
     chosen_skill: "scanoo_compare",
-    fallback_reason: "missing_exact_scanoo_compare_lane_fallback_to_knowledge_assistant",
+    fallback_lane: "knowledge-assistant",
+    fallback_reason_on_miss: "missing_exact_scanoo_compare_lane_fallback_to_knowledge_assistant",
   },
   scanoo_optimize: {
     route_target: "lane_backend",
@@ -459,6 +461,13 @@ function resolveExplicitLaneContext(normalizedRequest = {}, preferredLane = "") 
     return {
       capability_lane: "scanoo-diagnose",
       lane_label: "Scanoo 診斷助手",
+      lane_reason: "plugin_dispatch_requested_capability",
+    };
+  }
+  if (lane === "scanoo-compare") {
+    return {
+      capability_lane: "scanoo-compare",
+      lane_label: "Scanoo 比較助手",
       lane_reason: "plugin_dispatch_requested_capability",
     };
   }

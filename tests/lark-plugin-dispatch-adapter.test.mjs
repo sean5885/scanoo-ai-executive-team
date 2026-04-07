@@ -162,7 +162,38 @@ test("scanoo_diagnose falls back to knowledge-assistant only when the dedicated 
   assert.equal(mapping.fallback_reason, "missing_exact_scanoo_diagnose_lane_fallback_to_knowledge_assistant");
 });
 
-test("explicit scanoo_compare capability routes to mapped knowledge lane even without scanoo wording", async () => {
+test("scanoo_compare maps to the dedicated scanoo-compare lane", () => {
+  const mapping = resolveRequestedCapabilityLaneMapping({
+    requestedCapability: "scanoo_compare",
+  });
+
+  assert.equal(mapping.route_target, "lane_backend");
+  assert.equal(mapping.mapped_lane, "scanoo-compare");
+  assert.equal(mapping.chosen_lane, "scanoo-compare");
+  assert.equal(mapping.lane_mapping_source, "explicit");
+  assert.equal(mapping.fallback_reason, null);
+});
+
+test("scanoo_compare falls back to knowledge-assistant only when the dedicated lane is unavailable", () => {
+  const mapping = resolveRequestedCapabilityLaneMapping({
+    requestedCapability: "scanoo_compare",
+    supportedPluginDispatchLanes: new Set([
+      "knowledge-assistant",
+      "scanoo-diagnose",
+      "doc-editor",
+      "group-shared-assistant",
+      "personal-assistant",
+    ]),
+  });
+
+  assert.equal(mapping.route_target, "lane_backend");
+  assert.equal(mapping.mapped_lane, "knowledge-assistant");
+  assert.equal(mapping.chosen_lane, "knowledge-assistant");
+  assert.equal(mapping.lane_mapping_source, "fallback");
+  assert.equal(mapping.fallback_reason, "missing_exact_scanoo_compare_lane_fallback_to_knowledge_assistant");
+});
+
+test("explicit scanoo_compare capability routes to the dedicated compare lane even without scanoo wording", async () => {
   let knowledgeCalls = 0;
   let laneCalls = 0;
 
@@ -189,11 +220,11 @@ test("explicit scanoo_compare capability routes to mapped knowledge lane even wi
   });
 
   assert.equal(result.route_target, "lane_backend");
-  assert.equal(result.mapped_lane, "knowledge-assistant");
-  assert.equal(result.chosen_lane, "knowledge-assistant");
-  assert.equal(result.lane_mapping_source, "fallback");
+  assert.equal(result.mapped_lane, "scanoo-compare");
+  assert.equal(result.chosen_lane, "scanoo-compare");
+  assert.equal(result.lane_mapping_source, "explicit");
   assert.equal(result.chosen_skill, "scanoo_compare");
-  assert.equal(result.fallback_reason, "missing_exact_scanoo_compare_lane_fallback_to_knowledge_assistant");
+  assert.equal(result.fallback_reason, null);
   assert.equal(knowledgeCalls, 0);
   assert.equal(laneCalls, 1);
 });

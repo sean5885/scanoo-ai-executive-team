@@ -28,7 +28,7 @@ This is the grouped HTTP surface mirror for the current repo.
 | `/api/monitoring/metrics` | `GET` | aggregate request metrics | implemented |
 | `/api/monitoring/learning` | `GET` | review-first learning summary from request traces | implemented |
 | `/agent/improvements/learning/generate` | `POST` | persist reviewable improvement proposals | implemented |
-| `/agent/lark-plugin/dispatch` | `POST` | official Lark plugin hybrid dispatch entry; normalizes plugin request/session metadata plus `requested_capability / capability_source`, resolves capability-to-lane mapping (`mapped_lane / lane_mapping_source / fallback_reason`) before deciding `knowledge_answer` vs `lane_backend` vs `plugin_native`, includes a dedicated minimal `scanoo-diagnose` lane for `scanoo_diagnose`, records observability, then either executes the bounded backend path or returns a plugin-native forward decision | implemented |
+| `/agent/lark-plugin/dispatch` | `POST` | official Lark plugin hybrid dispatch entry; normalizes plugin request/session metadata plus `requested_capability / capability_source`, resolves capability-to-lane mapping (`mapped_lane / lane_mapping_source / fallback_reason`) before deciding `knowledge_answer` vs `lane_backend` vs `plugin_native`, includes dedicated minimal `scanoo-compare` and `scanoo-diagnose` lanes for `scanoo_compare / scanoo_diagnose`, records observability, then either executes the bounded backend path or returns a plugin-native forward decision | implemented |
 
 ## 2. Retrieval and Public Answer Surface
 

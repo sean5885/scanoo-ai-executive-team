@@ -404,6 +404,14 @@ export function resolveLaneExecutionPlan({ event, scope } = {}) {
     });
   }
 
+  if (lane === "scanoo-compare") {
+    return buildLaneTrace({
+      scope,
+      chosenAction: "scanoo_compare_user_input",
+      fallbackReason: null,
+    });
+  }
+
   if (lane === "knowledge-assistant") {
     return buildLaneTrace({
       scope,
@@ -858,6 +866,16 @@ async function executeScanooDiagnose({ event, scope, logger = noopLogger, traceI
     logger,
     traceId,
     handlerName: "executeScanooDiagnose",
+  });
+}
+
+async function executeScanooCompare({ event, scope, logger = noopLogger, traceId = null }) {
+  return executePlannerBackedLane({
+    event,
+    scope,
+    logger,
+    traceId,
+    handlerName: "executeScanooCompare",
   });
 }
 
@@ -2799,6 +2817,10 @@ export async function executeCapabilityLane({ event, scope, logger = noopLogger,
   if (lane === "knowledge-assistant") {
     assertRoutingDecisionOwner({ expected: expectedOwner, actual: "knowledge-assistant" });
     return executeKnowledgeAssistant({ event, scope, logger, traceId });
+  }
+  if (lane === "scanoo-compare") {
+    assertRoutingDecisionOwner({ expected: expectedOwner, actual: "scanoo-compare" });
+    return executeScanooCompare({ event, scope, logger, traceId });
   }
   if (lane === "scanoo-diagnose") {
     assertRoutingDecisionOwner({ expected: expectedOwner, actual: "scanoo-diagnose" });

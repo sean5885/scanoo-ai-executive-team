@@ -159,6 +159,8 @@ export function buildLaneIntroReply(scope, lane) {
   const nextStep =
     lane?.capability_lane === "doc-editor"
       ? "我會先看正文、評論和待改位置，再給你改稿建議。"
+      : lane?.capability_lane === "scanoo-compare"
+        ? "我會先用 Scanoo 比較路徑整理差異、觀察點與可行建議。"
       : lane?.capability_lane === "scanoo-diagnose"
         ? "我會先用 Scanoo 診斷路徑整理問題、原因與可行建議。"
       : lane?.capability_lane === "knowledge-assistant"
@@ -184,6 +186,9 @@ export function buildLaneFailureReply(scope, lane) {
   if (capabilityLane === "doc-editor") {
     detail = "我剛剛在讀文件、回覆鏈，或評論內容時遇到錯誤。";
     nextStep = "請直接再貼一次文件卡片、文件連結或 document_id，我會重新讀取。";
+  } else if (capabilityLane === "scanoo-compare") {
+    detail = "我剛剛在走 Scanoo 比較路徑並整理差異分析結果時遇到錯誤。";
+    nextStep = "你可以直接重問一次，或補更明確的比較對象、期間與維度讓我縮小範圍。";
   } else if (capabilityLane === "scanoo-diagnose") {
     detail = "我剛剛在走 Scanoo 診斷路徑並整理分析結果時遇到錯誤。";
     nextStep = "你可以直接重問一次，或補更明確的診斷目標、症狀與範圍讓我縮小問題。";

@@ -262,6 +262,25 @@ test("scanoo-diagnose lane keeps a distinct execution identity while reusing pla
   assert.equal(plan.fallback_reason, null);
 });
 
+test("scanoo-compare lane keeps a distinct execution identity while reusing planner-backed comparison", () => {
+  const plan = resolveLaneExecutionPlan({
+    scope: {
+      capability_lane: "scanoo-compare",
+    },
+    event: {
+      message: {
+        content: JSON.stringify({
+          text: "請幫我比較 Scanoo onboarding funnel 的新舊差異",
+        }),
+      },
+    },
+  });
+
+  assert.equal(plan.chosen_lane, "scanoo-compare");
+  assert.equal(plan.chosen_action, "scanoo_compare_user_input");
+  assert.equal(plan.fallback_reason, null);
+});
+
 test("lane execution plan reports structured semantic mismatch instead of generic fallback for misplaced document request", () => {
   const plan = resolveLaneExecutionPlan({
     scope: {
