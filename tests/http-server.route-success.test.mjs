@@ -244,6 +244,19 @@ async function startTestServer(t, serviceOverrides) {
   return { server, calls: sink.calls };
 }
 
+async function postPluginDispatch(port, payload) {
+  const response = await fetch(`http://127.0.0.1:${port}/agent/lark-plugin/dispatch`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await response.json();
+  return {
+    response,
+    body,
+  };
+}
+
 async function snapshotFile(filePath) {
   try {
     return await fs.readFile(filePath, "utf8");
@@ -2140,4 +2153,133 @@ test("improvement workflow routes support list approve reject apply", async (t) 
   assert.equal(calls.some((entry) => entry[1]?.event === "improvement_resolution_completed"), true);
   assert.equal(calls.some((entry) => entry[1]?.event === "improvement_apply_started"), true);
   assert.equal(calls.some((entry) => entry[1]?.event === "improvement_apply_completed"), true);
+});
+
+test("lark plugin dispatch route returns plugin_native forward decisions without entering planner or lane paths", async (t) => {
+  const { server, calls } = await startTestServer(t, {
+    async executePlannedUserInput() {
+      throw new Error("executePlannedUserInput should not run for plugin_native dispatch");
+    },
+    async executeCapabilityLane() {
+      throw new Error("executeCapabilityLane should not run for plugin_native dispatch");
+    },
+  });
+  const { port } = server.address();
+
+  const { response, body } = await postPluginDispatch(port, {
+    request_text: null,
+    session_id: null,
+    thread_id: null,
+    chat_id: null,
+    user_id: null,
+    account_id: "acct-1",
+    source: "official_lark_plugin",
+    tool_name: "lark_doc_read",
+    requested_capability: "lark_doc_read",
+    route_request: {
+      path: "/api/doc/read?document_id=doc_1",
+      method: "GET",
+      body: null,
+    },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.route_target, "plugin_native");
+  assert.equal(body.final_status, "plugin_native_forward");
+  assert.equal(body.fallback_reason, "plugin_native_capability");
+  assert.equal(body.forward_request.path, "/api/doc/read?document_id=doc_1");
+  assert.equal(calls.some((entry) => entry[1]?.event === "lark_plugin_dispatch_completed" && entry[1]?.fallback_reason === "plugin_native_capability"), true);
+});
+
+test("lark plugin dispatch route sends knowledge_answer requests through the existing answer edge", async (t) => {
+  const plannerCalls = [];
+  const { server, calls } = await startTestServer(t, {
+    async executePlannedUserInput(args) {
+      plannerCalls.push(args);
+      return {
+        ok: true,
+        action: "search_company_brain_docs",
+        execution_result: {
+          ok: true,
+          data: {
+            answer: "這是知識回答",
+            sources: ["來源 A"],
+            limitations: [],
+          },
+        },
+      };
+    },
+  });
+  const { port } = server.address();
+
+  const { response, body } = await postPluginDispatch(port, {
+    request_text: "公司 SOP 在哪裡？",
+    session_id: "sess_1",
+    thread_id: null,
+    chat_id: "chat_1",
+    user_id: "user_1",
+    account_id: "acct-1",
+    user_access_token: "token-1",
+    source: "official_lark_plugin",
+    tool_name: "lark_kb_answer",
+    requested_capability: "knowledge_answer",
+    route_request: {
+      path: "/answer?q=%E5%85%AC%E5%8F%B8%20SOP%20%E5%9C%A8%E5%93%AA%E8%A3%A1%EF%BC%9F&account_id=acct-1",
+      method: "GET",
+      body: null,
+    },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.route_target, "knowledge_answer");
+  assert.equal(body.chosen_lane, "knowledge-assistant");
+  assert.equal(body.final_status, "completed");
+  assert.equal(body.response.status, 200);
+  assert.equal(body.response.data.answer, "這是知識回答");
+  assert.equal(plannerCalls.length, 1);
+  assert.equal(plannerCalls[0].text, "公司 SOP 在哪裡？");
+  assert.equal(calls.some((entry) => entry[1]?.event === "lark_plugin_dispatch_completed" && entry[1]?.fallback_reason === "knowledge_answer_path"), true);
+});
+
+test("lark plugin dispatch route sends lane_style requests through the existing lane path and prefers thread session keys", async (t) => {
+  const laneCalls = [];
+  const { server, calls } = await startTestServer(t, {
+    async executeCapabilityLane(args) {
+      laneCalls.push(args);
+      return {
+        text: "這是 lane backend 的回答",
+      };
+    },
+  });
+  const { port } = server.address();
+
+  const { response, body } = await postPluginDispatch(port, {
+    request_text: "幫我分析 Scanoo onboarding funnel 的問題",
+    session_id: "sess_low_priority",
+    thread_id: "thr_priority",
+    chat_id: "chat_fallback",
+    user_id: "user_1",
+    account_id: "acct-1",
+    source: "official_lark_plugin",
+    tool_name: "lark_kb_answer",
+    requested_capability: "lane_style_capability",
+    route_request: {
+      path: "/answer?q=Scanoo",
+      method: "GET",
+      body: null,
+    },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.route_target, "lane_backend");
+  assert.equal(body.final_status, "completed");
+  assert.equal(body.chosen_skill, "lane_style_capability");
+  assert.equal(body.fallback_reason, "lane_style_capability");
+  assert.equal(body.response.data.answer, "這是 lane backend 的回答");
+  assert.equal(laneCalls.length, 1);
+  assert.equal(laneCalls[0].scope.session_key, "thread:thr_priority");
+  assert.equal(calls.some((entry) => entry[1]?.event === "lark_plugin_dispatch_completed" && entry[1]?.fallback_reason === "lane_style_capability"), true);
 });

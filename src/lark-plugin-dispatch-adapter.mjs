@@ -106,7 +106,7 @@ function inferRequestText(raw = {}, routeRequest = {}) {
   }
 
   const query = parseRouteQuery(routeRequest?.path || "");
-  return cleanText(query.get("q") || query.get("query") || query.get("text") || "");
+  return cleanText(query.get("q") || query.get("query") || query.get("text") || "") || null;
 }
 
 export function buildLarkPluginDispatchSessionKey({

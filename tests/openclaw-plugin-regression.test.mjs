@@ -169,6 +169,123 @@ test("lark_kb_answer first enters plugin dispatch instead of calling /answer dir
   assert.equal(result.details.answer, "這是 adapter 回來的答案");
 });
 
+test("plugin dispatch payload keeps metadata keys complete and preserves explicit values", async (t) => {
+  const api = createPluginApi();
+  register(api);
+  const tool = getTool(api, "lark_kb_answer");
+  const seen = [];
+
+  stubFetch(t, async (url, init = {}) => {
+    seen.push({
+      url: String(url),
+      method: init.method || "GET",
+      body: init.body ? JSON.parse(String(init.body)) : null,
+    });
+
+    return new Response(JSON.stringify({
+      ok: true,
+      route_target: "knowledge_answer",
+      final_status: "completed",
+      response: {
+        status: 200,
+        data: {
+          ok: true,
+          answer: "ok",
+          sources: [],
+          limitations: [],
+        },
+      },
+      trace_id: "trace_dispatch_meta",
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  });
+
+  await tool.execute("tool-meta", {
+    q: "請分析這個問題",
+    account_id: "acct-meta",
+    request_text: "請分析這個問題",
+    session_id: "sess-meta",
+    thread_id: "thr-meta",
+    chat_id: "chat-meta",
+    user_id: "user-meta",
+    source: "official_lark_plugin",
+    requested_capability: "lane_style_capability",
+  });
+
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].url, "http://127.0.0.1:3333/agent/lark-plugin/dispatch");
+  assert.deepEqual(seen[0].body, {
+    request_text: "請分析這個問題",
+    session_id: "sess-meta",
+    thread_id: "thr-meta",
+    chat_id: "chat-meta",
+    user_id: "user-meta",
+    account_id: "acct-meta",
+    source: "official_lark_plugin",
+    tool_name: "lark_kb_answer",
+    requested_capability: "lane_style_capability",
+    route_request: {
+      path: "/answer?q=%E8%AB%8B%E5%88%86%E6%9E%90%E9%80%99%E5%80%8B%E5%95%8F%E9%A1%8C&account_id=acct-meta",
+      method: "GET",
+      body: null,
+    },
+  });
+});
+
+test("plugin dispatch payload keeps missing metadata as null instead of omitting keys", async (t) => {
+  const api = createPluginApi();
+  register(api);
+  const tool = getTool(api, "lark_doc_read");
+  const seen = [];
+
+  stubFetch(t, async (url, init = {}) => {
+    seen.push({
+      url: String(url),
+      method: init.method || "GET",
+      body: init.body ? JSON.parse(String(init.body)) : null,
+    });
+
+    return new Response(JSON.stringify({
+      ok: true,
+      route_target: "plugin_native",
+      final_status: "plugin_native_forward",
+      forward_request: {
+        path: "/api/doc/read?document_id=doc_meta",
+        method: "GET",
+        body: null,
+      },
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  });
+
+  await tool.execute("tool-meta-null", {
+    document_id: "doc_meta",
+  });
+
+  assert.equal(seen.length, 2);
+  assert.equal(seen[0].url, "http://127.0.0.1:3333/agent/lark-plugin/dispatch");
+  assert.deepEqual(seen[0].body, {
+    request_text: null,
+    session_id: null,
+    thread_id: null,
+    chat_id: null,
+    user_id: null,
+    account_id: null,
+    source: "official_lark_plugin",
+    tool_name: "lark_doc_read",
+    requested_capability: "lark_doc_read",
+    route_request: {
+      path: "/api/doc/read?document_id=doc_meta",
+      method: "GET",
+      body: null,
+    },
+  });
+});
+
 test("lobster_security_run_action keeps approval_required as a non-throwing plugin result", async (t) => {
   const api = createPluginApi();
   register(api);

@@ -133,7 +133,20 @@ function parseJsonLikeBody(body: unknown): unknown {
   }
 }
 
+function cleanOptionalString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const text = value.trim();
+  return text || null;
+}
+
 function inferRequestText(path: string, params: Record<string, unknown>) {
+  const explicit = cleanOptionalString(params.request_text);
+  if (explicit) {
+    return trimText(explicit, 1000);
+  }
+
   const direct = trimText(
     params.q
     ?? params.query
@@ -148,10 +161,15 @@ function inferRequestText(path: string, params: Record<string, unknown>) {
     return direct;
   }
   const parsed = new URL(path, "http://plugin.local");
-  return trimText(parsed.searchParams.get("q") || parsed.searchParams.get("query") || parsed.searchParams.get("text") || "", 1000);
+  const fromQuery = trimText(parsed.searchParams.get("q") || parsed.searchParams.get("query") || parsed.searchParams.get("text") || "", 1000);
+  return fromQuery || null;
 }
 
 function inferRequestedCapability(action: string, path: string, params: Record<string, unknown>) {
+  const explicit = cleanOptionalString(params.requested_capability);
+  if (explicit) {
+    return explicit;
+  }
   const normalizedAction = String(action || "").trim();
   if (!normalizedAction) {
     return "plugin_native_unknown";
@@ -164,6 +182,31 @@ function inferRequestedCapability(action: string, path: string, params: Record<s
     return "knowledge_answer";
   }
   return normalizedAction;
+}
+
+function buildDispatchPayload(
+  action: string,
+  path: string,
+  params: Record<string, unknown>,
+  init?: InternalRequestInit,
+) {
+  const routeRequestBody = parseJsonLikeBody(init?.body);
+  return {
+    request_text: inferRequestText(path, params),
+    session_id: cleanOptionalString(params.session_id),
+    thread_id: cleanOptionalString(params.thread_id),
+    chat_id: cleanOptionalString(params.chat_id),
+    user_id: cleanOptionalString(params.user_id),
+    account_id: cleanOptionalString(params.account_id),
+    source: cleanOptionalString(params.source) || "official_lark_plugin",
+    tool_name: cleanOptionalString(action),
+    requested_capability: inferRequestedCapability(action, path, params),
+    route_request: {
+      path,
+      method: init?.method || "GET",
+      body: routeRequestBody,
+    },
+  };
 }
 
 async function fetchJsonDirect(
@@ -223,26 +266,10 @@ async function callJson(
   const params = executionContext?.params && typeof executionContext.params === "object"
     ? executionContext.params
     : {};
-  const routeRequestBody = parseJsonLikeBody(init?.body);
   const dispatchResult = await fetchJsonDirect(api, HYBRID_DISPATCH_PATH, {
     method: "POST",
     __skipHybridDispatch: true,
-    body: JSON.stringify({
-      request_text: inferRequestText(path, params),
-      session_id: typeof params.session_id === "string" ? params.session_id : null,
-      thread_id: typeof params.thread_id === "string" ? params.thread_id : null,
-      chat_id: typeof params.chat_id === "string" ? params.chat_id : null,
-      user_id: typeof params.user_id === "string" ? params.user_id : null,
-      account_id: typeof params.account_id === "string" ? params.account_id : null,
-      source: "official_lark_plugin",
-      tool_name: executionContext?.action || null,
-      requested_capability: inferRequestedCapability(executionContext?.action || "", path, params),
-      route_request: {
-        path,
-        method: init?.method || "GET",
-        body: routeRequestBody,
-      },
-    }),
+    body: JSON.stringify(buildDispatchPayload(executionContext?.action || "", path, params, init)),
   });
 
   const dispatchData = dispatchResult.data as Record<string, unknown> | null;

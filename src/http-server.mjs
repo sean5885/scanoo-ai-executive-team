@@ -8220,7 +8220,7 @@ async function handleLarkPluginDispatch(res, requestUrl, body, logger = noopHttp
     },
     async runLaneBackend({ request, decision }) {
       const { event, scope } = buildLarkPluginLaneContext(request);
-      const reply = await executeCapabilityLane({
+      const reply = await getHttpService("executeCapabilityLane", executeCapabilityLane)({
         event,
         scope,
         logger: dispatchLogger.child(scope.capability_lane || "lane_backend"),
