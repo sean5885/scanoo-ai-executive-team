@@ -161,6 +161,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/task-layer/task-classifier.mjs`
   - `/Users/seanhan/Documents/Playground/src/task-layer/task-dependency.mjs`
   - `/Users/seanhan/Documents/Playground/src/task-layer/task-skill-map.mjs`
+  - `/Users/seanhan/Documents/Playground/src/task-layer/task-to-answer.mjs`
   - `/Users/seanhan/Documents/Playground/src/task-layer/orchestrator.mjs`
 - Current truth:
   - a checked-in task-layer helper now exists under `src/task-layer/`
@@ -168,6 +169,7 @@ Current-truth docs for onboarding are:
   - `task-dependency.mjs` defines the current checked-in execution order as `copywriting -> image -> publish`
   - it maps those task tags to string skill identifiers `copy_agent`, `image_agent`, and `publish_agent`
   - `/Users/seanhan/Documents/Playground/src/task-layer/task-aggregator.mjs` folds per-task records into a unified `{ ok, tasks, results, summary, data, errors }` envelope
+  - `/Users/seanhan/Documents/Playground/src/task-layer/task-to-answer.mjs` converts that bounded task-layer envelope into canonical `answer / sources / limitations` fields for planner-facing multi-task replies
   - `runTaskLayer(...)` sorts detected tasks through that dependency helper, executes the provided `runSkill` callback sequentially, and returns that aggregated envelope with both raw per-task records and summarized status
   - a task failure is recorded fail-soft and does not stop later tasks from running in the same bounded pass
   - `executePlannedUserInput(...)` can now consult this helper as a planner pre-pass, but only when the caller explicitly provides a `runSkill` callback

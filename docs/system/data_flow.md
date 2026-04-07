@@ -204,7 +204,8 @@ Current path:
 3. `/Users/seanhan/Documents/Playground/src/task-layer/task-dependency.mjs` normalizes those tags into the checked-in execution order
 4. `/Users/seanhan/Documents/Playground/src/task-layer/task-skill-map.mjs` resolves each tag to a string skill identifier
 5. `/Users/seanhan/Documents/Playground/src/task-layer/orchestrator.mjs` invokes the caller-provided `runSkill(skill, { input, task })`
-6. the helper returns a unified object `{ ok, tasks, results, summary, data, errors }`, preserving per-task success/failure records while also surfacing summarized status and fail-soft errors
+6. `/Users/seanhan/Documents/Playground/src/task-layer/task-to-answer.mjs` now normalizes that task-layer result and derives the canonical user-facing `{ answer, sources, limitations }` fields for multi-task planner replies
+7. the helper returns a unified object `{ ok, tasks, results, summary, data, errors }`, preserving per-task success/failure records while also surfacing summarized status and fail-soft errors
 
 Current truth:
 
@@ -214,7 +215,7 @@ Current truth:
 - current checked-in mapped identifiers are `copy_agent`, `image_agent`, and `publish_agent`
 - execution is sequential and callback-driven; task failures are recorded fail-soft and later tasks still run; there is no checked-in queue or checked-in skill-runtime registration on this path
 - `executePlannedUserInput(...)` may call this helper before normal planning only when the caller explicitly supplies `runSkill`
-- when that optional pre-pass detects more than one task, planner execution returns a bounded `multi_task` result through the same canonical `answer / sources / limitations` boundary
+- when that optional pre-pass detects more than one task, planner execution returns a bounded `multi_task` result through the same canonical `answer / sources / limitations` boundary, and those user-facing fields are now derived by `task-to-answer.mjs` instead of being inlined inside `executive-planner.mjs`
 - if the helper detects zero or one task, or if the optional pre-pass fails, execution falls back to the original planner path
 - the checked-in public `/answer` edge does not currently supply `runSkill`, so the default public route behavior is unchanged
 
