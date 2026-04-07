@@ -7,6 +7,7 @@ const {
   assertRoutingDecisionOwner,
   buildScanooCompareFallbackQuery,
   buildScanooCompareDocsSearchReply,
+  buildScanooDiagnoseOfficialReadReply,
   looksLikeChatOnlyFailurePreference,
   looksLikeCloudOrganizationExit,
   looksLikeCloudOrganizationPlainLanguageRequest,
@@ -19,6 +20,7 @@ const {
   pickCalendarMeetingEvent,
   resolveLaneExecutionPlan,
   shouldFallbackScanooCompareToDocsSearch,
+  shouldFallbackScanooDiagnoseToOfficialRead,
   shouldPreferActiveExecutiveTask,
   shouldFallbackImageTaskToTextLane,
 } = await import("../src/lane-executor.mjs");
@@ -303,6 +305,45 @@ test("scanoo-compare falls back to docs search when compare evidence is insuffic
   assert.equal(shouldFallback, true);
 });
 
+test("scanoo-diagnose falls back to official read when evidence is insufficient and no doc-read action ran", () => {
+  const shouldFallback = shouldFallbackScanooDiagnoseToOfficialRead({
+    requestText: "請幫我診斷這份 onboarding 文件為什麼會導致轉化下滑",
+    plannerResult: {
+      ok: false,
+      error: "planner_failed",
+      action: "search_company_brain_docs",
+    },
+    userResponse: {
+      ok: false,
+      answer: "這題本來應該先走對應的查詢或流程，但這輪還沒真的執行到那個步驟，所以我先不亂補答案。",
+      sources: [],
+      limitations: ["目前資料不足，還不能直接判斷根因。"],
+      failure_class: "tool_omission",
+    },
+  });
+
+  assert.equal(shouldFallback, true);
+});
+
+test("scanoo-diagnose does not fall back to official read when planner already chose fetch_document", () => {
+  const shouldFallback = shouldFallbackScanooDiagnoseToOfficialRead({
+    requestText: "請幫我診斷這份 onboarding 文件為什麼會導致轉化下滑",
+    plannerResult: {
+      ok: true,
+      action: "fetch_document",
+    },
+    userResponse: {
+      ok: false,
+      answer: "我先讀文件。",
+      sources: [],
+      limitations: ["目前先讀文件。"],
+      failure_class: "tool_omission",
+    },
+  });
+
+  assert.equal(shouldFallback, false);
+});
+
 test("scanoo-compare fallback query shaping extracts stores and metrics", () => {
   const query = buildScanooCompareFallbackQuery("幫我比較 A店 和 B店 的流量、轉化，幫我看看");
 
@@ -331,6 +372,24 @@ test("scanoo-compare docs search fallback keeps the compare section order", () =
 
   assert.match(reply, /【比較對象】[\s\S]*【比較維度】[\s\S]*【核心差異】[\s\S]*【原因假設】[\s\S]*【證據 \/ 不確定性】[\s\S]*【建議行動】/);
   assert.match(reply, /Scanoo Onboarding SOP（doc_scanoo_compare_1）/);
+});
+
+test("scanoo-diagnose official read fallback keeps the diagnose section order", () => {
+  const reply = buildScanooDiagnoseOfficialReadReply({
+    requestText: "請幫我診斷 onboarding 文件裡的轉化問題",
+    document: {
+      title: "Scanoo Onboarding SOP",
+      document_id: "doc_scanoo_diag_1",
+      content: "這份文件定義了 onboarding 的流程、角色分工與主要轉化節點。",
+    },
+    documentRef: {
+      source: "referenced_message",
+    },
+  });
+
+  assert.match(reply, /【問題現象】[\s\S]*【可能原因】[\s\S]*【目前證據】[\s\S]*【不確定性】[\s\S]*【建議下一步】/);
+  assert.match(reply, /Scanoo Onboarding SOP/);
+  assert.match(reply, /doc_scanoo_diag_1/);
 });
 
 test("lane execution plan reports structured semantic mismatch instead of generic fallback for misplaced document request", () => {

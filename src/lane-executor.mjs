@@ -226,6 +226,14 @@ const SCANOO_COMPARE_DOCS_SEARCH_FAILURE_CLASSES = new Set([
   "permission_denied",
 ]);
 
+const SCANOO_DIAGNOSE_OFFICIAL_READ_FAILURE_CLASSES = new Set([
+  "generic_fallback",
+  "planner_failed",
+  "routing_no_match",
+  "tool_omission",
+  "permission_denied",
+]);
+
 const SCANOO_COMPARE_INSUFFICIENT_PATTERNS = [
   /資料不足/u,
   /資訊不足/u,
@@ -238,6 +246,28 @@ const SCANOO_COMPARE_INSUFFICIENT_PATTERNS = [
   /不確定/u,
   /先不亂補答案/u,
 ];
+
+const SCANOO_DIAGNOSE_INSUFFICIENT_PATTERNS = [
+  /資料不足/u,
+  /資訊不足/u,
+  /沒有足夠/u,
+  /缺少.*證據/u,
+  /缺少.*資料/u,
+  /缺少.*上下文/u,
+  /無法.*判斷/u,
+  /不能.*判斷/u,
+  /待確認/u,
+  /不確定/u,
+  /先不亂補答案/u,
+];
+
+const SCANOO_DOC_READ_ACTIONS = new Set([
+  "fetch_document",
+  "read_document",
+  "search_and_detail_doc",
+  "get_company_brain_doc_detail",
+  "document_summarize",
+]);
 
 const SCANOO_COMPARE_QUERY_METRICS = [
   "流量",
@@ -272,11 +302,20 @@ export function buildScanooDiagnoseBrief(text = "") {
   return `${SCANOO_DIAGNOSE_BRIEF}\n\n使用者問題：\n${normalizedText}`;
 }
 
-function buildScanooCompareFallbackSignalText(response = {}) {
+function buildScanooFallbackSignalText(response = {}) {
   return [
     cleanText(response?.answer || ""),
     ...(Array.isArray(response?.limitations) ? response.limitations.map((item) => cleanText(item)) : []),
   ].filter(Boolean).join("\n");
+}
+
+function getPlannerChosenAction(plannerResult = {}) {
+  return cleanText(
+    plannerResult?.action
+    || plannerResult?.steps?.[0]?.action
+    || plannerResult?.execution_result?.action
+    || "",
+  );
 }
 
 function escapeRegExp(text = "") {
@@ -346,12 +385,7 @@ export function shouldFallbackScanooCompareToDocsSearch({
     return false;
   }
 
-  const chosenAction = cleanText(
-    plannerResult?.action
-    || plannerResult?.steps?.[0]?.action
-    || plannerResult?.execution_result?.action
-    || "",
-  );
+  const chosenAction = getPlannerChosenAction(plannerResult);
   if (
     chosenAction === "search_company_brain_docs"
     || chosenAction === "search_and_detail_doc"
@@ -369,8 +403,35 @@ export function shouldFallbackScanooCompareToDocsSearch({
     return false;
   }
 
-  const signalText = buildScanooCompareFallbackSignalText(userResponse);
+  const signalText = buildScanooFallbackSignalText(userResponse);
   return SCANOO_COMPARE_INSUFFICIENT_PATTERNS.some((pattern) => pattern.test(signalText));
+}
+
+export function shouldFallbackScanooDiagnoseToOfficialRead({
+  requestText = "",
+  plannerResult = {},
+  userResponse = {},
+} = {}) {
+  if (!cleanText(requestText)) {
+    return false;
+  }
+
+  const chosenAction = getPlannerChosenAction(plannerResult);
+  if (SCANOO_DOC_READ_ACTIONS.has(chosenAction)) {
+    return false;
+  }
+
+  const sourceCount = Array.isArray(userResponse?.sources) ? userResponse.sources.length : 0;
+  const failureClass = cleanText(userResponse?.failure_class || "");
+  if (failureClass && SCANOO_DIAGNOSE_OFFICIAL_READ_FAILURE_CLASSES.has(failureClass)) {
+    return true;
+  }
+  if (sourceCount > 0) {
+    return false;
+  }
+
+  const signalText = buildScanooFallbackSignalText(userResponse);
+  return SCANOO_DIAGNOSE_INSUFFICIENT_PATTERNS.some((pattern) => pattern.test(signalText));
 }
 
 function formatScanooCompareDocsSearchEvidenceItem(item = {}) {
@@ -410,6 +471,58 @@ export function buildScanooCompareDocsSearchReply({
     normalizedItems.length > 0
       ? "- 先指定其中一份文件讓我往下讀 detail，或補 A/B 名稱、期間、指標，我就可以繼續做正式比較。"
       : "- 先補 A/B 名稱、期間、指標，或同步最新文件後再查一次。",
+  ].join("\n");
+}
+
+function formatScanooDiagnoseOfficialReadEvidenceItem({
+  document = {},
+  documentRef = {},
+} = {}) {
+  const title = cleanText(document?.title || document?.document_id || "未命名文件");
+  const docId = cleanText(document?.document_id || "");
+  const sourceLabel = documentRef?.source === "referenced_message"
+    ? "引用訊息中的官方文件"
+    : "目前訊息中的官方文件";
+  const snippet = truncate(cleanText(document?.content || "").replace(/\s+/g, " "), 180);
+  return `- 已補讀${sourceLabel}「${title}」${docId ? `（${docId}）` : ""}${snippet ? `：${snippet}` : "，但目前沒有可直接引用的正文片段。"}`;
+}
+
+export function buildScanooDiagnoseOfficialReadReply({
+  requestText = "",
+  document = {},
+  documentRef = {},
+} = {}) {
+  const title = cleanText(document?.title || document?.document_id || "未命名文件");
+  const docId = cleanText(document?.document_id || "");
+  const normalizedRequest = cleanText(requestText) || "這輪診斷";
+  const evidenceLine = formatScanooDiagnoseOfficialReadEvidenceItem({
+    document,
+    documentRef,
+  });
+  const hasSnippet = cleanText(document?.content || "").length > 0;
+
+  return [
+    "【問題現象】",
+    `原 diagnose 路徑這輪證據不足，所以我先補讀官方文件「${title}」；目前只能確認它和「${normalizedRequest}」直接相關，但還不能把文件內容直接當成已驗證根因。`,
+    "",
+    "【可能原因】",
+    "- 這份文件可能提供流程、定義或責任分工背景，但真正異常仍需對照期間、指標或版本變化。",
+    "- 如果問題是數據下滑，還要再驗證是否涉及流量來源、口徑變更或執行落差。",
+    "- 在沒有更多官方資料或指標前，以上都只能算待驗證假設。",
+    "",
+    "【目前證據】",
+    evidenceLine,
+    "",
+    "【不確定性】",
+    `- 這次只完成單份官方 read hydration${docId ? `（${docId}）` : ""}，還沒有串到其他文件、留言或報表。`,
+    hasSnippet
+      ? "- 目前可用證據主要是文件正文片段，還不足以單獨支持完整診斷結論。"
+      : "- 這份文件雖然成功讀到，但可用正文證據仍然有限。",
+    "- 如果要把 diagnose 收斂到可執行結論，還需要補異常期間、指標定義，或指定下一份要讀的官方文件。",
+    "",
+    "【建議下一步】",
+    `- 如果這份「${title}」就是主文檔，我可以沿著它繼續拆關鍵段落、留言或相鄰文件。`,
+    "- 也可以直接補異常期間、店別或模組、指標名稱，讓我把下一輪 diagnose 收斂到可驗證範圍。",
   ].join("\n");
 }
 
@@ -459,6 +572,78 @@ async function maybeBuildScanooCompareDocsSearchFallback({
     query: shapedQuery,
     items: docs.items,
   });
+}
+
+async function maybeBuildScanooDiagnoseOfficialReadFallback({
+  event = null,
+  accountId = "",
+  explicitAuth = null,
+  requestText = "",
+  plannerResult = {},
+  userResponse = {},
+  logger = noopLogger,
+} = {}) {
+  if (!shouldFallbackScanooDiagnoseToOfficialRead({
+    requestText,
+    plannerResult,
+    userResponse,
+  })) {
+    return null;
+  }
+
+  const accessToken = cleanText(explicitAuth?.access_token || "");
+  const resolvedAccountId = cleanText(explicitAuth?.account_id || accountId || "");
+  if (!accessToken || !resolvedAccountId) {
+    logger.info("scanoo_diagnose_official_read_fallback_skipped", {
+      reason: !accessToken ? "missing_explicit_user_access_token" : "missing_account_id",
+      failure_class: cleanText(userResponse?.failure_class || "") || null,
+      chosen_action: getPlannerChosenAction(plannerResult) || null,
+    });
+    return null;
+  }
+
+  const documentRef = await resolveReferencedDocumentId(event, accessToken, logger);
+  const documentId = cleanText(documentRef?.documentId || "");
+  if (!documentId) {
+    logger.info("scanoo_diagnose_official_read_fallback_skipped", {
+      reason: "missing_referenced_document_id",
+      failure_class: cleanText(userResponse?.failure_class || "") || null,
+      chosen_action: getPlannerChosenAction(plannerResult) || null,
+    });
+    return null;
+  }
+
+  try {
+    const document = await readDocumentFromRuntime({
+      accountId: resolvedAccountId,
+      accessToken,
+      documentId,
+      pathname: "internal:scanoo_diagnose_official_read_fallback",
+      logger,
+    });
+
+    logger.info("scanoo_diagnose_official_read_fallback", {
+      account_id: formatIdentifierHint(resolvedAccountId),
+      document_id: formatIdentifierHint(documentId),
+      document_source: cleanText(documentRef?.source || "") || null,
+      failure_class: cleanText(userResponse?.failure_class || "") || null,
+      chosen_action: getPlannerChosenAction(plannerResult) || null,
+    });
+
+    return buildScanooDiagnoseOfficialReadReply({
+      requestText,
+      document,
+      documentRef,
+    });
+  } catch (error) {
+    logger.warn("scanoo_diagnose_official_read_fallback_failed", {
+      account_id: formatIdentifierHint(resolvedAccountId),
+      document_id: formatIdentifierHint(documentId),
+      document_source: cleanText(documentRef?.source || "") || null,
+      error: logger.compactError(error),
+    });
+    return null;
+  }
 }
 
 const recentConversationSummarySignals = [
@@ -1225,6 +1410,24 @@ async function executePlannerBackedLane({
     if (docsSearchFallback) {
       return {
         text: docsSearchFallback,
+        handlerName,
+        traceId,
+      };
+    }
+  }
+  if (cleanText(scope?.capability_lane || "") === "scanoo-diagnose") {
+    const officialReadFallback = await maybeBuildScanooDiagnoseOfficialReadFallback({
+      event,
+      accountId: context.account?.id || "",
+      explicitAuth,
+      requestText: inputText,
+      plannerResult: plannedResult,
+      userResponse,
+      logger,
+    });
+    if (officialReadFallback) {
+      return {
+        text: officialReadFallback,
         handlerName,
         traceId,
       };

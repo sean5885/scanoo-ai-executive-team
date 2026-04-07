@@ -219,6 +219,7 @@ Current truth:
   - `【不確定性】`
   - `【建議下一步】`
 - both wrapper briefs stay lane-local and do not change planner ingress or the public response shape
+- when that diagnose-lane reply still lands in an insufficient-evidence state and has not already executed a document-read action, `lane-executor.mjs` now fail-soft calls the checked-in live official read helper `readDocumentFromRuntime(...)`; it only proceeds when the current message or referenced upstream message resolves to a document id and the lane still has explicit user auth, then returns one deterministic diagnose-shaped five-section reply that surfaces the official read as evidence and keeps the conclusion explicitly unverified
 - when that compare-lane reply still lands in an insufficient-evidence state and did not already resolve to a doc-read action, `lane-executor.mjs` now fail-soft calls the checked-in mirror read helper `searchCompanyBrainDocsFromRuntime(...)` with `action=search_company_brain_docs`; if the mirror search hits, the lane returns one deterministic compare-shaped docs-candidate reply instead of inventing a comparison conclusion
 - only if `scanoo-compare` is unavailable does the adapter fall back to `knowledge-assistant`, recording `fallback_reason=missing_exact_scanoo_compare_lane_fallback_to_knowledge_assistant`
 - only if `scanoo-diagnose` is unavailable does the adapter fall back to `knowledge-assistant`, recording `fallback_reason=missing_exact_scanoo_diagnose_lane_fallback_to_knowledge_assistant`
