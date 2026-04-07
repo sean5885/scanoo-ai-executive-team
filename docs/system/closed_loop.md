@@ -73,6 +73,8 @@ Implemented through:
 - `src/executive-closed-loop.mjs` now also derives a lightweight execution-reflection snapshot immediately after execution and before verification/improvement persistence: the pipeline first normalizes planner-step metadata into `execution_journal.planner_steps[]` with `{ intent, success_criteria }`, prefers explicit step metadata when present, falls back to task/work-plan/task-level success criteria when fields are missing, then returns a deterministic structured object with `overall_status` plus per-step `{ intent, success, success_match, deviation, reason }`; `success_match` records matched vs unmet success criteria, `deviation` is a bounded execution delta code, and `reason` is classified into controlled values such as `tool_failure`, `planning_error`, or `missing_info` instead of natural-language prose
 - `src/executive-evolution-metrics.mjs`
 - `src/executive-evolution-replay.mjs`
+- checked-in bounded replay fixtures now live under `/Users/seanhan/Documents/Playground/evals/executive-replay/fixtures`; each spec is local-only, deterministic, and safe to replay through `scripts/executive-evolution-replay.mjs` without re-driving external side effects
+- `/Users/seanhan/Documents/Playground/scripts/executive-evolution-replay-pack.mjs` now runs the full checked-in replay pack, emits one bounded per-case line per fixture, and summarizes `improved_count / unchanged_count / regressed_count`; `--json` returns the same results as a single JSON object
 - the same closed-loop finalize path now also archives a minimal local evolution snapshot per reflection and emits one structured `executive_evolution_metrics` log event with rolling local rates for:
   - `reflection_deviation_rate`
   - `improvement_trigger_rate`

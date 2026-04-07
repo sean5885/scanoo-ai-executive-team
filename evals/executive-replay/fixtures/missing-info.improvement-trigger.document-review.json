@@ -1,0 +1,137 @@
+{
+  "id": "missing-info.improvement-trigger.document-review",
+  "category": "missing_info_improvement_trigger",
+  "description": "Document review replay starts with a missing-info gap and then improves step coverage once the next action is explicit.",
+  "constraints": {
+    "deterministic": true,
+    "bounded": true,
+    "external_side_effects": false
+  },
+  "task": {
+    "task_type": "document_review",
+    "objective": "評估是否能直接公告新流程",
+    "work_plan": [
+      {
+        "agent_id": "research",
+        "task": "比對文件依據",
+        "selected_action": "review_documents",
+        "status": "completed",
+        "tool_required": true,
+        "success_criteria": [
+          "有來源證據"
+        ]
+      },
+      {
+        "agent_id": "generalist",
+        "task": "整理結論與下一步",
+        "selected_action": "summarize_review",
+        "status": "completed",
+        "success_criteria": [
+          "風險與下一步"
+        ]
+      }
+    ]
+  },
+  "request_text": "要不要本週直接對外公告新流程",
+  "first_run": {
+    "reply": {
+      "text": "目前需要更多資訊。風險是缺少法務批准記錄，暫時不能直接公告。"
+    },
+    "routing": {
+      "action": "summarize_review",
+      "dispatched_actions": [
+        {
+          "action": "review_documents",
+          "status": "completed"
+        },
+        {
+          "action": "summarize_review",
+          "status": "completed"
+        }
+      ]
+    },
+    "structuredResult": {
+      "conclusion": "暫時不能直接公告新流程。",
+      "referenced_documents": [
+        {
+          "doc_id": "policy-2026-04",
+          "title": "發布前檢查表"
+        }
+      ],
+      "reasons": [
+        "缺少法務批准記錄"
+      ],
+      "next_actions": [],
+      "document_count": 1
+    },
+    "extraEvidence": [
+      {
+        "type": "tool_output",
+        "summary": "retrieved_sources:policy-2026-04"
+      }
+    ]
+  },
+  "second_run": {
+    "reply": {
+      "text": "風險是法務批准仍待確認，下一步先補齊批准紀錄再公告。"
+    },
+    "routing": {
+      "action": "summarize_review",
+      "dispatched_actions": [
+        {
+          "action": "review_documents",
+          "status": "completed"
+        },
+        {
+          "action": "summarize_review",
+          "status": "completed"
+        }
+      ]
+    },
+    "structuredResult": {
+      "conclusion": "先補齊批准紀錄再公告。",
+      "referenced_documents": [
+        {
+          "doc_id": "policy-2026-04",
+          "title": "發布前檢查表"
+        }
+      ],
+      "reasons": [
+        "法務批准仍待確認"
+      ],
+      "next_actions": [
+        "補齊法務批准紀錄"
+      ],
+      "document_count": 1
+    },
+    "extraEvidence": [
+      {
+        "type": "tool_output",
+        "summary": "retrieved_sources:policy-2026-04"
+      }
+    ]
+  },
+  "expected": {
+    "first_run": {
+      "success": false,
+      "outcome_state": "blocked",
+      "reflection_status": "partial_success",
+      "deviation_rate": 0.5,
+      "step_reasons": [
+        "none",
+        "missing_info"
+      ]
+    },
+    "second_run": {
+      "success": false,
+      "outcome_state": "blocked",
+      "reflection_status": "success",
+      "deviation_rate": 0
+    },
+    "improvement_delta": {
+      "status": "improved",
+      "success_status": "same",
+      "deviation_status": "improved"
+    }
+  }
+}

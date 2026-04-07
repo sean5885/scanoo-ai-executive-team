@@ -1,0 +1,144 @@
+{
+  "id": "partial-success.meeting-follow-up",
+  "category": "partial_success",
+  "description": "Meeting replay where the first run leaves owner and deadline unresolved, then the second run closes the gaps.",
+  "constraints": {
+    "deterministic": true,
+    "bounded": true,
+    "external_side_effects": false
+  },
+  "task": {
+    "task_type": "meeting_processing",
+    "objective": "整理跨部門例會紀要",
+    "work_plan": [
+      {
+        "agent_id": "meeting_agent",
+        "task": "整理會議摘要",
+        "selected_action": "summarize_meeting",
+        "status": "completed",
+        "success_criteria": [
+          "有可讀結論"
+        ]
+      },
+      {
+        "agent_id": "meeting_agent",
+        "task": "補齊 action items",
+        "selected_action": "extract_action_items",
+        "status": "completed",
+        "success_criteria": [
+          "owner",
+          "deadline"
+        ]
+      }
+    ]
+  },
+  "request_text": "整理今天跨部門例會",
+  "first_run": {
+    "reply": {
+      "text": "已整理摘要，部分 owner 與 deadline 待確認。"
+    },
+    "routing": {
+      "action": "summarize_meeting",
+      "dispatched_actions": [
+        {
+          "action": "summarize_meeting",
+          "status": "completed"
+        },
+        {
+          "action": "extract_action_items",
+          "status": "completed"
+        }
+      ]
+    },
+    "structuredResult": {
+      "summary": "本週先上線 beta 版。",
+      "decisions": [
+        "先上線 beta 版"
+      ],
+      "action_items": [
+        {
+          "title": "補合約條款",
+          "owner": "待確認",
+          "deadline": "待確認"
+        }
+      ],
+      "open_questions": [
+        "待確認法務 owner"
+      ],
+      "knowledge_writeback": {
+        "proposals": []
+      }
+    },
+    "extraEvidence": [
+      {
+        "type": "summary_generated",
+        "summary": "meeting_summary"
+      }
+    ]
+  },
+  "second_run": {
+    "reply": {
+      "text": "已整理摘要，owner 與 deadline 已補齊。"
+    },
+    "routing": {
+      "action": "summarize_meeting",
+      "dispatched_actions": [
+        {
+          "action": "summarize_meeting",
+          "status": "completed"
+        },
+        {
+          "action": "extract_action_items",
+          "status": "completed"
+        }
+      ]
+    },
+    "structuredResult": {
+      "summary": "本週先上線 beta 版。",
+      "decisions": [
+        "先上線 beta 版"
+      ],
+      "action_items": [
+        {
+          "title": "補合約條款",
+          "owner": "法務",
+          "deadline": "2026-04-12"
+        }
+      ],
+      "open_questions": [],
+      "knowledge_writeback": {
+        "proposals": []
+      }
+    },
+    "extraEvidence": [
+      {
+        "type": "summary_generated",
+        "summary": "meeting_summary"
+      }
+    ]
+  },
+  "expected": {
+    "first_run": {
+      "success": false,
+      "outcome_state": "blocked",
+      "reflection_status": "partial_success",
+      "deviation_rate": 0.5,
+      "step_reasons": [
+        "none",
+        "missing_info"
+      ]
+    },
+    "second_run": {
+      "success": true,
+      "outcome_state": "completed",
+      "reflection_status": "success",
+      "deviation_rate": 0
+    },
+    "improvement_delta": {
+      "status": "improved",
+      "success_status": "improved",
+      "deviation_status": "improved"
+    }
+  }
+}
+

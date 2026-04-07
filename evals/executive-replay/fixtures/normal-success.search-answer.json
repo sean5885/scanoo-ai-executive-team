@@ -1,0 +1,108 @@
+{
+  "id": "normal-success.search-answer",
+  "category": "normal_success",
+  "description": "Stable search replay where both runs satisfy evidence and answer criteria without deviation.",
+  "constraints": {
+    "deterministic": true,
+    "bounded": true,
+    "external_side_effects": false
+  },
+  "task": {
+    "task_type": "search",
+    "objective": "整理 Q2 交付 SOP 摘要",
+    "success_criteria": [
+      "有可讀結論",
+      "有來源證據"
+    ],
+    "work_plan": [
+      {
+        "agent_id": "research",
+        "task": "查文件",
+        "selected_action": "search_company_brain_docs",
+        "status": "completed",
+        "tool_required": true,
+        "success_criteria": [
+          "有來源證據"
+        ]
+      },
+      {
+        "agent_id": "generalist",
+        "task": "整理答案",
+        "selected_action": "answer_user",
+        "status": "completed",
+        "success_criteria": [
+          "有可讀結論"
+        ]
+      }
+    ]
+  },
+  "request_text": "幫我整理 Q2 交付 SOP",
+  "first_run": {
+    "reply": {
+      "text": "Q2 交付 SOP 先確認需求，再建立驗收清單。"
+    },
+    "routing": {
+      "action": "answer_user",
+      "dispatched_actions": [
+        {
+          "action": "search_company_brain_docs",
+          "status": "completed"
+        },
+        {
+          "action": "answer_user",
+          "status": "completed"
+        }
+      ]
+    },
+    "extraEvidence": [
+      {
+        "type": "tool_output",
+        "summary": "retrieved_sources:delivery-sop-q2"
+      }
+    ]
+  },
+  "second_run": {
+    "reply": {
+      "text": "Q2 交付 SOP 先確認需求，再建立驗收清單。"
+    },
+    "routing": {
+      "action": "answer_user",
+      "dispatched_actions": [
+        {
+          "action": "search_company_brain_docs",
+          "status": "completed"
+        },
+        {
+          "action": "answer_user",
+          "status": "completed"
+        }
+      ]
+    },
+    "extraEvidence": [
+      {
+        "type": "tool_output",
+        "summary": "retrieved_sources:delivery-sop-q2"
+      }
+    ]
+  },
+  "expected": {
+    "first_run": {
+      "success": true,
+      "outcome_state": "completed",
+      "reflection_status": "success",
+      "deviation_rate": 0
+    },
+    "second_run": {
+      "success": true,
+      "outcome_state": "completed",
+      "reflection_status": "success",
+      "deviation_rate": 0
+    },
+    "improvement_delta": {
+      "status": "same",
+      "success_status": "same",
+      "deviation_status": "same"
+    }
+  }
+}
+

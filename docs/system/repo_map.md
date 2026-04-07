@@ -74,6 +74,7 @@ This file explains which directories are part of the current runtime, which are 
   - document workflow
   - meeting workflow
   - runtime workflow
+  - executive replay fixtures
   - real-user review fixtures
 
 ### `/Users/seanhan/Documents/Playground/config`

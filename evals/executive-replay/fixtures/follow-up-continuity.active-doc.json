@@ -1,0 +1,108 @@
+{
+  "id": "follow-up-continuity.active-doc",
+  "category": "follow_up_continuity",
+  "description": "Follow-up replay reuses the same active document context across both runs without adding new intents.",
+  "constraints": {
+    "deterministic": true,
+    "bounded": true,
+    "external_side_effects": false
+  },
+  "task": {
+    "task_type": "search",
+    "objective": "延續上一輪文件回答後續問題",
+    "success_criteria": [
+      "有可讀結論",
+      "有來源證據"
+    ],
+    "work_plan": [
+      {
+        "agent_id": "planner",
+        "task": "續用 active_doc",
+        "selected_action": "reuse_active_doc_context",
+        "status": "completed",
+        "success_criteria": [
+          "有來源證據"
+        ]
+      },
+      {
+        "agent_id": "generalist",
+        "task": "回答 follow-up",
+        "selected_action": "answer_follow_up",
+        "status": "completed",
+        "success_criteria": [
+          "有可讀結論"
+        ]
+      }
+    ]
+  },
+  "request_text": "延續上一輪，補充這份文件的風險",
+  "first_run": {
+    "reply": {
+      "text": "延續上一輪的《Q2 客戶導入計畫》，目前最大風險是法務審核延遲。"
+    },
+    "routing": {
+      "action": "answer_follow_up",
+      "dispatched_actions": [
+        {
+          "action": "reuse_active_doc_context",
+          "status": "completed"
+        },
+        {
+          "action": "answer_follow_up",
+          "status": "completed"
+        }
+      ]
+    },
+    "extraEvidence": [
+      {
+        "type": "tool_output",
+        "summary": "follow_up_source:doc-q2-onboarding-plan"
+      }
+    ]
+  },
+  "second_run": {
+    "reply": {
+      "text": "延續上一輪的《Q2 客戶導入計畫》，目前最大風險是法務審核延遲。"
+    },
+    "routing": {
+      "action": "answer_follow_up",
+      "dispatched_actions": [
+        {
+          "action": "reuse_active_doc_context",
+          "status": "completed"
+        },
+        {
+          "action": "answer_follow_up",
+          "status": "completed"
+        }
+      ]
+    },
+    "extraEvidence": [
+      {
+        "type": "tool_output",
+        "summary": "follow_up_source:doc-q2-onboarding-plan"
+      }
+    ]
+  },
+  "expected": {
+    "first_run": {
+      "success": true,
+      "outcome_state": "completed",
+      "reflection_status": "success",
+      "deviation_rate": 0
+    },
+    "second_run": {
+      "success": true,
+      "outcome_state": "completed",
+      "reflection_status": "success",
+      "deviation_rate": 0
+    },
+    "improvement_delta": {
+      "status": "same",
+      "success_status": "same",
+      "deviation_status": "same",
+      "intent_status": "same"
+    }
+  }
+}
+
