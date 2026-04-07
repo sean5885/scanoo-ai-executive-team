@@ -124,6 +124,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/skill-contract.mjs`
   - `/Users/seanhan/Documents/Playground/src/skill-runtime.mjs`
   - `/Users/seanhan/Documents/Playground/src/skill-registry.mjs`
+  - `/Users/seanhan/Documents/Playground/src/skills/document-fetch.mjs`
   - `/Users/seanhan/Documents/Playground/src/skills/search-and-summarize-skill.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner/skill-bridge.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner-visible-skill-observability.mjs`
@@ -136,6 +137,7 @@ Current-truth docs for onboarding are:
   - the runtime validates input, output, and side effects
   - the runtime rejects non-serializable input/output and nested skill execution
   - the checked-in sample skills are read-only and go through `read-runtime`
+  - `src/skills/document-fetch.mjs` is a secondary read-only helper under the same module group; it resolves `document_id` from direct input or raw Lark-style card payload and returns bounded `missing_access_token | not_found | permission_denied` failures without registering a new planner-visible skill
   - planner can consume a skill result through a bridge envelope
   - planner-visible skill selection is deterministic-only and conflict-fail-closed
   - planner-visible skill rollout now has a checked-in observability/rollback watch over selector, tool execution, and answer-boundary evidence
@@ -145,6 +147,7 @@ Current-truth docs for onboarding are:
   - skill existence does not add a new public route or planner routing target by itself
 - Evidence:
   - `/Users/seanhan/Documents/Playground/tests/skill-runtime.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/document-fetch.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/planner-visible-skill-observability.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/planner-visible-live-telemetry-adapter.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/planner-visible-live-telemetry-spec.test.mjs`
@@ -231,6 +234,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/scripts/executive-evolution-replay-pack.mjs`
 - Current truth:
   - execution reflection remains the checked-in source for per-step `success / deviation / reason`
+  - top-level reflection records now also classify `missing_access_token`, `permission_denied`, and `document_not_found` as `reason = missing_info` with `deviation = true`
   - finalized executive turns now archive a local evolution snapshot alongside the reflection record
   - the runtime logger now emits one structured `executive_evolution_metrics` event with rolling local rates for `reflection_deviation_rate`, `improvement_trigger_rate`, and `retry_success_rate`
   - bounded executive replay can now compare the same task across `first_run` and `second_run` run specs and output `improvement_delta` for success, steps, and deviation

@@ -12,6 +12,7 @@ Current code anchors:
 - `/Users/seanhan/Documents/Playground/src/skill-contract.mjs`
 - `/Users/seanhan/Documents/Playground/src/skill-runtime.mjs`
 - `/Users/seanhan/Documents/Playground/src/skill-registry.mjs`
+- `/Users/seanhan/Documents/Playground/src/skills/document-fetch.mjs`
 - `/Users/seanhan/Documents/Playground/src/skills/document-summarize-skill.mjs`
 - `/Users/seanhan/Documents/Playground/src/skills/search-and-summarize-skill.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner/skill-bridge.mjs`
@@ -26,6 +27,7 @@ This baseline is intentionally narrow:
 
 - it defines what a skill is
 - it gives two checked-in read-only examples
+- it also has one checked-in read-only helper under `src/skills/` that is not a registered skill definition
 - it keeps planner, read-runtime, and mutation-runtime boundaries explicit
 - it does not add a new public route
 - it does not change mutation/read/answer contracts
@@ -131,6 +133,14 @@ Current checked-in examples:
   - allowed effect is only `read:get_company_brain_doc_detail`
   - declared `skill_class=read_only`
   - declared `runtime_access=["read_runtime"]`
+- `document-fetch` helper
+  - read-only helper module only
+  - resolves `document_id` from direct input or raw card payload
+  - reads plain text through the existing Lark read connector/auth boundary
+  - returns bounded `missing_access_token | not_found | permission_denied`
+  - current checked-in executor integration is through `runPlannerMultiStep(...)` in `/Users/seanhan/Documents/Playground/src/executive-planner.mjs`
+  - executor uses it for internal `fetch_document` pre-read and fail-closes the plan when document retrieval fails
+  - is not currently registered in `skill-registry.mjs` and does not create a planner-visible action by itself
 
 ## Minimal Checked-In Contract
 

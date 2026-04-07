@@ -659,6 +659,35 @@ test("planUserInputAction accepts strict multi-step output", async () => {
   assert.equal(result.alternative?.action, "create_doc");
 });
 
+test("planUserInputAction injects required fetch_document step for explicit document references", async () => {
+  resetPlannerRuntimeContext();
+  const result = await planUserInputAction({
+    text: "請讀這個 document_id: doccnFetchPlan123 並整理重點",
+    async requester() {
+      return JSON.stringify({
+        action: "get_company_brain_doc_detail",
+        params: {},
+      });
+    },
+  });
+
+  assert.deepEqual(result.steps, [
+    {
+      action: "fetch_document",
+      intent: "retrieve document content before reasoning",
+      required: true,
+    },
+    {
+      action: "get_company_brain_doc_detail",
+      params: {
+        doc_id: "doccnFetchPlan123",
+      },
+    },
+  ]);
+  const envelope = buildPlannedUserInputEnvelope(result);
+  assert.equal(envelope.trace?.chosen_action, "get_company_brain_doc_detail");
+});
+
 test("planUserInputAction hardens unnecessary create multi-step back to single-step create_doc", async () => {
   resetPlannerRuntimeContext();
   const result = await planUserInputAction({
@@ -6045,6 +6074,213 @@ test("executePlannedUserInput runs multi-step decisions through sequential tool 
       },
     },
   ]);
+});
+
+test("executePlannedUserInput injects fetch_document before referenced document detail", async () => {
+  const fetchCalls = [];
+  const dispatcherCalls = [];
+  const result = await executePlannedUserInput({
+    text: "請直接讀這個 document_id: doccnFetchExec123",
+    logger: console,
+    async requester() {
+      return JSON.stringify({
+        action: "get_company_brain_doc_detail",
+        params: {},
+      });
+    },
+    async documentFetcher({ document_id, raw_card }) {
+      fetchCalls.push({ document_id, raw_card });
+      return {
+        ok: true,
+        document_id,
+        title: "Fetched Doc",
+        content: "document body",
+      };
+    },
+    async dispatcher({ action, payload, requestText, context }) {
+      dispatcherCalls.push({ action, payload, requestText, context });
+      return {
+        ok: true,
+        action,
+        data: { echoed: payload },
+        trace_id: "trace_detail",
+      };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(fetchCalls, [
+    {
+      document_id: "doccnFetchExec123",
+      raw_card: "請直接讀這個 document_id: doccnFetchExec123",
+    },
+  ]);
+  assert.deepEqual(dispatcherCalls, [
+    {
+      action: "get_company_brain_doc_detail",
+      payload: {
+        doc_id: "doccnFetchExec123",
+      },
+      requestText: "請直接讀這個 document_id: doccnFetchExec123",
+      context: {
+        document: {
+          document_id: "doccnFetchExec123",
+          title: "Fetched Doc",
+          content: "document body",
+          fetched: true,
+        },
+      },
+    },
+  ]);
+  assert.deepEqual(result.steps, [
+    {
+      action: "fetch_document",
+      intent: "retrieve document content before reasoning",
+      required: true,
+    },
+    {
+      action: "get_company_brain_doc_detail",
+      params: {
+        doc_id: "doccnFetchExec123",
+      },
+    },
+  ]);
+  assert.equal(result.trace_id, "trace_detail");
+  assert.deepEqual(result.execution_result?.execution_context, {
+    document: {
+      document_id: "doccnFetchExec123",
+      title: "Fetched Doc",
+      content: "document body",
+      fetched: true,
+    },
+  });
+});
+
+test("dispatchPlannerTool supports fetch_document with request-scoped document references", async () => {
+  const fetched = [];
+  const result = await dispatchPlannerTool({
+    action: "fetch_document",
+    requestText: "先看這個文件卡片 document_id: doccnDispatch123",
+    async documentFetcher({ document_id, raw_card }) {
+      fetched.push({ document_id, raw_card });
+      return {
+        ok: true,
+        document_id,
+        title: "Dispatch Demo",
+        content: "hello world",
+      };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(fetched, [
+    {
+      document_id: "doccnDispatch123",
+      raw_card: "先看這個文件卡片 document_id: doccnDispatch123",
+    },
+  ]);
+  assert.deepEqual(result.data, {
+    document_id: "doccnDispatch123",
+    title: "Dispatch Demo",
+    content: "hello world",
+    fetched: true,
+  });
+});
+
+test("runPlannerMultiStep attaches fetched document content to context for subsequent steps", async () => {
+  const dispatcherCalls = [];
+  const result = await runPlannerMultiStep({
+    steps: [
+      { action: "fetch_document", params: { doc_id: "doccnContext123" } },
+      { action: "get_company_brain_doc_detail", params: { doc_id: "doccnContext123" } },
+    ],
+    logger: console,
+    requestText: "請讀取 document_id: doccnContext123",
+    async documentFetcher({ document_id }) {
+      return {
+        ok: true,
+        document_id,
+        title: "Context Demo",
+        content: "context body",
+      };
+    },
+    async dispatcher({ action, payload, context, requestText }) {
+      dispatcherCalls.push({ action, payload, context, requestText });
+      return {
+        ok: true,
+        action,
+        data: { echoed: payload },
+        trace_id: "trace_context_detail",
+      };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(dispatcherCalls, [
+    {
+      action: "get_company_brain_doc_detail",
+      payload: { doc_id: "doccnContext123" },
+      context: {
+        document: {
+          document_id: "doccnContext123",
+          title: "Context Demo",
+          content: "context body",
+          fetched: true,
+        },
+      },
+      requestText: "請讀取 document_id: doccnContext123",
+    },
+  ]);
+  assert.deepEqual(result.execution_context, {
+    document: {
+      document_id: "doccnContext123",
+      title: "Context Demo",
+      content: "context body",
+      fetched: true,
+    },
+  });
+});
+
+test("runPlannerMultiStep stops fail_closed when fetch_document fails and does not continue", async () => {
+  let dispatcherCalled = false;
+  const result = await runPlannerMultiStep({
+    steps: [
+      { action: "fetch_document", params: { doc_id: "doccnDenied123" } },
+      { action: "create_doc", params: { title: "should not run" } },
+    ],
+    logger: console,
+    requestText: "請先讀這個 document_id: doccnDenied123",
+    async documentFetcher({ document_id }) {
+      return {
+        ok: false,
+        error: {
+          type: "permission_denied",
+          document_id,
+          message: "denied",
+        },
+      };
+    },
+    async dispatcher() {
+      dispatcherCalled = true;
+      return {
+        ok: true,
+        action: "create_doc",
+        trace_id: "unexpected",
+      };
+    },
+  });
+
+  assert.equal(dispatcherCalled, false);
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "fail_closed");
+  assert.equal(result.stopped, true);
+  assert.equal(result.stopped_at_step, 0);
+  assert.equal(result.current_step_index, 0);
+  assert.equal(result.execution_context, null);
+  assert.equal(result.last_error?.error, "fail_closed");
+  assert.equal(result.last_error?.data?.reason, "permission_denied");
+  assert.equal(result.last_error?.data?.failure_mode, "fail_closed");
+  assert.deepEqual(result.results.map((item) => item.action), ["fetch_document"]);
 });
 
 test("executePlannedUserInput stops multi-step execution on middle failure and returns error", async () => {

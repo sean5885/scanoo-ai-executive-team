@@ -40,6 +40,8 @@
   - fixed fields are `selected_action`, `execution_result`, `formatted_output`, `routing_reason`, `synthetic_agent_hint`, and `trace_id`
 - `planned_user_input_envelope`
   - output of `buildPlannedUserInputEnvelope(...)`
+  - strict user-input multi-step decisions may also carry an internal pre-read step `{ "action": "fetch_document", "intent": "retrieve document content before reasoning", "required": true }` when the request text already contains a document card, `document_id`, or a file link
+  - this pre-read step is runtime-internal and not a planner-contract catalog action; checked-in strict validation injects and accepts it without widening `target_catalog`
 
 ## Alignment Rules
 

@@ -41,6 +41,7 @@ Current minimum runtime responsibilities already implemented there:
 - planner multi-step execution
 - planner preset execution
 - bounded planner skill dispatch through skill-bridge
+- strict user-input document-reference pre-read injection via an internal `fetch_document` step when the request already carries a document card, `document_id`, or file link
 - reusable planner flow interface / registry layer
 - reusable planner-side company-brain doc-query pipeline
 - bounded planner-side company-brain learning ingest/update dispatch
@@ -725,6 +726,11 @@ For the multi-step shape:
 - each `steps[i].action` must resolve to an action in `planner_contract.json`
 - presets are still allowed only through the legacy single-step `action` path
 - each step is later dispatched through the existing planner tool execution boundary rather than a separate shortcut runtime
+- the internal `fetch_document` pre-read step is the checked-in exception:
+  - it is executed directly inside `runPlannerMultiStep(...)`
+  - it uses `/Users/seanhan/Documents/Playground/src/skills/document-fetch.mjs`
+  - on success it attaches `document` plain text into execution context for later steps
+  - on failure it stops the run as `fail_closed` and later steps do not execute
 
 Current strict user-input planner error boundary:
 
@@ -911,6 +917,7 @@ Current `runPlannerMultiStep(...)` output:
   "ok": "boolean",
   "steps": "array",
   "results": "array",
+  "execution_context": "object|null",
   "trace_id": "string|null",
   "error": "string|null",
   "stopped": "boolean",
@@ -924,7 +931,8 @@ Current `runPlannerMultiStep(...)` output:
 Current multi-step runtime behavior:
 
 - steps are executed in order
-- each step goes through `dispatchPlannerTool(...)`
+- most steps go through `dispatchPlannerTool(...)`
+- `fetch_document` is executed by the multi-step runtime itself through `/Users/seanhan/Documents/Playground/src/skills/document-fetch.mjs`
 - planner dispatch, planner JSON request, preset execution, and multi-step execution now all accept a shared abort signal from the HTTP request boundary
 - default behavior is stop-on-first-error
 - stopped runs return the failing step index and normalized error instead of continuing silently
@@ -932,7 +940,11 @@ Current multi-step runtime behavior:
   - `current_step_index` points to the current stop point on failure and to `steps.length` after full completion
   - `last_error` captures the latest failed step attempt as `{ error, trace_id, data }`
   - `retry_count` counts multi-step step-level retries performed by `runPlannerMultiStep(...)`
+- successful `fetch_document` runs are folded into `execution_context.document = { document_id, title, content, fetched }`
+- later steps receive that bounded `execution_context` from the runtime
+- if `fetch_document` cannot retrieve the document, runtime stops with `error = "fail_closed"` and keeps the concrete downstream reason in `last_error.data.reason`
 - multi-step runtime now accepts:
+  - `requestText`
   - `resume_from_step`
   - `previous_results`
   - `max_retries`

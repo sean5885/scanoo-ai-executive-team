@@ -3,6 +3,7 @@ import { cleanText } from "./message-intent-utils.mjs";
 export const EXECUTIVE_ERROR_TAXONOMY = Object.freeze([
   "fake_completion",
   "insufficient_evidence",
+  "missing_info",
   "wrong_routing",
   "unnecessary_clarification",
   "over_delegation",
@@ -18,6 +19,45 @@ export const EXECUTIVE_ERROR_TAXONOMY = Object.freeze([
   "hallucinated_source",
   "unverifiable_claim",
 ]);
+
+const REFLECTION_MISSING_INFO_FAILURE_TYPES = new Set([
+  "missing_access_token",
+  "permission_denied",
+  "document_not_found",
+]);
+
+function normalizeReflectionValues(values = []) {
+  return Array.from(new Set(
+    (Array.isArray(values) ? values : [])
+      .map((item) => cleanText(item))
+      .filter(Boolean),
+  ));
+}
+
+function collectReflectionFailureTypes(verification = null) {
+  if (!verification || typeof verification !== "object" || Array.isArray(verification)) {
+    return [];
+  }
+
+  return normalizeReflectionValues([
+    verification.failure_type,
+    verification.failureType,
+    verification.error_type,
+    verification.errorType,
+    verification.reason,
+    verification.execution_policy_reason,
+    verification?.data?.reason,
+    ...(Array.isArray(verification.issues) ? verification.issues : []),
+  ]);
+}
+
+function classifyReflectionReason({ verification = null } = {}) {
+  const failureTypes = collectReflectionFailureTypes(verification);
+  if (failureTypes.some((item) => REFLECTION_MISSING_INFO_FAILURE_TYPES.has(item))) {
+    return "missing_info";
+  }
+  return "";
+}
 
 function detectRoboticResponse(text = "") {
   const normalized = cleanText(text);
@@ -43,6 +83,8 @@ export function createReflectionRecord({
 } = {}) {
   const issues = [];
   const verificationIssues = Array.isArray(verification?.issues) ? verification.issues : [];
+  const classifiedReason = classifyReflectionReason({ verification });
+  const deviation = classifiedReason === "missing_info";
 
   if (verification?.fake_completion || verificationIssues.includes("fake_completion")) {
     issues.push("fake_completion");
@@ -68,6 +110,11 @@ export function createReflectionRecord({
   if (routing?.expected_agent_id && routing?.actual_agent_id && routing.expected_agent_id !== routing.actual_agent_id) {
     issues.push("wrong_routing");
   }
+  if (classifiedReason === "missing_info") {
+    issues.push("missing_info");
+  }
+
+  const normalizedIssues = normalizeReflectionValues(issues);
 
   return {
     task_id: cleanText(task?.id),
@@ -80,20 +127,22 @@ export function createReflectionRecord({
       summary: cleanText(item?.summary),
     })),
     verification_result: verification || null,
-    what_went_wrong: issues,
+    what_went_wrong: normalizedIssues,
     missing_elements: verificationIssues,
-    rule_should_have_caught: issues.map((item) => `rule:${item}`),
+    rule_should_have_caught: normalizedIssues.map((item) => `rule:${item}`),
     routing_quality: {
       expected_agent_id: cleanText(routing?.expected_agent_id),
       actual_agent_id: cleanText(routing?.actual_agent_id),
       correct: !(routing?.expected_agent_id && routing?.actual_agent_id) || routing.expected_agent_id === routing.actual_agent_id,
     },
     response_quality: {
-      robotic_response: issues.includes("robotic_response"),
-      direct_enough: !issues.includes("robotic_response"),
+      robotic_response: normalizedIssues.includes("robotic_response"),
+      direct_enough: !normalizedIssues.includes("robotic_response"),
     },
-    error_type: issues[0] || "",
-    should_improve_next_time: issues.length > 0,
+    reason: classifiedReason || "",
+    deviation,
+    error_type: classifiedReason || normalizedIssues[0] || "",
+    should_improve_next_time: normalizedIssues.length > 0,
     created_at: new Date().toISOString(),
   };
 }

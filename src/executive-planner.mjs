@@ -29,8 +29,9 @@ import {
   normalizeExplicitUserAuthContext,
 } from "./explicit-user-auth.mjs";
 import { getDocumentCreateGovernanceContract } from "./lark-write-guard.mjs";
-import { cleanText } from "./message-intent-utils.mjs";
+import { cleanText, extractDocumentId } from "./message-intent-utils.mjs";
 import { callOpenClawTextGeneration } from "./openclaw-text-service.mjs";
+import { fetchDocumentPlainText } from "./skills/document-fetch.mjs";
 import { FALLBACK_DISABLED, INVALID_ACTION, ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
 import { hasDocSearchIntent, hasScopedDocExclusionSearchIntent } from "./router.js";
 import { createRequestId, emitRateLimitedAlert, emitToolExecutionLog } from "./runtime-observability.mjs";
@@ -160,6 +161,8 @@ const PLANNER_ROUTING_REASON_ALIASES = Object.freeze({
   task_lifecycle_pending_item_action: "task_lifecycle_follow_up",
   forced_detail_for_mirror_runtime: "forced_selection",
 });
+const FETCH_DOCUMENT_ACTION = "fetch_document";
+const FETCH_DOCUMENT_STEP_INTENT = "retrieve document content before reasoning";
 
 const executiveCollaborationSignals = [
   "各個 agent",
@@ -1903,6 +1906,11 @@ const plannerExecutionPolicy = {
     retry: 0,
     stop_reason: "request_cancelled",
   },
+  fail_closed: {
+    self_heal: 0,
+    retry: 0,
+    stop_reason: "fail_closed",
+  },
   business_error: {
     self_heal: 0,
     retry: 0,
@@ -2294,6 +2302,7 @@ function buildPlannerMultiStepOutput({
   ok = true,
   steps = [],
   results = [],
+  executionContext = null,
   traceId = null,
   error = null,
   stopped = false,
@@ -2302,10 +2311,16 @@ function buildPlannerMultiStepOutput({
   lastError = null,
   retryCount = 0,
 } = {}) {
+  const normalizedExecutionContext = executionContext && typeof executionContext === "object" && !Array.isArray(executionContext)
+    ? executionContext
+    : null;
   return {
     ok,
     steps,
     results,
+    execution_context: normalizedExecutionContext && Object.keys(normalizedExecutionContext).length > 0
+      ? normalizedExecutionContext
+      : null,
     trace_id: traceId,
     error: cleanText(error) || null,
     stopped: stopped === true,
@@ -2595,6 +2610,56 @@ function healPlannerInput(action = "", payload = {}, violations = []) {
 
 function normalizePlannerPayload(payload = {}) {
   return payload && typeof payload === "object" && !Array.isArray(payload) ? { ...payload } : {};
+}
+
+function normalizePlannerExecutionContext(context = null) {
+  return context && typeof context === "object" && !Array.isArray(context)
+    ? { ...context }
+    : {};
+}
+
+function buildPlannerDocumentExecutionContext(result = null) {
+  const data = result?.data && typeof result.data === "object" && !Array.isArray(result.data)
+    ? result.data
+    : {};
+  const documentId = cleanText(data.document_id || "");
+  if (!documentId) {
+    return null;
+  }
+  return {
+    document: {
+      document_id: documentId,
+      title: cleanText(data.title || "") || "",
+      content: cleanText(data.content || "") || "",
+      fetched: data.fetched === true,
+    },
+  };
+}
+
+function mergePlannerExecutionContext(currentContext = null, nextContext = null) {
+  const normalizedCurrentContext = normalizePlannerExecutionContext(currentContext);
+  const normalizedNextContext = normalizePlannerExecutionContext(nextContext);
+  if (Object.keys(normalizedNextContext).length === 0) {
+    return normalizedCurrentContext;
+  }
+  return {
+    ...normalizedCurrentContext,
+    ...normalizedNextContext,
+  };
+}
+
+function derivePlannerExecutionContextFromResults(results = []) {
+  let executionContext = {};
+  for (const result of Array.isArray(results) ? results : []) {
+    if (cleanText(result?.action || "") !== FETCH_DOCUMENT_ACTION || result?.ok !== true) {
+      continue;
+    }
+    executionContext = mergePlannerExecutionContext(
+      executionContext,
+      buildPlannerDocumentExecutionContext(result),
+    );
+  }
+  return executionContext;
 }
 
 function applyCreateDocEntryGovernancePayload(action = "", payload = {}) {
@@ -3046,6 +3111,96 @@ export function validateOutput(action = "", result = null) {
   };
 }
 
+async function dispatchPlannerFetchDocument({
+  payload = {},
+  requestText = "",
+  authContext = null,
+  documentFetcher = fetchDocumentPlainText,
+  signal = null,
+} = {}) {
+  const preAbortResult = buildPlannerAbortResult({
+    action: FETCH_DOCUMENT_ACTION,
+    signal,
+  });
+  if (preAbortResult) {
+    return preAbortResult;
+  }
+
+  const normalizedPayload = normalizePlannerPayload(payload);
+  const effectivePayload = maybeAttachReferencedDocumentId({
+    text: requestText,
+    action: FETCH_DOCUMENT_ACTION,
+    params: normalizedPayload,
+  });
+  const docId = cleanText(effectivePayload.doc_id || "");
+  if (!docId) {
+    return buildPlannerStoppedResult({
+      action: FETCH_DOCUMENT_ACTION,
+      error: "business_error",
+      data: {
+        message: "planner_fetch_document_missing_document_reference",
+      },
+      traceId: null,
+    });
+  }
+
+  try {
+    const fetchResult = await documentFetcher({
+      document_id: docId,
+      raw_card: normalizedPayload.raw_card ?? requestText ?? null,
+      auth: authContext,
+    });
+    if (fetchResult?.ok !== true) {
+      const failureType = cleanText(fetchResult?.error?.type || "") || "not_found";
+      return buildPlannerStoppedResult({
+        action: FETCH_DOCUMENT_ACTION,
+        error: "fail_closed",
+        data: {
+          reason: failureType,
+          failure_mode: "fail_closed",
+          document_id: cleanText(fetchResult?.error?.document_id || "") || docId || null,
+          message: cleanText(fetchResult?.error?.message || "") || null,
+        },
+        traceId: null,
+        stopReason: "fail_closed",
+      });
+    }
+
+    return {
+      ok: true,
+      action: FETCH_DOCUMENT_ACTION,
+      data: {
+        document_id: cleanText(fetchResult?.document_id || "") || docId,
+        title: cleanText(fetchResult?.title || "") || "",
+        content: cleanText(fetchResult?.content || "") || "",
+        fetched: true,
+      },
+      trace_id: null,
+    };
+  } catch (error) {
+    const abortResult = buildPlannerAbortResult({
+      action: FETCH_DOCUMENT_ACTION,
+      signal,
+      error,
+    });
+    if (abortResult) {
+      return abortResult;
+    }
+    return buildPlannerStoppedResult({
+      action: FETCH_DOCUMENT_ACTION,
+      error: "fail_closed",
+      data: {
+        reason: "runtime_exception",
+        failure_mode: "fail_closed",
+        message: error instanceof Error ? error.message : String(error),
+        document_id: docId,
+      },
+      traceId: null,
+      stopReason: "fail_closed",
+    });
+  }
+}
+
 export function validatePresetOutput(presetName = "", result = null) {
   if (!result || result.ok !== true) {
     return { ok: true, violations: [] };
@@ -3068,10 +3223,13 @@ export function validatePlannerUserInputDecision(decision = {}, { text = "" } = 
     ? decision
     : {};
   const semantics = cleanText(text) ? derivePlannerUserInputSemantics(text) : null;
-  const effectiveDecision = hardenPlannerUserInputDecisionCandidate({
+  const effectiveDecision = enforceFetchDocumentStepRequirement({
     text,
-    decision: normalizedDecision,
-  }).decision;
+    decision: hardenPlannerUserInputDecisionCandidate({
+      text,
+      decision: normalizedDecision,
+    }).decision,
+  });
   const rawSteps = effectiveDecision.steps;
   if (rawSteps !== undefined) {
     if (!Array.isArray(rawSteps) || rawSteps.length === 0) {
@@ -3100,7 +3258,11 @@ export function validatePlannerUserInputDecision(decision = {}, { text = "" } = 
         };
       }
 
-      const params = normalizePlannerPayload(rawParams);
+      const params = maybeAttachReferencedDocumentId({
+        text,
+        action,
+        params: normalizePlannerPayload(rawParams),
+      });
       if (!action) {
         return {
           ok: false,
@@ -3108,8 +3270,18 @@ export function validatePlannerUserInputDecision(decision = {}, { text = "" } = 
         };
       }
 
+      const validatedStep = buildPlannerValidatedStep({
+        action,
+        params,
+        intent: rawStep.intent,
+        required: rawStep.required,
+      });
       const contract = getPlannerActionContract(action);
-      steps.push({ action, params });
+      steps.push(validatedStep);
+
+      if (action === FETCH_DOCUMENT_ACTION) {
+        continue;
+      }
 
       if (!contract) {
         return {
@@ -3151,7 +3323,11 @@ export function validatePlannerUserInputDecision(decision = {}, { text = "" } = 
       error: "planner_failed",
     };
   }
-  const params = normalizePlannerPayload(effectiveDecision.params);
+  const params = maybeAttachReferencedDocumentId({
+    text,
+    action: cleanText(effectiveDecision.action || ""),
+    params: normalizePlannerPayload(effectiveDecision.params),
+  });
 
   if (!action) {
     return {
@@ -3581,6 +3757,8 @@ export function shouldPreferSelectorAction({
 export async function dispatchPlannerTool({
   action = "",
   payload = {},
+  requestText = "",
+  documentFetcher = fetchDocumentPlainText,
   logger = console,
   baseUrl = oauthBaseUrl,
   maxRetry = 1,
@@ -3614,6 +3792,26 @@ export async function dispatchPlannerTool({
       traceId: preAbortResult.trace_id || null,
     });
     return preAbortResult;
+  }
+  if (runtimeInput.action === FETCH_DOCUMENT_ACTION) {
+    const fetchDocumentResult = await dispatchPlannerFetchDocument({
+      payload: runtimeInput.payload,
+      requestText,
+      authContext: normalizedAuthContext,
+      documentFetcher,
+      signal,
+    });
+    emitToolExecutionLog({
+      logger,
+      requestId,
+      action: runtimeInput.action,
+      params: runtimeInput.payload,
+      success: fetchDocumentResult?.ok === true,
+      data: buildPlannerToolExecutionData(fetchDocumentResult),
+      error: fetchDocumentResult?.ok === false ? fetchDocumentResult?.error || "business_error" : null,
+      traceId: fetchDocumentResult?.trace_id || null,
+    });
+    return fetchDocumentResult;
   }
   if (!tool && !skillAction) {
     const stoppedResult = buildPlannerStoppedResult({
@@ -4408,6 +4606,8 @@ export async function runPlannerMultiStep({
   steps = [],
   logger = console,
   dispatcher = dispatchPlannerTool,
+  documentFetcher = fetchDocumentPlainText,
+  requestText = "",
   stopOnError = true,
   resume_from_step = null,
   previous_results = [],
@@ -4422,6 +4622,7 @@ export async function runPlannerMultiStep({
       ok: false,
       steps: [],
       results: [],
+      executionContext: null,
       traceId: preAbortResult.trace_id || null,
       error: preAbortResult.error,
       stopped: true,
@@ -4454,6 +4655,7 @@ export async function runPlannerMultiStep({
   const results = hasPreviousResults
     ? previous_results.slice(0, completedStepCount)
     : [];
+  let executionContext = derivePlannerExecutionContextFromResults(results);
   const retryableErrorTypes = normalizePlannerRetryableErrorTypes(retryable_error_types);
   const maxRetries = Math.max(0, Number.isFinite(Number(max_retries)) ? Number(max_retries) : 0);
   let traceId = getLatestPlannerTraceId(results);
@@ -4472,17 +4674,33 @@ export async function runPlannerMultiStep({
 
     while (true) {
       throwIfPlannerSignalAborted(signal);
-      const result = await dispatcher({
-        action: step.action,
-        payload: step.payload,
-        logger,
-        authContext,
-        signal,
-      });
+      const result = step.action === FETCH_DOCUMENT_ACTION
+        ? await dispatchPlannerFetchDocument({
+            payload: step.payload,
+            requestText,
+            authContext,
+            documentFetcher,
+            signal,
+          })
+        : await dispatcher({
+            action: step.action,
+            payload: step.payload,
+            requestText,
+            context: executionContext,
+            logger,
+            authContext,
+            signal,
+          });
       results.push(result);
       traceId = result?.trace_id || traceId;
 
       if (result?.ok !== false) {
+        if (step.action === FETCH_DOCUMENT_ACTION) {
+          executionContext = mergePlannerExecutionContext(
+            executionContext,
+            buildPlannerDocumentExecutionContext(result),
+          );
+        }
         break;
       }
 
@@ -4555,6 +4773,7 @@ export async function runPlannerMultiStep({
       && stopped !== true,
     steps: normalizedSteps.map((step) => ({ action: step.action })),
     results,
+    executionContext,
     traceId,
     error,
     stopped,
@@ -5713,6 +5932,7 @@ async function buildPlannerUserInputPrompt({ text = "", sessionKey = "" } = {}) 
     "單步任務可用相容模式 action/params；只有明確需要多步時才輸出 steps。",
     "action 必須完全對應 target_catalog 裡的名稱。",
     "steps 內的 action 只能使用 type=action 條目，不可放 preset。",
+    `如果 user_request 內有 document card、document_id 或 file link，steps 第一項必須是 {"action":"${FETCH_DOCUMENT_ACTION}","intent":"${FETCH_DOCUMENT_STEP_INTENT}","required":true}。`,
     "params 必須是 object，且需符合對應 contract 的 required params。",
     "如果已有 active_doc 或 active_candidates，優先利用那些 doc_id 做 detail/read 決策。",
     "看文件列表用 list，找資料用 search，讀某份文件內容才用 detail；不要混用。",
@@ -5739,6 +5959,7 @@ async function buildPlannerUserInputPrompt({ text = "", sessionKey = "" } = {}) 
           "單步任務可用相容模式 action/params；只有明確需要多步時才輸出 steps。",
           "action 必須來自 target_catalog。",
           "steps 內 action 只能來自 type=action 條目，不可使用 preset。",
+          `若 user_request 帶 document card、document_id 或 file link，steps 第一項必須加 {"action":"${FETCH_DOCUMENT_ACTION}","intent":"${FETCH_DOCUMENT_STEP_INTENT}","required":true}。`,
           "params 只能放該 action/preset 需要的欄位。",
           "不可直接複製上一輪 decision；如果 user_request 和前一輪不是同一 task，必須重新決策。",
           "不可直接回答使用者問題，不可輸出 free text fallback。",
@@ -6054,6 +6275,151 @@ function buildPlannerSingleStepDecision(action = "", params = {}) {
   };
 }
 
+function buildFetchDocumentStep() {
+  return {
+    action: FETCH_DOCUMENT_ACTION,
+    intent: FETCH_DOCUMENT_STEP_INTENT,
+    required: true,
+  };
+}
+
+function normalizePlannerDecisionStep(step = {}) {
+  const normalizedStep = {
+    action: cleanText(step?.action || ""),
+  };
+  const rawParams = step?.params && typeof step.params === "object" && !Array.isArray(step.params)
+    ? step.params
+    : step?.payload && typeof step.payload === "object" && !Array.isArray(step.payload)
+      ? step.payload
+      : null;
+  if (rawParams) {
+    normalizedStep.params = normalizePlannerPayload(rawParams);
+  }
+  const intent = cleanText(step?.intent || "");
+  if (intent) {
+    normalizedStep.intent = intent;
+  }
+  if (typeof step?.required === "boolean") {
+    normalizedStep.required = step.required;
+  }
+  return normalizedStep;
+}
+
+function buildPlannerValidatedStep({
+  action = "",
+  params = undefined,
+  intent = "",
+  required = undefined,
+} = {}) {
+  const normalizedAction = cleanText(action || "");
+  const normalizedIntent = cleanText(intent || "");
+  const normalizedParams = params && typeof params === "object" && !Array.isArray(params)
+    ? normalizePlannerPayload(params)
+    : {};
+  const step = {
+    action: normalizedAction,
+  };
+  if (normalizedAction !== FETCH_DOCUMENT_ACTION) {
+    step.params = normalizedParams;
+  }
+  if (normalizedIntent) {
+    step.intent = normalizedIntent;
+  }
+  if (typeof required === "boolean") {
+    step.required = required;
+  }
+  return step;
+}
+
+function derivePlannerDocumentReference(text = "") {
+  const rawText = cleanText(text);
+  const documentId = cleanText(extractDocumentId({ text: rawText }));
+  const hasDocumentIdField = /\bdocument_id\b/i.test(rawText);
+  const hasFileLink = /https?:\/\/\S+\/(?:docx|wiki)\//i.test(rawText);
+  const hasFileLinkKeyword = /(?:file link|文件連結|文件链接|檔案連結|档案链接)/i.test(rawText);
+  const hasDocumentCard = /(?:document card|文件卡片|文檔卡片|文档卡片)/i.test(rawText);
+  return {
+    document_id: documentId || null,
+    has_reference: Boolean(documentId || hasDocumentIdField || hasFileLink || hasFileLinkKeyword || hasDocumentCard),
+  };
+}
+
+function maybeAttachReferencedDocumentId({
+  text = "",
+  action = "",
+  params = {},
+} = {}) {
+  const normalizedAction = cleanText(action || "");
+  const normalizedParams = normalizePlannerPayload(params);
+  if (
+    ![
+      FETCH_DOCUMENT_ACTION,
+      "get_company_brain_doc_detail",
+      "search_and_detail_doc",
+      "document_summarize",
+    ].includes(normalizedAction)
+  ) {
+    return normalizedParams;
+  }
+  if (cleanText(normalizedParams.doc_id || "")) {
+    return normalizedParams;
+  }
+  const referencedDocument = derivePlannerDocumentReference(text);
+  if (!cleanText(referencedDocument.document_id || "")) {
+    return normalizedParams;
+  }
+  return {
+    ...normalizedParams,
+    doc_id: referencedDocument.document_id,
+  };
+}
+
+function enforceFetchDocumentStepRequirement({
+  text = "",
+  decision = {},
+} = {}) {
+  if (!decision || typeof decision !== "object" || Array.isArray(decision)) {
+    return decision;
+  }
+  const referencedDocument = derivePlannerDocumentReference(text);
+  if (!referencedDocument.has_reference) {
+    return decision;
+  }
+
+  const normalizedSteps = Array.isArray(decision.steps)
+    ? decision.steps
+      .map((step) => normalizePlannerDecisionStep(step))
+      .filter((step) => cleanText(step.action))
+      .map((step) => ({
+        ...step,
+        ...(step.params
+          ? { params: maybeAttachReferencedDocumentId({ text, action: step.action, params: step.params }) }
+          : {}),
+      }))
+    : cleanText(decision.action || "")
+      ? [buildPlannerValidatedStep({
+          action: cleanText(decision.action || ""),
+          params: maybeAttachReferencedDocumentId({
+            text,
+            action: cleanText(decision.action || ""),
+            params: decision.params,
+          }),
+        })]
+      : [];
+
+  if (normalizedSteps.length === 0) {
+    return decision;
+  }
+
+  const remainingSteps = normalizedSteps.filter((step) => cleanText(step.action) !== FETCH_DOCUMENT_ACTION);
+  return {
+    steps: [
+      buildFetchDocumentStep(),
+      ...remainingSteps,
+    ],
+  };
+}
+
 function hardenPlannerUserInputDecisionCandidate({
   text = "",
   decision = {},
@@ -6126,7 +6492,11 @@ function hardenPlannerUserInputDecisionCandidate({
 
   const action = cleanText(normalizedDecision.action || "");
   const params = normalizedDecision.params && typeof normalizedDecision.params === "object" && !Array.isArray(normalizedDecision.params)
-    ? normalizePlannerPayload(normalizedDecision.params)
+    ? maybeAttachReferencedDocumentId({
+        text,
+        action,
+        params: normalizePlannerPayload(normalizedDecision.params),
+      })
     : normalizedDecision.params;
 
   if (action === "runtime_and_list_docs" && semantics.wants_runtime_info && !semantics.wants_document_list) {
@@ -6248,6 +6618,11 @@ function collectPlannerDecisionActionNames(decision = {}) {
   return action ? [action] : [];
 }
 
+function getPlannerDecisionRepresentativeAction(decision = {}) {
+  const actionNames = collectPlannerDecisionActionNames(decision);
+  return actionNames.find((action) => action !== FETCH_DOCUMENT_ACTION) || actionNames[0] || null;
+}
+
 function buildPlannerSemanticMismatch({
   decision = {},
   reason = "",
@@ -6269,6 +6644,7 @@ function validatePlannerDecisionSemantics({
 } = {}) {
   const semantics = derivePlannerUserInputSemantics(text);
   const actionNames = collectPlannerDecisionActionNames(decision);
+  const semanticActionNames = actionNames.filter((name) => name !== FETCH_DOCUMENT_ACTION);
   const allowedDocumentActions = new Set([
     "list_company_brain_docs",
     "search_company_brain_docs",
@@ -6302,7 +6678,7 @@ function validatePlannerDecisionSemantics({
     };
   }
 
-  if (semantics.wants_unsupported_slash_command && actionNames.length > 0) {
+  if (semantics.wants_unsupported_slash_command && semanticActionNames.length > 0) {
     return {
       ok: false,
       ...buildPlannerSemanticMismatch({
@@ -6313,7 +6689,7 @@ function validatePlannerDecisionSemantics({
     };
   }
 
-  if (semantics.wants_missing_agent_request && actionNames.length > 0) {
+  if (semantics.wants_missing_agent_request && semanticActionNames.length > 0) {
     return {
       ok: false,
       ...buildPlannerSemanticMismatch({
@@ -6324,7 +6700,7 @@ function validatePlannerDecisionSemantics({
     };
   }
 
-  if (semantics.wants_runtime_info && actionNames.some((name) => name !== "get_runtime_info")) {
+  if (semantics.wants_runtime_info && semanticActionNames.some((name) => name !== "get_runtime_info")) {
     return {
       ok: false,
       ...buildPlannerSemanticMismatch({
@@ -6338,8 +6714,8 @@ function validatePlannerDecisionSemantics({
   if (
     semantics.wants_create_doc
     && (
-      !actionNames.some((name) => allowedCreateActions.has(name))
-      || actionNames.some((name) => !allowedCreateContinuationActions.has(name))
+      !semanticActionNames.some((name) => allowedCreateActions.has(name))
+      || semanticActionNames.some((name) => !allowedCreateContinuationActions.has(name))
     )
   ) {
     return {
@@ -6355,7 +6731,7 @@ function validatePlannerDecisionSemantics({
   if (
     semantics.wants_document_lookup
     && !semantics.wants_create_doc
-    && actionNames.some((name) => !allowedDocumentActions.has(name))
+    && semanticActionNames.some((name) => !allowedDocumentActions.has(name))
   ) {
     return {
       ok: false,
@@ -6474,7 +6850,7 @@ function validatePlannerDecisionFreshness({
 function buildUserInputDecisionAlternative(decision = {}) {
   if (Array.isArray(decision?.steps) && decision.steps.length > 0) {
     return normalizeDecisionAlternative({
-      action: cleanText(decision.steps[0]?.action || "") || null,
+      action: getPlannerDecisionRepresentativeAction(decision),
       summary: "也可只先執行第一步取得中間結果，但這輪需求需要完整多步流程。",
     });
   }
@@ -6543,6 +6919,7 @@ function buildUserInputDecisionWhy({
   result = {},
   semantics = null,
 } = {}) {
+  const representativeAction = getPlannerDecisionRepresentativeAction(result);
   if (cleanText(result?.reason || "")) {
     if (result?.error) {
       return cleanText(result.reason);
@@ -6585,19 +6962,19 @@ function buildUserInputDecisionWhy({
   if (semantics?.wants_create_doc) {
     return "需求核心是建立文件，所以先走受控文件建立路徑。";
   }
-  if (cleanText(result?.action || "") === "get_company_brain_doc_detail") {
+  if (representativeAction === "get_company_brain_doc_detail") {
     return "這輪已經有足夠線索指向單一文件，所以直接走 detail。";
   }
-  if (cleanText(result?.action || "") === "search_company_brain_docs") {
+  if (representativeAction === "search_company_brain_docs") {
     return "需求偏向查資料或找文件，先 search 才能定位候選來源。";
   }
-  if (cleanText(result?.action || "") === "search_and_summarize") {
+  if (representativeAction === "search_and_summarize") {
     return "這輪需求被明確約束為 read-only skill 摘要路徑，所以不直接走一般 search bridge。";
   }
-  if (cleanText(result?.action || "") === "document_summarize") {
+  if (representativeAction === "document_summarize") {
     return "這輪需求被明確約束為單一文件的 read-only skill 摘要路徑，所以不直接走一般 detail bridge。";
   }
-  if (cleanText(result?.action || "") === "list_company_brain_docs") {
+  if (representativeAction === "list_company_brain_docs") {
     return "需求偏向列出已驗證文件鏡像，而不是鎖定單一文件內容。";
   }
   return "這個 action 最接近目前 user_request，且仍在受控 planner contract 內。";
@@ -6696,7 +7073,7 @@ export async function planUserInputAction({
             });
             maybeCompactPlannerConversationMemory({
               flows: buildPlannerFlowSnapshots(plannerFlows, { sessionKey }),
-              latestSelectedAction: decision.action || decision.steps?.[0]?.action || "",
+              latestSelectedAction: cleanText(decision.action || "") || getPlannerDecisionRepresentativeAction(decision) || "",
               reason: "post_plan_user_input_action",
               sessionKey,
             });
@@ -6859,6 +7236,7 @@ export async function executePlannedUserInput({
   requester = requestPlannerJson,
   logger = console,
   contentReader,
+  documentFetcher = fetchDocumentPlainText,
   baseUrl = oauthBaseUrl,
   toolFlowRunner = runPlannerToolFlow,
   multiStepRunner = runPlannerMultiStep,
@@ -7064,16 +7442,20 @@ export async function executePlannedUserInput({
       runtimeResult = await multiStepRunner({
         steps: decision.steps,
         logger,
+        requestText: text,
+        documentFetcher,
         resume_from_step,
         previous_results,
         max_retries,
         retryable_error_types,
         authContext,
         signal,
-        async dispatcher({ action, payload }) {
+        async dispatcher({ action, payload, requestText: stepRequestText, context }) {
           return dispatcher({
             action,
             payload,
+            requestText: stepRequestText,
+            context,
             logger,
             baseUrl,
             authContext,
@@ -7171,7 +7553,7 @@ export async function executePlannedUserInput({
 }
 
 export function buildPlannedUserInputEnvelope(result = {}) {
-  const chosenAction = cleanText(result.action || result.steps?.[0]?.action || "") || null;
+  const chosenAction = cleanText(result.action || "") || getPlannerDecisionRepresentativeAction(result) || null;
   const fallbackReason = cleanText(
     result.reason
     || result.execution_result?.data?.reason
@@ -7218,7 +7600,11 @@ export function buildPlannedUserInputEnvelope(result = {}) {
             steps: result.steps
               .map((step) => ({
                 action: cleanText(step?.action || "") || null,
-                params: normalizePlannerPayload(step?.params),
+                ...(step?.params && typeof step.params === "object" && !Array.isArray(step.params)
+                  ? { params: normalizePlannerPayload(step.params) }
+                  : {}),
+                ...(cleanText(step?.intent || "") ? { intent: cleanText(step.intent) } : {}),
+                ...(typeof step?.required === "boolean" ? { required: step.required } : {}),
               }))
               .filter((step) => step.action),
           }
@@ -7251,7 +7637,11 @@ export function buildPlannedUserInputEnvelope(result = {}) {
           steps: result.steps
             .map((step) => ({
               action: cleanText(step?.action || "") || null,
-              params: normalizePlannerPayload(step?.params),
+              ...(step?.params && typeof step.params === "object" && !Array.isArray(step.params)
+                ? { params: normalizePlannerPayload(step.params) }
+                : {}),
+              ...(cleanText(step?.intent || "") ? { intent: cleanText(step.intent) } : {}),
+              ...(typeof step?.required === "boolean" ? { required: step.required } : {}),
             }))
             .filter((step) => step.action),
         }
