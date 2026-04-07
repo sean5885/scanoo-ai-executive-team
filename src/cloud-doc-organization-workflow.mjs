@@ -7,11 +7,18 @@ import {
   setAccountPreference,
 } from "./rag-repository.mjs";
 import { sha256 } from "./text-utils.mjs";
+import {
+  buildWorkflowTimeoutGovernanceLine,
+  classifyWorkflowTimeoutGovernanceFamily,
+  DEFAULT_WORKFLOW_SLOW_WARNING_MS,
+  WORKFLOW_TIMEOUT_GOVERNANCE_FAMILIES,
+} from "./workflow-timeout-governance.mjs";
 
 const sessionWorkflowModePrefix = "session_workflow_mode:";
 const sessionWorkflowReviewCachePrefix = "session_workflow_review_cache:";
 const sessionWorkflowModeTtlMs = 90 * 60 * 1000;
 const sessionWorkflowReviewCacheTtlMs = 30 * 60 * 1000;
+const cloudDocRereviewSlowWarningMs = DEFAULT_WORKFLOW_SLOW_WARNING_MS;
 
 export const CLOUD_DOC_ORGANIZATION_MODE = "cloud_doc_organization";
 export const CLOUD_DOC_WORKFLOW = "cloud_doc";
@@ -179,6 +186,59 @@ function isAbortLikeError(error) {
     || message === "request_cancelled";
 }
 
+function resolveCloudDocAbortInfo({ signal = null, error = null } = {}) {
+  const source = signal?.aborted ? signal.reason || error : error;
+  if (!source && !signal?.aborted) {
+    return null;
+  }
+  const codeCandidate = cleanText(source?.code || error?.code || "");
+  const nameCandidate = cleanText(source?.name || error?.name || "");
+  if (!signal?.aborted && codeCandidate !== "request_timeout" && codeCandidate !== "request_cancelled" && nameCandidate !== "AbortError") {
+    return null;
+  }
+  return {
+    code: codeCandidate === "request_timeout" ? "request_timeout" : "request_cancelled",
+    timeout_ms: Number.isFinite(Number(source?.timeout_ms))
+      ? Number(source.timeout_ms)
+      : Number.isFinite(Number(error?.timeout_ms))
+        ? Number(error.timeout_ms)
+        : null,
+  };
+}
+
+function logCloudDocTimeoutGovernance(logger, {
+  family = null,
+  durationMs = null,
+  timeoutMs = null,
+  reviewSeedCount = null,
+  timedOut = false,
+  workflowStillRunning = false,
+} = {}) {
+  const normalizedFamily = classifyWorkflowTimeoutGovernanceFamily({
+    explicitFamily: family,
+    timedOut,
+    durationMs,
+    slowWarningMs: cloudDocRereviewSlowWarningMs,
+    workflowStillRunning,
+  });
+  if (!normalizedFamily || !logger || typeof logger.info !== "function") {
+    return;
+  }
+  const level = normalizedFamily === WORKFLOW_TIMEOUT_GOVERNANCE_FAMILIES.SUCCESSFUL_BUT_SLOW
+    ? "info"
+    : "warn";
+  logger[level]("cloud_doc_timeout_governance", {
+    workflow: CLOUD_DOC_WORKFLOW,
+    branch: "rereview",
+    timeout_governance_family: normalizedFamily,
+    duration_ms: Number.isFinite(Number(durationMs)) ? Number(durationMs) : null,
+    timeout_ms: Number.isFinite(Number(timeoutMs)) ? Number(timeoutMs) : null,
+    review_seed_count: Number.isFinite(Number(reviewSeedCount)) ? Number(reviewSeedCount) : null,
+    timed_out: timedOut === true,
+    workflow_still_running: workflowStillRunning === true,
+  });
+}
+
 function normalizeCloudOrganizationScopedSubject(value = "") {
   return cleanText(String(value || ""))
     .replace(/^(?:跟|与|與|和)\s*/u, "")
@@ -262,7 +322,13 @@ async function buildCloudOrganizationLocalRereviewFallbackReply({
   sessionKey = "",
   logger = null,
   replyBuilderName = "buildCloudOrganizationReviewReply",
+  abortInfo = null,
+  durationMs = null,
 } = {}) {
+  const timeoutObserved = cleanText(abortInfo?.code) === "request_timeout";
+  const governanceFamily = timeoutObserved
+    ? WORKFLOW_TIMEOUT_GOVERNANCE_FAMILIES.TIMEOUT_ACCEPTABLE
+    : null;
   const unresolved = reviewSeed.map(({ item, local }) => {
     const finalRole = categoryRoleMap[local?.category] || "待人工確認";
     return formatCloudOrganizationPendingItem({
@@ -271,7 +337,9 @@ async function buildCloudOrganizationLocalRereviewFallbackReply({
       stagingRole: finalRole,
       reason: summarizeCloudOrganizationReasons(
         collectCloudOrganizationReviewReasons(item, local),
-        "這輪語義複審沒有在時限內完成，所以我先保留本地判斷並放進待人工確認。",
+        timeoutObserved
+          ? "這輪語義複審逾時，所以我先保留本地判斷並放進待人工確認。"
+          : "這輪語義複審被中斷，所以我先保留本地判斷並放進待人工確認。",
       ),
     });
   });
@@ -284,6 +352,13 @@ async function buildCloudOrganizationLocalRereviewFallbackReply({
     pendingItems: unresolved,
   });
 
+  logCloudDocTimeoutGovernance(logger, {
+    family: governanceFamily,
+    durationMs,
+    timeoutMs: abortInfo?.timeout_ms,
+    reviewSeedCount: reviewSeed.length,
+    timedOut: timeoutObserved,
+  });
   logCloudDocReplyTrace(logger, {
     replyBuilderName,
     finalTextSourceFunction: "buildCloudOrganizationLocalRereviewFallbackReply",
@@ -293,15 +368,34 @@ async function buildCloudOrganizationLocalRereviewFallbackReply({
   });
   return {
     text: buildCloudOrganizationPendingReplyText({
-      conclusion: `第二輪角色審核這次先回退到本地保底結果，因為語義複審沒有在時限內完成。`,
+      conclusion: timeoutObserved
+        ? "第二輪角色審核這次先回退到本地保底結果，因為語義複審逾時了。"
+        : "第二輪角色審核這次先回退到本地保底結果，因為語義複審被中斷了。",
       summaryLines: [
-        "- 這一輪先保留本地分類與待人工確認清單，不假裝語義複審已完成。",
+        buildWorkflowTimeoutGovernanceLine({
+          family: governanceFamily,
+          workflowLabel: "雲文檔第二輪語義複審",
+          durationMs,
+        }),
+        timeoutObserved
+          ? "- 這一輪先保留本地分類與待人工確認清單，不假裝語義複審已完成。"
+          : "- 這一輪先保留本地分類與待人工確認清單，等下次有完整執行窗口時再補語義複審。",
         `- 待人工確認：${visibleUnresolved.length} 份`,
         buildCloudOrganizationTestResidualSummaryLine(testResidualDocs),
       ],
       pendingItems: visibleUnresolved,
     }),
     pending_items: visibleUnresolved,
+    timeout_governance: governanceFamily
+      ? {
+          family: governanceFamily,
+          duration_ms: Number.isFinite(Number(durationMs)) ? Number(durationMs) : null,
+          timeout_ms: Number.isFinite(Number(abortInfo?.timeout_ms)) ? Number(abortInfo.timeout_ms) : null,
+          timeout_observed: true,
+          fallback_used: true,
+          slow_warning_ms: cloudDocRereviewSlowWarningMs,
+        }
+      : null,
   };
 }
 
@@ -1071,6 +1165,22 @@ export async function buildCloudOrganizationReviewReply({
   }
 
   let semanticClassified = new Map();
+  const rereviewStartedAt = Date.now();
+  let slowTelemetryEmitted = false;
+  const slowTelemetryTimer = reviewSeed.length
+    ? setTimeout(() => {
+        slowTelemetryEmitted = true;
+        logCloudDocTimeoutGovernance(logger, {
+          family: WORKFLOW_TIMEOUT_GOVERNANCE_FAMILIES.WORKFLOW_TOO_SLOW,
+          durationMs: Date.now() - rereviewStartedAt,
+          reviewSeedCount: reviewSeed.length,
+          workflowStillRunning: true,
+        });
+      }, cloudDocRereviewSlowWarningMs)
+    : null;
+  if (typeof slowTelemetryTimer?.unref === "function") {
+    slowTelemetryTimer.unref();
+  }
   if (reviewSeed.length) {
     try {
       semanticClassified = await classifyDocumentsSemantically(
@@ -1085,6 +1195,10 @@ export async function buildCloudOrganizationReviewReply({
         { signal },
       );
     } catch (error) {
+      if (slowTelemetryTimer) {
+        clearTimeout(slowTelemetryTimer);
+      }
+      const abortInfo = resolveCloudDocAbortInfo({ signal, error });
       if (signal?.aborted || isAbortLikeError(error)) {
         return buildCloudOrganizationLocalRereviewFallbackReply({
           reviewSeed,
@@ -1092,10 +1206,30 @@ export async function buildCloudOrganizationReviewReply({
           sessionKey,
           logger,
           replyBuilderName,
+          abortInfo,
+          durationMs: Date.now() - rereviewStartedAt,
         });
       }
       semanticClassified = new Map();
     }
+  }
+  if (slowTelemetryTimer) {
+    clearTimeout(slowTelemetryTimer);
+  }
+  const rereviewDurationMs = Date.now() - rereviewStartedAt;
+  const slowSuccessFamily = classifyWorkflowTimeoutGovernanceFamily({
+    durationMs: rereviewDurationMs,
+    slowWarningMs: cloudDocRereviewSlowWarningMs,
+  });
+  if (
+    slowSuccessFamily === WORKFLOW_TIMEOUT_GOVERNANCE_FAMILIES.SUCCESSFUL_BUT_SLOW
+    && slowTelemetryEmitted !== true
+  ) {
+    logCloudDocTimeoutGovernance(logger, {
+      family: slowSuccessFamily,
+      durationMs: rereviewDurationMs,
+      reviewSeedCount: reviewSeed.length,
+    });
   }
 
   const reassignments = [];
@@ -1182,6 +1316,11 @@ export async function buildCloudOrganizationReviewReply({
     text: buildCloudOrganizationPendingReplyText({
       conclusion: `我已進入第二輪角色審核，先從 ${businessDocs.length} 份已索引文檔中挑出 ${reviewSeed.length} 份模糊或泛類文檔做複審。`,
       summaryLines: [
+        buildWorkflowTimeoutGovernanceLine({
+          family: slowSuccessFamily,
+          workflowLabel: "雲文檔第二輪語義複審",
+          durationMs: rereviewDurationMs,
+        }),
         "- 審核方式：先本地分類，再對模糊文檔做 MiniMax 小批量語義複審。",
         `- 待重新分配：${visibleReassignments.length} 份`,
         `- 待人工確認：${visibleUnresolved.length} 份`,
@@ -1196,6 +1335,13 @@ export async function buildCloudOrganizationReviewReply({
       ...visibleReassignments,
       ...visibleUnresolved,
     ],
+    timeout_governance: slowSuccessFamily
+      ? {
+          family: slowSuccessFamily,
+          duration_ms: rereviewDurationMs,
+          slow_warning_ms: cloudDocRereviewSlowWarningMs,
+        }
+      : null,
   };
 }
 

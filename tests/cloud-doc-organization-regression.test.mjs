@@ -341,7 +341,45 @@ test("generic review reply uses local fast summary instead of semantic rereview 
   assert.doesNotMatch(reply.text, /MiniMax 小批量語義複審/);
 });
 
-test("rereview falls back to local pending summary when semantic pass is aborted", async () => {
+test("rereview treats semantic timeout as acceptable fallback instead of pretending full rereview finished", async () => {
+  const account = upsertAccount({
+    open_id: `acct-rereview-timeout-open-${Date.now()}`,
+    name: "acct-rereview-timeout",
+  });
+  seedIndexedDocument({
+    accountId: account.id,
+    suffix: "workspace-onboarding-rereview-timeout",
+    title: "Workspace Onboarding Notes",
+    rawText: "workspace onboarding guide",
+  });
+  seedIndexedDocument({
+    accountId: account.id,
+    suffix: "admin-manual-rereview-timeout",
+    title: "Administrator Manual",
+    rawText: "",
+  });
+
+  const controller = new AbortController();
+  controller.abort(Object.assign(new Error("Request timed out after 15000ms."), {
+    name: "AbortError",
+    code: "request_timeout",
+    timeout_ms: 15000,
+  }));
+
+  const reply = await buildCloudOrganizationReviewReplyCached({
+    accountId: account.id,
+    sessionKey: `session-rereview-timeout-${Date.now()}`,
+    forceReReview: true,
+    signal: controller.signal,
+  });
+
+  assert.match(reply.text, /語義複審逾時/);
+  assert.match(reply.text, /可接受慢路徑 timeout/);
+  assert.equal(reply.timeout_governance?.family, "timeout_acceptable");
+  assert.equal(reply.timeout_governance?.timeout_observed, true);
+});
+
+test("rereview falls back to local pending summary when semantic pass is cancelled", async () => {
   const account = upsertAccount({
     open_id: `acct-rereview-abort-open-${Date.now()}`,
     name: "acct-rereview-abort",
@@ -373,9 +411,12 @@ test("rereview falls back to local pending summary when semantic pass is aborted
   });
 
   assert.match(reply.text, /回退到本地保底結果|待人工確認/u);
+  assert.match(reply.text, /被中斷/);
+  assert.doesNotMatch(reply.text, /可接受慢路徑 timeout/);
   assert.doesNotMatch(reply.text, /MiniMax 小批量語義複審/);
   assert.equal(Array.isArray(reply.pending_items), true);
   assert.equal(reply.pending_items.length >= 1, true);
+  assert.equal(reply.timeout_governance, null);
 });
 
 test("why reply skips test residual docs when explaining pending confirmation", async () => {

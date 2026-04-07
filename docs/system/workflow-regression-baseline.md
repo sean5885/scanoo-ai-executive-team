@@ -236,6 +236,28 @@ node scripts/runtime-workflow-eval.mjs
 - checked-in runtime workflow fixture dataset：`evals/runtime-workflow-set.mjs`
 - deterministic smoke runner output：PASS / FAIL 與固定 runtime mock answer 命中結果
 
+### Workflow Timeout Governance Focused Pack
+
+用途：
+
+- 用最小 deterministic case pack 固定 cloud-doc / workflow slow-path 與 timeout family 的 judge
+- 適合在修改 cloud-doc rereview fallback、usage-layer timeout summary、reply surface 或 timeout telemetry 後快速確認
+- 這不是 live timeout 壓測；它是受控 governance pack
+
+命令：
+
+```bash
+npm run eval:usage-layer:workflow-timeout-governance
+```
+
+覆蓋：
+
+- `successful_but_slow`
+- `timeout_acceptable`
+- `timeout_fail_closed`
+- `workflow_too_slow`
+- `needs_fixture_mock`
+
 ### Real-user Prompt Loop Smoke
 
 用途：

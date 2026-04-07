@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { usageLayerEvals } from "../evals/usage-layer/usage-layer-evals.mjs";
 import { registeredAgentFamilyEvals } from "../evals/usage-layer/registered-agent-family-evals.mjs";
+import { workflowTimeoutGovernanceEvals } from "../evals/usage-layer/workflow-timeout-governance-evals.mjs";
 import { runUsageLayerEvalCase, summarizeResults } from "../evals/usage-layer/usage-layer-runner.mjs";
 
 test("usage-layer runner executes registered slash-agent cases on the agent answer path", async () => {
@@ -61,6 +62,8 @@ test("usage-layer summary reports timed out cases separately", () => {
       duration_ms: 20001,
     },
   ]);
+  assert.equal(summary.counts.unclassified_timeout, 0);
+  assert.equal(summary.governance_breakdown.timeout_fail_closed, 1);
 });
 
 test("usage-layer eval pack expands to quality-gate scale without expected generic replies", () => {
@@ -106,4 +109,35 @@ test("registered-agent family pack stays bounded and covers owner surface plus f
     registeredAgentFamilyEvals.some((entry) => entry.expected_owner_surface === "routing_no_match"),
     true,
   );
+});
+
+test("workflow timeout governance pack stays bounded to the controlled timeout families", () => {
+  assert.equal(workflowTimeoutGovernanceEvals.length, 5);
+  assert.deepEqual(
+    workflowTimeoutGovernanceEvals.map((entry) => entry.context?.timeout_governance?.family),
+    [
+      "successful_but_slow",
+      "timeout_acceptable",
+      "timeout_fail_closed",
+      "workflow_too_slow",
+      "needs_fixture_mock",
+    ],
+  );
+});
+
+test("usage-layer runner reports workflow timeout governance family for deterministic timeout pack cases", async () => {
+  const timeoutAcceptableCase = workflowTimeoutGovernanceEvals.find((entry) => entry.id === "workflow-timeout-002");
+  assert.ok(timeoutAcceptableCase, "missing workflow-timeout-002");
+
+  const timeoutAcceptableResult = await runUsageLayerEvalCase(timeoutAcceptableCase);
+  assert.equal(timeoutAcceptableResult.governance_family, "timeout_acceptable");
+  assert.equal(timeoutAcceptableResult.actual_success_type, "workflow_progress");
+  assert.match(timeoutAcceptableResult.reply_text, /可接受慢路徑 timeout/);
+
+  const failClosedCase = workflowTimeoutGovernanceEvals.find((entry) => entry.id === "workflow-timeout-003");
+  assert.ok(failClosedCase, "missing workflow-timeout-003");
+
+  const failClosedResult = await runUsageLayerEvalCase(failClosedCase);
+  assert.equal(failClosedResult.governance_family, "timeout_fail_closed");
+  assert.equal(failClosedResult.actual_eval_outcome, "fail_closed");
 });

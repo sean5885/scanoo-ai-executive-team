@@ -1,6 +1,7 @@
 import { pathToFileURL } from "node:url";
 import { usageLayerEvals } from "./usage-layer-evals.mjs";
 import { registeredAgentFamilyEvals } from "./registered-agent-family-evals.mjs";
+import { workflowTimeoutGovernanceEvals } from "./workflow-timeout-governance-evals.mjs";
 import { runPlannerUserInputEdge } from "../../src/planner-user-input-edge.mjs";
 import { normalizeUserResponse, renderUserResponseText } from "../../src/user-response-normalizer.mjs";
 import { resolveRoutingEvalCase } from "../../src/routing-eval.mjs";
@@ -20,6 +21,11 @@ import {
 } from "../../src/planner-doc-query-flow.mjs";
 import { runPlannerToolFlow } from "../../src/executive-planner.mjs";
 import { ROUTING_NO_MATCH } from "../../src/planner-error-codes.mjs";
+import {
+  buildWorkflowTimeoutGovernanceLine,
+  classifyWorkflowTimeoutGovernanceFamily,
+  DEFAULT_WORKFLOW_SLOW_WARNING_MS,
+} from "../../src/workflow-timeout-governance.mjs";
 
 const noopLogger = {
   debug() {},
@@ -218,6 +224,100 @@ function scheduleStuckCaseWarning(testCase = {}, timeoutMs = DEFAULT_USAGE_LAYER
     timer.unref();
   }
   return timer;
+}
+
+function resolveTimeoutGovernanceConfig(testCase = {}) {
+  return testCase?.context?.timeout_governance && typeof testCase.context.timeout_governance === "object"
+    ? testCase.context.timeout_governance
+    : null;
+}
+
+function resolveGovernanceSlowWarningMs(governance = null) {
+  const slowWarningMs = Number(governance?.slow_warning_ms);
+  return Number.isFinite(slowWarningMs) && slowWarningMs > 0
+    ? Math.floor(slowWarningMs)
+    : DEFAULT_WORKFLOW_SLOW_WARNING_MS;
+}
+
+function buildGovernanceSimulationReply({
+  family = null,
+  durationMs = 0,
+  timeoutMs = null,
+} = {}) {
+  const governanceLine = buildWorkflowTimeoutGovernanceLine({
+    family,
+    workflowLabel: "雲文檔 workflow",
+    durationMs,
+  });
+  if (family === "successful_but_slow") {
+    return [
+      "結論",
+      "第二輪角色審核已完成，這輪只是比平常慢。",
+      "",
+      "摘要",
+      governanceLine,
+      "- 待重新分配：1 份",
+      "- 待人工確認：1 份",
+      "",
+      "待處理清單",
+      "1. 文件名：Scanoo Workspace Guide",
+      "   狀態：待重新分配",
+      "   簡短原因：內容更像 onboarding / workspace 通用文件。",
+      "   操作：回覆「第一個標記完成」",
+    ].join("\n");
+  }
+  if (family === "timeout_acceptable") {
+    return [
+      "結論",
+      "第二輪角色審核這次先回退到本地保底結果，因為語義複審逾時了。",
+      "",
+      "摘要",
+      governanceLine,
+      "- 待人工確認：2 份",
+      "",
+      "待處理清單",
+      "1. 文件名：Administrator Manual",
+      "   狀態：待人工確認",
+      "   簡短原因：本輪先保留本地分類。",
+      "   操作：回覆「第一個標記完成」",
+    ].join("\n");
+  }
+  if (family === "timeout_fail_closed") {
+    return [
+      "結論",
+      "這次 workflow 逾時了，我還沒有拿到可以安全交付的結果。",
+      "",
+      "下一步",
+      `- timeout family：timeout_fail_closed${Number.isFinite(Number(timeoutMs)) ? `（${timeoutMs}ms）` : ""}`,
+      "- 目前不回傳不完整的分配結果。",
+    ].join("\n");
+  }
+  if (family === "workflow_too_slow") {
+    return [
+      "結論",
+      "這條 workflow 還在跑，但目前已經慢到不適合包裝成正常完成。",
+      "",
+      "下一步",
+      `- ${governanceLine.replace(/^- /, "")}`,
+      "- 先停在受控邊界，避免把等待狀態說成完成。",
+    ].join("\n");
+  }
+  if (family === "needs_fixture_mock") {
+    return [
+      "結論",
+      "這條 case 目前需要 fixture/mock 或本地帳號上下文，否則不能把 timeout 行為當作真實 workflow 結果。",
+      "",
+      "下一步",
+      "- 先補 deterministic fixture 或 mock，再判讀 slow/timeout 邊界。",
+    ].join("\n");
+  }
+  return [
+    "結論",
+    "這條 timeout case 目前還沒有被歸進明確 family。",
+    "",
+    "下一步",
+    "- 先補分類，再決定要走 fallback 還是 fail-closed。",
+  ].join("\n");
 }
 
 function toPercent(numerator = 0, denominator = 0) {
@@ -631,6 +731,72 @@ async function runCloudDocWorkflowEvalCase(testCase = {}, route = {}, { signal =
     },
     replyText: normalizeText(reply?.text || ""),
     ownerSurface: "workflow:cloud_doc_organization",
+    governance: reply?.timeout_governance || null,
+  };
+}
+
+async function runWorkflowTimeoutGovernanceEvalCase(testCase = {}, route = {}) {
+  const governance = resolveTimeoutGovernanceConfig(testCase) || {};
+  const family = normalizeText(governance.family || governance.expected_family || "") || "unclassified_timeout";
+  const durationMs = Number.isFinite(Number(governance.simulated_duration_ms))
+    ? Number(governance.simulated_duration_ms)
+    : 0;
+  const timeoutMs = Number.isFinite(Number(governance.timeout_ms))
+    ? Number(governance.timeout_ms)
+    : null;
+  const replyText = buildGovernanceSimulationReply({
+    family,
+    durationMs,
+    timeoutMs,
+  });
+  const failClosedFamily = family === "timeout_fail_closed"
+    || family === "workflow_too_slow"
+    || family === "needs_fixture_mock"
+    || family === "unclassified_timeout";
+  const timeoutObserved = family === "timeout_acceptable"
+    || family === "timeout_fail_closed"
+    || family === "unclassified_timeout";
+  const failureClass = family === "timeout_fail_closed" || family === "unclassified_timeout"
+    ? "timeout"
+    : family === "workflow_too_slow"
+      ? "workflow_too_slow"
+      : family === "needs_fixture_mock"
+        ? "permission_denied"
+        : null;
+
+  return {
+    plannerEnvelope: {
+      ok: !failClosedFamily,
+      ...(failureClass ? { error: failureClass === "timeout" ? "request_timeout" : failureClass } : {}),
+      action: normalizeText(route?.planner_action || "") || null,
+      execution_result: {
+        ok: !failClosedFamily,
+        ...(failureClass ? { error: failureClass === "timeout" ? "request_timeout" : failureClass } : {}),
+        data: {
+          answer: replyText,
+          sources: [],
+          limitations: [],
+        },
+      },
+    },
+    userResponse: {
+      ok: !failClosedFamily,
+      ...(failureClass ? { failure_class: failureClass } : {}),
+    },
+    replyText,
+    ownerSurface: family === "needs_fixture_mock"
+      ? "permission_denied"
+      : "workflow:cloud_doc_organization",
+    governance: {
+      family,
+      duration_ms: durationMs,
+      timeout_ms: timeoutMs,
+      timeout_observed: timeoutObserved,
+      fallback_used: family === "timeout_acceptable",
+      workflow_still_running: family === "workflow_too_slow",
+      needs_fixture_mock: family === "needs_fixture_mock",
+      slow_warning_ms: resolveGovernanceSlowWarningMs(governance),
+    },
   };
 }
 
@@ -945,6 +1111,9 @@ async function runRoutingNoMatchEvalCase(testCase = {}, route = {}) {
 
 function summarizeFailReasons(result = {}) {
   const reasons = [];
+  if (normalizeText(result.governance_family || "")) {
+    reasons.push(`governance_family(${result.governance_family})`);
+  }
   if (result.timed_out === true) {
     reasons.push(`case_timeout(${result.duration_ms}ms)`);
   }
@@ -971,48 +1140,68 @@ function summarizeFailReasons(result = {}) {
   return reasons;
 }
 
+function deriveGovernanceFamilyFromResult(result = {}) {
+  return classifyWorkflowTimeoutGovernanceFamily({
+    explicitFamily: result.governance_family || null,
+    timedOut: result.timed_out === true,
+    durationMs: result.duration_ms,
+    slowWarningMs: DEFAULT_WORKFLOW_SLOW_WARNING_MS,
+    failClosed: normalizeText(result.actual_eval_outcome || "") === "fail_closed",
+  });
+}
+
 export async function runUsageLayerEvalCase(testCase = {}, {
   timeoutMs = DEFAULT_USAGE_LAYER_EVAL_CASE_TIMEOUT_MS,
   signal = null,
 } = {}) {
   const route = resolveRoutingEvalCase(normalizeEvalCase(testCase));
+  const governanceConfig = resolveTimeoutGovernanceConfig(testCase);
+  const effectiveRoute = governanceConfig
+    ? {
+        lane: normalizeText(testCase.expected_lane || "") || normalizeText(route?.lane || ""),
+        planner_action: normalizeText(testCase.expected_planner_action || "") || normalizeText(route?.planner_action || ""),
+        agent_or_tool: normalizeText(testCase.expected_agent_or_tool || "") || normalizeText(route?.agent_or_tool || ""),
+      }
+    : route;
   const startedAt = Date.now();
   const caseSignal = signal || createEvalCaseSignal(timeoutMs);
   const sessionKey = `usage-layer-eval:${testCase.id}`;
   let execution;
   primeUsageLayerEvalRuntimeContext(testCase, sessionKey);
   try {
-    if (
+    if (governanceConfig) {
+      execution = await runWorkflowTimeoutGovernanceEvalCase(testCase, effectiveRoute);
+    } else if (
       normalizeText(testCase?.expected_lane || "") === "personal_assistant"
       && normalizeText(testCase?.expected_success_type || "") === "fail_soft"
     ) {
-      execution = await runRoutingNoMatchEvalCase(testCase, route);
+      execution = await runRoutingNoMatchEvalCase(testCase, effectiveRoute);
     } else if (
       normalizeText(testCase?.expected_lane || "") === "personal_assistant"
       && normalizeText(testCase?.expected_planner_action || "") === "general_assistant_action"
       && normalizeText(testCase?.expected_agent_or_tool || "") === "reply:default"
     ) {
       execution = await runPersonalAssistantBoundaryEvalCase(testCase);
-    } else if (normalizeText(route?.lane || "") === "knowledge_assistant") {
-      execution = await runKnowledgeAssistantEvalCase(testCase, route, { signal: caseSignal });
-    } else if (normalizeText(route?.lane || "") === "cloud_doc_workflow") {
-      execution = await runCloudDocWorkflowEvalCase(testCase, route, { signal: caseSignal });
-    } else if (normalizeText(route?.lane || "") === "meeting_workflow") {
-      execution = await runMeetingWorkflowEvalCase(testCase, route);
-    } else if (normalizeText(route?.lane || "") === "doc_editor") {
-      execution = await runDocEditorEvalCase(testCase, route);
-    } else if (normalizeText(route?.lane || "") === "executive") {
-      execution = await runExecutiveEvalCase(testCase, route);
+    } else if (normalizeText(effectiveRoute?.lane || "") === "knowledge_assistant") {
+      execution = await runKnowledgeAssistantEvalCase(testCase, effectiveRoute, { signal: caseSignal });
+    } else if (normalizeText(effectiveRoute?.lane || "") === "cloud_doc_workflow") {
+      execution = await runCloudDocWorkflowEvalCase(testCase, effectiveRoute, { signal: caseSignal });
+    } else if (normalizeText(effectiveRoute?.lane || "") === "meeting_workflow") {
+      execution = await runMeetingWorkflowEvalCase(testCase, effectiveRoute);
+    } else if (normalizeText(effectiveRoute?.lane || "") === "doc_editor") {
+      execution = await runDocEditorEvalCase(testCase, effectiveRoute);
+    } else if (normalizeText(effectiveRoute?.lane || "") === "executive") {
+      execution = await runExecutiveEvalCase(testCase, effectiveRoute);
     } else if (
-      normalizeText(route?.lane || "") === "registered_agent"
-      && normalizeText(route?.planner_action || "") === "dispatch_registered_agent"
+      normalizeText(effectiveRoute?.lane || "") === "registered_agent"
+      && normalizeText(effectiveRoute?.planner_action || "") === "dispatch_registered_agent"
     ) {
-      execution = await runRegisteredAgentEvalCase(testCase, route);
+      execution = await runRegisteredAgentEvalCase(testCase, effectiveRoute);
     } else if (
-      normalizeText(route?.planner_action || "") === "ROUTING_NO_MATCH"
-      || normalizeText(route?.agent_or_tool || "") === "error:ROUTING_NO_MATCH"
+      normalizeText(effectiveRoute?.planner_action || "") === "ROUTING_NO_MATCH"
+      || normalizeText(effectiveRoute?.agent_or_tool || "") === "error:ROUTING_NO_MATCH"
     ) {
-      execution = await runRoutingNoMatchEvalCase(testCase, route);
+      execution = await runRoutingNoMatchEvalCase(testCase, effectiveRoute);
     } else {
       execution = await runPlannerUserInputEdge({
         text: testCase.user_text,
@@ -1025,7 +1214,7 @@ export async function runUsageLayerEvalCase(testCase = {}, {
   } catch (error) {
     if (caseSignal?.aborted || isAbortLikeError(error)) {
       execution = buildEvalTimeoutExecution({
-        route,
+        route: effectiveRoute,
         timeoutMs,
       });
     } else {
@@ -1039,22 +1228,22 @@ export async function runUsageLayerEvalCase(testCase = {}, {
   const replyText = normalizeText(execution?.replyText || renderUserResponseText(userResponse));
   const executedTarget = inferExecutedTarget({
     envelope: plannerEnvelope,
-    route,
+    route: effectiveRoute,
   });
   const failureClass = resolveFailureClass({
     testCase,
     userResponse,
-    route,
+    route: effectiveRoute,
     plannerEnvelope,
     executedTarget,
   });
   const actualOwnerSurface = inferOwnerSurface({
     execution,
     testCase,
-    route,
+    route: effectiveRoute,
     failureClass,
   });
-  const replyMode = classifyReplyMode({ userResponse, route, replyText });
+  const replyMode = classifyReplyMode({ userResponse, route: effectiveRoute, replyText });
   const actualSuccessType = classifySuccessType(replyMode);
   const generic = looksGenericReply({
     replyText,
@@ -1066,9 +1255,9 @@ export async function runUsageLayerEvalCase(testCase = {}, {
   });
   const unnecessaryClarification = actualSuccessType === "clarify"
     && !requestLikelyNeedsClarification(testCase.user_text);
-  const wrongRoute = normalizeText(route?.lane || "") !== normalizeText(testCase.expected_lane || "")
-    || normalizeText(route?.planner_action || "") !== normalizeText(testCase.expected_planner_action || "")
-    || normalizeText(route?.agent_or_tool || "") !== normalizeText(testCase.expected_agent_or_tool || "");
+  const wrongRoute = normalizeText(effectiveRoute?.lane || "") !== normalizeText(testCase.expected_lane || "")
+    || normalizeText(effectiveRoute?.planner_action || "") !== normalizeText(testCase.expected_planner_action || "")
+    || normalizeText(effectiveRoute?.agent_or_tool || "") !== normalizeText(testCase.expected_agent_or_tool || "");
   const successTypeHit = normalizeText(actualSuccessType) === normalizeText(testCase.expected_success_type);
   const genericFail = testCase.should_fail_if_generic === true && generic === true;
   const firstTurnSuccess = successTypeHit && !genericFail;
@@ -1081,6 +1270,20 @@ export async function runUsageLayerEvalCase(testCase = {}, {
     && actualOwnerSurface === "executive:generic";
   const durationMs = Date.now() - startedAt;
   const timedOut = normalizeText(plannerEnvelope?.error || "") === "case_timeout";
+  const governance = execution?.governance && typeof execution.governance === "object"
+    ? execution.governance
+    : null;
+  const governanceFamily = classifyWorkflowTimeoutGovernanceFamily({
+    explicitFamily: governance?.family || null,
+    timedOut,
+    timeoutObserved: governance?.timeout_observed === true,
+    durationMs: governance?.duration_ms ?? durationMs,
+    slowWarningMs: resolveGovernanceSlowWarningMs(governanceConfig || governance),
+    fallbackUsed: governance?.fallback_used === true,
+    failClosed: actualEvalOutcome === "fail_closed",
+    workflowStillRunning: governance?.workflow_still_running === true,
+    needsFixtureMock: governance?.needs_fixture_mock === true,
+  });
 
   return {
     id: testCase.id,
@@ -1095,9 +1298,9 @@ export async function runUsageLayerEvalCase(testCase = {}, {
     expected_eval_outcome: testCase.expected_eval_outcome,
     should_fail_if_generic: testCase.should_fail_if_generic === true,
     expected_owner_surface: expectedOwnerSurface,
-    actual_lane: normalizeText(route?.lane || "") || "unknown",
-    actual_action: normalizeText(route?.planner_action || "") || "unknown",
-    actual_tool: normalizeText(route?.agent_or_tool || "") || "unknown",
+    actual_lane: normalizeText(effectiveRoute?.lane || "") || "unknown",
+    actual_action: normalizeText(effectiveRoute?.planner_action || "") || "unknown",
+    actual_tool: normalizeText(effectiveRoute?.agent_or_tool || "") || "unknown",
     executed_action: normalizeText(plannerEnvelope?.action || "") || null,
     executed_target: executedTarget,
     actual_owner_surface: actualOwnerSurface,
@@ -1115,26 +1318,37 @@ export async function runUsageLayerEvalCase(testCase = {}, {
     generic_owner_surface: genericOwnerSurface,
     timed_out: timedOut,
     duration_ms: durationMs,
+    governance_family: governanceFamily,
   };
 }
 
 export function summarizeResults(results = []) {
   const total = results.length;
-  const toolRequiredCases = results.filter((item) => item.tool_required === true);
-  const genericSensitiveCases = results.filter((item) => item.should_fail_if_generic === true);
-  const clarifyCases = results.filter((item) => item.actual_success_type === "clarify");
-  const firstTurnSuccessCount = results.filter((item) => item.first_turn_success === true).length;
-  const wrongRouteCount = results.filter((item) => item.wrong_route === true).length;
+  const normalizedResults = results.map((item) => ({
+    ...item,
+    governance_family: deriveGovernanceFamilyFromResult(item),
+  }));
+  const toolRequiredCases = normalizedResults.filter((item) => item.tool_required === true);
+  const genericSensitiveCases = normalizedResults.filter((item) => item.should_fail_if_generic === true);
+  const clarifyCases = normalizedResults.filter((item) => item.actual_success_type === "clarify");
+  const firstTurnSuccessCount = normalizedResults.filter((item) => item.first_turn_success === true).length;
+  const wrongRouteCount = normalizedResults.filter((item) => item.wrong_route === true).length;
   const toolOmissionCount = toolRequiredCases.filter((item) => item.tool_omission === true).length;
   const genericFailCount = genericSensitiveCases.filter((item) => item.generic === true).length;
-  const genericReplyCount = results.filter((item) => item.actual_eval_outcome === "generic_reply").length;
-  const wrongOwnerSurfaceCount = results.filter((item) => item.wrong_owner_surface === true).length;
-  const genericOwnerSurfaceCount = results.filter((item) => item.generic_owner_surface === true).length;
-  const partialSuccessOutcomeCount = results.filter((item) => item.actual_eval_outcome === "partial_success").length;
+  const genericReplyCount = normalizedResults.filter((item) => item.actual_eval_outcome === "generic_reply").length;
+  const wrongOwnerSurfaceCount = normalizedResults.filter((item) => item.wrong_owner_surface === true).length;
+  const genericOwnerSurfaceCount = normalizedResults.filter((item) => item.generic_owner_surface === true).length;
+  const partialSuccessOutcomeCount = normalizedResults.filter((item) => item.actual_eval_outcome === "partial_success").length;
   const unnecessaryClarificationCount = clarifyCases.filter((item) => item.unnecessary_clarification === true).length;
-  const timedOutCases = results.filter((item) => item.timed_out === true);
+  const timedOutCases = normalizedResults.filter((item) => item.timed_out === true);
   const timeoutCount = timedOutCases.length;
-  const failCases = results
+  const governanceBreakdown = normalizedResults.reduce((acc, item) => {
+    const key = normalizeText(item.governance_family || "") || "none";
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+  const governedCases = normalizedResults.filter((item) => normalizeText(item.governance_family || ""));
+  const failCases = normalizedResults
     .map((item) => ({
       ...item,
       fail_reasons: summarizeFailReasons(item),
@@ -1142,7 +1356,7 @@ export function summarizeResults(results = []) {
     .filter((item) => item.fail_reasons.length > 0)
     .sort((left, right) => right.fail_reasons.length - left.fail_reasons.length)
     .slice(0, 5);
-  const failureBreakdown = results.reduce((acc, item) => {
+  const failureBreakdown = normalizedResults.reduce((acc, item) => {
     const key = normalizeText(item.failure_class || "") || "none";
     acc[key] = (acc[key] || 0) + 1;
     return acc;
@@ -1152,12 +1366,12 @@ export function summarizeResults(results = []) {
     .sort((left, right) => right[1] - left[1])
     .slice(0, 5)
     .map(([failureClass, count]) => ({ failure_class: failureClass, count }));
-  const expectedOutcomeBreakdown = results.reduce((acc, item) => {
+  const expectedOutcomeBreakdown = normalizedResults.reduce((acc, item) => {
     const key = normalizeText(item.expected_eval_outcome || "") || "unknown";
     acc[key] = (acc[key] || 0) + 1;
     return acc;
   }, {});
-  const actualOutcomeBreakdown = results.reduce((acc, item) => {
+  const actualOutcomeBreakdown = normalizedResults.reduce((acc, item) => {
     const key = normalizeText(item.actual_eval_outcome || "") || "unknown";
     acc[key] = (acc[key] || 0) + 1;
     return acc;
@@ -1189,11 +1403,14 @@ export function summarizeResults(results = []) {
       clarify_cases: clarifyCases.length,
       unnecessary_clarification: unnecessaryClarificationCount,
       timed_out: timeoutCount,
+      governed_cases: governedCases.length,
+      unclassified_timeout: governanceBreakdown.unclassified_timeout || 0,
       reply_discipline_logged_cases: total,
     },
     expected_outcome_breakdown: expectedOutcomeBreakdown,
     actual_outcome_breakdown: actualOutcomeBreakdown,
     failure_breakdown: failureBreakdown,
+    governance_breakdown: governanceBreakdown,
     top_failure_categories: topFailureCategories,
     top_fail_cases: failCases,
     timed_out_cases: timedOutCases.map((item) => ({
@@ -1201,6 +1418,14 @@ export function summarizeResults(results = []) {
       user_text: item.user_text,
       duration_ms: item.duration_ms,
     })),
+    governance_cases: normalizedResults
+      .filter((item) => normalizeText(item.governance_family || ""))
+      .map((item) => ({
+        id: item.id,
+        governance_family: item.governance_family,
+        duration_ms: item.duration_ms,
+        user_text: item.user_text,
+      })),
   };
 }
 
@@ -1217,9 +1442,12 @@ function printSummary(summary = {}) {
   console.log(`Wrong Owner Surface: ${summary.counts.wrong_owner_surface}`);
   console.log(`Generic Owner Surface: ${summary.counts.generic_owner_surface}`);
   console.log(`Timeouts: ${summary.counts.timed_out}`);
+  console.log(`Governed Cases: ${summary.counts.governed_cases}`);
+  console.log(`Unclassified Timeout Families: ${summary.counts.unclassified_timeout}`);
   console.log(`RDR: ${summary.metrics.RDR} (${summary.counts.reply_discipline_logged_cases} cases logged for manual reply-discipline review)`);
   console.log(`Expected outcomes: ${JSON.stringify(summary.expected_outcome_breakdown)}`);
   console.log(`Actual outcomes: ${JSON.stringify(summary.actual_outcome_breakdown)}`);
+  console.log(`Governance families: ${JSON.stringify(summary.governance_breakdown)}`);
   console.log("");
   console.log("Top failure categories:");
   if (!Array.isArray(summary.top_failure_categories) || summary.top_failure_categories.length === 0) {
@@ -1236,6 +1464,15 @@ function printSummary(summary = {}) {
   } else {
     for (const item of summary.timed_out_cases) {
       console.log(`- ${item.id} | ${item.duration_ms}ms | ${item.user_text}`);
+    }
+  }
+  console.log("");
+  console.log("Governance cases:");
+  if (!Array.isArray(summary.governance_cases) || summary.governance_cases.length === 0) {
+    console.log("- none");
+  } else {
+    for (const item of summary.governance_cases) {
+      console.log(`- ${item.id} | ${item.governance_family} | ${item.duration_ms}ms | ${item.user_text}`);
     }
   }
   console.log("");
@@ -1256,6 +1493,9 @@ function resolveUsageLayerEvalPack(packName = "") {
   }
   if (normalizedPackName === "registered-agent-family") {
     return registeredAgentFamilyEvals;
+  }
+  if (normalizedPackName === "workflow-timeout-governance") {
+    return workflowTimeoutGovernanceEvals;
   }
   throw new Error(`unknown usage-layer eval pack: ${packName}`);
 }
