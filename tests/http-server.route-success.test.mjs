@@ -2380,11 +2380,15 @@ test("lark plugin dispatch route sends explicit scanoo capability through the la
   });
 
   assert.equal(body.route_target, "lane_backend");
+  assert.equal(body.requested_capability, "scanoo_compare");
+  assert.equal(body.mapped_lane, "knowledge-assistant");
   assert.equal(body.chosen_skill, "scanoo_compare");
-  assert.equal(body.fallback_reason, "scanoo_compare");
+  assert.equal(body.chosen_lane, "knowledge-assistant");
+  assert.equal(body.lane_mapping_source, "fallback");
+  assert.equal(body.fallback_reason, "missing_exact_scanoo_compare_lane_fallback_to_knowledge_assistant");
   assert.equal(body.response.data.answer, "這是 scanoo lane backend 的回答");
   assert.equal(plannerCalls.length, 0);
   assert.equal(laneCalls.length, 1);
-  assert.equal(laneCalls[0].scope.capability_lane, "personal-assistant");
+  assert.equal(laneCalls[0].scope.capability_lane, "knowledge-assistant");
   assert.equal(calls.some((entry) => entry[1]?.event === "lark_plugin_dispatch_started" && entry[1]?.capability_source === "explicit"), true);
 });

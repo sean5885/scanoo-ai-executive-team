@@ -27,6 +27,8 @@ All minimum trace/log events should align around these fields:
 - `action|preset|agent`
 - `requested_capability`
 - `capability_source`
+- `mapped_lane`
+- `lane_mapping_source`
 - `chosen_lane`
 - `chosen_action`
 - `fallback_reason`
@@ -55,6 +57,8 @@ All minimum trace/log events should align around these fields:
   "agent": "string|null",
   "requested_capability": "string|null",
   "capability_source": "explicit|inferred|null",
+  "mapped_lane": "string|null",
+  "lane_mapping_source": "explicit|fallback|null",
   "chosen_lane": "string|null",
   "chosen_action": "string|null",
   "fallback_reason": "string|null",
@@ -111,6 +115,8 @@ All minimum trace/log events should align around these fields:
 - lane/runtime selection logs now also surface:
   - `requested_capability`
   - `capability_source`
+  - `mapped_lane`
+  - `lane_mapping_source`
   - `chosen_lane`
   - `chosen_action`
   - `fallback_reason`

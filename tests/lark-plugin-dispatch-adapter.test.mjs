@@ -7,6 +7,7 @@ import {
   normalizeLarkPluginDispatchRequest,
   resolveDirectIngressSourceState,
   resolveLarkPluginDispatchDecision,
+  resolveRequestedCapabilityLaneMapping,
 } from "../src/lark-plugin-dispatch-adapter.mjs";
 
 test("plugin-native request does not enter internal knowledge or lane backends", async () => {
@@ -131,7 +132,19 @@ test("explicit requested capability wins over text heuristics and records explic
   );
 });
 
-test("explicit scanoo capability routes to lane backend even without scanoo wording", async () => {
+test("scanoo_diagnose maps to the fallback knowledge lane", () => {
+  const mapping = resolveRequestedCapabilityLaneMapping({
+    requestedCapability: "scanoo_diagnose",
+  });
+
+  assert.equal(mapping.route_target, "lane_backend");
+  assert.equal(mapping.mapped_lane, "knowledge-assistant");
+  assert.equal(mapping.chosen_lane, "knowledge-assistant");
+  assert.equal(mapping.lane_mapping_source, "fallback");
+  assert.equal(mapping.fallback_reason, "missing_exact_scanoo_diagnose_lane_fallback_to_knowledge_assistant");
+});
+
+test("explicit scanoo_compare capability routes to mapped knowledge lane even without scanoo wording", async () => {
   let knowledgeCalls = 0;
   let laneCalls = 0;
 
@@ -158,10 +171,25 @@ test("explicit scanoo capability routes to lane backend even without scanoo word
   });
 
   assert.equal(result.route_target, "lane_backend");
-  assert.equal(result.chosen_lane, "personal-assistant");
+  assert.equal(result.mapped_lane, "knowledge-assistant");
+  assert.equal(result.chosen_lane, "knowledge-assistant");
+  assert.equal(result.lane_mapping_source, "fallback");
   assert.equal(result.chosen_skill, "scanoo_compare");
+  assert.equal(result.fallback_reason, "missing_exact_scanoo_compare_lane_fallback_to_knowledge_assistant");
   assert.equal(knowledgeCalls, 0);
   assert.equal(laneCalls, 1);
+});
+
+test("scanoo_optimize maps to the fallback knowledge lane", () => {
+  const mapping = resolveRequestedCapabilityLaneMapping({
+    requestedCapability: "scanoo_optimize",
+  });
+
+  assert.equal(mapping.route_target, "lane_backend");
+  assert.equal(mapping.mapped_lane, "knowledge-assistant");
+  assert.equal(mapping.chosen_lane, "knowledge-assistant");
+  assert.equal(mapping.lane_mapping_source, "fallback");
+  assert.equal(mapping.fallback_reason, "missing_exact_scanoo_optimize_lane_fallback_to_knowledge_assistant");
 });
 
 test("missing requested capability falls back to legacy heuristics", () => {
@@ -219,6 +247,26 @@ test("unknown capability fallback keeps an explicit reason", async () => {
   assert.equal(result.route_target, "plugin_native");
   assert.equal(result.final_status, "plugin_native_forward");
   assert.equal(result.fallback_reason, "unknown_capability_fallback_plugin_native");
+});
+
+test("missing mapped lane falls back with an explicit fallback reason", () => {
+  const mapping = resolveRequestedCapabilityLaneMapping({
+    requestedCapability: "scanoo_compare",
+    capabilityRouteMap: {
+      scanoo_compare: {
+        route_target: "lane_backend",
+        mapped_lane: "compare-assistant",
+        lane_mapping_source: "explicit",
+        chosen_skill: "scanoo_compare",
+      },
+    },
+  });
+
+  assert.equal(mapping.route_target, "lane_backend");
+  assert.equal(mapping.mapped_lane, "personal-assistant");
+  assert.equal(mapping.chosen_lane, "personal-assistant");
+  assert.equal(mapping.lane_mapping_source, "fallback");
+  assert.equal(mapping.fallback_reason, "mapped_lane_missing_or_unsupported_fallback_to_personal_assistant");
 });
 
 test("direct ingress policy is marked non-primary when gated by flag", () => {

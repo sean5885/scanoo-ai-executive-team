@@ -8211,8 +8211,11 @@ async function handleLarkPluginDispatch(res, requestUrl, body, logger = noopHttp
         trace_id: res?.__trace_id || null,
         data: {
           ...userResponse,
+          requested_capability: request.requested_capability || null,
           route_target: decision.route_target,
+          mapped_lane: decision.mapped_lane || null,
           chosen_lane: decision.chosen_lane || "knowledge-assistant",
+          lane_mapping_source: decision.lane_mapping_source || null,
           chosen_skill: decision.chosen_skill || null,
           fallback_reason: decision.fallback_reason || null,
         },
@@ -8230,15 +8233,18 @@ async function handleLarkPluginDispatch(res, requestUrl, body, logger = noopHttp
         return {
           status: 422,
           trace_id: res?.__trace_id || null,
-          data: {
-            ok: false,
-            error: "lane_backend_empty_reply",
-            route_target: decision.route_target,
-            chosen_lane: scope.capability_lane || null,
-            chosen_skill: decision.chosen_skill || null,
-            fallback_reason: decision.fallback_reason || "lane_backend_empty_reply",
-          },
-        };
+        data: {
+          ok: false,
+          error: "lane_backend_empty_reply",
+          requested_capability: request.requested_capability || null,
+          route_target: decision.route_target,
+          mapped_lane: scope.capability_lane || decision.mapped_lane || null,
+          chosen_lane: scope.capability_lane || null,
+          lane_mapping_source: decision.lane_mapping_source || null,
+          chosen_skill: decision.chosen_skill || null,
+          fallback_reason: decision.fallback_reason || "lane_backend_empty_reply",
+        },
+      };
       }
       return {
         status: 200,
@@ -8248,8 +8254,11 @@ async function handleLarkPluginDispatch(res, requestUrl, body, logger = noopHttp
           answer: reply.text,
           sources: [],
           limitations: [],
+          requested_capability: request.requested_capability || null,
           route_target: decision.route_target,
+          mapped_lane: scope.capability_lane || decision.mapped_lane || null,
           chosen_lane: scope.capability_lane || null,
+          lane_mapping_source: decision.lane_mapping_source || null,
           chosen_skill: decision.chosen_skill || null,
           fallback_reason: decision.fallback_reason || null,
         },

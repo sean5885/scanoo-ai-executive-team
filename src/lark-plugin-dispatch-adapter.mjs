@@ -22,34 +22,51 @@ const KNOWLEDGE_ANSWER_TOOL_PATTERNS = [
   /^lark_kb_answer$/,
 ];
 
+const SUPPORTED_PLUGIN_DISPATCH_LANES = new Set([
+  "knowledge-assistant",
+  "doc-editor",
+  "group-shared-assistant",
+  "personal-assistant",
+]);
+
 const REQUESTED_CAPABILITY_ROUTE_MAP = {
   knowledge_answer: {
     route_target: "knowledge_answer",
+    mapped_lane: "knowledge-assistant",
     chosen_lane: "knowledge-assistant",
+    lane_mapping_source: "explicit",
     chosen_skill: null,
     fallback_reason: "knowledge_answer_path",
   },
   scanoo_diagnose: {
     route_target: "lane_backend",
-    chosen_lane: "personal-assistant",
+    mapped_lane: "knowledge-assistant",
+    chosen_lane: "knowledge-assistant",
+    lane_mapping_source: "fallback",
     chosen_skill: "scanoo_diagnose",
-    fallback_reason: "scanoo_diagnose",
+    fallback_reason: "missing_exact_scanoo_diagnose_lane_fallback_to_knowledge_assistant",
   },
   scanoo_compare: {
     route_target: "lane_backend",
-    chosen_lane: "personal-assistant",
+    mapped_lane: "knowledge-assistant",
+    chosen_lane: "knowledge-assistant",
+    lane_mapping_source: "fallback",
     chosen_skill: "scanoo_compare",
-    fallback_reason: "scanoo_compare",
+    fallback_reason: "missing_exact_scanoo_compare_lane_fallback_to_knowledge_assistant",
   },
   scanoo_optimize: {
     route_target: "lane_backend",
-    chosen_lane: "personal-assistant",
+    mapped_lane: "knowledge-assistant",
+    chosen_lane: "knowledge-assistant",
+    lane_mapping_source: "fallback",
     chosen_skill: "scanoo_optimize",
-    fallback_reason: "scanoo_optimize",
+    fallback_reason: "missing_exact_scanoo_optimize_lane_fallback_to_knowledge_assistant",
   },
   lane_style_capability: {
     route_target: "lane_backend",
+    mapped_lane: "personal-assistant",
     chosen_lane: "personal-assistant",
+    lane_mapping_source: "fallback",
     chosen_skill: "lane_style_capability",
     fallback_reason: "lane_style_capability",
   },
@@ -124,6 +141,14 @@ function normalizeRouteRequest(routeRequest = {}) {
 function normalizeCapabilitySource(value = "") {
   const source = cleanText(value);
   if (source === "explicit" || source === "inferred") {
+    return source;
+  }
+  return null;
+}
+
+function normalizeLaneMappingSource(value = "") {
+  const source = cleanText(value);
+  if (source === "explicit" || source === "fallback") {
     return source;
   }
   return null;
@@ -279,20 +304,67 @@ function resolveChosenSkill(normalizedRequest = {}, routeTarget = "") {
   return null;
 }
 
+export function resolveRequestedCapabilityLaneMapping({
+  requestedCapability = "",
+  capabilityRouteMap = REQUESTED_CAPABILITY_ROUTE_MAP,
+} = {}) {
+  const normalizedCapability = cleanText(requestedCapability);
+  if (!normalizedCapability) {
+    return null;
+  }
+
+  const mapping = capabilityRouteMap?.[normalizedCapability];
+  if (!mapping) {
+    return null;
+  }
+
+  const routeTarget = cleanText(mapping?.route_target) || "plugin_native";
+  const requestedLane = cleanText(mapping?.mapped_lane || mapping?.chosen_lane);
+  const supportedLane = requestedLane && SUPPORTED_PLUGIN_DISPATCH_LANES.has(requestedLane)
+    ? requestedLane
+    : null;
+
+  if (routeTarget === "lane_backend" && !supportedLane) {
+    return {
+      route_target: routeTarget,
+      mapped_lane: "personal-assistant",
+      chosen_lane: "personal-assistant",
+      lane_mapping_source: "fallback",
+      chosen_skill: cleanText(mapping?.chosen_skill) || normalizedCapability,
+      fallback_reason: cleanText(mapping?.fallback_reason) || "mapped_lane_missing_or_unsupported_fallback_to_personal_assistant",
+    };
+  }
+
+  return {
+    route_target: routeTarget,
+    mapped_lane: supportedLane,
+    chosen_lane: supportedLane,
+    lane_mapping_source: normalizeLaneMappingSource(mapping?.lane_mapping_source)
+      || (supportedLane ? "explicit" : null),
+    chosen_skill: cleanText(mapping?.chosen_skill) || null,
+    fallback_reason: cleanText(mapping?.fallback_reason) || null,
+  };
+}
+
 function resolveRequestedCapabilityDecision(normalizedRequest = {}) {
   const requestedCapability = cleanText(normalizedRequest?.requested_capability);
   if (!requestedCapability) {
     return null;
   }
 
-  if (REQUESTED_CAPABILITY_ROUTE_MAP[requestedCapability]) {
-    return { ...REQUESTED_CAPABILITY_ROUTE_MAP[requestedCapability] };
+  const capabilityLaneMapping = resolveRequestedCapabilityLaneMapping({
+    requestedCapability,
+  });
+  if (capabilityLaneMapping) {
+    return capabilityLaneMapping;
   }
 
   if (matchesAnyPattern(requestedCapability, PLUGIN_NATIVE_TOOL_PATTERNS)) {
     return {
       route_target: "plugin_native",
+      mapped_lane: null,
       chosen_lane: null,
+      lane_mapping_source: "fallback",
       chosen_skill: null,
       fallback_reason: "plugin_native_capability",
     };
@@ -300,7 +372,9 @@ function resolveRequestedCapabilityDecision(normalizedRequest = {}) {
 
   return {
     route_target: "plugin_native",
+    mapped_lane: null,
     chosen_lane: null,
+    lane_mapping_source: "fallback",
     chosen_skill: null,
     fallback_reason: "unknown_capability_fallback_plugin_native",
   };
@@ -316,7 +390,9 @@ export function resolveLarkPluginDispatchDecision(normalizedRequest = {}, {
   });
 
   let routeTarget = "plugin_native";
+  let mappedLane = null;
   let chosenLane = null;
+  let laneMappingSource = null;
   let chosenSkill = null;
   let fallbackReason = ingressState.fallback_reason;
 
@@ -326,28 +402,38 @@ export function resolveLarkPluginDispatchDecision(normalizedRequest = {}, {
     const capabilityDecision = resolveRequestedCapabilityDecision(normalizedRequest);
     if (capabilityDecision) {
       routeTarget = capabilityDecision.route_target;
+      mappedLane = capabilityDecision.mapped_lane || null;
       chosenLane = capabilityDecision.chosen_lane;
+      laneMappingSource = capabilityDecision.lane_mapping_source || null;
       chosenSkill = capabilityDecision.chosen_skill;
       fallbackReason = fallbackReason || capabilityDecision.fallback_reason;
     } else if (isPluginNativeRequest(normalizedRequest)) {
+      laneMappingSource = "fallback";
       fallbackReason = fallbackReason || "plugin_native_capability";
     } else if (isLaneStyleRequest(normalizedRequest)) {
       routeTarget = "lane_backend";
+      mappedLane = resolveLaneChoice(normalizedRequest);
       chosenLane = resolveLaneChoice(normalizedRequest);
+      laneMappingSource = "fallback";
       chosenSkill = resolveChosenSkill(normalizedRequest, routeTarget);
       fallbackReason = fallbackReason || "lane_style_capability";
     } else if (isKnowledgeAnswerRequest(normalizedRequest)) {
       routeTarget = "knowledge_answer";
+      mappedLane = "knowledge-assistant";
       chosenLane = "knowledge-assistant";
+      laneMappingSource = "explicit";
       fallbackReason = fallbackReason || "knowledge_answer_path";
     } else {
+      laneMappingSource = "fallback";
       fallbackReason = fallbackReason || "unknown_capability_fallback_plugin_native";
     }
   }
 
   return {
     route_target: routeTarget,
+    mapped_lane: mappedLane,
     chosen_lane: chosenLane,
+    lane_mapping_source: laneMappingSource,
     chosen_skill: chosenSkill || resolveChosenSkill(normalizedRequest, routeTarget),
     fallback_reason: fallbackReason,
     is_primary_entry: ingressState.is_primary_entry === true,
@@ -451,7 +537,9 @@ export async function executeLarkPluginDispatch({
     session_id: request.session_id || null,
     thread_id: request.thread_id || null,
     route_target: decision.route_target,
+    mapped_lane: decision.mapped_lane || null,
     chosen_lane: decision.chosen_lane || null,
+    lane_mapping_source: decision.lane_mapping_source || null,
     chosen_skill: decision.chosen_skill || null,
     fallback_reason: decision.fallback_reason || null,
     tool_name: request.tool_name || null,
@@ -470,8 +558,11 @@ export async function executeLarkPluginDispatch({
       ok: true,
       trace_id: null,
       request,
+      requested_capability: request.requested_capability || null,
       route_target: decision.route_target,
+      mapped_lane: decision.mapped_lane || null,
       chosen_lane: null,
+      lane_mapping_source: decision.lane_mapping_source || null,
       chosen_skill: null,
       fallback_reason: decision.fallback_reason || null,
       capability_source: request.capability_source || null,
@@ -497,8 +588,11 @@ export async function executeLarkPluginDispatch({
       ok: responseStatus < 400,
       trace_id: traceId || null,
       request,
+      requested_capability: request.requested_capability || null,
       route_target: decision.route_target,
+      mapped_lane: decision.mapped_lane || null,
       chosen_lane: decision.chosen_lane || null,
+      lane_mapping_source: decision.lane_mapping_source || null,
       chosen_skill: decision.chosen_skill || null,
       fallback_reason: decision.fallback_reason || null,
       capability_source: request.capability_source || null,
@@ -524,8 +618,11 @@ export async function executeLarkPluginDispatch({
       ok: false,
       trace_id: null,
       request,
+      requested_capability: request.requested_capability || null,
       route_target: decision.route_target,
+      mapped_lane: decision.mapped_lane || null,
       chosen_lane: decision.chosen_lane || null,
+      lane_mapping_source: decision.lane_mapping_source || null,
       chosen_skill: decision.chosen_skill || null,
       fallback_reason: decision.fallback_reason || "runtime_exception",
       capability_source: request.capability_source || null,

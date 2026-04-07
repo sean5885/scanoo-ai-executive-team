@@ -188,7 +188,7 @@ Current path:
    - plugin-native tool name passthrough for non-specialized tools
 3. `/Users/seanhan/Documents/Playground/src/lark-plugin-dispatch-adapter.mjs` decides:
    - `knowledge_answer` directly from `requested_capability`
-   - `lane_backend` directly from `scanoo_*` capability
+   - `lane_backend` from `scanoo_*` capability only after the adapter resolves an explicit capability-to-lane mapping
    - `plugin_native` for plugin-native passthrough or unknown capability
    - only when `requested_capability` is absent does it fall back to the older tool/text heuristics
 4. `knowledge_answer` reuses `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs`
@@ -200,7 +200,12 @@ Current truth:
 - the checked-in official plugin ingress is the hybrid dispatch route, not direct scattered route selection inside the plugin
 - plugin-native document/message/calendar/task-style tools stay outside the internal planner/lane business flow
 - the checked-in minimal capability map does not add planner or model-side NLP; `lark_kb_answer` uses simple tool+params rules to emit `knowledge_answer` or one of the three `scanoo_*` capabilities
-- the dispatch layer records `request_text / source / session_id / thread_id / requested_capability / capability_source / route_target / chosen_lane / chosen_skill / fallback_reason / final_status`
+- the current checked-in `scanoo_*` capability-to-lane mapping is:
+  - `scanoo_diagnose -> knowledge-assistant` with `lane_mapping_source=fallback`
+  - `scanoo_compare -> knowledge-assistant` with `lane_mapping_source=fallback`
+  - `scanoo_optimize -> knowledge-assistant` with `lane_mapping_source=fallback`
+- this is a bounded fallback because the repo does not yet expose dedicated diagnose / compare / optimize lanes; the adapter now records a concrete `fallback_reason` instead of silently collapsing those capabilities into one generic lane label
+- the dispatch layer records `request_text / source / session_id / thread_id / requested_capability / capability_source / route_target / mapped_lane / lane_mapping_source / chosen_lane / chosen_skill / fallback_reason / final_status`
 
 ## 4. Adjacent Workflows
 
