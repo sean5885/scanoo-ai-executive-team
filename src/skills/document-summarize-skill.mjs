@@ -1,3 +1,9 @@
+export const SKILL_CONTRACT = Object.freeze({
+  intent: "Summarize one company-brain document detail into deterministic read-only skill output.",
+  success_criteria: "Return a fail-closed read-only result with doc_id, title, summary, hits, found, sources, and limitations after get_company_brain_doc_detail succeeds.",
+  failure_criteria: "Return contract_violation when account_id or doc_id is missing, or fail closed when read-runtime cannot retrieve document detail.",
+});
+
 import { cleanText } from "../message-intent-utils.mjs";
 import { runRead } from "../read-runtime.mjs";
 import { createSkillDefinition } from "../skill-contract.mjs";

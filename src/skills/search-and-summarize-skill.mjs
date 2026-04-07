@@ -1,3 +1,9 @@
+export const SKILL_CONTRACT = Object.freeze({
+  intent: "Search company-brain knowledge and summarize deterministic read-only results for one query.",
+  success_criteria: "Return a fail-closed read-only result with query, summary, hits, found, sources, and limitations after search_knowledge_base succeeds.",
+  failure_criteria: "Return contract_violation when account_id or query is missing, or fail closed when read-runtime search cannot complete.",
+});
+
 import { cleanText } from "../message-intent-utils.mjs";
 import {
   getReadSourceSnippet,
