@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildLarkPluginLaneContext,
   buildLarkPluginDispatchSessionKey,
   executeLarkPluginDispatch,
   normalizeLarkPluginDispatchRequest,
@@ -277,6 +278,48 @@ test("thread_id takes precedence when building plugin dispatch session keys", ()
     session_id: "sess_001",
   }), "thread:thr_001");
   assert.equal(normalized.resolved_session_key, "thread:thr_001");
+});
+
+test("lane context keeps explicit auth and structured handoff context for plugin dispatch lanes", () => {
+  const normalized = normalizeLarkPluginDispatchRequest({
+    request_text: "比較北極星店和月光店",
+    account_id: "acct-context",
+    user_access_token: "event-user-token-context",
+    plugin_context: {
+      explicit_auth: {
+        account_id: "acct-context",
+        access_token: "event-user-token-context",
+        source: "plugin_dispatch_params",
+      },
+      document_refs: [
+        {
+          document_id: "doc_context_1",
+          title: "Scanoo Compare SOP",
+        },
+      ],
+      compare_objects: [
+        { name: "北極星店", metric: "activation" },
+        { name: "月光店", metric: "activation" },
+      ],
+    },
+    route_request: {
+      path: "/answer?q=compare",
+      method: "POST",
+      body: {
+        document_id: "doc_context_1",
+      },
+    },
+  });
+
+  const { event } = buildLarkPluginLaneContext(normalized, "scanoo-compare");
+  const content = JSON.parse(event.message.content);
+
+  assert.equal(event.user_access_token, "event-user-token-context");
+  assert.equal(event.context.user_access_token, "event-user-token-context");
+  assert.equal(content.document_refs[0].document_id, "doc_context_1");
+  assert.equal(content.compare_objects[0].name, "北極星店");
+  assert.equal(content.route_request_body.document_id, "doc_context_1");
+  assert.equal(event.__lobster_plugin_dispatch.plugin_context.explicit_auth.account_id, "acct-context");
 });
 
 test("unknown capability fallback keeps an explicit reason", async () => {

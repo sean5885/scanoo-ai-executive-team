@@ -2443,6 +2443,75 @@ function resolveRequestAbortInfo({ signal = null, error = null } = {}) {
   };
 }
 
+function resolveBoundedFallbackLeadTimeMs(timeoutMs = null) {
+  const normalizedTimeoutMs = Number(timeoutMs);
+  if (!Number.isFinite(normalizedTimeoutMs) || normalizedTimeoutMs <= 0) {
+    return null;
+  }
+  const proportionalLead = Math.floor(normalizedTimeoutMs * 0.1);
+  return Math.min(5_000, Math.max(25, proportionalLead));
+}
+
+function createEarlyFallbackSignal({
+  signal = null,
+  timeoutMs = null,
+  pathname = "",
+} = {}) {
+  const leadTimeMs = resolveBoundedFallbackLeadTimeMs(timeoutMs);
+  const normalizedTimeoutMs = Number(timeoutMs);
+  if (
+    !Number.isFinite(normalizedTimeoutMs)
+    || normalizedTimeoutMs <= 0
+    || !Number.isFinite(leadTimeMs)
+    || normalizedTimeoutMs <= leadTimeMs
+  ) {
+    return {
+      signal,
+      clear() {},
+    };
+  }
+
+  const earlyTimeoutMs = normalizedTimeoutMs - leadTimeMs;
+  const controller = new AbortController();
+  const parentSignal = signal;
+  const propagateAbort = () => {
+    if (controller.signal.aborted) {
+      return;
+    }
+    controller.abort(parentSignal?.reason || buildRequestAbortReason({
+      code: "request_cancelled",
+      pathname,
+    }));
+  };
+
+  if (parentSignal?.aborted) {
+    propagateAbort();
+  } else if (parentSignal?.addEventListener) {
+    parentSignal.addEventListener("abort", propagateAbort, { once: true });
+  }
+
+  const timeoutHandle = setTimeout(() => {
+    if (controller.signal.aborted) {
+      return;
+    }
+    controller.abort(buildRequestAbortReason({
+      code: "request_timeout",
+      pathname,
+      timeoutMs: earlyTimeoutMs,
+    }));
+  }, earlyTimeoutMs);
+
+  return {
+    signal: controller.signal,
+    clear() {
+      clearTimeout(timeoutHandle);
+      if (parentSignal?.removeEventListener) {
+        parentSignal.removeEventListener("abort", propagateAbort);
+      }
+    },
+  };
+}
+
 function emitRequestTimeoutAlert({
   traceId = null,
   requestId = null,
@@ -8068,6 +8137,12 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger) {
     return;
   }
 
+  const earlyFallback = createEarlyFallbackSignal({
+    signal: logger?.__abort_signal || res?.__abort_signal || null,
+    timeoutMs: res?.__request_timeout_ms || null,
+    pathname: requestUrl?.pathname || "/answer",
+  });
+
   try {
     const directIngressState = resolveDirectIngressSourceState({
       source: "direct_http_answer",
@@ -8084,7 +8159,7 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger) {
       logger,
       baseUrl: oauthBaseUrl,
       authContext: resolveExplicitPlannerAuthContext(res, requestUrl, body),
-      signal: logger?.__abort_signal || res?.__abort_signal || null,
+      signal: earlyFallback.signal,
       requestId: res?.__request_id || null,
       traceId: res?.__trace_id || null,
       handlerName: "handleAnswer",
@@ -8102,7 +8177,7 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger) {
     });
   } catch (error) {
     const abortInfo = resolveRequestAbortInfo({
-      signal: logger?.__abort_signal || res?.__abort_signal || null,
+      signal: earlyFallback.signal,
       error,
     });
     if (abortInfo) {
@@ -8156,6 +8231,8 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger) {
       ...userResponse,
       __hide_trace_id: true,
     });
+  } finally {
+    earlyFallback.clear();
   }
 }
 
@@ -8187,48 +8264,68 @@ async function handleLarkPluginDispatch(res, requestUrl, body, logger = noopHttp
     pluginHybridDispatchEnabled: larkPluginHybridDispatchEnabled,
     directIngressPrimaryEnabled: larkDirectIngressPrimaryEnabled,
     async runKnowledgeAnswer({ request, decision }) {
+      const earlyFallback = createEarlyFallbackSignal({
+        signal: logger?.__abort_signal || res?.__abort_signal || null,
+        timeoutMs: res?.__request_timeout_ms || null,
+        pathname: requestUrl?.pathname || "/agent/lark-plugin/dispatch",
+      });
       const authContext = normalizeExplicitUserAuthContext({
         account_id: request.account_id || null,
         access_token: request.user_access_token || null,
-        source: "plugin_dispatch",
+        source: request.plugin_context?.explicit_auth?.source || "plugin_dispatch",
       });
-      const { plannerEnvelope, userResponse } = await runPlannerUserInputEdge({
-        text: request.request_text,
-        logger: dispatchLogger.child("knowledge_answer"),
-        baseUrl: oauthBaseUrl,
-        authContext,
-        signal: logger?.__abort_signal || res?.__abort_signal || null,
-        requestId: res?.__request_id || null,
-        traceId: res?.__trace_id || null,
-        handlerName: "handleLarkPluginDispatch.knowledgeAnswer",
-        plannerExecutor: getHttpService("executePlannedUserInput", executePlannedUserInput),
-      });
-      return {
-        status: resolvePlannerUserResponseStatusCode({
-          userResponse,
-          envelope: plannerEnvelope,
-        }),
-        trace_id: res?.__trace_id || null,
-        data: {
-          ...userResponse,
-          requested_capability: request.requested_capability || null,
-          route_target: decision.route_target,
-          mapped_lane: decision.mapped_lane || null,
-          chosen_lane: decision.chosen_lane || "knowledge-assistant",
-          lane_mapping_source: decision.lane_mapping_source || null,
-          chosen_skill: decision.chosen_skill || null,
-          fallback_reason: decision.fallback_reason || null,
-        },
-      };
+      try {
+        const { plannerEnvelope, userResponse } = await runPlannerUserInputEdge({
+          text: request.request_text,
+          logger: dispatchLogger.child("knowledge_answer"),
+          baseUrl: oauthBaseUrl,
+          authContext,
+          signal: earlyFallback.signal,
+          requestId: res?.__request_id || null,
+          traceId: res?.__trace_id || null,
+          handlerName: "handleLarkPluginDispatch.knowledgeAnswer",
+          plannerExecutor: getHttpService("executePlannedUserInput", executePlannedUserInput),
+        });
+        return {
+          status: resolvePlannerUserResponseStatusCode({
+            userResponse,
+            envelope: plannerEnvelope,
+          }),
+          trace_id: res?.__trace_id || null,
+          data: {
+            ...userResponse,
+            requested_capability: request.requested_capability || null,
+            route_target: decision.route_target,
+            mapped_lane: decision.mapped_lane || null,
+            chosen_lane: decision.chosen_lane || "knowledge-assistant",
+            lane_mapping_source: decision.lane_mapping_source || null,
+            chosen_skill: decision.chosen_skill || null,
+            fallback_reason: decision.fallback_reason || null,
+          },
+        };
+      } finally {
+        earlyFallback.clear();
+      }
     },
     async runLaneBackend({ request, decision }) {
-      const { event, scope } = buildLarkPluginLaneContext(request, decision.chosen_lane);
-      const reply = await getHttpService("executeCapabilityLane", executeCapabilityLane)({
-        event,
-        scope,
-        logger: dispatchLogger.child(scope.capability_lane || "lane_backend"),
-        traceId: res?.__trace_id || null,
+      const earlyFallback = createEarlyFallbackSignal({
+        signal: logger?.__abort_signal || res?.__abort_signal || null,
+        timeoutMs: res?.__request_timeout_ms || null,
+        pathname: requestUrl?.pathname || "/agent/lark-plugin/dispatch",
       });
+      const { event, scope } = buildLarkPluginLaneContext(request, decision.chosen_lane);
+      let reply;
+      try {
+        reply = await getHttpService("executeCapabilityLane", executeCapabilityLane)({
+          event,
+          scope,
+          logger: dispatchLogger.child(scope.capability_lane || "lane_backend"),
+          traceId: res?.__trace_id || null,
+          signal: earlyFallback.signal,
+        });
+      } finally {
+        earlyFallback.clear();
+      }
       if (!reply?.text) {
         return {
           status: 422,
@@ -8432,6 +8529,7 @@ export function startHttpServer({
     res.__request_headers = req.headers;
     res.__traffic_source = requestTraffic.traffic_source;
     res.__request_backed = requestTraffic.request_backed;
+    res.__request_timeout_ms = effectiveRequestTimeoutMs;
     res.__monitor_payload = null;
     res.__abort_signal = abortController.signal;
     requestLogger.__abort_signal = abortController.signal;

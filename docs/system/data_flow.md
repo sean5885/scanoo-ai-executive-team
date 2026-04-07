@@ -19,7 +19,7 @@ For the checked-in executive/workflow surfaces, same-account same-session entryp
 The Lark long-connection reply path is a bounded adjacent flow: inbound `im.message.receive_v1` events enter `/Users/seanhan/Documents/Playground/src/index.mjs`, lane selection happens before reply materialization, and `/Users/seanhan/Documents/Playground/src/runtime-message-reply.mjs` now treats the downstream Lark send as complete only when the message mutation response includes a concrete `message_id`.
 That same ingress surface now also tracks websocket lifecycle activity through `/Users/seanhan/Documents/Playground/src/long-connection-lifecycle-monitor.mjs`; the checked-in monitor now classifies decoded websocket control/data frames before `eventDispatcher.invoke(...)`, records the parsed callback/event type plus handler presence, and if the socket stays `ready` but has no inbound message or heartbeat activity past the watchdog window, the process exits so the local LaunchAgent can rebuild the persistent connection.
 
-The OpenClaw plugin ingress is now a second bounded adjacent flow: tool calls first post to `POST /agent/lark-plugin/dispatch`, `/Users/seanhan/Documents/Playground/src/lark-plugin-dispatch-adapter.mjs` normalizes `request_text / session_id / thread_id / chat_id / user_id / source / requested_capability / capability_source`, derives the checked-in session key (`thread -> chat -> session`), uses `requested_capability` first when present, records dispatch observability, and then either:
+The OpenClaw plugin ingress is now a second bounded adjacent flow: tool calls first post to `POST /agent/lark-plugin/dispatch`, `/Users/seanhan/Documents/Playground/src/lark-plugin-dispatch-adapter.mjs` normalizes `request_text / session_id / thread_id / chat_id / user_id / source / requested_capability / capability_source`, preserves a bounded `plugin_context` handoff payload for explicit auth plus doc/compare references, derives the checked-in session key (`thread -> chat -> session`), uses `requested_capability` first when present, records dispatch observability, and then either:
 
 1. executes the existing planner answer edge
 2. executes the existing lane path through a synthetic lane event/scope
@@ -225,6 +225,8 @@ Current truth:
 - only if `scanoo-diagnose` is unavailable does the adapter fall back to `knowledge-assistant`, recording `fallback_reason=missing_exact_scanoo_diagnose_lane_fallback_to_knowledge_assistant`
 - `scanoo_optimize` still has no dedicated checked-in lane, so it remains a bounded fallback and still records a concrete `fallback_reason` instead of silently collapsing into one generic lane label
 - the dispatch layer records `request_text / source / session_id / thread_id / requested_capability / capability_source / route_target / mapped_lane / lane_mapping_source / chosen_lane / chosen_skill / fallback_reason / final_status`
+- when `plugin_context` is present, the lane handoff event now keeps bounded `explicit_auth`, `document_refs`, `compare_objects`, and structured `route_request.body` context so downstream lane/planner recovery can still see the same compare/doc evidence instead of flattening everything to raw text only
+- `GET /answer` and plugin hybrid dispatch now also arm one early fallback abort signal ahead of the outer HTTP hard timeout; planner/lane code gets that earlier `request_timeout` first so bounded fail-soft replies can return before the final generic timeout guard fires
 
 ## 4. Adjacent Workflows
 

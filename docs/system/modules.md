@@ -63,6 +63,7 @@ Current-truth docs for onboarding are:
   - guard against competing local responders
   - serialize same-account same-session workflow/executive entrypoints inside one process so one session keeps one active coordination owner at a time
   - normalize plugin `thread -> chat -> session` dispatch keys, record route-target observability, and keep direct ingress marked separately from the formal plugin entry when `LARK_DIRECT_INGRESS_PRIMARY_ENABLED=false`
+  - preserve bounded plugin handoff context on hybrid dispatch: explicit user auth stays available to downstream lanes, and structured doc refs / compare objects now survive the synthetic lane event instead of collapsing to plain text only
   - send long-connection bot replies only through the mutation runtime, and only treat the send as successful when the Lark message response returns a concrete `message_id`; the runtime reply helper now emits `reply_send_attempted`, `reply_send_succeeded`, and `reply_send_failed` instead of a generic post-await success log
 - Evidence:
   - `/Users/seanhan/Documents/Playground/tests/http-server.route-success.test.mjs`
@@ -103,6 +104,7 @@ Current-truth docs for onboarding are:
   - the checked-in official plugin entry now lands on `/Users/seanhan/Documents/Playground/src/lark-plugin-dispatch-adapter.mjs` first, not on scattered route decisions inside the plugin
   - public answer generation goes through planner execution first
   - plugin-native document/message/calendar/task-style tools are explicitly classified as `plugin_native` and do not enter the internal planner/lane business path
+  - planner-backed `/answer` and plugin hybrid dispatch now arm one earlier bounded-fallback abort signal before the outer HTTP hard timeout, so planner/lane fail-soft recovery can answer first and the generic timeout stays the last resort
   - `/answer` and the `knowledge-assistant` lane now share one checked-in answer-edge helper instead of rebuilding `execute -> envelope -> normalize` separately
   - that shared answer-edge helper also lifts current legacy planner result shapes into canonical `answer / sources / limitations` before public rendering
   - `planner-ingress-contract.mjs` is the checked-in ingress rule for doc/knowledge/runtime planner admission and the personal-lane planner edge guard

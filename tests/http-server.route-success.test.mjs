@@ -12,6 +12,7 @@ const [
   { docUpdateConfirmationStorePath, executiveImprovementStorePath },
   { setupExecutiveTaskStateTestHarness },
   { EXPLICIT_USER_AUTH_HEADERS },
+  { extractDocumentId },
   { replaceDocumentChunks, saveToken, upsertDocument },
   { ensureDocRewriteWorkflowTask },
   { clearActiveExecutiveTask },
@@ -22,6 +23,7 @@ const [
   import("../src/config.mjs"),
   import("./helpers/executive-task-state-harness.mjs"),
   import("../src/explicit-user-auth.mjs"),
+  import("../src/message-intent-utils.mjs"),
   import("../src/rag-repository.mjs"),
   import("../src/executive-orchestrator.mjs"),
   import("../src/executive-task-state.mjs"),
@@ -228,13 +230,16 @@ function insertIndexedSearchFixture({
   ]);
 }
 
-async function startTestServer(t, serviceOverrides) {
+async function startTestServer(t, serviceOverrides, options = {}) {
   ensureTestAccount("acct-1");
   const sink = createLoggerSink();
   const server = startHttpServer({
     listen: false,
     logger: sink.logger,
     serviceOverrides: createAuthorizedOverrides(serviceOverrides),
+    ...(Number.isFinite(Number(options?.requestTimeoutMs))
+      ? { requestTimeoutMs: Number(options.requestTimeoutMs) }
+      : {}),
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => {
@@ -2457,4 +2462,111 @@ test("lark plugin dispatch route maps explicit scanoo_diagnose into the dedicate
     && entry[1]?.requested_capability === "scanoo_diagnose"
     && entry[1]?.lane_mapping_source === "explicit"
   )), true);
+});
+
+test("lark plugin dispatch route keeps explicit auth, doc refs, and compare objects on lane handoff", async (t) => {
+  const laneCalls = [];
+  const { server } = await startTestServer(t, {
+    async executeCapabilityLane(args) {
+      laneCalls.push(args);
+      return {
+        text: "這是帶 context 的 lane 回答",
+      };
+    },
+  });
+  const { port } = server.address();
+
+  const { body } = await postPluginDispatch(port, {
+    request_text: "比較北極星店和月光店的 onboarding funnel",
+    session_id: "sess_context",
+    thread_id: "thr_context",
+    chat_id: "chat_context",
+    user_id: "user_context",
+    account_id: "acct-context",
+    user_access_token: "event-user-token-context",
+    source: "official_lark_plugin",
+    tool_name: "lark_kb_answer",
+    requested_capability: "scanoo_compare",
+    capability_source: "explicit",
+    plugin_context: {
+      explicit_auth: {
+        account_id: "acct-context",
+        access_token: "event-user-token-context",
+        source: "plugin_dispatch_params",
+      },
+      document_refs: [
+        {
+          document_id: "doc_context_1",
+          title: "Scanoo Compare SOP",
+        },
+      ],
+      compare_objects: [
+        { name: "北極星店", metric: "activation" },
+        { name: "月光店", metric: "activation" },
+      ],
+    },
+    route_request: {
+      path: "/answer?q=compare",
+      method: "POST",
+      body: {
+        document_id: "doc_context_1",
+      },
+    },
+  });
+
+  assert.equal(body.response.data.answer, "這是帶 context 的 lane 回答");
+  assert.equal(laneCalls.length, 1);
+  assert.equal(laneCalls[0].event.user_access_token, "event-user-token-context");
+  assert.equal(laneCalls[0].event.context.user_access_token, "event-user-token-context");
+  assert.equal(extractDocumentId(laneCalls[0].event), "doc_context_1");
+  assert.equal(JSON.parse(laneCalls[0].event.message.content).compare_objects[0].name, "北極星店");
+  assert.equal(laneCalls[0].event.__lobster_plugin_dispatch.plugin_context.document_refs[0].document_id, "doc_context_1");
+});
+
+test("lark plugin dispatch route lets lane backend return a bounded fallback before the hard timeout", async (t) => {
+  const { server } = await startTestServer(t, {
+    async executeCapabilityLane({ signal }) {
+      await new Promise((resolve) => {
+        if (signal?.aborted) {
+          resolve();
+          return;
+        }
+        signal?.addEventListener("abort", resolve, { once: true });
+      });
+      return {
+        text: [
+          "【比較對象】",
+          "我先保住這輪比較需求，先回一個 bounded fallback。",
+          "",
+          "【比較維度】",
+          "- onboarding funnel",
+        ].join("\n"),
+      };
+    },
+  }, {
+    requestTimeoutMs: 80,
+  });
+  const { port } = server.address();
+
+  const { response, body } = await postPluginDispatch(port, {
+    request_text: "比較北極星店和月光店的 onboarding funnel",
+    session_id: "sess_timeout",
+    chat_id: "chat_timeout",
+    user_id: "user_timeout",
+    account_id: "acct-timeout",
+    source: "official_lark_plugin",
+    tool_name: "lark_kb_answer",
+    requested_capability: "scanoo_compare",
+    capability_source: "explicit",
+    route_request: {
+      path: "/answer?q=compare",
+      method: "GET",
+      body: null,
+    },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.final_status, "completed");
+  assert.match(body.response.data.answer, /bounded fallback/);
 });

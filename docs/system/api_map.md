@@ -28,7 +28,7 @@ This is the grouped HTTP surface mirror for the current repo.
 | `/api/monitoring/metrics` | `GET` | aggregate request metrics | implemented |
 | `/api/monitoring/learning` | `GET` | review-first learning summary from request traces | implemented |
 | `/agent/improvements/learning/generate` | `POST` | persist reviewable improvement proposals | implemented |
-| `/agent/lark-plugin/dispatch` | `POST` | official Lark plugin hybrid dispatch entry; normalizes plugin request/session metadata plus `requested_capability / capability_source`, resolves capability-to-lane mapping (`mapped_lane / lane_mapping_source / fallback_reason`) before deciding `knowledge_answer` vs `lane_backend` vs `plugin_native`, includes dedicated minimal `scanoo-compare` and `scanoo-diagnose` lanes for `scanoo_compare / scanoo_diagnose`, records observability, then either executes the bounded backend path or returns a plugin-native forward decision | implemented |
+| `/agent/lark-plugin/dispatch` | `POST` | official Lark plugin hybrid dispatch entry; normalizes plugin request/session metadata plus `requested_capability / capability_source`, keeps bounded `plugin_context` handoff data for explicit auth and doc/compare refs, resolves capability-to-lane mapping (`mapped_lane / lane_mapping_source / fallback_reason`) before deciding `knowledge_answer` vs `lane_backend` vs `plugin_native`, includes dedicated minimal `scanoo-compare` and `scanoo-diagnose` lanes for `scanoo_compare / scanoo_diagnose`, records observability, then either executes the bounded backend path or returns a plugin-native forward decision | implemented |
 
 ## 2. Retrieval and Public Answer Surface
 
@@ -47,6 +47,7 @@ This is the grouped HTTP surface mirror for the current repo.
 - direct HTTP `/answer` still exists, but with `LARK_DIRECT_INGRESS_PRIMARY_ENABLED=false` the checked-in runtime marks it as a non-primary direct ingress path rather than the formal plugin entry
 - the public `/answer` payload still does not expose raw planner errors, but the in-process normalized object now carries a non-enumerable `failure_class` for usage-layer eval / telemetry classification
 - public `sources[]` lines are derived from canonical source objects through `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`
+- `/answer` and plugin-backed planner/lane entrypoints now arm one earlier bounded-fallback abort signal before the outer HTTP timeout, so bounded fail-soft replies can return before the final generic timeout guard
 - `answer-service.mjs` still exists as a secondary retrieval-answer helper, but it is not the primary HTTP answer surface
 
 ## 3. Company-Brain Read Surfaces

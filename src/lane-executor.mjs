@@ -1321,33 +1321,36 @@ async function resolvePlannerExplicitAuthContext({ event, scope, accountId, logg
   return mergedAuth;
 }
 
-async function executeKnowledgeAssistant({ event, scope, logger = noopLogger, traceId = null }) {
+async function executeKnowledgeAssistant({ event, scope, logger = noopLogger, traceId = null, signal = null }) {
   return executePlannerBackedLane({
     event,
     scope,
     logger,
     traceId,
+    signal,
     handlerName: "executeKnowledgeAssistant",
   });
 }
 
-async function executeScanooDiagnose({ event, scope, logger = noopLogger, traceId = null }) {
+async function executeScanooDiagnose({ event, scope, logger = noopLogger, traceId = null, signal = null }) {
   return executePlannerBackedLane({
     event,
     scope,
     logger,
     traceId,
+    signal,
     handlerName: "executeScanooDiagnose",
     textDecorator: buildScanooDiagnoseBrief,
   });
 }
 
-async function executeScanooCompare({ event, scope, logger = noopLogger, traceId = null }) {
+async function executeScanooCompare({ event, scope, logger = noopLogger, traceId = null, signal = null }) {
   return executePlannerBackedLane({
     event,
     scope,
     logger,
     traceId,
+    signal,
     handlerName: "executeScanooCompare",
     textDecorator: buildScanooCompareBrief,
   });
@@ -1358,6 +1361,7 @@ async function executePlannerBackedLane({
   scope,
   logger = noopLogger,
   traceId = null,
+  signal = null,
   handlerName = "executePlannerBackedLane",
   textDecorator = null,
 } = {}) {
@@ -1385,6 +1389,7 @@ async function executePlannerBackedLane({
     text,
     logger,
     authContext: explicitAuth,
+    signal,
     sessionKey: cleanText(scope?.session_key || scope?.chat_id || event?.message?.chat_id || ""),
     traceId,
     handlerName,
@@ -3239,7 +3244,7 @@ async function executeGroupSharedAssistant({ event, scope, logger = noopLogger }
   });
 }
 
-export async function executeCapabilityLane({ event, scope, logger = noopLogger, traceId = null }) {
+export async function executeCapabilityLane({ event, scope, logger = noopLogger, traceId = null, signal = null }) {
   let meetingReply = null;
   try {
     meetingReply = await executeMeetingCommand({ event, scope, logger });
@@ -3326,15 +3331,15 @@ export async function executeCapabilityLane({ event, scope, logger = noopLogger,
 
   if (lane === "knowledge-assistant") {
     assertRoutingDecisionOwner({ expected: expectedOwner, actual: "knowledge-assistant" });
-    return executeKnowledgeAssistant({ event, scope, logger, traceId });
+    return executeKnowledgeAssistant({ event, scope, logger, traceId, signal });
   }
   if (lane === "scanoo-compare") {
     assertRoutingDecisionOwner({ expected: expectedOwner, actual: "scanoo-compare" });
-    return executeScanooCompare({ event, scope, logger, traceId });
+    return executeScanooCompare({ event, scope, logger, traceId, signal });
   }
   if (lane === "scanoo-diagnose") {
     assertRoutingDecisionOwner({ expected: expectedOwner, actual: "scanoo-diagnose" });
-    return executeScanooDiagnose({ event, scope, logger, traceId });
+    return executeScanooDiagnose({ event, scope, logger, traceId, signal });
   }
   if (lane === "doc-editor") {
     assertRoutingDecisionOwner({ expected: expectedOwner, actual: "doc-editor" });

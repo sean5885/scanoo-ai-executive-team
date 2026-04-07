@@ -141,6 +141,213 @@ function cleanOptionalString(value: unknown): string | null {
   return text || null;
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function cloneBoundedJson(value: unknown, depth = 0): unknown {
+  if (value == null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  if (depth >= 4) {
+    return null;
+  }
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, 6)
+      .map((item) => cloneBoundedJson(item, depth + 1))
+      .filter((item) => item !== undefined);
+  }
+  if (!isPlainObject(value)) {
+    return null;
+  }
+  const entries = Object.entries(value).slice(0, 24);
+  const cloned: Record<string, unknown> = {};
+  for (const [key, nested] of entries) {
+    const copied = cloneBoundedJson(nested, depth + 1);
+    if (copied !== undefined) {
+      cloned[key] = copied;
+    }
+  }
+  return cloned;
+}
+
+function readNestedString(root: unknown, path: string[]): string | null {
+  let current: unknown = root;
+  for (const key of path) {
+    if (!isPlainObject(current)) {
+      return null;
+    }
+    current = current[key];
+  }
+  return cleanOptionalString(current);
+}
+
+function resolvePluginDispatchExplicitAuth(
+  params: Record<string, unknown>,
+  routeRequestBody: unknown,
+): { account_id: string | null; access_token: string | null; source: string | null } | null {
+  const sources = [params, isPlainObject(routeRequestBody) ? routeRequestBody : null].filter(Boolean) as Record<string, unknown>[];
+  const accessToken = sources
+    .map((source) => (
+      cleanOptionalString(source.user_access_token)
+      || cleanOptionalString(source.userAccessToken)
+      || cleanOptionalString(source.access_token)
+      || cleanOptionalString(source.accessToken)
+      || readNestedString(source, ["explicit_auth", "user_access_token"])
+      || readNestedString(source, ["explicit_auth", "access_token"])
+      || readNestedString(source, ["auth", "user_access_token"])
+      || readNestedString(source, ["auth", "access_token"])
+      || readNestedString(source, ["authorization", "user_access_token"])
+      || readNestedString(source, ["authorization", "access_token"])
+      || readNestedString(source, ["context", "user_access_token"])
+      || readNestedString(source, ["context", "access_token"])
+    ))
+    .find(Boolean)
+    || null;
+  const accountId = sources
+    .map((source) => (
+      cleanOptionalString(source.account_id)
+      || cleanOptionalString(source.accountId)
+      || readNestedString(source, ["explicit_auth", "account_id"])
+      || readNestedString(source, ["explicit_auth", "accountId"])
+      || readNestedString(source, ["auth", "account_id"])
+      || readNestedString(source, ["auth", "accountId"])
+      || readNestedString(source, ["authorization", "account_id"])
+      || readNestedString(source, ["authorization", "accountId"])
+    ))
+    .find(Boolean)
+    || null;
+  const authSource = sources
+    .map((source) => (
+      readNestedString(source, ["explicit_auth", "source"])
+      || readNestedString(source, ["auth", "source"])
+      || readNestedString(source, ["authorization", "source"])
+      || cleanOptionalString(source.auth_source)
+      || cleanOptionalString(source.source)
+    ))
+    .find(Boolean)
+    || null;
+
+  if (!accessToken) {
+    return null;
+  }
+
+  return {
+    account_id: accountId,
+    access_token: accessToken,
+    source: authSource || "plugin_dispatch_params",
+  };
+}
+
+function looksLikeDocumentReference(value: unknown): boolean {
+  if (!isPlainObject(value)) {
+    return false;
+  }
+  return [
+    "document_id",
+    "doc_id",
+    "doc_token",
+    "file_token",
+    "file_key",
+    "document_url",
+    "doc_url",
+    "url",
+    "link",
+    "href",
+  ].some((key) => cleanOptionalString(value[key]));
+}
+
+function collectDocumentReferenceObjects(value: unknown, bucket: Record<string, unknown>[], depth = 0) {
+  if (depth >= 3 || value == null) {
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value.slice(0, 8)) {
+      collectDocumentReferenceObjects(item, bucket, depth + 1);
+    }
+    return;
+  }
+  if (!isPlainObject(value)) {
+    return;
+  }
+  if (looksLikeDocumentReference(value)) {
+    const cloned = cloneBoundedJson(value);
+    if (isPlainObject(cloned)) {
+      bucket.push(cloned);
+    }
+  }
+  for (const nested of Object.values(value).slice(0, 16)) {
+    collectDocumentReferenceObjects(nested, bucket, depth + 1);
+  }
+}
+
+function collectCompareObjects(value: unknown, bucket: Record<string, unknown>[], parentKey = "", depth = 0) {
+  if (depth >= 3 || value == null) {
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value.slice(0, 6)) {
+      collectCompareObjects(item, bucket, parentKey, depth + 1);
+    }
+    return;
+  }
+  if (!isPlainObject(value)) {
+    return;
+  }
+  const normalizedParentKey = String(parentKey || "").toLowerCase();
+  const compareByParent = /compare|comparison|baseline|candidate|left|right|store|target|subject/.test(normalizedParentKey);
+  const compareLike = compareByParent
+    || Object.keys(value).some((key) => /compare|comparison|baseline|candidate|left|right|store|target|subject/.test(key.toLowerCase()));
+  const hasIdentityFields = [
+    "name",
+    "title",
+    "text",
+    "label",
+    "metric",
+    "store",
+    "store_name",
+    "left",
+    "right",
+    "baseline",
+    "candidate",
+    "target",
+    "subject",
+  ].some((key) => value[key] != null);
+  if (compareLike && hasIdentityFields) {
+    const cloned = cloneBoundedJson(value);
+    if (isPlainObject(cloned)) {
+      bucket.push(cloned);
+    }
+  }
+  for (const [key, nested] of Object.entries(value).slice(0, 16)) {
+    collectCompareObjects(nested, bucket, key, depth + 1);
+  }
+}
+
+function buildDispatchPluginContext(
+  params: Record<string, unknown>,
+  routeRequestBody: unknown,
+) {
+  const explicitAuth = resolvePluginDispatchExplicitAuth(params, routeRequestBody);
+  const documentRefs: Record<string, unknown>[] = [];
+  const compareObjects: Record<string, unknown>[] = [];
+  collectDocumentReferenceObjects(params, documentRefs);
+  collectDocumentReferenceObjects(routeRequestBody, documentRefs);
+  collectCompareObjects(params, compareObjects);
+  collectCompareObjects(routeRequestBody, compareObjects);
+
+  if (!explicitAuth && documentRefs.length === 0 && compareObjects.length === 0) {
+    return null;
+  }
+
+  return {
+    ...(explicitAuth ? { explicit_auth: explicitAuth } : {}),
+    ...(documentRefs.length > 0 ? { document_refs: documentRefs.slice(0, 6) } : {}),
+    ...(compareObjects.length > 0 ? { compare_objects: compareObjects.slice(0, 6) } : {}),
+  };
+}
+
 function inferRequestText(path: string, params: Record<string, unknown>) {
   const explicit = cleanOptionalString(params.request_text);
   if (explicit) {
@@ -238,6 +445,7 @@ function buildDispatchPayload(
 ) {
   const routeRequestBody = parseJsonLikeBody(init?.body);
   const capability = resolveRequestedCapability(action, path, params);
+  const pluginContext = buildDispatchPluginContext(params, routeRequestBody);
   return {
     request_text: inferRequestText(path, params),
     session_id: cleanOptionalString(params.session_id),
@@ -249,6 +457,10 @@ function buildDispatchPayload(
     tool_name: cleanOptionalString(action),
     requested_capability: capability.requestedCapability,
     capability_source: capability.capabilitySource,
+    ...(pluginContext?.explicit_auth?.access_token
+      ? { user_access_token: pluginContext.explicit_auth.access_token }
+      : {}),
+    ...(pluginContext ? { plugin_context: pluginContext } : {}),
     route_request: {
       path,
       method: init?.method || "GET",

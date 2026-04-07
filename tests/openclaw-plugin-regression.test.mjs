@@ -280,6 +280,78 @@ test("plugin dispatch payload keeps metadata keys complete and preserves explici
   });
 });
 
+test("plugin dispatch payload preserves explicit auth, document refs, and compare objects for bounded handoff", async (t) => {
+  const api = createPluginApi();
+  register(api);
+  const tool = getTool(api, "lark_kb_answer");
+  const seen = [];
+
+  stubFetch(t, async (url, init = {}) => {
+    seen.push({
+      url: String(url),
+      method: init.method || "GET",
+      body: init.body ? JSON.parse(String(init.body)) : null,
+    });
+
+    return new Response(JSON.stringify({
+      ok: true,
+      route_target: "lane_backend",
+      final_status: "completed",
+      response: {
+        status: 200,
+        data: {
+          ok: true,
+          answer: "ok",
+          sources: [],
+          limitations: [],
+        },
+      },
+      trace_id: "trace_dispatch_context",
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  });
+
+  await tool.execute("tool-context", {
+    q: "比較北極星店和月光店的 onboarding",
+    account_id: "acct-context",
+    user_access_token: "event-user-token-context",
+    document_refs: [
+      {
+        document_id: "doc_compare_context_1",
+        title: "Scanoo Compare Playbook",
+        url: "https://larksuite.com/docx/doc_compare_context_1",
+      },
+    ],
+    compare_objects: [
+      { name: "北極星店", metric: "activation" },
+      { name: "月光店", metric: "activation" },
+    ],
+  });
+
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].body.user_access_token, "event-user-token-context");
+  assert.deepEqual(seen[0].body.plugin_context, {
+    explicit_auth: {
+      account_id: "acct-context",
+      access_token: "event-user-token-context",
+      source: "plugin_dispatch_params",
+    },
+    document_refs: [
+      {
+        document_id: "doc_compare_context_1",
+        title: "Scanoo Compare Playbook",
+        url: "https://larksuite.com/docx/doc_compare_context_1",
+      },
+    ],
+    compare_objects: [
+      { name: "北極星店", metric: "activation" },
+      { name: "月光店", metric: "activation" },
+    ],
+  });
+});
+
 test("plugin dispatch payload keeps missing metadata as null instead of omitting keys", async (t) => {
   const api = createPluginApi();
   register(api);
@@ -325,6 +397,13 @@ test("plugin dispatch payload keeps missing metadata as null instead of omitting
     tool_name: "lark_doc_read",
     requested_capability: "lark_doc_read",
     capability_source: "inferred",
+    plugin_context: {
+      document_refs: [
+        {
+          document_id: "doc_meta",
+        },
+      ],
+    },
     route_request: {
       path: "/api/doc/read?document_id=doc_meta",
       method: "GET",

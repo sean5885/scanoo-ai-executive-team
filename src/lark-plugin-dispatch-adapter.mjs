@@ -117,6 +117,36 @@ const noopLogger = {
   },
 };
 
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function cloneBoundedJson(value, depth = 0) {
+  if (value == null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  if (depth >= 4) {
+    return null;
+  }
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, 6)
+      .map((item) => cloneBoundedJson(item, depth + 1))
+      .filter((item) => item !== undefined);
+  }
+  if (!isPlainObject(value)) {
+    return null;
+  }
+  const cloned = {};
+  for (const [key, nested] of Object.entries(value).slice(0, 24)) {
+    const copied = cloneBoundedJson(nested, depth + 1);
+    if (copied !== undefined) {
+      cloned[key] = copied;
+    }
+  }
+  return cloned;
+}
+
 function safeUpperMethod(value) {
   const method = cleanText(value).toUpperCase();
   return method || "GET";
@@ -139,6 +169,43 @@ function normalizeRouteRequest(routeRequest = {}) {
     body: routeRequest?.body && typeof routeRequest.body === "object" && !Array.isArray(routeRequest.body)
       ? { ...routeRequest.body }
       : routeRequest?.body ?? null,
+  };
+}
+
+function sanitizePluginContext(pluginContext = null) {
+  if (!isPlainObject(pluginContext)) {
+    return null;
+  }
+  const explicitAuth = (() => {
+    if (!isPlainObject(pluginContext?.explicit_auth)) {
+      return null;
+    }
+    const normalized = {
+      account_id: cleanText(pluginContext.explicit_auth.account_id || pluginContext.explicit_auth.accountId || "") || null,
+      access_token: cleanText(pluginContext.explicit_auth.access_token || pluginContext.explicit_auth.user_access_token || "") || null,
+      source: cleanText(pluginContext.explicit_auth.source || "") || null,
+    };
+    return normalized.account_id || normalized.access_token || normalized.source
+      ? normalized
+      : null;
+  })();
+  const documentRefs = Array.isArray(pluginContext?.document_refs)
+    ? pluginContext.document_refs
+      .map((item) => cloneBoundedJson(item))
+      .filter((item) => isPlainObject(item))
+    : [];
+  const compareObjects = Array.isArray(pluginContext?.compare_objects)
+    ? pluginContext.compare_objects
+      .map((item) => cloneBoundedJson(item))
+      .filter((item) => isPlainObject(item))
+    : [];
+  if (!explicitAuth && documentRefs.length === 0 && compareObjects.length === 0) {
+    return null;
+  }
+  return {
+    ...(explicitAuth ? { explicit_auth: explicitAuth } : {}),
+    ...(documentRefs.length > 0 ? { document_refs: documentRefs } : {}),
+    ...(compareObjects.length > 0 ? { compare_objects: compareObjects } : {}),
   };
 }
 
@@ -212,10 +279,17 @@ export function normalizeLarkPluginDispatchRequest(raw = {}) {
   const routeRequest = normalizeRouteRequest(raw?.route_request || {});
   const query = parseRouteQuery(routeRequest.path);
   const requestText = inferRequestText(raw, routeRequest);
+  const pluginContext = sanitizePluginContext(raw?.plugin_context);
   const accountId = cleanText(
     raw?.account_id
+    || pluginContext?.explicit_auth?.account_id
     || raw?.route_request?.body?.account_id
     || query.get("account_id")
+    || "",
+  );
+  const userAccessToken = cleanText(
+    raw?.user_access_token
+    || pluginContext?.explicit_auth?.access_token
     || "",
   );
 
@@ -232,7 +306,8 @@ export function normalizeLarkPluginDispatchRequest(raw = {}) {
       requested_capability: raw?.requested_capability,
     }),
     capability_source: normalizeCapabilitySource(raw?.capability_source),
-    user_access_token: cleanText(raw?.user_access_token),
+    user_access_token: userAccessToken,
+    plugin_context: pluginContext,
     route_request: routeRequest,
   };
 
@@ -507,6 +582,21 @@ export function buildLarkPluginLaneContext(normalizedRequest = {}, preferredLane
     session_key: cleanText(normalizedRequest?.resolved_session_key || fallbackChatId),
     workspace_key: "workspace:lark_plugin_dispatch",
   };
+  const pluginContext = isPlainObject(normalizedRequest?.plugin_context)
+    ? normalizedRequest.plugin_context
+    : null;
+  const messageContent = {
+    text: cleanText(normalizedRequest?.request_text),
+    ...(Array.isArray(pluginContext?.document_refs) && pluginContext.document_refs.length > 0
+      ? { document_refs: pluginContext.document_refs }
+      : {}),
+    ...(Array.isArray(pluginContext?.compare_objects) && pluginContext.compare_objects.length > 0
+      ? { compare_objects: pluginContext.compare_objects }
+      : {}),
+    ...(routeRequestBodyForLane(normalizedRequest?.route_request?.body)
+      ? { route_request_body: routeRequestBodyForLane(normalizedRequest.route_request.body) }
+      : {}),
+  };
   const event = {
     sender: {
       sender_id: {
@@ -515,10 +605,16 @@ export function buildLarkPluginLaneContext(normalizedRequest = {}, preferredLane
     },
     message_text: cleanText(normalizedRequest?.request_text),
     text: cleanText(normalizedRequest?.request_text),
+    user_access_token: cleanText(normalizedRequest?.user_access_token) || undefined,
+    context: {
+      user_access_token: cleanText(normalizedRequest?.user_access_token) || undefined,
+      account_id: cleanText(normalizedRequest?.account_id) || null,
+      source: cleanText(pluginContext?.explicit_auth?.source || normalizedRequest?.source || "") || null,
+    },
     message: {
       chat_id: fallbackChatId,
       chat_type: "p2p",
-      content: JSON.stringify({ text: cleanText(normalizedRequest?.request_text) }),
+      content: JSON.stringify(messageContent),
     },
     __lobster_plugin_dispatch: {
       account_id: cleanText(normalizedRequest?.account_id),
@@ -528,6 +624,7 @@ export function buildLarkPluginLaneContext(normalizedRequest = {}, preferredLane
       source: cleanText(normalizedRequest?.source),
       requested_capability: cleanText(normalizedRequest?.requested_capability),
       capability_source: cleanText(normalizedRequest?.capability_source),
+      plugin_context: pluginContext,
     },
   };
 
@@ -540,6 +637,11 @@ export function buildLarkPluginLaneContext(normalizedRequest = {}, preferredLane
       ...(explicitLaneContext || resolveCapabilityLane(baseScope, event)),
     },
   };
+}
+
+function routeRequestBodyForLane(routeRequestBody = null) {
+  const cloned = cloneBoundedJson(routeRequestBody);
+  return isPlainObject(cloned) || Array.isArray(cloned) ? cloned : null;
 }
 
 export async function executeLarkPluginDispatch({
