@@ -341,6 +341,43 @@ test("generic review reply uses local fast summary instead of semantic rereview 
   assert.doesNotMatch(reply.text, /MiniMax 小批量語義複審/);
 });
 
+test("rereview falls back to local pending summary when semantic pass is aborted", async () => {
+  const account = upsertAccount({
+    open_id: `acct-rereview-abort-open-${Date.now()}`,
+    name: "acct-rereview-abort",
+  });
+  seedIndexedDocument({
+    accountId: account.id,
+    suffix: "workspace-onboarding-rereview",
+    title: "Workspace Onboarding Notes",
+    rawText: "workspace onboarding guide",
+  });
+  seedIndexedDocument({
+    accountId: account.id,
+    suffix: "admin-manual-rereview",
+    title: "Administrator Manual",
+    rawText: "",
+  });
+
+  const controller = new AbortController();
+  controller.abort(Object.assign(new Error("request_cancelled"), {
+    name: "AbortError",
+    code: "request_cancelled",
+  }));
+
+  const reply = await buildCloudOrganizationReviewReplyCached({
+    accountId: account.id,
+    sessionKey: `session-rereview-abort-${Date.now()}`,
+    forceReReview: true,
+    signal: controller.signal,
+  });
+
+  assert.match(reply.text, /回退到本地保底結果|待人工確認/u);
+  assert.doesNotMatch(reply.text, /MiniMax 小批量語義複審/);
+  assert.equal(Array.isArray(reply.pending_items), true);
+  assert.equal(reply.pending_items.length >= 1, true);
+});
+
 test("why reply skips test residual docs when explaining pending confirmation", async () => {
   const account = upsertAccount({
     open_id: `acct-why-residual-open-${Date.now()}`,
