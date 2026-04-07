@@ -198,12 +198,12 @@ test("full flow validation keeps runtime-info on one deterministic route without
     payload: {},
   }]);
   assert.equal(runtimeResult.execution_result?.ok, true);
-  assert.equal(runtimeResult.execution_result?.formatted_output?.kind, "runtime_info");
+  assert.equal(runtimeResult.execution_result?.formatted_output?.kind, "get_runtime_info");
   assertCanonicalPlannerEnvelope(envelope, {
     action: "get_runtime_info",
     ok: true,
     fallbackReason: null,
-    kind: "runtime_info",
+    kind: "get_runtime_info",
   });
   assert.match(response.answer || "", /runtime|PID|工作目錄|資料庫路徑/);
   assert.doesNotMatch(response.limitations.join("\n"), /未命名文件|同一組相關文件|打開「/);
@@ -278,8 +278,10 @@ test("full flow validation does not fake partial success when every requested su
 
   assert.equal(runtimeResult.execution_result?.ok, false);
   assert.equal(response.ok, false);
+  assert.equal(response.failure_class, "permission_denied");
   assert.equal(response.sources.length, 0);
-  assert.match(response.limitations.join(" "), /換個說法|上下文|目標資料/);
+  assert.match(response.answer || "", /auth-required|授權|使用者 token/);
+  assert.match(response.limitations.join(" "), /重新送出這輪需求|登入授權/);
 });
 
 test("full flow validation keeps mixed intent on a single preset route and renders from the same envelope", async () => {

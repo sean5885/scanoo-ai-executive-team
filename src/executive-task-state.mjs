@@ -74,6 +74,21 @@ function normalizeExecutionJournal(journal = {}) {
         .filter((item) => item.action)
         .slice(-12)
     : [];
+  const plannerSteps = Array.isArray(journal.planner_steps)
+    ? journal.planner_steps
+        .map((item) => ({
+          intent: normalizeText(item?.intent || item?.selected_action || item?.action || item?.task || ""),
+          success_criteria: normalizeList(
+            item?.success_criteria
+            || item?.successCriteria
+            || item?.criteria
+            || [],
+            10,
+          ),
+        }))
+        .filter((item) => item.intent || item.success_criteria.length > 0)
+        .slice(-12)
+    : [];
   const verifierVerdict = journal.verifier_verdict && typeof journal.verifier_verdict === "object"
     ? {
         pass: journal.verifier_verdict.pass === true,
@@ -95,6 +110,7 @@ function normalizeExecutionJournal(journal = {}) {
     classified_intent: normalizeText(journal.classified_intent || ""),
     selected_action: normalizeText(journal.selected_action || ""),
     dispatched_actions: dispatchedActions,
+    planner_steps: plannerSteps,
     raw_evidence: rawEvidence,
     fallback_used: journal.fallback_used === true,
     tool_required: journal.tool_required === true,
@@ -135,6 +151,14 @@ function normalizeTask(task = {}) {
           .map((item) => ({
             agent_id: normalizeText(item?.agent_id),
             task: normalizeText(item?.task),
+            intent: normalizeText(item?.intent || ""),
+            success_criteria: normalizeList(
+              item?.success_criteria
+              || item?.successCriteria
+              || item?.criteria
+              || [],
+              10,
+            ),
             selected_action: normalizeText(item?.selected_action || item?.action || ""),
             role: normalizeText(item?.role || ""),
             status: normalizeText(item?.status || "pending") || "pending",

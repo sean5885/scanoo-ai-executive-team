@@ -70,6 +70,7 @@ Implemented through:
 Implemented through:
 
 - `src/executive-reflection.mjs`
+- `src/executive-closed-loop.mjs` now also derives a lightweight execution-reflection snapshot immediately after execution and before verification/improvement persistence: the pipeline first normalizes planner-step metadata into `execution_journal.planner_steps[]` with `{ intent, success_criteria }`, prefers explicit step metadata when present, falls back to task/work-plan/task-level success criteria when fields are missing, then returns a deterministic structured object with `overall_status` plus per-step `{ intent, success, success_match, deviation, reason }`; `success_match` records matched vs unmet success criteria, `deviation` is a bounded execution delta code, and `reason` is classified into controlled values such as `tool_failure`, `planning_error`, or `missing_info` instead of natural-language prose
 
 ### Improvement Loop
 

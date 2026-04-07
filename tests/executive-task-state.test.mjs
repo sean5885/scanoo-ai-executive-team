@@ -59,6 +59,39 @@ test("executive task state persists active task, turns, and handoffs", async () 
   assert.equal(cleared, null);
 });
 
+test("executive task state preserves work-plan reflection metadata", async () => {
+  const task = await startExecutiveTask({
+    accountId: "metadata-account",
+    sessionKey: "metadata-session",
+    objective: "整理多步任務",
+    primaryAgentId: "ceo",
+    successCriteria: ["先回答問題", "有依據"],
+    workPlan: [
+      {
+        agent_id: "ceo",
+        task: "收斂答案",
+        intent: "answer_user",
+        success_criteria: ["先回答問題"],
+      },
+    ],
+  });
+
+  const active = await getActiveExecutiveTask("metadata-account", "metadata-session");
+  assert.equal(active?.id, task?.id);
+  assert.deepEqual(active?.work_plan, [
+    {
+      agent_id: "ceo",
+      task: "收斂答案",
+      intent: "answer_user",
+      success_criteria: ["先回答問題"],
+      selected_action: "",
+      role: "",
+      status: "pending",
+      tool_required: false,
+    },
+  ]);
+});
+
 test("executive task state test reset clears prior active task", async () => {
   const accountId = "reset-account";
   const sessionKey = "reset-session";

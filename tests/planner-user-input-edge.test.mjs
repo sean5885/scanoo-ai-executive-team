@@ -1,8 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
+const testDb = await createTestDbHarness();
 const { runPlannerUserInputEdge } = await import("../src/planner-user-input-edge.mjs");
 const { ROUTING_NO_MATCH } = await import("../src/planner-error-codes.mjs");
+
+test.after(() => {
+  testDb.close();
+});
 
 test("runPlannerUserInputEdge keeps planner execute -> envelope -> normalize on one shared helper", async () => {
   const calls = [];
