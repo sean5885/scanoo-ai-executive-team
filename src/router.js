@@ -8,7 +8,7 @@ import { ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
 const DOC_SEARCH_INTENT_RE = /找|搜尋|搜索|查|search/i;
 const DOC_SUMMARY_INTENT_RE = /整理|解釋|解释/;
 const DOC_DETAIL_CONTENT_INTENT_RE = /打開|打开|讀|读|內容|内容|寫了什麼|写了什么/;
-const DOC_PRONOUN_FOLLOW_UP_INTENT_RE = /這份文件|那份文件|這個文件|這份|那份|這個/;
+const DOC_PRONOUN_FOLLOW_UP_INTENT_RE = /這份文件|这份文件|那份文件|那個文件|那个文件|這個文件|这个文件|這份|这份|那份|這個|这个|那個|那个|這篇|这篇|那篇|這則|这则|那則|那则/;
 const DOC_ORDINAL_FOLLOW_UP_INTENT_RE = /第(?:1|一|2|二|3|三|4|四|5|五)份|第(?:1|一|2|二|3|三|4|四|5|五)個|打開第(?:1|一|2|二|3|三|4|四|5|五)/;
 
 function buildRouteDecision({

@@ -314,6 +314,8 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - 若 case 有提供 `expected_owner_surface`，runner 也會把 owner surface 納入 fail reason，避免 `/cmo` 這類 explicit owner family 只剩 route 命中、但回答邊界退成 generic executive brief
 - `knowledge_assistant` case 會重用 checked-in route truth，直接驅動 deterministic executor path 再回到同一條 answer boundary；這是 eval runner 的 bounded executor fallback，用來隔離 planner JSON latency，不改 routing truth、public contract 或 write policy
 - personal-lane `partial_success / fail_closed` case 會直接走 checked-in answer boundary normalizer，而不是讓 eval 被 planner waiting 拖成 timeout
+- follow-up / multi-intent continuity pack 現在另外允許在 eval context 內預載 `planner.active_doc / active_candidates`，並可用 bounded `mock_planner_envelope` 驗證第二輪 answer boundary；這只用於 deterministic usage-layer judging，不改 public runtime contract
+- 同一組 pack 也會把「主問題已成功回答，但句子裡還有送出 / 發布 / 圖片這類目前不可代做的子任務」判成 `partial_success`，要求回覆保留已完成部分並明講剩餘限制
 - runner 現在對每條 case 都加上固定 timeout guard；若單條 case 超時，會取消該 case、在 summary 額外列出 `timed_out_cases`，並繼續跑完剩餘 case
 - runner 現在也會輸出 `governance_family`、`governance_breakdown`、`governance_cases`，把 timeout/slow family 與一般 `failure_class` 分開看
 - 若 runner 看到 timeout 但無法分進明確 family，summary 會把它記到 `unclassified_timeout`

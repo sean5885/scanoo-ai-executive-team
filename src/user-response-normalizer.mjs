@@ -17,7 +17,7 @@ import { normalizeText } from "./text-utils.mjs";
 const MAX_USER_FACING_SOURCES = 3;
 const MAX_USER_FACING_NEXT_STEPS = 3;
 const RAW_PLANNER_VISIBLE_PAYLOAD_PATTERN = /skill_bridge|document_summarize|search_and_summarize|side_effects|get_company_brain_doc_detail|search_knowledge_base|read-runtime|authority/i;
-const TASK_DECOMPOSITION_CAPABILITY_ORDER = ["draft_copy", "image_asset", "outbound_delivery"];
+const TASK_DECOMPOSITION_CAPABILITY_ORDER = ["draft_copy", "information_answer", "image_asset", "outbound_delivery"];
 const TASK_DECOMPOSITION_CAPABILITIES = Object.freeze({
   draft_copy: Object.freeze({
     label: "文字草稿",
@@ -28,6 +28,13 @@ const TASK_DECOMPOSITION_CAPABILITIES = Object.freeze({
       /(?:文案|貼文|帖文|caption|copywriting|copy)/i,
       /(?:email|郵件|邮件|信件).{0,8}(?:草稿|內容|内容|文案)/i,
       /(?:回覆|回复).{0,8}(?:草稿|內容|内容)/i,
+    ],
+  }),
+  information_answer: Object.freeze({
+    label: "查詢或內容整理",
+    supported: true,
+    patterns: [
+      /(?:查|搜尋|搜索|找|看看|看一下|讀|读|打開|打开|整理|總結|总结|摘要|重點|重点|解釋|解释|說明|说明|風險|风险|進度|狀態|状态|下一步|為什麼|为什么|誰負責|谁负责|何時到期|何时到期|owner|deadline)/i,
     ],
   }),
   image_asset: Object.freeze({
@@ -44,10 +51,10 @@ const TASK_DECOMPOSITION_CAPABILITIES = Object.freeze({
     label: "發送或發布",
     supported: false,
     patterns: [
-      /(?:發送|发送|寄出|寄給|寄给|發佈|发布|代發|代发|發布出去|发布出去)/i,
+      /(?:發送|发送|寄出|寄給|寄给|發給|发给|發佈|发布|代發|代发|發布出去|发布出去)/i,
     ],
     negatedPatterns: [
-      /(?:先不要|不要|不用|先別|先别|暫時不要|暂时不要|不必).{0,8}(?:發送|发送|寄出|寄給|寄给|發佈|发布|代發|代发)/i,
+      /(?:先不要|不要|不用|先別|先别|暫時不要|暂时不要|不必).{0,8}(?:發送|发送|寄出|寄給|寄给|發給|发给|發佈|发布|代發|代发)/i,
     ],
   }),
 });
@@ -253,6 +260,94 @@ function buildTaskDecompositionLimitations(blocked = []) {
   return normalizeUserResponseList(entries);
 }
 
+function hasDeliveredUserResponseContent(response = {}) {
+  return Boolean(
+    normalizeText(response?.answer || "")
+    || (Array.isArray(response?.sources) && response.sources.length > 0),
+  );
+}
+
+function resolveTaskDecompositionCompletedLabel({
+  decomposition = {},
+  response = {},
+  plannerEnvelope = null,
+} = {}) {
+  const completableKeys = new Set(
+    (Array.isArray(decomposition?.completable) ? decomposition.completable : [])
+      .map((item) => item?.key)
+      .filter(Boolean),
+  );
+  if (completableKeys.has("draft_copy")) {
+    return buildDraftCopyContent(decomposition.requestText || response?.answer || "").label;
+  }
+
+  const normalizedAction = normalizeText(
+    plannerEnvelope?.action
+    || plannerEnvelope?.execution_result?.action
+    || "",
+  );
+  if (normalizedAction === "get_runtime_info") {
+    return "runtime 資訊查詢";
+  }
+  if (normalizedAction === "search_company_brain_docs") {
+    return "文件搜尋結果";
+  }
+  if (normalizedAction === "search_and_detail_doc" || normalizedAction === "get_company_brain_doc_detail") {
+    return "文件內容整理";
+  }
+  if (normalizedAction === "update_task_lifecycle_v1" || normalizedAction === "get_task_lifecycle_v1") {
+    return "task 狀態整理";
+  }
+
+  const primarySource = Array.isArray(response?.sources) ? normalizeText(response.sources[0] || "") : "";
+  const answer = normalizeText(response?.answer || "");
+  if (/資料庫路徑|pid|工作目錄|runtime/i.test(`${answer} ${primarySource}`)) {
+    return "runtime 資訊查詢";
+  }
+  if (/文件|文檔|文档|doc|wiki/i.test(`${answer} ${primarySource}`)) {
+    return "文件內容整理";
+  }
+  return "可直接完成的部分";
+}
+
+function maybeAttachTaskDecompositionPartialSuccess({
+  response = null,
+  requestText = "",
+  plannerEnvelope = null,
+} = {}) {
+  if (!response || typeof response !== "object" || Array.isArray(response) || response.ok !== true) {
+    return response;
+  }
+
+  const decomposition = detectTaskDecomposition(requestText);
+  if (!decomposition.isMultiIntent || decomposition.blocked.length === 0 || !hasDeliveredUserResponseContent(response)) {
+    return response;
+  }
+
+  const completedLabel = resolveTaskDecompositionCompletedLabel({
+    decomposition,
+    response,
+    plannerEnvelope,
+  });
+  const completedResponse = {
+    ...response,
+    sources: normalizeUserResponseList([
+      `已先完成：${completedLabel}。`,
+      `這輪另外還有 ${decomposition.blocked.map((item) => item.label).join("、")} 需求，所以目前先交付可完成的部分。`,
+      ...(Array.isArray(response.sources) ? response.sources : []),
+    ]),
+    limitations: normalizeUserResponseList([
+      ...(Array.isArray(response.limitations) ? response.limitations : []),
+      ...buildTaskDecompositionLimitations(decomposition.blocked),
+    ]),
+  };
+
+  return attachHiddenUserResponseMetadata(completedResponse, {
+    failure_class: "partial_success",
+    reply_mode: "partial_success",
+  });
+}
+
 function attachHiddenUserResponseMetadata(response = {}, metadata = {}) {
   if (!response || typeof response !== "object" || Array.isArray(response)) {
     return response;
@@ -318,12 +413,21 @@ function deriveFailureClassFromEnvelope({
   });
 }
 
-function maybeApplyTaskDecompositionFallback({
+function maybeApplyTaskDecompositionResponse({
   response = null,
   requestText = "",
+  plannerEnvelope = null,
 } = {}) {
   if (!response || typeof response !== "object" || Array.isArray(response)) {
     return response;
+  }
+  const partialOverlayResponse = maybeAttachTaskDecompositionPartialSuccess({
+    response,
+    requestText,
+    plannerEnvelope,
+  });
+  if (partialOverlayResponse !== response) {
+    return partialOverlayResponse;
   }
   if (!hasUsableTaskDecompositionFallback(response)) {
     return response;
@@ -1104,9 +1208,10 @@ export function normalizeUserResponse({
           limitations: normalizeUserResponseList(failureReply.limitations),
         }
       : buildPlannerSuccessUserResponse(envelope);
-    const normalizedResponse = maybeApplyTaskDecompositionFallback({
+    const normalizedResponse = maybeApplyTaskDecompositionResponse({
       response: baseResponse,
       requestText,
+      plannerEnvelope: envelope,
     });
     const failureClass = deriveFailureClassFromEnvelope({
       envelope,
@@ -1157,7 +1262,7 @@ export function normalizeUserResponse({
     ? objectPayload.execution_result
     : {};
   const executionData = resolvePlannerExecutionData(execution);
-  const normalizedPayload = maybeApplyTaskDecompositionFallback({
+  const normalizedPayload = maybeApplyTaskDecompositionResponse({
     response: buildExecutionDataUserResponse({
       executionData,
       ok: objectPayload.ok !== false && execution?.ok !== false,
@@ -1165,6 +1270,7 @@ export function normalizeUserResponse({
       ok: objectPayload.ok !== false && execution?.ok !== false,
     }),
     requestText,
+    plannerEnvelope: objectPayload,
   });
   attachHiddenUserResponseMetadata(normalizedPayload, {
     failure_class: deriveFailureClassFromEnvelope({

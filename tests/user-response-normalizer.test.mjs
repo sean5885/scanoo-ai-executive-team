@@ -14,6 +14,7 @@ function buildPlannerEnvelope({
   action = "search_company_brain_docs",
   executionOk = true,
   data = {},
+  formatted_output = null,
   error = null,
   trace = null,
 } = {}) {
@@ -25,6 +26,7 @@ function buildPlannerEnvelope({
       ok: executionOk,
       action,
       data,
+      ...(formatted_output ? { formatted_output } : {}),
     },
     ...(trace ? { trace } : {}),
   };
@@ -424,6 +426,62 @@ test("multi-intent fallback works for another mixed capability request", () => {
   assert.match(userResponse.answer || "", /Email 草稿/);
   assert.match(userResponse.answer || "", /招募/);
   assert.match(userResponse.limitations.join("\n"), /圖片|banner/i);
+  assert.match(userResponse.limitations.join("\n"), /不能直接替你送出|手動貼上/);
+});
+
+test("successful document answer plus delivery request is upgraded to partial success with explicit limitation", () => {
+  const userResponse = normalizeUserResponse({
+    requestText: "幫我整理 OKR 文件重點再寄給團隊",
+    plannerEnvelope: buildPlannerEnvelope({
+      ok: true,
+      action: "search_and_detail_doc",
+      executionOk: true,
+      formatted_output: {
+        kind: "search_and_detail",
+        title: "OKR Weekly Review",
+        doc_id: "doc-okr-1",
+        items: [
+          {
+            title: "OKR Weekly Review",
+            doc_id: "doc-okr-1",
+            reason: "文件內容直接命中 OKR。",
+          },
+        ],
+        match_reason: "OKR",
+        content_summary: "這份文件整理了本週 OKR 進度、阻塞點與下週重點。",
+        found: true,
+      },
+    }),
+  });
+
+  assert.equal(userResponse.ok, true);
+  assert.equal(userResponse.failure_class, "partial_success");
+  assert.match(userResponse.answer || "", /OKR Weekly Review/);
+  assert.match(userResponse.sources.join("\n"), /已先完成：文件內容整理/);
+  assert.match(userResponse.sources.join("\n"), /發送或發布/);
+  assert.match(userResponse.limitations.join("\n"), /不能直接替你送出|手動貼上/);
+});
+
+test("successful runtime answer plus delivery request is upgraded to partial success", () => {
+  const userResponse = normalizeUserResponse({
+    requestText: "先查 runtime db path 再發給團隊",
+    plannerEnvelope: buildPlannerEnvelope({
+      ok: true,
+      action: "get_runtime_info",
+      executionOk: true,
+      formatted_output: {
+        kind: "get_runtime_info",
+        db_path: "/tmp/lobster/runtime.db",
+        cwd: "/Users/seanhan/Documents/Playground",
+        node_pid: 4242,
+      },
+    }),
+  });
+
+  assert.equal(userResponse.ok, true);
+  assert.equal(userResponse.failure_class, "partial_success");
+  assert.match(userResponse.answer || "", /runtime 有正常回應|資料庫路徑/);
+  assert.match(userResponse.sources.join("\n"), /已先完成：runtime 資訊查詢/);
   assert.match(userResponse.limitations.join("\n"), /不能直接替你送出|手動貼上/);
 });
 

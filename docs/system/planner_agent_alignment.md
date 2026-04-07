@@ -781,7 +781,7 @@ The planner runtime also now keeps a small in-memory read context:
 - `active_candidates`
 - `active_theme`
 
-This allows pronoun-style follow-ups (`這份文件`) and ordinal follow-ups (`第一份 / 第二份`) to resolve against the latest successful company-brain search/detail interaction without changing the external planner output shape. Ordinal detail follow-ups are now intentionally narrower than pronoun follow-ups: they resolve only through the stored `active_candidates` index from the previous candidate list, and do not silently fall back to `active_doc` when that candidate context is missing.
+This allows pronoun-style follow-ups (`這份文件`, `那個`, `那份`, `那篇`) and ordinal follow-ups (`第一份 / 第二份`) to resolve against the latest successful company-brain search/detail interaction without changing the external planner output shape. Ordinal detail follow-ups are now intentionally narrower than pronoun follow-ups: they resolve only through the stored `active_candidates` index from the previous candidate list, and do not silently fall back to `active_doc` when that candidate context is missing.
 
 The planner now also gives task-lifecycle follow-ups a higher-priority local read path than doc follow-up dispatch when a recent planner action-layer snapshot exists. Minimal follow-up queries such as `進度`, `誰負責`, `何時到期`, `這個卡住了`, and `這個完成了` can read or update the latest planner-side `task lifecycle v1` snapshot directly without changing the external planner response envelope or calling downstream company-brain/doc routes.
 

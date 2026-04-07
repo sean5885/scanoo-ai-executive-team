@@ -2696,6 +2696,18 @@ test("router uses active doc for pronoun detail query and falls back when missin
   });
 });
 
+test("router treats 那個-style follow-up as the current active doc", () => {
+  assert.deepEqual(
+    route("那個呢", { activeDoc: { doc_id: "doc_123", title: "Demo" } }),
+    {
+      action: "get_company_brain_doc_detail",
+      selected_target: "get_company_brain_doc_detail",
+      target_kind: "action",
+      routing_reason: "doc_query_active_doc_detail",
+    },
+  );
+});
+
 test("router uses active candidates for ordinal follow-up selection", () => {
   assert.deepEqual(
     route("打開第一個", {

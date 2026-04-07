@@ -610,9 +610,31 @@ function resolveCapabilityRoute(testCase = {}) {
   const event = buildEvalEvent(testCase);
   const lane = resolveCapabilityLane(normalizeScope(testCase.scope), event);
   const normalizedLane = normalizeLaneName(lane?.capability_lane);
+  const plannerContext = testCase?.context?.planner && typeof testCase.context.planner === "object"
+    ? testCase.context.planner
+    : {};
+
+  if (
+    normalizedLane !== "knowledge_assistant"
+    && (
+      cleanText(plannerContext?.active_doc?.doc_id || plannerContext?.active_doc?.title || "")
+      || (Array.isArray(plannerContext?.active_candidates) && plannerContext.active_candidates.length > 0)
+      || cleanText(plannerContext?.active_theme || "")
+    )
+  ) {
+    const plannerDecision = resolvePlannerDecision(cleanText(testCase.text), plannerContext);
+    if (plannerDecision.planner_action !== ROUTING_NO_MATCH) {
+      return {
+        lane: "knowledge_assistant",
+        planner_action: plannerDecision.planner_action,
+        agent_or_tool: plannerDecision.agent_or_tool,
+        route_source: `${plannerDecision.source}_from_continuity_context`,
+      };
+    }
+  }
 
   if (normalizedLane === "knowledge_assistant") {
-    const plannerDecision = resolvePlannerDecision(cleanText(testCase.text), testCase.context?.planner || {});
+    const plannerDecision = resolvePlannerDecision(cleanText(testCase.text), plannerContext);
     return {
       lane: normalizedLane,
       planner_action: plannerDecision.planner_action,

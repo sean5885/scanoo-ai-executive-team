@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { usageLayerEvals } from "../evals/usage-layer/usage-layer-evals.mjs";
+import { followupMultiIntentContinuityEvals } from "../evals/usage-layer/followup-multi-intent-continuity-evals.mjs";
 import { registeredAgentFamilyEvals } from "../evals/usage-layer/registered-agent-family-evals.mjs";
 import { workflowTimeoutGovernanceEvals } from "../evals/usage-layer/workflow-timeout-governance-evals.mjs";
 import { runUsageLayerEvalCase, summarizeResults } from "../evals/usage-layer/usage-layer-runner.mjs";
@@ -109,6 +110,44 @@ test("registered-agent family pack stays bounded and covers owner surface plus f
     registeredAgentFamilyEvals.some((entry) => entry.expected_owner_surface === "routing_no_match"),
     true,
   );
+});
+
+test("follow-up and multi-intent continuity pack stays focused and covers partial plus fail-closed edges", () => {
+  assert.equal(followupMultiIntentContinuityEvals.length >= 15 && followupMultiIntentContinuityEvals.length <= 20, true);
+  assert.equal(
+    followupMultiIntentContinuityEvals.some((entry) => entry.expected_eval_outcome === "partial_success"),
+    true,
+  );
+  assert.equal(
+    followupMultiIntentContinuityEvals.some((entry) => entry.expected_eval_outcome === "fail_closed"),
+    true,
+  );
+});
+
+test("usage-layer runner keeps contextual second-turn follow-up replies out of generic fallback", async () => {
+  const testCase = followupMultiIntentContinuityEvals.find((entry) => entry.id === "continuity-001");
+  assert.ok(testCase, "missing continuity-001");
+
+  const result = await runUsageLayerEvalCase(testCase);
+
+  assert.equal(result.actual_lane, "knowledge_assistant");
+  assert.equal(result.actual_action, "get_company_brain_doc_detail");
+  assert.equal(result.generic, false);
+  assert.equal(result.first_turn_success, true);
+  assert.match(result.reply_text, /Onboarding SOP/);
+});
+
+test("usage-layer runner marks successful lookup-plus-delivery requests as partial success", async () => {
+  const testCase = followupMultiIntentContinuityEvals.find((entry) => entry.id === "multi-intent-010");
+  assert.ok(testCase, "missing multi-intent-010");
+
+  const result = await runUsageLayerEvalCase(testCase);
+
+  assert.equal(result.actual_eval_outcome, "partial_success");
+  assert.equal(result.actual_success_type, "partial_success");
+  assert.equal(result.generic, false);
+  assert.match(result.reply_text, /OKR Weekly Review/);
+  assert.match(result.reply_text, /不能直接替你送出|手動貼上/);
 });
 
 test("workflow timeout governance pack stays bounded to the controlled timeout families", () => {

@@ -1,5 +1,6 @@
 import { pathToFileURL } from "node:url";
 import { usageLayerEvals } from "./usage-layer-evals.mjs";
+import { followupMultiIntentContinuityEvals } from "./followup-multi-intent-continuity-evals.mjs";
 import { registeredAgentFamilyEvals } from "./registered-agent-family-evals.mjs";
 import { workflowTimeoutGovernanceEvals } from "./workflow-timeout-governance-evals.mjs";
 import { runPlannerUserInputEdge } from "../../src/planner-user-input-edge.mjs";
@@ -119,7 +120,7 @@ const PARTIAL_SUCCESS_PATTERNS = [
   /先把.*部分完成/i,
 ];
 const DEICTIC_PATTERNS = [
-  /這個|這份|這批|這些|這則|這篇|這份文件|第\d+份/u,
+  /這個|这个|那個|那个|這份|这份|那份|這批|這些|這則|这则|那則|那则|這篇|这篇|那篇|這份文件|这份文件|那份文件|第\d+份|第[一二三四五六七八九十]+份/u,
 ];
 const TOKEN_PATTERN = /[A-Za-z0-9_-]+|[\u4e00-\u9fff]{2,}/gu;
 const STOPWORDS = new Set([
@@ -328,19 +329,70 @@ function toPercent(numerator = 0, denominator = 0) {
 }
 
 function extractKeywords(text = "") {
-  return [...new Set(
-    (normalizeText(text).match(TOKEN_PATTERN) || [])
-      .map((token) => token.trim())
-      .filter((token) => token.length >= 2 && !STOPWORDS.has(token)),
-  )];
+  const rawTokens = (normalizeText(text).match(TOKEN_PATTERN) || [])
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2 && !STOPWORDS.has(token));
+  const expandedTokens = [];
+
+  for (const token of rawTokens) {
+    expandedTokens.push(token);
+    if (/^[\u4e00-\u9fff]+$/u.test(token) && token.length > 4) {
+      for (let size = 2; size <= Math.min(4, token.length); size += 1) {
+        for (let index = 0; index <= token.length - size; index += 1) {
+          expandedTokens.push(token.slice(index, index + size));
+        }
+      }
+    }
+  }
+
+  return [...new Set(expandedTokens.filter((token) => token.length >= 2 && !STOPWORDS.has(token)))];
 }
 
-function hasKeywordOverlap(replyText = "", requestText = "") {
+function hasKeywordOverlap(replyText = "", requestText = "", contextTexts = []) {
   const normalizedReply = normalizeText(replyText);
-  return extractKeywords(requestText).some((keyword) => normalizedReply.includes(keyword));
+  const keywords = [
+    ...extractKeywords(requestText),
+    ...extractKeywords(Array.isArray(contextTexts) ? contextTexts.join(" ") : ""),
+  ];
+  return [...new Set(keywords)].some((keyword) => normalizedReply.includes(keyword));
 }
 
-function looksGenericReply({ replyText = "", requestText = "" } = {}) {
+function collectContextTexts(testCase = {}) {
+  const plannerContext = testCase?.context?.planner && typeof testCase.context.planner === "object"
+    ? testCase.context.planner
+    : {};
+  const activeDoc = plannerContext.active_doc && typeof plannerContext.active_doc === "object"
+    ? plannerContext.active_doc
+    : null;
+  const activeCandidates = Array.isArray(plannerContext.active_candidates)
+    ? plannerContext.active_candidates
+    : [];
+  const activeExecutiveTask = testCase?.context?.active_executive_task && typeof testCase.context.active_executive_task === "object"
+    ? testCase.context.active_executive_task
+    : null;
+  return [
+    normalizeText(activeDoc?.title || ""),
+    normalizeText(activeDoc?.doc_id || ""),
+    ...activeCandidates.flatMap((item) => [
+      normalizeText(item?.title || ""),
+      normalizeText(item?.doc_id || ""),
+    ]),
+    normalizeText(plannerContext.active_theme || ""),
+    normalizeText(testCase?.context?.active_workflow_mode || ""),
+    normalizeText(activeExecutiveTask?.objective || ""),
+    normalizeText(activeExecutiveTask?.title || ""),
+  ].filter(Boolean);
+}
+
+function hasContinuationContext(testCase = {}) {
+  return collectContextTexts(testCase).length > 0;
+}
+
+function looksGenericReply({
+  replyText = "",
+  requestText = "",
+  contextTexts = [],
+} = {}) {
   const normalizedReply = normalizeText(replyText);
   if (!normalizedReply) {
     return true;
@@ -357,7 +409,7 @@ function looksGenericReply({ replyText = "", requestText = "" } = {}) {
   if (GENERIC_PATTERNS.some((pattern) => pattern.test(normalizedReply))) {
     return true;
   }
-  return !hasKeywordOverlap(normalizedReply, requestText);
+  return !hasKeywordOverlap(normalizedReply, requestText, contextTexts);
 }
 
 function isClarificationReply(replyText = "") {
@@ -389,6 +441,13 @@ function classifyEvalOutcome({
 function requestLikelyNeedsClarification(requestText = "") {
   const normalizedRequest = normalizeText(requestText);
   return DEICTIC_PATTERNS.some((pattern) => pattern.test(normalizedRequest));
+}
+
+function requestActuallyNeedsClarification(testCase = {}) {
+  if (!requestLikelyNeedsClarification(testCase.user_text)) {
+    return false;
+  }
+  return !hasContinuationContext(testCase);
 }
 
 function normalizeEvalCase(testCase = {}) {
@@ -732,6 +791,24 @@ async function runCloudDocWorkflowEvalCase(testCase = {}, route = {}, { signal =
     replyText: normalizeText(reply?.text || ""),
     ownerSurface: "workflow:cloud_doc_organization",
     governance: reply?.timeout_governance || null,
+  };
+}
+
+async function runMockPlannerEnvelopeEvalCase(testCase = {}) {
+  const plannerEnvelope = testCase?.context?.mock_planner_envelope
+    && typeof testCase.context.mock_planner_envelope === "object"
+    && !Array.isArray(testCase.context.mock_planner_envelope)
+    ? testCase.context.mock_planner_envelope
+    : {};
+  const userResponse = normalizeUserResponse({
+    plannerEnvelope,
+    requestText: testCase.user_text,
+    logger: noopLogger,
+  });
+  return {
+    plannerEnvelope,
+    userResponse,
+    replyText: renderUserResponseText(userResponse),
   };
 }
 
@@ -1169,7 +1246,9 @@ export async function runUsageLayerEvalCase(testCase = {}, {
   let execution;
   primeUsageLayerEvalRuntimeContext(testCase, sessionKey);
   try {
-    if (governanceConfig) {
+    if (testCase?.context?.mock_planner_envelope) {
+      execution = await runMockPlannerEnvelopeEvalCase(testCase);
+    } else if (governanceConfig) {
       execution = await runWorkflowTimeoutGovernanceEvalCase(testCase, effectiveRoute);
     } else if (
       normalizeText(testCase?.expected_lane || "") === "personal_assistant"
@@ -1248,13 +1327,14 @@ export async function runUsageLayerEvalCase(testCase = {}, {
   const generic = looksGenericReply({
     replyText,
     requestText: testCase.user_text,
+    contextTexts: collectContextTexts(testCase),
   });
   const actualEvalOutcome = classifyEvalOutcome({
     successType: actualSuccessType,
     generic,
   });
   const unnecessaryClarification = actualSuccessType === "clarify"
-    && !requestLikelyNeedsClarification(testCase.user_text);
+    && !requestActuallyNeedsClarification(testCase);
   const wrongRoute = normalizeText(effectiveRoute?.lane || "") !== normalizeText(testCase.expected_lane || "")
     || normalizeText(effectiveRoute?.planner_action || "") !== normalizeText(testCase.expected_planner_action || "")
     || normalizeText(effectiveRoute?.agent_or_tool || "") !== normalizeText(testCase.expected_agent_or_tool || "");
@@ -1493,6 +1573,9 @@ function resolveUsageLayerEvalPack(packName = "") {
   }
   if (normalizedPackName === "registered-agent-family") {
     return registeredAgentFamilyEvals;
+  }
+  if (normalizedPackName === "followup-multi-intent-continuity") {
+    return followupMultiIntentContinuityEvals;
   }
   if (normalizedPackName === "workflow-timeout-governance") {
     return workflowTimeoutGovernanceEvals;
