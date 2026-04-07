@@ -249,6 +249,8 @@ node scripts/runtime-workflow-eval.mjs
 ```bash
 npm run executive:replay -- path/to/replay-spec.json
 npm run executive:replay -- path/to/replay-spec.json --json
+npm run executive:replay-pack
+npm run executive:replay-pack -- --json
 ```
 
 輸入最小 shape：
