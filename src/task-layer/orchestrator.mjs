@@ -1,8 +1,9 @@
 import { classifyTask } from "./task-classifier.mjs";
 import { TASK_SKILL_MAP } from "./task-skill-map.mjs";
+import { sortTasks } from "./task-dependency.mjs";
 
 export async function runTaskLayer(input, runSkill) {
-  const tasks = classifyTask(input);
+  const tasks = sortTasks(classifyTask(input));
   const results = [];
 
   for (const task of tasks) {
@@ -20,6 +21,8 @@ export async function runTaskLayer(input, runSkill) {
         ok: false,
         error: error?.message || String(error),
       });
+      // Fail soft: keep advancing remaining tasks even if one task fails.
+      continue;
     }
   }
 

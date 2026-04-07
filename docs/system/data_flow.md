@@ -201,16 +201,18 @@ Current path:
 
 1. an internal caller passes raw user text to `/Users/seanhan/Documents/Playground/src/task-layer/task-classifier.mjs`
 2. `classifyTask(...)` emits zero or more deterministic task tags from keyword heuristics
-3. `/Users/seanhan/Documents/Playground/src/task-layer/task-skill-map.mjs` resolves each tag to a string skill identifier
-4. `/Users/seanhan/Documents/Playground/src/task-layer/orchestrator.mjs` invokes the caller-provided `runSkill(skill, { input, task })`
-5. the helper returns `{ tasks, results }` with per-task success or bounded error text
+3. `/Users/seanhan/Documents/Playground/src/task-layer/task-dependency.mjs` normalizes those tags into the checked-in execution order
+4. `/Users/seanhan/Documents/Playground/src/task-layer/task-skill-map.mjs` resolves each tag to a string skill identifier
+5. `/Users/seanhan/Documents/Playground/src/task-layer/orchestrator.mjs` invokes the caller-provided `runSkill(skill, { input, task })`
+6. the helper returns `{ tasks, results }` with per-task success or bounded error text
 
 Current truth:
 
 - implemented as an adjacent helper with an optional planner pre-pass
 - current checked-in tags are `copywriting`, `image`, and `publish`
+- current checked-in execution order is `copywriting -> image -> publish`
 - current checked-in mapped identifiers are `copy_agent`, `image_agent`, and `publish_agent`
-- execution is sequential and callback-driven; there is no checked-in queue or checked-in skill-runtime registration on this path
+- execution is sequential and callback-driven; task failures are recorded fail-soft and later tasks still run; there is no checked-in queue or checked-in skill-runtime registration on this path
 - `executePlannedUserInput(...)` may call this helper before normal planning only when the caller explicitly supplies `runSkill`
 - when that optional pre-pass detects more than one task, planner execution returns a bounded `multi_task` result through the same canonical `answer / sources / limitations` boundary
 - if the helper detects zero or one task, or if the optional pre-pass fails, execution falls back to the original planner path
