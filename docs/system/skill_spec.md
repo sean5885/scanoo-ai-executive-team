@@ -13,6 +13,7 @@ Current code anchors:
 - `/Users/seanhan/Documents/Playground/src/skill-runtime.mjs`
 - `/Users/seanhan/Documents/Playground/src/skill-registry.mjs`
 - `/Users/seanhan/Documents/Playground/src/skills/document-fetch.mjs`
+- `/Users/seanhan/Documents/Playground/src/skills/image-generate-skill.mjs`
 - `/Users/seanhan/Documents/Playground/src/skills/document-summarize-skill.mjs`
 - `/Users/seanhan/Documents/Playground/src/skills/search-and-summarize-skill.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner/skill-bridge.mjs`
@@ -26,7 +27,7 @@ Related mirror:
 This baseline is intentionally narrow:
 
 - it defines what a skill is
-- it gives two checked-in read-only examples
+- it gives three checked-in skill examples
 - it also has one checked-in read-only helper under `src/skills/` that is not a registered skill definition
 - it keeps planner, read-runtime, and mutation-runtime boundaries explicit
 - it does not add a new public route
@@ -104,6 +105,12 @@ Boundary:
   - selector path: chosen only by deterministic runtime conditions such as `taskType=document_summary_skill`
   - strict planner catalog admission: only on the non-overlapping single-document summary boundary
   - even when planner can call either skill directly, output still stays behind `planner/skill-bridge.mjs`, `user-response-normalizer.mjs`, and canonical source mapping
+  - planner action: `image_generate`
+  - backing skill: `image_generate`
+  - surface layer: `internal_only`
+  - planner visibility: `deterministic_only`
+  - selector path: none; current checked-in usage is direct bridge invocation by internal callers
+  - current executor returns a deterministic placeholder image URL and does not yet call an external image backend
 
 ### Read / Write Runtime Boundary
 
@@ -131,6 +138,12 @@ Current checked-in examples:
   - read-only
   - uses `read-runtime`
   - allowed effect is only `read:get_company_brain_doc_detail`
+  - declared `skill_class=read_only`
+  - declared `runtime_access=["read_runtime"]`
+- `image_generate`
+  - read-only
+  - currently returns a deterministic placeholder image URL without external runtime side effects
+  - allowed effects are empty
   - declared `skill_class=read_only`
   - declared `runtime_access=["read_runtime"]`
 - `document-fetch` helper
@@ -203,7 +216,7 @@ These capabilities existed before the checked-in skill runtime, but were embedde
 | `planner/knowledge-bridge.mjs` planner answer helper | rewrites query, retrieves, and builds summary for planner-side knowledge use | helper is skill-like; still not a generic skill runtime |
 
 Current checked-in skill baseline does not replace those flows.
-It only introduces a shared contract and two minimal sample implementations.
+It only introduces a shared contract and three minimal checked-in implementations.
 
 ## Checked-In Example Skill
 

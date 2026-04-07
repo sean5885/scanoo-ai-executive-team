@@ -110,6 +110,9 @@
     "selector_search_and_summarize_skill": {
       "surface": ["planner"]
     },
+    "selector_image_generate_skill": {
+      "surface": ["planner"]
+    },
     "selector_document_summarize_skill": {
       "surface": ["planner"]
     },
@@ -473,6 +476,101 @@
             "properties": {
               "skill": { "type": "string" },
               "query": { "type": ["string", "null"] },
+              "summary": { "type": ["string", "null"] },
+              "hits": { "type": "number" },
+              "found": { "type": "boolean" },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["id", "title", "url", "snippet"],
+                  "properties": {
+                    "id": { "type": ["string", "null"] },
+                    "title": { "type": ["string", "null"] },
+                    "url": { "type": ["string", "null"] },
+                    "snippet": { "type": ["string", "null"] }
+                  }
+                }
+              },
+              "limitations": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "side_effects": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["mode", "action", "runtime", "authority"],
+                  "properties": {
+                    "mode": { "type": ["string", "null"] },
+                    "action": { "type": ["string", "null"] },
+                    "runtime": { "type": ["string", "null"] },
+                    "authority": { "type": ["string", "null"] }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "error_codes": [
+        "contract_violation",
+        "runtime_exception",
+        "not_found"
+      ]
+    },
+    "image_generate": {
+      "planner_visibility": "deterministic_only",
+      "skill_surface_policy": {
+        "surface_layer": "internal_only",
+        "promotion_stage": "internal_only",
+        "previous_promotion_stage": null,
+        "planner_catalog_eligible": false,
+        "readiness_gate": {
+          "regression_suite_passed": false,
+          "answer_pipeline_enforced": false,
+          "observability_evidence_verified": false,
+          "raw_skill_output_blocked": false,
+          "output_shape_stable": false,
+          "side_effect_boundary_locked": false
+        },
+        "planner_admission_boundary": {
+          "require_signals": [],
+          "forbid_signals": [],
+          "fail_closed_on_ambiguity": true
+        }
+      },
+      "input_schema": {
+        "type": "object",
+        "required": ["prompt"],
+        "properties": {
+          "prompt": { "type": "string" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["ok", "action", "trace_id", "data"],
+        "properties": {
+          "ok": { "type": "boolean" },
+          "action": { "type": "string" },
+          "trace_id": { "type": ["string", "null"] },
+          "data": {
+            "type": "object",
+            "required": [
+              "skill",
+              "prompt",
+              "url",
+              "summary",
+              "hits",
+              "found",
+              "sources",
+              "limitations",
+              "side_effects"
+            ],
+            "properties": {
+              "skill": { "type": "string" },
+              "prompt": { "type": ["string", "null"] },
+              "url": { "type": ["string", "null"] },
               "summary": { "type": ["string", "null"] },
               "hits": { "type": "number" },
               "found": { "type": "boolean" },

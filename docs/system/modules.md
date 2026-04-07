@@ -126,6 +126,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/skill-runtime.mjs`
   - `/Users/seanhan/Documents/Playground/src/skill-registry.mjs`
   - `/Users/seanhan/Documents/Playground/src/skills/document-fetch.mjs`
+  - `/Users/seanhan/Documents/Playground/src/skills/image-generate-skill.mjs`
   - `/Users/seanhan/Documents/Playground/src/skills/search-and-summarize-skill.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner/skill-bridge.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner-visible-skill-observability.mjs`
@@ -138,7 +139,9 @@ Current-truth docs for onboarding are:
   - skill definitions must now declare `skill_class` and `runtime_access`
   - the runtime validates input, output, and side effects
   - the runtime rejects non-serializable input/output and nested skill execution
-  - the checked-in sample skills are read-only and go through `read-runtime`
+  - the checked-in skill set is currently `search_and_summarize`, `document_summarize`, and `image_generate`
+  - `search_and_summarize` and `document_summarize` are read-only and go through `read-runtime`
+  - `image_generate` is a checked-in internal-only read-only skill that returns a deterministic placeholder image URL without external side effects
   - `src/skills/document-fetch.mjs` is a secondary read-only helper under the same module group; it resolves `document_id` from direct input or raw Lark-style card payload and returns bounded `missing_access_token | not_found | permission_denied` failures without registering a new planner-visible skill
   - planner can consume a skill result through a bridge envelope
   - planner-visible skill selection is deterministic-only and conflict-fail-closed
@@ -177,7 +180,7 @@ Current-truth docs for onboarding are:
   - if that optional pre-pass detects more than one task, planner execution short-circuits into a bounded `multi_task` result that still stays inside the canonical `answer / sources / limitations` boundary
   - if no `runSkill` callback is provided, the pre-pass errors, or at most one task is detected, the original planner flow continues unchanged
   - the checked-in public `/answer` edge does not currently provide `runSkill`, so this does not change the default public route behavior
-  - `document_summarize` is a checked-in skill-backed action, `message_send` is a checked-in write action, and `image_generate` is currently only a task-layer routed identifier placeholder rather than a checked-in skill-runtime registration
+  - `document_summarize` is a checked-in skill-backed action, `message_send` is a checked-in write action, and `image_generate` is now a checked-in internal-only skill-backed action that still returns a placeholder URL rather than calling a real image backend
 - Evidence:
   - `/Users/seanhan/Documents/Playground/tests/task-dependency.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/task-layer.test.mjs`

@@ -68,6 +68,10 @@ Current checked-in skills:
   - `surface_layer = planner_visible`
   - `promotion_stage = planner_visible`
   - `previous_promotion_stage = readiness_check`
+- `image_generate`
+  - `surface_layer = internal_only`
+  - `promotion_stage = internal_only`
+  - current checked-in usage is bridge-only and stays outside the strict planner catalog
 
 Current checked-in enforcement:
 
@@ -116,6 +120,11 @@ Current checked-in examples:
   - `runtime_access = ["read_runtime"]`
   - allowed side effects:
     - `read:get_company_brain_doc_detail`
+- `image_generate`
+  - `skill_class = read_only`
+  - `runtime_access = ["read_runtime"]`
+  - allowed side effects:
+    - none
 
 Current v1 surface rule by class:
 

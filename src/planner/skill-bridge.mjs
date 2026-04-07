@@ -397,6 +397,16 @@ export function buildPlannerSkillEnvelope(skillExecution = {}) {
   const output = skillExecution?.output && typeof skillExecution.output === "object" && !Array.isArray(skillExecution.output)
     ? skillExecution.output
     : {};
+  const imageUrl = cleanText(output.url) || null;
+  const imagePrompt = cleanText(output.prompt) || null;
+  const hits = Number.isFinite(output.hits)
+    ? Number(output.hits)
+    : imageUrl
+      ? 1
+      : 0;
+  const found = typeof output.found === "boolean"
+    ? output.found
+    : Boolean(imageUrl);
 
   return {
     ok: true,
@@ -406,9 +416,11 @@ export function buildPlannerSkillEnvelope(skillExecution = {}) {
       ...(cleanText(output.query) ? { query: cleanText(output.query) } : {}),
       ...(cleanText(output.doc_id) ? { doc_id: cleanText(output.doc_id) } : {}),
       ...(cleanText(output.title) ? { title: cleanText(output.title) } : {}),
+      ...(imagePrompt ? { prompt: imagePrompt } : {}),
+      ...(imageUrl ? { url: imageUrl } : {}),
       summary: cleanText(output.summary) || null,
-      hits: Number.isFinite(output.hits) ? Number(output.hits) : 0,
-      found: output.found === true,
+      hits,
+      found,
       sources: normalizePlannerSkillSources(output.sources),
       limitations: normalizeStringList(output.limitations),
       side_effects: normalizePlannerSkillSideEffects(skillExecution?.side_effects),
@@ -537,6 +549,36 @@ const plannerSkillActionRegistry = createPlannerSkillActionRegistry([
         limit: normalizedPayload.limit ?? null,
         pathname: normalizedPayload.pathname ?? null,
         reader_overrides: normalizedPayload.reader_overrides ?? null,
+      };
+    },
+  },
+  {
+    action: "image_generate",
+    skill_name: "image_generate",
+    surface_layer: "internal_only",
+    promotion_stage: "internal_only",
+    skill_class: "read_only",
+    runtime_access: ["read_runtime"],
+    selector_mode: "deterministic_only",
+    selector_key: "skill.image_generate.internal",
+    selector_task_types: [],
+    routing_reason: "selector_image_generate_skill",
+    selection_reason: "內部 image skill bridge 會回傳受控 placeholder image 結果。",
+    allowed_side_effects: {
+      read: [],
+      write: [],
+    },
+    buildSkillInput(payload = {}) {
+      const normalizedPayload = payload && typeof payload === "object" && !Array.isArray(payload)
+        ? payload
+        : {};
+      return {
+        prompt: cleanText(
+          normalizedPayload.prompt
+          || normalizedPayload.input
+          || normalizedPayload.query
+          || "",
+        ),
       };
     },
   },
