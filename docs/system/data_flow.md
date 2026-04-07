@@ -195,6 +195,24 @@ Current truth:
 - `search_and_summarize` is planner-visible only on its query-bound search-plus-summarize admission boundary and otherwise fails closed back to the original routing family
 - this does not bypass mutation-runtime for writes
 
+### 4A-1. Task Layer Helper
+
+Current path:
+
+1. an internal caller passes raw user text to `/Users/seanhan/Documents/Playground/src/task-layer/task-classifier.mjs`
+2. `classifyTask(...)` emits zero or more deterministic task tags from keyword heuristics
+3. `/Users/seanhan/Documents/Playground/src/task-layer/task-skill-map.mjs` resolves each tag to a string skill identifier
+4. `/Users/seanhan/Documents/Playground/src/task-layer/orchestrator.mjs` invokes the caller-provided `runSkill(skill, { input, task })`
+5. the helper returns `{ tasks, results }` with per-task success or bounded error text
+
+Current truth:
+
+- implemented as an adjacent helper only
+- current checked-in tags are `copywriting`, `image`, and `publish`
+- current checked-in mapped identifiers are `copy_agent`, `image_agent`, and `publish_agent`
+- execution is sequential and callback-driven; there is no checked-in queue, planner admission, or skill-runtime registration on this path
+- this helper does not create a new public route and does not change the public `answer / sources / limitations` boundary
+
 ### 4B. Comment Rewrite
 
 Current path:

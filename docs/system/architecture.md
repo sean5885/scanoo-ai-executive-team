@@ -63,6 +63,10 @@ Use [deployment.md](/Users/seanhan/Documents/Playground/docs/system/deployment.m
   - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
 - answer orchestration
   - `/Users/seanhan/Documents/Playground/src/answer-service.mjs`
+- task-layer helper orchestration
+  - `/Users/seanhan/Documents/Playground/src/task-layer/task-classifier.mjs`
+  - `/Users/seanhan/Documents/Playground/src/task-layer/task-skill-map.mjs`
+  - `/Users/seanhan/Documents/Playground/src/task-layer/orchestrator.mjs`
 - executive orchestration
   - `/Users/seanhan/Documents/Playground/src/executive-planner.mjs`
   - `/Users/seanhan/Documents/Playground/src/executive-task-state.mjs`

@@ -132,6 +132,14 @@ This file explains which directories are part of the current runtime, which are 
   - the default adapter remains in-memory and the mock structured-log adapter is local-only
   - no production telemetry pipeline is wired from this subtree yet
 
+### Task Layer Helper
+
+- `/Users/seanhan/Documents/Playground/src/task-layer`
+- Current truth:
+  - contains a keyword task classifier, a static task-to-skill map, and a small callback-based orchestrator
+  - not wired into the main planner, public HTTP routes, or the checked-in skill runtime registry
+  - useful as an internal helper subtree for task decomposition experiments
+
 ### Write Surface
 
 - `/Users/seanhan/Documents/Playground/src/external-mutation-registry.mjs`

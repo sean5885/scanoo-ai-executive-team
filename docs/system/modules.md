@@ -155,6 +155,22 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/tests/planner-visible-live-telemetry-spec.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/planner-visible-live-telemetry-runtime.test.mjs`
 
+### 4A. Task Layer Helper
+
+- Implemented:
+  - `/Users/seanhan/Documents/Playground/src/task-layer/task-classifier.mjs`
+  - `/Users/seanhan/Documents/Playground/src/task-layer/task-skill-map.mjs`
+  - `/Users/seanhan/Documents/Playground/src/task-layer/orchestrator.mjs`
+- Current truth:
+  - a checked-in task-layer helper now exists under `src/task-layer/`
+  - it performs deterministic keyword classification into `copywriting`, `image`, and `publish`
+  - it maps those task tags to string skill identifiers `copy_agent`, `image_agent`, and `publish_agent`
+  - `runTaskLayer(...)` executes the provided `runSkill` callback sequentially per detected task and returns per-task success/failure records
+  - this helper is not wired into `GET /answer`, planner routing, `skill-runtime.mjs`, or any public HTTP route
+  - the mapped identifiers are local task-layer labels only; they are not evidence of checked-in planner-visible skill registration
+- Evidence:
+  - `/Users/seanhan/Documents/Playground/tests/task-layer.test.mjs`
+
 ### 5. External Write Path
 
 - Implemented:
