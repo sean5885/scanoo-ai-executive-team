@@ -65,6 +65,7 @@ const EXACT_METHODS = new Map([
   ["/sync/incremental", ["POST"]],
   ["/search", ["GET"]],
   ["/answer", ["GET"]],
+  ["/agent/lark-plugin/dispatch", ["POST"]],
   ["/agent/security/status", ["GET"]],
   ["/agent/approvals", ["GET"]],
   ["/agent/improvements", ["GET"]],

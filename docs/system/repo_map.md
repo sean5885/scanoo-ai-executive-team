@@ -26,6 +26,7 @@ This file explains which directories are part of the current runtime, which are 
 - Checked-in OpenClaw plugin adapter.
 - Current responsibility:
   - expose repo HTTP capabilities as OpenClaw tools
+  - send every tool call through the checked-in hybrid dispatch ingress before any plugin-native forward
 
 ### `/Users/seanhan/Documents/Playground/lobster_security`
 
@@ -99,6 +100,7 @@ This file explains which directories are part of the current runtime, which are 
 - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
 - `/Users/seanhan/Documents/Playground/src/index.mjs`
 - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
+- `/Users/seanhan/Documents/Playground/src/lark-plugin-dispatch-adapter.mjs`
 
 ### Read Surface
 
@@ -109,6 +111,7 @@ This file explains which directories are part of the current runtime, which are 
 
 ### Answer Surface
 
+- `/Users/seanhan/Documents/Playground/src/lark-plugin-dispatch-adapter.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs`
 - `/Users/seanhan/Documents/Playground/src/executive-planner.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-ingress-contract.mjs`
@@ -116,6 +119,9 @@ This file explains which directories are part of the current runtime, which are 
 - `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`
 - `/Users/seanhan/Documents/Playground/src/answer-service.mjs`
   - real file, but secondary helper rather than the main public `/answer` path
+- Current truth:
+  - the checked-in official plugin ingress first lands on `/Users/seanhan/Documents/Playground/src/lark-plugin-dispatch-adapter.mjs`
+  - `/answer` still exists as a direct ingress surface, but `LARK_DIRECT_INGRESS_PRIMARY_ENABLED=false` keeps it marked as non-primary
 
 ### Skill Runtime And Telemetry Spec
 

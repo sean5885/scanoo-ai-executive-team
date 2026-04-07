@@ -19,6 +19,12 @@ For the checked-in executive/workflow surfaces, same-account same-session entryp
 The Lark long-connection reply path is a bounded adjacent flow: inbound `im.message.receive_v1` events enter `/Users/seanhan/Documents/Playground/src/index.mjs`, lane selection happens before reply materialization, and `/Users/seanhan/Documents/Playground/src/runtime-message-reply.mjs` now treats the downstream Lark send as complete only when the message mutation response includes a concrete `message_id`.
 That same ingress surface now also tracks websocket lifecycle activity through `/Users/seanhan/Documents/Playground/src/long-connection-lifecycle-monitor.mjs`; the checked-in monitor now classifies decoded websocket control/data frames before `eventDispatcher.invoke(...)`, records the parsed callback/event type plus handler presence, and if the socket stays `ready` but has no inbound message or heartbeat activity past the watchdog window, the process exits so the local LaunchAgent can rebuild the persistent connection.
 
+The OpenClaw plugin ingress is now a second bounded adjacent flow: tool calls first post to `POST /agent/lark-plugin/dispatch`, `/Users/seanhan/Documents/Playground/src/lark-plugin-dispatch-adapter.mjs` normalizes `request_text / session_id / thread_id / chat_id / user_id / source / requested_capability`, derives the checked-in session key (`thread -> chat -> session`), records dispatch observability, and then either:
+
+1. executes the existing planner answer edge
+2. executes the existing lane path through a synthetic lane event/scope
+3. returns a `plugin_native` forward decision so the plugin can continue on the existing direct document/message/calendar/task-style route without entering the internal planner/lane business flow
+
 ## 1. Read Path
 
 ### 1A. Retrieval Index Read
@@ -147,6 +153,7 @@ Current truth:
 
 - this path is implemented
 - `/answer` is planner-first, not answer-service-first
+- direct `/answer` remains available, but when `LARK_DIRECT_INGRESS_PRIMARY_ENABLED=false` the runtime marks it as a non-primary ingress rather than the formal plugin entry
 - `/answer` and the `knowledge-assistant` lane now share the same planner answer-edge helper instead of re-assembling `execute -> envelope -> normalize` separately
 - that shared edge helper also absorbs current legacy planner result shapes into canonical `answer / sources / limitations` before the public boundary
 - for delivery/onboarding knowledge lookups, a single-hit company-brain search now turns into an answer-first reply that names the matched SOP/checklist document and surfaces bounded location/checklist/start-step hints from the indexed snippet, while preserving the same public `answer / sources / limitations` shape
@@ -167,6 +174,27 @@ Current truth:
 - this helper is implemented and tested
 - it is not the main public `/answer` route
 - even when planner uses a skill-backed action, the final user-facing reply still goes through the existing answer normalization path rather than exposing raw skill payload fields
+
+### 3A. Plugin Hybrid Dispatch Path
+
+Current path:
+
+1. OpenClaw tool call enters `/Users/seanhan/Documents/Playground/openclaw-plugin/lark-kb/index.ts`
+2. the plugin posts one normalized dispatch request to `POST /agent/lark-plugin/dispatch`
+3. `/Users/seanhan/Documents/Playground/src/lark-plugin-dispatch-adapter.mjs` decides:
+   - `knowledge_answer`
+   - `lane_backend`
+   - `plugin_native`
+4. `knowledge_answer` reuses `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs`
+5. `lane_backend` reuses `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
+6. `plugin_native` returns a forward decision and the plugin continues on the existing direct HTTP route
+
+Current truth:
+
+- the checked-in official plugin ingress is the hybrid dispatch route, not direct scattered route selection inside the plugin
+- plugin-native document/message/calendar/task-style tools stay outside the internal planner/lane business flow
+- lane-style asks such as Scanoo/analysis/diagnostic/compare/optimize can enter the existing lane backend without rewriting planner or removing skills
+- the dispatch layer records `request_text / source / session_id / thread_id / route_target / chosen_lane / chosen_skill / fallback_reason / final_status`
 
 ## 4. Adjacent Workflows
 

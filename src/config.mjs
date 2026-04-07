@@ -218,6 +218,10 @@ export const semanticClassifierJsonRetryMax = Number.parseInt(
   10,
 );
 export const openClawToolOutputMaxChars = Number.parseInt(process.env.OPENCLAW_TOOL_OUTPUT_MAX_CHARS || "2400", 10);
+export const larkPluginHybridDispatchEnabled =
+  String(process.env.LARK_PLUGIN_HYBRID_DISPATCH_ENABLED || "true").toLowerCase() === "true";
+export const larkDirectIngressPrimaryEnabled =
+  String(process.env.LARK_DIRECT_INGRESS_PRIMARY_ENABLED || "false").toLowerCase() === "true";
 export const meetingPromptMaxTokens = Number.parseInt(process.env.MEETING_PROMPT_MAX_TOKENS || "2200", 10);
 export const meetingTranscriptPromptMaxChars = Number.parseInt(
   process.env.MEETING_TRANSCRIPT_PROMPT_MAX_CHARS || "3600",

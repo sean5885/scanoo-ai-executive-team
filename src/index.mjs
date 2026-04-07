@@ -1,8 +1,9 @@
 import * as Lark from "@larksuiteoapi/node-sdk";
-import { baseConfig, botName } from "./config.mjs";
+import { baseConfig, botName, larkDirectIngressPrimaryEnabled } from "./config.mjs";
 import { resolveLarkBindingRuntime } from "./binding-runtime.mjs";
 import { startCommentSuggestionPoller } from "./comment-suggestion-poller.mjs";
 import { buildLaneFailureReply } from "./capability-lane.mjs";
+import { resolveDirectIngressSourceState } from "./lark-plugin-dispatch-adapter.mjs";
 import { executeCapabilityLane } from "./lane-executor.mjs";
 import { createRuntimeLogger, createTraceId, summarizeLarkEvent } from "./runtime-observability.mjs";
 import { startHttpServer } from "./http-server.mjs";
@@ -33,7 +34,14 @@ const eventDispatcher = new Lark.EventDispatcher({}).register({
       return;
     }
 
-    eventLogger.info("event_received");
+    const directIngressState = resolveDirectIngressSourceState({
+      source: "direct_lark_long_connection",
+      directIngressPrimaryEnabled: larkDirectIngressPrimaryEnabled,
+    });
+    eventLogger.info("event_received", {
+      ingress_primary: directIngressState.is_primary_entry === true,
+      ingress_note: directIngressState.fallback_reason || null,
+    });
 
     if (!messageEventDeduper.shouldProcess(data?.message?.message_id)) {
       eventLogger.warn("event_skipped", {

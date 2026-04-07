@@ -28,6 +28,7 @@ This is the grouped HTTP surface mirror for the current repo.
 | `/api/monitoring/metrics` | `GET` | aggregate request metrics | implemented |
 | `/api/monitoring/learning` | `GET` | review-first learning summary from request traces | implemented |
 | `/agent/improvements/learning/generate` | `POST` | persist reviewable improvement proposals | implemented |
+| `/agent/lark-plugin/dispatch` | `POST` | official Lark plugin hybrid dispatch entry; normalizes plugin request/session metadata, decides `knowledge_answer` vs `lane_backend` vs `plugin_native`, records observability, then either executes the bounded backend path or returns a plugin-native forward decision | implemented |
 
 ## 2. Retrieval and Public Answer Surface
 
@@ -43,6 +44,7 @@ This is the grouped HTTP surface mirror for the current repo.
 - the public route calls `executePlannedUserInput(...)`, not `answer-service.mjs` directly
 - the public body is shaped by `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
 - public `answer / sources / limitations` now only read from canonical `execution_result.data`
+- direct HTTP `/answer` still exists, but with `LARK_DIRECT_INGRESS_PRIMARY_ENABLED=false` the checked-in runtime marks it as a non-primary direct ingress path rather than the formal plugin entry
 - the public `/answer` payload still does not expose raw planner errors, but the in-process normalized object now carries a non-enumerable `failure_class` for usage-layer eval / telemetry classification
 - public `sources[]` lines are derived from canonical source objects through `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`
 - `answer-service.mjs` still exists as a secondary retrieval-answer helper, but it is not the primary HTTP answer surface

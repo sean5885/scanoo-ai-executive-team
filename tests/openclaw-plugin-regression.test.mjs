@@ -57,6 +57,27 @@ test("company_brain_apply uses the explicit apply route and returns structured o
       headers: init.headers,
       body: init.body ? JSON.parse(String(init.body)) : null,
     });
+
+    if (String(url).endsWith("/agent/lark-plugin/dispatch")) {
+      return new Response(JSON.stringify({
+        ok: true,
+        route_target: "plugin_native",
+        final_status: "plugin_native_forward",
+        forward_request: {
+          path: "/agent/company-brain/docs/doc-1/apply",
+          method: "POST",
+          body: {
+            actor: "reviewer@test",
+            source_stage: "approved_knowledge",
+            account_id: "acct-1",
+          },
+        },
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
     return new Response(JSON.stringify({
       ok: true,
       action: "apply_company_brain_approved_knowledge",
@@ -84,11 +105,15 @@ test("company_brain_apply uses the explicit apply route and returns structured o
     account_id: "acct-1",
   });
 
-  assert.equal(seen.length, 1);
-  assert.equal(seen[0].url, "http://127.0.0.1:3333/agent/company-brain/docs/doc-1/apply");
+  assert.equal(seen.length, 2);
+  assert.equal(seen[0].url, "http://127.0.0.1:3333/agent/lark-plugin/dispatch");
   assert.equal(seen[0].method, "POST");
-  assert.equal(typeof seen[0].headers["X-Request-Id"], "string");
-  assert.deepEqual(seen[0].body, {
+  assert.equal(seen[0].body.tool_name, "company_brain_apply");
+  assert.equal(seen[0].body.route_request.path, "/agent/company-brain/docs/doc-1/apply");
+  assert.equal(seen[1].url, "http://127.0.0.1:3333/agent/company-brain/docs/doc-1/apply");
+  assert.equal(seen[1].method, "POST");
+  assert.equal(typeof seen[1].headers["X-Request-Id"], "string");
+  assert.deepEqual(seen[1].body, {
     actor: "reviewer@test",
     source_stage: "approved_knowledge",
     account_id: "acct-1",
@@ -98,22 +123,91 @@ test("company_brain_apply uses the explicit apply route and returns structured o
   assert.equal(result.details.action, "apply_company_brain_approved_knowledge");
 });
 
+test("lark_kb_answer first enters plugin dispatch instead of calling /answer directly", async (t) => {
+  const api = createPluginApi();
+  register(api);
+  const tool = getTool(api, "lark_kb_answer");
+  const seen = [];
+
+  stubFetch(t, async (url, init = {}) => {
+    seen.push({
+      url: String(url),
+      method: init.method || "GET",
+      body: init.body ? JSON.parse(String(init.body)) : null,
+    });
+
+    assert.equal(String(url), "http://127.0.0.1:3333/agent/lark-plugin/dispatch");
+    return new Response(JSON.stringify({
+      ok: true,
+      route_target: "knowledge_answer",
+      final_status: "completed",
+      response: {
+        status: 200,
+        data: {
+          ok: true,
+          answer: "這是 adapter 回來的答案",
+          sources: ["source-a"],
+          limitations: [],
+        },
+      },
+      trace_id: "trace_dispatch_answer",
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  });
+
+  const result = await tool.execute("tool-2", {
+    q: "公司知識庫現在怎麼運作？",
+    account_id: "acct-2",
+  });
+
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].body.tool_name, "lark_kb_answer");
+  assert.equal(seen[0].body.route_request.path, "/answer?q=%E5%85%AC%E5%8F%B8%E7%9F%A5%E8%AD%98%E5%BA%AB%E7%8F%BE%E5%9C%A8%E6%80%8E%E9%BA%BC%E9%81%8B%E4%BD%9C%EF%BC%9F&account_id=acct-2");
+  assert.match(result.content[0].text, /lark_kb_answer/);
+  assert.equal(result.details.answer, "這是 adapter 回來的答案");
+});
+
 test("lobster_security_run_action keeps approval_required as a non-throwing plugin result", async (t) => {
   const api = createPluginApi();
   register(api);
   const tool = getTool(api, "lobster_security_run_action");
 
-  stubFetch(t, async () => new Response(JSON.stringify({
-    ok: false,
-    status: "approval_required",
-    approval_request: {
-      request_id: "req-1",
-      reason: "high_risk_command",
-    },
-  }), {
-    status: 409,
-    headers: { "content-type": "application/json" },
-  }));
+  stubFetch(t, async (url) => {
+    if (String(url).endsWith("/agent/lark-plugin/dispatch")) {
+      return new Response(JSON.stringify({
+        ok: true,
+        route_target: "plugin_native",
+        final_status: "plugin_native_forward",
+        forward_request: {
+          path: "/agent/tasks/task-1/actions",
+          method: "POST",
+          body: {
+            action: {
+              type: "command",
+              command: ["rm", "-rf", "/tmp/not-real"],
+            },
+          },
+        },
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    return new Response(JSON.stringify({
+      ok: false,
+      status: "approval_required",
+      approval_request: {
+        request_id: "req-1",
+        reason: "high_risk_command",
+      },
+    }), {
+      status: 409,
+      headers: { "content-type": "application/json" },
+    });
+  });
 
   const result = await tool.execute("tool-1", {
     task_id: "task-1",

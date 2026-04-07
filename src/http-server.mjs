@@ -2,6 +2,8 @@ import http from "node:http";
 import process from "node:process";
 import {
   httpRequestTimeoutMs,
+  larkDirectIngressPrimaryEnabled,
+  larkPluginHybridDispatchEnabled,
   oauthBaseUrl,
   oauthCallbackPath,
   oauthPort,
@@ -215,6 +217,12 @@ import {
 } from "./monitoring-store.mjs";
 import { normalizeUserResponse } from "./user-response-normalizer.mjs";
 import { runPlannerUserInputEdge } from "./planner-user-input-edge.mjs";
+import {
+  buildLarkPluginLaneContext,
+  executeLarkPluginDispatch,
+  resolveDirectIngressSourceState,
+} from "./lark-plugin-dispatch-adapter.mjs";
+import { executeCapabilityLane } from "./lane-executor.mjs";
 import db from "./db.mjs";
 import { buildExecutionEnvelope } from "./execution-envelope.mjs";
 import { withLarkWriteExecutionContext } from "./execute-lark-write.mjs";
@@ -794,6 +802,23 @@ function resolveExplicitPlannerAuthContext(res, requestUrl, body) {
     ...(headerAuth || {}),
     account_id: headerAuth?.account_id || getAccountId(requestUrl, body) || null,
   });
+}
+
+function resolvePlannerUserResponseStatusCode({ userResponse = {}, envelope = {} } = {}) {
+  const responseError = envelope?.error || envelope?.execution_result?.error || null;
+  if (userResponse?.ok === true) {
+    return 200;
+  }
+  if (responseError === "request_timeout") {
+    return 504;
+  }
+  if (responseError === "missing_user_access_token" || responseError === "oauth_reauth_required") {
+    return 401;
+  }
+  if (envelope?.error && !envelope?.execution_result) {
+    return 422;
+  }
+  return 200;
 }
 
 function companyBrainReadRequiresExplicitAuth(res, requestUrl) {
@@ -8044,9 +8069,15 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger) {
   }
 
   try {
+    const directIngressState = resolveDirectIngressSourceState({
+      source: "direct_http_answer",
+      directIngressPrimaryEnabled: larkDirectIngressPrimaryEnabled,
+    });
     logger.info("knowledge_answer_started", {
       account_id: getAccountId(requestUrl, body) || null,
       q_len: q.trim().length,
+      ingress_primary: directIngressState.is_primary_entry === true,
+      ingress_note: directIngressState.fallback_reason || null,
     });
     const { plannerResult: result, plannerEnvelope: envelope, userResponse } = await runPlannerUserInputEdge({
       text: q,
@@ -8064,16 +8095,7 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger) {
       ok: envelope.ok,
       planner_error: envelope.error || null,
     });
-    const responseError = envelope.error || envelope.execution_result?.error || null;
-    const statusCode = userResponse.ok === true
-      ? 200
-      : responseError === "request_timeout"
-      ? 504
-      : responseError === "missing_user_access_token" || responseError === "oauth_reauth_required"
-        ? 401
-        : envelope.error && !envelope.execution_result
-        ? 422
-        : 200;
+    const statusCode = resolvePlannerUserResponseStatusCode({ userResponse, envelope });
     jsonResponse(res, statusCode, {
       ...userResponse,
       __hide_trace_id: true,
@@ -8135,6 +8157,110 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger) {
       __hide_trace_id: true,
     });
   }
+}
+
+async function handleLarkPluginDispatch(res, requestUrl, body, logger = noopHttpLogger) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    jsonResponse(res, 400, {
+      ok: false,
+      error: "invalid_plugin_dispatch_payload",
+    });
+    return;
+  }
+
+  if (!cleanText(body?.route_request?.path)) {
+    jsonResponse(res, 400, {
+      ok: false,
+      error: "missing_plugin_dispatch_route_path",
+    });
+    return;
+  }
+
+  const dispatchLogger = logger.child("lark_plugin_dispatch", {
+    trace_id: res?.__trace_id || null,
+    request_id: res?.__request_id || null,
+  });
+
+  const result = await executeLarkPluginDispatch({
+    rawRequest: body,
+    logger: dispatchLogger,
+    pluginHybridDispatchEnabled: larkPluginHybridDispatchEnabled,
+    directIngressPrimaryEnabled: larkDirectIngressPrimaryEnabled,
+    async runKnowledgeAnswer({ request, decision }) {
+      const authContext = normalizeExplicitUserAuthContext({
+        account_id: request.account_id || null,
+        access_token: request.user_access_token || null,
+        source: "plugin_dispatch",
+      });
+      const { plannerEnvelope, userResponse } = await runPlannerUserInputEdge({
+        text: request.request_text,
+        logger: dispatchLogger.child("knowledge_answer"),
+        baseUrl: oauthBaseUrl,
+        authContext,
+        signal: logger?.__abort_signal || res?.__abort_signal || null,
+        requestId: res?.__request_id || null,
+        traceId: res?.__trace_id || null,
+        handlerName: "handleLarkPluginDispatch.knowledgeAnswer",
+        plannerExecutor: getHttpService("executePlannedUserInput", executePlannedUserInput),
+      });
+      return {
+        status: resolvePlannerUserResponseStatusCode({
+          userResponse,
+          envelope: plannerEnvelope,
+        }),
+        trace_id: res?.__trace_id || null,
+        data: {
+          ...userResponse,
+          route_target: decision.route_target,
+          chosen_lane: decision.chosen_lane || "knowledge-assistant",
+          chosen_skill: decision.chosen_skill || null,
+          fallback_reason: decision.fallback_reason || null,
+        },
+      };
+    },
+    async runLaneBackend({ request, decision }) {
+      const { event, scope } = buildLarkPluginLaneContext(request);
+      const reply = await executeCapabilityLane({
+        event,
+        scope,
+        logger: dispatchLogger.child(scope.capability_lane || "lane_backend"),
+        traceId: res?.__trace_id || null,
+      });
+      if (!reply?.text) {
+        return {
+          status: 422,
+          trace_id: res?.__trace_id || null,
+          data: {
+            ok: false,
+            error: "lane_backend_empty_reply",
+            route_target: decision.route_target,
+            chosen_lane: scope.capability_lane || null,
+            chosen_skill: decision.chosen_skill || null,
+            fallback_reason: decision.fallback_reason || "lane_backend_empty_reply",
+          },
+        };
+      }
+      return {
+        status: 200,
+        trace_id: res?.__trace_id || null,
+        data: {
+          ok: true,
+          answer: reply.text,
+          sources: [],
+          limitations: [],
+          route_target: decision.route_target,
+          chosen_lane: scope.capability_lane || null,
+          chosen_skill: decision.chosen_skill || null,
+          fallback_reason: decision.fallback_reason || null,
+        },
+      };
+    },
+  });
+
+  jsonResponse(res, 200, {
+    ...result,
+    trace_id: res?.__trace_id || result.trace_id || null,
+  });
 }
 
 async function handleSecureTaskStart(res, body) {
@@ -9347,6 +9473,13 @@ export function startHttpServer({
       if (requestUrl.pathname === "/answer" && req.method === "GET") {
         await runHttpRoute(requestLogger, "knowledge_answer", (routeLogger) =>
           handleAnswer(res, requestUrl, body, routeLogger)
+        );
+        return;
+      }
+
+      if (requestUrl.pathname === "/agent/lark-plugin/dispatch" && req.method === "POST") {
+        await runHttpRoute(requestLogger, "lark_plugin_dispatch", (routeLogger) =>
+          handleLarkPluginDispatch(res, requestUrl, body, routeLogger)
         );
         return;
       }

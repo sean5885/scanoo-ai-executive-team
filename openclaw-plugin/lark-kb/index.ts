@@ -11,7 +11,12 @@ type PluginConfig = {
   timeoutMs?: number;
 };
 
+type InternalRequestInit = RequestInit & {
+  __skipHybridDispatch?: boolean;
+};
+
 const TOOL_OUTPUT_MAX_CHARS = Number.parseInt(process.env.OPENCLAW_TOOL_OUTPUT_MAX_CHARS || "2400", 10);
+const HYBRID_DISPATCH_PATH = "/agent/lark-plugin/dispatch";
 const toolExecutionContext = new AsyncLocalStorage<{
   action: string;
   params: Record<string, unknown>;
@@ -114,22 +119,70 @@ function getConfig(api: { pluginConfig?: PluginConfig }) {
   };
 }
 
-async function callJson(
+function parseJsonLikeBody(body: unknown): unknown {
+  if (body == null || body === "") {
+    return null;
+  }
+  if (typeof body !== "string") {
+    return body;
+  }
+  try {
+    return JSON.parse(body);
+  } catch {
+    return body;
+  }
+}
+
+function inferRequestText(path: string, params: Record<string, unknown>) {
+  const direct = trimText(
+    params.q
+    ?? params.query
+    ?? params.text
+    ?? params.prompt
+    ?? params.title
+    ?? params.skill_query
+    ?? "",
+    1000,
+  );
+  if (direct) {
+    return direct;
+  }
+  const parsed = new URL(path, "http://plugin.local");
+  return trimText(parsed.searchParams.get("q") || parsed.searchParams.get("query") || parsed.searchParams.get("text") || "", 1000);
+}
+
+function inferRequestedCapability(action: string, path: string, params: Record<string, unknown>) {
+  const normalizedAction = String(action || "").trim();
+  if (!normalizedAction) {
+    return "plugin_native_unknown";
+  }
+  if (normalizedAction === "lark_kb_answer") {
+    const requestText = inferRequestText(path, params);
+    if (/(scanoo|分析|診斷|诊断|比較|比较|優化|优化|compare|diagnos|optimi)/i.test(requestText)) {
+      return "lane_style_capability";
+    }
+    return "knowledge_answer";
+  }
+  return normalizedAction;
+}
+
+async function fetchJsonDirect(
   api: { pluginConfig?: PluginConfig },
   path: string,
-  init?: RequestInit,
+  init?: InternalRequestInit,
 ): Promise<{ status: number; data: unknown }> {
   const cfg = getConfig(api);
   const executionContext = toolExecutionContext.getStore();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), cfg.timeoutMs);
   try {
+    const { __skipHybridDispatch: _skipHybridDispatch, ...fetchInit } = init ?? {};
     const res = await fetch(`${cfg.baseUrl}${path}`, {
-      ...init,
+      ...fetchInit,
       headers: {
         "Content-Type": "application/json",
         ...(executionContext?.requestId ? { "X-Request-Id": executionContext.requestId } : {}),
-        ...(init?.headers ?? {}),
+        ...(fetchInit?.headers ?? {}),
       },
       signal: controller.signal,
     });
@@ -149,6 +202,73 @@ async function callJson(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function callJson(
+  api: { pluginConfig?: PluginConfig },
+  path: string,
+  init?: InternalRequestInit,
+): Promise<{ status: number; data: unknown }> {
+  const executionContext = toolExecutionContext.getStore();
+  const shouldUseHybridDispatch = Boolean(
+    executionContext
+    && init?.__skipHybridDispatch !== true
+    && path !== HYBRID_DISPATCH_PATH
+  );
+
+  if (!shouldUseHybridDispatch) {
+    return fetchJsonDirect(api, path, init);
+  }
+
+  const params = executionContext?.params && typeof executionContext.params === "object"
+    ? executionContext.params
+    : {};
+  const routeRequestBody = parseJsonLikeBody(init?.body);
+  const dispatchResult = await fetchJsonDirect(api, HYBRID_DISPATCH_PATH, {
+    method: "POST",
+    __skipHybridDispatch: true,
+    body: JSON.stringify({
+      request_text: inferRequestText(path, params),
+      session_id: typeof params.session_id === "string" ? params.session_id : null,
+      thread_id: typeof params.thread_id === "string" ? params.thread_id : null,
+      chat_id: typeof params.chat_id === "string" ? params.chat_id : null,
+      user_id: typeof params.user_id === "string" ? params.user_id : null,
+      account_id: typeof params.account_id === "string" ? params.account_id : null,
+      source: "official_lark_plugin",
+      tool_name: executionContext?.action || null,
+      requested_capability: inferRequestedCapability(executionContext?.action || "", path, params),
+      route_request: {
+        path,
+        method: init?.method || "GET",
+        body: routeRequestBody,
+      },
+    }),
+  });
+
+  const dispatchData = dispatchResult.data as Record<string, unknown> | null;
+  if (executionContext && !executionContext.traceId) {
+    executionContext.traceId = extractTraceId(dispatchData?.trace_id ?? dispatchData?.response ?? dispatchData);
+  }
+
+  const forwardRequest = dispatchData?.forward_request as Record<string, unknown> | null;
+  if (dispatchResult.status < 400 && forwardRequest && String(dispatchData?.route_target || "") === "plugin_native") {
+    const forwardBody = forwardRequest.body == null ? undefined : JSON.stringify(forwardRequest.body);
+    return fetchJsonDirect(api, String(forwardRequest.path || path), {
+      method: String(forwardRequest.method || "GET"),
+      __skipHybridDispatch: true,
+      body: forwardBody,
+    });
+  }
+
+  if (dispatchResult.status < 400 && dispatchData?.response && typeof dispatchData.response === "object") {
+    const response = dispatchData.response as Record<string, unknown>;
+    return {
+      status: Number.isFinite(Number(response.status)) ? Number(response.status) : dispatchResult.status,
+      data: response.data ?? dispatchData,
+    };
+  }
+
+  return dispatchResult;
 }
 
 function trimText(value: unknown, maxChars = 220) {

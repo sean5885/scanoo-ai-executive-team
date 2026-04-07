@@ -753,12 +753,18 @@ function endOfDayUnix() {
 }
 
 async function resolveAuthContext(event, logger = noopLogger, { allowTenantFallback = false } = {}) {
+  const pluginDispatchAccountId = cleanText(event?.__lobster_plugin_dispatch?.account_id);
   const senderOpenId = cleanText(event?.sender?.sender_id?.open_id);
-  const scoped = senderOpenId ? await getStoredAccountContextByOpenId(senderOpenId) : null;
+  const scoped = pluginDispatchAccountId
+    ? { account: { id: pluginDispatchAccountId } }
+    : senderOpenId
+      ? await getStoredAccountContextByOpenId(senderOpenId)
+      : null;
   const fallback = scoped || (await getStoredAccountContext());
   if (!fallback?.account?.id) {
     logger.warn("missing_auth_context", {
       sender_open_id: formatIdentifierHint(senderOpenId),
+      plugin_dispatch_account_id: formatIdentifierHint(pluginDispatchAccountId),
     });
     return null;
   }

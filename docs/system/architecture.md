@@ -42,6 +42,7 @@ Use [deployment.md](/Users/seanhan/Documents/Playground/docs/system/deployment.m
   - `/Users/seanhan/Documents/Playground/src/index.mjs`
 - OpenClaw plugin tool surface
   - `/Users/seanhan/Documents/Playground/openclaw-plugin/lark-kb/index.ts`
+  - current checked-in plugin entry first re-enters the Node runtime through `/Users/seanhan/Documents/Playground/src/lark-plugin-dispatch-adapter.mjs` via `POST /agent/lark-plugin/dispatch`
 
 ### Application Layer
 
@@ -51,6 +52,7 @@ Use [deployment.md](/Users/seanhan/Documents/Playground/docs/system/deployment.m
   - `/Users/seanhan/Documents/Playground/src/http-server.mjs`
   - `/Users/seanhan/Documents/Playground/src/http-route-contracts.mjs`
   - `/Users/seanhan/Documents/Playground/src/monitoring-store.mjs`
+  - `/Users/seanhan/Documents/Playground/src/lark-plugin-dispatch-adapter.mjs`
 - comment rewrite orchestration
   - `/Users/seanhan/Documents/Playground/src/doc-comment-rewrite.mjs`
   - `/Users/seanhan/Documents/Playground/src/doc-preview-cards.mjs`
@@ -142,6 +144,7 @@ These describe code structure and responsibility, not how many processes are run
   - central runtime process
   - exposes all HTTP routes
   - calls OAuth, Lark content, sync, search/answer, security bridge, and monitoring query modules
+  - now also exposes the checked-in plugin hybrid dispatch ingress and keeps direct `/answer` separate from the official plugin entry
 
 - `monitoring-store.mjs`
   - persists one compact summary row per HTTP request into SQLite
@@ -204,7 +207,8 @@ These describe code structure and responsibility, not how many processes are run
   - reads a doc, reads comments, builds a patch-oriented rewrite preview, then optionally materializes the approved patch back to the doc
 
 - `openclaw-plugin/lark-kb`
-  - maps OpenClaw tool calls to repo HTTP routes
+  - maps OpenClaw tool calls into the checked-in plugin hybrid dispatch ingress first
+  - plugin-native document/message/calendar/task-style tools are still forwarded to their existing HTTP routes after dispatch classification
 
 - `lobster_security`
   - separate Python runtime
