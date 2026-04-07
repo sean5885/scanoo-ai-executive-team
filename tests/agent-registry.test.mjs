@@ -5,6 +5,7 @@ import {
   getRegisteredAgent,
   listAgentCapabilityMatrix,
   parseRegisteredAgentCommand,
+  resolveRegisteredAgentFamilyRequest,
 } from "../src/agent-registry.mjs";
 
 test("parseRegisteredAgentCommand resolves persona slash commands", () => {
@@ -26,6 +27,20 @@ test("parseRegisteredAgentCommand fail-closes knowledge without subcommand", () 
 
   assert.equal(parsed?.error, "ROUTING_NO_MATCH");
   assert.equal(parsed?.body, "請整理這批知識");
+});
+
+test("resolveRegisteredAgentFamilyRequest matches embedded slash and persona-style requests", () => {
+  const embeddedSlash = resolveRegisteredAgentFamilyRequest("把這輪改交給 /cmo", {
+    includeKnowledgeCommands: false,
+  });
+  const personaStyle = resolveRegisteredAgentFamilyRequest("請 consult agent 做方案比較", {
+    includeKnowledgeCommands: false,
+  });
+
+  assert.equal(embeddedSlash?.agent?.id, "cmo");
+  assert.equal(embeddedSlash?.surface, "persona_style");
+  assert.equal(personaStyle?.agent?.id, "consult");
+  assert.equal(personaStyle?.surface, "persona_style");
 });
 
 test("registered future agents are also available", () => {

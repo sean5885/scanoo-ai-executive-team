@@ -1,5 +1,6 @@
 import { pathToFileURL } from "node:url";
 import { usageLayerEvals } from "./usage-layer-evals.mjs";
+import { registeredAgentFamilyEvals } from "./registered-agent-family-evals.mjs";
 import { runPlannerUserInputEdge } from "../../src/planner-user-input-edge.mjs";
 import { normalizeUserResponse, renderUserResponseText } from "../../src/user-response-normalizer.mjs";
 import { resolveRoutingEvalCase } from "../../src/routing-eval.mjs";
@@ -12,7 +13,7 @@ import {
 import { getStoredAccountContext } from "../../src/lark-user-auth.mjs";
 import { buildLaneIntroReply } from "../../src/capability-lane.mjs";
 import { executeRegisteredAgent } from "../../src/agent-dispatcher.mjs";
-import { parseRegisteredAgentCommand } from "../../src/agent-registry.mjs";
+import { parseRegisteredAgentCommand, resolveRegisteredAgentFamilyRequest } from "../../src/agent-registry.mjs";
 import {
   hydratePlannerDocQueryRuntimeContext,
   resetPlannerDocQueryRuntimeContext,
@@ -343,6 +344,46 @@ function buildRegisteredAgentEvalText({
   ].join("\n");
 }
 
+async function buildResolvedRegisteredAgentEvalExecution({
+  testCase = {},
+  route = {},
+  agent,
+  requestText = "",
+} = {}) {
+  const normalizedRequestText = normalizeText(requestText || testCase.user_text);
+  const agentResult = await executeRegisteredAgent({
+    accountId: "usage-layer-eval",
+    agent,
+    requestText: normalizedRequestText,
+    scope: { session_key: `usage-layer-eval:${testCase.id}` },
+    searchFn() {
+      return {
+        items: [
+          buildUsageEvalSourceItem(
+            `${agent.label} Eval Context`,
+            `https://usage-layer.eval/${agent.id}`,
+            `這是 ${agent.label} 對「${normalizedRequestText}」的受控 usage-layer 測試上下文。`,
+          ),
+        ],
+      };
+    },
+    async textGenerator() {
+      return buildRegisteredAgentEvalText({
+        slash: agent.slash,
+        agentLabel: agent.label,
+        body: normalizedRequestText,
+      });
+    },
+    logger: noopLogger,
+  });
+
+  return {
+    agentResult,
+    replyText: normalizeText(agentResult?.text || ""),
+    ownerSurface: normalizeText(route?.agent_or_tool || "") || `agent:${agent.id}`,
+  };
+}
+
 function inferExecutedTarget({ envelope = {}, route = {} } = {}) {
   const action = normalizeText(envelope?.action || "");
   if (!action) {
@@ -370,6 +411,39 @@ function inferExecutedTarget({ envelope = {}, route = {} } = {}) {
     return normalizeText(route?.agent_or_tool || "") || "agent:generalist";
   }
   return `tool:${action}`;
+}
+
+function inferOwnerSurface({
+  execution = {},
+  testCase = {},
+  route = {},
+  failureClass = "",
+} = {}) {
+  const explicitOwnerSurface = normalizeText(execution?.ownerSurface || "");
+  if (explicitOwnerSurface) {
+    return explicitOwnerSurface;
+  }
+  if (failureClass === "routing_no_match") {
+    return "routing_no_match";
+  }
+  if (failureClass === "permission_denied") {
+    return "permission_denied";
+  }
+  if (normalizeText(route?.lane || "") === "registered_agent") {
+    return normalizeText(route?.agent_or_tool || "") || "agent:unknown";
+  }
+  if (normalizeText(route?.lane || "") === "executive") {
+    const explicitAgentRequest = resolveRegisteredAgentFamilyRequest(testCase.user_text, {
+      includeSlashCommand: true,
+      includePersonaMentions: true,
+      includeKnowledgeCommands: false,
+    });
+    const explicitAgentId = normalizeText(explicitAgentRequest?.agent?.id || "");
+    return explicitAgentId && explicitAgentId !== "generalist"
+      ? `agent:${explicitAgentId}`
+      : "executive:generic";
+  }
+  return normalizeText(route?.lane || "") || null;
 }
 
 function isNonPlannerOwnedRoute(route = {}) {
@@ -501,6 +575,7 @@ async function runCloudDocWorkflowEvalCase(testCase = {}, route = {}, { signal =
         "下一步",
         "- 先補可用帳號或重新登入，之後再跑這條文檔工作流。",
       ].join("\n"),
+      ownerSurface: "permission_denied",
     };
   }
 
@@ -555,6 +630,7 @@ async function runCloudDocWorkflowEvalCase(testCase = {}, route = {}, { signal =
       ok: Boolean(reply?.text),
     },
     replyText: normalizeText(reply?.text || ""),
+    ownerSurface: "workflow:cloud_doc_organization",
   };
 }
 
@@ -640,33 +716,15 @@ async function runRegisteredAgentEvalCase(testCase = {}, route = {}) {
         failure_class: "routing_no_match",
       },
       replyText: "",
+      ownerSurface: "routing_no_match",
     };
   }
 
-  const agentResult = await executeRegisteredAgent({
-    accountId: "usage-layer-eval",
+  const { agentResult, replyText, ownerSurface } = await buildResolvedRegisteredAgentEvalExecution({
+    testCase,
+    route,
     agent: command.agent,
     requestText: command.body || testCase.user_text,
-    scope: { session_key: `usage-layer-eval:${testCase.id}` },
-    searchFn() {
-      return {
-        items: [
-          buildUsageEvalSourceItem(
-            `${command.agent.label} Eval Context`,
-            `https://usage-layer.eval/${command.agent.id}`,
-            `這是 ${command.agent.label} 對「${command.body || testCase.user_text}」的受控 usage-layer 測試上下文。`,
-          ),
-        ],
-      };
-    },
-    async textGenerator() {
-      return buildRegisteredAgentEvalText({
-        slash: command.agent.slash,
-        agentLabel: command.agent.label,
-        body: command.body || testCase.user_text,
-      });
-    },
-    logger: noopLogger,
   });
 
   return {
@@ -688,7 +746,8 @@ async function runRegisteredAgentEvalCase(testCase = {}, route = {}) {
     userResponse: {
       ok: Boolean(agentResult?.text),
     },
-    replyText: normalizeText(agentResult?.text || ""),
+    replyText,
+    ownerSurface,
   };
 }
 
@@ -786,6 +845,41 @@ async function runPersonalAssistantBoundaryEvalCase(testCase = {}) {
 }
 
 async function runExecutiveEvalCase(testCase = {}, route = {}) {
+  const explicitAgentRequest = resolveRegisteredAgentFamilyRequest(testCase.user_text, {
+    includeSlashCommand: true,
+    includePersonaMentions: true,
+    includeKnowledgeCommands: false,
+  });
+  const explicitAgentId = normalizeText(explicitAgentRequest?.agent?.id || "");
+
+  if (explicitAgentRequest?.agent && explicitAgentId !== "generalist") {
+    const { agentResult, replyText, ownerSurface } = await buildResolvedRegisteredAgentEvalExecution({
+      testCase,
+      route,
+      agent: explicitAgentRequest.agent,
+      requestText: explicitAgentRequest.body || testCase.user_text,
+    });
+    return {
+      plannerEnvelope: {
+        ok: Boolean(agentResult?.text),
+        action: normalizeText(route?.planner_action || "") || "start",
+        execution_result: {
+          ok: Boolean(agentResult?.text),
+          data: {
+            answer: agentResult?.text || "",
+            sources: [],
+            limitations: [],
+          },
+        },
+      },
+      userResponse: {
+        ok: Boolean(agentResult?.text),
+      },
+      replyText,
+      ownerSurface,
+    };
+  }
+
   const replyText = [
     "結論",
     `這句「${testCase.user_text}」比較像需要 executive lane 收斂的協作任務，我先按 executive brief 接住。`,
@@ -813,6 +907,7 @@ async function runExecutiveEvalCase(testCase = {}, route = {}) {
       ok: true,
     },
     replyText,
+    ownerSurface: "executive:generic",
   };
 }
 
@@ -844,6 +939,7 @@ async function runRoutingNoMatchEvalCase(testCase = {}, route = {}) {
       failure_class: "routing_no_match",
     },
     replyText,
+    ownerSurface: "routing_no_match",
   };
 }
 
@@ -865,6 +961,9 @@ function summarizeFailReasons(result = {}) {
   }
   if (result.generic === true && result.should_fail_if_generic === true) {
     reasons.push("generic_reply");
+  }
+  if (result.wrong_owner_surface === true) {
+    reasons.push(`wrong_owner_surface(${result.actual_owner_surface || "unknown"} vs ${result.expected_owner_surface || "unknown"})`);
   }
   if (result.unnecessary_clarification === true) {
     reasons.push("unnecessary_clarification");
@@ -949,6 +1048,12 @@ export async function runUsageLayerEvalCase(testCase = {}, {
     plannerEnvelope,
     executedTarget,
   });
+  const actualOwnerSurface = inferOwnerSurface({
+    execution,
+    testCase,
+    route,
+    failureClass,
+  });
   const replyMode = classifyReplyMode({ userResponse, route, replyText });
   const actualSuccessType = classifySuccessType(replyMode);
   const generic = looksGenericReply({
@@ -968,6 +1073,12 @@ export async function runUsageLayerEvalCase(testCase = {}, {
   const genericFail = testCase.should_fail_if_generic === true && generic === true;
   const firstTurnSuccess = successTypeHit && !genericFail;
   const toolOmission = testCase.tool_required === true && !isControlledTarget(executedTarget);
+  const expectedOwnerSurface = normalizeText(testCase.expected_owner_surface || "") || null;
+  const wrongOwnerSurface = expectedOwnerSurface
+    ? actualOwnerSurface !== expectedOwnerSurface
+    : false;
+  const genericOwnerSurface = expectedOwnerSurface?.startsWith("agent:")
+    && actualOwnerSurface === "executive:generic";
   const durationMs = Date.now() - startedAt;
   const timedOut = normalizeText(plannerEnvelope?.error || "") === "case_timeout";
 
@@ -983,11 +1094,13 @@ export async function runUsageLayerEvalCase(testCase = {}, {
     expected_reply_mode: testCase.expected_reply_mode,
     expected_eval_outcome: testCase.expected_eval_outcome,
     should_fail_if_generic: testCase.should_fail_if_generic === true,
+    expected_owner_surface: expectedOwnerSurface,
     actual_lane: normalizeText(route?.lane || "") || "unknown",
     actual_action: normalizeText(route?.planner_action || "") || "unknown",
     actual_tool: normalizeText(route?.agent_or_tool || "") || "unknown",
     executed_action: normalizeText(plannerEnvelope?.action || "") || null,
     executed_target: executedTarget,
+    actual_owner_surface: actualOwnerSurface,
     reply_text: replyText,
     actual_reply_mode: replyMode,
     actual_success_type: actualSuccessType,
@@ -998,6 +1111,8 @@ export async function runUsageLayerEvalCase(testCase = {}, {
     first_turn_success: firstTurnSuccess,
     wrong_route: wrongRoute,
     tool_omission: toolOmission,
+    wrong_owner_surface: wrongOwnerSurface,
+    generic_owner_surface: genericOwnerSurface,
     timed_out: timedOut,
     duration_ms: durationMs,
   };
@@ -1013,6 +1128,8 @@ export function summarizeResults(results = []) {
   const toolOmissionCount = toolRequiredCases.filter((item) => item.tool_omission === true).length;
   const genericFailCount = genericSensitiveCases.filter((item) => item.generic === true).length;
   const genericReplyCount = results.filter((item) => item.actual_eval_outcome === "generic_reply").length;
+  const wrongOwnerSurfaceCount = results.filter((item) => item.wrong_owner_surface === true).length;
+  const genericOwnerSurfaceCount = results.filter((item) => item.generic_owner_surface === true).length;
   const partialSuccessOutcomeCount = results.filter((item) => item.actual_eval_outcome === "partial_success").length;
   const unnecessaryClarificationCount = clarifyCases.filter((item) => item.unnecessary_clarification === true).length;
   const timedOutCases = results.filter((item) => item.timed_out === true);
@@ -1066,6 +1183,8 @@ export function summarizeResults(results = []) {
       generic_sensitive_cases: genericSensitiveCases.length,
       generic_fail: genericFailCount,
       generic_replies: genericReplyCount,
+      wrong_owner_surface: wrongOwnerSurfaceCount,
+      generic_owner_surface: genericOwnerSurfaceCount,
       partial_success_outcomes: partialSuccessOutcomeCount,
       clarify_cases: clarifyCases.length,
       unnecessary_clarification: unnecessaryClarificationCount,
@@ -1095,6 +1214,8 @@ function printSummary(summary = {}) {
   console.log(`TOR: ${summary.metrics.TOR}`);
   console.log(`GRR: ${summary.metrics.GRR}`);
   console.log(`UCR: ${summary.metrics.UCR}`);
+  console.log(`Wrong Owner Surface: ${summary.counts.wrong_owner_surface}`);
+  console.log(`Generic Owner Surface: ${summary.counts.generic_owner_surface}`);
   console.log(`Timeouts: ${summary.counts.timed_out}`);
   console.log(`RDR: ${summary.metrics.RDR} (${summary.counts.reply_discipline_logged_cases} cases logged for manual reply-discipline review)`);
   console.log(`Expected outcomes: ${JSON.stringify(summary.expected_outcome_breakdown)}`);
@@ -1128,10 +1249,24 @@ function printSummary(summary = {}) {
   }
 }
 
+function resolveUsageLayerEvalPack(packName = "") {
+  const normalizedPackName = normalizeText(packName || "");
+  if (!normalizedPackName || normalizedPackName === "default") {
+    return usageLayerEvals;
+  }
+  if (normalizedPackName === "registered-agent-family") {
+    return registeredAgentFamilyEvals;
+  }
+  throw new Error(`unknown usage-layer eval pack: ${packName}`);
+}
+
 async function main() {
   const startedAt = Date.now();
+  const packFlagIndex = process.argv.indexOf("--pack");
+  const requestedPack = packFlagIndex >= 0 ? process.argv[packFlagIndex + 1] : "";
+  const selectedPack = resolveUsageLayerEvalPack(requestedPack);
   const results = [];
-  for (const testCase of usageLayerEvals) {
+  for (const testCase of selectedPack) {
     console.log(`[usage-layer][case:start] ${testCase.id} ${testCase.user_text}`);
     const stuckWarningTimer = scheduleStuckCaseWarning(testCase);
     const result = await runUsageLayerEvalCase(testCase);
@@ -1144,6 +1279,7 @@ async function main() {
   const summary = summarizeResults(results);
   printSummary(summary);
   console.log("");
+  console.log(`Selected pack: ${normalizeText(requestedPack || "") || "default"}`);
   console.log(`Total duration: ${Date.now() - startedAt}ms`);
 }
 

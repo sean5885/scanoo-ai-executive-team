@@ -113,6 +113,24 @@ test("runPlannerUserInputEdge recovers executive planner_failed into an owner-aw
   assert.match(result.userResponse.answer || "", /executive|agent|協作|收斂/i);
 });
 
+test("runPlannerUserInputEdge recovers explicit persona-style executive requests into agent-aware brief text", async () => {
+  const result = await runPlannerUserInputEdge({
+    text: "請 consult agent 做方案比較",
+    async plannerExecutor() {
+      return {
+        ok: false,
+        error: "planner_failed",
+      };
+    },
+  });
+
+  assert.equal(result.plannerEnvelope.ok, true);
+  assert.equal(result.userResponse.ok, true);
+  assert.equal(result.userResponse.failure_class, null);
+  assert.match(result.userResponse.answer || "", /\/consult/);
+  assert.doesNotMatch(result.userResponse.answer || "", /planner_failed/i);
+});
+
 test("runPlannerUserInputEdge fail-closes unsupported reminder requests instead of surfacing planner_failed", async () => {
   const result = await runPlannerUserInputEdge({
     text: "晚點提醒我一下",
@@ -128,6 +146,6 @@ test("runPlannerUserInputEdge fail-closes unsupported reminder requests instead 
   assert.equal(result.plannerEnvelope.error, ROUTING_NO_MATCH);
   assert.equal(result.userResponse.ok, false);
   assert.equal(result.userResponse.failure_class, "routing_no_match");
-  assert.match(result.userResponse.answer || "", /提醒/);
+  assert.match(result.userResponse.answer || "", /合適的處理方式|一般助理/);
   assert.doesNotMatch(result.userResponse.answer || "", /planner_failed/i);
 });

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { usageLayerEvals } from "../evals/usage-layer/usage-layer-evals.mjs";
+import { registeredAgentFamilyEvals } from "../evals/usage-layer/registered-agent-family-evals.mjs";
 import { runUsageLayerEvalCase, summarizeResults } from "../evals/usage-layer/usage-layer-runner.mjs";
 
 test("usage-layer runner executes registered slash-agent cases on the agent answer path", async () => {
@@ -74,6 +75,35 @@ test("usage-layer eval pack expands to quality-gate scale without expected gener
   );
   assert.equal(
     usageLayerEvals.some((entry) => entry.expected_eval_outcome === "fail_closed"),
+    true,
+  );
+});
+
+test("usage-layer runner keeps persona-style registered-agent family on the owner-aware answer surface", async () => {
+  const testCase = registeredAgentFamilyEvals.find((entry) => entry.id === "registered-agent-family-007");
+  assert.ok(testCase, "missing registered-agent-family-007");
+
+  const result = await runUsageLayerEvalCase(testCase);
+
+  assert.equal(result.actual_lane, "executive");
+  assert.equal(result.executed_target, "agent:consult");
+  assert.equal(result.actual_owner_surface, "agent:consult");
+  assert.equal(result.wrong_owner_surface, false);
+  assert.match(result.reply_text, /\/consult/);
+});
+
+test("registered-agent family pack stays bounded and covers owner surface plus fail-closed edges", () => {
+  assert.equal(registeredAgentFamilyEvals.length >= 15 && registeredAgentFamilyEvals.length <= 20, true);
+  assert.equal(
+    registeredAgentFamilyEvals.some((entry) => entry.expected_owner_surface?.startsWith("agent:")),
+    true,
+  );
+  assert.equal(
+    registeredAgentFamilyEvals.some((entry) => entry.expected_owner_surface === "permission_denied"),
+    true,
+  );
+  assert.equal(
+    registeredAgentFamilyEvals.some((entry) => entry.expected_owner_surface === "routing_no_match"),
     true,
   );
 });

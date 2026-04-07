@@ -288,6 +288,14 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - fail-closed
 - runtime / executive / meeting workflow
 
+另外有一組最小 focused pack：
+
+- dataset: `/Users/seanhan/Documents/Playground/evals/usage-layer/registered-agent-family-evals.mjs`
+- CLI: `npm run eval:usage-layer:registered-agent-family`
+- case 數量固定維持 `15~20` 條
+- 覆蓋 slash command、persona-style owner phrasing、registered-agent success、`permission_denied`、`routing_no_match`、`fail_closed`
+- 這組 pack 另外帶 optional `expected_owner_surface`，runner 會額外輸出 `actual_owner_surface`、`wrong_owner_surface`、`generic_owner_surface`，專門用來抓 explicit persona request 被 generic executive surface 吃掉的 regression
+
 判讀方式維持保守：
 
 - `lane / planner_action / agent_or_tool` 仍沿用既有 routing resolver
@@ -295,6 +303,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - 目前 checked-in `failure_class` 最少可區分：`routing_no_match`、`tool_omission`、`planner_failed`、`permission_denied`、`partial_success`、`generic_fallback`
 - runner 會優先讀這層 classification，再退回 `generic` / `clarify` / `partial_success` heuristic
 - summary 會輸出 `failure_breakdown` 與 top failure categories，避免所有 fail-soft case 都被誤壓成同一種 generic clarify
+- 若 case 有提供 `expected_owner_surface`，runner 也會把 owner surface 納入 fail reason，避免 `/cmo` 這類 explicit owner family 只剩 route 命中、但回答邊界退成 generic executive brief
 - `knowledge_assistant` case 會重用 checked-in route truth，直接驅動 deterministic executor path 再回到同一條 answer boundary；這是 eval runner 的 bounded executor fallback，用來隔離 planner JSON latency，不改 routing truth、public contract 或 write policy
 - personal-lane `partial_success / fail_closed` case 會直接走 checked-in answer boundary normalizer，而不是讓 eval 被 planner waiting 拖成 timeout
 - runner 現在對每條 case 都加上固定 timeout guard；若單條 case 超時，會取消該 case、在 summary 額外列出 `timed_out_cases`，並繼續跑完剩餘 case
