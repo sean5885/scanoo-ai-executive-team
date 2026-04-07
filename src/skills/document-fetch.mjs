@@ -1,3 +1,9 @@
+export const SKILL_CONTRACT = Object.freeze({
+  intent: "Resolve a document_id from direct input or raw Lark card payload and fetch plain-text document content through the existing auth boundary.",
+  success_criteria: "Return { ok: true, document_id, content } when the document_id is valid, auth resolves, and plain-text document content is readable.",
+  failure_criteria: "Fail closed with missing_access_token, permission_denied, or not_found when auth cannot be resolved, the document is inaccessible, or the document_id is invalid.",
+});
+
 import { fetchDocxPlainText } from "../lark-connectors.mjs";
 import {
   isOAuthReauthRequiredError,

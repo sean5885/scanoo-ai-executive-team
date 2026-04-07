@@ -134,6 +134,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-runtime.mjs`
 - Current truth:
   - a checked-in minimal skill contract now exists
+  - the checked-in skill/helper modules under `src/skills/` now also export a lightweight descriptive `SKILL_CONTRACT` object with `intent`, `success_criteria`, and `failure_criteria`
   - skill definitions must now declare `skill_class` and `runtime_access`
   - the runtime validates input, output, and side effects
   - the runtime rejects non-serializable input/output and nested skill execution

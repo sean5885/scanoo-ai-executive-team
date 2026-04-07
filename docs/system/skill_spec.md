@@ -161,6 +161,16 @@ Current contract shape:
 }
 ```
 
+Checked-in module metadata:
+
+- the three checked-in modules under `/Users/seanhan/Documents/Playground/src/skills/` also export a lightweight `SKILL_CONTRACT` object with:
+  - `intent`
+  - `success_criteria`
+  - `failure_criteria`
+- this module-level export is descriptive metadata only
+- runtime enforcement still comes from `createSkillDefinition(...)` and `/Users/seanhan/Documents/Playground/src/skill-contract.mjs`
+- `/Users/seanhan/Documents/Playground/src/skills/document-fetch.mjs` exports the same metadata shape even though it remains a helper module and not a registered planner-visible skill
+
 Current runtime rules:
 
 - missing or mismatched governance metadata:
