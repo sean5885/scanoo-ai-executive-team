@@ -12,6 +12,15 @@ test("executePlannedUserInput short-circuits to multi-task result when task-laye
       return JSON.stringify({ action: "get_runtime_info", params: {} });
     },
     async runSkill(name, payload) {
+      if (payload.task === "copywriting") {
+        return { answer: "新品開跑，限時搶先看。" };
+      }
+      if (payload.task === "image") {
+        return { url: "hero.png" };
+      }
+      if (payload.task === "publish") {
+        return true;
+      }
       return { name, task: payload.task };
     },
   });
@@ -27,7 +36,10 @@ test("executePlannedUserInput short-circuits to multi-task result when task-laye
     image: "done",
     publish: "done",
   });
-  assert.match(result.execution_result?.data?.answer || "", /多任務路徑/);
+  assert.equal(
+    result.execution_result?.data?.answer,
+    "文案：新品開跑，限時搶先看。\n圖片：已生成（hero.png）\n發布：已完成",
+  );
   assert.deepEqual(result.execution_result?.data?.sources, [
     "任務拆解：文案、圖片、發布。",
     "文案 已完成執行。",
