@@ -183,12 +183,13 @@ Current path:
 Current truth:
 
 - implemented as a minimal baseline
-- current checked-in sample skills are `search_and_summarize` and `document_summarize`
-- both checked-in sample skills are read-only and use `read-runtime`
+- current checked-in skill implementations are `search_and_summarize`, `document_summarize`, and `image_generate`
+- `search_and_summarize` and `document_summarize` are read-only and use `read-runtime`
+- `image_generate` is read-only and currently returns a deterministic placeholder URL without external runtime side effects
 - `search_and_summarize` uses `search_knowledge_base`
 - `document_summarize` uses `get_company_brain_doc_detail`
 - this does not register a new public route or planner routing target
-- both checked-in skill-backed actions stay behind `planner/skill-bridge.mjs` and the answer pipeline
+- the checked-in skill-backed actions stay behind `planner/skill-bridge.mjs` and the answer pipeline
 - failed skill-bridge executions may now emit one process-local `skill_bridge_failure` reflection payload through `/Users/seanhan/Documents/Playground/src/reflection/skill-reflection.mjs` when the host installs `globalThis.appendReflectionLog`
 - that hook is additive observability only; it does not create a closed-loop executive task, does not enter the executive reflection archive, and does not change the public `answer / sources / limitations` boundary
 - `document_summarize` is planner-visible on its single-document summary boundary
@@ -220,7 +221,7 @@ Current truth:
 - on the current checked-in path, `task-to-answer.mjs` prefers exposing bounded per-task natural-language payloads for successful `copywriting`, `image`, and `publish` tasks inside `answer`; if no such payload can be rendered, it falls back to the prior execution-summary wording while still preserving fail-soft `limitations`
 - if the helper detects zero or one task, or if the optional pre-pass fails, execution falls back to the original planner path
 - the checked-in public `/answer` edge does not currently supply `runSkill`, so the default public route behavior is unchanged
-- `document_summarize` is backed by the checked-in skill runtime, `message_send` is backed by the checked-in write runtime, and `image_generate` is currently only a routed placeholder string on this helper path
+- `document_summarize` is backed by the checked-in skill runtime, `message_send` is backed by the checked-in write runtime, and `image_generate` is now backed by a checked-in internal-only skill runtime that still returns a placeholder URL on this helper path
 
 ### 4B. Comment Rewrite
 

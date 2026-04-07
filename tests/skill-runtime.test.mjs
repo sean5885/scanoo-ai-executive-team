@@ -23,6 +23,7 @@ import {
 
 const SKILL_FILE_URLS = [
   new URL("../src/skills/document-summarize-skill.mjs", import.meta.url),
+  new URL("../src/skills/image-generate-skill.mjs", import.meta.url),
   new URL("../src/skills/search-and-summarize-skill.mjs", import.meta.url),
 ];
 
@@ -235,6 +236,71 @@ test("search_and_summarize runs through read-runtime and returns planner-usable 
       ],
     },
     trace_id: null,
+  });
+});
+
+test("image_generate returns a stable placeholder image result through the checked-in skill runtime", async () => {
+  const result = await runSkill({
+    registry: defaultSkillRegistry,
+    skillName: "image_generate",
+    input: {
+      prompt: "cat astronaut",
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.skill, "image_generate");
+  assert.equal(result.failure_mode, "fail_closed");
+  assert.deepEqual(result.side_effects, []);
+  assert.deepEqual(result.output, {
+    prompt: "cat astronaut",
+    url: "https://dummyimage.com/512x512/000/fff.png&text=cat%20astronaut",
+  });
+
+  const plannerEnvelope = buildPlannerSkillEnvelope(result);
+  assert.deepEqual(plannerEnvelope.data, {
+    skill: "image_generate",
+    prompt: "cat astronaut",
+    url: "https://dummyimage.com/512x512/000/fff.png&text=cat%20astronaut",
+    summary: null,
+    hits: 1,
+    found: true,
+    sources: [],
+    limitations: [],
+    side_effects: [],
+  });
+});
+
+test("image_generate fail-closes on empty prompt", async () => {
+  const result = await runSkill({
+    registry: defaultSkillRegistry,
+    skillName: "image_generate",
+    input: {
+      prompt: "   ",
+    },
+  });
+
+  assert.deepEqual(result, {
+    ok: false,
+    skill: "image_generate",
+    failure_mode: "fail_closed",
+    error: "contract_violation",
+    output: null,
+    side_effects: [],
+    trace_id: null,
+    details: {
+      phase: "input_validation",
+      violations: [
+        {
+          type: "required",
+          code: "missing_required",
+          path: "$input.prompt",
+          expected: "non_empty_string",
+          actual: "empty",
+          message: "Missing required field $input.prompt.",
+        },
+      ],
+    },
   });
 });
 
@@ -1064,6 +1130,40 @@ test("listSkillContracts exposes the checked-in minimal skill contract", () => {
         disallow_side_channel_repo_db_access: true,
       },
     },
+    {
+      name: "image_generate",
+      input_schema: {
+        type: "object",
+        required: ["prompt"],
+        properties: {
+          prompt: { type: "string" },
+        },
+      },
+      output_schema: {
+        type: "object",
+        required: ["prompt", "url"],
+        properties: {
+          prompt: { type: "string" },
+          url: { type: "string" },
+        },
+      },
+      allowed_side_effects: {
+        read: [],
+        write: [],
+      },
+      failure_mode: "fail_closed",
+      skill_class: "read_only",
+      runtime_access: ["read_runtime"],
+      governance: {
+        skill_class: "read_only",
+        runtime_access: ["read_runtime"],
+        max_skills_per_run: 1,
+        allow_skill_chain: false,
+        input_must_be_serializable: true,
+        output_must_be_serializable: true,
+        disallow_side_channel_repo_db_access: true,
+      },
+    },
   ]);
 });
 
@@ -1228,6 +1328,25 @@ test("planner skill bridge exposes checked-in read-only skill actions and adapts
       },
     },
     {
+      action: "image_generate",
+      skill_name: "image_generate",
+      surface_layer: "internal_only",
+      max_skills_per_run: 1,
+      allow_skill_chain: false,
+      skill_class: "read_only",
+      runtime_access: ["read_runtime"],
+      selector_mode: "deterministic_only",
+      selector_key: "skill.image_generate.internal",
+      selector_task_types: [],
+      routing_reason: "selector_image_generate_skill",
+      planner_catalog_eligible: false,
+      raw_user_output_allowed: false,
+      allowed_side_effects: {
+        read: [],
+        write: [],
+      },
+    },
+    {
       action: "document_summarize",
       skill_name: "document_summarize",
       surface_layer: "planner_visible",
@@ -1247,6 +1366,46 @@ test("planner skill bridge exposes checked-in read-only skill actions and adapts
       },
     },
   ]);
+});
+
+test("image_generate bridge action executes through the checked-in planner skill bridge", async () => {
+  const bridgeResult = await runPlannerSkillBridge({
+    action: "image_generate",
+    payload: {
+      prompt: "launch poster",
+    },
+  });
+
+  assert.deepEqual(bridgeResult, {
+    ok: true,
+    action: "image_generate",
+    data: {
+      skill: "image_generate",
+      bridge: "skill_bridge",
+      max_skills_per_run: 1,
+      allow_skill_chain: false,
+      prompt: "launch poster",
+      url: "https://dummyimage.com/512x512/000/fff.png&text=launch%20poster",
+      summary: null,
+      hits: 1,
+      found: true,
+      sources: [],
+      limitations: [],
+      side_effects: [],
+    },
+    trace_id: null,
+  });
+});
+
+test("image_generate stays internal_only and out of the planner-visible catalog", () => {
+  const entry = getPlannerSkillAction("image_generate");
+
+  assert.equal(entry?.surface_layer, "internal_only");
+  assert.equal(entry?.promotion_stage, "internal_only");
+  assert.equal(entry?.previous_promotion_stage, null);
+  assert.equal(entry?.planner_catalog_eligible, false);
+  assert.equal(entry?.selector_key, "skill.image_generate.internal");
+  assert.deepEqual(entry?.selector_task_types, []);
 });
 
 test("deterministic skill selector keeps existing routing stable when a new non-overlapping skill is added", () => {

@@ -245,6 +245,36 @@ test("planner contract mirror keeps search_and_summarize planner_visible admissi
   assert.deepEqual(registryEntry?.readiness_gate, contractPolicy.readiness_gate);
 });
 
+test("planner contract mirror keeps image_generate internal_only metadata aligned with the skill registry", () => {
+  const contractPolicy = plannerContract?.actions?.image_generate?.skill_surface_policy;
+  const registryEntry = getPlannerSkillAction("image_generate");
+
+  assert.deepEqual(contractPolicy, {
+    surface_layer: "internal_only",
+    promotion_stage: "internal_only",
+    previous_promotion_stage: null,
+    planner_catalog_eligible: false,
+    readiness_gate: {
+      regression_suite_passed: false,
+      answer_pipeline_enforced: false,
+      observability_evidence_verified: false,
+      raw_skill_output_blocked: false,
+      output_shape_stable: false,
+      side_effect_boundary_locked: false,
+    },
+    planner_admission_boundary: {
+      require_signals: [],
+      forbid_signals: [],
+      fail_closed_on_ambiguity: true,
+    },
+  });
+  assert.equal(registryEntry?.surface_layer, contractPolicy.surface_layer);
+  assert.equal(registryEntry?.promotion_stage, contractPolicy.promotion_stage);
+  assert.equal(registryEntry?.previous_promotion_stage, contractPolicy.previous_promotion_stage);
+  assert.equal(registryEntry?.planner_catalog_eligible, contractPolicy.planner_catalog_eligible);
+  assert.deepEqual(registryEntry?.readiness_gate, contractPolicy.readiness_gate);
+});
+
 test("planner contract consistency flags missing lifecycle follow-up action", () => {
   const contractOverride = JSON.parse(JSON.stringify(plannerContract));
   delete contractOverride.actions.read_task_lifecycle_v1;
