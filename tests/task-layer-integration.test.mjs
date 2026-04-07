@@ -28,6 +28,15 @@ test("executePlannedUserInput short-circuits to multi-task result when task-laye
     publish: "done",
   });
   assert.match(result.execution_result?.data?.answer || "", /多任務路徑/);
+  assert.deepEqual(result.execution_result?.data?.sources, [
+    "任務拆解：文案、圖片、發布。",
+    "文案 已完成執行。",
+    "圖片 已完成執行。",
+    "發布 已完成執行。",
+  ]);
+  assert.deepEqual(result.execution_result?.data?.limitations, [
+    "如果你要，我可以再把每個子任務展開成更完整的最終稿或後續步驟。",
+  ]);
 });
 
 test("executePlannedUserInput falls back to the original planner flow when task-layer finds at most one task", async () => {

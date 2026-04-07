@@ -68,6 +68,7 @@ Use [deployment.md](/Users/seanhan/Documents/Playground/docs/system/deployment.m
   - `/Users/seanhan/Documents/Playground/src/task-layer/task-dependency.mjs`
   - `/Users/seanhan/Documents/Playground/src/task-layer/task-skill-map.mjs`
   - `/Users/seanhan/Documents/Playground/src/task-layer/task-aggregator.mjs`
+  - `/Users/seanhan/Documents/Playground/src/task-layer/task-to-answer.mjs`
   - `/Users/seanhan/Documents/Playground/src/task-layer/orchestrator.mjs`
   - may be consulted by `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` as an optional planner pre-pass when a caller provides `runSkill`
 - executive orchestration
