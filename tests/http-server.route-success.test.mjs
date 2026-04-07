@@ -2243,6 +2243,57 @@ test("lark plugin dispatch route sends knowledge_answer requests through the exi
   assert.equal(calls.some((entry) => entry[1]?.event === "lark_plugin_dispatch_completed" && entry[1]?.fallback_reason === "knowledge_answer_path"), true);
 });
 
+test("lark plugin dispatch route respects explicit knowledge_answer capability over scanoo heuristics", async (t) => {
+  const plannerCalls = [];
+  const laneCalls = [];
+  const { server } = await startTestServer(t, {
+    async executePlannedUserInput(args) {
+      plannerCalls.push(args);
+      return {
+        ok: true,
+        action: "search_company_brain_docs",
+        execution_result: {
+          ok: true,
+          data: {
+            answer: "這是 answer edge 的回答",
+            sources: ["來源 A"],
+            limitations: [],
+          },
+        },
+      };
+    },
+    async executeCapabilityLane(args) {
+      laneCalls.push(args);
+      return {
+        text: "這不應該被用到",
+      };
+    },
+  });
+  const { port } = server.address();
+
+  const { body } = await postPluginDispatch(port, {
+    request_text: "幫我比較 Scanoo onboarding funnel 差異",
+    session_id: "sess_explicit_knowledge",
+    chat_id: "chat_explicit_knowledge",
+    user_id: "user_knowledge",
+    account_id: "acct-knowledge",
+    source: "official_lark_plugin",
+    tool_name: "lark_kb_answer",
+    requested_capability: "knowledge_answer",
+    capability_source: "explicit",
+    route_request: {
+      path: "/answer?q=Scanoo",
+      method: "GET",
+      body: null,
+    },
+  });
+
+  assert.equal(body.route_target, "knowledge_answer");
+  assert.equal(body.chosen_lane, "knowledge-assistant");
+  assert.equal(plannerCalls.length, 1);
+  assert.equal(laneCalls.length, 0);
+});
+
 test("lark plugin dispatch route sends lane_style requests through the existing lane path and prefers thread session keys", async (t) => {
   const laneCalls = [];
   const { server, calls } = await startTestServer(t, {
@@ -2282,4 +2333,58 @@ test("lark plugin dispatch route sends lane_style requests through the existing 
   assert.equal(laneCalls.length, 1);
   assert.equal(laneCalls[0].scope.session_key, "thread:thr_priority");
   assert.equal(calls.some((entry) => entry[1]?.event === "lark_plugin_dispatch_completed" && entry[1]?.fallback_reason === "lane_style_capability"), true);
+});
+
+test("lark plugin dispatch route sends explicit scanoo capability through the lane path", async (t) => {
+  const plannerCalls = [];
+  const laneCalls = [];
+  const { server, calls } = await startTestServer(t, {
+    async executePlannedUserInput(args) {
+      plannerCalls.push(args);
+      return {
+        ok: true,
+        execution_result: {
+          ok: true,
+          data: {
+            answer: "planner should stay unused",
+            sources: [],
+            limitations: [],
+          },
+        },
+      };
+    },
+    async executeCapabilityLane(args) {
+      laneCalls.push(args);
+      return {
+        text: "這是 scanoo lane backend 的回答",
+      };
+    },
+  });
+  const { port } = server.address();
+
+  const { body } = await postPluginDispatch(port, {
+    request_text: "公司 SOP 在哪裡？",
+    session_id: "sess_scanoo_compare",
+    chat_id: "chat_scanoo_compare",
+    user_id: "user_scanoo",
+    account_id: "acct-scanoo",
+    source: "official_lark_plugin",
+    tool_name: "lark_kb_answer",
+    requested_capability: "scanoo_compare",
+    capability_source: "explicit",
+    route_request: {
+      path: "/answer?q=SOP",
+      method: "GET",
+      body: null,
+    },
+  });
+
+  assert.equal(body.route_target, "lane_backend");
+  assert.equal(body.chosen_skill, "scanoo_compare");
+  assert.equal(body.fallback_reason, "scanoo_compare");
+  assert.equal(body.response.data.answer, "這是 scanoo lane backend 的回答");
+  assert.equal(plannerCalls.length, 0);
+  assert.equal(laneCalls.length, 1);
+  assert.equal(laneCalls[0].scope.capability_lane, "personal-assistant");
+  assert.equal(calls.some((entry) => entry[1]?.event === "lark_plugin_dispatch_started" && entry[1]?.capability_source === "explicit"), true);
 });

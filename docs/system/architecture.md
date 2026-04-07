@@ -208,6 +208,7 @@ These describe code structure and responsibility, not how many processes are run
 
 - `openclaw-plugin/lark-kb`
   - maps OpenClaw tool calls into the checked-in plugin hybrid dispatch ingress first
+  - every tool call now carries `requested_capability` and `capability_source`; the current checked-in minimal capability set only specializes `knowledge_answer`, `scanoo_diagnose`, `scanoo_compare`, and `scanoo_optimize`, while other plugin-native tools still pass their tool name through that same dispatch envelope
   - plugin-native document/message/calendar/task-style tools are still forwarded to their existing HTTP routes after dispatch classification
 
 - `lobster_security`

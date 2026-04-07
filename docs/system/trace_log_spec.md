@@ -25,6 +25,8 @@ All minimum trace/log events should align around these fields:
 - `event_type`
 - `timestamp`
 - `action|preset|agent`
+- `requested_capability`
+- `capability_source`
 - `chosen_lane`
 - `chosen_action`
 - `fallback_reason`
@@ -51,6 +53,8 @@ All minimum trace/log events should align around these fields:
   "timestamp": "string|null",
   "preset": "string|null",
   "agent": "string|null",
+  "requested_capability": "string|null",
+  "capability_source": "explicit|inferred|null",
   "chosen_lane": "string|null",
   "chosen_action": "string|null",
   "fallback_reason": "string|null",
@@ -105,6 +109,8 @@ All minimum trace/log events should align around these fields:
    - `doc_query_route`
    - `doc_query_result`
 - lane/runtime selection logs now also surface:
+  - `requested_capability`
+  - `capability_source`
   - `chosen_lane`
   - `chosen_action`
   - `fallback_reason`

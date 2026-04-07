@@ -22,6 +22,39 @@ const KNOWLEDGE_ANSWER_TOOL_PATTERNS = [
   /^lark_kb_answer$/,
 ];
 
+const REQUESTED_CAPABILITY_ROUTE_MAP = {
+  knowledge_answer: {
+    route_target: "knowledge_answer",
+    chosen_lane: "knowledge-assistant",
+    chosen_skill: null,
+    fallback_reason: "knowledge_answer_path",
+  },
+  scanoo_diagnose: {
+    route_target: "lane_backend",
+    chosen_lane: "personal-assistant",
+    chosen_skill: "scanoo_diagnose",
+    fallback_reason: "scanoo_diagnose",
+  },
+  scanoo_compare: {
+    route_target: "lane_backend",
+    chosen_lane: "personal-assistant",
+    chosen_skill: "scanoo_compare",
+    fallback_reason: "scanoo_compare",
+  },
+  scanoo_optimize: {
+    route_target: "lane_backend",
+    chosen_lane: "personal-assistant",
+    chosen_skill: "scanoo_optimize",
+    fallback_reason: "scanoo_optimize",
+  },
+  lane_style_capability: {
+    route_target: "lane_backend",
+    chosen_lane: "personal-assistant",
+    chosen_skill: "lane_style_capability",
+    fallback_reason: "lane_style_capability",
+  },
+};
+
 const LANE_STYLE_PATTERNS = [
   /scanoo/i,
   /分析/u,
@@ -88,6 +121,14 @@ function normalizeRouteRequest(routeRequest = {}) {
   };
 }
 
+function normalizeCapabilitySource(value = "") {
+  const source = cleanText(value);
+  if (source === "explicit" || source === "inferred") {
+    return source;
+  }
+  return null;
+}
+
 function inferRequestText(raw = {}, routeRequest = {}) {
   const explicit = cleanText(
     raw?.request_text
@@ -133,35 +174,9 @@ export function buildLarkPluginDispatchSessionKey({
 }
 
 export function inferRequestedCapability({
-  tool_name = "",
   requested_capability = "",
-  route_path = "",
-  request_text = "",
 } = {}) {
-  const explicit = cleanText(requested_capability);
-  if (explicit) {
-    return explicit;
-  }
-
-  const toolName = cleanText(tool_name);
-  if (toolName) {
-    return toolName;
-  }
-
-  const routePath = cleanText(route_path);
-  if (routePath === "/answer") {
-    return "knowledge_answer";
-  }
-  if (routePath === "/search") {
-    return "knowledge_search";
-  }
-
-  const requestText = cleanText(request_text);
-  if (requestText) {
-    return requestText;
-  }
-
-  return "plugin_native_unknown";
+  return cleanText(requested_capability) || null;
 }
 
 export function normalizeLarkPluginDispatchRequest(raw = {}) {
@@ -185,11 +200,9 @@ export function normalizeLarkPluginDispatchRequest(raw = {}) {
     source: cleanText(raw?.source || "official_lark_plugin") || "official_lark_plugin",
     tool_name: cleanText(raw?.tool_name),
     requested_capability: inferRequestedCapability({
-      tool_name: raw?.tool_name,
       requested_capability: raw?.requested_capability,
-      route_path: routeRequest.path,
-      request_text: requestText,
     }),
+    capability_source: normalizeCapabilitySource(raw?.capability_source),
     user_access_token: cleanText(raw?.user_access_token),
     route_request: routeRequest,
   };
@@ -230,8 +243,7 @@ function isKnowledgeAnswerRequest(normalizedRequest = {}) {
 }
 
 function isLaneStyleRequest(normalizedRequest = {}) {
-  return matchesAnyPattern(normalizedRequest?.requested_capability, LANE_STYLE_PATTERNS)
-    || matchesAnyPattern(normalizedRequest?.request_text, LANE_STYLE_PATTERNS);
+  return matchesAnyPattern(normalizedRequest?.request_text, LANE_STYLE_PATTERNS);
 }
 
 function resolveLaneChoice(normalizedRequest = {}) {
@@ -267,6 +279,33 @@ function resolveChosenSkill(normalizedRequest = {}, routeTarget = "") {
   return null;
 }
 
+function resolveRequestedCapabilityDecision(normalizedRequest = {}) {
+  const requestedCapability = cleanText(normalizedRequest?.requested_capability);
+  if (!requestedCapability) {
+    return null;
+  }
+
+  if (REQUESTED_CAPABILITY_ROUTE_MAP[requestedCapability]) {
+    return { ...REQUESTED_CAPABILITY_ROUTE_MAP[requestedCapability] };
+  }
+
+  if (matchesAnyPattern(requestedCapability, PLUGIN_NATIVE_TOOL_PATTERNS)) {
+    return {
+      route_target: "plugin_native",
+      chosen_lane: null,
+      chosen_skill: null,
+      fallback_reason: "plugin_native_capability",
+    };
+  }
+
+  return {
+    route_target: "plugin_native",
+    chosen_lane: null,
+    chosen_skill: null,
+    fallback_reason: "unknown_capability_fallback_plugin_native",
+  };
+}
+
 export function resolveLarkPluginDispatchDecision(normalizedRequest = {}, {
   pluginHybridDispatchEnabled = true,
   directIngressPrimaryEnabled = false,
@@ -278,35 +317,78 @@ export function resolveLarkPluginDispatchDecision(normalizedRequest = {}, {
 
   let routeTarget = "plugin_native";
   let chosenLane = null;
+  let chosenSkill = null;
   let fallbackReason = ingressState.fallback_reason;
 
   if (pluginHybridDispatchEnabled !== true) {
     fallbackReason = fallbackReason || "plugin_hybrid_dispatch_disabled";
-  } else if (isPluginNativeRequest(normalizedRequest)) {
-    fallbackReason = fallbackReason || "plugin_native_capability";
-  } else if (isLaneStyleRequest(normalizedRequest)) {
-    routeTarget = "lane_backend";
-    chosenLane = resolveLaneChoice(normalizedRequest);
-    fallbackReason = fallbackReason || "lane_style_capability";
-  } else if (isKnowledgeAnswerRequest(normalizedRequest)) {
-    routeTarget = "knowledge_answer";
-    chosenLane = "knowledge-assistant";
-    fallbackReason = fallbackReason || "knowledge_answer_path";
   } else {
-    fallbackReason = fallbackReason || "unknown_capability_fallback_plugin_native";
+    const capabilityDecision = resolveRequestedCapabilityDecision(normalizedRequest);
+    if (capabilityDecision) {
+      routeTarget = capabilityDecision.route_target;
+      chosenLane = capabilityDecision.chosen_lane;
+      chosenSkill = capabilityDecision.chosen_skill;
+      fallbackReason = fallbackReason || capabilityDecision.fallback_reason;
+    } else if (isPluginNativeRequest(normalizedRequest)) {
+      fallbackReason = fallbackReason || "plugin_native_capability";
+    } else if (isLaneStyleRequest(normalizedRequest)) {
+      routeTarget = "lane_backend";
+      chosenLane = resolveLaneChoice(normalizedRequest);
+      chosenSkill = resolveChosenSkill(normalizedRequest, routeTarget);
+      fallbackReason = fallbackReason || "lane_style_capability";
+    } else if (isKnowledgeAnswerRequest(normalizedRequest)) {
+      routeTarget = "knowledge_answer";
+      chosenLane = "knowledge-assistant";
+      fallbackReason = fallbackReason || "knowledge_answer_path";
+    } else {
+      fallbackReason = fallbackReason || "unknown_capability_fallback_plugin_native";
+    }
   }
 
   return {
     route_target: routeTarget,
     chosen_lane: chosenLane,
-    chosen_skill: resolveChosenSkill(normalizedRequest, routeTarget),
+    chosen_skill: chosenSkill || resolveChosenSkill(normalizedRequest, routeTarget),
     fallback_reason: fallbackReason,
     is_primary_entry: ingressState.is_primary_entry === true,
     ingress_state: ingressState,
   };
 }
 
-export function buildLarkPluginLaneContext(normalizedRequest = {}) {
+function resolveExplicitLaneContext(normalizedRequest = {}, preferredLane = "") {
+  const lane = cleanText(preferredLane);
+  if (!lane) {
+    return null;
+  }
+  if (lane === "knowledge-assistant") {
+    return {
+      capability_lane: "knowledge-assistant",
+      lane_label: "知識助手",
+      lane_reason: "plugin_dispatch_requested_capability",
+    };
+  }
+  if (lane === "doc-editor") {
+    return {
+      capability_lane: "doc-editor",
+      lane_label: "文檔編輯助手",
+      lane_reason: "plugin_dispatch_requested_capability",
+    };
+  }
+  if (lane === "group-shared-assistant") {
+    return {
+      capability_lane: "group-shared-assistant",
+      lane_label: "群組共享助手",
+      lane_reason: "plugin_dispatch_requested_capability",
+    };
+  }
+  return {
+    capability_lane: "personal-assistant",
+    lane_label: "個人助手",
+    lane_reason: "plugin_dispatch_requested_capability",
+  };
+}
+
+export function buildLarkPluginLaneContext(normalizedRequest = {}, preferredLane = "") {
   const fallbackChatId = cleanText(normalizedRequest?.chat_id || normalizedRequest?.thread_id || normalizedRequest?.session_id || "plugin_dispatch");
   const baseScope = {
     chat_type: "dm",
@@ -334,14 +416,17 @@ export function buildLarkPluginLaneContext(normalizedRequest = {}) {
       thread_id: cleanText(normalizedRequest?.thread_id),
       source: cleanText(normalizedRequest?.source),
       requested_capability: cleanText(normalizedRequest?.requested_capability),
+      capability_source: cleanText(normalizedRequest?.capability_source),
     },
   };
+
+  const explicitLaneContext = resolveExplicitLaneContext(normalizedRequest, preferredLane);
 
   return {
     event,
     scope: {
       ...baseScope,
-      ...resolveCapabilityLane(baseScope, event),
+      ...(explicitLaneContext || resolveCapabilityLane(baseScope, event)),
     },
   };
 }
@@ -371,6 +456,7 @@ export async function executeLarkPluginDispatch({
     fallback_reason: decision.fallback_reason || null,
     tool_name: request.tool_name || null,
     requested_capability: request.requested_capability || null,
+    capability_source: request.capability_source || null,
     primary_entry: decision.is_primary_entry === true,
   };
 
@@ -388,6 +474,7 @@ export async function executeLarkPluginDispatch({
       chosen_lane: null,
       chosen_skill: null,
       fallback_reason: decision.fallback_reason || null,
+      capability_source: request.capability_source || null,
       final_status: "plugin_native_forward",
       response: null,
       forward_request: request.route_request,
@@ -414,6 +501,7 @@ export async function executeLarkPluginDispatch({
       chosen_lane: decision.chosen_lane || null,
       chosen_skill: decision.chosen_skill || null,
       fallback_reason: decision.fallback_reason || null,
+      capability_source: request.capability_source || null,
       final_status: finalStatus,
       response: {
         status: responseStatus,
@@ -440,6 +528,7 @@ export async function executeLarkPluginDispatch({
       chosen_lane: decision.chosen_lane || null,
       chosen_skill: decision.chosen_skill || null,
       fallback_reason: decision.fallback_reason || "runtime_exception",
+      capability_source: request.capability_source || null,
       final_status: "failed",
       response: {
         status: 500,

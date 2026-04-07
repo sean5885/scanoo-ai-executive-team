@@ -164,9 +164,54 @@ test("lark_kb_answer first enters plugin dispatch instead of calling /answer dir
 
   assert.equal(seen.length, 1);
   assert.equal(seen[0].body.tool_name, "lark_kb_answer");
+  assert.equal(seen[0].body.requested_capability, "knowledge_answer");
+  assert.equal(seen[0].body.capability_source, "inferred");
   assert.equal(seen[0].body.route_request.path, "/answer?q=%E5%85%AC%E5%8F%B8%E7%9F%A5%E8%AD%98%E5%BA%AB%E7%8F%BE%E5%9C%A8%E6%80%8E%E9%BA%BC%E9%81%8B%E4%BD%9C%EF%BC%9F&account_id=acct-2");
   assert.match(result.content[0].text, /lark_kb_answer/);
   assert.equal(result.details.answer, "這是 adapter 回來的答案");
+});
+
+test("plugin dispatch payload infers scanoo compare capability from lark_kb_answer params", async (t) => {
+  const api = createPluginApi();
+  register(api);
+  const tool = getTool(api, "lark_kb_answer");
+  const seen = [];
+
+  stubFetch(t, async (url, init = {}) => {
+    seen.push({
+      url: String(url),
+      method: init.method || "GET",
+      body: init.body ? JSON.parse(String(init.body)) : null,
+    });
+
+    return new Response(JSON.stringify({
+      ok: true,
+      route_target: "lane_backend",
+      final_status: "completed",
+      response: {
+        status: 200,
+        data: {
+          ok: true,
+          answer: "ok",
+          sources: [],
+          limitations: [],
+        },
+      },
+      trace_id: "trace_dispatch_scanoo_compare",
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  });
+
+  await tool.execute("tool-scanoo-compare", {
+    q: "請比較 Scanoo 新舊 onboarding funnel",
+    account_id: "acct-scanoo",
+  });
+
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].body.requested_capability, "scanoo_compare");
+  assert.equal(seen[0].body.capability_source, "inferred");
 });
 
 test("plugin dispatch payload keeps metadata keys complete and preserves explicit values", async (t) => {
@@ -211,7 +256,7 @@ test("plugin dispatch payload keeps metadata keys complete and preserves explici
     chat_id: "chat-meta",
     user_id: "user-meta",
     source: "official_lark_plugin",
-    requested_capability: "lane_style_capability",
+    requested_capability: "scanoo_diagnose",
   });
 
   assert.equal(seen.length, 1);
@@ -225,7 +270,8 @@ test("plugin dispatch payload keeps metadata keys complete and preserves explici
     account_id: "acct-meta",
     source: "official_lark_plugin",
     tool_name: "lark_kb_answer",
-    requested_capability: "lane_style_capability",
+    requested_capability: "scanoo_diagnose",
+    capability_source: "explicit",
     route_request: {
       path: "/answer?q=%E8%AB%8B%E5%88%86%E6%9E%90%E9%80%99%E5%80%8B%E5%95%8F%E9%A1%8C&account_id=acct-meta",
       method: "GET",
@@ -278,6 +324,7 @@ test("plugin dispatch payload keeps missing metadata as null instead of omitting
     source: "official_lark_plugin",
     tool_name: "lark_doc_read",
     requested_capability: "lark_doc_read",
+    capability_source: "inferred",
     route_request: {
       path: "/api/doc/read?document_id=doc_meta",
       method: "GET",

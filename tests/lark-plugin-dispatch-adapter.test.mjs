@@ -6,6 +6,7 @@ import {
   executeLarkPluginDispatch,
   normalizeLarkPluginDispatchRequest,
   resolveDirectIngressSourceState,
+  resolveLarkPluginDispatchDecision,
 } from "../src/lark-plugin-dispatch-adapter.mjs";
 
 test("plugin-native request does not enter internal knowledge or lane backends", async () => {
@@ -76,6 +77,110 @@ test("Scanoo-style request routes into the existing lane backend", async () => {
   assert.equal(result.chosen_skill, "lane_style_capability");
   assert.equal(knowledgeCalls, 0);
   assert.equal(laneCalls, 1);
+});
+
+test("explicit requested capability wins over text heuristics and records explicit source", async () => {
+  let knowledgeCalls = 0;
+  let laneCalls = 0;
+  const logs = [];
+  const logger = {
+    info(event, payload) {
+      logs.push([event, payload]);
+    },
+    warn() {},
+    error() {},
+    compactError(error) {
+      return error;
+    },
+  };
+
+  const result = await executeLarkPluginDispatch({
+    rawRequest: {
+      tool_name: "lark_kb_answer",
+      requested_capability: "knowledge_answer",
+      capability_source: "explicit",
+      request_text: "幫我比較 Scanoo onboarding funnel 差異",
+      route_request: {
+        path: "/answer?q=Scanoo",
+        method: "GET",
+      },
+      source: "official_lark_plugin",
+    },
+    logger,
+    async runKnowledgeAnswer() {
+      knowledgeCalls += 1;
+      return { status: 200, data: { ok: true } };
+    },
+    async runLaneBackend() {
+      laneCalls += 1;
+      return { status: 200, data: { ok: true } };
+    },
+  });
+
+  assert.equal(result.route_target, "knowledge_answer");
+  assert.equal(result.capability_source, "explicit");
+  assert.equal(knowledgeCalls, 1);
+  assert.equal(laneCalls, 0);
+  assert.equal(
+    logs.some(([event, payload]) => (
+      event === "lark_plugin_dispatch_started"
+      && payload?.requested_capability === "knowledge_answer"
+      && payload?.capability_source === "explicit"
+    )),
+    true,
+  );
+});
+
+test("explicit scanoo capability routes to lane backend even without scanoo wording", async () => {
+  let knowledgeCalls = 0;
+  let laneCalls = 0;
+
+  const result = await executeLarkPluginDispatch({
+    rawRequest: {
+      tool_name: "lark_kb_answer",
+      requested_capability: "scanoo_compare",
+      capability_source: "explicit",
+      request_text: "公司 SOP 在哪裡？",
+      route_request: {
+        path: "/answer?q=%E5%85%AC%E5%8F%B8%20SOP",
+        method: "GET",
+      },
+      source: "official_lark_plugin",
+    },
+    async runKnowledgeAnswer() {
+      knowledgeCalls += 1;
+      return { status: 200, data: { ok: true } };
+    },
+    async runLaneBackend() {
+      laneCalls += 1;
+      return { status: 200, data: { ok: true } };
+    },
+  });
+
+  assert.equal(result.route_target, "lane_backend");
+  assert.equal(result.chosen_lane, "personal-assistant");
+  assert.equal(result.chosen_skill, "scanoo_compare");
+  assert.equal(knowledgeCalls, 0);
+  assert.equal(laneCalls, 1);
+});
+
+test("missing requested capability falls back to legacy heuristics", () => {
+  const normalized = normalizeLarkPluginDispatchRequest({
+    tool_name: "lark_kb_answer",
+    request_text: "幫我分析 Scanoo onboarding funnel 的問題點",
+    route_request: {
+      path: "/answer?q=Scanoo",
+      method: "GET",
+    },
+    source: "official_lark_plugin",
+  });
+
+  const decision = resolveLarkPluginDispatchDecision(normalized);
+
+  assert.equal(normalized.requested_capability, null);
+  assert.equal(normalized.capability_source, null);
+  assert.equal(decision.route_target, "lane_backend");
+  assert.equal(decision.fallback_reason, "lane_style_capability");
 });
 
 test("thread_id takes precedence when building plugin dispatch session keys", () => {

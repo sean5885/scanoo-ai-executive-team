@@ -19,7 +19,7 @@ For the checked-in executive/workflow surfaces, same-account same-session entryp
 The Lark long-connection reply path is a bounded adjacent flow: inbound `im.message.receive_v1` events enter `/Users/seanhan/Documents/Playground/src/index.mjs`, lane selection happens before reply materialization, and `/Users/seanhan/Documents/Playground/src/runtime-message-reply.mjs` now treats the downstream Lark send as complete only when the message mutation response includes a concrete `message_id`.
 That same ingress surface now also tracks websocket lifecycle activity through `/Users/seanhan/Documents/Playground/src/long-connection-lifecycle-monitor.mjs`; the checked-in monitor now classifies decoded websocket control/data frames before `eventDispatcher.invoke(...)`, records the parsed callback/event type plus handler presence, and if the socket stays `ready` but has no inbound message or heartbeat activity past the watchdog window, the process exits so the local LaunchAgent can rebuild the persistent connection.
 
-The OpenClaw plugin ingress is now a second bounded adjacent flow: tool calls first post to `POST /agent/lark-plugin/dispatch`, `/Users/seanhan/Documents/Playground/src/lark-plugin-dispatch-adapter.mjs` normalizes `request_text / session_id / thread_id / chat_id / user_id / source / requested_capability`, derives the checked-in session key (`thread -> chat -> session`), records dispatch observability, and then either:
+The OpenClaw plugin ingress is now a second bounded adjacent flow: tool calls first post to `POST /agent/lark-plugin/dispatch`, `/Users/seanhan/Documents/Playground/src/lark-plugin-dispatch-adapter.mjs` normalizes `request_text / session_id / thread_id / chat_id / user_id / source / requested_capability / capability_source`, derives the checked-in session key (`thread -> chat -> session`), uses `requested_capability` first when present, records dispatch observability, and then either:
 
 1. executes the existing planner answer edge
 2. executes the existing lane path through a synthetic lane event/scope
@@ -180,11 +180,17 @@ Current truth:
 Current path:
 
 1. OpenClaw tool call enters `/Users/seanhan/Documents/Playground/openclaw-plugin/lark-kb/index.ts`
-2. the plugin posts one normalized dispatch request to `POST /agent/lark-plugin/dispatch`
-3. `/Users/seanhan/Documents/Playground/src/lark-plugin-dispatch-adapter.mjs` decides:
+2. the plugin posts one normalized dispatch request to `POST /agent/lark-plugin/dispatch`, carrying one checked-in `requested_capability`
    - `knowledge_answer`
-   - `lane_backend`
-   - `plugin_native`
+   - `scanoo_diagnose`
+   - `scanoo_compare`
+   - `scanoo_optimize`
+   - plugin-native tool name passthrough for non-specialized tools
+3. `/Users/seanhan/Documents/Playground/src/lark-plugin-dispatch-adapter.mjs` decides:
+   - `knowledge_answer` directly from `requested_capability`
+   - `lane_backend` directly from `scanoo_*` capability
+   - `plugin_native` for plugin-native passthrough or unknown capability
+   - only when `requested_capability` is absent does it fall back to the older tool/text heuristics
 4. `knowledge_answer` reuses `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs`
 5. `lane_backend` reuses `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
 6. `plugin_native` returns a forward decision and the plugin continues on the existing direct HTTP route
@@ -193,8 +199,8 @@ Current truth:
 
 - the checked-in official plugin ingress is the hybrid dispatch route, not direct scattered route selection inside the plugin
 - plugin-native document/message/calendar/task-style tools stay outside the internal planner/lane business flow
-- lane-style asks such as Scanoo/analysis/diagnostic/compare/optimize can enter the existing lane backend without rewriting planner or removing skills
-- the dispatch layer records `request_text / source / session_id / thread_id / route_target / chosen_lane / chosen_skill / fallback_reason / final_status`
+- the checked-in minimal capability map does not add planner or model-side NLP; `lark_kb_answer` uses simple tool+params rules to emit `knowledge_answer` or one of the three `scanoo_*` capabilities
+- the dispatch layer records `request_text / source / session_id / thread_id / requested_capability / capability_source / route_target / chosen_lane / chosen_skill / fallback_reason / final_status`
 
 ## 4. Adjacent Workflows
 

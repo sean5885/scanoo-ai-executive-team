@@ -165,23 +165,69 @@ function inferRequestText(path: string, params: Record<string, unknown>) {
   return fromQuery || null;
 }
 
-function inferRequestedCapability(action: string, path: string, params: Record<string, unknown>) {
+const SCANOO_COMPARE_PATTERNS = [
+  /比較/u,
+  /比较/u,
+  /比對/u,
+  /对比/u,
+  /\bcompare\b/i,
+  /\bvs\b/i,
+];
+
+const SCANOO_OPTIMIZE_PATTERNS = [
+  /優化/u,
+  /优化/u,
+  /改善/u,
+  /提升/u,
+  /調整/u,
+  /调整/u,
+  /optimi[sz]/i,
+];
+
+function resolveRequestedCapability(action: string, path: string, params: Record<string, unknown>) {
   const explicit = cleanOptionalString(params.requested_capability);
   if (explicit) {
-    return explicit;
+    return {
+      requestedCapability: explicit,
+      capabilitySource: "explicit" as const,
+    };
   }
   const normalizedAction = String(action || "").trim();
   if (!normalizedAction) {
-    return "plugin_native_unknown";
+    return {
+      requestedCapability: "plugin_native_unknown",
+      capabilitySource: "inferred" as const,
+    };
   }
   if (normalizedAction === "lark_kb_answer") {
     const requestText = inferRequestText(path, params);
-    if (/(scanoo|分析|診斷|诊断|比較|比较|優化|优化|compare|diagnos|optimi)/i.test(requestText)) {
-      return "lane_style_capability";
+    if (/scanoo/i.test(requestText)) {
+      if (SCANOO_COMPARE_PATTERNS.some((pattern) => pattern.test(requestText))) {
+        return {
+          requestedCapability: "scanoo_compare",
+          capabilitySource: "inferred" as const,
+        };
+      }
+      if (SCANOO_OPTIMIZE_PATTERNS.some((pattern) => pattern.test(requestText))) {
+        return {
+          requestedCapability: "scanoo_optimize",
+          capabilitySource: "inferred" as const,
+        };
+      }
+      return {
+        requestedCapability: "scanoo_diagnose",
+        capabilitySource: "inferred" as const,
+      };
     }
-    return "knowledge_answer";
+    return {
+      requestedCapability: "knowledge_answer",
+      capabilitySource: "inferred" as const,
+    };
   }
-  return normalizedAction;
+  return {
+    requestedCapability: normalizedAction,
+    capabilitySource: "inferred" as const,
+  };
 }
 
 function buildDispatchPayload(
@@ -191,6 +237,7 @@ function buildDispatchPayload(
   init?: InternalRequestInit,
 ) {
   const routeRequestBody = parseJsonLikeBody(init?.body);
+  const capability = resolveRequestedCapability(action, path, params);
   return {
     request_text: inferRequestText(path, params),
     session_id: cleanOptionalString(params.session_id),
@@ -200,7 +247,8 @@ function buildDispatchPayload(
     account_id: cleanOptionalString(params.account_id),
     source: cleanOptionalString(params.source) || "official_lark_plugin",
     tool_name: cleanOptionalString(action),
-    requested_capability: inferRequestedCapability(action, path, params),
+    requested_capability: capability.requestedCapability,
+    capability_source: capability.capabilitySource,
     route_request: {
       path,
       method: init?.method || "GET",
