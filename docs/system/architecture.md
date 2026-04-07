@@ -171,6 +171,12 @@ These describe code structure and responsibility, not how many processes are run
 - `executive-closed-loop.mjs`
   - turns execution output into evidence, verification, reflection, and improvement proposals
   - also records an additive plan-vs-execution reflection snapshot at `task.meta.execution_reflection` before verifier/improvement persistence, using structured step-level `success_match / deviation / reason` codes without changing user-visible answer output
+  - after reflection, attaches the lightweight `improvement_proposal` onto `task.execution_journal` for internal traceability without changing the visible answer body
+
+- `executive-improvement.mjs`
+  - derives one lightweight pure `improvement_proposal` from `reflection_result`
+  - proposal shape is limited to `type / summary / action_suggestion`
+  - does not write knowledge or workflow state directly; workflow metadata and persistence are added downstream by the closed-loop improvement workflow
 
 - `single-machine-runtime-coordination.mjs`
   - serializes same-account same-session executive/workflow entrypoints inside one local process

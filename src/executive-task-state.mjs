@@ -105,6 +105,13 @@ function normalizeExecutionJournal(journal = {}) {
         status: normalizeText(journal.synthetic_agent_hint.status || ""),
       }
     : null;
+  const improvementProposal = journal.improvement_proposal && typeof journal.improvement_proposal === "object"
+    ? {
+        type: normalizeText(journal.improvement_proposal.type || ""),
+        summary: normalizeText(journal.improvement_proposal.summary || ""),
+        action_suggestion: normalizeText(journal.improvement_proposal.action_suggestion || ""),
+      }
+    : null;
 
   return {
     classified_intent: normalizeText(journal.classified_intent || ""),
@@ -116,6 +123,10 @@ function normalizeExecutionJournal(journal = {}) {
     tool_required: journal.tool_required === true,
     verifier_verdict: verifierVerdict,
     synthetic_agent_hint: syntheticAgentHint,
+    improvement_proposal:
+      improvementProposal && (improvementProposal.type || improvementProposal.summary || improvementProposal.action_suggestion)
+        ? improvementProposal
+        : null,
   };
 }
 

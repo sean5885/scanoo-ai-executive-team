@@ -1,7 +1,40 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
 
-import { buildExecutionJournal, buildExecutionReflection } from "../src/executive-closed-loop.mjs";
+import {
+  executiveImprovementStorePath,
+  executiveReflectionStorePath,
+  executiveSessionMemoryStorePath,
+} from "../src/config.mjs";
+import {
+  buildExecutionJournal,
+  buildExecutionReflection,
+  finalizeExecutiveTaskTurn,
+} from "../src/executive-closed-loop.mjs";
+import {
+  getExecutiveTask,
+  startExecutiveTask,
+} from "../src/executive-task-state.mjs";
+import { setupExecutiveTaskStateTestHarness } from "./helpers/executive-task-state-harness.mjs";
+
+setupExecutiveTaskStateTestHarness();
+
+async function snapshotFile(filePath) {
+  try {
+    return await fs.readFile(filePath, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+async function restoreFile(filePath, content) {
+  if (content == null) {
+    await fs.rm(filePath, { force: true });
+    return;
+  }
+  await fs.writeFile(filePath, content, "utf8");
+}
 
 test("execution reflection marks completed planner steps as success", () => {
   const reflection = buildExecutionReflection({
@@ -281,5 +314,50 @@ test("execution reflection classifies missing info when success criteria stay un
         reason: "missing_info",
       },
     ],
+  });
+});
+
+test("closed loop attaches lightweight improvement proposal to execution journal after reflection", async (t) => {
+  const files = [
+    executiveReflectionStorePath,
+    executiveImprovementStorePath,
+    executiveSessionMemoryStorePath,
+  ];
+  const snapshots = await Promise.all(files.map((filePath) => snapshotFile(filePath)));
+  t.after(async () => {
+    await Promise.all(files.map((filePath, index) => restoreFile(filePath, snapshots[index])));
+  });
+
+  const task = await startExecutiveTask({
+    accountId: "acct-improvement-journal",
+    sessionKey: "sess-improvement-journal",
+    objective: "回覆使用者問題",
+    primaryAgentId: "generalist",
+    currentAgentId: "generalist",
+    taskType: "search",
+    lifecycleState: "awaiting_result",
+  });
+
+  await finalizeExecutiveTaskTurn({
+    task,
+    accountId: "acct-improvement-journal",
+    sessionKey: "sess-improvement-journal",
+    requestText: "請整理答案",
+    reply: {
+      text: "任務已啟動，這是整理後的答案。",
+    },
+    routing: {
+      action: "answer_user",
+      dispatched_actions: [
+        { action: "answer_user", status: "completed" },
+      ],
+    },
+  });
+
+  const updatedTask = await getExecutiveTask(task.id);
+  assert.deepEqual(updatedTask?.execution_journal?.improvement_proposal, {
+    type: "prompt_fix",
+    summary: "Prompt constraints did not keep the response grounded and on-contract.",
+    action_suggestion: "Tighten answer-order, completion-gate, and evidence-language instructions for this failure pattern.",
   });
 });

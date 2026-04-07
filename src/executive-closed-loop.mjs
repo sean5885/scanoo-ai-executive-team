@@ -10,7 +10,7 @@ import {
 } from "./executive-improvement-workflow.mjs";
 import { buildTaskRuleSet, inferTaskType, KNOWLEDGE_RULES } from "./executive-rules.mjs";
 import { createReflectionRecord } from "./executive-reflection.mjs";
-import { createImprovementProposals } from "./executive-improvement.mjs";
+import { createImprovementProposal, createImprovementProposals } from "./executive-improvement.mjs";
 import { EVIDENCE_TYPES, verifyTaskCompletion } from "./executive-verifier.mjs";
 import {
   appendExecutiveTaskEvidence,
@@ -670,6 +670,20 @@ function withVerifierVerdict(executionJournal = null, verifierVerdict = null) {
   };
 }
 
+function withImprovementProposal(executionJournal = null, improvementProposal = null) {
+  return {
+    ...(executionJournal && typeof executionJournal === "object" ? executionJournal : {}),
+    improvement_proposal:
+      improvementProposal && typeof improvementProposal === "object"
+        ? {
+            type: cleanText(improvementProposal.type || ""),
+            summary: cleanText(improvementProposal.summary || ""),
+            action_suggestion: cleanText(improvementProposal.action_suggestion || ""),
+          }
+        : null,
+  };
+}
+
 export function buildExecutionEvidence({
   executionJournal = null,
 } = {}) {
@@ -905,10 +919,14 @@ export async function finalizeExecutiveTaskTurn({
     taskId: task.id,
     reflection,
   });
+  const improvementProposal = createImprovementProposal(reflection);
+  current = await updateExecutiveTask(task.id, {
+    execution_journal: withImprovementProposal(current?.execution_journal, improvementProposal),
+  });
   current = await applyLifecycle(current || task, "reflected", "post_task_review_completed");
 
   const rawProposals = createImprovementProposals({
-    reflection,
+    reflection_result: reflection,
     task: current || task,
   });
   const proposals = await registerImprovementWorkflowProposals({

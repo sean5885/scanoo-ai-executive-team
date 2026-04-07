@@ -18,6 +18,7 @@ Key upgrades:
 - more natural answer-first executive briefs
 - verification-fail recovery now returns to `executing / blocked / escalated`
 - reflection and improvement schemas aligned with the root AGENTS / RULES contract
+- improvement inference stays lightweight and pure; workflow persistence remains downstream
 
 ## Main New Modules
 

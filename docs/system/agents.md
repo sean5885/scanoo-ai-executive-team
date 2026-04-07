@@ -224,6 +224,8 @@ What now exists in current code:
   - support explicit exit from executive mode
   - derive task rules, success criteria, and lifecycle state on task initialization
   - collect evidence from execution, run verifier checks, and append reflection/improvement records
+  - keep the improvement inference layer lightweight: `executive-improvement.mjs` first produces one pure `improvement_proposal` (`type / summary / action_suggestion`) from `reflection_result`, then downstream workflow code adds IDs, status, approval/apply metadata, and persistence
+  - persist that lightweight `improvement_proposal` back into `task.execution_journal` after reflection so the closed-loop trace retains the local improvement signal without altering answer text
   - use the same dedicated `lobster-backend` OpenClaw MiniMax text path for planner decisions when direct `LLM_API_KEY` is unavailable
   - render user-facing executive replies as a fixed brief with:
     - direct answer first
