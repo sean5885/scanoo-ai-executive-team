@@ -5,6 +5,7 @@ const testDb = await createTestDbHarness();
 const {
   assertRoutingDecisionFinalOwner,
   assertRoutingDecisionOwner,
+  buildScanooCompareFallbackQuery,
   buildScanooCompareDocsSearchReply,
   looksLikeChatOnlyFailurePreference,
   looksLikeCloudOrganizationExit,
@@ -300,6 +301,18 @@ test("scanoo-compare falls back to docs search when compare evidence is insuffic
   });
 
   assert.equal(shouldFallback, true);
+});
+
+test("scanoo-compare fallback query shaping extracts stores and metrics", () => {
+  const query = buildScanooCompareFallbackQuery("幫我比較 A店 和 B店 的流量、轉化，幫我看看");
+
+  assert.equal(query, "A店 vs B店 + 流量 轉化");
+});
+
+test("scanoo-compare fallback query shaping removes stopwords when compare pair is incomplete", () => {
+  const query = buildScanooCompareFallbackQuery("幫我看看 A店 流量 比較 一下");
+
+  assert.equal(query, "A店 流量");
 });
 
 test("scanoo-compare docs search fallback keeps the compare section order", () => {

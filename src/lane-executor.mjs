@@ -220,6 +220,23 @@ const SCANOO_COMPARE_INSUFFICIENT_PATTERNS = [
   /先不亂補答案/u,
 ];
 
+const SCANOO_COMPARE_QUERY_METRICS = [
+  "流量",
+  "轉化",
+  "转化",
+  "留存",
+  "排名",
+];
+
+const SCANOO_COMPARE_QUERY_STOPWORDS = [
+  "比較",
+  "比较",
+  "一下",
+  "幫我",
+  "帮我",
+  "看看",
+];
+
 export function buildScanooCompareBrief(text = "") {
   const normalizedText = cleanText(text);
   if (!normalizedText) {
@@ -233,6 +250,64 @@ function buildScanooCompareFallbackSignalText(response = {}) {
     cleanText(response?.answer || ""),
     ...(Array.isArray(response?.limitations) ? response.limitations.map((item) => cleanText(item)) : []),
   ].filter(Boolean).join("\n");
+}
+
+function escapeRegExp(text = "") {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function uniqueStrings(items = []) {
+  const seen = new Set();
+  return items.filter((item) => {
+    const normalized = cleanText(item);
+    if (!normalized || seen.has(normalized)) {
+      return false;
+    }
+    seen.add(normalized);
+    return true;
+  });
+}
+
+function stripScanooCompareQueryStopwords(text = "") {
+  let normalized = cleanText(text);
+  for (const stopword of SCANOO_COMPARE_QUERY_STOPWORDS) {
+    normalized = normalized.replace(new RegExp(escapeRegExp(stopword), "gu"), " ");
+  }
+  return normalized.replace(/[，,。！？!?:：;；（）()「」『』【】[\]{}]/gu, " ").replace(/\s+/g, " ").trim();
+}
+
+function extractScanooCompareStoreNames(text = "") {
+  const matches = Array.from(
+    cleanText(text).matchAll(/([\p{Script=Han}A-Za-z0-9_-]{1,30}店)/gu),
+    (match) => cleanText(match?.[1] || ""),
+  );
+  return uniqueStrings(matches).slice(0, 2);
+}
+
+function extractScanooCompareMetricTerms(text = "") {
+  return uniqueStrings(
+    SCANOO_COMPARE_QUERY_METRICS.filter((metric) => cleanText(text).includes(metric)),
+  );
+}
+
+export function buildScanooCompareFallbackQuery(requestText = "") {
+  const normalizedText = cleanText(requestText);
+  if (!normalizedText) {
+    return "";
+  }
+
+  const stores = extractScanooCompareStoreNames(normalizedText);
+  const metrics = extractScanooCompareMetricTerms(normalizedText);
+  const cleanedQuery = stripScanooCompareQueryStopwords(normalizedText);
+
+  if (stores.length >= 2) {
+    const compareSegment = `${stores[0]} vs ${stores[1]}`;
+    return metrics.length > 0
+      ? `${compareSegment} + ${metrics.join(" ")}`
+      : compareSegment;
+  }
+
+  return cleanedQuery || normalizedText;
 }
 
 export function shouldFallbackScanooCompareToDocsSearch({
@@ -326,9 +401,10 @@ async function maybeBuildScanooCompareDocsSearchFallback({
     return null;
   }
 
+  const shapedQuery = buildScanooCompareFallbackQuery(requestText);
   const docs = await searchCompanyBrainDocsFromRuntime({
     accountId,
-    query: requestText,
+    query: shapedQuery,
     limit: 3,
     pathname: "internal:scanoo_compare_docs_search_fallback",
     logger,
@@ -336,7 +412,8 @@ async function maybeBuildScanooCompareDocsSearchFallback({
 
   logger.info("scanoo_compare_docs_search_fallback", {
     account_id: formatIdentifierHint(accountId),
-    query: truncate(requestText, 120),
+    original_query: truncate(requestText, 120),
+    shaped_query: truncate(shapedQuery, 120),
     hit_count: Array.isArray(docs?.items) ? docs.items.length : 0,
     failure_class: cleanText(userResponse?.failure_class || "") || null,
     chosen_action: cleanText(
@@ -352,7 +429,7 @@ async function maybeBuildScanooCompareDocsSearchFallback({
   }
 
   return buildScanooCompareDocsSearchReply({
-    query: requestText,
+    query: shapedQuery,
     items: docs.items,
   });
 }
