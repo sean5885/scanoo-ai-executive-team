@@ -22,6 +22,11 @@ test("executePlannedUserInput short-circuits to multi-task result when task-laye
   assert.equal(result.execution_result?.data?.mode, "multi_task");
   assert.deepEqual(result.execution_result?.data?.tasks, ["copywriting", "image", "publish"]);
   assert.equal(result.execution_result?.data?.results?.length, 3);
+  assert.deepEqual(result.execution_result?.data?.summary, {
+    copywriting: "done",
+    image: "done",
+    publish: "done",
+  });
   assert.match(result.execution_result?.data?.answer || "", /多任務路徑/);
 });
 

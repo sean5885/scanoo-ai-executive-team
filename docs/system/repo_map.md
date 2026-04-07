@@ -136,7 +136,7 @@ This file explains which directories are part of the current runtime, which are 
 
 - `/Users/seanhan/Documents/Playground/src/task-layer`
 - Current truth:
-  - contains a keyword task classifier, a static dependency-order helper, a static task-to-skill map, and a small callback-based orchestrator
+  - contains a keyword task classifier, a static dependency-order helper, a static task-to-skill map, a small result aggregator, and a callback-based orchestrator
   - the checked-in task execution order is currently `copywriting -> image -> publish`
   - can be consulted by `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` as an optional pre-pass when the caller supplies `runSkill`
   - the checked-in public route surfaces do not currently pass that callback, so the default `/answer` path is unchanged

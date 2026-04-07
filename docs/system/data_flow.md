@@ -204,7 +204,7 @@ Current path:
 3. `/Users/seanhan/Documents/Playground/src/task-layer/task-dependency.mjs` normalizes those tags into the checked-in execution order
 4. `/Users/seanhan/Documents/Playground/src/task-layer/task-skill-map.mjs` resolves each tag to a string skill identifier
 5. `/Users/seanhan/Documents/Playground/src/task-layer/orchestrator.mjs` invokes the caller-provided `runSkill(skill, { input, task })`
-6. the helper returns `{ tasks, results }` with per-task success or bounded error text
+6. the helper returns a unified object `{ ok, tasks, results, summary, data, errors }`, preserving per-task success/failure records while also surfacing summarized status and fail-soft errors
 
 Current truth:
 
