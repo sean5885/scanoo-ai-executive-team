@@ -25,8 +25,11 @@ test("usage-layer summary reports timed out cases separately", () => {
     {
       id: "entry-timeout",
       user_text: "把非 scanoo 的文檔摘出去",
+      tool_required: true,
+      expected_eval_outcome: "good_answer",
       should_fail_if_generic: true,
       actual_success_type: "fail_soft",
+      actual_eval_outcome: "fail_closed",
       expected_success_type: "workflow_progress",
       actual_lane: "cloud_doc_workflow",
       actual_action: "rereview",
@@ -47,6 +50,9 @@ test("usage-layer summary reports timed out cases separately", () => {
 
   assert.equal(summary.counts.timed_out, 1);
   assert.equal(summary.failure_breakdown.timeout, 1);
+  assert.equal(summary.metrics.generic_rate, "0.00%");
+  assert.equal(summary.metrics.partial_success_rate, "0.00%");
+  assert.equal(summary.actual_outcome_breakdown.fail_closed, 1);
   assert.deepEqual(summary.timed_out_cases, [
     {
       id: "entry-timeout",
@@ -54,4 +60,20 @@ test("usage-layer summary reports timed out cases separately", () => {
       duration_ms: 20001,
     },
   ]);
+});
+
+test("usage-layer eval pack expands to quality-gate scale without expected generic replies", () => {
+  assert.equal(usageLayerEvals.length >= 40 && usageLayerEvals.length <= 60, true);
+  assert.equal(
+    usageLayerEvals.some((entry) => entry.expected_eval_outcome === "generic_reply"),
+    false,
+  );
+  assert.equal(
+    usageLayerEvals.some((entry) => entry.expected_eval_outcome === "partial_success"),
+    true,
+  );
+  assert.equal(
+    usageLayerEvals.some((entry) => entry.expected_eval_outcome === "fail_closed"),
+    true,
+  );
 });

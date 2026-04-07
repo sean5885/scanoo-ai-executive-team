@@ -968,6 +968,7 @@ Current stop behavior already implemented in runtime:
   - retry once, then stop
 - `runtime_exception`
   - retry once, then stop
+  - local readonly fallback is only used on the abort boundary; generic runtime exceptions still stay on this retry-and-stop path
 - `request_timeout`
   - stop immediately; no retry after the timeout boundary
 - `request_cancelled`

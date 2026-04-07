@@ -1701,6 +1701,51 @@ test("dispatchPlannerTool emits minimal runtime trace events", async () => {
   }
 });
 
+test("dispatchPlannerTool falls back to local readonly runtime info when upstream read is aborted", async () => {
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+
+  globalThis.fetch = async (_url, init = {}) => new Promise((_, reject) => {
+    init.signal?.addEventListener("abort", () => {
+      reject(
+        init.signal.reason || Object.assign(new Error("request_cancelled"), {
+          name: "AbortError",
+          code: "request_cancelled",
+        }),
+      );
+    }, { once: true });
+    setTimeout(() => {
+      controller.abort(Object.assign(new Error("request_cancelled"), {
+        name: "AbortError",
+        code: "request_cancelled",
+      }));
+    }, 5);
+  });
+
+  try {
+    const result = await dispatchPlannerTool({
+      action: "get_runtime_info",
+      payload: {},
+      logger: {
+        debug() {},
+        info() {},
+        warn() {},
+        error() {},
+      },
+      baseUrl: "http://localhost:3333",
+      signal: controller.signal,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.action, "get_runtime_info");
+    assert.equal(result.meta?.source, "local_readonly_fallback");
+    assert.equal(typeof result.data?.db_path, "string");
+    assert.equal(typeof result.data?.cwd, "string");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("dispatchPlannerTool logs successful tool execution with request_id", async () => {
   const originalFetch = globalThis.fetch;
   const toolLogs = [];

@@ -3899,14 +3899,6 @@ export async function dispatchPlannerTool({
       if (abortResult) {
         return abortResult;
       }
-      const localFallback = await attemptLocalPlannerReadonlyFallback({
-        action: tool.action,
-        payload: effectivePayload,
-        authContext: normalizedAuthContext,
-      });
-      if (localFallback) {
-        return localFallback;
-      }
       return normalizeError({
         ok: false,
         action: tool.action,
