@@ -212,7 +212,13 @@ Current truth:
   - `【原因假設】`
   - `【證據 / 不確定性】`
   - `【建議行動】`
-- this compare brief is injected only on the `scanoo-compare` lane and does not change planner ingress, public response shape, or the `scanoo-diagnose` lane contract
+- before `scanoo-diagnose` enters that same shared planner answer-edge helper, `lane-executor.mjs` now prepends one fixed diagnose brief that requires the planner input/output to stay in the checked-in heading order:
+  - `【問題現象】`
+  - `【可能原因】`
+  - `【目前證據】`
+  - `【不確定性】`
+  - `【建議下一步】`
+- both wrapper briefs stay lane-local and do not change planner ingress or the public response shape
 - when that compare-lane reply still lands in an insufficient-evidence state and did not already resolve to a doc-read action, `lane-executor.mjs` now fail-soft calls the checked-in mirror read helper `searchCompanyBrainDocsFromRuntime(...)` with `action=search_company_brain_docs`; if the mirror search hits, the lane returns one deterministic compare-shaped docs-candidate reply instead of inventing a comparison conclusion
 - only if `scanoo-compare` is unavailable does the adapter fall back to `knowledge-assistant`, recording `fallback_reason=missing_exact_scanoo_compare_lane_fallback_to_knowledge_assistant`
 - only if `scanoo-diagnose` is unavailable does the adapter fall back to `knowledge-assistant`, recording `fallback_reason=missing_exact_scanoo_diagnose_lane_fallback_to_knowledge_assistant`

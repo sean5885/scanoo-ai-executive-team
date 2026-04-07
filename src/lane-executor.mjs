@@ -199,6 +199,25 @@ const SCANOO_COMPARE_BRIEF = `
 （給出具體下一步）
 `.trim();
 
+const SCANOO_DIAGNOSE_BRIEF = `
+你正在執行「Scanoo Diagnose 任務」，請嚴格依以下結構輸出，禁止自由發揮，也不要加入其他段落：
+
+【問題現象】
+（先描述目前觀察到的問題、症狀或異常；若使用者沒有提供足夠資訊，明確指出缺口）
+
+【可能原因】
+（列出 2-3 個最可能原因，並區分高可能與待驗證）
+
+【目前證據】
+（整理已知事實、可引用觀察、現有資料；沒有證據時要明確寫出）
+
+【不確定性】
+（說明哪些仍是推測、缺哪些關鍵資料、目前不能下結論的部分）
+
+【建議下一步】
+（給出具體、可執行的下一步）
+`.trim();
+
 const SCANOO_COMPARE_DOCS_SEARCH_FAILURE_CLASSES = new Set([
   "generic_fallback",
   "planner_failed",
@@ -243,6 +262,14 @@ export function buildScanooCompareBrief(text = "") {
     return SCANOO_COMPARE_BRIEF;
   }
   return `${SCANOO_COMPARE_BRIEF}\n\n使用者問題：\n${normalizedText}`;
+}
+
+export function buildScanooDiagnoseBrief(text = "") {
+  const normalizedText = cleanText(text);
+  if (!normalizedText) {
+    return SCANOO_DIAGNOSE_BRIEF;
+  }
+  return `${SCANOO_DIAGNOSE_BRIEF}\n\n使用者問題：\n${normalizedText}`;
 }
 
 function buildScanooCompareFallbackSignalText(response = {}) {
@@ -1126,6 +1153,7 @@ async function executeScanooDiagnose({ event, scope, logger = noopLogger, traceI
     logger,
     traceId,
     handlerName: "executeScanooDiagnose",
+    textDecorator: buildScanooDiagnoseBrief,
   });
 }
 
