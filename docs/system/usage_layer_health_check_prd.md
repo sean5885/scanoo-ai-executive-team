@@ -36,7 +36,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 本輪只做兩件事：
 
 1. 把 usage-layer health check 的成功標準正式寫成 PRD。
-2. 把 40 條 eval baseline 的 schema 與 case 組成方式定稿。
+2. 把 40 條 seed pack 擴成 40~60 條可日常追蹤的 usage eval pack，並定稿 schema 與 case 組成方式。
 
 ### 本輪不做
 
@@ -45,23 +45,24 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - 不把 multi-skill mesh、worker mesh、autonomous company-brain 納入本輪範圍。
 - 不重寫整套系統。
 
-目前 repo 已有一個最小 checked-in runner：
+目前 repo 已有一個 checked-in runner：
 
 - dataset: `/Users/seanhan/Documents/Playground/evals/usage-layer/usage-layer-evals.mjs`
 - runner: `/Users/seanhan/Documents/Playground/evals/usage-layer/usage-layer-runner.mjs`
 - CLI: `npm run eval:usage-layer`
 
-這個 runner 只做 read-only eval：
+這個 runner 目前做的是 bounded read-only eval：
 
-- `knowledge_assistant` case 重用既有 planner answer edge 取真實 user-facing reply
+- `knowledge_assistant` case 重用既有 route truth，但在 eval runner 內直接驅動 deterministic executor path，再回到同一條 answer boundary，避免 planner JSON latency 把 usage gauge 量成 timeout
 - `doc_editor` case 走既有 lane intro / preview boundary，不再被 planner answer edge 吞掉成 generic fallback
 - `cloud_doc_workflow` case 走已 checked-in 的本地 preview/review/why reply builder，避免把明顯 workflow case 錯送到 planner answer edge
+- personal-lane `partial_success / fail_closed` case 直接重用 checked-in normalizer boundary，不再讓 no-match 類 eval 取決於 planner waiting
 - 重用既有 routing resolver 取 `lane / planner_action / agent_or_tool`
 - `tool_omission` 判定會優先看是否已命中 checked-in controlled executor；對 `doc_editor` / `meeting_workflow` / `cloud_doc_workflow` 這類非 planner-owner lane，不再把 runner 自己沒走到 owner surface 誤算成 omission
 - 用簡單 heuristic 統計 `FTHR / WRR / TOR / GRR / UCR`
 - `RDR` 目前先保留 TODO，僅把 reply discipline case log 出來
 
-它不修改 runtime / planner / routing，也不補 prompt 或新增能力。
+它不改 routing truth、write policy 或 public response shape；但會在 eval runner 內做 bounded executor fallback，好讓 usage-layer gate 量到的是 answer quality，而不是 planner JSON 生成延遲。
 
 ## 問題定義
 
@@ -193,11 +194,11 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 這三類分型不是三套新系統，而是下一輪修 bug / quick-fix 的 triage bucket。
 
-## 40 條 Eval Baseline 設計
+## 50 條 Eval Baseline 設計
 
 ### 設計原則
 
-- 40 條不是新產品 contract，而是 usage-layer health pack。
+- 50 條不是新產品 contract，而是 usage-layer health pack。
 - 優先重用現有 `routing-eval-set`、`full-flow-validation`、`user-response-normalizer` 已有 case family。
 - baseline 要能同時量到 route correctness、executor correctness、reply usefulness。
 - 每條 baseline 至少要能回答：
@@ -213,6 +214,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 | `EU` 入口理解 | 14 | lane / action / owner 是否正確 |
 | `ES` 執行策略 | 14 | tool / workflow / preset / contextual follow-up 是否正確 |
 | `RP` 回覆包裝 | 12 | answer / workflow / partial success / fail-soft 的呈現是否正確 |
+| `GX` 實用擴充 | 10 | follow-up、多意圖、command-style、auth/account fail-closed truth |
 
 ### 覆蓋範圍
 
@@ -237,15 +239,24 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 ### 40 條 pack 的定位
 
-這組 40 條 pack 應被視為「usage-layer acceptance pack v1」：
+這組 50 條 pack 應被視為「usage-layer acceptance pack v1」：
 
 - 小於目前 99 條 routing eval，方便日常快速跑與人工 review
 - 比目前 routing eval 多一層 reply-mode 與 success-type
 - 比單純 golden answer 更貼近 repo reality，因為它仍以 lane/action/agent_or_tool 為骨架
 
-完整 40 條 seed pack 見：
+其中 40 條 seed pack 與 schema 見：
 
 - [usage_layer_eval_schema.md](/Users/seanhan/Documents/Playground/docs/system/usage_layer_eval_schema.md)
+
+目前 checked-in `/Users/seanhan/Documents/Playground/evals/usage-layer/usage-layer-evals.mjs` 會在這 40 條 seed 之上，再補 10 條：
+
+- follow-up / workflow continuation
+- multi-intent / partial success
+- explicit fail-closed
+- command-style 補強
+
+另外，基於目前 repo 沒有 stored explicit user auth / account context 的 code truth，auth-required company-brain read 與 account-required cloud-doc workflow case 在 checked-in pack 中會被標成 `fail_closed`。這不是降格需求，而是避免把環境前置條件缺失誤算成 generic or timeout。
 
 ## Execution Graph
 
@@ -305,7 +316,7 @@ flowchart TD
 ### 30 天
 
 - 定稿本 PRD 與 eval schema
-- 建立 `usage-layer baseline v1` 的 40 條資料檔
+- 建立 `usage-layer baseline v1` 的 50 條資料檔（由 40 條 seed + 10 條 quality-gate 擴充組成）
 - 定義最小 judge 輸出格式：
   - `lane_hit`
   - `planner_hit`
@@ -317,7 +328,7 @@ flowchart TD
 
 ### 60 天
 
-- 把 40 條 baseline 從目前的 10 條 seed pack 擴滿
+- 把 40 條 seed pack 擴成 50 條可日常重跑的 gate pack
 - 補上 deterministic comparison 與報表輸出
 - 依 metric 分 bucket 做 quick fix：
   - `WRR` 高先修入口理解

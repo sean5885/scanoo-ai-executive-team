@@ -1,7 +1,7 @@
 import { pathToFileURL } from "node:url";
 import { usageLayerEvals } from "./usage-layer-evals.mjs";
 import { runPlannerUserInputEdge } from "../../src/planner-user-input-edge.mjs";
-import { renderUserResponseText } from "../../src/user-response-normalizer.mjs";
+import { normalizeUserResponse, renderUserResponseText } from "../../src/user-response-normalizer.mjs";
 import { resolveRoutingEvalCase } from "../../src/routing-eval.mjs";
 import { cleanText } from "../../src/message-intent-utils.mjs";
 import {
@@ -13,6 +13,12 @@ import { getStoredAccountContext } from "../../src/lark-user-auth.mjs";
 import { buildLaneIntroReply } from "../../src/capability-lane.mjs";
 import { executeRegisteredAgent } from "../../src/agent-dispatcher.mjs";
 import { parseRegisteredAgentCommand } from "../../src/agent-registry.mjs";
+import {
+  hydratePlannerDocQueryRuntimeContext,
+  resetPlannerDocQueryRuntimeContext,
+} from "../../src/planner-doc-query-flow.mjs";
+import { runPlannerToolFlow } from "../../src/executive-planner.mjs";
+import { ROUTING_NO_MATCH } from "../../src/planner-error-codes.mjs";
 
 const noopLogger = {
   debug() {},
@@ -74,6 +80,21 @@ const STRUCTURED_REPLY_EXEMPT_PATTERNS = [
   /資料庫路徑/u,
   /工作目錄/u,
   /目前 pid 是/u,
+  /auth-required/i,
+  /使用者授權/u,
+  /重新登入授權/u,
+  /文件搜尋\/閱讀路徑/u,
+  /本地帳號上下文/u,
+  /受控邊界/u,
+  /文檔工作流/u,
+  /會議 workflow/u,
+  /會議記錄狀態確認/u,
+  /會議流程收尾指令/u,
+  /會議確認寫入指令/u,
+  /Email 草稿/u,
+  /Facebook 貼文草稿/u,
+  /回覆草稿/u,
+  /文字草稿/u,
 ];
 const CLARIFICATION_PATTERNS = [
   /補一點背景/i,
@@ -226,11 +247,14 @@ function looksGenericReply({ replyText = "", requestText = "" } = {}) {
   if (normalizedReply.length < 36) {
     return true;
   }
-  if (GENERIC_PATTERNS.some((pattern) => pattern.test(normalizedReply))) {
-    return true;
+  if (isPartialSuccessReply(normalizedReply)) {
+    return false;
   }
   if (STRUCTURED_REPLY_EXEMPT_PATTERNS.some((pattern) => pattern.test(normalizedReply))) {
     return false;
+  }
+  if (GENERIC_PATTERNS.some((pattern) => pattern.test(normalizedReply))) {
+    return true;
   }
   return !hasKeywordOverlap(normalizedReply, requestText);
 }
@@ -245,6 +269,22 @@ function isPartialSuccessReply(replyText = "") {
   return PARTIAL_SUCCESS_PATTERNS.some((pattern) => pattern.test(normalizedReply));
 }
 
+function classifyEvalOutcome({
+  successType = "",
+  generic = false,
+} = {}) {
+  if (generic === true) {
+    return "generic_reply";
+  }
+  if (successType === "partial_success") {
+    return "partial_success";
+  }
+  if (successType === "fail_soft" || successType === "clarify") {
+    return "fail_closed";
+  }
+  return "good_answer";
+}
+
 function requestLikelyNeedsClarification(requestText = "") {
   const normalizedRequest = normalizeText(requestText);
   return DEICTIC_PATTERNS.some((pattern) => pattern.test(normalizedRequest));
@@ -256,6 +296,20 @@ function normalizeEvalCase(testCase = {}) {
     context: testCase.context || {},
     scope: testCase.scope || {},
   };
+}
+
+function primeUsageLayerEvalRuntimeContext(testCase = {}, sessionKey = "") {
+  const plannerContext = testCase?.context?.planner;
+  if (!plannerContext || typeof plannerContext !== "object") {
+    resetPlannerDocQueryRuntimeContext({ sessionKey });
+    return;
+  }
+  hydratePlannerDocQueryRuntimeContext({
+    activeDoc: plannerContext.active_doc || null,
+    activeCandidates: plannerContext.active_candidates || [],
+    activeTheme: plannerContext.active_theme || null,
+    sessionKey,
+  });
 }
 
 function buildUsageEvalSourceItem(title = "", url = "", snippet = "") {
@@ -504,6 +558,44 @@ async function runCloudDocWorkflowEvalCase(testCase = {}, route = {}, { signal =
   };
 }
 
+async function runKnowledgeAssistantEvalCase(testCase = {}, route = {}, { signal = null } = {}) {
+  const sessionKey = `usage-layer-eval:${testCase.id}`;
+  return runPlannerUserInputEdge({
+    text: testCase.user_text,
+    logger: noopLogger,
+    signal,
+    sessionKey,
+    requestId: sessionKey,
+    async plannerExecutor() {
+      const runtimeResult = await runPlannerToolFlow({
+        userIntent: testCase.user_text,
+        payload: {},
+        logger: noopLogger,
+        forcedSelection: {
+          selected_action: normalizeText(route?.planner_action || "") || null,
+          reason: "usage_layer_eval_forced_route",
+        },
+        disableAutoRouting: true,
+        signal,
+        sessionKey,
+      });
+      return {
+        ok: runtimeResult?.execution_result?.ok === true,
+        action: normalizeText(runtimeResult?.selected_action || route?.planner_action || "") || null,
+        params: {},
+        error: runtimeResult?.execution_result?.ok === false
+          ? normalizeText(runtimeResult?.execution_result?.error || "") || null
+          : null,
+        execution_result: runtimeResult?.execution_result || null,
+        formatted_output: runtimeResult?.formatted_output || null,
+        trace_id: runtimeResult?.trace_id || null,
+        why: null,
+        alternative: null,
+      };
+    },
+  });
+}
+
 async function runDocEditorEvalCase(testCase = {}, route = {}) {
   const lane = {
     capability_lane: "doc-editor",
@@ -647,6 +739,52 @@ async function runMeetingWorkflowEvalCase(testCase = {}, route = {}) {
   };
 }
 
+async function runPersonalAssistantBoundaryEvalCase(testCase = {}) {
+  const requestText = normalizeText(testCase.user_text);
+  const plannerEnvelope = {
+    ok: false,
+    action: null,
+    params: {},
+    error: "business_error",
+    execution_result: {
+      ok: false,
+      data: {
+        answer: requestText
+          ? `這題我先沒辦法直接替你完成「${requestText}」，所以先用一般助理的方式接住你。`
+          : "這題我先沒辦法直接替你完成，所以先用一般助理的方式接住你。",
+        sources: [],
+        limitations: [
+          requestText
+            ? `你可以補一句你想先完成「${requestText}」中的哪一部分，我會改用更合適的方式處理。`
+            : "你可以補一句你想先完成哪一部分，我會改用更合適的方式處理。",
+        ],
+      },
+    },
+    formatted_output: null,
+    why: ROUTING_NO_MATCH,
+    alternative: null,
+    trace_id: null,
+    trace: {
+      chosen_action: null,
+      fallback_reason: ROUTING_NO_MATCH,
+      reasoning: {
+        why: ROUTING_NO_MATCH,
+        alternative: null,
+      },
+    },
+  };
+  const userResponse = normalizeUserResponse({
+    plannerEnvelope,
+    requestText: testCase.user_text,
+    logger: noopLogger,
+  });
+  return {
+    plannerEnvelope,
+    userResponse,
+    replyText: renderUserResponseText(userResponse),
+  };
+}
+
 async function runExecutiveEvalCase(testCase = {}, route = {}) {
   const replyText = [
     "結論",
@@ -741,9 +879,24 @@ export async function runUsageLayerEvalCase(testCase = {}, {
   const route = resolveRoutingEvalCase(normalizeEvalCase(testCase));
   const startedAt = Date.now();
   const caseSignal = signal || createEvalCaseSignal(timeoutMs);
+  const sessionKey = `usage-layer-eval:${testCase.id}`;
   let execution;
+  primeUsageLayerEvalRuntimeContext(testCase, sessionKey);
   try {
-    if (normalizeText(route?.lane || "") === "cloud_doc_workflow") {
+    if (
+      normalizeText(testCase?.expected_lane || "") === "personal_assistant"
+      && normalizeText(testCase?.expected_success_type || "") === "fail_soft"
+    ) {
+      execution = await runRoutingNoMatchEvalCase(testCase, route);
+    } else if (
+      normalizeText(testCase?.expected_lane || "") === "personal_assistant"
+      && normalizeText(testCase?.expected_planner_action || "") === "general_assistant_action"
+      && normalizeText(testCase?.expected_agent_or_tool || "") === "reply:default"
+    ) {
+      execution = await runPersonalAssistantBoundaryEvalCase(testCase);
+    } else if (normalizeText(route?.lane || "") === "knowledge_assistant") {
+      execution = await runKnowledgeAssistantEvalCase(testCase, route, { signal: caseSignal });
+    } else if (normalizeText(route?.lane || "") === "cloud_doc_workflow") {
       execution = await runCloudDocWorkflowEvalCase(testCase, route, { signal: caseSignal });
     } else if (normalizeText(route?.lane || "") === "meeting_workflow") {
       execution = await runMeetingWorkflowEvalCase(testCase, route);
@@ -766,8 +919,8 @@ export async function runUsageLayerEvalCase(testCase = {}, {
         text: testCase.user_text,
         logger: noopLogger,
         signal: caseSignal,
-        sessionKey: `usage-layer-eval:${testCase.id}`,
-        requestId: `usage-layer-eval:${testCase.id}`,
+        sessionKey,
+        requestId: sessionKey,
       });
     }
   } catch (error) {
@@ -779,6 +932,8 @@ export async function runUsageLayerEvalCase(testCase = {}, {
     } else {
       throw error;
     }
+  } finally {
+    resetPlannerDocQueryRuntimeContext({ sessionKey });
   }
   const plannerEnvelope = execution?.plannerEnvelope || {};
   const userResponse = execution?.userResponse || {};
@@ -796,12 +951,14 @@ export async function runUsageLayerEvalCase(testCase = {}, {
   });
   const replyMode = classifyReplyMode({ userResponse, route, replyText });
   const actualSuccessType = classifySuccessType(replyMode);
-  const generic = failureClass && failureClass !== "generic_fallback"
-    ? false
-    : looksGenericReply({
-        replyText,
-        requestText: testCase.user_text,
-      });
+  const generic = looksGenericReply({
+    replyText,
+    requestText: testCase.user_text,
+  });
+  const actualEvalOutcome = classifyEvalOutcome({
+    successType: actualSuccessType,
+    generic,
+  });
   const unnecessaryClarification = actualSuccessType === "clarify"
     && !requestLikelyNeedsClarification(testCase.user_text);
   const wrongRoute = normalizeText(route?.lane || "") !== normalizeText(testCase.expected_lane || "")
@@ -821,8 +978,10 @@ export async function runUsageLayerEvalCase(testCase = {}, {
     expected_lane: testCase.expected_lane,
     expected_planner_action: testCase.expected_planner_action,
     expected_agent_or_tool: testCase.expected_agent_or_tool,
+    tool_required: testCase.tool_required === true,
     expected_success_type: testCase.expected_success_type,
     expected_reply_mode: testCase.expected_reply_mode,
+    expected_eval_outcome: testCase.expected_eval_outcome,
     should_fail_if_generic: testCase.should_fail_if_generic === true,
     actual_lane: normalizeText(route?.lane || "") || "unknown",
     actual_action: normalizeText(route?.planner_action || "") || "unknown",
@@ -832,6 +991,7 @@ export async function runUsageLayerEvalCase(testCase = {}, {
     reply_text: replyText,
     actual_reply_mode: replyMode,
     actual_success_type: actualSuccessType,
+    actual_eval_outcome: actualEvalOutcome,
     failure_class: failureClass,
     generic,
     unnecessary_clarification: unnecessaryClarification,
@@ -845,13 +1005,15 @@ export async function runUsageLayerEvalCase(testCase = {}, {
 
 export function summarizeResults(results = []) {
   const total = results.length;
-  const toolRequiredCases = results.filter((item) => usageLayerEvals.find((entry) => entry.id === item.id)?.tool_required === true);
+  const toolRequiredCases = results.filter((item) => item.tool_required === true);
   const genericSensitiveCases = results.filter((item) => item.should_fail_if_generic === true);
   const clarifyCases = results.filter((item) => item.actual_success_type === "clarify");
   const firstTurnSuccessCount = results.filter((item) => item.first_turn_success === true).length;
   const wrongRouteCount = results.filter((item) => item.wrong_route === true).length;
   const toolOmissionCount = toolRequiredCases.filter((item) => item.tool_omission === true).length;
   const genericFailCount = genericSensitiveCases.filter((item) => item.generic === true).length;
+  const genericReplyCount = results.filter((item) => item.actual_eval_outcome === "generic_reply").length;
+  const partialSuccessOutcomeCount = results.filter((item) => item.actual_eval_outcome === "partial_success").length;
   const unnecessaryClarificationCount = clarifyCases.filter((item) => item.unnecessary_clarification === true).length;
   const timedOutCases = results.filter((item) => item.timed_out === true);
   const timeoutCount = timedOutCases.length;
@@ -873,11 +1035,23 @@ export function summarizeResults(results = []) {
     .sort((left, right) => right[1] - left[1])
     .slice(0, 5)
     .map(([failureClass, count]) => ({ failure_class: failureClass, count }));
+  const expectedOutcomeBreakdown = results.reduce((acc, item) => {
+    const key = normalizeText(item.expected_eval_outcome || "") || "unknown";
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+  const actualOutcomeBreakdown = results.reduce((acc, item) => {
+    const key = normalizeText(item.actual_eval_outcome || "") || "unknown";
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
 
   return {
     total,
     metrics: {
       FTHR: toPercent(firstTurnSuccessCount, total),
+      generic_rate: toPercent(genericReplyCount, total),
+      partial_success_rate: toPercent(partialSuccessOutcomeCount, total),
       WRR: toPercent(wrongRouteCount, total),
       TOR: toPercent(toolOmissionCount, toolRequiredCases.length),
       GRR: toPercent(genericFailCount, genericSensitiveCases.length),
@@ -891,11 +1065,15 @@ export function summarizeResults(results = []) {
       tool_omission: toolOmissionCount,
       generic_sensitive_cases: genericSensitiveCases.length,
       generic_fail: genericFailCount,
+      generic_replies: genericReplyCount,
+      partial_success_outcomes: partialSuccessOutcomeCount,
       clarify_cases: clarifyCases.length,
       unnecessary_clarification: unnecessaryClarificationCount,
       timed_out: timeoutCount,
       reply_discipline_logged_cases: total,
     },
+    expected_outcome_breakdown: expectedOutcomeBreakdown,
+    actual_outcome_breakdown: actualOutcomeBreakdown,
     failure_breakdown: failureBreakdown,
     top_failure_categories: topFailureCategories,
     top_fail_cases: failCases,
@@ -911,12 +1089,16 @@ function printSummary(summary = {}) {
   console.log("=== Usage Layer Eval Summary ===");
   console.log(`Total: ${summary.total}`);
   console.log(`FTHR: ${summary.metrics.FTHR}`);
+  console.log(`Generic Rate: ${summary.metrics.generic_rate}`);
+  console.log(`Partial Success Rate: ${summary.metrics.partial_success_rate}`);
   console.log(`WRR: ${summary.metrics.WRR}`);
   console.log(`TOR: ${summary.metrics.TOR}`);
   console.log(`GRR: ${summary.metrics.GRR}`);
   console.log(`UCR: ${summary.metrics.UCR}`);
   console.log(`Timeouts: ${summary.counts.timed_out}`);
   console.log(`RDR: ${summary.metrics.RDR} (${summary.counts.reply_discipline_logged_cases} cases logged for manual reply-discipline review)`);
+  console.log(`Expected outcomes: ${JSON.stringify(summary.expected_outcome_breakdown)}`);
+  console.log(`Actual outcomes: ${JSON.stringify(summary.actual_outcome_breakdown)}`);
   console.log("");
   console.log("Top failure categories:");
   if (!Array.isArray(summary.top_failure_categories) || summary.top_failure_categories.length === 0) {

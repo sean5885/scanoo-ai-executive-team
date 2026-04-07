@@ -256,6 +256,55 @@ function getCloudOrganizationDocumentTitle(item = {}) {
   ].find(Boolean) || "untitled";
 }
 
+async function buildCloudOrganizationLocalRereviewFallbackReply({
+  reviewSeed = [],
+  testResidualDocs = [],
+  sessionKey = "",
+  logger = null,
+  replyBuilderName = "buildCloudOrganizationReviewReply",
+} = {}) {
+  const unresolved = reviewSeed.map(({ item, local }) => {
+    const finalRole = categoryRoleMap[local?.category] || "待人工確認";
+    return formatCloudOrganizationPendingItem({
+      item,
+      status: "待人工確認",
+      stagingRole: finalRole,
+      reason: summarizeCloudOrganizationReasons(
+        collectCloudOrganizationReviewReasons(item, local),
+        "這輪語義複審沒有在時限內完成，所以我先保留本地判斷並放進待人工確認。",
+      ),
+    });
+  });
+  const visibleUnresolved = await syncCloudOrganizationPendingItems({
+    sessionKey,
+    sourceKind: "cloud_doc_rereview",
+    sourceTitle: "Cloud Doc Rereview",
+    sourceSummary: `待人工確認：${unresolved.length} 份`,
+    sourceMatchReason: "語義複審超時後的本地待人工確認清單",
+    pendingItems: unresolved,
+  });
+
+  logCloudDocReplyTrace(logger, {
+    replyBuilderName,
+    finalTextSourceFunction: "buildCloudOrganizationLocalRereviewFallbackReply",
+    sessionKey,
+    forceReReview: true,
+    cacheHit: false,
+  });
+  return {
+    text: buildCloudOrganizationPendingReplyText({
+      conclusion: `第二輪角色審核這次先回退到本地保底結果，因為語義複審沒有在時限內完成。`,
+      summaryLines: [
+        "- 這一輪先保留本地分類與待人工確認清單，不假裝語義複審已完成。",
+        `- 待人工確認：${visibleUnresolved.length} 份`,
+        buildCloudOrganizationTestResidualSummaryLine(testResidualDocs),
+      ],
+      pendingItems: visibleUnresolved,
+    }),
+    pending_items: visibleUnresolved,
+  };
+}
+
 export function isCloudOrganizationTestResidualTitle(title = "") {
   return cloudOrganizationTestResidualTitlePattern.test(cleanText(title));
 }
@@ -1037,7 +1086,13 @@ export async function buildCloudOrganizationReviewReply({
       );
     } catch (error) {
       if (signal?.aborted || isAbortLikeError(error)) {
-        throw error;
+        return buildCloudOrganizationLocalRereviewFallbackReply({
+          reviewSeed,
+          testResidualDocs,
+          sessionKey,
+          logger,
+          replyBuilderName,
+        });
       }
       semanticClassified = new Map();
     }

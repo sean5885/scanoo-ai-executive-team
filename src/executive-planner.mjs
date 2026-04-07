@@ -2926,6 +2926,41 @@ function normalizeCompanyBrainActionResult(action = "", result = null) {
   };
 }
 
+function normalizeRuntimeInfoActionResult(result = null) {
+  if (!result || typeof result !== "object" || result.ok !== true) {
+    return result;
+  }
+  const nestedData = result?.data?.data;
+  if (
+    nestedData
+    && typeof nestedData === "object"
+    && !Array.isArray(nestedData)
+    && !Array.isArray(result?.data)
+    && !Object.prototype.hasOwnProperty.call(result.data || {}, "db_path")
+    && (
+      Object.prototype.hasOwnProperty.call(nestedData, "db_path")
+      || Object.prototype.hasOwnProperty.call(nestedData, "node_pid")
+      || Object.prototype.hasOwnProperty.call(nestedData, "cwd")
+      || Object.prototype.hasOwnProperty.call(nestedData, "service_start_time")
+    )
+  ) {
+    return {
+      ...result,
+      data: {
+        ...nestedData,
+      },
+    };
+  }
+  return result;
+}
+
+function normalizePlannerDispatchActionResult(action = "", result = null) {
+  if (cleanText(action) === "get_runtime_info") {
+    return normalizeRuntimeInfoActionResult(result);
+  }
+  return normalizeCompanyBrainActionResult(action, result);
+}
+
 function buildPlannerToolExecutionData(result = null) {
   if (!result || typeof result !== "object") {
     return {};
@@ -3763,7 +3798,7 @@ export async function dispatchPlannerTool({
 
     const rawText = await response.text();
     throwIfPlannerSignalAborted(signal);
-    const data = normalizeCompanyBrainActionResult(
+    const data = normalizePlannerDispatchActionResult(
       tool.action,
       parsePlannerDispatchResponse(rawText, tool.action),
     );
@@ -3851,6 +3886,16 @@ export async function dispatchPlannerTool({
         error,
         traceId: stickyTraceId,
       });
+      if (abortResult) {
+        const localFallback = await attemptLocalPlannerReadonlyFallback({
+          action: tool.action,
+          payload: effectivePayload,
+          authContext: normalizedAuthContext,
+        });
+        if (localFallback) {
+          return localFallback;
+        }
+      }
       if (abortResult) {
         return abortResult;
       }

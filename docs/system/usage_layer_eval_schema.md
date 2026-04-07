@@ -11,7 +11,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 這份 schema 直接站在現有 deterministic routing eval 之上：
 
 - 保留 `lane / planner_action / agent_or_tool`
-- 新增 `expected_reply_mode / expected_success_type / should_fail_if_generic`
+- 新增 `expected_reply_mode / expected_success_type / expected_eval_outcome / should_fail_if_generic`
 - 用來回答「對使用者是不是有幫助」
 
 ## Repo Reality 對齊
@@ -126,6 +126,22 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `false`:
     - 明確的 fail-soft 保底 case
     - intentionally broad fallback case
+
+### `expected_eval_outcome`
+
+- 型別：`string`
+- 定義：這條 case 在 usage-layer gate 上預期落入的最終 outcome label
+- 合法值：
+  - `good_answer`
+  - `partial_success`
+  - `fail_closed`
+  - `generic_reply`
+
+注意：
+
+- checked-in pack 現在要求 `generic_reply` 預期值為 `0`，也就是沒有任何 case 應以 generic reply 作為成功標準
+- `good_answer` 是 usage-layer gate label，不代表一定是 pure direct answer；也可包含 workflow progress / card preview
+- `fail_closed` 表示這條 case 在目前 repo truth 下，明確邊界回覆本身就是預期結果
 
 ## Recommended Optional Fields
 
@@ -243,7 +259,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 建立正式 baseline 檔時，建議遵守以下規則：
 
-1. 先把上表 40 條原封不動落成資料檔，再談擴充。
+1. 先以 40 條 seed pack 為骨架，再在同一 schema 下擴到 40~60 條 quality-gate pack。
 2. 每條若需要 context，直接沿用現有 `routing-eval-set` 的 `context` / `scope` 形狀。
 3. `EU` / `ES` / `RP` 三群不得失衡；若新增某群 case，需補足其他群。
 4. 不要在 baseline 檔裡發明 repo 不存在的 lane、action、agent、tool、preset 名稱。
@@ -263,7 +279,15 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - `registered_agent -> dispatch_registered_agent` 走 checked-in slash-agent dispatcher boundary，而不是再退回 planner edge generic fallback
   - deterministic `executive` / `ROUTING_NO_MATCH` seed case 走 runner-side bounded reply surface，避免 eval 因 planner waiting 失去 summary；這不改 route truth 或 public contract
 
-本輪只先放 10 條 seed case 驗證 runner，沒有一次補滿 40 條。  
+目前 checked-in dataset 已擴到 50 條，覆蓋：
+
+- follow-up
+- 多意圖 / partial success
+- command-style
+- doc / workflow（含 delivery / onboarding）
+- fail-closed
+- runtime / executive / meeting workflow
+
 判讀方式維持保守：
 
 - `lane / planner_action / agent_or_tool` 仍沿用既有 routing resolver
@@ -271,19 +295,21 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - 目前 checked-in `failure_class` 最少可區分：`routing_no_match`、`tool_omission`、`planner_failed`、`permission_denied`、`partial_success`、`generic_fallback`
 - runner 會優先讀這層 classification，再退回 `generic` / `clarify` / `partial_success` heuristic
 - summary 會輸出 `failure_breakdown` 與 top failure categories，避免所有 fail-soft case 都被誤壓成同一種 generic clarify
-- runner 現在對每條 case 都加上固定 timeout guard，並把同一個 abort signal 傳到 planner edge 與 cloud-doc `review/rereview` 的語義複審鏈路
-- 若單條 case 超時，runner 會取消該 case、在 summary 額外列出 `timed_out_cases`，並繼續跑完剩餘 case；這是 eval lifecycle guard，不改 usage-layer success criteria、planner prompt 或 routing truth
+- `knowledge_assistant` case 會重用 checked-in route truth，直接驅動 deterministic executor path 再回到同一條 answer boundary；這是 eval runner 的 bounded executor fallback，用來隔離 planner JSON latency，不改 routing truth、public contract 或 write policy
+- personal-lane `partial_success / fail_closed` case 會直接走 checked-in answer boundary normalizer，而不是讓 eval 被 planner waiting 拖成 timeout
+- runner 現在對每條 case 都加上固定 timeout guard；若單條 case 超時，會取消該 case、在 summary 額外列出 `timed_out_cases`，並繼續跑完剩餘 case
 - CLI 會印出 case start/done/timeout 與 stuck warning，方便直接定位是哪一條 case 長時間沒有結束
 - `RDR` 目前先保留 TODO，只做 case log，不宣稱已收斂成穩定自動 judge
+- 由於目前 repo 本地沒有 stored explicit user auth / account context，checked-in pack 會把 auth-required company-brain read 與 account-required cloud-doc workflow case 標成 `fail_closed`；這是當前 code truth，不是宣稱能力不存在
 
 ## 結論
 
-這份 schema 已經足夠直接拿去做 usage-layer 40 條 baseline：
+這份 schema 已經足夠直接拿去做 usage-layer 50 條 quality-gate pack：
 
 - 欄位已定義
 - enum 已收斂
 - judge 口徑已定義
-- 40 條 seed pack 已排好
-- 最小 runner 已可先用 10 條 seed case 實跑
+- 40 條 seed pack 已排好，並已擴成 50 條 checked-in gate pack
+- runner 已可直接穩定實跑整組
 
-下一步是把 checked-in seed pack 擴到完整 40 條並收斂 `RDR` judge，不需要回頭重談 schema。
+下一步是收斂 `RDR` judge 與後續增量維護，不需要回頭重談 schema。
