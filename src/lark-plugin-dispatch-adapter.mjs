@@ -24,6 +24,7 @@ const KNOWLEDGE_ANSWER_TOOL_PATTERNS = [
 
 const SUPPORTED_PLUGIN_DISPATCH_LANES = new Set([
   "knowledge-assistant",
+  "scanoo-diagnose",
   "doc-editor",
   "group-shared-assistant",
   "personal-assistant",
@@ -40,11 +41,12 @@ const REQUESTED_CAPABILITY_ROUTE_MAP = {
   },
   scanoo_diagnose: {
     route_target: "lane_backend",
-    mapped_lane: "knowledge-assistant",
-    chosen_lane: "knowledge-assistant",
-    lane_mapping_source: "fallback",
+    mapped_lane: "scanoo-diagnose",
+    chosen_lane: "scanoo-diagnose",
+    lane_mapping_source: "explicit",
     chosen_skill: "scanoo_diagnose",
-    fallback_reason: "missing_exact_scanoo_diagnose_lane_fallback_to_knowledge_assistant",
+    fallback_lane: "knowledge-assistant",
+    fallback_reason_on_miss: "missing_exact_scanoo_diagnose_lane_fallback_to_knowledge_assistant",
   },
   scanoo_compare: {
     route_target: "lane_backend",
@@ -307,6 +309,7 @@ function resolveChosenSkill(normalizedRequest = {}, routeTarget = "") {
 export function resolveRequestedCapabilityLaneMapping({
   requestedCapability = "",
   capabilityRouteMap = REQUESTED_CAPABILITY_ROUTE_MAP,
+  supportedPluginDispatchLanes = SUPPORTED_PLUGIN_DISPATCH_LANES,
 } = {}) {
   const normalizedCapability = cleanText(requestedCapability);
   if (!normalizedCapability) {
@@ -320,18 +323,24 @@ export function resolveRequestedCapabilityLaneMapping({
 
   const routeTarget = cleanText(mapping?.route_target) || "plugin_native";
   const requestedLane = cleanText(mapping?.mapped_lane || mapping?.chosen_lane);
-  const supportedLane = requestedLane && SUPPORTED_PLUGIN_DISPATCH_LANES.has(requestedLane)
+  const supportedLane = requestedLane && supportedPluginDispatchLanes.has(requestedLane)
     ? requestedLane
     : null;
 
   if (routeTarget === "lane_backend" && !supportedLane) {
+    const fallbackLane = cleanText(mapping?.fallback_lane);
+    const supportedFallbackLane = fallbackLane && supportedPluginDispatchLanes.has(fallbackLane)
+      ? fallbackLane
+      : null;
     return {
       route_target: routeTarget,
-      mapped_lane: "personal-assistant",
-      chosen_lane: "personal-assistant",
+      mapped_lane: supportedFallbackLane || "personal-assistant",
+      chosen_lane: supportedFallbackLane || "personal-assistant",
       lane_mapping_source: "fallback",
       chosen_skill: cleanText(mapping?.chosen_skill) || normalizedCapability,
-      fallback_reason: cleanText(mapping?.fallback_reason) || "mapped_lane_missing_or_unsupported_fallback_to_personal_assistant",
+      fallback_reason: cleanText(mapping?.fallback_reason_on_miss)
+        || cleanText(mapping?.fallback_reason)
+        || "mapped_lane_missing_or_unsupported_fallback_to_personal_assistant",
     };
   }
 
@@ -445,6 +454,13 @@ function resolveExplicitLaneContext(normalizedRequest = {}, preferredLane = "") 
   const lane = cleanText(preferredLane);
   if (!lane) {
     return null;
+  }
+  if (lane === "scanoo-diagnose") {
+    return {
+      capability_lane: "scanoo-diagnose",
+      lane_label: "Scanoo 診斷助手",
+      lane_reason: "plugin_dispatch_requested_capability",
+    };
   }
   if (lane === "knowledge-assistant") {
     return {

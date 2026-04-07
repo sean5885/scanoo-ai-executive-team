@@ -396,6 +396,14 @@ export function resolveLaneExecutionPlan({ event, scope } = {}) {
   const lane = cleanText(scope?.capability_lane || "personal-assistant") || "personal-assistant";
   const text = normalizeMessageText(event);
 
+  if (lane === "scanoo-diagnose") {
+    return buildLaneTrace({
+      scope,
+      chosenAction: "scanoo_diagnose_user_input",
+      fallbackReason: null,
+    });
+  }
+
   if (lane === "knowledge-assistant") {
     return buildLaneTrace({
       scope,
@@ -834,6 +842,32 @@ async function resolvePlannerExplicitAuthContext({ event, scope, accountId, logg
 }
 
 async function executeKnowledgeAssistant({ event, scope, logger = noopLogger, traceId = null }) {
+  return executePlannerBackedLane({
+    event,
+    scope,
+    logger,
+    traceId,
+    handlerName: "executeKnowledgeAssistant",
+  });
+}
+
+async function executeScanooDiagnose({ event, scope, logger = noopLogger, traceId = null }) {
+  return executePlannerBackedLane({
+    event,
+    scope,
+    logger,
+    traceId,
+    handlerName: "executeScanooDiagnose",
+  });
+}
+
+async function executePlannerBackedLane({
+  event,
+  scope,
+  logger = noopLogger,
+  traceId = null,
+  handlerName = "executePlannerBackedLane",
+} = {}) {
   const lanePlan = resolveLaneExecutionPlan({ event, scope });
   logger.info("lane_execution_planned", lanePlan);
   const context = await resolveAuthContext(event, logger, { allowTenantFallback: true });
@@ -859,7 +893,7 @@ async function executeKnowledgeAssistant({ event, scope, logger = noopLogger, tr
     authContext: explicitAuth,
     sessionKey: cleanText(scope?.session_key || scope?.chat_id || event?.message?.chat_id || ""),
     traceId,
-    handlerName: "executeKnowledgeAssistant",
+    handlerName,
     envelopeDecorator(envelope) {
       return attachLaneTrace(envelope, { scope });
     },
@@ -873,7 +907,7 @@ async function executeKnowledgeAssistant({ event, scope, logger = noopLogger, tr
   logger.info("lane_execution_result", plannerEnvelope.trace);
   return {
     text: renderUserResponseText(userResponse),
-    handlerName: "executeKnowledgeAssistant",
+    handlerName,
     traceId,
   };
 }
@@ -2765,6 +2799,10 @@ export async function executeCapabilityLane({ event, scope, logger = noopLogger,
   if (lane === "knowledge-assistant") {
     assertRoutingDecisionOwner({ expected: expectedOwner, actual: "knowledge-assistant" });
     return executeKnowledgeAssistant({ event, scope, logger, traceId });
+  }
+  if (lane === "scanoo-diagnose") {
+    assertRoutingDecisionOwner({ expected: expectedOwner, actual: "scanoo-diagnose" });
+    return executeScanooDiagnose({ event, scope, logger, traceId });
   }
   if (lane === "doc-editor") {
     assertRoutingDecisionOwner({ expected: expectedOwner, actual: "doc-editor" });

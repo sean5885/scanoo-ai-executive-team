@@ -210,7 +210,10 @@ These describe code structure and responsibility, not how many processes are run
   - maps OpenClaw tool calls into the checked-in plugin hybrid dispatch ingress first
   - every tool call now carries `requested_capability` and `capability_source`; the current checked-in minimal capability set only specializes `knowledge_answer`, `scanoo_diagnose`, `scanoo_compare`, and `scanoo_optimize`, while other plugin-native tools still pass their tool name through that same dispatch envelope
   - `scanoo_diagnose / scanoo_compare / scanoo_optimize` no longer stop at a generic lane-backend label only; the adapter now records an explicit capability-to-lane mapping before execution
-  - because the checked-in repo still has no dedicated diagnose / compare / optimize lane, those three capabilities currently fall back to the existing stable `knowledge-assistant` lane and record `lane_mapping_source=fallback` plus a concrete `fallback_reason`
+  - the checked-in repo now exposes one dedicated minimal diagnose lane: `scanoo_diagnose -> scanoo-diagnose`
+  - that lane stays thin on purpose: it preserves distinct routing / trace / execution identity, but still reuses the existing planner answer-edge helper for stable answer/analysis execution
+  - only when the dedicated `scanoo-diagnose` lane is unavailable does the adapter fall back to `knowledge-assistant`, recording `lane_mapping_source=fallback` plus `fallback_reason=missing_exact_scanoo_diagnose_lane_fallback_to_knowledge_assistant`
+  - `scanoo_compare` and `scanoo_optimize` still have no dedicated checked-in lane and continue to fall back to `knowledge-assistant`
   - plugin-native document/message/calendar/task-style tools are still forwarded to their existing HTTP routes after dispatch classification
 
 - `lobster_security`

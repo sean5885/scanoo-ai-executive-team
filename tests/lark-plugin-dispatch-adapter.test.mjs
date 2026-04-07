@@ -132,9 +132,27 @@ test("explicit requested capability wins over text heuristics and records explic
   );
 });
 
-test("scanoo_diagnose maps to the fallback knowledge lane", () => {
+test("scanoo_diagnose maps to the dedicated scanoo-diagnose lane", () => {
   const mapping = resolveRequestedCapabilityLaneMapping({
     requestedCapability: "scanoo_diagnose",
+  });
+
+  assert.equal(mapping.route_target, "lane_backend");
+  assert.equal(mapping.mapped_lane, "scanoo-diagnose");
+  assert.equal(mapping.chosen_lane, "scanoo-diagnose");
+  assert.equal(mapping.lane_mapping_source, "explicit");
+  assert.equal(mapping.fallback_reason, null);
+});
+
+test("scanoo_diagnose falls back to knowledge-assistant only when the dedicated lane is unavailable", () => {
+  const mapping = resolveRequestedCapabilityLaneMapping({
+    requestedCapability: "scanoo_diagnose",
+    supportedPluginDispatchLanes: new Set([
+      "knowledge-assistant",
+      "doc-editor",
+      "group-shared-assistant",
+      "personal-assistant",
+    ]),
   });
 
   assert.equal(mapping.route_target, "lane_backend");

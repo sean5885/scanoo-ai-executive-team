@@ -201,10 +201,12 @@ Current truth:
 - plugin-native document/message/calendar/task-style tools stay outside the internal planner/lane business flow
 - the checked-in minimal capability map does not add planner or model-side NLP; `lark_kb_answer` uses simple tool+params rules to emit `knowledge_answer` or one of the three `scanoo_*` capabilities
 - the current checked-in `scanoo_*` capability-to-lane mapping is:
-  - `scanoo_diagnose -> knowledge-assistant` with `lane_mapping_source=fallback`
+  - `scanoo_diagnose -> scanoo-diagnose` with `lane_mapping_source=explicit`
   - `scanoo_compare -> knowledge-assistant` with `lane_mapping_source=fallback`
   - `scanoo_optimize -> knowledge-assistant` with `lane_mapping_source=fallback`
-- this is a bounded fallback because the repo does not yet expose dedicated diagnose / compare / optimize lanes; the adapter now records a concrete `fallback_reason` instead of silently collapsing those capabilities into one generic lane label
+- the dedicated `scanoo-diagnose` lane is intentionally thin: adapter identity, lane trace, and execution owner are distinct, but execution still reuses the existing planner answer-edge helper
+- only if `scanoo-diagnose` is unavailable does the adapter fall back to `knowledge-assistant`, recording `fallback_reason=missing_exact_scanoo_diagnose_lane_fallback_to_knowledge_assistant`
+- `scanoo_compare` and `scanoo_optimize` still have no dedicated checked-in lane, so they remain bounded fallbacks and still record a concrete `fallback_reason` instead of silently collapsing into one generic lane label
 - the dispatch layer records `request_text / source / session_id / thread_id / requested_capability / capability_source / route_target / mapped_lane / lane_mapping_source / chosen_lane / chosen_skill / fallback_reason / final_status`
 
 ## 4. Adjacent Workflows

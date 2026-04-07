@@ -2392,3 +2392,65 @@ test("lark plugin dispatch route sends explicit scanoo capability through the la
   assert.equal(laneCalls[0].scope.capability_lane, "knowledge-assistant");
   assert.equal(calls.some((entry) => entry[1]?.event === "lark_plugin_dispatch_started" && entry[1]?.capability_source === "explicit"), true);
 });
+
+test("lark plugin dispatch route maps explicit scanoo_diagnose into the dedicated diagnose lane", async (t) => {
+  const plannerCalls = [];
+  const laneCalls = [];
+  const { server, calls } = await startTestServer(t, {
+    async executePlannedUserInput(args) {
+      plannerCalls.push(args);
+      return {
+        ok: true,
+        execution_result: {
+          ok: true,
+          data: {
+            answer: "planner should stay unused",
+            sources: [],
+            limitations: [],
+          },
+        },
+      };
+    },
+    async executeCapabilityLane(args) {
+      laneCalls.push(args);
+      return {
+        text: "這是 scanoo diagnose lane 的回答",
+      };
+    },
+  });
+  const { port } = server.address();
+
+  const { body } = await postPluginDispatch(port, {
+    request_text: "請幫我診斷 Scanoo onboarding funnel 的掉轉換原因",
+    session_id: "sess_scanoo_diagnose",
+    chat_id: "chat_scanoo_diagnose",
+    user_id: "user_scanoo_diag",
+    account_id: "acct-scanoo",
+    source: "official_lark_plugin",
+    tool_name: "lark_kb_answer",
+    requested_capability: "scanoo_diagnose",
+    capability_source: "explicit",
+    route_request: {
+      path: "/answer?q=Scanoo%20diagnose",
+      method: "GET",
+      body: null,
+    },
+  });
+
+  assert.equal(body.route_target, "lane_backend");
+  assert.equal(body.requested_capability, "scanoo_diagnose");
+  assert.equal(body.mapped_lane, "scanoo-diagnose");
+  assert.equal(body.chosen_skill, "scanoo_diagnose");
+  assert.equal(body.chosen_lane, "scanoo-diagnose");
+  assert.equal(body.lane_mapping_source, "explicit");
+  assert.equal(body.fallback_reason, null);
+  assert.equal(body.response.data.answer, "這是 scanoo diagnose lane 的回答");
+  assert.equal(plannerCalls.length, 0);
+  assert.equal(laneCalls.length, 1);
+  assert.equal(laneCalls[0].scope.capability_lane, "scanoo-diagnose");
+  assert.equal(calls.some((entry) => (
+    entry[1]?.event === "lark_plugin_dispatch_completed"
+    && entry[1]?.requested_capability === "scanoo_diagnose"
+    && entry[1]?.lane_mapping_source === "explicit"
+  )), true);
+});

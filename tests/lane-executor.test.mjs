@@ -243,6 +243,25 @@ test("lane execution plan separates document summary from recent dialogue summar
   assert.equal(dialoguePlan.chosen_action, "summarize_recent_dialogue");
 });
 
+test("scanoo-diagnose lane keeps a distinct execution identity while reusing planner-backed analysis", () => {
+  const plan = resolveLaneExecutionPlan({
+    scope: {
+      capability_lane: "scanoo-diagnose",
+    },
+    event: {
+      message: {
+        content: JSON.stringify({
+          text: "請幫我診斷 Scanoo onboarding funnel 為什麼掉轉換",
+        }),
+      },
+    },
+  });
+
+  assert.equal(plan.chosen_lane, "scanoo-diagnose");
+  assert.equal(plan.chosen_action, "scanoo_diagnose_user_input");
+  assert.equal(plan.fallback_reason, null);
+});
+
 test("lane execution plan reports structured semantic mismatch instead of generic fallback for misplaced document request", () => {
   const plan = resolveLaneExecutionPlan({
     scope: {
