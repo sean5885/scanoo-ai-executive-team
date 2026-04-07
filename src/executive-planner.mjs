@@ -2226,7 +2226,47 @@ function formatTaskLayerTaskLabel(task = "") {
 
 function buildTaskLayerPlannerResult(taskLayerResult = null) {
   const tasks = Array.isArray(taskLayerResult?.tasks) ? taskLayerResult.tasks.map((task) => cleanText(task)).filter(Boolean) : [];
-  const results = Array.isArray(taskLayerResult?.results) ? taskLayerResult.results : [];
+  const results = Array.isArray(taskLayerResult?.results)
+    ? taskLayerResult.results
+    : tasks.map((task) => {
+        const taskName = cleanText(task);
+        const status = cleanText(taskLayerResult?.summary?.[taskName]);
+        if (status === "done") {
+          return {
+            task: taskName,
+            ok: true,
+            result: taskLayerResult?.data?.[taskName],
+          };
+        }
+        const error = Array.isArray(taskLayerResult?.errors)
+          ? taskLayerResult.errors.find((item) => cleanText(item?.task) === taskName)?.error
+          : null;
+        return {
+          task: taskName,
+          ok: false,
+          error: cleanText(error) || "runtime_exception",
+        };
+      });
+  const summary = tasks.reduce((output, task) => {
+    output[task] = results.find((item) => cleanText(item?.task) === task)?.ok === true
+      ? "done"
+      : "failed";
+    return output;
+  }, {});
+  const data = results.reduce((output, item) => {
+    const task = cleanText(item?.task);
+    if (task && item?.ok === true) {
+      output[task] = item.result;
+    }
+    return output;
+  }, {});
+  const errors = results
+    .filter((item) => item?.ok !== true)
+    .map((item) => ({
+      task: cleanText(item?.task) || null,
+      error: cleanText(item?.error || "") || "runtime_exception",
+    }))
+    .filter((item) => item.task);
   const succeeded = results.filter((item) => item?.ok === true);
   const failed = results.filter((item) => item?.ok !== true);
   const taskSummary = tasks.map((task) => formatTaskLayerTaskLabel(task)).join("、");
@@ -2261,6 +2301,9 @@ function buildTaskLayerPlannerResult(taskLayerResult = null) {
         mode: "multi_task",
         tasks,
         results,
+        summary,
+        data,
+        errors,
         answer,
         sources,
         limitations,

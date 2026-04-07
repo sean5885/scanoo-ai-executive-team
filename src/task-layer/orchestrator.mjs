@@ -1,5 +1,6 @@
 import { classifyTask } from "./task-classifier.mjs";
 import { TASK_SKILL_MAP } from "./task-skill-map.mjs";
+import { aggregateResults } from "./task-aggregator.mjs";
 import { sortTasks } from "./task-dependency.mjs";
 
 export async function runTaskLayer(input, runSkill) {
@@ -26,5 +27,5 @@ export async function runTaskLayer(input, runSkill) {
     }
   }
 
-  return { tasks, results };
+  return aggregateResults({ tasks, results });
 }

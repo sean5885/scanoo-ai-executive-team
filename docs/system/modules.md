@@ -167,7 +167,8 @@ Current-truth docs for onboarding are:
   - it performs deterministic keyword classification into `copywriting`, `image`, and `publish`
   - `task-dependency.mjs` defines the current checked-in execution order as `copywriting -> image -> publish`
   - it maps those task tags to string skill identifiers `copy_agent`, `image_agent`, and `publish_agent`
-  - `runTaskLayer(...)` sorts detected tasks through that dependency helper, executes the provided `runSkill` callback sequentially, and returns per-task success/failure records
+  - `/Users/seanhan/Documents/Playground/src/task-layer/task-aggregator.mjs` folds per-task records into a unified `{ ok, tasks, results, summary, data, errors }` envelope
+  - `runTaskLayer(...)` sorts detected tasks through that dependency helper, executes the provided `runSkill` callback sequentially, and returns that aggregated envelope with both raw per-task records and summarized status
   - a task failure is recorded fail-soft and does not stop later tasks from running in the same bounded pass
   - `executePlannedUserInput(...)` can now consult this helper as a planner pre-pass, but only when the caller explicitly provides a `runSkill` callback
   - if that optional pre-pass detects more than one task, planner execution short-circuits into a bounded `multi_task` result that still stays inside the canonical `answer / sources / limitations` boundary

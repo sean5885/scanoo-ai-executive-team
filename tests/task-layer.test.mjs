@@ -24,6 +24,28 @@ test("runTaskLayer maps tasks to skills and records per-task failures", async ()
   });
 
   assert.deepEqual(result.tasks, ["copywriting", "image", "publish"]);
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.summary, {
+    copywriting: "done",
+    image: "done",
+    publish: "failed",
+  });
+  assert.deepEqual(result.data, {
+    copywriting: {
+      handledBy: "copy_agent",
+      task: "copywriting",
+    },
+    image: {
+      handledBy: "image_agent",
+      task: "image",
+    },
+  });
+  assert.deepEqual(result.errors, [
+    {
+      task: "publish",
+      error: "publish blocked",
+    },
+  ]);
   assert.deepEqual(calls, [
     {
       skill: "copy_agent",
