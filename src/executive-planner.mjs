@@ -35,6 +35,7 @@ import { fetchDocumentPlainText } from "./skills/document-fetch.mjs";
 import { FALLBACK_DISABLED, INVALID_ACTION, ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
 import { hasDocSearchIntent, hasScopedDocExclusionSearchIntent } from "./router.js";
 import { createRequestId, emitRateLimitedAlert, emitToolExecutionLog } from "./runtime-observability.mjs";
+import { runTaskLayer } from "./task-layer/orchestrator.mjs";
 import {
   compactPlannerConversationMemory as compactPlannerConversationMemoryLayer,
   getPlannerConversationMemory as getPlannerConversationMemoryLayer,
@@ -2207,6 +2208,73 @@ function normalizePlannerFormattedOutput(formattedOutput = null) {
 
 function extractPlannerFormattedOutput(executionResult = null) {
   return normalizePlannerFormattedOutput(executionResult?.formatted_output);
+}
+
+function formatTaskLayerTaskLabel(task = "") {
+  const normalized = cleanText(task);
+  if (normalized === "copywriting") {
+    return "文案";
+  }
+  if (normalized === "image") {
+    return "圖片";
+  }
+  if (normalized === "publish") {
+    return "發布";
+  }
+  return normalized || "未命名任務";
+}
+
+function buildTaskLayerPlannerResult(taskLayerResult = null) {
+  const tasks = Array.isArray(taskLayerResult?.tasks) ? taskLayerResult.tasks.map((task) => cleanText(task)).filter(Boolean) : [];
+  const results = Array.isArray(taskLayerResult?.results) ? taskLayerResult.results : [];
+  const succeeded = results.filter((item) => item?.ok === true);
+  const failed = results.filter((item) => item?.ok !== true);
+  const taskSummary = tasks.map((task) => formatTaskLayerTaskLabel(task)).join("、");
+  const answer = failed.length === 0
+    ? `這輪先依多任務路徑拆成 ${tasks.length} 個子任務${taskSummary ? `：${taskSummary}` : ""}，並完成執行。`
+    : succeeded.length > 0
+      ? `這輪先依多任務路徑拆成 ${tasks.length} 個子任務${taskSummary ? `：${taskSummary}` : ""}，目前先完成其中 ${succeeded.length} 個。`
+      : `這輪先依多任務路徑拆出 ${tasks.length} 個子任務${taskSummary ? `：${taskSummary}` : ""}，但目前都還沒有成功完成。`;
+  const sources = [
+    taskSummary ? `任務拆解：${taskSummary}。` : "",
+    ...succeeded.map((item) => {
+      const task = formatTaskLayerTaskLabel(item?.task || "");
+      return `${task} 已完成執行。`;
+    }),
+  ].filter(Boolean);
+  const limitations = failed.length > 0
+    ? failed.map((item) => {
+        const task = formatTaskLayerTaskLabel(item?.task || "");
+        const error = cleanText(item?.error || "") || "runtime_exception";
+        return `${task} 目前未完成：${error}。`;
+      })
+    : ["如果你要，我可以再把每個子任務展開成更完整的最終稿或後續步驟。"];
+
+  return {
+    ok: succeeded.length > 0 || failed.length === 0,
+    action: "multi_task",
+    params: {},
+    error: succeeded.length > 0 || failed.length === 0 ? null : "multi_task_failed",
+    execution_result: {
+      ok: succeeded.length > 0 || failed.length === 0,
+      data: {
+        mode: "multi_task",
+        tasks,
+        results,
+        answer,
+        sources,
+        limitations,
+      },
+    },
+    formatted_output: null,
+    trace_id: null,
+    why: "task-layer 預先辨識到多個子任務，所以先走 bounded multi-task pre-pass。",
+    alternative: normalizeDecisionAlternative({
+      action: null,
+      agent_id: null,
+      summary: "若只要處理其中一件事，也可以退回原本的單一路徑 planner 流程。",
+    }),
+  };
 }
 
 function buildPlannerPendingItemActionFormattedOutput({
@@ -7251,6 +7319,8 @@ export async function executePlannedUserInput({
   sessionKey = "",
   requestId = "",
   telemetryAdapter = null,
+  runSkill = null,
+  taskLayerRunner = runTaskLayer,
 } = {}) {
   const preAbortInfo = derivePlannerAbortInfo({ signal });
   if (preAbortInfo) {
@@ -7263,6 +7333,18 @@ export async function executePlannedUserInput({
       why: null,
       alternative: normalizeDecisionAlternative(null),
     };
+  }
+  if (typeof runSkill === "function" && typeof taskLayerRunner === "function") {
+    try {
+      const taskLayerResult = await taskLayerRunner(text, runSkill);
+      if (Array.isArray(taskLayerResult?.tasks) && taskLayerResult.tasks.length > 1) {
+        return buildTaskLayerPlannerResult(taskLayerResult);
+      }
+    } catch (error) {
+      logger?.warn?.("planner_task_layer_prepass_failed", {
+        error: cleanText(error?.message || "") || String(error),
+      });
+    }
   }
   const decision = plannedDecision
     ? (() => {

@@ -207,11 +207,14 @@ Current path:
 
 Current truth:
 
-- implemented as an adjacent helper only
+- implemented as an adjacent helper with an optional planner pre-pass
 - current checked-in tags are `copywriting`, `image`, and `publish`
 - current checked-in mapped identifiers are `copy_agent`, `image_agent`, and `publish_agent`
-- execution is sequential and callback-driven; there is no checked-in queue, planner admission, or skill-runtime registration on this path
-- this helper does not create a new public route and does not change the public `answer / sources / limitations` boundary
+- execution is sequential and callback-driven; there is no checked-in queue or checked-in skill-runtime registration on this path
+- `executePlannedUserInput(...)` may call this helper before normal planning only when the caller explicitly supplies `runSkill`
+- when that optional pre-pass detects more than one task, planner execution returns a bounded `multi_task` result through the same canonical `answer / sources / limitations` boundary
+- if the helper detects zero or one task, or if the optional pre-pass fails, execution falls back to the original planner path
+- the checked-in public `/answer` edge does not currently supply `runSkill`, so the default public route behavior is unchanged
 
 ### 4B. Comment Rewrite
 

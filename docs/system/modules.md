@@ -166,10 +166,14 @@ Current-truth docs for onboarding are:
   - it performs deterministic keyword classification into `copywriting`, `image`, and `publish`
   - it maps those task tags to string skill identifiers `copy_agent`, `image_agent`, and `publish_agent`
   - `runTaskLayer(...)` executes the provided `runSkill` callback sequentially per detected task and returns per-task success/failure records
-  - this helper is not wired into `GET /answer`, planner routing, `skill-runtime.mjs`, or any public HTTP route
+  - `executePlannedUserInput(...)` can now consult this helper as a planner pre-pass, but only when the caller explicitly provides a `runSkill` callback
+  - if that optional pre-pass detects more than one task, planner execution short-circuits into a bounded `multi_task` result that still stays inside the canonical `answer / sources / limitations` boundary
+  - if no `runSkill` callback is provided, the pre-pass errors, or at most one task is detected, the original planner flow continues unchanged
+  - the checked-in public `/answer` edge does not currently provide `runSkill`, so this does not change the default public route behavior
   - the mapped identifiers are local task-layer labels only; they are not evidence of checked-in planner-visible skill registration
 - Evidence:
   - `/Users/seanhan/Documents/Playground/tests/task-layer.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/task-layer-integration.test.mjs`
 
 ### 5. External Write Path
 

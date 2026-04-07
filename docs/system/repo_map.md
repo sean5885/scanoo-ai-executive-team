@@ -137,7 +137,9 @@ This file explains which directories are part of the current runtime, which are 
 - `/Users/seanhan/Documents/Playground/src/task-layer`
 - Current truth:
   - contains a keyword task classifier, a static task-to-skill map, and a small callback-based orchestrator
-  - not wired into the main planner, public HTTP routes, or the checked-in skill runtime registry
+  - can be consulted by `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` as an optional pre-pass when the caller supplies `runSkill`
+  - the checked-in public route surfaces do not currently pass that callback, so the default `/answer` path is unchanged
+  - not wired into the checked-in skill runtime registry
   - useful as an internal helper subtree for task decomposition experiments
 
 ### Write Surface
