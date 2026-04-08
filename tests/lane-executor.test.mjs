@@ -8,6 +8,7 @@ const {
   buildScanooCompareFallbackQuery,
   buildScanooCompareDocsSearchReply,
   buildScanooDiagnoseOfficialReadReply,
+  filterScanooCompareDocsSearchItems,
   looksLikeChatOnlyFailurePreference,
   looksLikeCloudOrganizationExit,
   looksLikeCloudOrganizationPlainLanguageRequest,
@@ -372,6 +373,45 @@ test("scanoo-compare docs search fallback keeps the compare section order", () =
 
   assert.match(reply, /【比較對象】[\s\S]*【比較維度】[\s\S]*【核心差異】[\s\S]*【原因假設】[\s\S]*【證據 \/ 不確定性】[\s\S]*【建議行動】/);
   assert.match(reply, /Scanoo Onboarding SOP（doc_scanoo_compare_1）/);
+});
+
+test("scanoo-compare docs search fallback excludes demo verify success evidence hits", () => {
+  const filtered = filterScanooCompareDocsSearchItems([
+    {
+      title: "Scanoo Compare Demo",
+      doc_id: "doc_scanoo_compare_demo",
+      url: "https://example.com/doc_scanoo_compare_demo",
+    },
+    {
+      title: "Scanoo Compare Success Probe",
+      doc_id: "doc_scanoo_compare_success_probe",
+    },
+    {
+      title: "Scanoo Onboarding SOP",
+      doc_id: "doc_scanoo_compare_1",
+      summary: {
+        overview: "收斂 onboarding 流程、指標與 owner。",
+      },
+    },
+  ]);
+
+  assert.deepEqual(filtered.map((item) => item.doc_id), ["doc_scanoo_compare_1"]);
+});
+
+test("scanoo-compare docs search fallback returns bounded missing-data reply when no eligible evidence remains", () => {
+  const reply = buildScanooCompareDocsSearchReply({
+    query: "Scanoo onboarding funnel 新舊差異",
+    items: [
+      {
+        title: "Scanoo Compare Verify Fixture",
+        doc_id: "doc_scanoo_compare_verify_fixture",
+      },
+    ],
+  });
+
+  assert.match(reply, /目前官方文件搜尋也還沒有命中可直接支撐比較的文件/);
+  assert.doesNotMatch(reply, /doc_scanoo_compare_verify_fixture/);
+  assert.match(reply, /還不能安全下結論哪一側表現更好/);
 });
 
 test("scanoo-diagnose official read fallback keeps the diagnose section order", () => {

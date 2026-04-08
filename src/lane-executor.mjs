@@ -286,6 +286,8 @@ const SCANOO_COMPARE_QUERY_STOPWORDS = [
   "看看",
 ];
 
+const SCANOO_COMPARE_EVIDENCE_GUARD_PATTERN = /(?:^|[^a-z0-9])(demo|verify|verification|success)(?:[^a-z0-9]|$)/iu;
+
 export function buildScanooCompareBrief(text = "") {
   const normalizedText = cleanText(text);
   if (!normalizedText) {
@@ -441,11 +443,25 @@ function formatScanooCompareDocsSearchEvidenceItem(item = {}) {
   return `- ${title}${docId ? `（${docId}）` : ""}${summary ? `：${summary}` : ""}`;
 }
 
+function shouldExcludeScanooCompareEvidenceItem(item = {}) {
+  const guardText = [
+    cleanText(item?.title || ""),
+    cleanText(item?.doc_id || ""),
+    cleanText(item?.url || ""),
+    cleanText(item?.source || ""),
+  ].filter(Boolean).join(" ");
+  return guardText ? SCANOO_COMPARE_EVIDENCE_GUARD_PATTERN.test(guardText) : false;
+}
+
+export function filterScanooCompareDocsSearchItems(items = []) {
+  return (Array.isArray(items) ? items : []).filter((item) => !shouldExcludeScanooCompareEvidenceItem(item));
+}
+
 export function buildScanooCompareDocsSearchReply({
   query = "",
   items = [],
 } = {}) {
-  const normalizedItems = Array.isArray(items) ? items : [];
+  const normalizedItems = filterScanooCompareDocsSearchItems(items);
   const evidenceLines = normalizedItems.length > 0
     ? normalizedItems.slice(0, 3).map((item) => formatScanooCompareDocsSearchEvidenceItem(item))
     : ["- 目前官方文件搜尋也還沒有命中可直接支撐比較的文件。"];
@@ -554,7 +570,8 @@ async function maybeBuildScanooCompareDocsSearchFallback({
     account_id: formatIdentifierHint(accountId),
     original_query: truncate(requestText, 120),
     shaped_query: truncate(shapedQuery, 120),
-    hit_count: Array.isArray(docs?.items) ? docs.items.length : 0,
+    raw_hit_count: Array.isArray(docs?.items) ? docs.items.length : 0,
+    hit_count: Array.isArray(docs?.items) ? filterScanooCompareDocsSearchItems(docs.items).length : 0,
     failure_class: cleanText(userResponse?.failure_class || "") || null,
     chosen_action: cleanText(
       plannerResult?.action
@@ -564,7 +581,7 @@ async function maybeBuildScanooCompareDocsSearchFallback({
     ) || null,
   });
 
-  if (!Array.isArray(docs?.items) || docs.items.length === 0) {
+  if (!Array.isArray(docs?.items)) {
     return null;
   }
 
