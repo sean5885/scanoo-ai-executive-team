@@ -361,25 +361,34 @@ test("scanoo-compare fallback query shaping removes stopwords when compare pair 
   assert.equal(query, "A店 流量");
 });
 
-test("scanoo-compare docs search fallback keeps the compare section order", () => {
+test("scanoo-compare docs search fallback keeps section order and returns normal compare with two valid evidences", () => {
   const reply = buildScanooCompareDocsSearchReply({
-    query: "Scanoo onboarding funnel 新舊差異",
+    query: "比較 A店 與 B店 的流量與轉化",
     items: [
       {
-        title: "Scanoo Onboarding SOP",
+        title: "A店 onboarding weekly report",
         doc_id: "doc_scanoo_compare_1",
         summary: {
-          overview: "收斂 onboarding 流程、指標與 owner。",
+          overview: "A店在 2026-03 的流量 12000、轉化 3.2%，留存 28%。",
+        },
+      },
+      {
+        title: "B店 onboarding weekly report",
+        doc_id: "doc_scanoo_compare_2",
+        summary: {
+          overview: "B店在 2026-03 的流量 9800、轉化 2.6%，留存 24%。",
         },
       },
     ],
   });
 
   assert.match(reply, /【比較對象】[\s\S]*【比較維度】[\s\S]*【核心差異】[\s\S]*【原因假設】[\s\S]*【證據 \/ 不確定性】[\s\S]*【建議行動】/);
-  assert.match(reply, /Scanoo Onboarding SOP（doc_scanoo_compare_1）/);
+  assert.match(reply, /A店 onboarding weekly report（doc_scanoo_compare_1）/);
+  assert.match(reply, /正式比較/);
+  assert.doesNotMatch(reply, /partial comparison/);
 });
 
-test("scanoo-compare docs search fallback excludes demo verify success evidence hits", () => {
+test("scanoo-compare relevance gate filters demo\/test\/stub\/sample style evidence", () => {
   const filtered = filterScanooCompareDocsSearchItems([
     {
       title: "Scanoo Compare Demo",
@@ -391,31 +400,83 @@ test("scanoo-compare docs search fallback excludes demo verify success evidence 
       doc_id: "doc_scanoo_compare_success_probe",
     },
     {
-      title: "Scanoo Onboarding SOP",
+      title: "Scanoo Compare Final Validation",
+      doc_id: "doc_scanoo_compare_final_validation",
+    },
+    {
+      title: "Scanoo Compare Minimal Artifact",
+      doc_id: "doc_scanoo_compare_minimal_artifact",
+    },
+    {
+      title: "Scanoo Compare Stub Sample",
+      doc_id: "doc_scanoo_compare_stub_sample",
+    },
+    {
+      title: "Scanoo Compare Test Fixture",
+      doc_id: "doc_scanoo_compare_test_fixture",
+    },
+    {
+      title: "A店 onboarding weekly report",
       doc_id: "doc_scanoo_compare_1",
       summary: {
-        overview: "收斂 onboarding 流程、指標與 owner。",
+        overview: "A店在 2026-03 的流量 12000、轉化 3.2%，留存 28%。",
       },
     },
-  ]);
+  ], {
+    query: "比較 A店 與 B店 的流量與轉化",
+  });
 
   assert.deepEqual(filtered.map((item) => item.doc_id), ["doc_scanoo_compare_1"]);
 });
 
-test("scanoo-compare docs search fallback returns bounded missing-data reply when no eligible evidence remains", () => {
+test("scanoo-compare docs search fallback uses partial comparison when one valid and one invalid evidence are mixed", () => {
   const reply = buildScanooCompareDocsSearchReply({
-    query: "Scanoo onboarding funnel 新舊差異",
+    query: "比較 A店 與 B店 的流量與轉化",
+    items: [
+      {
+        title: "A店 onboarding weekly report",
+        doc_id: "doc_scanoo_compare_1",
+        summary: {
+          overview: "A店在 2026-03 的流量 12000、轉化 3.2%，留存 28%。",
+        },
+      },
+      {
+        title: "Scanoo Compare Demo",
+        doc_id: "doc_scanoo_compare_demo",
+      },
+    ],
+  });
+
+  assert.match(reply, /partial comparison/);
+  assert.match(reply, /doc_scanoo_compare_1/);
+  assert.doesNotMatch(reply, /doc_scanoo_compare_demo/);
+  assert.match(reply, /仍缺/);
+});
+
+test("scanoo-compare docs search fallback reports concrete gaps when no valid evidence remains", () => {
+  const reply = buildScanooCompareDocsSearchReply({
+    query: "比較 A店 與 B店 的流量與轉化",
     items: [
       {
         title: "Scanoo Compare Verify Fixture",
         doc_id: "doc_scanoo_compare_verify_fixture",
       },
+      {
+        title: "Scanoo Intro Note",
+        doc_id: "doc_scanoo_compare_intro",
+        summary: {
+          overview: "只描述流程，沒有指標與日期。",
+        },
+      },
     ],
   });
 
-  assert.match(reply, /目前官方文件搜尋也還沒有命中可直接支撐比較的文件/);
+  assert.match(reply, /0 份通過 relevance gate/);
+  assert.match(reply, /不會直接回泛化 fallback/);
+  assert.match(reply, /A店/);
+  assert.match(reply, /B店/);
+  assert.match(reply, /流量 \/ 轉化/);
   assert.doesNotMatch(reply, /doc_scanoo_compare_verify_fixture/);
-  assert.match(reply, /還不能安全下結論哪一側表現更好/);
 });
 
 test("scanoo-diagnose official read fallback keeps the diagnose section order", () => {
@@ -958,10 +1019,10 @@ test("scanoo-compare pre-timeout fallback forces evidence search before returnin
       return {
         items: [
           {
-            title: "Scanoo Compare SOP",
+            title: "A店 vs B店 compare snapshot",
             doc_id: "doc_compare_force_1",
             summary: {
-              overview: "整理比較維度、店別指標與後續追查方式。",
+              overview: "A店與B店在 2026-03 的流量 12000/9800，轉化 3.2%/2.6%。",
             },
           },
         ],
@@ -970,7 +1031,7 @@ test("scanoo-compare pre-timeout fallback forces evidence search before returnin
   });
 
   assert.match(reply, /【比較對象】/);
-  assert.match(reply, /Scanoo Compare SOP（doc_compare_force_1）/);
+  assert.match(reply, /A店 vs B店 compare snapshot（doc_compare_force_1）/);
   assert.doesNotMatch(reply, /這次處理逾時了/);
 });
 
