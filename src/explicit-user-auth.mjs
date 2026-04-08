@@ -10,20 +10,44 @@ export const EXPLICIT_USER_AUTH_HEADERS = Object.freeze({
 const EVENT_USER_ACCESS_TOKEN_PATHS = [
   ["user_access_token"],
   ["userAccessToken"],
+  ["explicit_auth", "access_token"],
+  ["explicit_auth", "user_access_token"],
   ["header", "user_access_token"],
   ["header", "userAccessToken"],
   ["context", "user_access_token"],
   ["context", "userAccessToken"],
+  ["context", "explicit_auth", "access_token"],
+  ["context", "explicit_auth", "user_access_token"],
   ["event_context", "user_access_token"],
   ["event_context", "userAccessToken"],
+  ["event_context", "explicit_auth", "access_token"],
+  ["event_context", "explicit_auth", "user_access_token"],
   ["eventContext", "user_access_token"],
   ["eventContext", "userAccessToken"],
+  ["eventContext", "explicit_auth", "access_token"],
+  ["eventContext", "explicit_auth", "user_access_token"],
   ["authorization", "user_access_token"],
   ["authorization", "userAccessToken"],
   ["auth", "user_access_token"],
   ["auth", "userAccessToken"],
   ["message", "user_access_token"],
   ["message", "userAccessToken"],
+  ["plugin_context", "explicit_auth", "access_token"],
+  ["plugin_context", "explicit_auth", "user_access_token"],
+  ["__lobster_plugin_dispatch", "explicit_auth", "access_token"],
+  ["__lobster_plugin_dispatch", "explicit_auth", "user_access_token"],
+  ["__lobster_plugin_dispatch", "plugin_context", "explicit_auth", "access_token"],
+  ["__lobster_plugin_dispatch", "plugin_context", "explicit_auth", "user_access_token"],
+];
+
+const EVENT_EXPLICIT_AUTH_CONTEXT_PATHS = [
+  ["explicit_auth"],
+  ["context", "explicit_auth"],
+  ["event_context", "explicit_auth"],
+  ["eventContext", "explicit_auth"],
+  ["plugin_context", "explicit_auth"],
+  ["__lobster_plugin_dispatch", "explicit_auth"],
+  ["__lobster_plugin_dispatch", "plugin_context", "explicit_auth"],
 ];
 
 function readNestedValue(root, path = []) {
@@ -84,20 +108,39 @@ export function extractUserAccessTokenFromLarkEvent(event = null) {
   return null;
 }
 
+function extractExplicitUserAuthContextFromLarkEvent(event = null) {
+  for (const path of EVENT_EXPLICIT_AUTH_CONTEXT_PATHS) {
+    const auth = normalizeExplicitUserAuthContext(readNestedValue(event, path));
+    if (auth?.account_id || auth?.access_token || auth?.source) {
+      return auth;
+    }
+  }
+  return null;
+}
+
 export function buildExplicitUserAuthContext({
   event = null,
   accountId = "",
   persistedAuth = null,
 } = {}) {
+  const normalizedPersistedAuth = normalizeExplicitUserAuthContext(persistedAuth);
+  const eventAuth = extractExplicitUserAuthContextFromLarkEvent(event);
+  if (eventAuth) {
+    return normalizeExplicitUserAuthContext({
+      account_id: eventAuth.account_id || accountId || normalizedPersistedAuth?.account_id || null,
+      access_token: eventAuth.access_token || normalizedPersistedAuth?.access_token || null,
+      source: eventAuth.source || normalizedPersistedAuth?.source || "event_explicit_user_auth",
+    });
+  }
   const eventToken = extractUserAccessTokenFromLarkEvent(event);
   if (eventToken) {
     return normalizeExplicitUserAuthContext({
-      account_id: accountId || persistedAuth?.account_id || null,
+      account_id: accountId || normalizedPersistedAuth?.account_id || null,
       access_token: eventToken,
-      source: "event_user_access_token",
+      source: normalizedPersistedAuth?.source || "event_user_access_token",
     });
   }
-  return normalizeExplicitUserAuthContext(persistedAuth);
+  return normalizedPersistedAuth;
 }
 
 export function buildExplicitUserAuthHeaders(authContext = null, { required = false } = {}) {

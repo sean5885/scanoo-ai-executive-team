@@ -591,6 +591,72 @@ test("scanoo-diagnose official read fallback 強制讀取已解析出的 documen
   assert.match(reply, /【目前證據】/);
 });
 
+test("scanoo-diagnose pre-timeout fallback 會優先讀 plugin handoff 的 explicit user token", async () => {
+  const logs = [];
+  const reply = await maybeBuildScanooDiagnoseOfficialReadFallback({
+    event: {
+      context: {
+        account_id: "acct-diagnose",
+      },
+      __lobster_plugin_dispatch: {
+        plugin_context: {
+          explicit_auth: {
+            account_id: "acct-diagnose",
+            access_token: "plugin-user-token",
+            source: "plugin_dispatch_params",
+          },
+        },
+      },
+    },
+    accountId: "acct-diagnose",
+    explicitAuth: null,
+    requestText: "請幫我診斷 onboarding 文件裡的轉化問題",
+    plannerResult: {
+      ok: false,
+      error: "request_timeout",
+    },
+    userResponse: {
+      ok: false,
+      answer: "這次處理逾時了，我還沒有拿到可以安全交付的結果。",
+      sources: [],
+      limitations: [],
+    },
+    forceRead: true,
+    resolvedDocumentRef: {
+      documentId: "doc_diag_handoff_1",
+      source: "plugin_context_document_refs",
+    },
+    async readDocument({ accountId, accessToken, documentId }) {
+      assert.equal(accountId, "acct-diagnose");
+      assert.equal(accessToken, "plugin-user-token");
+      assert.equal(documentId, "doc_diag_handoff_1");
+      return {
+        title: "Scanoo Diagnose Handoff SOP",
+        document_id: documentId,
+        content: "這份文件定義了 diagnose handoff 後的 official read 判讀方式。",
+      };
+    },
+    logger: {
+      info(event, payload) {
+        logs.push([event, payload]);
+      },
+      warn() {},
+      compactError(error) {
+        return { message: error?.message || String(error) };
+      },
+    },
+  });
+
+  assert.match(reply, /Scanoo Diagnose Handoff SOP/);
+  assert.equal(
+    logs.some(([event, payload]) => (
+      event === "scanoo_diagnose_official_read_fallback_skipped"
+      && payload?.reason === "missing_explicit_user_access_token"
+    )),
+    false,
+  );
+});
+
 test("scanoo lane pre-timeout plan leaves a dedicated fallback window before route timeout", () => {
   const plan = resolveScanooLanePreTimeoutPlan({
     lane: "scanoo-compare",

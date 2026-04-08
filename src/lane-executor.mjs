@@ -811,8 +811,13 @@ async function maybeBuildScanooDiagnoseOfficialReadFallback({
     return null;
   }
 
-  const accessToken = cleanText(explicitAuth?.access_token || "");
-  const resolvedAccountId = cleanText(explicitAuth?.account_id || accountId || "");
+  const resolvedExplicitAuth = buildExplicitUserAuthContext({
+    event,
+    accountId,
+    persistedAuth: explicitAuth,
+  });
+  const accessToken = cleanText(resolvedExplicitAuth?.access_token || "");
+  const resolvedAccountId = cleanText(resolvedExplicitAuth?.account_id || accountId || "");
   if (!accessToken || !resolvedAccountId) {
     logger.info("scanoo_diagnose_official_read_fallback_skipped", {
       reason: !accessToken ? "missing_explicit_user_access_token" : "missing_account_id",
@@ -1782,11 +1787,21 @@ async function executePlannerBackedLane({
     }
   }
   if (lane === "scanoo-diagnose") {
+    const officialReadAuth = buildExplicitUserAuthContext({
+      event,
+      accountId: context.account?.id || "",
+      persistedAuth: explicitAuth,
+    });
     const resolvedDocumentRef = (preferOfficialDocRead || isScanooLanePreTimeoutAbort(laneAbortInfo))
-      ? await resolveReferencedDocumentId(event, context.token, logger, {
+      ? await resolveReferencedDocumentId(
+        event,
+        cleanText(officialReadAuth?.access_token || "") || context.token,
+        logger,
+        {
         accountId: context.account?.id || "",
         allowDocsSearchFallback: true,
-      })
+      },
+      )
       : null;
     const shouldForceOfficialRead = (
       (preferOfficialDocRead || isScanooLanePreTimeoutAbort(laneAbortInfo))
@@ -1804,7 +1819,7 @@ async function executePlannerBackedLane({
     const officialReadFallback = await maybeBuildScanooDiagnoseOfficialReadFallback({
       event,
       accountId: context.account?.id || "",
-      explicitAuth,
+      explicitAuth: officialReadAuth,
       requestText: inputText,
       plannerResult: plannedResult,
       userResponse,

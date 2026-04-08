@@ -1,5 +1,6 @@
 import { resolveCapabilityLane } from "./capability-lane.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
+import { normalizeExplicitUserAuthContext } from "./explicit-user-auth.mjs";
 
 const PLUGIN_NATIVE_TOOL_PATTERNS = [
   /^lark_doc_/,
@@ -585,6 +586,13 @@ export function buildLarkPluginLaneContext(normalizedRequest = {}, preferredLane
   const pluginContext = isPlainObject(normalizedRequest?.plugin_context)
     ? normalizedRequest.plugin_context
     : null;
+  const explicitAuth = normalizeExplicitUserAuthContext(
+    pluginContext?.explicit_auth || {
+      account_id: cleanText(normalizedRequest?.account_id) || null,
+      access_token: cleanText(normalizedRequest?.user_access_token) || null,
+      source: cleanText(pluginContext?.explicit_auth?.source || normalizedRequest?.source || "") || null,
+    },
+  );
   const messageContent = {
     text: cleanText(normalizedRequest?.request_text),
     ...(Array.isArray(pluginContext?.document_refs) && pluginContext.document_refs.length > 0
@@ -605,11 +613,13 @@ export function buildLarkPluginLaneContext(normalizedRequest = {}, preferredLane
     },
     message_text: cleanText(normalizedRequest?.request_text),
     text: cleanText(normalizedRequest?.request_text),
-    user_access_token: cleanText(normalizedRequest?.user_access_token) || undefined,
+    user_access_token: cleanText(explicitAuth?.access_token || normalizedRequest?.user_access_token) || undefined,
+    ...(explicitAuth ? { explicit_auth: explicitAuth } : {}),
     context: {
-      user_access_token: cleanText(normalizedRequest?.user_access_token) || undefined,
-      account_id: cleanText(normalizedRequest?.account_id) || null,
-      source: cleanText(pluginContext?.explicit_auth?.source || normalizedRequest?.source || "") || null,
+      user_access_token: cleanText(explicitAuth?.access_token || normalizedRequest?.user_access_token) || undefined,
+      account_id: cleanText(explicitAuth?.account_id || normalizedRequest?.account_id) || null,
+      source: cleanText(explicitAuth?.source || normalizedRequest?.source || "") || null,
+      ...(explicitAuth ? { explicit_auth: explicitAuth } : {}),
     },
     message: {
       chat_id: fallbackChatId,
@@ -624,7 +634,13 @@ export function buildLarkPluginLaneContext(normalizedRequest = {}, preferredLane
       source: cleanText(normalizedRequest?.source),
       requested_capability: cleanText(normalizedRequest?.requested_capability),
       capability_source: cleanText(normalizedRequest?.capability_source),
-      plugin_context: pluginContext,
+      ...(explicitAuth ? { explicit_auth: explicitAuth } : {}),
+      plugin_context: pluginContext
+        ? {
+            ...pluginContext,
+            ...(explicitAuth ? { explicit_auth: explicitAuth } : {}),
+          }
+        : null,
     },
   };
 

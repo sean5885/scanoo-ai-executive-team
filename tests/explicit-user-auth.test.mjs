@@ -42,6 +42,34 @@ test("buildExplicitUserAuthContext falls back to persisted session auth after re
   });
 });
 
+test("buildExplicitUserAuthContext prefers plugin dispatch explicit auth envelopes on lane handoff", () => {
+  const auth = buildExplicitUserAuthContext({
+    event: {
+      __lobster_plugin_dispatch: {
+        plugin_context: {
+          explicit_auth: {
+            account_id: "acct-plugin",
+            access_token: "plugin-token-1",
+            source: "plugin_dispatch_params",
+          },
+        },
+      },
+    },
+    accountId: "acct-fallback",
+    persistedAuth: {
+      account_id: "acct-persisted",
+      access_token: "persisted-token-1",
+      source: "session_user_access_token",
+    },
+  });
+
+  assert.deepEqual(auth, {
+    account_id: "acct-plugin",
+    access_token: "plugin-token-1",
+    source: "plugin_dispatch_params",
+  });
+});
+
 test("request explicit auth helpers read planner bridge headers", () => {
   const headers = {
     [EXPLICIT_USER_AUTH_HEADERS.accountId]: "acct-1",
