@@ -8322,6 +8322,8 @@ async function handleLarkPluginDispatch(res, requestUrl, body, logger = noopHttp
           logger: dispatchLogger.child(scope.capability_lane || "lane_backend"),
           traceId: res?.__trace_id || null,
           signal: earlyFallback.signal,
+          requestSignal: logger?.__abort_signal || res?.__abort_signal || null,
+          requestTimeoutMs: res?.__request_timeout_ms || null,
         });
       } finally {
         earlyFallback.clear();

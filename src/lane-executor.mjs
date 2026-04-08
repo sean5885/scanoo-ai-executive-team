@@ -425,6 +425,154 @@ export function buildScanooCompareFallbackQuery(requestText = "") {
   return cleanedQuery || normalizedText;
 }
 
+function resolveBoundedFallbackLeadTimeMs(timeoutMs = null) {
+  const normalizedTimeoutMs = Number(timeoutMs);
+  if (!Number.isFinite(normalizedTimeoutMs) || normalizedTimeoutMs <= 0) {
+    return null;
+  }
+  const proportionalLead = Math.floor(normalizedTimeoutMs * 0.1);
+  return Math.min(5_000, Math.max(25, proportionalLead));
+}
+
+export function resolveScanooLanePreTimeoutPlan({
+  requestTimeoutMs = null,
+  lane = "",
+} = {}) {
+  const normalizedLane = cleanText(lane);
+  if (normalizedLane !== "scanoo-compare" && normalizedLane !== "scanoo-diagnose") {
+    return null;
+  }
+
+  const normalizedTimeoutMs = Number(requestTimeoutMs);
+  const routeLeadTimeMs = resolveBoundedFallbackLeadTimeMs(normalizedTimeoutMs);
+  if (
+    !Number.isFinite(normalizedTimeoutMs)
+    || normalizedTimeoutMs <= 0
+    || !Number.isFinite(routeLeadTimeMs)
+  ) {
+    return null;
+  }
+
+  const fallbackWindowMs = Math.min(1_500, Math.max(25, Math.floor(routeLeadTimeMs * 0.8)));
+  const plannerTimeoutMs = normalizedTimeoutMs - routeLeadTimeMs - fallbackWindowMs;
+  if (!Number.isFinite(plannerTimeoutMs) || plannerTimeoutMs <= 0) {
+    return null;
+  }
+
+  return {
+    plannerTimeoutMs,
+    fallbackWindowMs,
+    routeLeadTimeMs,
+    hardTimeoutMs: normalizedTimeoutMs,
+  };
+}
+
+function buildLaneAbortReason({
+  code = "request_cancelled",
+  timeoutMs = null,
+  source = "",
+} = {}) {
+  const normalizedCode = cleanText(code) === "request_timeout" ? "request_timeout" : "request_cancelled";
+  return {
+    name: "AbortError",
+    code: normalizedCode,
+    message: normalizedCode === "request_timeout"
+      ? `Request timed out after ${Number(timeoutMs || 0)}ms.`
+      : "Request was cancelled before completion.",
+    ...(Number.isFinite(Number(timeoutMs)) ? { timeout_ms: Number(timeoutMs) } : {}),
+    ...(cleanText(source) ? { source: cleanText(source) } : {}),
+  };
+}
+
+function resolveLaneAbortInfo({ signal = null, error = null } = {}) {
+  const source = signal?.aborted ? signal.reason || error : error;
+  if (!source && !signal?.aborted) {
+    return null;
+  }
+
+  const codeCandidate = cleanText(source?.code || error?.code || "");
+  const nameCandidate = cleanText(source?.name || error?.name || "");
+  if (!signal?.aborted && codeCandidate !== "request_timeout" && codeCandidate !== "request_cancelled" && nameCandidate !== "AbortError") {
+    return null;
+  }
+
+  return {
+    code: codeCandidate === "request_timeout" ? "request_timeout" : "request_cancelled",
+    message: cleanText(source?.message || error?.message)
+      || (codeCandidate === "request_timeout"
+        ? "Request timed out before completion."
+        : "Request was cancelled before completion."),
+    timeout_ms: Number.isFinite(Number(source?.timeout_ms))
+      ? Number(source.timeout_ms)
+      : Number.isFinite(Number(error?.timeout_ms))
+        ? Number(error.timeout_ms)
+        : null,
+    source: cleanText(source?.source || error?.source || "") || null,
+  };
+}
+
+function createScanooLanePreTimeoutSignal({
+  lane = "",
+  requestSignal = null,
+  requestTimeoutMs = null,
+} = {}) {
+  const plan = resolveScanooLanePreTimeoutPlan({
+    requestTimeoutMs,
+    lane,
+  });
+  if (!plan) {
+    return {
+      signal: requestSignal,
+      clear() {},
+      plan: null,
+    };
+  }
+
+  const controller = new AbortController();
+  const parentSignal = requestSignal;
+  const propagateAbort = () => {
+    if (controller.signal.aborted) {
+      return;
+    }
+    controller.abort(parentSignal?.reason || buildLaneAbortReason({
+      code: "request_cancelled",
+    }));
+  };
+
+  if (parentSignal?.aborted) {
+    propagateAbort();
+  } else if (parentSignal?.addEventListener) {
+    parentSignal.addEventListener("abort", propagateAbort, { once: true });
+  }
+
+  const timeoutHandle = setTimeout(() => {
+    if (controller.signal.aborted) {
+      return;
+    }
+    controller.abort(buildLaneAbortReason({
+      code: "request_timeout",
+      timeoutMs: plan.plannerTimeoutMs,
+      source: "scanoo_lane_pretimeout",
+    }));
+  }, plan.plannerTimeoutMs);
+
+  return {
+    signal: controller.signal,
+    clear() {
+      clearTimeout(timeoutHandle);
+      if (parentSignal?.removeEventListener) {
+        parentSignal.removeEventListener("abort", propagateAbort);
+      }
+    },
+    plan,
+  };
+}
+
+function isScanooLanePreTimeoutAbort(abortInfo = null) {
+  return cleanText(abortInfo?.code || "") === "request_timeout"
+    && cleanText(abortInfo?.source || "") === "scanoo_lane_pretimeout";
+}
+
 export function shouldFallbackScanooCompareToDocsSearch({
   requestText = "",
   plannerResult = {},
@@ -595,17 +743,22 @@ async function maybeBuildScanooCompareDocsSearchFallback({
   plannerResult = {},
   userResponse = {},
   logger = noopLogger,
+  forceSearch = false,
+  searchDocs = searchCompanyBrainDocsFromRuntime,
 } = {}) {
-  if (!cleanText(accountId) || !shouldFallbackScanooCompareToDocsSearch({
-    requestText,
-    plannerResult,
-    userResponse,
-  })) {
+  if (!cleanText(accountId) || (
+    !forceSearch
+    && !shouldFallbackScanooCompareToDocsSearch({
+      requestText,
+      plannerResult,
+      userResponse,
+    })
+  )) {
     return null;
   }
 
   const shapedQuery = buildScanooCompareFallbackQuery(requestText);
-  const docs = await searchCompanyBrainDocsFromRuntime({
+  const docs = await searchDocs({
     accountId,
     query: shapedQuery,
     limit: 3,
@@ -1367,6 +1520,7 @@ async function resolveReferencedDocumentId(event, accessToken, logger = noopLogg
 
 export { resolveReferencedDocumentId };
 export { maybeBuildScanooDiagnoseOfficialReadFallback };
+export { maybeBuildScanooCompareDocsSearchFallback };
 
 function startOfDayUnix() {
   const now = new Date();
@@ -1461,7 +1615,13 @@ async function resolvePlannerExplicitAuthContext({ event, scope, accountId, logg
   return mergedAuth;
 }
 
-async function executeKnowledgeAssistant({ event, scope, logger = noopLogger, traceId = null, signal = null }) {
+async function executeKnowledgeAssistant({
+  event,
+  scope,
+  logger = noopLogger,
+  traceId = null,
+  signal = null,
+}) {
   return executePlannerBackedLane({
     event,
     scope,
@@ -1472,26 +1632,46 @@ async function executeKnowledgeAssistant({ event, scope, logger = noopLogger, tr
   });
 }
 
-async function executeScanooDiagnose({ event, scope, logger = noopLogger, traceId = null, signal = null }) {
+async function executeScanooDiagnose({
+  event,
+  scope,
+  logger = noopLogger,
+  traceId = null,
+  signal = null,
+  requestSignal = null,
+  requestTimeoutMs = null,
+}) {
   return executePlannerBackedLane({
     event,
     scope,
     logger,
     traceId,
     signal,
+    requestSignal,
+    requestTimeoutMs,
     handlerName: "executeScanooDiagnose",
     textDecorator: buildScanooDiagnoseBrief,
     preferOfficialDocRead: true,
   });
 }
 
-async function executeScanooCompare({ event, scope, logger = noopLogger, traceId = null, signal = null }) {
+async function executeScanooCompare({
+  event,
+  scope,
+  logger = noopLogger,
+  traceId = null,
+  signal = null,
+  requestSignal = null,
+  requestTimeoutMs = null,
+}) {
   return executePlannerBackedLane({
     event,
     scope,
     logger,
     traceId,
     signal,
+    requestSignal,
+    requestTimeoutMs,
     handlerName: "executeScanooCompare",
     textDecorator: buildScanooCompareBrief,
   });
@@ -1503,6 +1683,8 @@ async function executePlannerBackedLane({
   logger = noopLogger,
   traceId = null,
   signal = null,
+  requestSignal = null,
+  requestTimeoutMs = null,
   handlerName = "executePlannerBackedLane",
   textDecorator = null,
   preferOfficialDocRead = false,
@@ -1527,11 +1709,18 @@ async function executePlannerBackedLane({
     logger,
   });
 
+  const lane = cleanText(scope?.capability_lane || "");
+  const plannerSignalContext = createScanooLanePreTimeoutSignal({
+    lane,
+    requestSignal: requestSignal || signal,
+    requestTimeoutMs,
+  });
+  const plannerSignal = plannerSignalContext.signal || signal;
   const { plannerResult: plannedResult, plannerEnvelope, userResponse } = await runPlannerUserInputEdge({
     text,
     logger,
     authContext: explicitAuth,
-    signal,
+    signal: plannerSignal,
     sessionKey: cleanText(scope?.session_key || scope?.chat_id || event?.message?.chat_id || ""),
     traceId,
     handlerName,
@@ -1539,6 +1728,8 @@ async function executePlannerBackedLane({
       return attachLaneTrace(envelope, { scope });
     },
   });
+  const laneAbortInfo = resolveLaneAbortInfo({ signal: plannerSignal });
+  plannerSignalContext.clear();
   if (userResponse.ok === false) {
     logger.info("lane_execution_user_fallback", {
       chosen_action: cleanText(plannedResult?.action || plannedResult?.steps?.[0]?.action || "") || null,
@@ -1546,7 +1737,35 @@ async function executePlannerBackedLane({
     });
   }
   logger.info("lane_execution_result", plannerEnvelope.trace);
-  if (cleanText(scope?.capability_lane || "") === "scanoo-compare") {
+  if (lane === "scanoo-compare" && isScanooLanePreTimeoutAbort(laneAbortInfo)) {
+    logger.info("scanoo_lane_pretimeout_fallback", {
+      lane,
+      planner_timeout_ms: laneAbortInfo?.timeout_ms ?? null,
+      fallback_window_ms: plannerSignalContext?.plan?.fallbackWindowMs ?? null,
+      route_lead_time_ms: plannerSignalContext?.plan?.routeLeadTimeMs ?? null,
+    });
+    const docsSearchFallback = await maybeBuildScanooCompareDocsSearchFallback({
+      accountId: context.account?.id || "",
+      requestText: inputText,
+      plannerResult: plannedResult,
+      userResponse,
+      logger,
+      forceSearch: true,
+    });
+    if (docsSearchFallback) {
+      return {
+        text: docsSearchFallback,
+        handlerName,
+        traceId,
+      };
+    }
+    logger.warn("scanoo_lane_pretimeout_fallback_failed", {
+      lane,
+      planner_error: cleanText(plannedResult?.error || "") || null,
+      fallback_mode: "evidence_search",
+    });
+  }
+  if (lane === "scanoo-compare") {
     const docsSearchFallback = await maybeBuildScanooCompareDocsSearchFallback({
       accountId: context.account?.id || "",
       requestText: inputText,
@@ -1562,18 +1781,26 @@ async function executePlannerBackedLane({
       };
     }
   }
-  if (cleanText(scope?.capability_lane || "") === "scanoo-diagnose") {
-    const resolvedDocumentRef = preferOfficialDocRead
+  if (lane === "scanoo-diagnose") {
+    const resolvedDocumentRef = (preferOfficialDocRead || isScanooLanePreTimeoutAbort(laneAbortInfo))
       ? await resolveReferencedDocumentId(event, context.token, logger, {
         accountId: context.account?.id || "",
         allowDocsSearchFallback: true,
       })
       : null;
     const shouldForceOfficialRead = (
-      preferOfficialDocRead
+      (preferOfficialDocRead || isScanooLanePreTimeoutAbort(laneAbortInfo))
       && Boolean(cleanText(resolvedDocumentRef?.documentId || ""))
       && !SCANOO_DOC_READ_ACTIONS.has(getPlannerChosenAction(plannedResult))
     );
+    if (isScanooLanePreTimeoutAbort(laneAbortInfo)) {
+      logger.info("scanoo_lane_pretimeout_fallback", {
+        lane,
+        planner_timeout_ms: laneAbortInfo?.timeout_ms ?? null,
+        fallback_window_ms: plannerSignalContext?.plan?.fallbackWindowMs ?? null,
+        route_lead_time_ms: plannerSignalContext?.plan?.routeLeadTimeMs ?? null,
+      });
+    }
     const officialReadFallback = await maybeBuildScanooDiagnoseOfficialReadFallback({
       event,
       accountId: context.account?.id || "",
@@ -1591,6 +1818,13 @@ async function executePlannerBackedLane({
         handlerName,
         traceId,
       };
+    }
+    if (isScanooLanePreTimeoutAbort(laneAbortInfo)) {
+      logger.warn("scanoo_lane_pretimeout_fallback_failed", {
+        lane,
+        planner_error: cleanText(plannedResult?.error || "") || null,
+        fallback_mode: "official_read",
+      });
     }
   }
   return {
@@ -3399,7 +3633,15 @@ async function executeGroupSharedAssistant({ event, scope, logger = noopLogger }
   });
 }
 
-export async function executeCapabilityLane({ event, scope, logger = noopLogger, traceId = null, signal = null }) {
+export async function executeCapabilityLane({
+  event,
+  scope,
+  logger = noopLogger,
+  traceId = null,
+  signal = null,
+  requestSignal = null,
+  requestTimeoutMs = null,
+}) {
   let meetingReply = null;
   try {
     meetingReply = await executeMeetingCommand({ event, scope, logger });
@@ -3490,11 +3732,27 @@ export async function executeCapabilityLane({ event, scope, logger = noopLogger,
   }
   if (lane === "scanoo-compare") {
     assertRoutingDecisionOwner({ expected: expectedOwner, actual: "scanoo-compare" });
-    return executeScanooCompare({ event, scope, logger, traceId, signal });
+    return executeScanooCompare({
+      event,
+      scope,
+      logger,
+      traceId,
+      signal,
+      requestSignal,
+      requestTimeoutMs,
+    });
   }
   if (lane === "scanoo-diagnose") {
     assertRoutingDecisionOwner({ expected: expectedOwner, actual: "scanoo-diagnose" });
-    return executeScanooDiagnose({ event, scope, logger, traceId, signal });
+    return executeScanooDiagnose({
+      event,
+      scope,
+      logger,
+      traceId,
+      signal,
+      requestSignal,
+      requestTimeoutMs,
+    });
   }
   if (lane === "doc-editor") {
     assertRoutingDecisionOwner({ expected: expectedOwner, actual: "doc-editor" });

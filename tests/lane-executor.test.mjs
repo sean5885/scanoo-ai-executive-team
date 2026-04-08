@@ -20,7 +20,9 @@ const {
   looksLikeMeetingCaptureStatusQuery,
   pickCalendarMeetingEvent,
   maybeBuildScanooDiagnoseOfficialReadFallback,
+  maybeBuildScanooCompareDocsSearchFallback,
   resolveLaneExecutionPlan,
+  resolveScanooLanePreTimeoutPlan,
   resolveReferencedDocumentId,
   shouldFallbackScanooCompareToDocsSearch,
   shouldFallbackScanooDiagnoseToOfficialRead,
@@ -587,6 +589,56 @@ test("scanoo-diagnose official read fallback 強制讀取已解析出的 documen
   assert.match(reply, /Scanoo Diagnose SOP/);
   assert.match(reply, /doc_diag_force_1/);
   assert.match(reply, /【目前證據】/);
+});
+
+test("scanoo lane pre-timeout plan leaves a dedicated fallback window before route timeout", () => {
+  const plan = resolveScanooLanePreTimeoutPlan({
+    lane: "scanoo-compare",
+    requestTimeoutMs: 15000,
+  });
+
+  assert.equal(plan?.hardTimeoutMs, 15000);
+  assert.equal(plan?.routeLeadTimeMs, 1500);
+  assert.equal(plan?.fallbackWindowMs, 1200);
+  assert.equal(plan?.plannerTimeoutMs, 12300);
+});
+
+test("scanoo-compare pre-timeout fallback forces evidence search before returning timeout", async () => {
+  const reply = await maybeBuildScanooCompareDocsSearchFallback({
+    accountId: "acct-compare",
+    requestText: "幫我比較 A店 和 B店 的流量、轉化",
+    plannerResult: {
+      ok: false,
+      error: "request_timeout",
+    },
+    userResponse: {
+      ok: false,
+      answer: "這次處理逾時了，我還沒有拿到可以安全交付的結果。",
+      sources: [],
+      limitations: [],
+    },
+    forceSearch: true,
+    logger: {
+      info() {},
+    },
+    async searchDocs() {
+      return {
+        items: [
+          {
+            title: "Scanoo Compare SOP",
+            doc_id: "doc_compare_force_1",
+            summary: {
+              overview: "整理比較維度、店別指標與後續追查方式。",
+            },
+          },
+        ],
+      };
+    },
+  });
+
+  assert.match(reply, /【比較對象】/);
+  assert.match(reply, /Scanoo Compare SOP（doc_compare_force_1）/);
+  assert.doesNotMatch(reply, /這次處理逾時了/);
 });
 
 test("lane execution plan reports structured semantic mismatch instead of generic fallback for misplaced document request", () => {

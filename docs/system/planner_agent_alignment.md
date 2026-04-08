@@ -983,6 +983,7 @@ Current stop behavior already implemented in runtime:
   - local readonly fallback is only used on the abort boundary; generic runtime exceptions still stay on this retry-and-stop path
 - `request_timeout`
   - stop immediately; no retry after the timeout boundary
+  - lane-local exception: dedicated `scanoo-diagnose / scanoo-compare` wrappers now cut planner off slightly earlier than the shared soft timeout so the lane can spend the remaining bounded window on official-read / evidence-search fallback before a final timeout is allowed to surface
 - `request_cancelled`
   - stop immediately; no retry after the cancel boundary
 - `business_error`
