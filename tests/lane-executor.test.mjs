@@ -797,6 +797,133 @@ test("scanoo-diagnose pre-timeout fallback 會優先讀 plugin handoff 的 expli
   );
 });
 
+test("scanoo-diagnose no token + 有 context 時回 non-generic weak-but-usable diagnose", async () => {
+  const logs = [];
+  const reply = await maybeBuildScanooDiagnoseOfficialReadFallback({
+    event: {
+      __lobster_plugin_dispatch: {
+        plugin_context: {
+          document_refs: [
+            {
+              title: "Scanoo Diagnose SOP",
+            },
+          ],
+          explicit_auth: {
+            account_id: "acct-diagnose",
+            source: "plugin_dispatch_params",
+          },
+        },
+      },
+    },
+    accountId: "acct-diagnose",
+    explicitAuth: {
+      account_id: "acct-diagnose",
+      source: "plugin_dispatch_params",
+    },
+    requestText: "請幫我診斷 onboarding 文件裡的轉化問題",
+    plannerResult: {
+      ok: false,
+      error: "planner_failed",
+      action: "search_company_brain_docs",
+    },
+    userResponse: {
+      ok: false,
+      answer: "這題本來應該先走對應的查詢或流程，但這輪還沒真的執行到那個步驟，所以我先不亂補答案。",
+      sources: ["目前手上只有 plugin handoff 帶進來的文件線索。"],
+      limitations: ["目前資料不足，還不能直接判斷根因。"],
+      failure_class: "tool_omission",
+    },
+    resolvedDocumentRef: {
+      documentId: "doc_diag_ctx_1",
+      matchedTitle: "Scanoo Diagnose SOP",
+      source: "plugin_context_document_refs_title_search",
+    },
+    async readDocument() {
+      assert.fail("readDocument should not be called when explicit user token is missing");
+    },
+    logger: {
+      info(event, payload) {
+        logs.push([event, payload]);
+      },
+      warn() {},
+      compactError(error) {
+        return { message: error?.message || String(error) };
+      },
+    },
+  });
+
+  assert.match(reply, /【問題現象】[\s\S]*【可能原因】[\s\S]*【目前證據】[\s\S]*【不確定性】[\s\S]*【建議下一步】/);
+  assert.match(reply, /weak-but-usable/);
+  assert.match(reply, /Scanoo Diagnose SOP/);
+  assert.match(reply, /doc_diag_ctx_1/);
+  assert.match(reply, /explicit user access token/);
+  assert.doesNotMatch(reply, /這題本來應該先走對應的查詢或流程/);
+  assert.equal(
+    logs.some(([event, payload]) => (
+      event === "scanoo_diagnose_official_read_fallback_skipped"
+      && payload?.reason === "missing_explicit_user_access_token"
+      && payload?.reply_mode === "bounded_context_backed_diagnose"
+    )),
+    true,
+  );
+});
+
+test("scanoo-diagnose no token + 無 context 時也回 explicit limitation + bounded diagnose", async () => {
+  const logs = [];
+  const reply = await maybeBuildScanooDiagnoseOfficialReadFallback({
+    event: {
+      message: {
+        content: JSON.stringify({
+          text: "請幫我診斷 onboarding 文件裡的轉化問題",
+        }),
+      },
+    },
+    accountId: "acct-diagnose",
+    explicitAuth: {
+      account_id: "acct-diagnose",
+    },
+    requestText: "請幫我診斷 onboarding 文件裡的轉化問題",
+    plannerResult: {
+      ok: false,
+      error: "planner_failed",
+      action: "search_company_brain_docs",
+    },
+    userResponse: {
+      ok: false,
+      answer: "這題本來應該先走對應的查詢或流程，但這輪還沒真的執行到那個步驟，所以我先不亂補答案。",
+      sources: [],
+      limitations: ["目前資料不足，還不能直接判斷根因。"],
+      failure_class: "tool_omission",
+    },
+    async readDocument() {
+      assert.fail("readDocument should not be called when explicit user token is missing");
+    },
+    logger: {
+      info(event, payload) {
+        logs.push([event, payload]);
+      },
+      warn() {},
+      compactError(error) {
+        return { message: error?.message || String(error) };
+      },
+    },
+  });
+
+  assert.match(reply, /【問題現象】[\s\S]*【可能原因】[\s\S]*【目前證據】[\s\S]*【不確定性】[\s\S]*【建議下一步】/);
+  assert.match(reply, /缺少可驗證的 explicit user access token/);
+  assert.match(reply, /已知觀察：使用者這輪要診斷的是/);
+  assert.match(reply, /下一步可驗證動作/);
+  assert.doesNotMatch(reply, /這題本來應該先走對應的查詢或流程/);
+  assert.equal(
+    logs.some(([event, payload]) => (
+      event === "scanoo_diagnose_official_read_fallback_skipped"
+      && payload?.reason === "missing_explicit_user_access_token"
+      && payload?.reply_mode === "bounded_prompt_only_diagnose"
+    )),
+    true,
+  );
+});
+
 test("scanoo lane pre-timeout plan leaves a dedicated fallback window before route timeout", () => {
   const plan = resolveScanooLanePreTimeoutPlan({
     lane: "scanoo-compare",

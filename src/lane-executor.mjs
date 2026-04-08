@@ -743,6 +743,132 @@ function formatScanooDiagnoseOfficialReadEvidenceItem({
   return `- 已補讀${sourceLabel}「${title}」${docId ? `（${docId}）` : ""}${snippet ? `：${snippet}` : "，但目前沒有可直接引用的正文片段。"}`;
 }
 
+function formatScanooDiagnoseDocumentRefHint(documentRef = {}) {
+  const title = cleanText(
+    documentRef?.title
+    || documentRef?.document_title
+    || documentRef?.name
+    || documentRef?.query
+    || documentRef?.description
+    || documentRef?.document_description
+    || documentRef?.text
+    || "",
+  );
+  const docId = cleanText(
+    documentRef?.document_id
+    || documentRef?.doc_id
+    || extractDocumentId(documentRef)
+    || "",
+  );
+  if (!title && !docId) {
+    return "";
+  }
+  if (title && docId) {
+    return `「${truncate(title, 60)}」（${docId}）`;
+  }
+  if (title) {
+    return `「${truncate(title, 60)}」`;
+  }
+  return `文件 ${docId}`;
+}
+
+function buildScanooDiagnoseMissingExplicitAuthReply({
+  event = null,
+  requestText = "",
+  userResponse = {},
+  resolvedDocumentRef = null,
+  explicitAuth = null,
+} = {}) {
+  const normalizedRequest = cleanText(requestText) || "這輪 diagnose";
+  const pluginContextDocumentRefs = collectPluginContextDocumentRefs(event);
+  const knownDocumentHints = uniqueStrings([
+    ...pluginContextDocumentRefs.map((item) => formatScanooDiagnoseDocumentRefHint(item)),
+    formatScanooDiagnoseDocumentRefHint({
+      title: resolvedDocumentRef?.matchedTitle,
+      document_id: resolvedDocumentRef?.documentId,
+    }),
+  ]).slice(0, 3);
+  const sourceEvidence = uniqueStrings(
+    (Array.isArray(userResponse?.sources) ? userResponse.sources : [])
+      .map((item) => cleanText(item))
+      .filter(Boolean),
+  ).slice(0, 2);
+  const hasHydratedContext = Boolean(cleanText(resolvedDocumentRef?.documentId || ""))
+    || pluginContextDocumentRefs.length > 0
+    || Boolean(resolvedDocumentRef?.searchAttempted);
+  const hasEvidence = sourceEvidence.length > 0;
+  const hasReadableAuthContext = Boolean(
+    cleanText(explicitAuth?.source || "")
+    || cleanText(event?.__lobster_plugin_dispatch?.plugin_context?.explicit_auth?.account_id || "")
+    || cleanText(event?.__lobster_plugin_dispatch?.plugin_context?.explicit_auth?.source || ""),
+  );
+  const contextBacked = hasHydratedContext || hasEvidence || hasReadableAuthContext;
+  const observations = [
+    `- 已知觀察：使用者這輪要診斷的是「${truncate(normalizedRequest, 90)}」。`,
+    knownDocumentHints.length > 0
+      ? `- Context 內已有文件線索：${knownDocumentHints.join("、")}。`
+      : "- 目前可直接採信的 context 主要只有這輪 prompt，還沒有正文、報表或留言 evidence。",
+    sourceEvidence.length > 0
+      ? `- 現有回合已留下可引用線索：${sourceEvidence.map((item) => truncate(item, 80)).join("；")}。`
+      : "",
+    hasReadableAuthContext
+      ? "- handoff 已帶到 account/auth context，但缺少可直接執行 official read 的 explicit user access token。"
+      : "- 這輪沒有帶到可驗證的 explicit user access token，所以我不能直接打開官方文件正文。",
+  ].filter(Boolean);
+  const possibleCauses = contextBacked
+    ? [
+      "- 文件/流程上下文已部分到位，但 explicit user token 沒跟著進來，導致 diagnose 只能停在 context-backed 判讀，不能正式驗證正文。",
+      "- 問題也可能來自流程定義、執行落差與實際指標表現之間的不一致；目前缺的不是想法，而是最後一段可核對 evidence。",
+      "- 如果症狀是流量、轉化或留存異常，仍需再驗證期間、口徑、版本或店別差異，才能收斂到單一根因。",
+    ]
+    : [
+      "- 最直接的阻塞是缺少 explicit user access token，所以 auth-required read path 被 fail-soft 擋下。",
+      "- 目前也沒有足夠文件、帳號或指標 context 能把 diagnose 鎖定到單一範圍，因此根因只能先停在假設層。",
+      "- 若問題其實跟流程版本或口徑變更有關，現在沒有正文或報表可交叉驗證，所以還不能選定哪一條原因最可信。",
+    ];
+  const evidenceLines = [
+    ...observations,
+    resolvedDocumentRef?.searchAttempted && !resolvedDocumentRef?.documentId
+      ? "- 我已嘗試用 handoff 裡的文件線索補 resolve document_id，但目前仍未命中可安全讀取的單一官方文件。"
+      : "",
+  ].filter(Boolean);
+  const uncertaintyLines = contextBacked
+    ? [
+      "- 目前這份 diagnose 仍是 weak-but-usable 的 bounded 判讀，不是已完成 official read 後的正式結論。",
+      "- 在補到 explicit user token 前，我不能把任何文件線索直接升格成已驗證根因。",
+      "- 若要確認是流程問題、數據口徑問題，還需要正文、留言或異常期間指標做交叉驗證。",
+    ]
+    : [
+      "- 目前還沒有官方正文、留言或報表 evidence，所以不能把任何原因寫成確定結論。",
+      "- 這輪也還沒能定位單一文件或模組，代表後續驗證仍需要先縮小範圍。",
+      "- 在 access token 與最基本 context 都補齊前，診斷只能維持 bounded 初判。",
+    ];
+  const nextSteps = [
+    knownDocumentHints.length > 0
+      ? `- 下一步可驗證動作：補上這批文件線索對應的 explicit user access token，我就能先從 ${knownDocumentHints[0]} 開始 official read。`
+      : "- 下一步可驗證動作：直接補文件連結、document_id，或回覆原始文件卡片，讓我先把要讀的官方文件鎖定下來。",
+    "- 再補異常期間、店別/模組與關鍵指標名稱，我可以把 diagnose 從弱判讀收斂成可驗證的檢查清單。",
+    "- 如果是 plugin/handoff 觸發，重新帶入 `explicit_auth.access_token` 後再跑一次，能直接驗證目前這輪假設。",
+  ];
+
+  return [
+    "【問題現象】",
+    `我目前不能直接進 official read，因為這輪缺少可驗證的 explicit user access token；不過我先根據 prompt / context 做一版 bounded diagnose，避免回成 generic 模板。`,
+    "",
+    "【可能原因】",
+    ...possibleCauses,
+    "",
+    "【目前證據】",
+    ...evidenceLines,
+    "",
+    "【不確定性】",
+    ...uncertaintyLines,
+    "",
+    "【建議下一步】",
+    ...nextSteps,
+  ].join("\n");
+}
+
 export function buildScanooDiagnoseOfficialReadReply({
   requestText = "",
   document = {},
@@ -899,12 +1025,22 @@ async function maybeBuildScanooDiagnoseOfficialReadFallback({
   const accessToken = cleanText(resolvedExplicitAuth?.access_token || "");
   const resolvedAccountId = cleanText(resolvedExplicitAuth?.account_id || accountId || "");
   if (!accessToken || !resolvedAccountId) {
+    const missingExplicitAuthReply = buildScanooDiagnoseMissingExplicitAuthReply({
+      event,
+      requestText,
+      userResponse,
+      resolvedDocumentRef,
+      explicitAuth: resolvedExplicitAuth,
+    });
     logger.info("scanoo_diagnose_official_read_fallback_skipped", {
       reason: !accessToken ? "missing_explicit_user_access_token" : "missing_account_id",
+      reply_mode: missingExplicitAuthReply.includes("weak-but-usable")
+        ? "bounded_context_backed_diagnose"
+        : "bounded_prompt_only_diagnose",
       failure_class: cleanText(userResponse?.failure_class || "") || null,
       chosen_action: getPlannerChosenAction(plannerResult) || null,
     });
-    return null;
+    return missingExplicitAuthReply;
   }
 
   const documentRef = (resolvedDocumentRef?.documentId || resolvedDocumentRef?.searchAttempted)
