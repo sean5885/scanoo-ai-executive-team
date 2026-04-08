@@ -272,10 +272,26 @@ const SCANOO_DOC_READ_ACTIONS = new Set([
 
 const SCANOO_COMPARE_QUERY_METRICS = [
   "流量",
+  "traffic",
   "轉化",
   "转化",
+  "conversion",
   "留存",
+  "retention",
   "排名",
+  "rank",
+];
+
+const SCANOO_COMPARE_COMPARABLE_METRICS = [
+  "流量",
+  "traffic",
+  "轉化",
+  "转化",
+  "conversion",
+  "留存",
+  "retention",
+  "排名",
+  "rank",
 ];
 
 const SCANOO_COMPARE_QUERY_STOPWORDS = [
@@ -287,7 +303,16 @@ const SCANOO_COMPARE_QUERY_STOPWORDS = [
   "看看",
 ];
 
-const SCANOO_COMPARE_EVIDENCE_GUARD_PATTERN = /(?:^|[^a-z0-9])(demo|verify|verification|success)(?:[^a-z0-9]|$)/iu;
+const SCANOO_COMPARE_EVIDENCE_GUARD_PATTERN = /(?:^|[^a-z0-9])(demo|verify|verification|success|test|final validation|minimal|artifact|stub|sample)(?:[^a-z0-9]|$)/iu;
+const SCANOO_COMPARE_ENTITY_IDENTIFIER_PATTERN = /([\p{Script=Han}A-Za-z0-9_-]{1,30}店|門店|门店|店鋪|店铺|\b(?:store|shop|branch|entity|channel|campaign|cohort)\b)/giu;
+const SCANOO_COMPARE_TIME_OR_DATA_PATTERNS = [
+  /\b20\d{2}[./-]\d{1,2}(?:[./-]\d{1,2})?\b/u,
+  /\b\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?\b/u,
+  /\bq[1-4]\b/iu,
+  /(?:近\d+\s*(?:天|週|周|月)|最近\d+\s*(?:天|週|周|月)|本週|本周|本月|上週|上周|上月|week|month|daily|weekly|monthly|quarter|季度|期間|期间)/iu,
+  /(?:\d+(?:\.\d+)?\s*(?:%|％|k|m|萬|万|次|人次|單|单|筆|笔))/iu,
+  /(?:流量|traffic|轉化|转化|conversion|留存|retention|排名|rank)[^。\n]{0,18}\d/iu,
+];
 
 export function buildScanooCompareBrief(text = "") {
   const normalizedText = cleanText(text);
@@ -444,10 +469,134 @@ function extractScanooCompareStoreNames(text = "") {
   return uniqueStrings(matches).slice(0, 2);
 }
 
+function textIncludesKeyword(text = "", keyword = "") {
+  const normalizedText = cleanText(text);
+  const normalizedKeyword = cleanText(keyword);
+  if (!normalizedText || !normalizedKeyword) {
+    return false;
+  }
+  if (/[a-z]/i.test(normalizedKeyword)) {
+    return normalizedText.toLowerCase().includes(normalizedKeyword.toLowerCase());
+  }
+  return normalizedText.includes(normalizedKeyword);
+}
+
 function extractScanooCompareMetricTerms(text = "") {
   return uniqueStrings(
-    SCANOO_COMPARE_QUERY_METRICS.filter((metric) => cleanText(text).includes(metric)),
+    SCANOO_COMPARE_QUERY_METRICS.filter((metric) => textIncludesKeyword(text, metric)),
   );
+}
+
+function extractScanooCompareComparableMetrics(text = "") {
+  return uniqueStrings(
+    SCANOO_COMPARE_COMPARABLE_METRICS.filter((metric) => textIncludesKeyword(text, metric)),
+  );
+}
+
+function collectScanooCompareEvidenceText(item = {}) {
+  const highlights = Array.isArray(item?.summary?.highlights)
+    ? item.summary.highlights.map((entry) => cleanText(entry)).filter(Boolean)
+    : [];
+  const pathText = [
+    cleanText(item?.title || ""),
+    cleanText(item?.doc_id || item?.document_id || ""),
+    cleanText(item?.url || ""),
+    cleanText(item?.source || ""),
+  ].filter(Boolean).join(" ");
+  const contentText = [
+    cleanText(item?.summary?.overview || ""),
+    cleanText(item?.summary?.snippet || ""),
+    ...highlights,
+    cleanText(item?.raw_text || ""),
+    cleanText(item?.content || ""),
+  ].filter(Boolean).join(" ");
+  return {
+    pathText,
+    contentText,
+    mergedText: [pathText, contentText].filter(Boolean).join(" "),
+  };
+}
+
+function extractScanooCompareEntitySignals(text = "", {
+  queryEntities = [],
+} = {}) {
+  const normalizedText = cleanText(text);
+  if (!normalizedText) {
+    return [];
+  }
+  const entityPattern = new RegExp(
+    SCANOO_COMPARE_ENTITY_IDENTIFIER_PATTERN.source,
+    SCANOO_COMPARE_ENTITY_IDENTIFIER_PATTERN.flags,
+  );
+  const patternMatches = Array.from(
+    normalizedText.matchAll(entityPattern),
+    (match) => cleanText(match?.[1] || ""),
+  );
+  const queryMatches = (Array.isArray(queryEntities) ? queryEntities : [])
+    .filter((entity) => textIncludesKeyword(normalizedText, entity));
+  return uniqueStrings([
+    ...extractScanooCompareStoreNames(normalizedText),
+    ...patternMatches,
+    ...queryMatches,
+  ]).slice(0, 6);
+}
+
+function hasScanooCompareTimeOrDataSignal(text = "") {
+  const normalizedText = cleanText(text);
+  if (!normalizedText) {
+    return false;
+  }
+  return SCANOO_COMPARE_TIME_OR_DATA_PATTERNS.some((pattern) => pattern.test(normalizedText));
+}
+
+function resolveScanooCompareEvidenceRelevance(item = {}, {
+  queryEntities = [],
+} = {}) {
+  const text = collectScanooCompareEvidenceText(item);
+  const blockedByKeyword = text.mergedText
+    ? SCANOO_COMPARE_EVIDENCE_GUARD_PATTERN.test(text.mergedText)
+    : false;
+  const entitySignals = extractScanooCompareEntitySignals(text.mergedText, {
+    queryEntities,
+  });
+  const metricSignals = extractScanooCompareComparableMetrics(text.mergedText);
+  const hasTimeOrData = hasScanooCompareTimeOrDataSignal(text.contentText || text.mergedText);
+  const missingDimensions = [];
+  if (entitySignals.length === 0) {
+    missingDimensions.push("entity_identifier");
+  }
+  if (metricSignals.length === 0) {
+    missingDimensions.push("comparable_metric");
+  }
+  if (!hasTimeOrData) {
+    missingDimensions.push("time_or_data_field");
+  }
+  return {
+    item,
+    text,
+    blockedByKeyword,
+    entitySignals,
+    metricSignals,
+    hasTimeOrData,
+    missingDimensions,
+    isRelevant: !blockedByKeyword && missingDimensions.length === 0,
+  };
+}
+
+function analyzeScanooCompareEvidenceItems(items = [], {
+  query = "",
+} = {}) {
+  const queryEntities = extractScanooCompareStoreNames(query);
+  const queryMetrics = extractScanooCompareMetricTerms(query);
+  const analyses = (Array.isArray(items) ? items : []).map((item) => resolveScanooCompareEvidenceRelevance(item, {
+    queryEntities,
+  }));
+  return {
+    analyses,
+    queryEntities,
+    queryMetrics,
+    validAnalyses: analyses.filter((analysis) => analysis.isRelevant),
+  };
 }
 
 export function buildScanooCompareFallbackQuery(requestText = "") {
@@ -676,57 +825,236 @@ export function shouldFallbackScanooDiagnoseToOfficialRead({
   return SCANOO_DIAGNOSE_INSUFFICIENT_PATTERNS.some((pattern) => pattern.test(signalText));
 }
 
-function formatScanooCompareDocsSearchEvidenceItem(item = {}) {
+function formatScanooCompareMissingDimensionLabel(token = "") {
+  if (token === "entity_identifier") {
+    return "entity identifier";
+  }
+  if (token === "comparable_metric") {
+    return "可比較指標（conversion / retention / rank / traffic）";
+  }
+  if (token === "time_or_data_field") {
+    return "時間或數據欄位";
+  }
+  return cleanText(token);
+}
+
+function summarizeScanooCompareRejectedEvidence(analyses = []) {
+  const blockedCount = analyses.filter((analysis) => analysis?.blockedByKeyword).length;
+  const missingCounter = new Map();
+  for (const analysis of analyses) {
+    if (analysis?.blockedByKeyword) {
+      continue;
+    }
+    for (const token of Array.isArray(analysis?.missingDimensions) ? analysis.missingDimensions : []) {
+      const label = formatScanooCompareMissingDimensionLabel(token);
+      missingCounter.set(label, Number(missingCounter.get(label) || 0) + 1);
+    }
+  }
+  const parts = [];
+  if (blockedCount > 0) {
+    parts.push(`命中 demo/verify/test 類關鍵字 ${blockedCount} 份`);
+  }
+  for (const [label, count] of missingCounter.entries()) {
+    parts.push(`缺少「${label}」${count} 份`);
+  }
+  return parts.join("；");
+}
+
+function formatScanooCompareDocsSearchEvidenceItem(analysis = {}) {
+  const item = analysis?.item || analysis;
   const title = cleanText(item?.title || item?.doc_id || "未命名文件");
-  const docId = cleanText(item?.doc_id || "");
+  const docId = cleanText(item?.doc_id || item?.document_id || "");
   const summary = cleanText(item?.summary?.overview || item?.summary?.snippet || "");
-  return `- ${title}${docId ? `（${docId}）` : ""}${summary ? `：${summary}` : ""}`;
+  const entitySignals = Array.isArray(analysis?.entitySignals) ? analysis.entitySignals : [];
+  const metricSignals = Array.isArray(analysis?.metricSignals) ? analysis.metricSignals : [];
+  const signalText = [
+    entitySignals.length > 0 ? `entity=${entitySignals.slice(0, 2).join("/")}` : "",
+    metricSignals.length > 0 ? `metric=${metricSignals.slice(0, 3).join("/")}` : "",
+    analysis?.hasTimeOrData ? "time/data=有" : "",
+  ].filter(Boolean).join("；");
+  return `- ${title}${docId ? `（${docId}）` : ""}${summary ? `：${summary}` : ""}${signalText ? `（${signalText}）` : ""}`;
 }
 
-function shouldExcludeScanooCompareEvidenceItem(item = {}) {
-  const guardText = [
-    cleanText(item?.title || ""),
-    cleanText(item?.doc_id || ""),
-    cleanText(item?.url || ""),
-    cleanText(item?.source || ""),
-  ].filter(Boolean).join(" ");
-  return guardText ? SCANOO_COMPARE_EVIDENCE_GUARD_PATTERN.test(guardText) : false;
+function resolveScanooCompareContractStatus({
+  validAnalyses = [],
+  queryEntities = [],
+} = {}) {
+  const uniqueEntities = uniqueStrings(
+    validAnalyses.flatMap((analysis) => (
+      Array.isArray(analysis?.entitySignals) ? analysis.entitySignals : []
+    )),
+  );
+  const uniqueMetrics = uniqueStrings(
+    validAnalyses.flatMap((analysis) => (
+      Array.isArray(analysis?.metricSignals) ? analysis.metricSignals : []
+    )),
+  );
+  const hasTwoComparableEvidence = validAnalyses.length >= 2;
+  const hasTwoEntities = uniqueEntities.length >= 2;
+  const hasComparableMetric = uniqueMetrics.length >= 1;
+  const missingDimensions = [];
+  if (!hasTwoComparableEvidence) {
+    missingDimensions.push("第二份可比較 evidence");
+  }
+  if (!hasTwoEntities) {
+    missingDimensions.push(queryEntities.length >= 2 ? "對照側 entity" : "A/B entity");
+  }
+  if (!hasComparableMetric) {
+    missingDimensions.push("可比較指標（conversion / retention / rank / traffic）");
+  }
+  return {
+    uniqueEntities,
+    uniqueMetrics,
+    missingDimensions,
+    isSatisfied: hasTwoComparableEvidence && hasTwoEntities && hasComparableMetric,
+  };
 }
 
-export function filterScanooCompareDocsSearchItems(items = []) {
-  return (Array.isArray(items) ? items : []).filter((item) => !shouldExcludeScanooCompareEvidenceItem(item));
+function buildScanooCompareGapActions({
+  queryEntities = [],
+  queryMetrics = [],
+  missingDimensions = [],
+} = {}) {
+  const metricsLabel = queryMetrics.length > 0
+    ? queryMetrics.slice(0, 4).join(" / ")
+    : "流量 / 轉化 / 留存 / 排名";
+  const actions = [];
+  if (queryEntities.length >= 2) {
+    actions.push(`- 先補「${queryEntities[0]}」與「${queryEntities[1]}」同一期間（例如近 7 天或同一月份）的 ${metricsLabel} 原始數值。`);
+  } else {
+    actions.push(`- 先補兩個明確比較對象（例如 A店 vs B店），再提供同期間 ${metricsLabel} 數據。`);
+  }
+  actions.push("- 每一側至少提供 1 份含日期/期間欄位的官方來源（title + doc_id 或連結），避免口徑錯配。");
+  if (missingDimensions.includes("第二份可比較 evidence") || missingDimensions.includes("對照側 entity")) {
+    actions.push("- 目前只命中單側資料，請補另一側同口徑資料後我就能把 partial compare 升級成正式 compare。");
+  }
+  return actions;
+}
+
+export function filterScanooCompareDocsSearchItems(items = [], {
+  query = "",
+} = {}) {
+  return analyzeScanooCompareEvidenceItems(items, { query }).validAnalyses.map((analysis) => analysis.item);
 }
 
 export function buildScanooCompareDocsSearchReply({
   query = "",
   items = [],
 } = {}) {
-  const normalizedItems = filterScanooCompareDocsSearchItems(items);
-  const evidenceLines = normalizedItems.length > 0
-    ? normalizedItems.slice(0, 3).map((item) => formatScanooCompareDocsSearchEvidenceItem(item))
-    : ["- 目前官方文件搜尋也還沒有命中可直接支撐比較的文件。"];
   const normalizedQuery = cleanText(query) || "這輪需求";
+  const evidenceAnalysis = analyzeScanooCompareEvidenceItems(items, {
+    query: normalizedQuery,
+  });
+  const validAnalyses = evidenceAnalysis.validAnalyses;
+  const invalidAnalyses = evidenceAnalysis.analyses.filter((analysis) => !analysis.isRelevant);
+  const contractStatus = resolveScanooCompareContractStatus({
+    validAnalyses,
+    queryEntities: evidenceAnalysis.queryEntities,
+  });
+  const evidenceLines = validAnalyses.length > 0
+    ? validAnalyses.slice(0, 3).map((analysis) => formatScanooCompareDocsSearchEvidenceItem(analysis))
+    : ["- 目前候選文件沒有任何一份通過 compare relevance gate。"];
+  const rejectedSummary = summarizeScanooCompareRejectedEvidence(invalidAnalyses);
+  const targetLabel = evidenceAnalysis.queryEntities.length >= 2
+    ? `${evidenceAnalysis.queryEntities[0]} vs ${evidenceAnalysis.queryEntities[1]}`
+    : contractStatus.uniqueEntities.slice(0, 2).join(" vs ") || "A/B 對照組";
+  const metricsLabel = contractStatus.uniqueMetrics.length > 0
+    ? contractStatus.uniqueMetrics.slice(0, 4).join(" / ")
+    : (
+      evidenceAnalysis.queryMetrics.length > 0
+        ? evidenceAnalysis.queryMetrics.slice(0, 4).join(" / ")
+        : "流量 / 轉化 / 留存 / 排名"
+    );
+  const firstValidEntity = contractStatus.uniqueEntities[0] || evidenceAnalysis.queryEntities[0] || "目前已命中的單側資料";
+  const firstValidDoc = validAnalyses[0]?.item;
+  const secondValidDoc = validAnalyses[1]?.item;
+  const docA = cleanText(firstValidDoc?.title || firstValidDoc?.doc_id || "第一份 evidence");
+  const docB = cleanText(secondValidDoc?.title || secondValidDoc?.doc_id || "第二份 evidence");
+
+  if (contractStatus.isSatisfied) {
+    return [
+      "【比較對象】",
+      `已命中至少兩份有效 compare evidence，可先對「${targetLabel}」做正式比較。`,
+      "",
+      "【比較維度】",
+      `目前可對齊的比較維度是 ${metricsLabel}，且兩側都有可用時間/數據欄位。`,
+      "",
+      "【核心差異】",
+      `- 第一輪可比較差異已形成：${docA} 與 ${docB} 在指標覆蓋與期間描述上存在落差。`,
+      `- 目前最可能的差異來源是 ${metricsLabel} 的口徑或時間窗不一致，可直接進下一輪 detail 對齊。`,
+      "",
+      "【原因假設】",
+      "- 兩側資料來源與執行節點不同，導致同名指標可能對應不同流程階段。",
+      "- 若近期有版本、投放或流量來源變更，會放大 compare 表現差異。",
+      "",
+      "【證據 / 不確定性】",
+      ...evidenceLines,
+      "- 不確定性：目前仍以 docs summary 做第一輪比較，尚未下鑽到逐欄位數值。",
+      "",
+      "【建議行動】",
+      "- 指定兩份文件先讀 detail（或直接貼 doc_id），我會把 A/B 指標做同口徑對齊。",
+      "- 若你手上有同期間報表截點，可直接補上，我會把比較收斂成可執行結論。",
+    ].join("\n");
+  }
+
+  if (validAnalyses.length > 0) {
+    return [
+      "【比較對象】",
+      `目前只有「${firstValidEntity}」這一側命中有效 evidence；仍缺 ${contractStatus.missingDimensions.join("、")}，所以先給 partial comparison。`,
+      "",
+      "【比較維度】",
+      `已可比較維度：${metricsLabel}。`,
+      `仍缺維度：${contractStatus.missingDimensions.join("、")}。`,
+      "",
+      "【核心差異】",
+      `- partial comparison：目前只確認「${firstValidEntity}」側有 ${metricsLabel} 的可比對訊號。`,
+      "- 推測差異先落在指標口徑或時間窗，待補對照側同期間數據後再定論。",
+      "",
+      "【原因假設】",
+      `- 目前只有 ${validAnalyses.length} 份 evidence 通過 gate，尚未達到「至少兩個有效 entity + 指標」的完整 compare 門檻。`,
+      rejectedSummary ? `- 其餘候選被排除的主因：${rejectedSummary}。` : "- 其餘候選資料仍缺關鍵 compare 維度。",
+      "",
+      "【證據 / 不確定性】",
+      ...evidenceLines,
+      `- 合約缺口：${contractStatus.missingDimensions.join("、")}。`,
+      "",
+      "【建議行動】",
+      ...buildScanooCompareGapActions({
+        queryEntities: evidenceAnalysis.queryEntities,
+        queryMetrics: evidenceAnalysis.queryMetrics,
+        missingDimensions: contractStatus.missingDimensions,
+      }),
+    ].join("\n");
+  }
 
   return [
     "【比較對象】",
-    `目前還缺可直接對比的 A / B 官方資料；我先改用和「${normalizedQuery}」最相關的官方文件來補足依據。`,
+    `這輪與「${normalizedQuery}」相關的候選 evidence 共 ${evidenceAnalysis.analyses.length} 份，但 0 份通過 relevance gate，尚無法建立 A/B 比較基準。`,
     "",
     "【比較維度】",
-    "先用文件中的目標、流程、指標與責任分工當成第一輪比較維度。",
+    `目前缺少可用的 ${contractStatus.missingDimensions.join("、")}。`,
     "",
     "【核心差異】",
-    "目前沒有足夠的成對資料，還不能安全下結論哪一側表現更好。",
+    "- 因為沒有任何有效 evidence，這輪連單側比較都無法成立。",
+    "- 我不會直接回泛化 fallback；先把缺口列清楚，補齊後可立即進 compare。",
     "",
     "【原因假設】",
-    "這輪主要卡在缺少可驗證的比較對象、期間或指標，所以先退回官方 read 補 evidence。",
+    rejectedSummary
+      ? `- 候選被排除主因：${rejectedSummary}。`
+      : "- 候選資料多為低訊號內容，缺少可比較的 entity / metric / time-data 結構。",
     "",
     "【證據 / 不確定性】",
-    ...evidenceLines,
+    `- 已檢查候選 evidence ${evidenceAnalysis.analyses.length} 份，通過 relevance gate 0 份。`,
+    rejectedSummary
+      ? `- 排除摘要：${rejectedSummary}。`
+      : "- 排除摘要：候選資料缺少 compare 所需的 entity / metric / time-data 訊號。",
     "",
     "【建議行動】",
-    normalizedItems.length > 0
-      ? "- 先指定其中一份文件讓我往下讀 detail，或補 A/B 名稱、期間、指標，我就可以繼續做正式比較。"
-      : "- 先補 A/B 名稱、期間、指標，或同步最新文件後再查一次。",
+    ...buildScanooCompareGapActions({
+      queryEntities: evidenceAnalysis.queryEntities,
+      queryMetrics: evidenceAnalysis.queryMetrics,
+      missingDimensions: contractStatus.missingDimensions,
+    }),
   ].join("\n");
 }
 
@@ -976,7 +1304,9 @@ async function maybeBuildScanooCompareDocsSearchFallback({
     original_query: truncate(requestText, 120),
     shaped_query: truncate(shapedQuery, 120),
     raw_hit_count: Array.isArray(docs?.items) ? docs.items.length : 0,
-    hit_count: Array.isArray(docs?.items) ? filterScanooCompareDocsSearchItems(docs.items).length : 0,
+    hit_count: Array.isArray(docs?.items)
+      ? filterScanooCompareDocsSearchItems(docs.items, { query: shapedQuery }).length
+      : 0,
     failure_class: cleanText(userResponse?.failure_class || "") || null,
     chosen_action: cleanText(
       plannerResult?.action
