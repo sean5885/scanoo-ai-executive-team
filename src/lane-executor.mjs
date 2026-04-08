@@ -2253,6 +2253,147 @@ async function executeScanooCompare({
   });
 }
 
+function resolveRequestedCapabilityFromEvent(event = null) {
+  return cleanText(event?.__lobster_plugin_dispatch?.requested_capability || "") || "";
+}
+
+function shouldRunScanooCapabilityFastPath({
+  lane = "",
+  requestedCapability = "",
+} = {}) {
+  const normalizedLane = cleanText(lane);
+  const normalizedCapability = cleanText(requestedCapability);
+  return (
+    (normalizedCapability === "scanoo_compare" && normalizedLane === "scanoo-compare")
+    || (normalizedCapability === "scanoo_diagnose" && normalizedLane === "scanoo-diagnose")
+  );
+}
+
+async function maybeExecuteScanooCapabilityFastPath({
+  lane = "",
+  requestedCapability = "",
+  event = null,
+  accountId = "",
+  contextToken = "",
+  explicitAuth = null,
+  requestText = "",
+  logger = noopLogger,
+  maybeBuildScanooCompareDocsSearchFallbackFn = maybeBuildScanooCompareDocsSearchFallback,
+  maybeBuildScanooDiagnoseOfficialReadFallbackFn = maybeBuildScanooDiagnoseOfficialReadFallback,
+  resolveReferencedDocumentIdFn = resolveReferencedDocumentId,
+} = {}) {
+  if (!shouldRunScanooCapabilityFastPath({ lane, requestedCapability })) {
+    return {
+      attempted: false,
+      handled: false,
+      text: null,
+    };
+  }
+
+  logger.info("scanoo_capability_fastpath_attempted", {
+    lane,
+    requested_capability: requestedCapability,
+  });
+
+  try {
+    if (lane === "scanoo-compare") {
+      const compareReply = await maybeBuildScanooCompareDocsSearchFallbackFn({
+        accountId,
+        requestText,
+        plannerResult: {},
+        userResponse: {},
+        logger,
+        forceSearch: true,
+      });
+      if (cleanText(compareReply)) {
+        logger.info("scanoo_capability_fastpath_succeeded", {
+          lane,
+          requested_capability: requestedCapability,
+          path: "compare_evidence_search",
+        });
+        return {
+          attempted: true,
+          handled: true,
+          text: compareReply,
+        };
+      }
+      logger.warn("scanoo_capability_fastpath_failed", {
+        lane,
+        requested_capability: requestedCapability,
+        reason: "compare_evidence_not_available",
+      });
+      return {
+        attempted: true,
+        handled: false,
+        text: null,
+      };
+    }
+
+    if (lane === "scanoo-diagnose") {
+      const officialReadAuth = buildExplicitUserAuthContext({
+        event,
+        accountId,
+        persistedAuth: explicitAuth,
+      });
+      const resolvedDocumentRef = await resolveReferencedDocumentIdFn(
+        event,
+        cleanText(officialReadAuth?.access_token || "") || cleanText(contextToken || ""),
+        logger,
+        {
+          accountId,
+          allowDocsSearchFallback: true,
+        },
+      );
+      const diagnoseReply = await maybeBuildScanooDiagnoseOfficialReadFallbackFn({
+        event,
+        accountId,
+        explicitAuth: officialReadAuth,
+        requestText,
+        plannerResult: {},
+        userResponse: {},
+        logger,
+        forceRead: true,
+        resolvedDocumentRef,
+      });
+      if (cleanText(diagnoseReply)) {
+        logger.info("scanoo_capability_fastpath_succeeded", {
+          lane,
+          requested_capability: requestedCapability,
+          path: "diagnose_official_read",
+        });
+        return {
+          attempted: true,
+          handled: true,
+          text: diagnoseReply,
+        };
+      }
+      logger.warn("scanoo_capability_fastpath_failed", {
+        lane,
+        requested_capability: requestedCapability,
+        reason: "diagnose_official_read_not_available",
+      });
+      return {
+        attempted: true,
+        handled: false,
+        text: null,
+      };
+    }
+  } catch (error) {
+    logger.warn("scanoo_capability_fastpath_failed", {
+      lane,
+      requested_capability: requestedCapability,
+      reason: "runtime_exception",
+      error: logger.compactError(error),
+    });
+  }
+
+  return {
+    attempted: true,
+    handled: false,
+    text: null,
+  };
+}
+
 async function executePlannerBackedLane({
   event,
   scope,
@@ -2264,10 +2405,17 @@ async function executePlannerBackedLane({
   handlerName = "executePlannerBackedLane",
   textDecorator = null,
   preferOfficialDocRead = false,
+  resolveAuthContextFn = resolveAuthContext,
+  resolvePlannerExplicitAuthContextFn = resolvePlannerExplicitAuthContext,
+  runPlannerUserInputEdgeFn = runPlannerUserInputEdge,
+  maybeBuildScanooCompareDocsSearchFallbackFn = maybeBuildScanooCompareDocsSearchFallback,
+  maybeBuildScanooDiagnoseOfficialReadFallbackFn = maybeBuildScanooDiagnoseOfficialReadFallback,
+  resolveReferencedDocumentIdFn = resolveReferencedDocumentId,
+  renderUserResponseTextFn = renderUserResponseText,
 } = {}) {
   const lanePlan = resolveLaneExecutionPlan({ event, scope });
   logger.info("lane_execution_planned", lanePlan);
-  const context = await resolveAuthContext(event, logger, { allowTenantFallback: true });
+  const context = await resolveAuthContextFn(event, logger, { allowTenantFallback: true });
   if (!context) {
     return { text: buildLaneIntroReply(scope, scope) };
   }
@@ -2278,7 +2426,7 @@ async function executePlannerBackedLane({
   }
   const text = typeof textDecorator === "function" ? textDecorator(inputText) : inputText;
 
-  const explicitAuth = await resolvePlannerExplicitAuthContext({
+  const explicitAuth = await resolvePlannerExplicitAuthContextFn({
     event,
     scope,
     accountId: context.account?.id || "",
@@ -2286,13 +2434,36 @@ async function executePlannerBackedLane({
   });
 
   const lane = cleanText(scope?.capability_lane || "");
-  const plannerSignalContext = createScanooLanePreTimeoutSignal({
+  const requestedCapability = resolveRequestedCapabilityFromEvent(event);
+  const scanooFastPath = await maybeExecuteScanooCapabilityFastPath({
     lane,
+    requestedCapability,
+    event,
+    accountId: context.account?.id || "",
+    contextToken: context.token,
+    explicitAuth,
+    requestText: inputText,
+    logger,
+    maybeBuildScanooCompareDocsSearchFallbackFn,
+    maybeBuildScanooDiagnoseOfficialReadFallbackFn,
+    resolveReferencedDocumentIdFn,
+  });
+  if (scanooFastPath.handled) {
+    return {
+      text: scanooFastPath.text,
+      handlerName,
+      traceId,
+    };
+  }
+
+  const plannerFallbackOnly = scanooFastPath.attempted === true;
+  const plannerSignalContext = createScanooLanePreTimeoutSignal({
+    lane: plannerFallbackOnly ? "" : lane,
     requestSignal: requestSignal || signal,
     requestTimeoutMs,
   });
   const plannerSignal = plannerSignalContext.signal || signal;
-  const { plannerResult: plannedResult, plannerEnvelope, userResponse } = await runPlannerUserInputEdge({
+  const { plannerResult: plannedResult, plannerEnvelope, userResponse } = await runPlannerUserInputEdgeFn({
     text,
     logger,
     authContext: explicitAuth,
@@ -2310,9 +2481,17 @@ async function executePlannerBackedLane({
     logger.info("lane_execution_user_fallback", {
       chosen_action: cleanText(plannedResult?.action || plannedResult?.steps?.[0]?.action || "") || null,
       planner_error: cleanText(plannedResult?.error || plannedResult?.execution_result?.error || "") || null,
+      scanoo_primary_path_attempted: plannerFallbackOnly,
     });
   }
   logger.info("lane_execution_result", plannerEnvelope.trace);
+  if (plannerFallbackOnly) {
+    return {
+      text: renderUserResponseTextFn(userResponse),
+      handlerName,
+      traceId,
+    };
+  }
   if (lane === "scanoo-compare" && isScanooLanePreTimeoutAbort(laneAbortInfo)) {
     logger.info("scanoo_lane_pretimeout_fallback", {
       lane,
@@ -2320,7 +2499,7 @@ async function executePlannerBackedLane({
       fallback_window_ms: plannerSignalContext?.plan?.fallbackWindowMs ?? null,
       route_lead_time_ms: plannerSignalContext?.plan?.routeLeadTimeMs ?? null,
     });
-    const docsSearchFallback = await maybeBuildScanooCompareDocsSearchFallback({
+    const docsSearchFallback = await maybeBuildScanooCompareDocsSearchFallbackFn({
       accountId: context.account?.id || "",
       requestText: inputText,
       plannerResult: plannedResult,
@@ -2342,7 +2521,7 @@ async function executePlannerBackedLane({
     });
   }
   if (lane === "scanoo-compare") {
-    const docsSearchFallback = await maybeBuildScanooCompareDocsSearchFallback({
+    const docsSearchFallback = await maybeBuildScanooCompareDocsSearchFallbackFn({
       accountId: context.account?.id || "",
       requestText: inputText,
       plannerResult: plannedResult,
@@ -2364,14 +2543,14 @@ async function executePlannerBackedLane({
       persistedAuth: explicitAuth,
     });
     const resolvedDocumentRef = (preferOfficialDocRead || isScanooLanePreTimeoutAbort(laneAbortInfo))
-      ? await resolveReferencedDocumentId(
+      ? await resolveReferencedDocumentIdFn(
         event,
         cleanText(officialReadAuth?.access_token || "") || context.token,
         logger,
         {
-        accountId: context.account?.id || "",
-        allowDocsSearchFallback: true,
-      },
+          accountId: context.account?.id || "",
+          allowDocsSearchFallback: true,
+        },
       )
       : null;
     const shouldForceOfficialRead = (
@@ -2387,7 +2566,7 @@ async function executePlannerBackedLane({
         route_lead_time_ms: plannerSignalContext?.plan?.routeLeadTimeMs ?? null,
       });
     }
-    const officialReadFallback = await maybeBuildScanooDiagnoseOfficialReadFallback({
+    const officialReadFallback = await maybeBuildScanooDiagnoseOfficialReadFallbackFn({
       event,
       accountId: context.account?.id || "",
       explicitAuth: officialReadAuth,
@@ -2414,10 +2593,14 @@ async function executePlannerBackedLane({
     }
   }
   return {
-    text: renderUserResponseText(userResponse),
+    text: renderUserResponseTextFn(userResponse),
     handlerName,
     traceId,
   };
+}
+
+export async function executePlannerBackedLaneForTest(options = {}) {
+  return executePlannerBackedLane(options);
 }
 
 async function executeBitableLinkRequest({ event, scope, logger = noopLogger }) {

@@ -8,6 +8,7 @@ const {
   buildScanooCompareFallbackQuery,
   buildScanooCompareDocsSearchReply,
   buildScanooDiagnoseOfficialReadReply,
+  executePlannerBackedLaneForTest,
   filterScanooCompareDocsSearchItems,
   looksLikeChatOnlyFailurePreference,
   looksLikeCloudOrganizationExit,
@@ -1033,6 +1034,319 @@ test("scanoo-compare pre-timeout fallback forces evidence search before returnin
   assert.match(reply, /【比較對象】/);
   assert.match(reply, /A店 vs B店 compare snapshot（doc_compare_force_1）/);
   assert.doesNotMatch(reply, /這次處理逾時了/);
+});
+
+test("explicit scanoo_compare capability runs lane fast-path before planner fallback flow", async () => {
+  let plannerCalls = 0;
+  let compareFallbackCalls = 0;
+  const reply = await executePlannerBackedLaneForTest({
+    event: {
+      __lobster_plugin_dispatch: {
+        requested_capability: "scanoo_compare",
+      },
+      message: {
+        chat_id: "chat-scanoo-compare",
+        content: JSON.stringify({
+          text: "幫我比較 A店 和 B店 的轉化差異",
+        }),
+      },
+    },
+    scope: {
+      capability_lane: "scanoo-compare",
+      session_key: "thread:scanoo-compare",
+      chat_id: "chat-scanoo-compare",
+    },
+    logger: {
+      info() {},
+      warn() {},
+      compactError(error) {
+        return error;
+      },
+    },
+    async resolveAuthContextFn() {
+      return {
+        account: { id: "acct-scanoo-compare" },
+        token: "tenant_token",
+        tokenKind: "user",
+      };
+    },
+    async resolvePlannerExplicitAuthContextFn() {
+      return null;
+    },
+    async maybeBuildScanooCompareDocsSearchFallbackFn() {
+      compareFallbackCalls += 1;
+      return "【比較對象】\n- fast-path compare ready";
+    },
+    async runPlannerUserInputEdgeFn() {
+      plannerCalls += 1;
+      return {
+        plannerResult: { ok: false, error: "request_timeout" },
+        plannerEnvelope: { trace: {} },
+        userResponse: { ok: false, answer: "planner timeout", sources: [], limitations: [] },
+      };
+    },
+  });
+
+  assert.equal(compareFallbackCalls, 1);
+  assert.equal(plannerCalls, 0);
+  assert.match(reply.text, /fast-path compare ready/);
+});
+
+test("explicit scanoo_diagnose capability runs lane fast-path before planner fallback flow", async () => {
+  let plannerCalls = 0;
+  let diagnoseFallbackCalls = 0;
+  const reply = await executePlannerBackedLaneForTest({
+    event: {
+      __lobster_plugin_dispatch: {
+        requested_capability: "scanoo_diagnose",
+      },
+      message: {
+        chat_id: "chat-scanoo-diagnose",
+        content: JSON.stringify({
+          text: "幫我診斷 onboarding 為何下滑",
+        }),
+      },
+    },
+    scope: {
+      capability_lane: "scanoo-diagnose",
+      session_key: "thread:scanoo-diagnose",
+      chat_id: "chat-scanoo-diagnose",
+    },
+    logger: {
+      info() {},
+      warn() {},
+      compactError(error) {
+        return error;
+      },
+    },
+    async resolveAuthContextFn() {
+      return {
+        account: { id: "acct-scanoo-diagnose" },
+        token: "tenant_token",
+        tokenKind: "user",
+      };
+    },
+    async resolvePlannerExplicitAuthContextFn() {
+      return {
+        account_id: "acct-scanoo-diagnose",
+        access_token: "user_access_token",
+      };
+    },
+    async resolveReferencedDocumentIdFn() {
+      return {
+        documentId: "doc_scanoo_fastpath",
+        source: "plugin_context_document_refs",
+      };
+    },
+    async maybeBuildScanooDiagnoseOfficialReadFallbackFn() {
+      diagnoseFallbackCalls += 1;
+      return "【問題現象】\n- fast-path diagnose ready";
+    },
+    async runPlannerUserInputEdgeFn() {
+      plannerCalls += 1;
+      return {
+        plannerResult: { ok: false, error: "request_timeout" },
+        plannerEnvelope: { trace: {} },
+        userResponse: { ok: false, answer: "planner timeout", sources: [], limitations: [] },
+      };
+    },
+  });
+
+  assert.equal(diagnoseFallbackCalls, 1);
+  assert.equal(plannerCalls, 0);
+  assert.match(reply.text, /fast-path diagnose ready/);
+});
+
+test("scanoo_compare planner fallback path no longer re-enters lane after request_timeout", async () => {
+  let plannerCalls = 0;
+  let compareFallbackCalls = 0;
+  const reply = await executePlannerBackedLaneForTest({
+    event: {
+      __lobster_plugin_dispatch: {
+        requested_capability: "scanoo_compare",
+      },
+      message: {
+        chat_id: "chat-scanoo-compare-timeout",
+        content: JSON.stringify({
+          text: "幫我比較 A店 和 B店",
+        }),
+      },
+    },
+    scope: {
+      capability_lane: "scanoo-compare",
+      session_key: "thread:scanoo-compare-timeout",
+      chat_id: "chat-scanoo-compare-timeout",
+    },
+    logger: {
+      info() {},
+      warn() {},
+      compactError(error) {
+        return error;
+      },
+    },
+    async resolveAuthContextFn() {
+      return {
+        account: { id: "acct-scanoo-compare-timeout" },
+        token: "tenant_token",
+        tokenKind: "user",
+      };
+    },
+    async resolvePlannerExplicitAuthContextFn() {
+      return null;
+    },
+    async maybeBuildScanooCompareDocsSearchFallbackFn() {
+      compareFallbackCalls += 1;
+      return null;
+    },
+    async runPlannerUserInputEdgeFn() {
+      plannerCalls += 1;
+      return {
+        plannerResult: { ok: false, error: "request_timeout" },
+        plannerEnvelope: { trace: {} },
+        userResponse: { ok: false, answer: "planner timeout response", sources: [], limitations: [] },
+      };
+    },
+    renderUserResponseTextFn(userResponse) {
+      return `planner:${userResponse.answer}`;
+    },
+  });
+
+  assert.equal(compareFallbackCalls, 1);
+  assert.equal(plannerCalls, 1);
+  assert.equal(reply.text, "planner:planner timeout response");
+});
+
+test("scanoo_diagnose planner fallback path no longer re-enters lane after request_timeout", async () => {
+  let plannerCalls = 0;
+  let diagnoseFallbackCalls = 0;
+  const reply = await executePlannerBackedLaneForTest({
+    event: {
+      __lobster_plugin_dispatch: {
+        requested_capability: "scanoo_diagnose",
+      },
+      message: {
+        chat_id: "chat-scanoo-diagnose-timeout",
+        content: JSON.stringify({
+          text: "幫我診斷這份文件",
+        }),
+      },
+    },
+    scope: {
+      capability_lane: "scanoo-diagnose",
+      session_key: "thread:scanoo-diagnose-timeout",
+      chat_id: "chat-scanoo-diagnose-timeout",
+    },
+    logger: {
+      info() {},
+      warn() {},
+      compactError(error) {
+        return error;
+      },
+    },
+    async resolveAuthContextFn() {
+      return {
+        account: { id: "acct-scanoo-diagnose-timeout" },
+        token: "tenant_token",
+        tokenKind: "user",
+      };
+    },
+    async resolvePlannerExplicitAuthContextFn() {
+      return {
+        account_id: "acct-scanoo-diagnose-timeout",
+        access_token: "user_access_token",
+      };
+    },
+    async resolveReferencedDocumentIdFn() {
+      return {
+        documentId: "doc_scanoo_diag_timeout",
+        source: "plugin_context_document_refs",
+      };
+    },
+    async maybeBuildScanooDiagnoseOfficialReadFallbackFn() {
+      diagnoseFallbackCalls += 1;
+      return null;
+    },
+    async runPlannerUserInputEdgeFn() {
+      plannerCalls += 1;
+      return {
+        plannerResult: { ok: false, error: "request_timeout" },
+        plannerEnvelope: { trace: {} },
+        userResponse: { ok: false, answer: "planner timeout diagnose", sources: [], limitations: [] },
+      };
+    },
+    renderUserResponseTextFn(userResponse) {
+      return `planner:${userResponse.answer}`;
+    },
+  });
+
+  assert.equal(diagnoseFallbackCalls, 1);
+  assert.equal(plannerCalls, 1);
+  assert.equal(reply.text, "planner:planner timeout diagnose");
+});
+
+test("non-scanoo capability keeps original planner-first flow", async () => {
+  let plannerCalls = 0;
+  let compareFallbackCalls = 0;
+  let diagnoseFallbackCalls = 0;
+  const reply = await executePlannerBackedLaneForTest({
+    event: {
+      __lobster_plugin_dispatch: {
+        requested_capability: "knowledge_answer",
+      },
+      message: {
+        chat_id: "chat-knowledge",
+        content: JSON.stringify({
+          text: "幫我找公司 SOP",
+        }),
+      },
+    },
+    scope: {
+      capability_lane: "knowledge-assistant",
+      session_key: "thread:knowledge",
+      chat_id: "chat-knowledge",
+    },
+    logger: {
+      info() {},
+      warn() {},
+      compactError(error) {
+        return error;
+      },
+    },
+    async resolveAuthContextFn() {
+      return {
+        account: { id: "acct-knowledge" },
+        token: "tenant_token",
+        tokenKind: "user",
+      };
+    },
+    async resolvePlannerExplicitAuthContextFn() {
+      return null;
+    },
+    async maybeBuildScanooCompareDocsSearchFallbackFn() {
+      compareFallbackCalls += 1;
+      return "unexpected";
+    },
+    async maybeBuildScanooDiagnoseOfficialReadFallbackFn() {
+      diagnoseFallbackCalls += 1;
+      return "unexpected";
+    },
+    async runPlannerUserInputEdgeFn() {
+      plannerCalls += 1;
+      return {
+        plannerResult: { ok: true, action: "search_company_brain_docs" },
+        plannerEnvelope: { trace: {} },
+        userResponse: { ok: true, answer: "planner success", sources: [], limitations: [] },
+      };
+    },
+    renderUserResponseTextFn(userResponse) {
+      return `planner:${userResponse.answer}`;
+    },
+  });
+
+  assert.equal(plannerCalls, 1);
+  assert.equal(compareFallbackCalls, 0);
+  assert.equal(diagnoseFallbackCalls, 0);
+  assert.equal(reply.text, "planner:planner success");
 });
 
 test("lane execution plan reports structured semantic mismatch instead of generic fallback for misplaced document request", () => {

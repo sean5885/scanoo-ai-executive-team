@@ -125,6 +125,9 @@ All minimum trace/log events should align around these fields:
     - `fallback_reason=missing_exact_scanoo_compare_lane_fallback_to_knowledge_assistant` only when that dedicated lane cannot be used
     - `scanoo_diagnose -> scanoo-diagnose` with `lane_mapping_source=explicit`
     - `fallback_reason=missing_exact_scanoo_diagnose_lane_fallback_to_knowledge_assistant` only when that dedicated lane cannot be used
+    - explicit Scanoo capability lanes now emit `scanoo_capability_fastpath_attempted` and either:
+      - `scanoo_capability_fastpath_succeeded` when lane-primary evidence/read hydration returns a bounded reply before planner
+      - `scanoo_capability_fastpath_failed` when lane-primary fast-path cannot safely return and runtime falls back to planner
     - dedicated Scanoo lanes may now also emit `scanoo_lane_pretimeout_fallback` before the shared planner soft timeout boundary and `scanoo_lane_pretimeout_fallback_failed` only when that pre-timeout recovery still cannot produce a bounded reply
 - tool execution callers now also emit a unified `lobster_tool_execution` payload with:
    - `request_id`
