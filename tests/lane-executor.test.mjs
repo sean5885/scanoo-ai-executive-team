@@ -485,28 +485,29 @@ test("resolveReferencedDocumentId 能從 plugin-dispatch handoff 的 document_re
 
 test("resolveReferencedDocumentId 會在 diagnose document_refs 只有 title 時自動 search 補 document_id", async () => {
   const logs = [];
-  const result = await resolveReferencedDocumentId(
-    {
-      message: {
-        content: JSON.stringify({
-          text: "請幫我診斷這份文件",
-          document_refs: [
-            {
-              title: "Scanoo Diagnose SOP",
-            },
-          ],
-        }),
-      },
-      __lobster_plugin_dispatch: {
-        plugin_context: {
-          document_refs: [
-            {
-              title: "Scanoo Diagnose SOP",
-            },
-          ],
-        },
+  const event = {
+    message: {
+      content: JSON.stringify({
+        text: "請幫我診斷這份文件",
+        document_refs: [
+          {
+            title: "Scanoo Diagnose SOP",
+          },
+        ],
+      }),
+    },
+    __lobster_plugin_dispatch: {
+      plugin_context: {
+        document_refs: [
+          {
+            title: "Scanoo Diagnose SOP",
+          },
+        ],
       },
     },
+  };
+  const result = await resolveReferencedDocumentId(
+    event,
     "user-token",
     {
       info(event, payload) {
@@ -537,6 +538,7 @@ test("resolveReferencedDocumentId 會在 diagnose document_refs 只有 title 時
 
   assert.equal(result.documentId, "doc_diag_search_1");
   assert.equal(result.source, "plugin_context_document_refs_title_search");
+  assert.equal(event.__lobster_plugin_dispatch.plugin_context.document_refs[0].document_id, "doc_diag_search_1");
   assert.equal(
     logs.some(([event, payload]) => (
       event === "doc_resolution_search_hit"
@@ -589,6 +591,144 @@ test("scanoo-diagnose official read fallback 強制讀取已解析出的 documen
   assert.match(reply, /Scanoo Diagnose SOP/);
   assert.match(reply, /doc_diag_force_1/);
   assert.match(reply, /【目前證據】/);
+});
+
+test("scanoo-diagnose official read fallback 會在 title-only docref resolve 後強制進 official read", async () => {
+  const reply = await maybeBuildScanooDiagnoseOfficialReadFallback({
+    event: {
+      message: {
+        content: JSON.stringify({
+          text: "請幫我診斷 onboarding 文件裡的轉化問題",
+          document_refs: [
+            {
+              title: "Scanoo Diagnose SOP",
+            },
+          ],
+        }),
+      },
+      __lobster_plugin_dispatch: {
+        plugin_context: {
+          document_refs: [
+            {
+              title: "Scanoo Diagnose SOP",
+            },
+          ],
+        },
+      },
+    },
+    accountId: "acct-diagnose",
+    explicitAuth: {
+      account_id: "acct-diagnose",
+      access_token: "user-token",
+    },
+    requestText: "請幫我診斷 onboarding 文件裡的轉化問題",
+    plannerResult: {
+      ok: false,
+      error: "planner_failed",
+      action: "search_company_brain_docs",
+    },
+    userResponse: {
+      ok: false,
+      answer: "這題本來應該先走對應的查詢或流程，但這輪還沒真的執行到那個步驟，所以我先不亂補答案。",
+      sources: [],
+      limitations: ["目前資料不足，還不能直接判斷根因。"],
+      failure_class: "tool_omission",
+    },
+    async searchDocs({ query }) {
+      assert.equal(query, "Scanoo Diagnose SOP");
+      return {
+        items: [
+          {
+            title: "Scanoo Diagnose SOP",
+            doc_id: "doc_diag_resolved_1",
+          },
+        ],
+      };
+    },
+    async readDocument({ documentId }) {
+      assert.equal(documentId, "doc_diag_resolved_1");
+      return {
+        title: "Scanoo Diagnose SOP",
+        document_id: documentId,
+        content: "這份文件定義了 diagnose official read 的檢查流程。",
+      };
+    },
+    logger: {
+      info() {},
+      warn() {},
+      compactError(error) {
+        return { message: error?.message || String(error) };
+      },
+    },
+  });
+
+  assert.match(reply, /Scanoo Diagnose SOP/);
+  assert.match(reply, /doc_diag_resolved_1/);
+  assert.match(reply, /【目前證據】/);
+});
+
+test("scanoo-diagnose official read fallback resolve 失敗時回 bounded diagnose fallback，不回 generic", async () => {
+  const reply = await maybeBuildScanooDiagnoseOfficialReadFallback({
+    event: {
+      message: {
+        content: JSON.stringify({
+          text: "請幫我診斷 onboarding 文件裡的轉化問題",
+          document_refs: [
+            {
+              query: "Scanoo onboarding diagnose 手冊",
+            },
+          ],
+        }),
+      },
+      __lobster_plugin_dispatch: {
+        plugin_context: {
+          document_refs: [
+            {
+              query: "Scanoo onboarding diagnose 手冊",
+            },
+          ],
+        },
+      },
+    },
+    accountId: "acct-diagnose",
+    explicitAuth: {
+      account_id: "acct-diagnose",
+      access_token: "user-token",
+    },
+    requestText: "請幫我診斷 onboarding 文件裡的轉化問題",
+    plannerResult: {
+      ok: false,
+      error: "planner_failed",
+      action: "search_company_brain_docs",
+    },
+    userResponse: {
+      ok: false,
+      answer: "這題本來應該先走對應的查詢或流程，但這輪還沒真的執行到那個步驟，所以我先不亂補答案。",
+      sources: [],
+      limitations: ["目前資料不足，還不能直接判斷根因。"],
+      failure_class: "tool_omission",
+    },
+    async searchDocs() {
+      return {
+        items: [],
+      };
+    },
+    async readDocument() {
+      assert.fail("readDocument should not be called when document_id cannot be resolved");
+    },
+    logger: {
+      info() {},
+      warn() {},
+      compactError(error) {
+        return { message: error?.message || String(error) };
+      },
+    },
+  });
+
+  assert.match(reply, /【問題現象】[\s\S]*【可能原因】[\s\S]*【目前證據】[\s\S]*【不確定性】[\s\S]*【建議下一步】/);
+  assert.match(reply, /補出可直接讀取的 document_id/);
+  assert.match(reply, /Scanoo onboarding diagnose 手冊/);
+  assert.doesNotMatch(reply, /這題本來應該先走對應的查詢或流程/);
 });
 
 test("scanoo-diagnose pre-timeout fallback 會優先讀 plugin handoff 的 explicit user token", async () => {

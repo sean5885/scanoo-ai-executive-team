@@ -337,14 +337,59 @@ function uniqueStrings(items = []) {
   });
 }
 
-function normalizeScanooDocumentRefTitle(documentRef = {}) {
-  return cleanText(
-    documentRef?.title
-    || documentRef?.document_title
-    || documentRef?.name
-    || documentRef?.text
-    || "",
-  );
+function collectScanooDocumentRefSearchQueries(documentRef = {}) {
+  return uniqueStrings([
+    cleanText(documentRef?.title || ""),
+    cleanText(documentRef?.document_title || ""),
+    cleanText(documentRef?.name || ""),
+    cleanText(documentRef?.query || ""),
+    cleanText(documentRef?.description || ""),
+    cleanText(documentRef?.document_description || ""),
+    cleanText(documentRef?.text || ""),
+  ]);
+}
+
+function hydrateResolvedDocumentIdIntoEventDocumentRefs(event = null, {
+  query = "",
+  documentId = "",
+  matchedTitle = "",
+} = {}) {
+  const normalizedQuery = cleanText(query);
+  const normalizedDocumentId = cleanText(documentId);
+  const normalizedMatchedTitle = cleanText(matchedTitle);
+  if (!normalizedQuery || !normalizedDocumentId) {
+    return;
+  }
+
+  const applyResolvedDocumentId = (documentRefs = []) => {
+    let updated = false;
+    for (const documentRef of Array.isArray(documentRefs) ? documentRefs : []) {
+      if (!documentRef || typeof documentRef !== "object" || Array.isArray(documentRef)) {
+        continue;
+      }
+      if (extractDocumentId(documentRef)) {
+        continue;
+      }
+      if (!collectScanooDocumentRefSearchQueries(documentRef).includes(normalizedQuery)) {
+        continue;
+      }
+      documentRef.document_id = normalizedDocumentId;
+      if (!cleanText(documentRef.title) && normalizedMatchedTitle) {
+        documentRef.title = normalizedMatchedTitle;
+      }
+      updated = true;
+    }
+    return updated;
+  };
+
+  applyResolvedDocumentId(event?.__lobster_plugin_dispatch?.plugin_context?.document_refs);
+
+  if (typeof event?.message?.content === "string") {
+    const parsedMessageContent = safeParseJson(event.message.content);
+    if (parsedMessageContent && applyResolvedDocumentId(parsedMessageContent?.document_refs)) {
+      event.message.content = JSON.stringify(parsedMessageContent);
+    }
+  }
 }
 
 function collectPluginContextDocumentRefs(event = null) {
@@ -737,6 +782,40 @@ export function buildScanooDiagnoseOfficialReadReply({
   ].join("\n");
 }
 
+function buildScanooDiagnoseMissingDocumentReply({
+  requestText = "",
+  documentRef = {},
+} = {}) {
+  const normalizedRequest = cleanText(requestText) || "這輪 diagnose";
+  const searchedQueries = uniqueStrings(documentRef?.searchedQueries || []);
+  const querySummary = searchedQueries.length > 0
+    ? searchedQueries.slice(0, 3).map((item) => `「${truncate(item, 60)}」`).join("、")
+    : "目前訊息中的文件線索";
+
+  return [
+    "【問題現象】",
+    `我已先嘗試把「${normalizedRequest}」對到對應官方文件，但目前還沒能從你提供的文件線索補出可直接讀取的 document_id，所以這輪不能安全進 official read。`,
+    "",
+    "【可能原因】",
+    "- handoff 目前只有文件 title / name / query 描述，沒有可直接開啟正文的 token。",
+    "- mirror docs search 沒有命中單一可確定的官方文件，或命中結果不足以安全回填 document_id。",
+    "- 在沒有 document_id 前，任何診斷都只會停在猜測，不能當成正式讀過文件後的結論。",
+    "",
+    "【目前證據】",
+    `- 已嘗試用以下文件線索補查：${querySummary}。`,
+    "- 目前 plugin handoff 內仍沒有可驗證的 document_id，因此沒有進到官方正文讀取。",
+    "",
+    "【不確定性】",
+    "- 這次尚未確認實際對應的是哪一份官方文件，所以不能把 diagnose 綁定到單一文檔版本。",
+    "- 若標題相近文件很多、名稱不完整，單靠描述欄位會有誤配風險。",
+    "- 在正式讀到文件前，我不能安全下根因結論。",
+    "",
+    "【建議下一步】",
+    "- 直接補文件連結、document_id，或回覆原始文件卡片。",
+    "- 如果只有名稱可補，請給更完整的文件標題、關鍵詞或對應模組，我就可以再做一次 bounded resolve。",
+  ].join("\n");
+}
+
 async function maybeBuildScanooCompareDocsSearchFallback({
   accountId = "",
   requestText = "",
@@ -801,6 +880,7 @@ async function maybeBuildScanooDiagnoseOfficialReadFallback({
   logger = noopLogger,
   forceRead = false,
   resolvedDocumentRef = null,
+  searchDocs = searchCompanyBrainDocsFromRuntime,
   readDocument = readDocumentFromRuntime,
 } = {}) {
   if (!forceRead && !shouldFallbackScanooDiagnoseToOfficialRead({
@@ -827,11 +907,12 @@ async function maybeBuildScanooDiagnoseOfficialReadFallback({
     return null;
   }
 
-  const documentRef = resolvedDocumentRef?.documentId
+  const documentRef = (resolvedDocumentRef?.documentId || resolvedDocumentRef?.searchAttempted)
     ? resolvedDocumentRef
     : await resolveReferencedDocumentId(event, accessToken, logger, {
       accountId: resolvedAccountId,
       allowDocsSearchFallback: true,
+      searchDocs,
     });
   const documentId = cleanText(documentRef?.documentId || "");
   if (!documentId) {
@@ -841,6 +922,12 @@ async function maybeBuildScanooDiagnoseOfficialReadFallback({
       failure_class: cleanText(userResponse?.failure_class || "") || null,
       chosen_action: getPlannerChosenAction(plannerResult) || null,
     });
+    if (documentRef?.searchAttempted) {
+      return buildScanooDiagnoseMissingDocumentReply({
+        requestText,
+        documentRef,
+      });
+    }
     return null;
   }
 
@@ -1473,10 +1560,10 @@ async function resolveReferencedDocumentId(event, accessToken, logger = noopLogg
   }
 
   if (allowDocsSearchFallback && cleanText(accountId) && pluginContextDocumentRefs.length > 0) {
-    const titleQueries = uniqueStrings(
-      pluginContextDocumentRefs.map((item) => normalizeScanooDocumentRefTitle(item)),
+    const searchQueries = uniqueStrings(
+      pluginContextDocumentRefs.flatMap((item) => collectScanooDocumentRefSearchQueries(item)),
     );
-    for (const query of titleQueries) {
+    for (const query of searchQueries) {
       try {
         const docs = await searchDocs({
           accountId,
@@ -1487,6 +1574,11 @@ async function resolveReferencedDocumentId(event, accessToken, logger = noopLogg
         });
         const matchedItem = pickScanooDiagnoseDocumentIdSearchHit(query, docs?.items);
         if (matchedItem?.resolved_doc_id) {
+          hydrateResolvedDocumentIdIntoEventDocumentRefs(event, {
+            query,
+            documentId: matchedItem.resolved_doc_id,
+            matchedTitle: matchedItem?.title || "",
+          });
           logger.info("doc_resolution_search_hit", {
             source: "plugin_context_document_refs_title_search",
             query: truncate(query, 120),
@@ -1512,6 +1604,17 @@ async function resolveReferencedDocumentId(event, accessToken, logger = noopLogg
         });
       }
     }
+
+    logger.info("doc_resolution_search_exhausted", {
+      source: "plugin_context_document_refs_title_search",
+      query_count: searchQueries.length,
+    });
+    return {
+      documentId: "",
+      source: "plugin_context_document_refs_title_search_miss",
+      searchAttempted: searchQueries.length > 0,
+      searchedQueries: searchQueries,
+    };
   }
 
   logger.warn("doc_resolution_miss", {
@@ -1520,6 +1623,8 @@ async function resolveReferencedDocumentId(event, accessToken, logger = noopLogg
   return {
     documentId: "",
     source: "none",
+    searchAttempted: false,
+    searchedQueries: [],
   };
 }
 
