@@ -389,6 +389,54 @@ test("scanoo-compare docs search fallback keeps section order and returns normal
   assert.doesNotMatch(reply, /partial comparison/);
 });
 
+test("scanoo-compare docs search fallback uses partial comparison when only one side has valid evidence", () => {
+  const reply = buildScanooCompareDocsSearchReply({
+    query: "比較 A店 與 B店 的流量與轉化",
+    items: [
+      {
+        title: "A店 onboarding weekly report",
+        doc_id: "doc_scanoo_compare_one_sided",
+        summary: {
+          overview: "A店在 2026-03 的流量 12000、轉化 3.2%。",
+        },
+      },
+    ],
+  });
+
+  assert.match(reply, /partial comparison/);
+  assert.match(reply, /已確認觀察：A店 側/);
+  assert.match(reply, /另一側缺口：B店 側/);
+  assert.match(reply, /最小補數據/);
+  assert.doesNotMatch(reply, /正式比較/);
+});
+
+test("scanoo-compare docs search fallback uses partial comparison when one query metric is missing on one side", () => {
+  const reply = buildScanooCompareDocsSearchReply({
+    query: "比較 A店 與 B店 的流量與轉化",
+    items: [
+      {
+        title: "A店 onboarding weekly report",
+        doc_id: "doc_scanoo_compare_metric_full",
+        summary: {
+          overview: "A店在 2026-03 的流量 12000、轉化 3.2%。",
+        },
+      },
+      {
+        title: "B店 onboarding weekly report",
+        doc_id: "doc_scanoo_compare_metric_gap",
+        summary: {
+          overview: "B店在 2026-03 的流量 9800。",
+        },
+      },
+    ],
+  });
+
+  assert.match(reply, /partial comparison/);
+  assert.match(reply, /雙側對齊指標（轉化）/);
+  assert.match(reply, /方向推估：就目前已知指標覆蓋/);
+  assert.doesNotMatch(reply, /正式比較/);
+});
+
 test("scanoo-compare relevance gate filters demo\/test\/stub\/sample style evidence", () => {
   const filtered = filterScanooCompareDocsSearchItems([
     {
@@ -477,6 +525,8 @@ test("scanoo-compare docs search fallback reports concrete gaps when no valid ev
   assert.match(reply, /A店/);
   assert.match(reply, /B店/);
   assert.match(reply, /流量 \/ 轉化/);
+  assert.doesNotMatch(reply, /partial comparison/);
+  assert.doesNotMatch(reply, /正式比較/);
   assert.doesNotMatch(reply, /doc_scanoo_compare_verify_fixture/);
 });
 

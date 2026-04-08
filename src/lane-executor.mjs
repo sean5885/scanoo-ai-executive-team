@@ -875,9 +875,61 @@ function formatScanooCompareDocsSearchEvidenceItem(analysis = {}) {
   return `- ${title}${docId ? `（${docId}）` : ""}${summary ? `：${summary}` : ""}${signalText ? `（${signalText}）` : ""}`;
 }
 
+function buildScanooCompareEntityCoverage(validAnalyses = [], {
+  queryEntities = [],
+} = {}) {
+  const coverageMap = new Map();
+
+  const ensureEntry = (entity = "") => {
+    const normalizedEntity = cleanText(entity);
+    if (!normalizedEntity) {
+      return null;
+    }
+    if (!coverageMap.has(normalizedEntity)) {
+      coverageMap.set(normalizedEntity, {
+        entity: normalizedEntity,
+        metrics: new Set(),
+        evidenceCount: 0,
+        hasTimeOrData: false,
+      });
+    }
+    return coverageMap.get(normalizedEntity);
+  };
+
+  for (const entity of uniqueStrings(queryEntities)) {
+    ensureEntry(entity);
+  }
+
+  for (const analysis of validAnalyses) {
+    const entities = uniqueStrings(Array.isArray(analysis?.entitySignals) ? analysis.entitySignals : []);
+    const metrics = uniqueStrings(Array.isArray(analysis?.metricSignals) ? analysis.metricSignals : []);
+    for (const entity of entities) {
+      const entry = ensureEntry(entity);
+      if (!entry) {
+        continue;
+      }
+      entry.evidenceCount += 1;
+      if (analysis?.hasTimeOrData) {
+        entry.hasTimeOrData = true;
+      }
+      for (const metric of metrics) {
+        entry.metrics.add(metric);
+      }
+    }
+  }
+
+  return Array.from(coverageMap.values()).map((entry) => ({
+    entity: entry.entity,
+    metrics: Array.from(entry.metrics),
+    evidenceCount: entry.evidenceCount,
+    hasTimeOrData: entry.hasTimeOrData,
+  }));
+}
+
 function resolveScanooCompareContractStatus({
   validAnalyses = [],
   queryEntities = [],
+  queryMetrics = [],
 } = {}) {
   const uniqueEntities = uniqueStrings(
     validAnalyses.flatMap((analysis) => (
@@ -889,9 +941,18 @@ function resolveScanooCompareContractStatus({
       Array.isArray(analysis?.metricSignals) ? analysis.metricSignals : []
     )),
   );
+  const requiredQueryMetrics = uniqueStrings(Array.isArray(queryMetrics) ? queryMetrics : []);
+  const entityCoverage = buildScanooCompareEntityCoverage(validAnalyses, {
+    queryEntities,
+  });
+  const entitiesWithEvidence = entityCoverage.filter((entry) => entry.evidenceCount > 0);
+  const missingSharedQueryMetrics = requiredQueryMetrics.filter((metric) => (
+    entitiesWithEvidence.filter((entry) => entry.metrics.includes(metric)).length < 2
+  ));
   const hasTwoComparableEvidence = validAnalyses.length >= 2;
-  const hasTwoEntities = uniqueEntities.length >= 2;
+  const hasTwoEntities = entitiesWithEvidence.length >= 2;
   const hasComparableMetric = uniqueMetrics.length >= 1;
+  const hasSharedQueryMetricCoverage = missingSharedQueryMetrics.length === 0;
   const missingDimensions = [];
   if (!hasTwoComparableEvidence) {
     missingDimensions.push("第二份可比較 evidence");
@@ -902,11 +963,68 @@ function resolveScanooCompareContractStatus({
   if (!hasComparableMetric) {
     missingDimensions.push("可比較指標（conversion / retention / rank / traffic）");
   }
+  if (!hasSharedQueryMetricCoverage) {
+    missingDimensions.push(`雙側對齊指標（${missingSharedQueryMetrics.join(" / ")}）`);
+  }
+
+  const rankedEntities = entitiesWithEvidence
+    .map((entry) => ({
+      ...entry,
+      requiredMetricHits: requiredQueryMetrics.length > 0
+        ? requiredQueryMetrics.filter((metric) => entry.metrics.includes(metric)).length
+        : entry.metrics.length,
+    }))
+    .sort((left, right) => (
+      right.requiredMetricHits - left.requiredMetricHits
+      || right.metrics.length - left.metrics.length
+      || right.evidenceCount - left.evidenceCount
+      || Number(right.hasTimeOrData) - Number(left.hasTimeOrData)
+      || left.entity.localeCompare(right.entity)
+    ));
+  const strongestEntity = rankedEntities[0]?.entity || null;
+
+  let gapEntity = null;
+  const gapEntityMissingDimensions = [];
+  if (queryEntities.length >= 2) {
+    gapEntity = queryEntities.find((entity) => (
+      !entitiesWithEvidence.some((entry) => entry.entity === entity)
+    )) || null;
+    if (gapEntity) {
+      gapEntityMissingDimensions.push("可比較 evidence");
+      if (requiredQueryMetrics.length > 0) {
+        gapEntityMissingDimensions.push(`指標（${requiredQueryMetrics.join(" / ")}）`);
+      }
+      gapEntityMissingDimensions.push("時間或數據欄位");
+    }
+  }
+
+  if (!gapEntity && missingSharedQueryMetrics.length > 0 && entitiesWithEvidence.length > 0) {
+    const rankedGapCandidate = entitiesWithEvidence
+      .map((entry) => ({
+        entity: entry.entity,
+        missingRequiredMetrics: missingSharedQueryMetrics.filter((metric) => !entry.metrics.includes(metric)),
+      }))
+      .sort((left, right) => (
+        right.missingRequiredMetrics.length - left.missingRequiredMetrics.length
+        || left.entity.localeCompare(right.entity)
+      ))[0];
+    if (rankedGapCandidate?.missingRequiredMetrics?.length > 0) {
+      gapEntity = rankedGapCandidate.entity;
+      gapEntityMissingDimensions.push(`指標（${rankedGapCandidate.missingRequiredMetrics.join(" / ")}）`);
+    }
+  }
+
   return {
     uniqueEntities,
     uniqueMetrics,
+    requiredQueryMetrics,
+    entityCoverage,
+    strongestEntity,
+    gapEntity,
+    gapEntityMissingDimensions,
+    missingSharedQueryMetrics,
     missingDimensions,
-    isSatisfied: hasTwoComparableEvidence && hasTwoEntities && hasComparableMetric,
+    isSatisfied: hasTwoComparableEvidence && hasTwoEntities && hasComparableMetric && hasSharedQueryMetricCoverage,
   };
 }
 
@@ -920,11 +1038,14 @@ function buildScanooCompareGapActions({
     : "流量 / 轉化 / 留存 / 排名";
   const actions = [];
   if (queryEntities.length >= 2) {
-    actions.push(`- 先補「${queryEntities[0]}」與「${queryEntities[1]}」同一期間（例如近 7 天或同一月份）的 ${metricsLabel} 原始數值。`);
+    actions.push(`- 最小補數據：先補「${queryEntities[0]}」與「${queryEntities[1]}」同一期間（例如近 7 天或同一月份）的 ${metricsLabel} 原始數值。`);
   } else {
-    actions.push(`- 先補兩個明確比較對象（例如 A店 vs B店），再提供同期間 ${metricsLabel} 數據。`);
+    actions.push(`- 最小補數據：先補兩個明確比較對象（例如 A店 vs B店），再提供同期間 ${metricsLabel} 數據。`);
   }
   actions.push("- 每一側至少提供 1 份含日期/期間欄位的官方來源（title + doc_id 或連結），避免口徑錯配。");
+  if (missingDimensions.some((dimension) => dimension.startsWith("雙側對齊指標（"))) {
+    actions.push("- 若目前只缺單一指標，先補缺口側該指標的同期間數值即可，不需要重做整份報表。");
+  }
   if (missingDimensions.includes("第二份可比較 evidence") || missingDimensions.includes("對照側 entity")) {
     actions.push("- 目前只命中單側資料，請補另一側同口徑資料後我就能把 partial compare 升級成正式 compare。");
   }
@@ -950,6 +1071,7 @@ export function buildScanooCompareDocsSearchReply({
   const contractStatus = resolveScanooCompareContractStatus({
     validAnalyses,
     queryEntities: evidenceAnalysis.queryEntities,
+    queryMetrics: evidenceAnalysis.queryMetrics,
   });
   const evidenceLines = validAnalyses.length > 0
     ? validAnalyses.slice(0, 3).map((analysis) => formatScanooCompareDocsSearchEvidenceItem(analysis))
@@ -998,17 +1120,31 @@ export function buildScanooCompareDocsSearchReply({
   }
 
   if (validAnalyses.length > 0) {
+    const confirmedEntity = contractStatus.strongestEntity || firstValidEntity;
+    const gapEntity = contractStatus.gapEntity
+      || (evidenceAnalysis.queryEntities.length >= 2
+        ? evidenceAnalysis.queryEntities.find((entity) => entity !== confirmedEntity) || null
+        : null);
+    const gapDimensionText = contractStatus.gapEntityMissingDimensions.length > 0
+      ? contractStatus.gapEntityMissingDimensions.join("、")
+      : contractStatus.missingDimensions.join("、");
+    const directionalHint = gapEntity && confirmedEntity && gapEntity !== confirmedEntity
+      ? `- 方向推估：就目前已知指標覆蓋，${confirmedEntity} 側訊號較完整；${gapEntity} 側仍缺 ${gapDimensionText || "可比較維度"}。`
+      : `- 方向推估：已知訊號先集中在「${confirmedEntity}」側，差異方向暫時偏向「${confirmedEntity}」可比性較高。`;
     return [
       "【比較對象】",
-      `目前只有「${firstValidEntity}」這一側命中有效 evidence；仍缺 ${contractStatus.missingDimensions.join("、")}，所以先給 partial comparison。`,
+      `目前已確認「${confirmedEntity}」側有可比對 evidence；但另一側仍缺 ${contractStatus.missingDimensions.join("、")}，所以先給 partial comparison。`,
       "",
       "【比較維度】",
       `已可比較維度：${metricsLabel}。`,
       `仍缺維度：${contractStatus.missingDimensions.join("、")}。`,
       "",
       "【核心差異】",
-      `- partial comparison：目前只確認「${firstValidEntity}」側有 ${metricsLabel} 的可比對訊號。`,
-      "- 推測差異先落在指標口徑或時間窗，待補對照側同期間數據後再定論。",
+      `- 已確認觀察：${confirmedEntity} 側在「${docA}」可見 ${metricsLabel} 的可比對訊號。`,
+      gapEntity
+        ? `- 另一側缺口：${gapEntity} 側仍缺 ${gapDimensionText || "可比較維度"}。`
+        : `- 另一側缺口：目前仍缺 ${contractStatus.missingDimensions.join("、")}。`,
+      directionalHint,
       "",
       "【原因假設】",
       `- 目前只有 ${validAnalyses.length} 份 evidence 通過 gate，尚未達到「至少兩個有效 entity + 指標」的完整 compare 門檻。`,
