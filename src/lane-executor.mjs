@@ -337,6 +337,52 @@ function uniqueStrings(items = []) {
   });
 }
 
+function normalizeScanooDocumentRefTitle(documentRef = {}) {
+  return cleanText(
+    documentRef?.title
+    || documentRef?.document_title
+    || documentRef?.name
+    || documentRef?.text
+    || "",
+  );
+}
+
+function collectPluginContextDocumentRefs(event = null) {
+  const parsedMessageContent = safeParseJson(event?.message?.content);
+  return [
+    ...(Array.isArray(event?.__lobster_plugin_dispatch?.plugin_context?.document_refs)
+      ? event.__lobster_plugin_dispatch.plugin_context.document_refs
+      : []),
+    ...(Array.isArray(parsedMessageContent?.document_refs)
+      ? parsedMessageContent.document_refs
+      : []),
+  ];
+}
+
+function pickScanooDiagnoseDocumentIdSearchHit(query = "", items = []) {
+  const normalizedQuery = cleanText(query).toLowerCase();
+  const normalizedItems = (Array.isArray(items) ? items : [])
+    .map((item) => ({
+      ...item,
+      resolved_doc_id: cleanText(item?.doc_id || item?.document_id || ""),
+      normalized_title: cleanText(item?.title || "").toLowerCase(),
+    }))
+    .filter((item) => item.resolved_doc_id);
+
+  if (!normalizedItems.length) {
+    return null;
+  }
+
+  if (normalizedQuery) {
+    const exactTitleHit = normalizedItems.find((item) => item.normalized_title === normalizedQuery);
+    if (exactTitleHit) {
+      return exactTitleHit;
+    }
+  }
+
+  return normalizedItems.length === 1 ? normalizedItems[0] : null;
+}
+
 function stripScanooCompareQueryStopwords(text = "") {
   let normalized = cleanText(text);
   for (const stopword of SCANOO_COMPARE_QUERY_STOPWORDS) {
@@ -600,8 +646,11 @@ async function maybeBuildScanooDiagnoseOfficialReadFallback({
   plannerResult = {},
   userResponse = {},
   logger = noopLogger,
+  forceRead = false,
+  resolvedDocumentRef = null,
+  readDocument = readDocumentFromRuntime,
 } = {}) {
-  if (!shouldFallbackScanooDiagnoseToOfficialRead({
+  if (!forceRead && !shouldFallbackScanooDiagnoseToOfficialRead({
     requestText,
     plannerResult,
     userResponse,
@@ -620,11 +669,17 @@ async function maybeBuildScanooDiagnoseOfficialReadFallback({
     return null;
   }
 
-  const documentRef = await resolveReferencedDocumentId(event, accessToken, logger);
+  const documentRef = resolvedDocumentRef?.documentId
+    ? resolvedDocumentRef
+    : await resolveReferencedDocumentId(event, accessToken, logger, {
+      accountId: resolvedAccountId,
+      allowDocsSearchFallback: true,
+    });
   const documentId = cleanText(documentRef?.documentId || "");
   if (!documentId) {
     logger.info("scanoo_diagnose_official_read_fallback_skipped", {
       reason: "missing_referenced_document_id",
+      force_read: forceRead,
       failure_class: cleanText(userResponse?.failure_class || "") || null,
       chosen_action: getPlannerChosenAction(plannerResult) || null,
     });
@@ -632,7 +687,7 @@ async function maybeBuildScanooDiagnoseOfficialReadFallback({
   }
 
   try {
-    const document = await readDocumentFromRuntime({
+    const document = await readDocument({
       accountId: resolvedAccountId,
       accessToken,
       documentId,
@@ -644,6 +699,7 @@ async function maybeBuildScanooDiagnoseOfficialReadFallback({
       account_id: formatIdentifierHint(resolvedAccountId),
       document_id: formatIdentifierHint(documentId),
       document_source: cleanText(documentRef?.source || "") || null,
+      force_read: forceRead,
       failure_class: cleanText(userResponse?.failure_class || "") || null,
       chosen_action: getPlannerChosenAction(plannerResult) || null,
     });
@@ -1200,8 +1256,11 @@ function buildLaneWriteBlockedReply(error) {
 
 const meetingCoordinator = createMeetingCoordinator();
 
-async function resolveReferencedDocumentId(event, accessToken, logger = noopLogger) {
-  const parsedMessageContent = safeParseJson(event?.message?.content);
+async function resolveReferencedDocumentId(event, accessToken, logger = noopLogger, {
+  accountId = "",
+  allowDocsSearchFallback = false,
+  searchDocs = searchCompanyBrainDocsFromRuntime,
+} = {}) {
   const directDocumentId = extractDocumentId(event);
   if (directDocumentId) {
     logger.info("doc_resolution_hit", {
@@ -1214,14 +1273,7 @@ async function resolveReferencedDocumentId(event, accessToken, logger = noopLogg
     };
   }
 
-  const pluginContextDocumentRefs = [
-    ...(Array.isArray(event?.__lobster_plugin_dispatch?.plugin_context?.document_refs)
-      ? event.__lobster_plugin_dispatch.plugin_context.document_refs
-      : []),
-    ...(Array.isArray(parsedMessageContent?.document_refs)
-      ? parsedMessageContent.document_refs
-      : []),
-  ];
+  const pluginContextDocumentRefs = collectPluginContextDocumentRefs(event);
   for (let index = 0; index < pluginContextDocumentRefs.length; index += 1) {
     const pluginContextDocumentId = extractDocumentId(pluginContextDocumentRefs[index]);
     if (pluginContextDocumentId) {
@@ -1262,6 +1314,48 @@ async function resolveReferencedDocumentId(event, accessToken, logger = noopLogg
     }
   }
 
+  if (allowDocsSearchFallback && cleanText(accountId) && pluginContextDocumentRefs.length > 0) {
+    const titleQueries = uniqueStrings(
+      pluginContextDocumentRefs.map((item) => normalizeScanooDocumentRefTitle(item)),
+    );
+    for (const query of titleQueries) {
+      try {
+        const docs = await searchDocs({
+          accountId,
+          query,
+          limit: 3,
+          pathname: "internal:scanoo_diagnose_document_ref_search",
+          logger,
+        });
+        const matchedItem = pickScanooDiagnoseDocumentIdSearchHit(query, docs?.items);
+        if (matchedItem?.resolved_doc_id) {
+          logger.info("doc_resolution_search_hit", {
+            source: "plugin_context_document_refs_title_search",
+            query: truncate(query, 120),
+            document_id: formatIdentifierHint(matchedItem.resolved_doc_id),
+          });
+          return {
+            documentId: matchedItem.resolved_doc_id,
+            source: "plugin_context_document_refs_title_search",
+            query,
+            matchedTitle: cleanText(matchedItem?.title || "") || null,
+          };
+        }
+        logger.info("doc_resolution_search_miss", {
+          source: "plugin_context_document_refs_title_search",
+          query: truncate(query, 120),
+          hit_count: Array.isArray(docs?.items) ? docs.items.length : 0,
+        });
+      } catch (error) {
+        logger.warn("doc_resolution_search_failed", {
+          source: "plugin_context_document_refs_title_search",
+          query: truncate(query, 120),
+          error: logger.compactError(error),
+        });
+      }
+    }
+  }
+
   logger.warn("doc_resolution_miss", {
     related_message_count: collectRelatedMessageIds(event).length,
   });
@@ -1272,6 +1366,7 @@ async function resolveReferencedDocumentId(event, accessToken, logger = noopLogg
 }
 
 export { resolveReferencedDocumentId };
+export { maybeBuildScanooDiagnoseOfficialReadFallback };
 
 function startOfDayUnix() {
   const now = new Date();
@@ -1386,6 +1481,7 @@ async function executeScanooDiagnose({ event, scope, logger = noopLogger, traceI
     signal,
     handlerName: "executeScanooDiagnose",
     textDecorator: buildScanooDiagnoseBrief,
+    preferOfficialDocRead: true,
   });
 }
 
@@ -1409,6 +1505,7 @@ async function executePlannerBackedLane({
   signal = null,
   handlerName = "executePlannerBackedLane",
   textDecorator = null,
+  preferOfficialDocRead = false,
 } = {}) {
   const lanePlan = resolveLaneExecutionPlan({ event, scope });
   logger.info("lane_execution_planned", lanePlan);
@@ -1466,6 +1563,17 @@ async function executePlannerBackedLane({
     }
   }
   if (cleanText(scope?.capability_lane || "") === "scanoo-diagnose") {
+    const resolvedDocumentRef = preferOfficialDocRead
+      ? await resolveReferencedDocumentId(event, context.token, logger, {
+        accountId: context.account?.id || "",
+        allowDocsSearchFallback: true,
+      })
+      : null;
+    const shouldForceOfficialRead = (
+      preferOfficialDocRead
+      && Boolean(cleanText(resolvedDocumentRef?.documentId || ""))
+      && !SCANOO_DOC_READ_ACTIONS.has(getPlannerChosenAction(plannedResult))
+    );
     const officialReadFallback = await maybeBuildScanooDiagnoseOfficialReadFallback({
       event,
       accountId: context.account?.id || "",
@@ -1474,6 +1582,8 @@ async function executePlannerBackedLane({
       plannerResult: plannedResult,
       userResponse,
       logger,
+      forceRead: shouldForceOfficialRead,
+      resolvedDocumentRef,
     });
     if (officialReadFallback) {
       return {

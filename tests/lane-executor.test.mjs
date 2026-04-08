@@ -19,6 +19,7 @@ const {
   looksLikeDeleteMeetingDocRequest,
   looksLikeMeetingCaptureStatusQuery,
   pickCalendarMeetingEvent,
+  maybeBuildScanooDiagnoseOfficialReadFallback,
   resolveLaneExecutionPlan,
   resolveReferencedDocumentId,
   shouldFallbackScanooCompareToDocsSearch,
@@ -478,6 +479,114 @@ test("resolveReferencedDocumentId 能從 plugin-dispatch handoff 的 document_re
     )),
     true,
   );
+});
+
+test("resolveReferencedDocumentId 會在 diagnose document_refs 只有 title 時自動 search 補 document_id", async () => {
+  const logs = [];
+  const result = await resolveReferencedDocumentId(
+    {
+      message: {
+        content: JSON.stringify({
+          text: "請幫我診斷這份文件",
+          document_refs: [
+            {
+              title: "Scanoo Diagnose SOP",
+            },
+          ],
+        }),
+      },
+      __lobster_plugin_dispatch: {
+        plugin_context: {
+          document_refs: [
+            {
+              title: "Scanoo Diagnose SOP",
+            },
+          ],
+        },
+      },
+    },
+    "user-token",
+    {
+      info(event, payload) {
+        logs.push([event, payload]);
+      },
+      warn(event, payload) {
+        logs.push([event, payload]);
+      },
+      compactError(error) {
+        return { message: error?.message || String(error) };
+      },
+    },
+    {
+      accountId: "acct-diagnose",
+      allowDocsSearchFallback: true,
+      async searchDocs() {
+        return {
+          items: [
+            {
+              title: "Scanoo Diagnose SOP",
+              doc_id: "doc_diag_search_1",
+            },
+          ],
+        };
+      },
+    },
+  );
+
+  assert.equal(result.documentId, "doc_diag_search_1");
+  assert.equal(result.source, "plugin_context_document_refs_title_search");
+  assert.equal(
+    logs.some(([event, payload]) => (
+      event === "doc_resolution_search_hit"
+      && payload?.document_id
+    )),
+    true,
+  );
+});
+
+test("scanoo-diagnose official read fallback 強制讀取已解析出的 document_id", async () => {
+  const reply = await maybeBuildScanooDiagnoseOfficialReadFallback({
+    accountId: "acct-diagnose",
+    explicitAuth: {
+      account_id: "acct-diagnose",
+      access_token: "user-token",
+    },
+    requestText: "請幫我診斷 onboarding 文件裡的轉化問題",
+    plannerResult: {
+      ok: true,
+      action: "search_company_brain_docs",
+    },
+    userResponse: {
+      ok: true,
+      answer: "先維持一般診斷回覆。",
+      sources: ["planner_source"],
+      limitations: [],
+    },
+    forceRead: true,
+    resolvedDocumentRef: {
+      documentId: "doc_diag_force_1",
+      source: "plugin_context_document_refs_title_search",
+    },
+    async readDocument({ documentId }) {
+      assert.equal(documentId, "doc_diag_force_1");
+      return {
+        title: "Scanoo Diagnose SOP",
+        document_id: documentId,
+        content: "這份文件定義了 onboarding 的診斷流程與主要轉化節點。",
+      };
+    },
+    logger: {
+      info() {},
+      warn() {},
+      compactError(error) {
+        return { message: error?.message || String(error) };
+      },
+    },
+  });
+
+  assert.match(reply, /Scanoo Diagnose SOP/);
+  assert.match(reply, /doc_diag_force_1/);
+  assert.match(reply, /【目前證據】/);
 });
 
 test("lane execution plan reports structured semantic mismatch instead of generic fallback for misplaced document request", () => {
