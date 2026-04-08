@@ -36,6 +36,7 @@ import {
   detectDocBoundaryIntent,
   extractDocumentId,
   normalizeMessageText,
+  safeParseJson,
 } from "./message-intent-utils.mjs";
 import { classifyInputModality } from "./modality-router.mjs";
 import {
@@ -1200,6 +1201,7 @@ function buildLaneWriteBlockedReply(error) {
 const meetingCoordinator = createMeetingCoordinator();
 
 async function resolveReferencedDocumentId(event, accessToken, logger = noopLogger) {
+  const parsedMessageContent = safeParseJson(event?.message?.content);
   const directDocumentId = extractDocumentId(event);
   if (directDocumentId) {
     logger.info("doc_resolution_hit", {
@@ -1210,6 +1212,30 @@ async function resolveReferencedDocumentId(event, accessToken, logger = noopLogg
       documentId: directDocumentId,
       source: "current_message",
     };
+  }
+
+  const pluginContextDocumentRefs = [
+    ...(Array.isArray(event?.__lobster_plugin_dispatch?.plugin_context?.document_refs)
+      ? event.__lobster_plugin_dispatch.plugin_context.document_refs
+      : []),
+    ...(Array.isArray(parsedMessageContent?.document_refs)
+      ? parsedMessageContent.document_refs
+      : []),
+  ];
+  for (let index = 0; index < pluginContextDocumentRefs.length; index += 1) {
+    const pluginContextDocumentId = extractDocumentId(pluginContextDocumentRefs[index]);
+    if (pluginContextDocumentId) {
+      logger.info("doc_resolution_hit", {
+        source: "plugin_context_document_refs",
+        document_id: formatIdentifierHint(pluginContextDocumentId),
+        reference_index: index,
+      });
+      return {
+        documentId: pluginContextDocumentId,
+        source: "plugin_context_document_refs",
+        referenceIndex: index,
+      };
+    }
   }
 
   for (const relatedMessageId of collectRelatedMessageIds(event)) {
@@ -1244,6 +1270,8 @@ async function resolveReferencedDocumentId(event, accessToken, logger = noopLogg
     source: "none",
   };
 }
+
+export { resolveReferencedDocumentId };
 
 function startOfDayUnix() {
   const now = new Date();

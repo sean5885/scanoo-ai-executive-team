@@ -20,6 +20,7 @@ const {
   looksLikeMeetingCaptureStatusQuery,
   pickCalendarMeetingEvent,
   resolveLaneExecutionPlan,
+  resolveReferencedDocumentId,
   shouldFallbackScanooCompareToDocsSearch,
   shouldFallbackScanooDiagnoseToOfficialRead,
   shouldPreferActiveExecutiveTask,
@@ -430,6 +431,53 @@ test("scanoo-diagnose official read fallback keeps the diagnose section order", 
   assert.match(reply, /【問題現象】[\s\S]*【可能原因】[\s\S]*【目前證據】[\s\S]*【不確定性】[\s\S]*【建議下一步】/);
   assert.match(reply, /Scanoo Onboarding SOP/);
   assert.match(reply, /doc_scanoo_diag_1/);
+});
+
+test("resolveReferencedDocumentId 能從 plugin-dispatch handoff 的 document_refs 解析 obj_token", async () => {
+  const logs = [];
+  const result = await resolveReferencedDocumentId(
+    {
+      message: {
+        content: JSON.stringify({
+          text: "請幫我診斷這份文件",
+          document_refs: [
+            {
+              obj_token: "MFK7dDFLFoVlOGxWCv5cTXKmnMh",
+              title: "Scanoo Diagnose SOP",
+            },
+          ],
+        }),
+      },
+      __lobster_plugin_dispatch: {
+        plugin_context: {
+          document_refs: [
+            {
+              obj_token: "MFK7dDFLFoVlOGxWCv5cTXKmnMh",
+              title: "Scanoo Diagnose SOP",
+            },
+          ],
+        },
+      },
+    },
+    "user-token",
+    {
+      info(event, payload) {
+        logs.push([event, payload]);
+      },
+      warn() {},
+    },
+  );
+
+  assert.equal(result.documentId, "MFK7dDFLFoVlOGxWCv5cTXKmnMh");
+  assert.match(result.source, /current_message|plugin_context_document_refs/);
+  assert.equal(
+    logs.some(([event, payload]) => (
+      event === "doc_resolution_hit"
+      && /current_message|plugin_context_document_refs/.test(String(payload?.source || ""))
+      && payload?.document_id
+    )),
+    true,
+  );
 });
 
 test("lane execution plan reports structured semantic mismatch instead of generic fallback for misplaced document request", () => {

@@ -248,6 +248,7 @@ function looksLikeDocumentReference(value: unknown): boolean {
     "document_id",
     "doc_id",
     "doc_token",
+    "obj_token",
     "file_token",
     "file_key",
     "document_url",
