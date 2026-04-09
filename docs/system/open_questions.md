@@ -25,6 +25,7 @@ For this closure-planning pass:
 11. Workflow/planner state is local JSON: same-session orchestration is now serialized in-process for the checked-in executive/workflow path, but other local JSON stores still remain local-first facts.
 12. Generic runtime questions do not reliably enter planner mode from the lane layer: resolved through `/Users/seanhan/Documents/Playground/src/planner-ingress-contract.mjs`, which is now shared by lane admission, personal-lane edge guarding, and `/Users/seanhan/Documents/Playground/src/planner-runtime-info-flow.mjs`.
 13. HTTP and mutation-runtime idempotency use different scopes: still real, but cut from the next-three closure order.
+14. Planner helper doc/code drift (`tool-loop` single-step wording) was observed and resolved on 2026-04-09 by aligning `/Users/seanhan/Documents/Playground/docs/system/modules.md` and `/Users/seanhan/Documents/Playground/docs/system/data_flow.md` to checked-in `next_action` multi-step behavior plus `/Users/seanhan/Documents/Playground/src/planner/execution-pipeline.mjs`.
 
 ## Ranked Closure Threads
 
