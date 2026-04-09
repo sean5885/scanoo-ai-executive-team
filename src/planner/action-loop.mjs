@@ -1,3 +1,4 @@
+import { updateDocAction } from '../actions/update-doc-action.mjs';
 import { sendMessageAction } from '../actions/send-message-action.mjs';
 
 export async function runActionLoop(plan, context) {
@@ -22,5 +23,15 @@ export async function runActionLoop(plan, context) {
     };
   }
 
+  if (action === 'update_doc') {
+    const result = await updateDocAction({
+      token: context.token,
+      token_type: params?.token_type || context?.token_type,
+      doc_token: params?.doc_token,
+      content: params?.content,
+      mode: params?.mode || 'append'
+    });
+    return { ok: true, type: 'action_executed', action: 'update_doc', result };
+  }
   return { ok: false, type: 'unsupported_action', action };
 }
