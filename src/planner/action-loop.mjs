@@ -1,3 +1,4 @@
+import { createTaskAction } from '../actions/create-task-action.mjs';
 import { updateDocAction } from '../actions/update-doc-action.mjs';
 import { sendMessageAction } from '../actions/send-message-action.mjs';
 
@@ -32,6 +33,14 @@ export async function runActionLoop(plan, context) {
       mode: params?.mode || 'append'
     });
     return { ok: true, type: 'action_executed', action: 'update_doc', result };
+  }
+  if (action === "create_task") {
+    const result = await createTaskAction({
+      token: context.token,
+      title: params?.title,
+      due_time: params?.due_time
+    });
+    return { ok: true, type: "action_executed", action: "create_task", result };
   }
   return { ok: false, type: 'unsupported_action', action };
 }
