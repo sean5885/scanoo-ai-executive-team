@@ -41,6 +41,7 @@ import {
   toUserFacing as taskLayerResultToUserFacing,
 } from "./task-layer/task-to-answer.mjs";
 import {
+  readPlannerWorkingMemoryForRouting,
   compactPlannerConversationMemory as compactPlannerConversationMemoryLayer,
   getPlannerConversationMemory as getPlannerConversationMemoryLayer,
   maybeCompactPlannerConversationMemory,
@@ -178,6 +179,22 @@ const PLANNER_ROUTING_REASON_ALIASES = Object.freeze({
 });
 const FETCH_DOCUMENT_ACTION = "fetch_document";
 const FETCH_DOCUMENT_STEP_INTENT = "retrieve document content before reasoning";
+const PLANNER_WORKING_MEMORY_MIN_CONFIDENCE = 0.35;
+const PLANNER_WORKING_MEMORY_RETRY_PATTERN = /(再試一次|再试一次|重試|重试|retry|run again|再來一次|再来一次)/i;
+const PLANNER_WORKING_MEMORY_TOPIC_SWITCH_PATTERN = /(換個題目|换个题目|換題|换题|改問|改问|另一題|另一题|new topic|different question)/i;
+const PLANNER_WORKING_MEMORY_ELLIPSIS_FOLLOW_UP_PATTERN = /^(繼續|继续|再來|再来|然後呢|然后呢|下一步|接著|接着|same task)$/i;
+const PLANNER_WORKING_MEMORY_UNRESOLVED_SLOT_ACTIONS = Object.freeze({
+  candidate_selection_required: "search_company_brain_docs",
+  missing_document_reference: "search_company_brain_docs",
+  needs_doc_candidates: "search_company_brain_docs",
+  requires_runtime_context: "get_runtime_info",
+});
+const PLANNER_WORKING_MEMORY_AGENT_ACTION_HINTS = Object.freeze({
+  doc_agent: "search_and_detail_doc",
+  runtime_agent: "get_runtime_info",
+  meeting_agent: "search_company_brain_docs",
+  mixed_agent: "search_company_brain_docs",
+});
 
 const executiveCollaborationSignals = [
   "各個 agent",
@@ -3633,6 +3650,211 @@ export function getPlannerPreset(preset = "") {
   return plannerPresetRegistry.get(cleanText(preset));
 }
 
+function canUseWorkingMemoryAction(action = "", {
+  text = "",
+  semantics = null,
+} = {}) {
+  const normalizedAction = cleanText(action);
+  if (!normalizedAction) {
+    return false;
+  }
+  if (!getPlannerActionContract(normalizedAction) && !getPlannerPreset(normalizedAction)) {
+    return false;
+  }
+  if (cleanText(text) && !isPlannerDecisionCatalogVisible(normalizedAction, {
+    text,
+    semantics: semantics && typeof semantics === "object" && !Array.isArray(semantics)
+      ? semantics
+      : null,
+  })) {
+    return false;
+  }
+  if (getPlannerSkillAction(normalizedAction)) {
+    if (!isPlannerSkillActionCatalogVisible(normalizedAction)) {
+      return false;
+    }
+    if (cleanText(text) && !isPlannerDecisionCatalogVisible(normalizedAction, {
+      text,
+      semantics: semantics && typeof semantics === "object" && !Array.isArray(semantics)
+        ? semantics
+        : null,
+    })) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function resolvePlannerWorkingMemoryActionFromSlots(unresolvedSlots = []) {
+  if (!Array.isArray(unresolvedSlots)) {
+    return "";
+  }
+  for (const slot of unresolvedSlots) {
+    const normalizedSlot = cleanText(slot);
+    if (!normalizedSlot) {
+      continue;
+    }
+    const action = PLANNER_WORKING_MEMORY_UNRESOLVED_SLOT_ACTIONS[normalizedSlot];
+    if (action) {
+      return action;
+    }
+  }
+  return "";
+}
+
+function isPlannerWorkingMemoryTopicSwitch({
+  userIntent = "",
+  taskType = "",
+  semantics = null,
+  workingMemory = null,
+} = {}) {
+  const normalizedIntent = cleanText(userIntent);
+  if (!normalizedIntent) {
+    return false;
+  }
+  if (PLANNER_WORKING_MEMORY_TOPIC_SWITCH_PATTERN.test(normalizedIntent)) {
+    return true;
+  }
+  const normalizedSemantics = semantics && typeof semantics === "object" && !Array.isArray(semantics)
+    ? semantics
+    : derivePlannerUserInputSemantics(normalizedIntent);
+  const inferredTaskType = cleanText(workingMemory?.inferred_task_type || "");
+  const normalizedTaskType = cleanText(taskType || "");
+  if (normalizedSemantics.wants_runtime_info && inferredTaskType && inferredTaskType !== "runtime_info") {
+    return true;
+  }
+  if (normalizedSemantics.wants_document_lookup && inferredTaskType === "runtime_info") {
+    return true;
+  }
+  if (normalizedTaskType && inferredTaskType && normalizedTaskType !== inferredTaskType) {
+    return true;
+  }
+  return false;
+}
+
+function resolvePlannerWorkingMemoryContinuation({
+  userIntent = "",
+  taskType = "",
+  payload = {},
+  sessionKey = "",
+  logger = console,
+  stage = "routing",
+} = {}) {
+  const readResult = readPlannerWorkingMemoryForRouting({ sessionKey });
+  const observability = {
+    memory_read_attempted: true,
+    memory_hit: readResult?.observability?.memory_hit === true,
+    memory_miss: readResult?.observability?.memory_miss !== false,
+    memory_used_in_routing: false,
+    memory_snapshot: readResult?.observability?.memory_snapshot || null,
+  };
+  const workingMemory = readResult?.data && typeof readResult.data === "object" && !Array.isArray(readResult.data)
+    ? readResult.data
+    : null;
+
+  if (!workingMemory) {
+    return {
+      selected_action: null,
+      reason: null,
+      routing_reason: null,
+      payload: payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {},
+      observability,
+    };
+  }
+
+  const semantics = derivePlannerUserInputSemantics(userIntent);
+  const confidence = Number.isFinite(Number(workingMemory.confidence))
+    ? Number(workingMemory.confidence)
+    : null;
+  const hasConfidence = confidence !== null;
+  const confidenceAllowed = !hasConfidence || confidence >= PLANNER_WORKING_MEMORY_MIN_CONFIDENCE;
+  const topicSwitch = isPlannerWorkingMemoryTopicSwitch({
+    userIntent,
+    taskType,
+    semantics,
+    workingMemory,
+  });
+  const unresolvedAction = resolvePlannerWorkingMemoryActionFromSlots(workingMemory.unresolved_slots);
+  const normalizedIntent = cleanText(userIntent);
+  const shouldContinueSameTask = Boolean(
+    semantics.explicit_same_task
+    || PLANNER_WORKING_MEMORY_RETRY_PATTERN.test(normalizedIntent)
+    || PLANNER_WORKING_MEMORY_ELLIPSIS_FOLLOW_UP_PATTERN.test(normalizedIntent),
+  );
+
+  let selectedAction = "";
+  let reason = "";
+  let routingReason = "";
+  if (confidenceAllowed && !topicSwitch && unresolvedAction && canUseWorkingMemoryAction(unresolvedAction, {
+    text: userIntent,
+    semantics,
+  })) {
+    selectedAction = unresolvedAction;
+    reason = "working_memory_unresolved_slots";
+    routingReason = "working_memory_unresolved_slots";
+  } else if (confidenceAllowed && !topicSwitch && shouldContinueSameTask) {
+    const skillAction = cleanText(workingMemory.last_selected_skill || "");
+    const nextBestAction = cleanText(workingMemory.next_best_action || "");
+    const agentActionHint = PLANNER_WORKING_MEMORY_AGENT_ACTION_HINTS[cleanText(workingMemory.last_selected_agent || "")] || "";
+    const skillActionReusable = skillAction
+      && getPlannerSkillAction(skillAction)
+      && isPlannerSkillActionCatalogVisible(skillAction)
+      && isPlannerDecisionCatalogVisible(skillAction, {
+        text: userIntent,
+        semantics,
+      })
+      ? skillAction
+      : "";
+    const candidateActions = [
+      skillActionReusable,
+      nextBestAction,
+      agentActionHint,
+    ];
+    const reusableAction = candidateActions.find((action) => canUseWorkingMemoryAction(action, {
+      text: userIntent,
+      semantics,
+    }));
+    if (reusableAction) {
+      selectedAction = reusableAction;
+      reason = skillAction && reusableAction === skillAction
+        ? "working_memory_reuse_skill"
+        : "working_memory_reuse_action";
+      routingReason = reason;
+    }
+  }
+
+  observability.memory_used_in_routing = Boolean(selectedAction);
+  return {
+    selected_action: selectedAction || null,
+    reason: reason || null,
+    routing_reason: routingReason || null,
+    payload: payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {},
+    observability,
+  };
+}
+
+function buildPlannerWorkingMemoryContinuationParams({
+  action = "",
+  text = "",
+  payload = {},
+  workingMemory = null,
+} = {}) {
+  const normalizedPayload = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? normalizePlannerPayload(payload)
+    : {};
+  const normalizedAction = cleanText(action);
+  if (normalizedAction === "search_company_brain_docs" || normalizedAction === "search_and_summarize") {
+    const query = cleanText(normalizedPayload.q || normalizedPayload.query || text || workingMemory?.current_goal || "");
+    return query
+      ? {
+          ...normalizedPayload,
+          q: query,
+        }
+      : normalizedPayload;
+  }
+  return normalizedPayload;
+}
+
 // ---------------------------------------------------------------------------
 // Planner selection runtime
 // ---------------------------------------------------------------------------
@@ -4282,6 +4504,14 @@ export async function runPlannerToolFlow({
         ) || "forced_selection",
       }
     : null;
+  const memoryContinuation = resolvePlannerWorkingMemoryContinuation({
+    userIntent: agentInput.user_intent,
+    taskType: agentInput.task_type,
+    payload: agentInput.payload,
+    sessionKey,
+    logger,
+    stage: "runPlannerToolFlow",
+  });
   const plannerDocQueryContext = getPlannerDocQueryContext({ sessionKey });
   const taskLifecycleFollowUp = (!disableAutoRouting && !normalizedForcedSelection)
     ? await maybeRunPlannerTaskLifecycleFollowUp({
@@ -4329,6 +4559,20 @@ export async function runPlannerToolFlow({
         taskType: agentInput.task_type,
         logger,
       });
+  const memorySelection = !normalizedForcedSelection
+    && !taskLifecycleFollowUp?.selected_action
+    && !disableAutoRouting
+    && !cleanText(hardRoutedAction || "")
+    && cleanText(memoryContinuation?.selected_action || "")
+    ? {
+        selected_action: cleanText(memoryContinuation.selected_action) || null,
+        reason: cleanText(memoryContinuation.reason || "") || "working_memory_reuse_action",
+        routing_reason: normalizePlannerRoutingReason(
+          cleanText(memoryContinuation.routing_reason || ""),
+          "working_memory_reuse_action",
+        ) || "working_memory_reuse_action",
+      }
+    : null;
   const prefersSelectorSelection = !normalizedForcedSelection
     && !taskLifecycleFollowUp?.selected_action
     && shouldPreferSelectorAction({
@@ -4346,6 +4590,8 @@ export async function runPlannerToolFlow({
           "selector_override_generic_search_route",
         ) || "selector_override_generic_search_route",
       }
+    : memorySelection
+    ? memorySelection
     : hardRoutedAction
     ? {
         selected_action: hardRoutedAction,
@@ -4356,6 +4602,10 @@ export async function runPlannerToolFlow({
         ) || "hard_route_match",
       }
     : selectorSelection;
+  const memoryUsedInRouting = Boolean(memorySelection && selection === memorySelection);
+  if (memoryContinuation?.observability && typeof memoryContinuation.observability === "object") {
+    memoryContinuation.observability.memory_used_in_routing = memoryUsedInRouting;
+  }
   const selectionRoutingReason = normalizePlannerRoutingReason(cleanText(selection?.routing_reason || ""))
     || (cleanText(selection?.selected_action || "") ? "selector_match" : "routing_no_match");
   const selectionReasoning = normalizeDecisionReasoning({
@@ -4574,6 +4824,9 @@ export async function runPlannerToolFlow({
         || executionResult?.error
         || ""
       ) || null,
+      ...(memoryContinuation?.observability && typeof memoryContinuation.observability === "object"
+        ? memoryContinuation.observability
+        : {}),
     },
   }));
 
@@ -7282,6 +7535,48 @@ function resolveDeterministicPlannerFallbackSelection({
   };
 }
 
+function resolveWorkingMemorySeedDecision({
+  text = "",
+  taskType = "",
+  payload = {},
+  sessionKey = "",
+  logger = console,
+} = {}) {
+  const memoryContinuation = resolvePlannerWorkingMemoryContinuation({
+    userIntent: text,
+    taskType,
+    payload,
+    sessionKey,
+    logger,
+    stage: "executePlannedUserInput",
+  });
+  const selectedAction = cleanText(memoryContinuation?.selected_action || "");
+  if (!selectedAction || !canUseWorkingMemoryAction(selectedAction, { text })) {
+    return {
+      decision: null,
+      observability: memoryContinuation?.observability || null,
+    };
+  }
+  const workingMemorySnapshot = memoryContinuation?.observability?.memory_snapshot
+    && typeof memoryContinuation.observability.memory_snapshot === "object"
+    && !Array.isArray(memoryContinuation.observability.memory_snapshot)
+    ? memoryContinuation.observability.memory_snapshot
+    : null;
+  return {
+    decision: {
+      action: selectedAction,
+      params: buildPlannerWorkingMemoryContinuationParams({
+        action: selectedAction,
+        text,
+        payload,
+        workingMemory: workingMemorySnapshot,
+      }),
+      reason: cleanText(memoryContinuation?.reason || "") || "working_memory_reuse_action",
+    },
+    observability: memoryContinuation?.observability || null,
+  };
+}
+
 export async function executePlannedUserInput({
   text = "",
   requester = requestPlannerJson,
@@ -7329,9 +7624,19 @@ export async function executePlannedUserInput({
       });
     }
   }
-  const decision = plannedDecision
+  const memorySeedDecision = plannedDecision
+    ? { decision: null, observability: null }
+    : resolveWorkingMemorySeedDecision({
+        text,
+        taskType: "",
+        payload: {},
+        sessionKey,
+        logger,
+      });
+  const prePlannedDecision = plannedDecision || memorySeedDecision.decision;
+  const decision = prePlannedDecision
     ? (() => {
-        const validatedDecision = validatePlannerUserInputDecision(plannedDecision, { text });
+        const validatedDecision = validatePlannerUserInputDecision(prePlannedDecision, { text });
         if (validatedDecision?.ok !== true) {
           return withUserInputDecisionExplanation(validatedDecision, { text });
         }
@@ -7346,6 +7651,22 @@ export async function executePlannedUserInput({
         );
       })()
     : await planUserInputAction({ text, requester, signal, sessionKey });
+  const memorySeedObservability = memorySeedDecision?.observability
+    && typeof memorySeedDecision.observability === "object"
+    ? {
+        ...memorySeedDecision.observability,
+        memory_used_in_routing: Boolean(!plannedDecision && memorySeedDecision.decision && !decision?.error),
+      }
+    : null;
+  if (memorySeedObservability) {
+    logger?.debug?.("planner_working_memory", {
+      stage: "planner_working_memory",
+      memory_stage: "executePlannedUserInput_preplan",
+      session_key: cleanText(sessionKey) || null,
+      selected_action: cleanText(memorySeedDecision?.decision?.action || "") || null,
+      ...memorySeedObservability,
+    });
+  }
   const plannerVisibleMonitor = !decision?.error && !Array.isArray(decision?.steps)
     ? createPlannerVisibleTelemetryMonitor({
         text,

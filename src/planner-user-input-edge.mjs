@@ -8,6 +8,8 @@ import { resolveRegisteredAgentFamilyRequest } from "./agent-registry.mjs";
 import { parseMeetingCommand } from "./meeting-agent.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import { ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
+import { getPlannerSkillAction } from "./planner/skill-bridge.mjs";
+import { applyPlannerWorkingMemoryPatch } from "./planner-conversation-memory.mjs";
 import { normalizeUserResponse } from "./user-response-normalizer.mjs";
 
 const REMINDER_REQUEST_PATTERNS = [
@@ -313,6 +315,133 @@ function adaptPlannerResultForEdge(result = {}, { requestText = "" } = {}) {
   return result;
 }
 
+function isStablePlannerAnswerBoundary({
+  plannerEnvelope = null,
+  userResponse = null,
+} = {}) {
+  return Boolean(
+    plannerEnvelope
+    && typeof plannerEnvelope === "object"
+    && !Array.isArray(plannerEnvelope)
+    && userResponse
+    && typeof userResponse === "object"
+    && !Array.isArray(userResponse)
+    && typeof userResponse.answer === "string",
+  );
+}
+
+function inferWorkingMemoryTaskType(action = "") {
+  const normalizedAction = cleanText(action);
+  if (!normalizedAction) {
+    return null;
+  }
+  if (normalizedAction === "get_runtime_info") {
+    return "runtime_info";
+  }
+  if (getPlannerSkillAction(normalizedAction)) {
+    return "skill_read";
+  }
+  if (normalizedAction === "create_doc") {
+    return "doc_write";
+  }
+  if (
+    normalizedAction === "list_company_brain_docs"
+    || normalizedAction === "search_company_brain_docs"
+    || normalizedAction === "search_and_detail_doc"
+    || normalizedAction === "get_company_brain_doc_detail"
+  ) {
+    return "document_lookup";
+  }
+  return "general";
+}
+
+function deriveWorkingMemoryUnresolvedSlots({
+  plannerEnvelope = null,
+  userResponse = null,
+} = {}) {
+  const unresolved = [];
+  const formatted = plannerEnvelope?.formatted_output;
+  const kind = cleanText(formatted?.kind || "");
+  if (kind === "search_and_detail_candidates") {
+    unresolved.push("candidate_selection_required");
+  }
+  if (kind === "search_and_detail_not_found") {
+    unresolved.push("missing_document_reference");
+  }
+  if (userResponse?.ok !== true) {
+    unresolved.push("response_not_success");
+  }
+  return Array.from(new Set(unresolved));
+}
+
+function deriveWorkingMemoryNextBestAction({
+  unresolvedSlots = [],
+  selectedAction = "",
+} = {}) {
+  if (unresolvedSlots.includes("candidate_selection_required") || unresolvedSlots.includes("missing_document_reference")) {
+    return "search_company_brain_docs";
+  }
+  return cleanText(selectedAction) || null;
+}
+
+function deriveWorkingMemoryConfidence({
+  userResponse = null,
+  unresolvedSlots = [],
+} = {}) {
+  if (userResponse?.ok !== true) {
+    return 0.32;
+  }
+  if (unresolvedSlots.length > 0) {
+    return 0.62;
+  }
+  return Array.isArray(userResponse?.sources) && userResponse.sources.length > 0
+    ? 0.9
+    : 0.76;
+}
+
+function buildWorkingMemoryPatch({
+  requestText = "",
+  plannerResult = null,
+  plannerEnvelope = null,
+  userResponse = null,
+} = {}) {
+  const selectedAction = cleanText(
+    plannerEnvelope?.action
+    || plannerResult?.action
+    || plannerEnvelope?.trace?.chosen_action
+    || "",
+  );
+  const unresolvedSlots = deriveWorkingMemoryUnresolvedSlots({
+    plannerEnvelope,
+    userResponse,
+  });
+  const selectedSkill = getPlannerSkillAction(selectedAction)
+    ? selectedAction
+    : null;
+  const toolSummary = cleanText(
+    plannerEnvelope?.formatted_output?.content_summary
+    || plannerResult?.formatted_output?.content_summary
+    || userResponse?.answer
+    || "",
+  );
+  return {
+    current_goal: cleanText(requestText) || null,
+    inferred_task_type: inferWorkingMemoryTaskType(selectedAction),
+    last_selected_agent: cleanText(plannerResult?.synthetic_agent_hint?.agent || "") || null,
+    last_selected_skill: selectedSkill,
+    last_tool_result_summary: toolSummary || null,
+    unresolved_slots: unresolvedSlots,
+    next_best_action: deriveWorkingMemoryNextBestAction({
+      unresolvedSlots,
+      selectedAction,
+    }),
+    confidence: deriveWorkingMemoryConfidence({
+      userResponse,
+      unresolvedSlots,
+    }),
+  };
+}
+
 export async function runPlannerUserInputEdge({
   text = "",
   logger = console,
@@ -329,6 +458,7 @@ export async function runPlannerUserInputEdge({
   envelopeBuilder = buildPlannedUserInputEnvelope,
   responseNormalizer = normalizeUserResponse,
   envelopeDecorator = null,
+  workingMemoryWriter = applyPlannerWorkingMemoryPatch,
 } = {}) {
   const executedPlannerResult = await plannerExecutor({
     text,
@@ -360,6 +490,38 @@ export async function runPlannerUserInputEdge({
     logger,
     traceId,
     handlerName,
+  });
+  const shouldWriteWorkingMemory = isStablePlannerAnswerBoundary({
+    plannerEnvelope,
+    userResponse,
+  });
+  let memoryWriteResult = {
+    ok: false,
+    observability: {
+      memory_write_attempted: false,
+      memory_write_succeeded: false,
+      memory_snapshot: null,
+    },
+  };
+  if (shouldWriteWorkingMemory && typeof workingMemoryWriter === "function") {
+    memoryWriteResult = await workingMemoryWriter({
+      patch: buildWorkingMemoryPatch({
+        requestText: text,
+        plannerResult,
+        plannerEnvelope,
+        userResponse,
+      }),
+      sessionKey,
+      source: "planner_answer_boundary_v1",
+    }) || memoryWriteResult;
+  }
+  logger?.info?.("planner_working_memory", {
+    stage: "planner_working_memory",
+    memory_stage: "answer_boundary_write_back",
+    session_key: cleanText(sessionKey) || null,
+    memory_write_attempted: shouldWriteWorkingMemory && typeof workingMemoryWriter === "function",
+    memory_write_succeeded: memoryWriteResult?.ok === true,
+    memory_snapshot: memoryWriteResult?.observability?.memory_snapshot || null,
   });
 
   return {

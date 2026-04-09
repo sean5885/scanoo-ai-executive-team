@@ -810,6 +810,42 @@ This summary layer is used only for planner prompt assembly. When conversation t
 
 The same planner memory layer is now persisted through a minimal JSON file store, so `latest_summary`, bounded `recent_messages`, and `last_compacted_at` survive process restart and are auto-loaded before later planner prompt assembly. When runtime doc-query context is empty, the planner now lazily restores `active_doc` / `active_candidates` / `active_theme` from that persisted summary before later flow routing and prompt assembly.
 
+The same session store now also carries a minimal **session-scoped working memory v1** block per `sessionKey` (conversation scope only, no cross-session persona memory, no vector retrieval):
+
+- `current_goal`
+- `inferred_task_type`
+- `last_selected_agent`
+- `last_selected_skill`
+- `last_tool_result_summary`
+- `unresolved_slots`
+- `next_best_action`
+- `confidence`
+- `updated_at`
+
+Runtime usage boundary:
+
+- planner/router pre-read now attempts to read this working-memory block before normal selector fallback
+- when the current turn is a same-task follow-up/retry and confidence is bounded, routing may reuse the previous action/skill hint instead of forcing a fresh planner generation
+- unresolved slot hints can steer the next action (for example candidate-selection gaps route back to bounded search)
+- clear topic-switch phrasing keeps fail-closed behavior and avoids stale-memory carryover
+- malformed/missing working-memory snapshots fail closed (treated as miss, not as valid routing input)
+
+Write boundary:
+
+- working-memory write-back is now centralized at the answer boundary in `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs`
+- write-back uses patch semantics over the existing session snapshot (no full-object blind overwrite per turn)
+- only stable final boundary outputs are eligible for write-back; intermediate planner/router states do not write
+
+Observed routing/write signals now include:
+
+- `memory_read_attempted`
+- `memory_hit`
+- `memory_miss`
+- `memory_used_in_routing`
+- `memory_write_attempted`
+- `memory_write_succeeded`
+- `memory_snapshot`
+
 The executive planner decision prompt now also reads a bounded task-state summary from that same local `task lifecycle v1` store: before agent selection, `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` asks `/Users/seanhan/Documents/Playground/src/planner-task-lifecycle-v1.mjs` for the latest relevant snapshot summary and injects `unfinished_hint`, `blocked_hint`, and `in_progress_hint` into prompt assembly, so decisions can preferentially reference unfinished tasks, surface blocked-task risk, and reuse in-progress execution summaries without changing the public planner JSON shape.
 
 The normalized executive decision shape in that same module now also carries deterministic explainability metadata:

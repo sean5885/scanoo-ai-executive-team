@@ -155,3 +155,82 @@ test("runPlannerUserInputEdge fail-closes unsupported reminder requests instead 
   assert.match(result.userResponse.answer || "", /合適的處理方式|一般助理/);
   assert.doesNotMatch(result.userResponse.answer || "", /planner_failed/i);
 });
+
+test("runPlannerUserInputEdge writes working-memory patch at answer boundary when output is stable", async () => {
+  const memoryWrites = [];
+  const result = await runPlannerUserInputEdge({
+    text: "幫我整理 onboarding 重點",
+    sessionKey: "wm-boundary-session",
+    async plannerExecutor() {
+      return {
+        ok: true,
+        action: "search_and_summarize",
+        synthetic_agent_hint: {
+          agent: "doc_agent",
+        },
+        execution_result: {
+          ok: true,
+          data: {
+            answer: "這是整理後的重點。",
+            sources: ["onboarding v1"],
+            limitations: [],
+          },
+        },
+      };
+    },
+    workingMemoryWriter(input) {
+      memoryWrites.push(input);
+      return {
+        ok: true,
+        observability: {
+          memory_snapshot: {
+            current_goal: "幫我整理 onboarding 重點",
+          },
+        },
+      };
+    },
+  });
+
+  assert.equal(result.userResponse.ok, true);
+  assert.equal(memoryWrites.length, 1);
+  assert.equal(memoryWrites[0].sessionKey, "wm-boundary-session");
+  assert.equal(memoryWrites[0].source, "planner_answer_boundary_v1");
+  assert.equal(memoryWrites[0].patch.current_goal, "幫我整理 onboarding 重點");
+  assert.equal(memoryWrites[0].patch.inferred_task_type, "skill_read");
+  assert.equal(memoryWrites[0].patch.last_selected_agent, "doc_agent");
+  assert.equal(memoryWrites[0].patch.last_selected_skill, "search_and_summarize");
+  assert.equal(Array.isArray(memoryWrites[0].patch.unresolved_slots), true);
+});
+
+test("runPlannerUserInputEdge skips working-memory write when response is not stable", async () => {
+  let writeAttempted = false;
+  await runPlannerUserInputEdge({
+    text: "這輪先不用回覆",
+    async plannerExecutor() {
+      return {
+        ok: true,
+        action: "get_runtime_info",
+        execution_result: {
+          ok: true,
+          data: {},
+        },
+      };
+    },
+    responseNormalizer() {
+      return {
+        ok: true,
+        answer: null,
+        sources: [],
+        limitations: [],
+      };
+    },
+    async workingMemoryWriter() {
+      writeAttempted = true;
+      return {
+        ok: true,
+      };
+    },
+  });
+
+  assert.equal(writeAttempted, false);
+});
