@@ -148,6 +148,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/skills/search-and-summarize-skill.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner/action-loop.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner/tool-loop.mjs`
+  - `/Users/seanhan/Documents/Playground/src/planner/tool-loop-with-feedback.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner/plan-normalizer.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner/execution-pipeline.mjs`
   - `/Users/seanhan/Documents/Playground/src/prompts/action-system-prompt.txt`
@@ -169,6 +170,7 @@ Current-truth docs for onboarding are:
   - `update-doc-action.mjs` is a bounded Lark Docx write helper that enters `/Users/seanhan/Documents/Playground/src/execute-lark-write.mjs` `executeLarkWrite(...)` and then reuses `/Users/seanhan/Documents/Playground/src/lark-content.mjs` `updateDocument(...)`; it supports optional `token_type/mode` and infers tenant token mode from `t-` token prefix when `token_type` is absent
   - `planner/action-loop.mjs` currently provides a minimal standalone action executor (`send_message`, `update_doc`, `create_task`) and returns a bounded `no_action | action_executed | unsupported_action` shape
   - `planner/tool-loop.mjs` is a thin wrapper around `runActionLoop(...)`; it keeps the loop envelope (`type = "tool_loop"`, ordered `steps`) and follows bounded `next_action` chaining up to `max_steps`
+  - `planner/tool-loop-with-feedback.mjs` is a local feedback-loop helper that reruns `llm(...)` each step with the previous step history (`previous_steps` + `last_result`), returns early on normalized `answer`, and otherwise executes through the same bounded action loop
   - `planner/plan-normalizer.mjs` is a local helper that normalizes model output into a plan-like object but is not currently wired as a required planner contract step
   - `planner/execution-pipeline.mjs` is a local orchestration helper that runs `llm(input) -> normalizePlan(raw)` and then:
     - returns `{ ok: true, type: "answer", answer }` directly when normalized output carries `answer`
@@ -186,6 +188,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/tests/skill-runtime.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/document-fetch.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/execution-pipeline.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/tool-loop-feedback.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/planner-visible-skill-observability.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/planner-visible-live-telemetry-adapter.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/planner-visible-live-telemetry-spec.test.mjs`
