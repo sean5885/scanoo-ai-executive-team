@@ -5478,7 +5478,7 @@ test("selectPlannerTool aligns search-plus-content phrasing to generic search", 
   assert.equal(result.routing_reason, "selector_search_company_brain_docs");
 });
 
-test("selectPlannerTool keeps the original read-only skill path deterministic with two skills registered", () => {
+test("selectPlannerTool keeps the planner-visible read-only skill path deterministic while preserving internal bridge entries", () => {
   const result = selectPlannerTool({
     userIntent: "幫我整理 launch checklist",
     taskType: "skill_read",
@@ -5505,6 +5505,25 @@ test("selectPlannerTool keeps the original read-only skill path deterministic wi
       raw_user_output_allowed: false,
       allowed_side_effects: {
         read: ["search_knowledge_base"],
+        write: [],
+      },
+    },
+    {
+      action: "image_generate",
+      skill_name: "image_generate",
+      surface_layer: "internal_only",
+      max_skills_per_run: 1,
+      allow_skill_chain: false,
+      skill_class: "read_only",
+      runtime_access: ["read_runtime"],
+      selector_mode: "deterministic_only",
+      selector_key: "skill.image_generate.internal",
+      selector_task_types: [],
+      routing_reason: "selector_image_generate_skill",
+      planner_catalog_eligible: false,
+      raw_user_output_allowed: false,
+      allowed_side_effects: {
+        read: [],
         write: [],
       },
     },
