@@ -1,3 +1,4 @@
+import { runActionLoop } from './action-loop.mjs';
 import { cleanText } from "../message-intent-utils.mjs";
 import { emitSkillReflection } from "../reflection/skill-reflection.mjs";
 import { defaultSkillRegistry } from "../skill-registry.mjs";
@@ -770,7 +771,14 @@ export async function runPlannerSkillBridge({
   signal = null,
   registry = defaultSkillRegistry,
 } = {}) {
+  const { plan, context } = payload || {};
   const skillAction = getPlannerSkillAction(action);
+  // === action loop 注入（V1-safe）===
+  try {
+    if (typeof plan !== "undefined" && plan && plan.action && typeof context !== "undefined") {
+      return await runActionLoop(plan, context);
+    }
+  } catch (e) {}
   if (!skillAction) {
     return {
       ok: false,
