@@ -264,7 +264,8 @@ Current truth:
 - the checked-in skill-backed actions stay behind `planner/skill-bridge.mjs` and the answer pipeline
 - `planner/action-loop.mjs`, `planner/tool-loop.mjs`, `actions/send-message-action.mjs`, and `actions/update-doc-action.mjs` are currently adjacent helpers:
   - `runActionLoop(...)` supports minimal `send_message`, `update_doc`, and `create_task` execution with a standalone envelope
-  - `runToolLoop(...)` wraps `runActionLoop(...)` into an ordered `tool_loop` envelope with bounded step records (`{ step, action, result }`)
+  - `runToolLoop(...)` wraps `runActionLoop(...)` into an ordered `tool_loop` envelope with bounded step records (`{ step, action, result }`) and follows `next_action` chaining up to `max_steps`
+  - `runExecutionPipeline(...)` (`/Users/seanhan/Documents/Playground/src/planner/execution-pipeline.mjs`) runs `llm(input) -> normalizePlan(raw)` and either returns a direct `type="answer"` reply or enters `runToolLoop({ plan, context, max_steps: 3 })` for execution
   - `sendMessageAction(...)` issues `POST /open-apis/im/v1/messages?receive_id_type=chat_id` and fails fast on missing or non-ASCII `token/chat_id` placeholders
   - `updateDocAction(...)` now enters the controlled write path through `/Users/seanhan/Documents/Playground/src/execute-lark-write.mjs` `executeLarkWrite(...)` and then reuses `/Users/seanhan/Documents/Playground/src/lark-content.mjs` `updateDocument(...)` (docx block descendant write path), accepts optional `token_type/mode`, and infers tenant token mode from `t-` token prefix when `token_type` is absent
   - `planner/skill-bridge.mjs` contains a guarded tool-loop entry: when `payload.plan` has `action` and `payload.context` exists, it executes `runToolLoop({ plan, context, max_steps: 3 })`; otherwise it stays on normal planner skill routing

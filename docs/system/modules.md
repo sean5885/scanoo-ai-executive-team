@@ -149,6 +149,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/planner/action-loop.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner/tool-loop.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner/plan-normalizer.mjs`
+  - `/Users/seanhan/Documents/Playground/src/planner/execution-pipeline.mjs`
   - `/Users/seanhan/Documents/Playground/src/prompts/action-system-prompt.txt`
   - `/Users/seanhan/Documents/Playground/src/planner/skill-bridge.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner-visible-skill-observability.mjs`
@@ -167,8 +168,11 @@ Current-truth docs for onboarding are:
   - `send-message-action.mjs` is a bounded Lark IM write helper for text messages (`/open-apis/im/v1/messages?receive_id_type=chat_id`) and now fails fast on missing fields or non-ASCII `token/chat_id` placeholders before network send
   - `update-doc-action.mjs` is a bounded Lark Docx write helper that enters `/Users/seanhan/Documents/Playground/src/execute-lark-write.mjs` `executeLarkWrite(...)` and then reuses `/Users/seanhan/Documents/Playground/src/lark-content.mjs` `updateDocument(...)`; it supports optional `token_type/mode` and infers tenant token mode from `t-` token prefix when `token_type` is absent
   - `planner/action-loop.mjs` currently provides a minimal standalone action executor (`send_message`, `update_doc`, `create_task`) and returns a bounded `no_action | action_executed | unsupported_action` shape
-  - `planner/tool-loop.mjs` is a thin wrapper around `runActionLoop(...)`; V1 keeps the loop envelope (`type = "tool_loop"`, ordered `steps`) but currently stops after the first executed action while preserving a bounded `max_steps` interface for later expansion
+  - `planner/tool-loop.mjs` is a thin wrapper around `runActionLoop(...)`; it keeps the loop envelope (`type = "tool_loop"`, ordered `steps`) and follows bounded `next_action` chaining up to `max_steps`
   - `planner/plan-normalizer.mjs` is a local helper that normalizes model output into a plan-like object but is not currently wired as a required planner contract step
+  - `planner/execution-pipeline.mjs` is a local orchestration helper that runs `llm(input) -> normalizePlan(raw)` and then:
+    - returns `{ ok: true, type: "answer", answer }` directly when normalized output carries `answer`
+    - otherwise executes `runToolLoop({ plan, context, max_steps: 3 })` and returns `{ ok: true, type: "execution_result", plan, result }`
   - `requestPlannerJson(...)` in `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` now prepends an optional file-backed system message from `/Users/seanhan/Documents/Playground/src/prompts/action-system-prompt.txt` when the file exists
   - `src/skills/document-fetch.mjs` is a secondary read-only helper under the same module group; it resolves `document_id` from direct input or raw Lark-style card payload and returns bounded `missing_access_token | not_found | permission_denied` failures without registering a new planner-visible skill
   - planner can consume a skill result through a bridge envelope
@@ -181,6 +185,7 @@ Current-truth docs for onboarding are:
 - Evidence:
   - `/Users/seanhan/Documents/Playground/tests/skill-runtime.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/document-fetch.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/execution-pipeline.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/planner-visible-skill-observability.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/planner-visible-live-telemetry-adapter.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/planner-visible-live-telemetry-spec.test.mjs`
