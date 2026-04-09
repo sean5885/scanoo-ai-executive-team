@@ -126,6 +126,7 @@ This file explains which directories are part of the current runtime, which are 
 ### Skill Runtime And Telemetry Spec
 
 - `/Users/seanhan/Documents/Playground/src/skill-runtime.mjs`
+- `/Users/seanhan/Documents/Playground/src/planner/tool-loop-with-feedback.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner/skill-bridge.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-visible-skill-observability.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-spec.mjs`
