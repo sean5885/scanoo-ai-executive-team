@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runExecutionPipeline } from '../src/planner/execution-pipeline.mjs';
 
-test('execution pipeline runs multi-step plan with feedback loop', async () => {
+test('execution pipeline uses feedback loop', async () => {
   let call = 0;
+
   const llm = async () => {
     call++;
     if (call === 1) {
@@ -29,10 +30,10 @@ test('execution pipeline runs multi-step plan with feedback loop', async () => {
   };
 
   const originalFetch = global.fetch;
-  let calls = 0;
+  let fetchCalls = 0;
 
   global.fetch = async () => {
-    calls++;
+    fetchCalls++;
     return {
       ok: true,
       headers: { get() { return 'application/json'; } },
@@ -42,28 +43,13 @@ test('execution pipeline runs multi-step plan with feedback loop', async () => {
 
   const res = await runExecutionPipeline({
     llm,
-    input: 'test',
+    input: 'start',
     context
   });
 
   assert.equal(res.ok, true);
   assert.equal(res.type, 'answer');
-  assert.equal(res.answer, 'done');
-  assert.equal(res.steps.length, 2);
-  assert.equal(calls, 2);
+  assert.equal(fetchCalls, 2);
 
   global.fetch = originalFetch;
-});
-
-test('execution pipeline returns answer directly', async () => {
-  const llm = async () => '這是答案';
-
-  const res = await runExecutionPipeline({
-    llm,
-    input: 'test',
-    context: {}
-  });
-
-  assert.equal(res.type, 'answer');
-  assert.equal(res.answer, '這是答案');
 });

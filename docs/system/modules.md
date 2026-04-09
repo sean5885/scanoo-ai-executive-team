@@ -151,6 +151,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/planner/tool-loop-with-feedback.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner/plan-normalizer.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner/execution-pipeline.mjs`
+  - `/Users/seanhan/Documents/Playground/src/planner/render-execution-result.mjs`
   - `/Users/seanhan/Documents/Playground/src/prompts/action-system-prompt.txt`
   - `/Users/seanhan/Documents/Playground/src/planner/skill-bridge.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner-visible-skill-observability.mjs`
@@ -174,7 +175,9 @@ Current-truth docs for onboarding are:
   - `planner/plan-normalizer.mjs` is a local helper that normalizes model output into a plan-like object but is not currently wired as a required planner contract step
   - `planner/execution-pipeline.mjs` is a local orchestration helper that runs `llm(input) -> normalizePlan(raw)` and then:
     - returns `{ ok: true, type: "answer", answer }` directly when normalized output carries `answer`
-    - otherwise executes `runToolLoop({ plan, context, max_steps: 3 })` and returns `{ ok: true, type: "execution_result", plan, result }`
+    - otherwise enters `runToolLoopWithFeedback({ llm, input, context, max_steps: 3 })` through a replay wrapper that reuses that first `raw` output as feedback-loop step 1 (so the initial action decision is not dropped)
+    - when feedback loop returns `type = "final_answer"`, it maps to `{ ok: true, type: "answer", answer, steps }`
+    - otherwise it uses `planner/render-execution-result.mjs` to convert feedback-loop steps into a readable fallback `answer` and still returns `{ ok: true, type: "answer", answer, steps }`
   - `requestPlannerJson(...)` in `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` now prepends an optional file-backed system message from `/Users/seanhan/Documents/Playground/src/prompts/action-system-prompt.txt` when the file exists
   - `src/skills/document-fetch.mjs` is a secondary read-only helper under the same module group; it resolves `document_id` from direct input or raw Lark-style card payload and returns bounded `missing_access_token | not_found | permission_denied` failures without registering a new planner-visible skill
   - planner can consume a skill result through a bridge envelope
@@ -188,6 +191,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/tests/skill-runtime.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/document-fetch.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/execution-pipeline.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/execution-pipeline-feedback.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/tool-loop-feedback.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/planner-visible-skill-observability.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/planner-visible-live-telemetry-adapter.test.mjs`
