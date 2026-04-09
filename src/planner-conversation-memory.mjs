@@ -8,6 +8,18 @@ const PLANNER_SUMMARY_TRIGGER_TURNS = 6;
 const PLANNER_SUMMARY_TRIGGER_CHARS = 2400;
 const PLANNER_RECENT_MESSAGE_LIMIT = 4;
 const DEFAULT_PLANNER_SESSION_KEY = "default";
+const PLANNER_WORKING_MEMORY_SLOT_LIMIT = 6;
+const PLANNER_WORKING_MEMORY_REQUIRED_KEYS = Object.freeze([
+  "current_goal",
+  "inferred_task_type",
+  "last_selected_agent",
+  "last_selected_skill",
+  "last_tool_result_summary",
+  "unresolved_slots",
+  "next_best_action",
+  "confidence",
+  "updated_at",
+]);
 
 const plannerConversationMemoryState = {
   latest_session_key: DEFAULT_PLANNER_SESSION_KEY,
@@ -28,10 +40,103 @@ function normalizePlannerConversationSessionKey(sessionKey = "") {
   return cleanText(sessionKey) || DEFAULT_PLANNER_SESSION_KEY;
 }
 
+function buildEmptyPlannerWorkingMemory() {
+  return {
+    current_goal: null,
+    inferred_task_type: null,
+    last_selected_agent: null,
+    last_selected_skill: null,
+    last_tool_result_summary: null,
+    unresolved_slots: [],
+    next_best_action: null,
+    confidence: null,
+    updated_at: null,
+  };
+}
+
+function normalizeWorkingMemoryString(value) {
+  return cleanText(value) || null;
+}
+
+function normalizeWorkingMemorySlots(slots = []) {
+  if (!Array.isArray(slots)) {
+    return [];
+  }
+  return slots
+    .map((slot) => normalizeWorkingMemoryString(slot))
+    .filter(Boolean)
+    .slice(0, PLANNER_WORKING_MEMORY_SLOT_LIMIT);
+}
+
+function normalizeWorkingMemoryConfidence(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const normalized = Number(value);
+  if (!Number.isFinite(normalized)) {
+    return null;
+  }
+  if (normalized < 0 || normalized > 1) {
+    return null;
+  }
+  return normalized;
+}
+
+function normalizePlannerWorkingMemory(value = null) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  for (const key of PLANNER_WORKING_MEMORY_REQUIRED_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) {
+      return null;
+    }
+  }
+  const stringFields = [
+    "current_goal",
+    "inferred_task_type",
+    "last_selected_agent",
+    "last_selected_skill",
+    "last_tool_result_summary",
+    "next_best_action",
+    "updated_at",
+  ];
+  for (const key of stringFields) {
+    if (value[key] !== null && value[key] !== undefined && typeof value[key] !== "string") {
+      return null;
+    }
+  }
+  if (!Array.isArray(value.unresolved_slots) || value.unresolved_slots.some((slot) => typeof slot !== "string")) {
+    return null;
+  }
+  if (value.confidence !== null && value.confidence !== undefined && typeof value.confidence !== "number") {
+    return null;
+  }
+  const unresolvedSlots = normalizeWorkingMemorySlots(value.unresolved_slots);
+  if (unresolvedSlots.length !== value.unresolved_slots.length) {
+    return null;
+  }
+  if (value.confidence !== null && value.confidence !== undefined && normalizeWorkingMemoryConfidence(value.confidence) === null) {
+    return null;
+  }
+
+  return {
+    current_goal: normalizeWorkingMemoryString(value.current_goal),
+    inferred_task_type: normalizeWorkingMemoryString(value.inferred_task_type),
+    last_selected_agent: normalizeWorkingMemoryString(value.last_selected_agent),
+    last_selected_skill: normalizeWorkingMemoryString(value.last_selected_skill),
+    last_tool_result_summary: normalizeWorkingMemoryString(value.last_tool_result_summary),
+    unresolved_slots: unresolvedSlots,
+    next_best_action: normalizeWorkingMemoryString(value.next_best_action),
+    confidence: normalizeWorkingMemoryConfidence(value.confidence),
+    updated_at: normalizeWorkingMemoryString(value.updated_at),
+  };
+}
+
 function buildEmptyPlannerConversationSession() {
   return {
     recent_messages: [],
     latest_summary: null,
+    working_memory: null,
     turns_since_summary: 0,
     chars_since_summary: 0,
     total_turns: 0,
@@ -60,6 +165,9 @@ function normalizePlannerConversationMemorySnapshot(snapshot = {}) {
       ? Number(snapshot.total_turns)
       : 0,
     last_compacted_at: cleanText(snapshot?.last_compacted_at) || null,
+    working_memory: Object.prototype.hasOwnProperty.call(snapshot || {}, "working_memory")
+      ? cloneJsonSafe(snapshot?.working_memory)
+      : null,
   };
 }
 
@@ -377,6 +485,204 @@ export function maybeCompactPlannerConversationMemory({
   });
 }
 
+function getCanonicalPlannerWorkingMemoryFromSession(sessionState = null) {
+  return normalizePlannerWorkingMemory(sessionState?.working_memory || null);
+}
+
+function normalizePlannerWorkingMemoryPatchValue(key, value) {
+  if (key === "unresolved_slots") {
+    if (!Array.isArray(value)) {
+      return {
+        ok: false,
+        error: "invalid_working_memory_slots",
+      };
+    }
+    const normalizedSlots = normalizeWorkingMemorySlots(value);
+    if (normalizedSlots.length !== value.length) {
+      return {
+        ok: false,
+        error: "invalid_working_memory_slots",
+      };
+    }
+    return {
+      ok: true,
+      value: normalizedSlots,
+    };
+  }
+
+  if (key === "confidence") {
+    if (value === null || value === undefined || value === "") {
+      return { ok: true, value: null };
+    }
+    const normalizedConfidence = normalizeWorkingMemoryConfidence(value);
+    if (normalizedConfidence === null) {
+      return {
+        ok: false,
+        error: "invalid_working_memory_confidence",
+      };
+    }
+    return {
+      ok: true,
+      value: normalizedConfidence,
+    };
+  }
+
+  if (key === "updated_at") {
+    if (value === null || value === undefined || value === "") {
+      return { ok: true, value: null };
+    }
+    const normalizedText = normalizeWorkingMemoryString(value);
+    if (!normalizedText) {
+      return {
+        ok: false,
+        error: "invalid_working_memory_updated_at",
+      };
+    }
+    return {
+      ok: true,
+      value: normalizedText,
+    };
+  }
+
+  if (value === null || value === undefined || value === "") {
+    return { ok: true, value: null };
+  }
+
+  const normalizedText = normalizeWorkingMemoryString(value);
+  if (!normalizedText) {
+    return {
+      ok: false,
+      error: "invalid_working_memory_string",
+    };
+  }
+  return {
+    ok: true,
+    value: normalizedText,
+  };
+}
+
+function normalizePlannerWorkingMemoryPatch(patch = null) {
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+    return {
+      ok: false,
+      error: "invalid_working_memory_patch",
+      updates: {},
+    };
+  }
+
+  const updates = {};
+  const updateKeys = PLANNER_WORKING_MEMORY_REQUIRED_KEYS.filter((key) =>
+    key !== "updated_at"
+    && Object.prototype.hasOwnProperty.call(patch, key));
+
+  for (const key of updateKeys) {
+    const normalizedValue = normalizePlannerWorkingMemoryPatchValue(key, patch[key]);
+    if (normalizedValue.ok !== true) {
+      return {
+        ok: false,
+        error: normalizedValue.error || "invalid_working_memory_patch",
+        field: key,
+        updates: {},
+      };
+    }
+    updates[key] = normalizedValue.value;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return {
+      ok: false,
+      error: "empty_working_memory_patch",
+      updates: {},
+    };
+  }
+
+  return {
+    ok: true,
+    updates,
+  };
+}
+
+export function readPlannerWorkingMemoryForRouting({ sessionKey = "" } = {}) {
+  ensurePlannerConversationMemoryLoaded();
+  const normalizedSessionKey = normalizePlannerConversationSessionKey(sessionKey);
+  const sessionState = getPlannerConversationSessionState(normalizedSessionKey, {
+    createIfMissing: false,
+  });
+  const rawWorkingMemory = sessionState?.working_memory;
+  const normalizedWorkingMemory = getCanonicalPlannerWorkingMemoryFromSession(sessionState);
+  const hasRawMemory = rawWorkingMemory !== null && rawWorkingMemory !== undefined;
+  const hit = Boolean(normalizedWorkingMemory);
+  const missReason = !hasRawMemory
+    ? "missing"
+    : hit
+      ? null
+      : "invalid_format";
+  return {
+    ok: true,
+    data: hit ? cloneJsonSafe(normalizedWorkingMemory) : null,
+    reason: missReason,
+    observability: {
+      memory_read_attempted: true,
+      memory_hit: hit,
+      memory_miss: !hit,
+      memory_snapshot: hit ? cloneJsonSafe(normalizedWorkingMemory) : null,
+    },
+  };
+}
+
+export function getPlannerWorkingMemory({ sessionKey = "" } = {}) {
+  const readResult = readPlannerWorkingMemoryForRouting({ sessionKey });
+  return readResult.ok === true && readResult.data
+    ? readResult.data
+    : null;
+}
+
+export function applyPlannerWorkingMemoryPatch({
+  patch = null,
+  sessionKey = "",
+  source = "unknown",
+} = {}) {
+  ensurePlannerConversationMemoryLoaded();
+  const normalizedSessionKey = normalizePlannerConversationSessionKey(sessionKey);
+  plannerConversationMemoryState.latest_session_key = normalizedSessionKey;
+  const normalizedPatch = normalizePlannerWorkingMemoryPatch(patch);
+  if (normalizedPatch.ok !== true) {
+    return {
+      ok: false,
+      error: normalizedPatch.error || "invalid_working_memory_patch",
+      field: normalizedPatch.field || null,
+      source: cleanText(source) || "unknown",
+      data: null,
+      observability: {
+        memory_write_attempted: true,
+        memory_write_succeeded: false,
+        memory_snapshot: null,
+      },
+    };
+  }
+
+  const sessionState = getPlannerConversationSessionState(normalizedSessionKey);
+  const baseMemory = getCanonicalPlannerWorkingMemoryFromSession(sessionState) || buildEmptyPlannerWorkingMemory();
+  const nextMemory = {
+    ...baseMemory,
+    ...normalizedPatch.updates,
+    updated_at: new Date().toISOString(),
+  };
+  sessionState.working_memory = nextMemory;
+  persistPlannerConversationMemory();
+
+  return {
+    ok: true,
+    source: cleanText(source) || "unknown",
+    data: cloneJsonSafe(nextMemory),
+    observability: {
+      memory_write_attempted: true,
+      memory_write_succeeded: true,
+      memory_snapshot: cloneJsonSafe(nextMemory),
+    },
+  };
+}
+
 export function getPlannerConversationMemory({ sessionKey = "" } = {}) {
   ensurePlannerConversationMemoryLoaded();
   const normalizedSessionKey = normalizePlannerConversationSessionKey(sessionKey);
@@ -389,6 +695,7 @@ export function getPlannerConversationMemory({ sessionKey = "" } = {}) {
     chars_since_summary: sessionState.chars_since_summary,
     total_turns: sessionState.total_turns,
     last_compacted_at: sessionState.last_compacted_at,
+    working_memory: getCanonicalPlannerWorkingMemoryFromSession(sessionState),
   });
 }
 

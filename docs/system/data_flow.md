@@ -148,6 +148,7 @@ Current public `/answer` path:
    - `sources`
    - `limitations`
 7. `answer-source-mapper.mjs` converts canonical source objects into bounded public `sources[]` lines
+8. `planner-user-input-edge.mjs` performs session-scoped working-memory v1 patch write-back only after a stable final boundary response is available
 
 Current truth:
 
@@ -160,6 +161,7 @@ Current truth:
 - before the public boundary returns a generic failure, the checked-in normalizer now does a minimal mixed-request decomposition for copy/image/send-style asks and returns partial success when at least one text-draft subtask is still doable
 - answer evidence is surfaced through canonical source mapping before public rendering
 - the checked-in normalizer now reads only canonical `execution_result.data.answer / sources / limitations`
+- session working-memory v1 write-back is centralized at this answer boundary (not mid-planner): only stable final outputs write patch updates; malformed/missing memory reads fail closed and are treated as miss during pre-routing reuse
 - planner JSON requests now attempt to prepend one optional file-backed action system prompt (`/Users/seanhan/Documents/Playground/src/prompts/action-system-prompt.txt`) before the existing planner system prompt; when the file is missing/unreadable this step fail-soft skips and keeps the prior prompt path
 
 ### Secondary Retrieval-Answer Helper
