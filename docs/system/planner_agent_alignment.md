@@ -247,13 +247,17 @@ This path is bounded by the checked-in planner contract:
 - planner skill integration is explicit and bounded:
   - checked-in planner actions:
     - `search_and_summarize`
+    - `image_generate`
     - `document_summarize`
+  - checked-in planner skill bridge surface (`listPlannerSkillBridges`) includes all three entries above
   - checked-in surface layer:
     - `search_and_summarize` is `planner_visible`
+    - `image_generate` is `internal_only`
     - `document_summarize` is `planner_visible`
   - current selection entries are deterministic-only:
     - `taskType=skill_read` -> `search_and_summarize`
     - `taskType=document_summary_skill` -> `document_summarize`
+    - `image_generate` does not expose a strict planner selector task type and stays internal bridge invocation only
   - planner-visible promotion remains fail-closed governance in `planner/skill-bridge.mjs`:
     - valid promotion path is `internal_only -> readiness_check -> planner_visible`
     - direct jump is rejected
