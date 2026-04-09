@@ -134,6 +134,16 @@ const executiveExitSignals = [
   "換下一個任務",
 ];
 
+const ACTION_SYSTEM_PROMPT_FILE = new URL("./prompts/action-system-prompt.txt", import.meta.url);
+
+function readActionSystemPrompt() {
+  try {
+    return readFileSync(ACTION_SYSTEM_PROMPT_FILE, "utf8");
+  } catch (_) {
+    return "";
+  }
+}
+
 const EXECUTIVE_MAX_ROLES = 3;
 const EXECUTIVE_MAX_SUPPORTING_ROLES = EXECUTIVE_MAX_ROLES - 1;
 const PLANNER_CONTEXT_WINDOW_MAX_CHARS = 2400;
@@ -5924,6 +5934,12 @@ export async function requestPlannerJson({
   signal = null,
 } = {}) {
   throwIfPlannerSignalAborted(signal);
+  const actionSystemPrompt = readActionSystemPrompt();
+  const messages = [
+    ...(actionSystemPrompt ? [{ role: "system", content: actionSystemPrompt }] : []),
+    { role: "system", content: systemPrompt },
+    { role: "user", content: prompt },
+  ];
   if (!llmApiKey) {
     return callOpenClawTextGeneration({
       systemPrompt,
@@ -5943,10 +5959,7 @@ export async function requestPlannerJson({
       model: llmModel,
       temperature: llmTemperature,
       top_p: llmTopP,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: prompt },
-      ],
+      messages,
     }),
     signal,
   });

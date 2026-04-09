@@ -160,6 +160,7 @@ Current truth:
 - before the public boundary returns a generic failure, the checked-in normalizer now does a minimal mixed-request decomposition for copy/image/send-style asks and returns partial success when at least one text-draft subtask is still doable
 - answer evidence is surfaced through canonical source mapping before public rendering
 - the checked-in normalizer now reads only canonical `execution_result.data.answer / sources / limitations`
+- planner JSON requests now attempt to prepend one optional file-backed action system prompt (`/Users/seanhan/Documents/Playground/src/prompts/action-system-prompt.txt`) before the existing planner system prompt; when the file is missing/unreadable this step fail-soft skips and keeps the prior prompt path
 
 ### Secondary Retrieval-Answer Helper
 
@@ -261,6 +262,10 @@ Current truth:
 - `document_summarize` uses `get_company_brain_doc_detail`
 - this does not register a new public route or planner routing target
 - the checked-in skill-backed actions stay behind `planner/skill-bridge.mjs` and the answer pipeline
+- `planner/action-loop.mjs` and `actions/send-message-action.mjs` are currently adjacent helpers:
+  - `runActionLoop(...)` supports minimal `send_message` execution with a standalone envelope
+  - `sendMessageAction(...)` issues `POST /open-apis/im/v1/messages?receive_id_type=chat_id` and fails fast on missing or non-ASCII `token/chat_id` placeholders
+  - `planner/skill-bridge.mjs` contains an optional guarded probe (`payload.plan + payload.context`) for this loop, but the checked-in default planner dispatch path does not currently populate that payload shape, so normal planner skill routing remains unchanged
 - failed skill-bridge executions may now emit one process-local `skill_bridge_failure` reflection payload through `/Users/seanhan/Documents/Playground/src/reflection/skill-reflection.mjs` when the host installs `globalThis.appendReflectionLog`
 - that hook is additive observability only; it does not create a closed-loop executive task, does not enter the executive reflection archive, and does not change the public `answer / sources / limitations` boundary
 - `document_summarize` is planner-visible on its single-document summary boundary
