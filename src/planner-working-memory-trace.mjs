@@ -95,6 +95,23 @@ function normalizeExecutionPlan(plan = null) {
           return {
             step_id: stepId,
             status: stepStatus,
+            failure_class: cleanText(step?.failure_class || "") || null,
+            recovery_policy: cleanText(step?.recovery_policy || "") || null,
+            recovery_state: step?.recovery_state && typeof step.recovery_state === "object" && !Array.isArray(step.recovery_state)
+              ? {
+                  last_failure_class: cleanText(step.recovery_state.last_failure_class || "") || null,
+                  recovery_attempt_count: Number.isFinite(Number(step.recovery_state.recovery_attempt_count))
+                    ? Number(step.recovery_state.recovery_attempt_count)
+                    : 0,
+                  last_recovery_action: cleanText(step.recovery_state.last_recovery_action || "") || null,
+                  rollback_target_step_id: cleanText(step.recovery_state.rollback_target_step_id || "") || null,
+                }
+              : {
+                  last_failure_class: null,
+                  recovery_attempt_count: 0,
+                  last_recovery_action: null,
+                  rollback_target_step_id: null,
+                },
           };
         })
         .filter(Boolean)
@@ -120,6 +137,9 @@ function toSnapshot(memorySnapshot = null) {
   const slotState = normalizeSlotState(snapshot.slot_state);
   const abandonedTaskIds = summarizeAbandonedTaskIds(snapshot.abandoned_task_ids);
   const executionPlan = normalizeExecutionPlan(snapshot.execution_plan);
+  const currentPlanStep = executionPlan.current_step
+    ? executionPlan.steps.find((step) => step.step_id === executionPlan.current_step) || null
+    : null;
   return {
     task_id: cleanText(snapshot.task_id || "") || null,
     task_type: cleanText(snapshot.task_type || snapshot.inferred_task_type || "") || null,
@@ -143,6 +163,13 @@ function toSnapshot(memorySnapshot = null) {
       plan_id: executionPlan.plan_id,
       plan_status: executionPlan.plan_status,
       current_step: executionPlan.current_step,
+      current_step_failure_class: currentPlanStep?.failure_class || null,
+      current_step_recovery_policy: currentPlanStep?.recovery_policy || null,
+      current_step_recovery_action: currentPlanStep?.recovery_state?.last_recovery_action || null,
+      current_step_recovery_attempt_count: Number.isFinite(Number(currentPlanStep?.recovery_state?.recovery_attempt_count))
+        ? Number(currentPlanStep.recovery_state.recovery_attempt_count)
+        : 0,
+      current_step_rollback_target_step_id: currentPlanStep?.recovery_state?.rollback_target_step_id || null,
       steps: executionPlan.steps,
     },
     _slot_map: slotState.map,
@@ -228,6 +255,11 @@ function buildDiffLines({
   addFieldDiff("plan_id", previous.execution_plan.plan_id, next.execution_plan.plan_id);
   addFieldDiff("plan_status", previous.execution_plan.plan_status, next.execution_plan.plan_status);
   addFieldDiff("current_step", previous.execution_plan.current_step, next.execution_plan.current_step);
+  addFieldDiff("current_step_failure_class", previous.execution_plan.current_step_failure_class, next.execution_plan.current_step_failure_class);
+  addFieldDiff("current_step_recovery_policy", previous.execution_plan.current_step_recovery_policy, next.execution_plan.current_step_recovery_policy);
+  addFieldDiff("current_step_recovery_action", previous.execution_plan.current_step_recovery_action, next.execution_plan.current_step_recovery_action);
+  addFieldDiff("current_step_recovery_attempt_count", previous.execution_plan.current_step_recovery_attempt_count, next.execution_plan.current_step_recovery_attempt_count);
+  addFieldDiff("current_step_rollback_target_step_id", previous.execution_plan.current_step_rollback_target_step_id, next.execution_plan.current_step_rollback_target_step_id);
 
   const slotKeys = Array.from(new Set([
     ...Object.keys(previous._slot_map || {}),
@@ -310,6 +342,31 @@ function buildDiffLines({
       addDiffLine(`plan_invalidated: ${planId} (${cleanText(planInvalidated.reason || "unknown") || "unknown"})`);
     }
   }
+  const failureClass = cleanText(normalizedObservability.failure_class || "");
+  if (failureClass && !hasDiffPrefix("failure_class:")) {
+    addDiffLine(`failure_class: ${failureClass}`);
+  }
+  const recoveryPolicy = cleanText(normalizedObservability.recovery_policy || "");
+  if (recoveryPolicy && !hasDiffPrefix("recovery_policy:")) {
+    addDiffLine(`recovery_policy: ${recoveryPolicy}`);
+  }
+  const recoveryAction = cleanText(normalizedObservability.recovery_action || "");
+  if (recoveryAction && !hasDiffPrefix("recovery_action:")) {
+    addDiffLine(`recovery_action: ${recoveryAction}`);
+  }
+  if (Number.isFinite(Number(normalizedObservability.recovery_attempt_count))
+    && !hasDiffPrefix("recovery_attempt_count:")) {
+    addDiffLine(`recovery_attempt_count: ${Number(normalizedObservability.recovery_attempt_count)}`);
+  }
+  const rollbackTargetStepId = cleanText(normalizedObservability.rollback_target_step_id || "");
+  if (rollbackTargetStepId && !hasDiffPrefix("rollback_target_step_id:")) {
+    addDiffLine(`rollback_target_step_id: ${rollbackTargetStepId}`);
+  }
+  if (Array.isArray(normalizedObservability.skipped_step_ids)
+    && normalizedObservability.skipped_step_ids.length > 0
+    && !hasDiffPrefix("skipped_step_ids:")) {
+    addDiffLine(`skipped_step_ids: ${formatValue(normalizedObservability.skipped_step_ids)}`);
+  }
   if (normalizedObservability.resumed_from_waiting_user === true) {
     addDiffLine("resume: waiting_user");
   }
@@ -337,6 +394,7 @@ function buildTaskTraceText({
     `retry: count=${next.retry_count} | policy=${next.retry_policy.strategy} (max=${next.retry_policy.max_retries})`,
     `next_best_action: ${formatValue(next.next_best_action)}`,
     `plan: id=${formatValue(next.execution_plan.plan_id)} | status=${formatValue(next.execution_plan.plan_status)} | current_step=${formatValue(next.execution_plan.current_step)}`,
+    `recovery: class=${formatValue(next.execution_plan.current_step_failure_class)} | policy=${formatValue(next.execution_plan.current_step_recovery_policy)} | action=${formatValue(next.execution_plan.current_step_recovery_action)} | attempts=${formatValue(next.execution_plan.current_step_recovery_attempt_count)} | rollback_target=${formatValue(next.execution_plan.current_step_rollback_target_step_id)}`,
     `slot_state: missing=${formatValue(slots.missing)} | filled=${formatValue(slots.filled)} | invalid=${formatValue(slots.invalid)}`,
     `abandoned_task_ids: ${abandonedSummary}`,
   ];
@@ -363,7 +421,7 @@ export function buildPlannerTaskTraceDiagnostics({
     nextSnapshot: memorySnapshot,
     observability,
   });
-  const summary = `task=${formatValue(snapshot.task_id)} phase=${snapshot.task_phase} status=${snapshot.task_status} owner=${formatValue(snapshot.current_owner_agent)} plan=${formatValue(snapshot.execution_plan.plan_status)}:${formatValue(snapshot.execution_plan.current_step)} next=${formatValue(snapshot.next_best_action)}`;
+  const summary = `task=${formatValue(snapshot.task_id)} phase=${snapshot.task_phase} status=${snapshot.task_status} owner=${formatValue(snapshot.current_owner_agent)} plan=${formatValue(snapshot.execution_plan.plan_status)}:${formatValue(snapshot.execution_plan.current_step)} recovery=${formatValue(snapshot.execution_plan.current_step_recovery_action)} next=${formatValue(snapshot.next_best_action)}`;
   return {
     summary,
     snapshot: {
@@ -395,6 +453,11 @@ export function buildPlannerTaskTraceDiagnostics({
       retry_attempt: Boolean(observability?.retry_attempt && typeof observability.retry_attempt === "object"),
       step_transition: Boolean(observability?.step_transition && typeof observability.step_transition === "object"),
       plan_invalidated: Boolean(observability?.plan_invalidated && typeof observability.plan_invalidated === "object"),
+      failure_class: Boolean(cleanText(observability?.failure_class || "")),
+      recovery_policy: Boolean(cleanText(observability?.recovery_policy || "")),
+      recovery_action: Boolean(cleanText(observability?.recovery_action || "")),
+      rollback_target_step_id: Boolean(cleanText(observability?.rollback_target_step_id || "")),
+      skipped_step_ids: Array.isArray(observability?.skipped_step_ids) && observability.skipped_step_ids.length > 0,
       resumed_from_waiting_user: observability?.resumed_from_waiting_user === true,
       resumed_from_retry: observability?.resumed_from_retry === true,
     },

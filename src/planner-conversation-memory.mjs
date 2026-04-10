@@ -59,6 +59,25 @@ const PLANNER_WORKING_MEMORY_STEP_STATUSES = new Set([
   "failed",
   "skipped",
 ]);
+const PLANNER_WORKING_MEMORY_FAILURE_CLASSES = new Set([
+  "tool_error",
+  "missing_slot",
+  "capability_gap",
+  "invalid_artifact",
+  "timeout",
+  "unknown",
+]);
+const PLANNER_WORKING_MEMORY_RECOVERY_POLICIES = new Set([
+  "retry_same_step",
+  "reroute_owner",
+  "ask_user",
+  "skip_step",
+  "rollback_to_step",
+]);
+const PLANNER_WORKING_MEMORY_RECOVERY_ACTIONS = new Set([
+  ...PLANNER_WORKING_MEMORY_RECOVERY_POLICIES,
+  "failed",
+]);
 const PLANNER_WORKING_MEMORY_PLAN_STEP_LIMIT = 12;
 const PLANNER_WORKING_MEMORY_PLAN_REF_LIMIT = 8;
 const DEFAULT_PLANNER_WORKING_MEMORY_RETRY_POLICY = Object.freeze({
@@ -352,6 +371,79 @@ function normalizeWorkingMemoryExecutionPlanRefs(value = [], { limit = PLANNER_W
     .slice(0, limit);
 }
 
+function normalizeWorkingMemoryExecutionPlanFailureClass(value = null, { allowNull = true } = {}) {
+  const normalized = cleanText(value || "");
+  if (!normalized) {
+    return allowNull ? null : null;
+  }
+  return PLANNER_WORKING_MEMORY_FAILURE_CLASSES.has(normalized)
+    ? normalized
+    : null;
+}
+
+function normalizeWorkingMemoryExecutionPlanRecoveryPolicy(value = null, { allowNull = true } = {}) {
+  const normalized = cleanText(value || "");
+  if (!normalized) {
+    return allowNull ? null : null;
+  }
+  return PLANNER_WORKING_MEMORY_RECOVERY_POLICIES.has(normalized)
+    ? normalized
+    : null;
+}
+
+function buildDefaultWorkingMemoryExecutionPlanRecoveryState() {
+  return {
+    last_failure_class: null,
+    recovery_attempt_count: 0,
+    last_recovery_action: null,
+    rollback_target_step_id: null,
+  };
+}
+
+function normalizeWorkingMemoryExecutionPlanRecoveryState(value = null, { allowMissing = true } = {}) {
+  if ((value === null || value === undefined || value === "") && allowMissing) {
+    return buildDefaultWorkingMemoryExecutionPlanRecoveryState();
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const normalized = buildDefaultWorkingMemoryExecutionPlanRecoveryState();
+  if (Object.prototype.hasOwnProperty.call(value, "last_failure_class")) {
+    const failureClass = normalizeWorkingMemoryExecutionPlanFailureClass(value.last_failure_class, { allowNull: true });
+    if (value.last_failure_class !== null && value.last_failure_class !== undefined && value.last_failure_class !== "" && !failureClass) {
+      return null;
+    }
+    normalized.last_failure_class = failureClass;
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "recovery_attempt_count")) {
+    const attemptCount = Number(value.recovery_attempt_count);
+    if (!Number.isFinite(attemptCount) || attemptCount < 0) {
+      return null;
+    }
+    normalized.recovery_attempt_count = Math.floor(attemptCount);
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "last_recovery_action")) {
+    const recoveryAction = cleanText(value.last_recovery_action || "");
+    if (value.last_recovery_action !== null && value.last_recovery_action !== undefined && value.last_recovery_action !== ""
+      && !PLANNER_WORKING_MEMORY_RECOVERY_ACTIONS.has(recoveryAction)) {
+      return null;
+    }
+    normalized.last_recovery_action = recoveryAction || null;
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "rollback_target_step_id")) {
+    if (value.rollback_target_step_id === null || value.rollback_target_step_id === undefined || value.rollback_target_step_id === "") {
+      normalized.rollback_target_step_id = null;
+    } else {
+      const rollbackTargetStepId = normalizeWorkingMemoryString(value.rollback_target_step_id);
+      if (!rollbackTargetStepId) {
+        return null;
+      }
+      normalized.rollback_target_step_id = rollbackTargetStepId;
+    }
+  }
+  return normalized;
+}
+
 function normalizeWorkingMemoryExecutionPlanStep(step = null, { allowPartial = false } = {}) {
   if (!step || typeof step !== "object" || Array.isArray(step)) {
     return null;
@@ -477,6 +569,54 @@ function normalizeWorkingMemoryExecutionPlanStep(step = null, { allowPartial = f
     return null;
   } else {
     normalizedStep.slot_requirements = slotRequirements;
+  }
+
+  if (allowPartial) {
+    if (hasField("failure_class")) {
+      const failureClass = normalizeWorkingMemoryExecutionPlanFailureClass(step.failure_class, { allowNull: true });
+      if (step.failure_class !== null && step.failure_class !== undefined && step.failure_class !== "" && !failureClass) {
+        return null;
+      }
+      normalizedStep.failure_class = failureClass;
+    }
+  } else {
+    const failureClass = normalizeWorkingMemoryExecutionPlanFailureClass(step.failure_class, { allowNull: true });
+    if (step.failure_class !== null && step.failure_class !== undefined && step.failure_class !== "" && !failureClass) {
+      return null;
+    }
+    normalizedStep.failure_class = failureClass;
+  }
+
+  if (allowPartial) {
+    if (hasField("recovery_policy")) {
+      const recoveryPolicy = normalizeWorkingMemoryExecutionPlanRecoveryPolicy(step.recovery_policy, { allowNull: true });
+      if (step.recovery_policy !== null && step.recovery_policy !== undefined && step.recovery_policy !== "" && !recoveryPolicy) {
+        return null;
+      }
+      normalizedStep.recovery_policy = recoveryPolicy;
+    }
+  } else {
+    const recoveryPolicy = normalizeWorkingMemoryExecutionPlanRecoveryPolicy(step.recovery_policy, { allowNull: true });
+    if (step.recovery_policy !== null && step.recovery_policy !== undefined && step.recovery_policy !== "" && !recoveryPolicy) {
+      return null;
+    }
+    normalizedStep.recovery_policy = recoveryPolicy;
+  }
+
+  if (allowPartial) {
+    if (hasField("recovery_state")) {
+      const recoveryState = normalizeWorkingMemoryExecutionPlanRecoveryState(step.recovery_state, { allowMissing: false });
+      if (!recoveryState) {
+        return null;
+      }
+      normalizedStep.recovery_state = recoveryState;
+    }
+  } else {
+    const recoveryState = normalizeWorkingMemoryExecutionPlanRecoveryState(step.recovery_state, { allowMissing: true });
+    if (!recoveryState) {
+      return null;
+    }
+    normalizedStep.recovery_state = recoveryState;
   }
 
   return normalizedStep;
@@ -1575,6 +1715,30 @@ export function applyPlannerWorkingMemoryPatch({
   const basePlan = normalizeWorkingMemoryExecutionPlan(baseMemory.execution_plan);
   const nextPlan = normalizeWorkingMemoryExecutionPlan(nextMemory.execution_plan);
   const planStepTransition = buildExecutionPlanStepTransition(basePlan, nextPlan);
+  const skippedStepIds = Array.isArray(planStepTransition?.steps)
+    ? planStepTransition.steps
+        .filter((step) => cleanText(step?.to || "") === "skipped")
+        .map((step) => normalizeWorkingMemoryString(step?.step_id))
+        .filter(Boolean)
+    : [];
+  const recoverySignalStepId = cleanText(nextPlan?.current_step_id || "")
+    || (Array.isArray(planStepTransition?.steps)
+      ? planStepTransition.steps
+          .slice()
+          .reverse()
+          .find((step) => {
+            const toStatus = cleanText(step?.to || "");
+            return toStatus === "failed" || toStatus === "blocked" || toStatus === "skipped";
+          })?.step_id || ""
+      : "");
+  const recoverySignalStep = recoverySignalStepId
+    ? (nextPlan?.steps || []).find((step) => step.step_id === recoverySignalStepId) || null
+    : null;
+  const recoverySignalState = recoverySignalStep?.recovery_state
+    && typeof recoverySignalStep.recovery_state === "object"
+    && !Array.isArray(recoverySignalStep.recovery_state)
+    ? recoverySignalStep.recovery_state
+    : null;
   const planInvalidated = (() => {
     if (!basePlan) {
       return null;
@@ -1613,6 +1777,14 @@ export function applyPlannerWorkingMemoryPatch({
       current_step: cleanText(nextPlan?.current_step_id || "") || null,
       step_transition: planStepTransition,
       plan_invalidated: planInvalidated,
+      failure_class: cleanText(recoverySignalStep?.failure_class || "") || null,
+      recovery_policy: cleanText(recoverySignalStep?.recovery_policy || "") || null,
+      recovery_action: cleanText(recoverySignalState?.last_recovery_action || "") || null,
+      recovery_attempt_count: Number.isFinite(Number(recoverySignalState?.recovery_attempt_count))
+        ? Number(recoverySignalState.recovery_attempt_count)
+        : null,
+      rollback_target_step_id: cleanText(recoverySignalState?.rollback_target_step_id || "") || null,
+      skipped_step_ids: skippedStepIds.length > 0 ? skippedStepIds : null,
       task_abandoned: taskAbandoned
         ? {
             task_id: taskAbandoned,
