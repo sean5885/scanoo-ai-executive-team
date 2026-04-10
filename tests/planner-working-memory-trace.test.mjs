@@ -215,6 +215,75 @@ test("task trace includes execution plan transitions and resume markers", () => 
   assert.equal(trace.diff.includes("resume: waiting_user"), true);
 });
 
+test("task trace exposes recovery policy diagnostics fields", () => {
+  const trace = buildPlannerTaskTraceDiagnostics({
+    memoryStage: "answer_boundary_write_back",
+    previousMemorySnapshot: {
+      task_id: "task-recovery-trace",
+      execution_plan: {
+        plan_id: "plan-recovery-trace",
+        plan_status: "active",
+        current_step_id: "step-2",
+        steps: [
+          {
+            step_id: "step-2",
+            status: "failed",
+            failure_class: "tool_error",
+            recovery_policy: "retry_same_step",
+            recovery_state: {
+              last_failure_class: "tool_error",
+              recovery_attempt_count: 1,
+              last_recovery_action: "retry_same_step",
+              rollback_target_step_id: null,
+            },
+          },
+        ],
+      },
+    },
+    memorySnapshot: {
+      task_id: "task-recovery-trace",
+      execution_plan: {
+        plan_id: "plan-recovery-trace",
+        plan_status: "active",
+        current_step_id: "step-3",
+        steps: [
+          {
+            step_id: "step-2",
+            status: "skipped",
+            failure_class: "tool_error",
+            recovery_policy: "skip_step",
+            recovery_state: {
+              last_failure_class: "tool_error",
+              recovery_attempt_count: 2,
+              last_recovery_action: "skip_step",
+              rollback_target_step_id: null,
+            },
+          },
+          {
+            step_id: "step-3",
+            status: "running",
+          },
+        ],
+      },
+    },
+    observability: {
+      failure_class: "tool_error",
+      recovery_policy: "skip_step",
+      recovery_action: "skip_step",
+      recovery_attempt_count: 2,
+      rollback_target_step_id: null,
+      skipped_step_ids: ["step-2"],
+    },
+  });
+
+  assert.equal(trace.diff.includes("failure_class: tool_error"), true);
+  assert.equal(trace.diff.includes("recovery_policy: skip_step"), true);
+  assert.equal(trace.diff.includes("recovery_action: skip_step"), true);
+  assert.equal(trace.diff.includes("recovery_attempt_count: 2"), true);
+  assert.equal(trace.diff.includes("skipped_step_ids: [step-2]"), true);
+  assert.equal(trace.summary.includes("recovery="), true);
+});
+
 test("planner logs task trace at memory pre-read and router decision", async () => {
   const sessionKey = "wm-trace-hook-router";
   resetPlannerRuntimeContext({ sessionKey });

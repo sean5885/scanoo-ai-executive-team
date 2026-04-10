@@ -26,10 +26,6 @@ const REMINDER_TIMING_PATTERNS = [
 ];
 const WORKING_MEMORY_TOPIC_SWITCH_PATTERN = /(換個題目|换个题目|換題|换题|改問|改问|另一題|另一题|new topic|different question)/i;
 const WORKING_MEMORY_DONE_PATTERN = /(完成|done|結束|结束|搞定|已完成|完成了)/i;
-const WORKING_MEMORY_RETRYABLE_ERRORS = new Set([
-  "tool_error",
-  "runtime_exception",
-]);
 const DEFAULT_WORKING_MEMORY_RETRY_POLICY = Object.freeze({
   max_retries: 2,
   strategy: "same_agent_then_reroute",
@@ -47,6 +43,30 @@ const WORKING_MEMORY_PLAN_STEP_STATUSES = new Set([
   "completed",
   "failed",
   "skipped",
+]);
+const WORKING_MEMORY_FAILURE_CLASSES = new Set([
+  "tool_error",
+  "missing_slot",
+  "capability_gap",
+  "invalid_artifact",
+  "timeout",
+  "unknown",
+]);
+const WORKING_MEMORY_RECOVERY_POLICIES = new Set([
+  "retry_same_step",
+  "reroute_owner",
+  "ask_user",
+  "skip_step",
+  "rollback_to_step",
+]);
+const WORKING_MEMORY_RECOVERY_ACTIONS = new Set([
+  ...WORKING_MEMORY_RECOVERY_POLICIES,
+  "failed",
+]);
+const WORKING_MEMORY_NON_CRITICAL_STEP_TYPES = new Set([
+  "non_critical",
+  "optional",
+  "best_effort",
 ]);
 
 function resolveEdgeExecution(result = {}) {
@@ -557,6 +577,71 @@ function normalizeExecutionPlanStepStatus(status = "") {
     : null;
 }
 
+function normalizeExecutionPlanFailureClass(failureClass = null, { allowNull = true } = {}) {
+  const normalized = cleanText(failureClass || "");
+  if (!normalized) {
+    return allowNull ? null : null;
+  }
+  return WORKING_MEMORY_FAILURE_CLASSES.has(normalized)
+    ? normalized
+    : null;
+}
+
+function normalizeExecutionPlanRecoveryPolicy(recoveryPolicy = null, { allowNull = true } = {}) {
+  const normalized = cleanText(recoveryPolicy || "");
+  if (!normalized) {
+    return allowNull ? null : null;
+  }
+  return WORKING_MEMORY_RECOVERY_POLICIES.has(normalized)
+    ? normalized
+    : null;
+}
+
+function buildDefaultExecutionPlanRecoveryState() {
+  return {
+    last_failure_class: null,
+    recovery_attempt_count: 0,
+    last_recovery_action: null,
+    rollback_target_step_id: null,
+  };
+}
+
+function normalizeExecutionPlanRecoveryState(value = null, { allowMissing = true } = {}) {
+  if ((value === null || value === undefined || value === "") && allowMissing) {
+    return buildDefaultExecutionPlanRecoveryState();
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const normalized = buildDefaultExecutionPlanRecoveryState();
+  if (Object.prototype.hasOwnProperty.call(value, "last_failure_class")) {
+    const failureClass = normalizeExecutionPlanFailureClass(value.last_failure_class, { allowNull: true });
+    if (value.last_failure_class !== null && value.last_failure_class !== undefined && value.last_failure_class !== "" && !failureClass) {
+      return null;
+    }
+    normalized.last_failure_class = failureClass;
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "recovery_attempt_count")) {
+    const recoveryAttemptCount = Number(value.recovery_attempt_count);
+    if (!Number.isFinite(recoveryAttemptCount) || recoveryAttemptCount < 0) {
+      return null;
+    }
+    normalized.recovery_attempt_count = Math.floor(recoveryAttemptCount);
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "last_recovery_action")) {
+    const recoveryAction = cleanText(value.last_recovery_action || "");
+    if (value.last_recovery_action !== null && value.last_recovery_action !== undefined && value.last_recovery_action !== ""
+      && !WORKING_MEMORY_RECOVERY_ACTIONS.has(recoveryAction)) {
+      return null;
+    }
+    normalized.last_recovery_action = recoveryAction || null;
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "rollback_target_step_id")) {
+    normalized.rollback_target_step_id = cleanText(value.rollback_target_step_id || "") || null;
+  }
+  return normalized;
+}
+
 function normalizeExecutionPlan(plan = null) {
   if (!plan || typeof plan !== "object" || Array.isArray(plan)) {
     return null;
@@ -586,6 +671,14 @@ function normalizeExecutionPlan(plan = null) {
           const slotRequirements = Array.isArray(step.slot_requirements)
             ? step.slot_requirements.map((item) => cleanText(item)).filter(Boolean)
             : [];
+          const failureClass = normalizeExecutionPlanFailureClass(step?.failure_class, { allowNull: true });
+          const recoveryPolicy = normalizeExecutionPlanRecoveryPolicy(step?.recovery_policy, { allowNull: true });
+          const recoveryState = normalizeExecutionPlanRecoveryState(step?.recovery_state, { allowMissing: true });
+          if ((step?.failure_class !== null && step?.failure_class !== undefined && step?.failure_class !== "" && !failureClass)
+            || (step?.recovery_policy !== null && step?.recovery_policy !== undefined && step?.recovery_policy !== "" && !recoveryPolicy)
+            || !recoveryState) {
+            return null;
+          }
           return {
             step_id: stepId,
             step_type: stepType,
@@ -596,11 +689,14 @@ function normalizeExecutionPlan(plan = null) {
             retryable: step.retryable !== false,
             artifact_refs: Array.from(new Set(artifactRefs)),
             slot_requirements: Array.from(new Set(slotRequirements)),
+            failure_class: failureClass,
+            recovery_policy: recoveryPolicy,
+            recovery_state: recoveryState,
           };
         })
         .filter(Boolean)
     : [];
-  if (steps.length === 0) {
+  if (steps.length === 0 && planStatus !== "completed" && planStatus !== "invalidated") {
     return null;
   }
   const currentStepId = cleanText(plan.current_step_id || "") || null;
@@ -715,6 +811,195 @@ function buildExecutionPlanStepTransitions(previousPlan = null, nextPlan = null)
   };
 }
 
+function deriveFailureClassFromPlannerError(plannerError = "") {
+  const normalizedError = cleanText(plannerError || "");
+  if (!normalizedError) {
+    return null;
+  }
+  if (normalizedError === "tool_error" || normalizedError === "runtime_exception") {
+    return "tool_error";
+  }
+  if (normalizedError === "request_timeout" || normalizedError === "timeout" || normalizedError === "request_cancelled") {
+    return "timeout";
+  }
+  if (normalizedError === "invalid_artifact" || normalizedError === "artifact_invalid") {
+    return "invalid_artifact";
+  }
+  if (normalizedError === "capability_gap") {
+    return "capability_gap";
+  }
+  return "unknown";
+}
+
+function deriveWorkingMemoryFailureClass({
+  plannerError = "",
+  unresolvedSlots = [],
+  plannerEnvelope = null,
+  userResponse = null,
+  previousOwner = null,
+  currentOwner = null,
+} = {}) {
+  if (Array.isArray(unresolvedSlots) && unresolvedSlots.length > 0) {
+    return "missing_slot";
+  }
+  const errorFailureClass = deriveFailureClassFromPlannerError(plannerError);
+  if (errorFailureClass) {
+    return errorFailureClass;
+  }
+  if (cleanText(previousOwner || "") && cleanText(currentOwner || "") && cleanText(previousOwner || "") !== cleanText(currentOwner || "")
+    && (plannerEnvelope?.ok === false || userResponse?.ok !== true)) {
+    return "capability_gap";
+  }
+  if (plannerEnvelope?.ok === false || userResponse?.ok !== true) {
+    return "unknown";
+  }
+  return null;
+}
+
+function isNonCriticalExecutionPlanStep(step = null) {
+  const stepType = cleanText(step?.step_type || "");
+  return WORKING_MEMORY_NON_CRITICAL_STEP_TYPES.has(stepType);
+}
+
+function resolveExecutionPlanRollbackTargetStepId({
+  step = null,
+  stepMap = new Map(),
+  fallbackPreviousStepId = null,
+} = {}) {
+  const dependsOn = Array.isArray(step?.depends_on)
+    ? step.depends_on.map((item) => cleanText(item)).filter(Boolean)
+    : [];
+  for (let index = dependsOn.length - 1; index >= 0; index -= 1) {
+    const candidate = dependsOn[index];
+    if (candidate && stepMap.has(candidate)) {
+      return candidate;
+    }
+  }
+  const artifactRefs = Array.isArray(step?.artifact_refs)
+    ? step.artifact_refs.map((item) => cleanText(item)).filter(Boolean)
+    : [];
+  for (const ref of artifactRefs) {
+    const matched = ref.match(/^step:(.+)$/i) || ref.match(/^from_step:(.+)$/i);
+    const stepId = cleanText(matched?.[1] || "");
+    if (stepId && stepMap.has(stepId)) {
+      return stepId;
+    }
+  }
+  const fallbackStepId = cleanText(fallbackPreviousStepId || "");
+  return fallbackStepId && stepMap.has(fallbackStepId)
+    ? fallbackStepId
+    : null;
+}
+
+function resolveExecutionPlanRecoveryDecision({
+  failureClass = null,
+  step = null,
+  stepMap = new Map(),
+  activeStepIndex = null,
+  steps = [],
+  previousRetryCount = 0,
+  retryPolicy = DEFAULT_WORKING_MEMORY_RETRY_POLICY,
+  previousOwner = null,
+  currentOwner = null,
+} = {}) {
+  if (!failureClass || !step) {
+    return {
+      recovery_action: null,
+      recovery_policy: null,
+      rollback_target_step_id: null,
+      reroute_owner_agent: null,
+    };
+  }
+
+  if (failureClass === "missing_slot") {
+    return {
+      recovery_action: "ask_user",
+      recovery_policy: "ask_user",
+      rollback_target_step_id: null,
+      reroute_owner_agent: null,
+    };
+  }
+
+  if (failureClass === "capability_gap") {
+    const rerouteOwner = cleanText(currentOwner || "") || cleanText(previousOwner || "") || cleanText(step.owner_agent || "") || null;
+    return {
+      recovery_action: "reroute_owner",
+      recovery_policy: "reroute_owner",
+      rollback_target_step_id: null,
+      reroute_owner_agent: rerouteOwner,
+    };
+  }
+
+  if (failureClass === "invalid_artifact") {
+    const fallbackPreviousStepId = activeStepIndex !== null && activeStepIndex > 0
+      ? cleanText(steps[activeStepIndex - 1]?.step_id || "") || null
+      : null;
+    const rollbackTargetStepId = resolveExecutionPlanRollbackTargetStepId({
+      step,
+      stepMap,
+      fallbackPreviousStepId,
+    });
+    if (rollbackTargetStepId) {
+      return {
+        recovery_action: "rollback_to_step",
+        recovery_policy: "rollback_to_step",
+        rollback_target_step_id: rollbackTargetStepId,
+        reroute_owner_agent: null,
+      };
+    }
+    return {
+      recovery_action: "ask_user",
+      recovery_policy: "ask_user",
+      rollback_target_step_id: null,
+      reroute_owner_agent: null,
+    };
+  }
+
+  if (failureClass === "tool_error" || failureClass === "timeout") {
+    const retryBudget = Number.isFinite(Number(retryPolicy?.max_retries))
+      ? Number(retryPolicy.max_retries)
+      : DEFAULT_WORKING_MEMORY_RETRY_POLICY.max_retries;
+    if (step.retryable !== false && Number(previousRetryCount) < retryBudget) {
+      return {
+        recovery_action: "retry_same_step",
+        recovery_policy: "retry_same_step",
+        rollback_target_step_id: null,
+        reroute_owner_agent: null,
+      };
+    }
+    if (isNonCriticalExecutionPlanStep(step)) {
+      return {
+        recovery_action: "skip_step",
+        recovery_policy: "skip_step",
+        rollback_target_step_id: null,
+        reroute_owner_agent: null,
+      };
+    }
+    const ownerAgent = cleanText(step.owner_agent || "");
+    if (ownerAgent && ownerAgent !== "planner_agent") {
+      return {
+        recovery_action: "reroute_owner",
+        recovery_policy: "reroute_owner",
+        rollback_target_step_id: null,
+        reroute_owner_agent: cleanText(previousOwner || "") || ownerAgent || null,
+      };
+    }
+    return {
+      recovery_action: "ask_user",
+      recovery_policy: "ask_user",
+      rollback_target_step_id: null,
+      reroute_owner_agent: null,
+    };
+  }
+
+  return {
+    recovery_action: "ask_user",
+    recovery_policy: "ask_user",
+    rollback_target_step_id: null,
+    reroute_owner_agent: null,
+  };
+}
+
 function buildWorkingMemoryExecutionPlanPatch({
   plannerResult = null,
   plannerEnvelope = null,
@@ -722,10 +1007,13 @@ function buildWorkingMemoryExecutionPlanPatch({
   previousWorkingMemory = null,
   selectedAction = "",
   currentOwner = null,
+  previousOwner = null,
   unresolvedSlots = [],
   topicSwitch = false,
   phaseAndStatus = { phase: "planning", status: "running" },
-  retryableFailure = false,
+  failureClass = null,
+  previousRetryCount = 0,
+  retryPolicy = DEFAULT_WORKING_MEMORY_RETRY_POLICY,
 } = {}) {
   const previousPlan = normalizeExecutionPlan(previousWorkingMemory?.execution_plan);
   const planActions = collectExecutionPlanActions({
@@ -737,12 +1025,20 @@ function buildWorkingMemoryExecutionPlanPatch({
   if (planActions.length === 0) {
     return {
       patch: null,
+      phaseAndStatus,
+      current_owner_agent: cleanText(currentOwner || previousWorkingMemory?.current_owner_agent || "") || null,
       observability: {
         plan_id: null,
         plan_status: null,
         current_step: null,
         step_transition: null,
         plan_invalidated: null,
+        failure_class: null,
+        recovery_policy: null,
+        recovery_action: null,
+        recovery_attempt_count: null,
+        rollback_target_step_id: null,
+        skipped_step_ids: null,
         resumed_from_waiting_user: false,
         resumed_from_retry: false,
       },
@@ -764,7 +1060,9 @@ function buildWorkingMemoryExecutionPlanPatch({
     : null;
   const previousSteps = Array.isArray(previousPlan?.steps) ? previousPlan.steps : [];
   const usedPreviousStepIds = new Set();
-  const steps = planActions.map((action, index) => {
+  const steps = [];
+  for (let index = 0; index < planActions.length; index += 1) {
+    const action = planActions[index];
     const previousByIndex = previousSteps[index];
     const previousByAction = previousSteps.find((step) =>
       step.intended_action === action && !usedPreviousStepIds.has(step.step_id));
@@ -775,10 +1073,16 @@ function buildWorkingMemoryExecutionPlanPatch({
       usedPreviousStepIds.add(previousStep.step_id);
     }
     const stepId = cleanText(previousStep?.step_id || "") || `${planId}_step_${index + 1}`;
-    const dependsOn = index > 0
-      ? [cleanText(previousSteps[index - 1]?.step_id || "") || `${planId}_step_${index}`]
-      : [];
-    return {
+    const dependsOn = Array.isArray(previousStep?.depends_on) && previousStep.depends_on.length > 0
+      ? previousStep.depends_on.map((item) => cleanText(item)).filter(Boolean)
+      : index > 0
+        ? [steps[index - 1].step_id]
+        : [];
+    const previousFailureClass = normalizeExecutionPlanFailureClass(previousStep?.failure_class, { allowNull: true });
+    const previousRecoveryPolicy = normalizeExecutionPlanRecoveryPolicy(previousStep?.recovery_policy, { allowNull: true });
+    const previousRecoveryState = normalizeExecutionPlanRecoveryState(previousStep?.recovery_state, { allowMissing: true })
+      || buildDefaultExecutionPlanRecoveryState();
+    steps.push({
       step_id: stepId,
       step_type: cleanText(previousStep?.step_type || "") || "planner_action",
       owner_agent: cleanText(previousStep?.owner_agent || "") || ownerAgent,
@@ -788,18 +1092,29 @@ function buildWorkingMemoryExecutionPlanPatch({
       retryable: previousStep?.retryable !== false,
       artifact_refs: Array.isArray(previousStep?.artifact_refs) ? previousStep.artifact_refs.slice(0, 8) : [],
       slot_requirements: Array.isArray(previousStep?.slot_requirements) ? previousStep.slot_requirements.slice(0, 6) : [],
-    };
-  });
+      failure_class: previousFailureClass,
+      recovery_policy: previousRecoveryPolicy,
+      recovery_state: previousRecoveryState,
+    });
+  }
 
   if (steps.length === 0) {
     return {
       patch: null,
+      phaseAndStatus,
+      current_owner_agent: null,
       observability: {
         plan_id: null,
         plan_status: null,
         current_step: null,
         step_transition: null,
         plan_invalidated: null,
+        failure_class: null,
+        recovery_policy: null,
+        recovery_action: null,
+        recovery_attempt_count: null,
+        rollback_target_step_id: null,
+        skipped_step_ids: null,
         resumed_from_waiting_user: false,
         resumed_from_retry: false,
       },
@@ -820,7 +1135,7 @@ function buildWorkingMemoryExecutionPlanPatch({
     && userResponse?.ok === true
     && phaseAndStatus.phase !== "waiting_user"
     && phaseAndStatus.phase !== "failed"
-    && !retryableFailure;
+    && !failureClass;
   if (successfulTurnWithoutRuntimeIndex) {
     for (let index = 0; index < selectedStepIndex; index += 1) {
       if (steps[index].status !== "completed" && steps[index].status !== "skipped") {
@@ -857,13 +1172,109 @@ function buildWorkingMemoryExecutionPlanPatch({
     activeStepIndex = null;
   }
 
-  if (activeStepIndex !== null) {
-    if (phaseAndStatus.phase === "waiting_user") {
+  let resolvedPhaseAndStatus = {
+    phase: cleanText(phaseAndStatus?.phase || "") || "planning",
+    status: cleanText(phaseAndStatus?.status || "") || "running",
+  };
+  let resolvedOwnerAgent = cleanText(currentOwner || "") || ownerAgent;
+  let appliedRecoveryAction = null;
+  let appliedRecoveryPolicy = null;
+  let appliedRollbackTargetStepId = null;
+  let appliedRecoveryAttemptCount = null;
+  const activeStep = activeStepIndex !== null
+    ? steps[activeStepIndex]
+    : null;
+  const hasFailure = Boolean(failureClass);
+  if (activeStep && hasFailure) {
+    const stepMap = new Map(steps.map((step) => [step.step_id, step]));
+    const recoveryDecision = resolveExecutionPlanRecoveryDecision({
+      failureClass,
+      step: activeStep,
+      stepMap,
+      activeStepIndex,
+      steps,
+      previousRetryCount,
+      retryPolicy,
+      previousOwner,
+      currentOwner,
+    });
+    const previousRecoveryState = normalizeExecutionPlanRecoveryState(activeStep.recovery_state, { allowMissing: true })
+      || buildDefaultExecutionPlanRecoveryState();
+    const nextRecoveryAttemptCount = Number(previousRecoveryState.recovery_attempt_count || 0) + 1;
+    activeStep.failure_class = failureClass;
+    activeStep.recovery_policy = recoveryDecision.recovery_policy || null;
+    activeStep.recovery_state = {
+      ...previousRecoveryState,
+      last_failure_class: failureClass,
+      recovery_attempt_count: nextRecoveryAttemptCount,
+      last_recovery_action: recoveryDecision.recovery_action || "failed",
+      rollback_target_step_id: recoveryDecision.rollback_target_step_id || null,
+    };
+    appliedRecoveryAction = recoveryDecision.recovery_action || "failed";
+    appliedRecoveryPolicy = recoveryDecision.recovery_policy || null;
+    appliedRollbackTargetStepId = recoveryDecision.rollback_target_step_id || null;
+    appliedRecoveryAttemptCount = nextRecoveryAttemptCount;
+    if (appliedRecoveryAction === "ask_user") {
       steps[activeStepIndex].status = "blocked";
       steps[activeStepIndex].slot_requirements = Array.from(new Set(unresolvedSlots)).slice(0, 6);
-    } else if (retryableFailure || phaseAndStatus.phase === "failed") {
+      resolvedPhaseAndStatus = { phase: "waiting_user", status: "blocked" };
+    } else if (appliedRecoveryAction === "retry_same_step") {
       steps[activeStepIndex].status = "failed";
-    } else if (phaseAndStatus.phase === "executing" || phaseAndStatus.phase === "retrying") {
+      resolvedPhaseAndStatus = { phase: "retrying", status: "failed" };
+    } else if (appliedRecoveryAction === "reroute_owner") {
+      steps[activeStepIndex].status = "failed";
+      const rerouteOwnerAgent = cleanText(recoveryDecision.reroute_owner_agent || "") || null;
+      if (rerouteOwnerAgent) {
+        steps[activeStepIndex].owner_agent = rerouteOwnerAgent;
+        resolvedOwnerAgent = rerouteOwnerAgent;
+      }
+      resolvedPhaseAndStatus = { phase: "retrying", status: "failed" };
+    } else if (appliedRecoveryAction === "skip_step" && isNonCriticalExecutionPlanStep(activeStep)) {
+      steps[activeStepIndex].status = "skipped";
+      steps[activeStepIndex].recovery_state.last_recovery_action = "skip_step";
+      let nextStepIndex = null;
+      for (let index = activeStepIndex + 1; index < steps.length; index += 1) {
+        if (steps[index].status !== "completed" && steps[index].status !== "skipped") {
+          nextStepIndex = index;
+          break;
+        }
+      }
+      activeStepIndex = nextStepIndex;
+      if (activeStepIndex !== null && steps[activeStepIndex] && steps[activeStepIndex].status === "pending") {
+        steps[activeStepIndex].status = "running";
+      }
+      resolvedPhaseAndStatus = { phase: "executing", status: "running" };
+    } else if (appliedRecoveryAction === "rollback_to_step" && appliedRollbackTargetStepId) {
+      const rollbackTargetIndex = steps.findIndex((step) => step.step_id === appliedRollbackTargetStepId);
+      if (rollbackTargetIndex >= 0) {
+        for (let index = rollbackTargetIndex; index < steps.length; index += 1) {
+          if (index === rollbackTargetIndex) {
+            steps[index].status = "running";
+          } else if (steps[index].status !== "completed") {
+            steps[index].status = "pending";
+          }
+        }
+        activeStepIndex = rollbackTargetIndex;
+        resolvedPhaseAndStatus = { phase: "executing", status: "running" };
+      } else {
+        appliedRecoveryAction = "ask_user";
+        steps[activeStepIndex].status = "blocked";
+        steps[activeStepIndex].slot_requirements = Array.from(new Set(unresolvedSlots)).slice(0, 6);
+        resolvedPhaseAndStatus = { phase: "waiting_user", status: "blocked" };
+      }
+    } else {
+      steps[activeStepIndex].status = "failed";
+      steps[activeStepIndex].recovery_state.last_recovery_action = "failed";
+      appliedRecoveryAction = "failed";
+      resolvedPhaseAndStatus = { phase: "failed", status: "failed" };
+    }
+  } else if (activeStepIndex !== null) {
+    if (resolvedPhaseAndStatus.phase === "waiting_user") {
+      steps[activeStepIndex].status = "blocked";
+      steps[activeStepIndex].slot_requirements = Array.from(new Set(unresolvedSlots)).slice(0, 6);
+    } else if (resolvedPhaseAndStatus.phase === "failed") {
+      steps[activeStepIndex].status = "failed";
+    } else if (resolvedPhaseAndStatus.phase === "executing" || resolvedPhaseAndStatus.phase === "retrying") {
       if (steps[activeStepIndex].status !== "completed") {
         steps[activeStepIndex].status = "running";
       }
@@ -885,13 +1296,13 @@ function buildWorkingMemoryExecutionPlanPatch({
 
   const allStepsCompleted = steps.every((step) => step.status === "completed" || step.status === "skipped");
   const planStatus = (() => {
-    if (allStepsCompleted || phaseAndStatus.phase === "done") {
+    if (allStepsCompleted || resolvedPhaseAndStatus.phase === "done") {
       return "completed";
     }
-    if (phaseAndStatus.phase === "waiting_user") {
+    if (resolvedPhaseAndStatus.phase === "waiting_user") {
       return "paused";
     }
-    if (phaseAndStatus.phase === "failed" && !retryableFailure) {
+    if (resolvedPhaseAndStatus.phase === "failed" || appliedRecoveryAction === "failed") {
       return "paused";
     }
     return "active";
@@ -909,23 +1320,38 @@ function buildWorkingMemoryExecutionPlanPatch({
   };
   const previousPhase = cleanText(previousWorkingMemory?.task_phase || "");
   const previousStatus = cleanText(previousWorkingMemory?.task_status || "");
+  const stepTransition = buildExecutionPlanStepTransitions(previousPlan, nextPlan);
+  const skippedStepIds = Array.isArray(stepTransition?.steps)
+    ? stepTransition.steps
+        .filter((step) => cleanText(step?.to || "") === "skipped")
+        .map((step) => cleanText(step?.step_id || ""))
+        .filter(Boolean)
+    : [];
   return {
     patch: nextPlan,
+    phaseAndStatus: resolvedPhaseAndStatus,
+    current_owner_agent: resolvedOwnerAgent,
     observability: {
       plan_id: nextPlan.plan_id,
       plan_status: nextPlan.plan_status,
       current_step: nextPlan.current_step_id,
-      step_transition: buildExecutionPlanStepTransitions(previousPlan, nextPlan),
+      step_transition: stepTransition,
       plan_invalidated: topicSwitch && previousPlan
         ? {
             plan_id: previousPlan.plan_id,
             reason: "topic_switch",
           }
         : null,
+      failure_class: hasFailure ? failureClass : null,
+      recovery_policy: appliedRecoveryPolicy,
+      recovery_action: appliedRecoveryAction,
+      recovery_attempt_count: appliedRecoveryAttemptCount,
+      rollback_target_step_id: appliedRollbackTargetStepId,
+      skipped_step_ids: skippedStepIds.length > 0 ? skippedStepIds : null,
       resumed_from_waiting_user: previousPhase === "waiting_user"
-        && phaseAndStatus.phase === "executing",
+        && resolvedPhaseAndStatus.phase === "executing",
       resumed_from_retry: (previousPhase === "retrying" || previousStatus === "failed")
-        && phaseAndStatus.phase === "executing",
+        && resolvedPhaseAndStatus.phase === "executing",
     },
   };
 }
@@ -965,6 +1391,7 @@ function buildWorkingMemoryPatch({
   const unresolvedSlots = deriveWorkingMemoryUnresolvedSlots({
     slotState,
   });
+  const unresolvedUserSlots = unresolvedSlots.filter((slotKey) => cleanText(slotKey || "") !== "response_not_success");
   const selectedSkill = getPlannerSkillAction(selectedAction)
     ? selectedAction
     : null;
@@ -981,20 +1408,28 @@ function buildWorkingMemoryPatch({
     || plannerResult?.error
     || "",
   );
-  const retryableFailure = WORKING_MEMORY_RETRYABLE_ERRORS.has(plannerError);
-  const nextRetryCount = retryableFailure
-    ? previousRetryCount + 1
-    : userResponse?.ok === true
-      ? 0
-      : previousRetryCount;
-  const hasMissingSlots = unresolvedSlots.length > 0;
-  const phaseAndStatus = (() => {
+  const failureClass = deriveWorkingMemoryFailureClass({
+    plannerError,
+    unresolvedSlots: unresolvedUserSlots,
+    plannerEnvelope,
+    userResponse,
+    previousOwner,
+    currentOwner,
+  });
+  const hasMissingSlots = unresolvedUserSlots.length > 0;
+  const initialPhaseAndStatus = (() => {
     if (hasMissingSlots) {
       return { phase: "waiting_user", status: "blocked" };
     }
-    if (retryableFailure) {
+    if (failureClass === "tool_error" || failureClass === "timeout") {
       return {
-        phase: nextRetryCount < retryPolicy.max_retries ? "retrying" : "failed",
+        phase: previousRetryCount + 1 < retryPolicy.max_retries ? "retrying" : "failed",
+        status: "failed",
+      };
+    }
+    if (failureClass === "capability_gap" || failureClass === "invalid_artifact" || failureClass === "unknown") {
+      return {
+        phase: "failed",
         status: "failed",
       };
     }
@@ -1012,13 +1447,6 @@ function buildWorkingMemoryPatch({
     }
     return { phase: "planning", status: "running" };
   })();
-  const handoffReason = retryableFailure
-    ? "retry"
-    : hasMissingSlots
-      ? "needs_user_input"
-      : currentOwner && previousOwner && currentOwner !== previousOwner
-        ? "capability_gap"
-        : null;
   const previousAbandonedTaskIds = Array.isArray(previousWorkingMemory?.abandoned_task_ids)
     ? previousWorkingMemory.abandoned_task_ids
         .map((task) => cleanText(task))
@@ -1040,21 +1468,51 @@ function buildWorkingMemoryPatch({
     previousWorkingMemory,
     selectedAction,
     currentOwner,
-    unresolvedSlots,
+    previousOwner,
+    unresolvedSlots: unresolvedUserSlots,
     topicSwitch,
-    phaseAndStatus,
-    retryableFailure,
+    phaseAndStatus: initialPhaseAndStatus,
+    failureClass,
+    previousRetryCount,
+    retryPolicy,
   });
+  const resolvedPhaseAndStatus = executionPlan.phaseAndStatus
+    && typeof executionPlan.phaseAndStatus === "object"
+    && !Array.isArray(executionPlan.phaseAndStatus)
+    ? executionPlan.phaseAndStatus
+    : initialPhaseAndStatus;
+  const recoveryAction = cleanText(executionPlan.observability?.recovery_action || "") || null;
+  const recoveryAttempted = Boolean(failureClass) && (
+    recoveryAction === "retry_same_step"
+    || recoveryAction === "reroute_owner"
+    || recoveryAction === "rollback_to_step"
+    || recoveryAction === "skip_step"
+  );
+  const nextRetryCount = recoveryAttempted
+    ? previousRetryCount + 1
+    : userResponse?.ok === true
+      ? 0
+      : previousRetryCount;
+  const resolvedCurrentOwner = cleanText(executionPlan.current_owner_agent || currentOwner || "") || null;
+  const handoffReason = recoveryAction === "ask_user" || hasMissingSlots
+    ? "needs_user_input"
+    : recoveryAction === "reroute_owner" || failureClass === "capability_gap"
+      ? "capability_gap"
+      : recoveryAttempted
+        ? "retry"
+        : resolvedCurrentOwner && previousOwner && resolvedCurrentOwner !== previousOwner
+          ? "capability_gap"
+          : null;
   const patch = {
     current_goal: cleanText(requestText) || previousWorkingMemory?.current_goal || null,
     inferred_task_type: taskType,
-    last_selected_agent: currentOwner,
+    last_selected_agent: resolvedCurrentOwner,
     last_selected_skill: selectedSkill,
     last_tool_result_summary: toolSummary || null,
-    unresolved_slots: unresolvedSlots,
+    unresolved_slots: unresolvedUserSlots,
     slot_state: slotState,
     next_best_action: deriveWorkingMemoryNextBestAction({
-      unresolvedSlots,
+      unresolvedSlots: unresolvedUserSlots,
       selectedAction,
     }),
     confidence: deriveWorkingMemoryConfidence({
@@ -1063,9 +1521,9 @@ function buildWorkingMemoryPatch({
     }),
     task_id: taskId,
     task_type: taskType,
-    task_phase: phaseAndStatus.phase,
-    task_status: phaseAndStatus.status,
-    current_owner_agent: currentOwner,
+    task_phase: resolvedPhaseAndStatus.phase,
+    task_status: resolvedPhaseAndStatus.status,
+    current_owner_agent: resolvedCurrentOwner,
     previous_owner_agent: handoffReason ? previousOwner : cleanText(previousWorkingMemory?.previous_owner_agent || "") || null,
     handoff_reason: handoffReason,
     retry_count: nextRetryCount,
@@ -1088,19 +1546,21 @@ function buildWorkingMemoryPatch({
     agent_handoff: handoffReason
       ? {
           from: previousOwner,
-          to: currentOwner,
+          to: resolvedCurrentOwner,
           reason: handoffReason,
         }
       : null,
-    retry_attempt: retryableFailure
+    retry_attempt: recoveryAttempted
       ? {
+          from: previousRetryCount,
           retry_count: nextRetryCount,
           max_retries: retryPolicy.max_retries,
           strategy: retryPolicy.strategy,
+          mode: recoveryAction === "reroute_owner" ? "reroute" : "same_step",
         }
       : null,
     slot_update: {
-      pending_slots: unresolvedSlots,
+      pending_slots: unresolvedUserSlots,
       slot_state_count: slotState.length,
     },
     plan_id: executionPlan.observability?.plan_id || null,
@@ -1108,6 +1568,12 @@ function buildWorkingMemoryPatch({
     current_step: executionPlan.observability?.current_step || null,
     step_transition: executionPlan.observability?.step_transition || null,
     plan_invalidated: executionPlan.observability?.plan_invalidated || null,
+    failure_class: executionPlan.observability?.failure_class || null,
+    recovery_policy: executionPlan.observability?.recovery_policy || null,
+    recovery_action: executionPlan.observability?.recovery_action || null,
+    recovery_attempt_count: executionPlan.observability?.recovery_attempt_count ?? null,
+    rollback_target_step_id: executionPlan.observability?.rollback_target_step_id || null,
+    skipped_step_ids: executionPlan.observability?.skipped_step_ids || null,
     resumed_from_waiting_user: executionPlan.observability?.resumed_from_waiting_user === true,
     resumed_from_retry: executionPlan.observability?.resumed_from_retry === true,
     task_abandoned: topicSwitch && previousTaskId
@@ -1117,6 +1583,13 @@ function buildWorkingMemoryPatch({
         }
       : null,
   };
+  if (Array.isArray(unresolvedSlots) && unresolvedSlots.length > unresolvedUserSlots.length) {
+    observability.slot_update = {
+      pending_slots: unresolvedUserSlots,
+      slot_state_count: slotState.length,
+      technical_slots: unresolvedSlots.filter((slotKey) => cleanText(slotKey || "") === "response_not_success"),
+    };
+  }
   return {
     patch,
     observability,
@@ -1196,6 +1669,12 @@ export async function runPlannerUserInputEdge({
     current_step: null,
     step_transition: null,
     plan_invalidated: null,
+    failure_class: null,
+    recovery_policy: null,
+    recovery_action: null,
+    recovery_attempt_count: null,
+    rollback_target_step_id: null,
+    skipped_step_ids: null,
     resumed_from_waiting_user: false,
     resumed_from_retry: false,
     task_abandoned: null,
@@ -1260,6 +1739,16 @@ export async function runPlannerUserInputEdge({
     current_step: mergedMemoryObservability.current_step || null,
     step_transition: mergedMemoryObservability.step_transition || null,
     plan_invalidated: mergedMemoryObservability.plan_invalidated || null,
+    failure_class: mergedMemoryObservability.failure_class || null,
+    recovery_policy: mergedMemoryObservability.recovery_policy || null,
+    recovery_action: mergedMemoryObservability.recovery_action || null,
+    recovery_attempt_count: Number.isFinite(Number(mergedMemoryObservability.recovery_attempt_count))
+      ? Number(mergedMemoryObservability.recovery_attempt_count)
+      : null,
+    rollback_target_step_id: mergedMemoryObservability.rollback_target_step_id || null,
+    skipped_step_ids: Array.isArray(mergedMemoryObservability.skipped_step_ids)
+      ? mergedMemoryObservability.skipped_step_ids
+      : null,
     resumed_from_waiting_user: mergedMemoryObservability.resumed_from_waiting_user === true,
     resumed_from_retry: mergedMemoryObservability.resumed_from_retry === true,
     task_abandoned: mergedMemoryObservability.task_abandoned || null,
