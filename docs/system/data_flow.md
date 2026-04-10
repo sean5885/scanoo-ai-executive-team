@@ -161,7 +161,7 @@ Current truth:
 - before the public boundary returns a generic failure, the checked-in normalizer now does a minimal mixed-request decomposition for copy/image/send-style asks and returns partial success when at least one text-draft subtask is still doable
 - answer evidence is surfaced through canonical source mapping before public rendering
 - the checked-in normalizer now reads only canonical `execution_result.data.answer / sources / limitations`
-- session working-memory v2 write-back is centralized at this answer boundary (not mid-planner): only stable final outputs write patch updates; patch writes now include task/phase/status/owner/retry/slot updates together with v1-compatible fields, and malformed/missing memory reads still fail closed and are treated as miss during pre-routing reuse
+- session working-memory v2 write-back is centralized at this answer boundary (not mid-planner): only stable final outputs write patch updates; patch writes now include task/phase/status/owner/retry/slot updates, plus execution-plan persistence v1 updates (`plan_status`, `current_step_id`, `step.status`, `artifact_refs`, `slot_requirements`) via patch-merge semantics together with v1-compatible fields, and malformed/missing memory reads still fail closed and are treated as miss during pre-routing reuse
 - planner JSON requests now attempt to prepend one optional file-backed action system prompt (`/Users/seanhan/Documents/Playground/src/prompts/action-system-prompt.txt`) before the existing planner system prompt; when the file is missing/unreadable this step fail-soft skips and keeps the prior prompt path
 
 ### Secondary Retrieval-Answer Helper

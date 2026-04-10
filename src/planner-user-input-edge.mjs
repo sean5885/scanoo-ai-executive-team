@@ -34,6 +34,20 @@ const DEFAULT_WORKING_MEMORY_RETRY_POLICY = Object.freeze({
   max_retries: 2,
   strategy: "same_agent_then_reroute",
 });
+const WORKING_MEMORY_PLAN_STATUSES = new Set([
+  "active",
+  "paused",
+  "completed",
+  "invalidated",
+]);
+const WORKING_MEMORY_PLAN_STEP_STATUSES = new Set([
+  "pending",
+  "running",
+  "blocked",
+  "completed",
+  "failed",
+  "skipped",
+]);
 
 function resolveEdgeExecution(result = {}) {
   return result?.execution_result && typeof result.execution_result === "object"
@@ -532,6 +546,390 @@ function deriveWorkingMemoryConfidence({
     : 0.76;
 }
 
+function buildWorkingMemoryPlanId() {
+  return `plan_${Date.now()}_${randomUUID().slice(0, 8)}`;
+}
+
+function normalizeExecutionPlanStepStatus(status = "") {
+  const normalized = cleanText(status);
+  return WORKING_MEMORY_PLAN_STEP_STATUSES.has(normalized)
+    ? normalized
+    : null;
+}
+
+function normalizeExecutionPlan(plan = null) {
+  if (!plan || typeof plan !== "object" || Array.isArray(plan)) {
+    return null;
+  }
+  const planId = cleanText(plan.plan_id || "");
+  const planStatus = cleanText(plan.plan_status || "");
+  if (!planId || !WORKING_MEMORY_PLAN_STATUSES.has(planStatus)) {
+    return null;
+  }
+  const steps = Array.isArray(plan.steps)
+    ? plan.steps
+        .map((step) => {
+          const stepId = cleanText(step?.step_id || "");
+          const stepType = cleanText(step?.step_type || "");
+          const ownerAgent = cleanText(step?.owner_agent || "");
+          const intendedAction = cleanText(step?.intended_action || "");
+          const status = normalizeExecutionPlanStepStatus(step?.status || "");
+          if (!stepId || !stepType || !ownerAgent || !intendedAction || !status) {
+            return null;
+          }
+          const dependsOn = Array.isArray(step.depends_on)
+            ? step.depends_on.map((item) => cleanText(item)).filter(Boolean)
+            : [];
+          const artifactRefs = Array.isArray(step.artifact_refs)
+            ? step.artifact_refs.map((item) => cleanText(item)).filter(Boolean)
+            : [];
+          const slotRequirements = Array.isArray(step.slot_requirements)
+            ? step.slot_requirements.map((item) => cleanText(item)).filter(Boolean)
+            : [];
+          return {
+            step_id: stepId,
+            step_type: stepType,
+            owner_agent: ownerAgent,
+            intended_action: intendedAction,
+            status,
+            depends_on: Array.from(new Set(dependsOn)),
+            retryable: step.retryable !== false,
+            artifact_refs: Array.from(new Set(artifactRefs)),
+            slot_requirements: Array.from(new Set(slotRequirements)),
+          };
+        })
+        .filter(Boolean)
+    : [];
+  if (steps.length === 0) {
+    return null;
+  }
+  const currentStepId = cleanText(plan.current_step_id || "") || null;
+  if (currentStepId && !steps.some((step) => step.step_id === currentStepId)) {
+    return null;
+  }
+  return {
+    plan_id: planId,
+    plan_status: planStatus,
+    current_step_id: currentStepId,
+    steps,
+  };
+}
+
+function collectExecutionPlanActions({
+  plannerResult = null,
+  plannerEnvelope = null,
+  selectedAction = "",
+  previousPlan = null,
+} = {}) {
+  const decisionSteps = Array.isArray(plannerResult?.steps)
+    ? plannerResult.steps
+    : Array.isArray(plannerEnvelope?.steps)
+      ? plannerEnvelope.steps
+      : Array.isArray(plannerResult?.execution_result?.steps)
+        ? plannerResult.execution_result.steps
+        : [];
+  const plannedActions = decisionSteps
+    .map((step) => cleanText(step?.action || ""))
+    .filter(Boolean);
+  if (plannedActions.length > 0) {
+    return plannedActions;
+  }
+  if (previousPlan?.steps?.length) {
+    const actions = previousPlan.steps.map((step) => cleanText(step.intended_action)).filter(Boolean);
+    const nextSelectedAction = cleanText(selectedAction);
+    if (nextSelectedAction && !actions.includes(nextSelectedAction)) {
+      actions.push(nextSelectedAction);
+    }
+    return actions;
+  }
+  if (cleanText(selectedAction)) {
+    return [cleanText(selectedAction)];
+  }
+  return [];
+}
+
+function collectExecutionPlanArtifactRefs({
+  userResponse = null,
+  plannerEnvelope = null,
+  plannerResult = null,
+} = {}) {
+  const refs = [];
+  const append = (value) => {
+    const normalized = cleanText(value);
+    if (normalized) {
+      refs.push(normalized);
+    }
+  };
+  for (const source of Array.isArray(userResponse?.sources) ? userResponse.sources : []) {
+    if (typeof source === "string") {
+      append(source);
+      continue;
+    }
+    append(source?.doc_id || source?.id || source?.title || source?.name);
+  }
+  for (const item of Array.isArray(plannerEnvelope?.formatted_output?.items)
+    ? plannerEnvelope.formatted_output.items
+    : []) {
+    append(item?.doc_id || item?.id || item?.title || item?.name);
+  }
+  const traceId = cleanText(plannerResult?.trace_id || plannerResult?.execution_result?.trace_id || "");
+  if (traceId) {
+    append(`trace:${traceId}`);
+  }
+  return Array.from(new Set(refs)).slice(0, 8);
+}
+
+function buildExecutionPlanStepTransitions(previousPlan = null, nextPlan = null) {
+  const basePlan = normalizeExecutionPlan(previousPlan);
+  const currentPlan = normalizeExecutionPlan(nextPlan);
+  if (!currentPlan) {
+    return null;
+  }
+  const baseMap = new Map((basePlan?.steps || []).map((step) => [step.step_id, step.status]));
+  const currentMap = new Map(currentPlan.steps.map((step) => [step.step_id, step.status]));
+  const transitions = [];
+  const stepIds = Array.from(new Set([
+    ...Array.from(baseMap.keys()),
+    ...Array.from(currentMap.keys()),
+  ]));
+  for (const stepId of stepIds) {
+    const from = baseMap.has(stepId) ? baseMap.get(stepId) : null;
+    const to = currentMap.has(stepId) ? currentMap.get(stepId) : null;
+    if (from !== to) {
+      transitions.push({
+        step_id: stepId,
+        from,
+        to,
+      });
+    }
+  }
+  const fromCurrent = cleanText(basePlan?.current_step_id || "") || null;
+  const toCurrent = cleanText(currentPlan.current_step_id || "") || null;
+  if (transitions.length === 0 && fromCurrent === toCurrent) {
+    return null;
+  }
+  return {
+    from_current_step_id: fromCurrent,
+    to_current_step_id: toCurrent,
+    steps: transitions,
+  };
+}
+
+function buildWorkingMemoryExecutionPlanPatch({
+  plannerResult = null,
+  plannerEnvelope = null,
+  userResponse = null,
+  previousWorkingMemory = null,
+  selectedAction = "",
+  currentOwner = null,
+  unresolvedSlots = [],
+  topicSwitch = false,
+  phaseAndStatus = { phase: "planning", status: "running" },
+  retryableFailure = false,
+} = {}) {
+  const previousPlan = normalizeExecutionPlan(previousWorkingMemory?.execution_plan);
+  const planActions = collectExecutionPlanActions({
+    plannerResult,
+    plannerEnvelope,
+    selectedAction,
+    previousPlan,
+  });
+  if (planActions.length === 0) {
+    return {
+      patch: null,
+      observability: {
+        plan_id: null,
+        plan_status: null,
+        current_step: null,
+        step_transition: null,
+        plan_invalidated: null,
+        resumed_from_waiting_user: false,
+        resumed_from_retry: false,
+      },
+    };
+  }
+
+  const planId = (topicSwitch || !previousPlan)
+    ? buildWorkingMemoryPlanId()
+    : previousPlan.plan_id;
+  const ownerAgent = cleanText(currentOwner || previousWorkingMemory?.current_owner_agent || previousWorkingMemory?.last_selected_agent || "") || "planner_agent";
+  const runtimeResult = plannerResult?.execution_result && typeof plannerResult.execution_result === "object"
+    ? plannerResult.execution_result
+    : {};
+  const runtimeCurrentStepIndex = Number.isInteger(runtimeResult.current_step_index)
+    ? Number(runtimeResult.current_step_index)
+    : null;
+  const runtimeStoppedAtStep = Number.isInteger(runtimeResult.stopped_at_step)
+    ? Number(runtimeResult.stopped_at_step)
+    : null;
+  const previousSteps = Array.isArray(previousPlan?.steps) ? previousPlan.steps : [];
+  const usedPreviousStepIds = new Set();
+  const steps = planActions.map((action, index) => {
+    const previousByIndex = previousSteps[index];
+    const previousByAction = previousSteps.find((step) =>
+      step.intended_action === action && !usedPreviousStepIds.has(step.step_id));
+    const previousStep = previousByIndex?.intended_action === action
+      ? previousByIndex
+      : previousByAction || null;
+    if (previousStep?.step_id) {
+      usedPreviousStepIds.add(previousStep.step_id);
+    }
+    const stepId = cleanText(previousStep?.step_id || "") || `${planId}_step_${index + 1}`;
+    const dependsOn = index > 0
+      ? [cleanText(previousSteps[index - 1]?.step_id || "") || `${planId}_step_${index}`]
+      : [];
+    return {
+      step_id: stepId,
+      step_type: cleanText(previousStep?.step_type || "") || "planner_action",
+      owner_agent: cleanText(previousStep?.owner_agent || "") || ownerAgent,
+      intended_action: action,
+      status: normalizeExecutionPlanStepStatus(previousStep?.status || "") || "pending",
+      depends_on: dependsOn,
+      retryable: previousStep?.retryable !== false,
+      artifact_refs: Array.isArray(previousStep?.artifact_refs) ? previousStep.artifact_refs.slice(0, 8) : [],
+      slot_requirements: Array.isArray(previousStep?.slot_requirements) ? previousStep.slot_requirements.slice(0, 6) : [],
+    };
+  });
+
+  if (steps.length === 0) {
+    return {
+      patch: null,
+      observability: {
+        plan_id: null,
+        plan_status: null,
+        current_step: null,
+        step_transition: null,
+        plan_invalidated: null,
+        resumed_from_waiting_user: false,
+        resumed_from_retry: false,
+      },
+    };
+  }
+
+  const completedCount = runtimeCurrentStepIndex !== null
+    ? Math.max(0, Math.min(runtimeCurrentStepIndex, steps.length))
+    : 0;
+  for (let index = 0; index < completedCount; index += 1) {
+    steps[index].status = "completed";
+  }
+  const selectedStepIndex = selectedAction
+    ? steps.findIndex((step) => step.intended_action === selectedAction)
+    : -1;
+  const successfulTurnWithoutRuntimeIndex = runtimeCurrentStepIndex === null
+    && selectedStepIndex >= 0
+    && userResponse?.ok === true
+    && phaseAndStatus.phase !== "waiting_user"
+    && phaseAndStatus.phase !== "failed"
+    && !retryableFailure;
+  if (successfulTurnWithoutRuntimeIndex) {
+    for (let index = 0; index < selectedStepIndex; index += 1) {
+      if (steps[index].status !== "completed" && steps[index].status !== "skipped") {
+        steps[index].status = "completed";
+      }
+    }
+    steps[selectedStepIndex].status = "completed";
+  }
+  if (runtimeStoppedAtStep !== null && steps[runtimeStoppedAtStep]) {
+    steps[runtimeStoppedAtStep].status = "failed";
+  }
+
+  let activeStepIndex = (() => {
+    if (runtimeStoppedAtStep !== null && steps[runtimeStoppedAtStep]) {
+      return runtimeStoppedAtStep;
+    }
+    if (runtimeCurrentStepIndex !== null && runtimeCurrentStepIndex >= 0 && runtimeCurrentStepIndex < steps.length) {
+      return runtimeCurrentStepIndex;
+    }
+    if (successfulTurnWithoutRuntimeIndex && selectedStepIndex >= 0) {
+      const nextIndex = selectedStepIndex + 1;
+      if (nextIndex < steps.length) {
+        return nextIndex;
+      }
+      return null;
+    }
+    if (selectedStepIndex >= 0) {
+      return selectedStepIndex;
+    }
+    return steps.findIndex((step) => step.status !== "completed" && step.status !== "skipped");
+  })();
+
+  if (activeStepIndex < 0) {
+    activeStepIndex = null;
+  }
+
+  if (activeStepIndex !== null) {
+    if (phaseAndStatus.phase === "waiting_user") {
+      steps[activeStepIndex].status = "blocked";
+      steps[activeStepIndex].slot_requirements = Array.from(new Set(unresolvedSlots)).slice(0, 6);
+    } else if (retryableFailure || phaseAndStatus.phase === "failed") {
+      steps[activeStepIndex].status = "failed";
+    } else if (phaseAndStatus.phase === "executing" || phaseAndStatus.phase === "retrying") {
+      if (steps[activeStepIndex].status !== "completed") {
+        steps[activeStepIndex].status = "running";
+      }
+      steps[activeStepIndex].slot_requirements = Array.from(new Set(unresolvedSlots)).slice(0, 6);
+    }
+  }
+
+  const artifactRefs = collectExecutionPlanArtifactRefs({
+    userResponse,
+    plannerEnvelope,
+    plannerResult,
+  });
+  const artifactStepIndex = activeStepIndex !== null
+    ? activeStepIndex
+    : Math.max(0, steps.length - 1);
+  if (steps[artifactStepIndex] && artifactRefs.length > 0) {
+    steps[artifactStepIndex].artifact_refs = artifactRefs;
+  }
+
+  const allStepsCompleted = steps.every((step) => step.status === "completed" || step.status === "skipped");
+  const planStatus = (() => {
+    if (allStepsCompleted || phaseAndStatus.phase === "done") {
+      return "completed";
+    }
+    if (phaseAndStatus.phase === "waiting_user") {
+      return "paused";
+    }
+    if (phaseAndStatus.phase === "failed" && !retryableFailure) {
+      return "paused";
+    }
+    return "active";
+  })();
+  const currentStepId = planStatus === "completed"
+    ? null
+    : activeStepIndex !== null
+      ? steps[activeStepIndex].step_id
+      : steps.find((step) => step.status !== "completed" && step.status !== "skipped")?.step_id || null;
+  const nextPlan = {
+    plan_id: planId,
+    plan_status: planStatus,
+    current_step_id: currentStepId,
+    steps,
+  };
+  const previousPhase = cleanText(previousWorkingMemory?.task_phase || "");
+  const previousStatus = cleanText(previousWorkingMemory?.task_status || "");
+  return {
+    patch: nextPlan,
+    observability: {
+      plan_id: nextPlan.plan_id,
+      plan_status: nextPlan.plan_status,
+      current_step: nextPlan.current_step_id,
+      step_transition: buildExecutionPlanStepTransitions(previousPlan, nextPlan),
+      plan_invalidated: topicSwitch && previousPlan
+        ? {
+            plan_id: previousPlan.plan_id,
+            reason: "topic_switch",
+          }
+        : null,
+      resumed_from_waiting_user: previousPhase === "waiting_user"
+        && phaseAndStatus.phase === "executing",
+      resumed_from_retry: (previousPhase === "retrying" || previousStatus === "failed")
+        && phaseAndStatus.phase === "executing",
+    },
+  };
+}
+
 function buildWorkingMemoryPatch({
   requestText = "",
   plannerResult = null,
@@ -635,6 +1033,18 @@ function buildWorkingMemoryPatch({
     || userResponse?.answer
     || "",
   );
+  const executionPlan = buildWorkingMemoryExecutionPlanPatch({
+    plannerResult,
+    plannerEnvelope,
+    userResponse,
+    previousWorkingMemory,
+    selectedAction,
+    currentOwner,
+    unresolvedSlots,
+    topicSwitch,
+    phaseAndStatus,
+    retryableFailure,
+  });
   const patch = {
     current_goal: cleanText(requestText) || previousWorkingMemory?.current_goal || null,
     inferred_task_type: taskType,
@@ -661,6 +1071,9 @@ function buildWorkingMemoryPatch({
     retry_count: nextRetryCount,
     retry_policy: retryPolicy,
     abandoned_task_ids: abandonedTaskIds,
+    ...(executionPlan.patch
+      ? { execution_plan: executionPlan.patch }
+      : {}),
   };
   const previousPhase = cleanText(previousWorkingMemory?.task_phase || "") || null;
   const previousStatus = cleanText(previousWorkingMemory?.task_status || "") || null;
@@ -690,6 +1103,13 @@ function buildWorkingMemoryPatch({
       pending_slots: unresolvedSlots,
       slot_state_count: slotState.length,
     },
+    plan_id: executionPlan.observability?.plan_id || null,
+    plan_status: executionPlan.observability?.plan_status || null,
+    current_step: executionPlan.observability?.current_step || null,
+    step_transition: executionPlan.observability?.step_transition || null,
+    plan_invalidated: executionPlan.observability?.plan_invalidated || null,
+    resumed_from_waiting_user: executionPlan.observability?.resumed_from_waiting_user === true,
+    resumed_from_retry: executionPlan.observability?.resumed_from_retry === true,
     task_abandoned: topicSwitch && previousTaskId
       ? {
           task_id: previousTaskId,
@@ -771,6 +1191,13 @@ export async function runPlannerUserInputEdge({
     agent_handoff: null,
     retry_attempt: null,
     slot_update: null,
+    plan_id: null,
+    plan_status: null,
+    current_step: null,
+    step_transition: null,
+    plan_invalidated: null,
+    resumed_from_waiting_user: false,
+    resumed_from_retry: false,
     task_abandoned: null,
   };
   let previousWorkingMemory = null;
@@ -828,6 +1255,13 @@ export async function runPlannerUserInputEdge({
     agent_handoff: mergedMemoryObservability.agent_handoff || null,
     retry_attempt: mergedMemoryObservability.retry_attempt || null,
     slot_update: mergedMemoryObservability.slot_update || null,
+    plan_id: mergedMemoryObservability.plan_id || null,
+    plan_status: mergedMemoryObservability.plan_status || null,
+    current_step: mergedMemoryObservability.current_step || null,
+    step_transition: mergedMemoryObservability.step_transition || null,
+    plan_invalidated: mergedMemoryObservability.plan_invalidated || null,
+    resumed_from_waiting_user: mergedMemoryObservability.resumed_from_waiting_user === true,
+    resumed_from_retry: mergedMemoryObservability.resumed_from_retry === true,
     task_abandoned: mergedMemoryObservability.task_abandoned || null,
     task_trace_summary: taskTrace.summary,
     task_trace_diff: taskTrace.diff,

@@ -45,6 +45,22 @@ const PLANNER_WORKING_MEMORY_RETRY_STRATEGIES = new Set([
   "reroute",
   "same_agent_then_reroute",
 ]);
+const PLANNER_WORKING_MEMORY_PLAN_STATUSES = new Set([
+  "active",
+  "paused",
+  "completed",
+  "invalidated",
+]);
+const PLANNER_WORKING_MEMORY_STEP_STATUSES = new Set([
+  "pending",
+  "running",
+  "blocked",
+  "completed",
+  "failed",
+  "skipped",
+]);
+const PLANNER_WORKING_MEMORY_PLAN_STEP_LIMIT = 12;
+const PLANNER_WORKING_MEMORY_PLAN_REF_LIMIT = 8;
 const DEFAULT_PLANNER_WORKING_MEMORY_RETRY_POLICY = Object.freeze({
   max_retries: 2,
   strategy: "same_agent_then_reroute",
@@ -80,6 +96,7 @@ const PLANNER_WORKING_MEMORY_PATCHABLE_KEYS = Object.freeze([
   "retry_policy",
   "slot_state",
   "abandoned_task_ids",
+  "execution_plan",
 ]);
 
 const plannerConversationMemoryState = {
@@ -122,6 +139,7 @@ function buildEmptyPlannerWorkingMemory() {
     retry_policy: { ...DEFAULT_PLANNER_WORKING_MEMORY_RETRY_POLICY },
     slot_state: [],
     abandoned_task_ids: [],
+    execution_plan: null,
     updated_at: null,
   };
 }
@@ -314,6 +332,362 @@ function normalizeWorkingMemoryAbandonedTaskIds(value = []) {
     .slice(-8);
 }
 
+function normalizeWorkingMemoryExecutionPlanStatus(value = "") {
+  const normalized = cleanText(value);
+  if (!normalized) {
+    return null;
+  }
+  return PLANNER_WORKING_MEMORY_PLAN_STATUSES.has(normalized)
+    ? normalized
+    : null;
+}
+
+function normalizeWorkingMemoryExecutionPlanRefs(value = [], { limit = PLANNER_WORKING_MEMORY_PLAN_REF_LIMIT } = {}) {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  return Array.from(new Set(value
+    .map((item) => normalizeWorkingMemoryString(item))
+    .filter(Boolean)))
+    .slice(0, limit);
+}
+
+function normalizeWorkingMemoryExecutionPlanStep(step = null, { allowPartial = false } = {}) {
+  if (!step || typeof step !== "object" || Array.isArray(step)) {
+    return null;
+  }
+  const hasField = (field) => Object.prototype.hasOwnProperty.call(step, field);
+  const stepId = normalizeWorkingMemoryString(step.step_id);
+  if (!stepId) {
+    return null;
+  }
+
+  const normalizedStep = {
+    step_id: stepId,
+  };
+
+  const stepType = normalizeWorkingMemoryString(step.step_type);
+  if (allowPartial) {
+    if (hasField("step_type")) {
+      if (!stepType) {
+        return null;
+      }
+      normalizedStep.step_type = stepType;
+    }
+  } else if (!stepType) {
+    return null;
+  } else {
+    normalizedStep.step_type = stepType;
+  }
+
+  const ownerAgent = normalizeWorkingMemoryString(step.owner_agent);
+  if (allowPartial) {
+    if (hasField("owner_agent")) {
+      if (!ownerAgent) {
+        return null;
+      }
+      normalizedStep.owner_agent = ownerAgent;
+    }
+  } else if (!ownerAgent) {
+    return null;
+  } else {
+    normalizedStep.owner_agent = ownerAgent;
+  }
+
+  const intendedAction = normalizeWorkingMemoryString(step.intended_action);
+  if (allowPartial) {
+    if (hasField("intended_action")) {
+      if (!intendedAction) {
+        return null;
+      }
+      normalizedStep.intended_action = intendedAction;
+    }
+  } else if (!intendedAction) {
+    return null;
+  } else {
+    normalizedStep.intended_action = intendedAction;
+  }
+
+  const status = cleanText(step.status || "");
+  if (allowPartial) {
+    if (hasField("status")) {
+      if (!PLANNER_WORKING_MEMORY_STEP_STATUSES.has(status)) {
+        return null;
+      }
+      normalizedStep.status = status;
+    }
+  } else if (!PLANNER_WORKING_MEMORY_STEP_STATUSES.has(status)) {
+    return null;
+  } else {
+    normalizedStep.status = status;
+  }
+
+  if (allowPartial) {
+    if (hasField("retryable")) {
+      if (typeof step.retryable !== "boolean") {
+        return null;
+      }
+      normalizedStep.retryable = step.retryable;
+    }
+  } else if (typeof step.retryable !== "boolean") {
+    return null;
+  } else {
+    normalizedStep.retryable = step.retryable;
+  }
+
+  const dependsOn = normalizeWorkingMemoryExecutionPlanRefs(step.depends_on);
+  if (allowPartial) {
+    if (hasField("depends_on")) {
+      if (!Array.isArray(dependsOn)) {
+        return null;
+      }
+      normalizedStep.depends_on = dependsOn;
+    }
+  } else if (!Array.isArray(dependsOn)) {
+    return null;
+  } else {
+    normalizedStep.depends_on = dependsOn;
+  }
+
+  const artifactRefs = normalizeWorkingMemoryExecutionPlanRefs(step.artifact_refs);
+  if (allowPartial) {
+    if (hasField("artifact_refs")) {
+      if (!Array.isArray(artifactRefs)) {
+        return null;
+      }
+      normalizedStep.artifact_refs = artifactRefs;
+    }
+  } else if (!Array.isArray(artifactRefs)) {
+    return null;
+  } else {
+    normalizedStep.artifact_refs = artifactRefs;
+  }
+
+  const slotRequirements = normalizeWorkingMemoryExecutionPlanRefs(step.slot_requirements, {
+    limit: PLANNER_WORKING_MEMORY_SLOT_LIMIT,
+  });
+  if (allowPartial) {
+    if (hasField("slot_requirements")) {
+      if (!Array.isArray(slotRequirements)) {
+        return null;
+      }
+      normalizedStep.slot_requirements = slotRequirements;
+    }
+  } else if (!Array.isArray(slotRequirements)) {
+    return null;
+  } else {
+    normalizedStep.slot_requirements = slotRequirements;
+  }
+
+  return normalizedStep;
+}
+
+function normalizeWorkingMemoryExecutionPlanSteps(steps = [], { allowPartial = false } = {}) {
+  if (!Array.isArray(steps)) {
+    return null;
+  }
+  const normalizedSteps = [];
+  const seenStepIds = new Set();
+  for (const step of steps) {
+    const normalizedStep = normalizeWorkingMemoryExecutionPlanStep(step, { allowPartial });
+    if (!normalizedStep) {
+      return null;
+    }
+    if (seenStepIds.has(normalizedStep.step_id)) {
+      return null;
+    }
+    seenStepIds.add(normalizedStep.step_id);
+    normalizedSteps.push(normalizedStep);
+    if (normalizedSteps.length >= PLANNER_WORKING_MEMORY_PLAN_STEP_LIMIT) {
+      break;
+    }
+  }
+  return normalizedSteps;
+}
+
+function normalizeWorkingMemoryExecutionPlan(value = null) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const planId = normalizeWorkingMemoryString(value.plan_id);
+  const planStatus = normalizeWorkingMemoryExecutionPlanStatus(value.plan_status);
+  const currentStepId = value.current_step_id === null || value.current_step_id === undefined || value.current_step_id === ""
+    ? null
+    : normalizeWorkingMemoryString(value.current_step_id);
+  const steps = normalizeWorkingMemoryExecutionPlanSteps(value.steps);
+
+  if (!planId || !planStatus || !Array.isArray(steps) || currentStepId === undefined) {
+    return null;
+  }
+  if (steps.length === 0 && planStatus !== "completed" && planStatus !== "invalidated") {
+    return null;
+  }
+  const stepIds = new Set(steps.map((step) => step.step_id));
+  if (currentStepId && !stepIds.has(currentStepId)) {
+    return null;
+  }
+
+  let resolvedCurrentStepId = currentStepId;
+  if (!resolvedCurrentStepId && planStatus === "active") {
+    const firstPendingStep = steps.find((step) =>
+      step.status === "pending"
+      || step.status === "running"
+      || step.status === "blocked"
+      || step.status === "failed");
+    resolvedCurrentStepId = firstPendingStep?.step_id || null;
+  }
+  if (planStatus === "completed" || planStatus === "invalidated") {
+    resolvedCurrentStepId = null;
+  }
+
+  return {
+    plan_id: planId,
+    plan_status: planStatus,
+    current_step_id: resolvedCurrentStepId,
+    steps,
+  };
+}
+
+function normalizeWorkingMemoryExecutionPlanPatch(value = null) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const hasField = (field) => Object.prototype.hasOwnProperty.call(value, field);
+  const normalizedPatch = {};
+
+  if (hasField("plan_id")) {
+    const planId = normalizeWorkingMemoryString(value.plan_id);
+    if (!planId) {
+      return null;
+    }
+    normalizedPatch.plan_id = planId;
+  }
+  if (hasField("plan_status")) {
+    const planStatus = normalizeWorkingMemoryExecutionPlanStatus(value.plan_status);
+    if (!planStatus) {
+      return null;
+    }
+    normalizedPatch.plan_status = planStatus;
+  }
+  if (hasField("current_step_id")) {
+    if (value.current_step_id === null || value.current_step_id === undefined || value.current_step_id === "") {
+      normalizedPatch.current_step_id = null;
+    } else {
+      const currentStepId = normalizeWorkingMemoryString(value.current_step_id);
+      if (!currentStepId) {
+        return null;
+      }
+      normalizedPatch.current_step_id = currentStepId;
+    }
+  }
+  if (hasField("steps")) {
+    const steps = normalizeWorkingMemoryExecutionPlanSteps(value.steps, { allowPartial: true });
+    if (!Array.isArray(steps)) {
+      return null;
+    }
+    normalizedPatch.steps = steps;
+  }
+  if (Object.keys(normalizedPatch).length === 0) {
+    return null;
+  }
+  return normalizedPatch;
+}
+
+function mergeWorkingMemoryExecutionPlan(basePlan = null, patch = null) {
+  if (patch === null || patch === undefined) {
+    return null;
+  }
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+    return null;
+  }
+  const base = normalizeWorkingMemoryExecutionPlan(basePlan);
+  const mergedPlan = base
+    ? {
+        plan_id: base.plan_id,
+        plan_status: base.plan_status,
+        current_step_id: base.current_step_id,
+        steps: base.steps.map((step) => ({ ...step })),
+      }
+    : {
+        plan_id: null,
+        plan_status: "active",
+        current_step_id: null,
+        steps: [],
+      };
+
+  if (Object.prototype.hasOwnProperty.call(patch, "plan_id")) {
+    mergedPlan.plan_id = patch.plan_id;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, "plan_status")) {
+    mergedPlan.plan_status = patch.plan_status;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, "current_step_id")) {
+    mergedPlan.current_step_id = patch.current_step_id;
+  }
+  if (Array.isArray(patch.steps)) {
+    const stepOrder = mergedPlan.steps.map((step) => step.step_id);
+    const stepMap = new Map(mergedPlan.steps.map((step) => [step.step_id, { ...step }]));
+    for (const stepPatch of patch.steps) {
+      const stepId = normalizeWorkingMemoryString(stepPatch?.step_id);
+      if (!stepId) {
+        return null;
+      }
+      if (!stepMap.has(stepId)) {
+        stepMap.set(stepId, { step_id: stepId });
+        stepOrder.push(stepId);
+      }
+      stepMap.set(stepId, {
+        ...stepMap.get(stepId),
+        ...stepPatch,
+      });
+    }
+    mergedPlan.steps = stepOrder
+      .map((stepId) => stepMap.get(stepId))
+      .filter(Boolean);
+  }
+
+  return normalizeWorkingMemoryExecutionPlan(mergedPlan);
+}
+
+function buildExecutionPlanStepTransition(basePlan = null, nextPlan = null) {
+  const normalizedBase = normalizeWorkingMemoryExecutionPlan(basePlan);
+  const normalizedNext = normalizeWorkingMemoryExecutionPlan(nextPlan);
+  if (!normalizedNext) {
+    return null;
+  }
+  const baseStepMap = new Map((normalizedBase?.steps || []).map((step) => [step.step_id, step.status]));
+  const nextStepMap = new Map((normalizedNext.steps || []).map((step) => [step.step_id, step.status]));
+  const stepTransitions = [];
+  const stepIds = Array.from(new Set([
+    ...Array.from(baseStepMap.keys()),
+    ...Array.from(nextStepMap.keys()),
+  ]));
+  for (const stepId of stepIds) {
+    const fromStatus = baseStepMap.has(stepId) ? baseStepMap.get(stepId) : null;
+    const toStatus = nextStepMap.has(stepId) ? nextStepMap.get(stepId) : null;
+    if (fromStatus !== toStatus) {
+      stepTransitions.push({
+        step_id: stepId,
+        from: fromStatus,
+        to: toStatus,
+      });
+    }
+  }
+  const fromCurrentStep = normalizeWorkingMemoryString(normalizedBase?.current_step_id);
+  const toCurrentStep = normalizeWorkingMemoryString(normalizedNext.current_step_id);
+  if (stepTransitions.length === 0 && fromCurrentStep === toCurrentStep) {
+    return null;
+  }
+  return {
+    from_current_step_id: fromCurrentStep || null,
+    to_current_step_id: toCurrentStep || null,
+    steps: stepTransitions,
+  };
+}
+
 function normalizePlannerWorkingMemory(value = null) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
@@ -362,6 +736,9 @@ function normalizePlannerWorkingMemory(value = null) {
   if (value.abandoned_task_ids !== null && value.abandoned_task_ids !== undefined && !Array.isArray(value.abandoned_task_ids)) {
     return null;
   }
+  if (value.execution_plan !== null && value.execution_plan !== undefined && (typeof value.execution_plan !== "object" || Array.isArray(value.execution_plan))) {
+    return null;
+  }
 
   const unresolvedSlots = normalizeWorkingMemorySlots(value.unresolved_slots);
   if (unresolvedSlots.length !== value.unresolved_slots.length) {
@@ -407,6 +784,10 @@ function normalizePlannerWorkingMemory(value = null) {
     : slotStateProvided
       ? []
       : unresolvedSlots;
+  const executionPlan = normalizeWorkingMemoryExecutionPlan(value.execution_plan);
+  if (value.execution_plan !== null && value.execution_plan !== undefined && value.execution_plan !== "" && executionPlan === null) {
+    return null;
+  }
 
   return {
     current_goal: normalizeWorkingMemoryString(value.current_goal),
@@ -431,6 +812,7 @@ function normalizePlannerWorkingMemory(value = null) {
     retry_policy: retryPolicy,
     slot_state: slotState,
     abandoned_task_ids: normalizeWorkingMemoryAbandonedTaskIds(value.abandoned_task_ids || []),
+    execution_plan: executionPlan,
     updated_at: normalizeWorkingMemoryString(value.updated_at),
   };
 }
@@ -939,6 +1321,26 @@ function normalizePlannerWorkingMemoryPatchValue(key, value) {
     };
   }
 
+  if (key === "execution_plan") {
+    if (value === null || value === undefined || value === "") {
+      return {
+        ok: true,
+        value: null,
+      };
+    }
+    const normalizedPlanPatch = normalizeWorkingMemoryExecutionPlanPatch(value);
+    if (!normalizedPlanPatch) {
+      return {
+        ok: false,
+        error: "invalid_working_memory_execution_plan",
+      };
+    }
+    return {
+      ok: true,
+      value: normalizedPlanPatch,
+    };
+  }
+
   if (key === "updated_at") {
     if (value === null || value === undefined || value === "") {
       return { ok: true, value: null };
@@ -1080,6 +1482,25 @@ export function applyPlannerWorkingMemoryPatch({
     ...normalizedPatch.updates,
     updated_at: new Date().toISOString(),
   };
+  if (Object.prototype.hasOwnProperty.call(normalizedPatch.updates, "execution_plan")) {
+    draftMemory.execution_plan = normalizedPatch.updates.execution_plan === null
+      ? null
+      : mergeWorkingMemoryExecutionPlan(baseMemory.execution_plan, normalizedPatch.updates.execution_plan);
+    if (normalizedPatch.updates.execution_plan !== null && !draftMemory.execution_plan) {
+      return {
+        ok: false,
+        error: "invalid_working_memory_execution_plan",
+        field: "execution_plan",
+        source: cleanText(source) || "unknown",
+        data: null,
+        observability: {
+          memory_write_attempted: true,
+          memory_write_succeeded: false,
+          memory_snapshot: null,
+        },
+      };
+    }
+  }
   if (Object.prototype.hasOwnProperty.call(normalizedPatch.updates, "slot_state")
     && !Object.prototype.hasOwnProperty.call(normalizedPatch.updates, "unresolved_slots")) {
     draftMemory.unresolved_slots = deriveUnresolvedSlotsFromSlotState(draftMemory.slot_state);
@@ -1151,6 +1572,27 @@ export function applyPlannerWorkingMemoryPatch({
     && nextMemory.abandoned_task_ids.length > baseMemory.abandoned_task_ids.length
     ? nextMemory.abandoned_task_ids[nextMemory.abandoned_task_ids.length - 1]
     : null;
+  const basePlan = normalizeWorkingMemoryExecutionPlan(baseMemory.execution_plan);
+  const nextPlan = normalizeWorkingMemoryExecutionPlan(nextMemory.execution_plan);
+  const planStepTransition = buildExecutionPlanStepTransition(basePlan, nextPlan);
+  const planInvalidated = (() => {
+    if (!basePlan) {
+      return null;
+    }
+    if (basePlan.plan_status !== "invalidated" && nextPlan?.plan_status === "invalidated") {
+      return {
+        plan_id: basePlan.plan_id,
+        reason: "invalidated",
+      };
+    }
+    if (nextPlan?.plan_id && basePlan.plan_id !== nextPlan.plan_id) {
+      return {
+        plan_id: basePlan.plan_id,
+        reason: "replaced_by_new_plan",
+      };
+    }
+    return null;
+  })();
 
   return {
     ok: true,
@@ -1166,6 +1608,11 @@ export function applyPlannerWorkingMemoryPatch({
       agent_handoff: agentHandoff,
       retry_attempt: retryAttempt,
       slot_update: slotUpdate,
+      plan_id: cleanText(nextPlan?.plan_id || "") || null,
+      plan_status: cleanText(nextPlan?.plan_status || "") || null,
+      current_step: cleanText(nextPlan?.current_step_id || "") || null,
+      step_transition: planStepTransition,
+      plan_invalidated: planInvalidated,
       task_abandoned: taskAbandoned
         ? {
             task_id: taskAbandoned,

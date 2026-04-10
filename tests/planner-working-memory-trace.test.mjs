@@ -158,6 +158,63 @@ test("task trace shows topic-switch as new task plus abandoned task", () => {
   assert.equal(trace.diff.includes("abandoned_task_ids: [] -> [task-old-topic]"), true);
 });
 
+test("task trace includes execution plan transitions and resume markers", () => {
+  const trace = buildPlannerTaskTraceDiagnostics({
+    memoryStage: "answer_boundary_write_back",
+    previousMemorySnapshot: {
+      task_id: "task-plan-trace",
+      execution_plan: {
+        plan_id: "plan-1",
+        plan_status: "paused",
+        current_step_id: "step-1",
+        steps: [
+          {
+            step_id: "step-1",
+            status: "blocked",
+          },
+        ],
+      },
+    },
+    memorySnapshot: {
+      task_id: "task-plan-trace",
+      execution_plan: {
+        plan_id: "plan-1",
+        plan_status: "active",
+        current_step_id: "step-2",
+        steps: [
+          {
+            step_id: "step-1",
+            status: "completed",
+          },
+          {
+            step_id: "step-2",
+            status: "running",
+          },
+        ],
+      },
+    },
+    observability: {
+      step_transition: {
+        from_current_step_id: "step-1",
+        to_current_step_id: "step-2",
+        steps: [
+          {
+            step_id: "step-1",
+            from: "blocked",
+            to: "completed",
+          },
+        ],
+      },
+      resumed_from_waiting_user: true,
+    },
+  });
+
+  assert.equal(trace.diff.includes("plan_status: paused -> active"), true);
+  assert.equal(trace.diff.includes("current_step: step-1 -> step-2"), true);
+  assert.equal(trace.diff.includes("plan.step.step-1: blocked -> completed"), true);
+  assert.equal(trace.diff.includes("resume: waiting_user"), true);
+});
+
 test("planner logs task trace at memory pre-read and router decision", async () => {
   const sessionKey = "wm-trace-hook-router";
   resetPlannerRuntimeContext({ sessionKey });
