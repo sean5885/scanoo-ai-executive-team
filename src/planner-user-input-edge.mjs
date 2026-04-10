@@ -4,12 +4,13 @@ import {
   executePlannedUserInput,
   looksLikeExecutiveStart,
 } from "./executive-planner.mjs";
+import { randomUUID } from "node:crypto";
 import { resolveRegisteredAgentFamilyRequest } from "./agent-registry.mjs";
 import { parseMeetingCommand } from "./meeting-agent.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import { ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
 import { getPlannerSkillAction } from "./planner/skill-bridge.mjs";
-import { applyPlannerWorkingMemoryPatch } from "./planner-conversation-memory.mjs";
+import { applyPlannerWorkingMemoryPatch, readPlannerWorkingMemoryForRouting } from "./planner-conversation-memory.mjs";
 import { normalizeUserResponse } from "./user-response-normalizer.mjs";
 
 const REMINDER_REQUEST_PATTERNS = [
@@ -22,6 +23,16 @@ const REMINDER_TIMING_PATTERNS = [
   /\blater\b/i,
   /提醒我/u,
 ];
+const WORKING_MEMORY_TOPIC_SWITCH_PATTERN = /(換個題目|换个题目|換題|换题|改問|改问|另一題|另一题|new topic|different question)/i;
+const WORKING_MEMORY_DONE_PATTERN = /(完成|done|結束|结束|搞定|已完成|完成了)/i;
+const WORKING_MEMORY_RETRYABLE_ERRORS = new Set([
+  "tool_error",
+  "runtime_exception",
+]);
+const DEFAULT_WORKING_MEMORY_RETRY_POLICY = Object.freeze({
+  max_retries: 2,
+  strategy: "same_agent_then_reroute",
+});
 
 function resolveEdgeExecution(result = {}) {
   return result?.execution_result && typeof result.execution_result === "object"
@@ -355,23 +366,144 @@ function inferWorkingMemoryTaskType(action = "") {
   return "general";
 }
 
-function deriveWorkingMemoryUnresolvedSlots({
+function normalizeWorkingMemoryRetryPolicy(retryPolicy = null) {
+  if (!retryPolicy || typeof retryPolicy !== "object" || Array.isArray(retryPolicy)) {
+    return { ...DEFAULT_WORKING_MEMORY_RETRY_POLICY };
+  }
+  const maxRetries = Number(retryPolicy.max_retries);
+  const strategy = cleanText(retryPolicy.strategy || "");
+  if (!Number.isFinite(maxRetries) || maxRetries < 0 || !strategy) {
+    return { ...DEFAULT_WORKING_MEMORY_RETRY_POLICY };
+  }
+  if (!["same_agent", "reroute", "same_agent_then_reroute"].includes(strategy)) {
+    return { ...DEFAULT_WORKING_MEMORY_RETRY_POLICY };
+  }
+  return {
+    max_retries: Math.floor(maxRetries),
+    strategy,
+  };
+}
+
+function buildWorkingMemoryTaskId() {
+  return `task_${Date.now()}_${randomUUID().slice(0, 8)}`;
+}
+
+function buildWorkingMemorySlotTtl() {
+  return new Date(Date.now() + (30 * 60 * 1000)).toISOString();
+}
+
+function isWorkingMemoryTopicSwitch({
+  requestText = "",
+  previousTaskType = "",
+  nextTaskType = "",
+} = {}) {
+  const normalizedText = cleanText(requestText);
+  if (!normalizedText) {
+    return false;
+  }
+  if (WORKING_MEMORY_TOPIC_SWITCH_PATTERN.test(normalizedText)) {
+    return true;
+  }
+  const previousType = cleanText(previousTaskType);
+  const nextType = cleanText(nextTaskType);
+  return Boolean(previousType && nextType && previousType !== nextType);
+}
+
+function deriveWorkingMemorySlotState({
   plannerEnvelope = null,
   userResponse = null,
+  requestText = "",
+  selectedAction = "",
+  previousWorkingMemory = null,
 } = {}) {
-  const unresolved = [];
+  const previousSlotState = Array.isArray(previousWorkingMemory?.slot_state)
+    ? previousWorkingMemory.slot_state
+      .filter((slot) => {
+        const ttl = cleanText(slot?.ttl || "");
+        if (!ttl) {
+          return true;
+        }
+        const expiresAt = Date.parse(ttl);
+        return Number.isFinite(expiresAt) && expiresAt > Date.now();
+      })
+      .map((slot) => ({
+        slot_key: cleanText(slot?.slot_key || ""),
+        required_by: cleanText(slot?.required_by || "") || null,
+        status: cleanText(slot?.status || "missing") || "missing",
+        source: cleanText(slot?.source || "inferred") || "inferred",
+        ttl: cleanText(slot?.ttl || "") || buildWorkingMemorySlotTtl(),
+      }))
+      .filter((slot) => slot.slot_key && ["missing", "filled", "invalid"].includes(slot.status))
+    : [];
+  const normalizedRequestText = cleanText(requestText);
+  const sameTaskPromptOnly = /^(繼續|继续|再來|再来|下一步|接著|接着|same task|retry)$/i.test(normalizedRequestText);
+  if (
+    cleanText(previousWorkingMemory?.task_phase || "") === "waiting_user"
+    && normalizedRequestText
+    && !sameTaskPromptOnly
+  ) {
+    const missingSlot = previousSlotState.find((slot) => slot.status === "missing" || slot.status === "invalid");
+    if (missingSlot) {
+      missingSlot.status = "filled";
+      missingSlot.source = "user";
+      missingSlot.ttl = buildWorkingMemorySlotTtl();
+    }
+  }
+
+  const upsertSlot = (nextSlot) => {
+    const existingIndex = previousSlotState.findIndex((slot) => slot.slot_key === nextSlot.slot_key);
+    if (existingIndex >= 0) {
+      previousSlotState[existingIndex] = nextSlot;
+      return;
+    }
+    previousSlotState.push(nextSlot);
+  };
+
+  const derivedMissingSlots = [];
   const formatted = plannerEnvelope?.formatted_output;
   const kind = cleanText(formatted?.kind || "");
   if (kind === "search_and_detail_candidates") {
-    unresolved.push("candidate_selection_required");
+    derivedMissingSlots.push("candidate_selection_required");
   }
   if (kind === "search_and_detail_not_found") {
-    unresolved.push("missing_document_reference");
+    derivedMissingSlots.push("missing_document_reference");
   }
-  if (userResponse?.ok !== true) {
-    unresolved.push("response_not_success");
+  if (derivedMissingSlots.length === 0 && userResponse?.ok !== true) {
+    derivedMissingSlots.push("response_not_success");
   }
-  return Array.from(new Set(unresolved));
+  for (const slotKey of Array.from(new Set(derivedMissingSlots))) {
+    upsertSlot({
+      slot_key: slotKey,
+      required_by: cleanText(selectedAction) || null,
+      status: slotKey === "response_not_success" ? "invalid" : "missing",
+      source: "inferred",
+      ttl: buildWorkingMemorySlotTtl(),
+    });
+  }
+
+  if (derivedMissingSlots.length === 0 && userResponse?.ok === true) {
+    for (const slot of previousSlotState) {
+      if (slot.status === "missing" || slot.status === "invalid") {
+        slot.status = "filled";
+        slot.source = "tool";
+        slot.ttl = buildWorkingMemorySlotTtl();
+      }
+    }
+  }
+
+  return previousSlotState.slice(0, 6);
+}
+
+function deriveWorkingMemoryUnresolvedSlots({
+  slotState = [],
+} = {}) {
+  if (!Array.isArray(slotState)) {
+    return [];
+  }
+  return Array.from(new Set(slotState
+    .filter((slot) => slot?.status === "missing" || slot?.status === "invalid")
+    .map((slot) => cleanText(slot?.slot_key || ""))
+    .filter(Boolean)));
 }
 
 function deriveWorkingMemoryNextBestAction({
@@ -404,6 +536,7 @@ function buildWorkingMemoryPatch({
   plannerResult = null,
   plannerEnvelope = null,
   userResponse = null,
+  previousWorkingMemory = null,
 } = {}) {
   const selectedAction = cleanText(
     plannerEnvelope?.action
@@ -411,26 +544,104 @@ function buildWorkingMemoryPatch({
     || plannerEnvelope?.trace?.chosen_action
     || "",
   );
-  const unresolvedSlots = deriveWorkingMemoryUnresolvedSlots({
+  const taskType = inferWorkingMemoryTaskType(selectedAction)
+    || cleanText(previousWorkingMemory?.task_type || previousWorkingMemory?.inferred_task_type || "")
+    || "general";
+  const topicSwitch = isWorkingMemoryTopicSwitch({
+    requestText,
+    previousTaskType: cleanText(previousWorkingMemory?.task_type || previousWorkingMemory?.inferred_task_type || ""),
+    nextTaskType: taskType,
+  });
+  const previousTaskId = cleanText(previousWorkingMemory?.task_id || "") || null;
+  const taskId = (!previousTaskId || topicSwitch)
+    ? buildWorkingMemoryTaskId()
+    : previousTaskId;
+  const slotState = deriveWorkingMemorySlotState({
     plannerEnvelope,
     userResponse,
+    requestText,
+    selectedAction,
+    previousWorkingMemory,
+  });
+  const unresolvedSlots = deriveWorkingMemoryUnresolvedSlots({
+    slotState,
   });
   const selectedSkill = getPlannerSkillAction(selectedAction)
     ? selectedAction
     : null;
+  const previousOwner = cleanText(previousWorkingMemory?.current_owner_agent || previousWorkingMemory?.last_selected_agent || "") || null;
+  const currentOwner = cleanText(plannerResult?.synthetic_agent_hint?.agent || previousOwner || "") || null;
+  const retryPolicy = normalizeWorkingMemoryRetryPolicy(previousWorkingMemory?.retry_policy);
+  const previousRetryCount = Number.isFinite(Number(previousWorkingMemory?.retry_count))
+    ? Number(previousWorkingMemory.retry_count)
+    : 0;
+  const plannerError = cleanText(
+    plannerEnvelope?.execution_result?.error
+    || plannerEnvelope?.error
+    || plannerResult?.execution_result?.error
+    || plannerResult?.error
+    || "",
+  );
+  const retryableFailure = WORKING_MEMORY_RETRYABLE_ERRORS.has(plannerError);
+  const nextRetryCount = retryableFailure
+    ? previousRetryCount + 1
+    : userResponse?.ok === true
+      ? 0
+      : previousRetryCount;
+  const hasMissingSlots = unresolvedSlots.length > 0;
+  const phaseAndStatus = (() => {
+    if (hasMissingSlots) {
+      return { phase: "waiting_user", status: "blocked" };
+    }
+    if (retryableFailure) {
+      return {
+        phase: nextRetryCount < retryPolicy.max_retries ? "retrying" : "failed",
+        status: "failed",
+      };
+    }
+    if (plannerEnvelope?.ok === false || userResponse?.ok !== true) {
+      return {
+        phase: "failed",
+        status: "failed",
+      };
+    }
+    if (selectedAction === "mark_resolved" || WORKING_MEMORY_DONE_PATTERN.test(cleanText(requestText))) {
+      return { phase: "done", status: "completed" };
+    }
+    if (selectedAction) {
+      return { phase: "executing", status: "running" };
+    }
+    return { phase: "planning", status: "running" };
+  })();
+  const handoffReason = retryableFailure
+    ? "retry"
+    : hasMissingSlots
+      ? "needs_user_input"
+      : currentOwner && previousOwner && currentOwner !== previousOwner
+        ? "capability_gap"
+        : null;
+  const previousAbandonedTaskIds = Array.isArray(previousWorkingMemory?.abandoned_task_ids)
+    ? previousWorkingMemory.abandoned_task_ids
+        .map((task) => cleanText(task))
+        .filter(Boolean)
+    : [];
+  const abandonedTaskIds = topicSwitch && previousTaskId
+    ? Array.from(new Set([...previousAbandonedTaskIds, previousTaskId])).slice(-8)
+    : previousAbandonedTaskIds;
   const toolSummary = cleanText(
     plannerEnvelope?.formatted_output?.content_summary
     || plannerResult?.formatted_output?.content_summary
     || userResponse?.answer
     || "",
   );
-  return {
-    current_goal: cleanText(requestText) || null,
-    inferred_task_type: inferWorkingMemoryTaskType(selectedAction),
-    last_selected_agent: cleanText(plannerResult?.synthetic_agent_hint?.agent || "") || null,
+  const patch = {
+    current_goal: cleanText(requestText) || previousWorkingMemory?.current_goal || null,
+    inferred_task_type: taskType,
+    last_selected_agent: currentOwner,
     last_selected_skill: selectedSkill,
     last_tool_result_summary: toolSummary || null,
     unresolved_slots: unresolvedSlots,
+    slot_state: slotState,
     next_best_action: deriveWorkingMemoryNextBestAction({
       unresolvedSlots,
       selectedAction,
@@ -439,6 +650,55 @@ function buildWorkingMemoryPatch({
       userResponse,
       unresolvedSlots,
     }),
+    task_id: taskId,
+    task_type: taskType,
+    task_phase: phaseAndStatus.phase,
+    task_status: phaseAndStatus.status,
+    current_owner_agent: currentOwner,
+    previous_owner_agent: handoffReason ? previousOwner : cleanText(previousWorkingMemory?.previous_owner_agent || "") || null,
+    handoff_reason: handoffReason,
+    retry_count: nextRetryCount,
+    retry_policy: retryPolicy,
+    abandoned_task_ids: abandonedTaskIds,
+  };
+  const previousPhase = cleanText(previousWorkingMemory?.task_phase || "") || null;
+  const previousStatus = cleanText(previousWorkingMemory?.task_status || "") || null;
+  const observability = {
+    task_id: taskId,
+    task_phase_transition: previousPhase && previousPhase !== patch.task_phase
+      ? `${previousPhase}->${patch.task_phase}`
+      : null,
+    task_status_transition: previousStatus && previousStatus !== patch.task_status
+      ? `${previousStatus}->${patch.task_status}`
+      : null,
+    agent_handoff: handoffReason
+      ? {
+          from: previousOwner,
+          to: currentOwner,
+          reason: handoffReason,
+        }
+      : null,
+    retry_attempt: retryableFailure
+      ? {
+          retry_count: nextRetryCount,
+          max_retries: retryPolicy.max_retries,
+          strategy: retryPolicy.strategy,
+        }
+      : null,
+    slot_update: {
+      pending_slots: unresolvedSlots,
+      slot_state_count: slotState.length,
+    },
+    task_abandoned: topicSwitch && previousTaskId
+      ? {
+          task_id: previousTaskId,
+          reason: "topic_switch",
+        }
+      : null,
+  };
+  return {
+    patch,
+    observability,
   };
 }
 
@@ -503,14 +763,40 @@ export async function runPlannerUserInputEdge({
       memory_snapshot: null,
     },
   };
+  let derivedMemoryObservability = {
+    task_id: null,
+    task_phase_transition: null,
+    task_status_transition: null,
+    agent_handoff: null,
+    retry_attempt: null,
+    slot_update: null,
+    task_abandoned: null,
+  };
   if (shouldWriteWorkingMemory && typeof workingMemoryWriter === "function") {
+    const previousWorkingMemoryRead = readPlannerWorkingMemoryForRouting({
+      sessionKey,
+    });
+    const previousWorkingMemory = previousWorkingMemoryRead?.ok === true
+      && previousWorkingMemoryRead?.data
+      && typeof previousWorkingMemoryRead.data === "object"
+      && !Array.isArray(previousWorkingMemoryRead.data)
+      ? previousWorkingMemoryRead.data
+      : null;
+    const memoryPatchPayload = buildWorkingMemoryPatch({
+      requestText: text,
+      plannerResult,
+      plannerEnvelope,
+      userResponse,
+      previousWorkingMemory,
+    });
+    derivedMemoryObservability = {
+      ...derivedMemoryObservability,
+      ...(memoryPatchPayload?.observability && typeof memoryPatchPayload.observability === "object"
+        ? memoryPatchPayload.observability
+        : {}),
+    };
     memoryWriteResult = await workingMemoryWriter({
-      patch: buildWorkingMemoryPatch({
-        requestText: text,
-        plannerResult,
-        plannerEnvelope,
-        userResponse,
-      }),
+      patch: memoryPatchPayload.patch,
       sessionKey,
       source: "planner_answer_boundary_v1",
     }) || memoryWriteResult;
@@ -522,6 +808,13 @@ export async function runPlannerUserInputEdge({
     memory_write_attempted: shouldWriteWorkingMemory && typeof workingMemoryWriter === "function",
     memory_write_succeeded: memoryWriteResult?.ok === true,
     memory_snapshot: memoryWriteResult?.observability?.memory_snapshot || null,
+    task_id: memoryWriteResult?.observability?.task_id || derivedMemoryObservability.task_id || null,
+    task_phase_transition: memoryWriteResult?.observability?.task_phase_transition || derivedMemoryObservability.task_phase_transition || null,
+    task_status_transition: memoryWriteResult?.observability?.task_status_transition || derivedMemoryObservability.task_status_transition || null,
+    agent_handoff: memoryWriteResult?.observability?.agent_handoff || derivedMemoryObservability.agent_handoff || null,
+    retry_attempt: memoryWriteResult?.observability?.retry_attempt || derivedMemoryObservability.retry_attempt || null,
+    slot_update: memoryWriteResult?.observability?.slot_update || derivedMemoryObservability.slot_update || null,
+    task_abandoned: memoryWriteResult?.observability?.task_abandoned || derivedMemoryObservability.task_abandoned || null,
   });
 
   return {

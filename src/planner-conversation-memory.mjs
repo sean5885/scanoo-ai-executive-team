@@ -9,7 +9,47 @@ const PLANNER_SUMMARY_TRIGGER_CHARS = 2400;
 const PLANNER_RECENT_MESSAGE_LIMIT = 4;
 const DEFAULT_PLANNER_SESSION_KEY = "default";
 const PLANNER_WORKING_MEMORY_SLOT_LIMIT = 6;
-const PLANNER_WORKING_MEMORY_REQUIRED_KEYS = Object.freeze([
+const PLANNER_WORKING_MEMORY_TASK_PHASES = new Set([
+  "init",
+  "planning",
+  "executing",
+  "waiting_user",
+  "retrying",
+  "done",
+  "failed",
+]);
+const PLANNER_WORKING_MEMORY_TASK_STATUSES = new Set([
+  "running",
+  "blocked",
+  "completed",
+  "failed",
+]);
+const PLANNER_WORKING_MEMORY_HANDOFF_REASONS = new Set([
+  "needs_tool",
+  "needs_user_input",
+  "capability_gap",
+  "retry",
+]);
+const PLANNER_WORKING_MEMORY_SLOT_STATUSES = new Set([
+  "missing",
+  "filled",
+  "invalid",
+]);
+const PLANNER_WORKING_MEMORY_SLOT_SOURCES = new Set([
+  "user",
+  "tool",
+  "inferred",
+]);
+const PLANNER_WORKING_MEMORY_RETRY_STRATEGIES = new Set([
+  "same_agent",
+  "reroute",
+  "same_agent_then_reroute",
+]);
+const DEFAULT_PLANNER_WORKING_MEMORY_RETRY_POLICY = Object.freeze({
+  max_retries: 2,
+  strategy: "same_agent_then_reroute",
+});
+const PLANNER_WORKING_MEMORY_V1_REQUIRED_KEYS = Object.freeze([
   "current_goal",
   "inferred_task_type",
   "last_selected_agent",
@@ -19,6 +59,27 @@ const PLANNER_WORKING_MEMORY_REQUIRED_KEYS = Object.freeze([
   "next_best_action",
   "confidence",
   "updated_at",
+]);
+const PLANNER_WORKING_MEMORY_PATCHABLE_KEYS = Object.freeze([
+  "current_goal",
+  "inferred_task_type",
+  "last_selected_agent",
+  "last_selected_skill",
+  "last_tool_result_summary",
+  "unresolved_slots",
+  "next_best_action",
+  "confidence",
+  "task_id",
+  "task_type",
+  "task_phase",
+  "task_status",
+  "current_owner_agent",
+  "previous_owner_agent",
+  "handoff_reason",
+  "retry_count",
+  "retry_policy",
+  "slot_state",
+  "abandoned_task_ids",
 ]);
 
 const plannerConversationMemoryState = {
@@ -50,6 +111,17 @@ function buildEmptyPlannerWorkingMemory() {
     unresolved_slots: [],
     next_best_action: null,
     confidence: null,
+    task_id: null,
+    task_type: null,
+    task_phase: "init",
+    task_status: "running",
+    current_owner_agent: null,
+    previous_owner_agent: null,
+    handoff_reason: null,
+    retry_count: 0,
+    retry_policy: { ...DEFAULT_PLANNER_WORKING_MEMORY_RETRY_POLICY },
+    slot_state: [],
+    abandoned_task_ids: [],
     updated_at: null,
   };
 }
@@ -68,6 +140,100 @@ function normalizeWorkingMemorySlots(slots = []) {
     .slice(0, PLANNER_WORKING_MEMORY_SLOT_LIMIT);
 }
 
+function resolveWorkingMemorySlotTtl(ttl = null) {
+  if (ttl === null || ttl === undefined || ttl === "") {
+    return new Date(Date.now() + (30 * 60 * 1000)).toISOString();
+  }
+  if (typeof ttl === "number" && Number.isFinite(ttl)) {
+    try {
+      return new Date(ttl).toISOString();
+    } catch {
+      return null;
+    }
+  }
+  const normalized = cleanText(ttl);
+  if (!normalized) {
+    return null;
+  }
+  const timestamp = Date.parse(normalized);
+  if (!Number.isFinite(timestamp)) {
+    return null;
+  }
+  return new Date(timestamp).toISOString();
+}
+
+function isWorkingMemorySlotExpired(slot = null) {
+  const ttl = cleanText(slot?.ttl || "");
+  if (!ttl) {
+    return false;
+  }
+  const expiry = Date.parse(ttl);
+  if (!Number.isFinite(expiry)) {
+    return true;
+  }
+  return expiry <= Date.now();
+}
+
+function normalizeWorkingMemorySlotState(slots = []) {
+  if (!Array.isArray(slots)) {
+    return [];
+  }
+  const normalizedSlots = [];
+  for (const slot of slots) {
+    if (!slot || typeof slot !== "object" || Array.isArray(slot)) {
+      return null;
+    }
+    const slotKey = normalizeWorkingMemoryString(slot.slot_key);
+    const requiredBy = normalizeWorkingMemoryString(slot.required_by);
+    const status = cleanText(slot.status || "");
+    const source = cleanText(slot.source || "");
+    const ttl = resolveWorkingMemorySlotTtl(slot.ttl);
+    if (!slotKey || !PLANNER_WORKING_MEMORY_SLOT_STATUSES.has(status) || !PLANNER_WORKING_MEMORY_SLOT_SOURCES.has(source) || !ttl) {
+      return null;
+    }
+    normalizedSlots.push({
+      slot_key: slotKey,
+      required_by: requiredBy,
+      status,
+      source,
+      ttl,
+    });
+    if (normalizedSlots.length >= PLANNER_WORKING_MEMORY_SLOT_LIMIT) {
+      break;
+    }
+  }
+  return normalizedSlots;
+}
+
+function deriveSlotStateFromUnresolvedSlots(unresolvedSlots = [], { requiredBy = null, source = "inferred" } = {}) {
+  return normalizeWorkingMemorySlots(unresolvedSlots)
+    .map((slotKey) => ({
+      slot_key: slotKey,
+      required_by: normalizeWorkingMemoryString(requiredBy),
+      status: "missing",
+      source: PLANNER_WORKING_MEMORY_SLOT_SOURCES.has(source) ? source : "inferred",
+      ttl: resolveWorkingMemorySlotTtl(null),
+    }));
+}
+
+function pruneExpiredWorkingMemorySlotState(slotState = []) {
+  if (!Array.isArray(slotState)) {
+    return [];
+  }
+  return slotState.filter((slot) => !isWorkingMemorySlotExpired(slot));
+}
+
+function deriveUnresolvedSlotsFromSlotState(slotState = []) {
+  if (!Array.isArray(slotState)) {
+    return [];
+  }
+  return Array.from(new Set(slotState
+    .filter((slot) => slot?.status === "missing" || slot?.status === "invalid")
+    .map((slot) => normalizeWorkingMemoryString(slot?.slot_key))
+    .filter(Boolean)))
+    .slice(0, PLANNER_WORKING_MEMORY_SLOT_LIMIT);
+}
+
 function normalizeWorkingMemoryConfidence(value) {
   if (value === null || value === undefined || value === "") {
     return null;
@@ -82,11 +248,77 @@ function normalizeWorkingMemoryConfidence(value) {
   return normalized;
 }
 
+function normalizeWorkingMemoryTaskPhase(value) {
+  const normalized = cleanText(value);
+  if (!normalized) {
+    return "init";
+  }
+  return PLANNER_WORKING_MEMORY_TASK_PHASES.has(normalized)
+    ? normalized
+    : null;
+}
+
+function normalizeWorkingMemoryTaskStatus(value) {
+  const normalized = cleanText(value);
+  if (!normalized) {
+    return "running";
+  }
+  return PLANNER_WORKING_MEMORY_TASK_STATUSES.has(normalized)
+    ? normalized
+    : null;
+}
+
+function normalizeWorkingMemoryHandoffReason(value) {
+  const normalized = cleanText(value);
+  if (!normalized) {
+    return null;
+  }
+  return PLANNER_WORKING_MEMORY_HANDOFF_REASONS.has(normalized)
+    ? normalized
+    : null;
+}
+
+function normalizeWorkingMemoryRetryCount(value) {
+  if (value === null || value === undefined || value === "") {
+    return 0;
+  }
+  const normalized = Number(value);
+  if (!Number.isFinite(normalized) || normalized < 0) {
+    return null;
+  }
+  return Math.floor(normalized);
+}
+
+function normalizeWorkingMemoryRetryPolicy(value = null) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { ...DEFAULT_PLANNER_WORKING_MEMORY_RETRY_POLICY };
+  }
+  const maxRetries = Number(value.max_retries);
+  const strategy = cleanText(value.strategy || "");
+  if (!Number.isFinite(maxRetries) || maxRetries < 0 || !PLANNER_WORKING_MEMORY_RETRY_STRATEGIES.has(strategy)) {
+    return null;
+  }
+  return {
+    max_retries: Math.floor(maxRetries),
+    strategy,
+  };
+}
+
+function normalizeWorkingMemoryAbandonedTaskIds(value = []) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return Array.from(new Set(value
+    .map((taskId) => normalizeWorkingMemoryString(taskId))
+    .filter(Boolean)))
+    .slice(-8);
+}
+
 function normalizePlannerWorkingMemory(value = null) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }
-  for (const key of PLANNER_WORKING_MEMORY_REQUIRED_KEYS) {
+  for (const key of PLANNER_WORKING_MEMORY_V1_REQUIRED_KEYS) {
     if (!Object.prototype.hasOwnProperty.call(value, key)) {
       return null;
     }
@@ -98,6 +330,13 @@ function normalizePlannerWorkingMemory(value = null) {
     "last_selected_skill",
     "last_tool_result_summary",
     "next_best_action",
+    "task_id",
+    "task_type",
+    "task_phase",
+    "task_status",
+    "current_owner_agent",
+    "previous_owner_agent",
+    "handoff_reason",
     "updated_at",
   ];
   for (const key of stringFields) {
@@ -111,6 +350,19 @@ function normalizePlannerWorkingMemory(value = null) {
   if (value.confidence !== null && value.confidence !== undefined && typeof value.confidence !== "number") {
     return null;
   }
+  if (value.retry_count !== null && value.retry_count !== undefined && typeof value.retry_count !== "number") {
+    return null;
+  }
+  if (value.retry_policy !== null && value.retry_policy !== undefined && (typeof value.retry_policy !== "object" || Array.isArray(value.retry_policy))) {
+    return null;
+  }
+  if (value.slot_state !== null && value.slot_state !== undefined && !Array.isArray(value.slot_state)) {
+    return null;
+  }
+  if (value.abandoned_task_ids !== null && value.abandoned_task_ids !== undefined && !Array.isArray(value.abandoned_task_ids)) {
+    return null;
+  }
+
   const unresolvedSlots = normalizeWorkingMemorySlots(value.unresolved_slots);
   if (unresolvedSlots.length !== value.unresolved_slots.length) {
     return null;
@@ -118,16 +370,67 @@ function normalizePlannerWorkingMemory(value = null) {
   if (value.confidence !== null && value.confidence !== undefined && normalizeWorkingMemoryConfidence(value.confidence) === null) {
     return null;
   }
+  const taskPhase = normalizeWorkingMemoryTaskPhase(value.task_phase);
+  if (taskPhase === null) {
+    return null;
+  }
+  const taskStatus = normalizeWorkingMemoryTaskStatus(value.task_status);
+  if (taskStatus === null) {
+    return null;
+  }
+  const handoffReason = normalizeWorkingMemoryHandoffReason(value.handoff_reason);
+  if (value.handoff_reason !== null && value.handoff_reason !== undefined && cleanText(value.handoff_reason) && handoffReason === null) {
+    return null;
+  }
+  const retryCount = normalizeWorkingMemoryRetryCount(value.retry_count);
+  if (retryCount === null) {
+    return null;
+  }
+  const retryPolicy = normalizeWorkingMemoryRetryPolicy(value.retry_policy);
+  if (retryPolicy === null) {
+    return null;
+  }
+  const slotStateProvided = !(value.slot_state === null || value.slot_state === undefined);
+  let slotState = !slotStateProvided
+    ? deriveSlotStateFromUnresolvedSlots(unresolvedSlots, {
+        requiredBy: cleanText(value.last_selected_skill || value.last_selected_agent || "") || null,
+        source: "inferred",
+      })
+    : normalizeWorkingMemorySlotState(value.slot_state);
+  if (slotState === null) {
+    return null;
+  }
+  slotState = pruneExpiredWorkingMemorySlotState(slotState);
+  const unresolvedFromSlotState = deriveUnresolvedSlotsFromSlotState(slotState);
+  const canonicalUnresolvedSlots = unresolvedFromSlotState.length > 0
+    ? unresolvedFromSlotState
+    : slotStateProvided
+      ? []
+      : unresolvedSlots;
 
   return {
     current_goal: normalizeWorkingMemoryString(value.current_goal),
-    inferred_task_type: normalizeWorkingMemoryString(value.inferred_task_type),
+    inferred_task_type: normalizeWorkingMemoryString(value.inferred_task_type)
+      || normalizeWorkingMemoryString(value.task_type),
     last_selected_agent: normalizeWorkingMemoryString(value.last_selected_agent),
     last_selected_skill: normalizeWorkingMemoryString(value.last_selected_skill),
     last_tool_result_summary: normalizeWorkingMemoryString(value.last_tool_result_summary),
-    unresolved_slots: unresolvedSlots,
+    unresolved_slots: canonicalUnresolvedSlots,
     next_best_action: normalizeWorkingMemoryString(value.next_best_action),
     confidence: normalizeWorkingMemoryConfidence(value.confidence),
+    task_id: normalizeWorkingMemoryString(value.task_id),
+    task_type: normalizeWorkingMemoryString(value.task_type)
+      || normalizeWorkingMemoryString(value.inferred_task_type),
+    task_phase: taskPhase,
+    task_status: taskStatus,
+    current_owner_agent: normalizeWorkingMemoryString(value.current_owner_agent)
+      || normalizeWorkingMemoryString(value.last_selected_agent),
+    previous_owner_agent: normalizeWorkingMemoryString(value.previous_owner_agent),
+    handoff_reason: handoffReason,
+    retry_count: retryCount,
+    retry_policy: retryPolicy,
+    slot_state: slotState,
+    abandoned_task_ids: normalizeWorkingMemoryAbandonedTaskIds(value.abandoned_task_ids || []),
     updated_at: normalizeWorkingMemoryString(value.updated_at),
   };
 }
@@ -510,6 +813,26 @@ function normalizePlannerWorkingMemoryPatchValue(key, value) {
     };
   }
 
+  if (key === "slot_state") {
+    if (!Array.isArray(value)) {
+      return {
+        ok: false,
+        error: "invalid_working_memory_slot_state",
+      };
+    }
+    const normalizedSlotState = normalizeWorkingMemorySlotState(value);
+    if (!Array.isArray(normalizedSlotState)) {
+      return {
+        ok: false,
+        error: "invalid_working_memory_slot_state",
+      };
+    }
+    return {
+      ok: true,
+      value: pruneExpiredWorkingMemorySlotState(normalizedSlotState),
+    };
+  }
+
   if (key === "confidence") {
     if (value === null || value === undefined || value === "") {
       return { ok: true, value: null };
@@ -524,6 +847,95 @@ function normalizePlannerWorkingMemoryPatchValue(key, value) {
     return {
       ok: true,
       value: normalizedConfidence,
+    };
+  }
+
+  if (key === "retry_count") {
+    const normalizedRetryCount = normalizeWorkingMemoryRetryCount(value);
+    if (normalizedRetryCount === null) {
+      return {
+        ok: false,
+        error: "invalid_working_memory_retry_count",
+      };
+    }
+    return {
+      ok: true,
+      value: normalizedRetryCount,
+    };
+  }
+
+  if (key === "retry_policy") {
+    const normalizedRetryPolicy = normalizeWorkingMemoryRetryPolicy(value);
+    if (normalizedRetryPolicy === null) {
+      return {
+        ok: false,
+        error: "invalid_working_memory_retry_policy",
+      };
+    }
+    return {
+      ok: true,
+      value: normalizedRetryPolicy,
+    };
+  }
+
+  if (key === "task_phase") {
+    const normalizedTaskPhase = normalizeWorkingMemoryTaskPhase(value);
+    if (normalizedTaskPhase === null) {
+      return {
+        ok: false,
+        error: "invalid_working_memory_task_phase",
+      };
+    }
+    return {
+      ok: true,
+      value: normalizedTaskPhase,
+    };
+  }
+
+  if (key === "task_status") {
+    const normalizedTaskStatus = normalizeWorkingMemoryTaskStatus(value);
+    if (normalizedTaskStatus === null) {
+      return {
+        ok: false,
+        error: "invalid_working_memory_task_status",
+      };
+    }
+    return {
+      ok: true,
+      value: normalizedTaskStatus,
+    };
+  }
+
+  if (key === "handoff_reason") {
+    if (value === null || value === undefined || value === "") {
+      return {
+        ok: true,
+        value: null,
+      };
+    }
+    const normalizedHandoffReason = normalizeWorkingMemoryHandoffReason(value);
+    if (normalizedHandoffReason === null) {
+      return {
+        ok: false,
+        error: "invalid_working_memory_handoff_reason",
+      };
+    }
+    return {
+      ok: true,
+      value: normalizedHandoffReason,
+    };
+  }
+
+  if (key === "abandoned_task_ids") {
+    if (!Array.isArray(value)) {
+      return {
+        ok: false,
+        error: "invalid_working_memory_abandoned_tasks",
+      };
+    }
+    return {
+      ok: true,
+      value: normalizeWorkingMemoryAbandonedTaskIds(value),
     };
   }
 
@@ -571,9 +983,8 @@ function normalizePlannerWorkingMemoryPatch(patch = null) {
   }
 
   const updates = {};
-  const updateKeys = PLANNER_WORKING_MEMORY_REQUIRED_KEYS.filter((key) =>
-    key !== "updated_at"
-    && Object.prototype.hasOwnProperty.call(patch, key));
+  const updateKeys = PLANNER_WORKING_MEMORY_PATCHABLE_KEYS.filter((key) =>
+    Object.prototype.hasOwnProperty.call(patch, key));
 
   for (const key of updateKeys) {
     const normalizedValue = normalizePlannerWorkingMemoryPatchValue(key, patch[key]);
@@ -626,6 +1037,7 @@ export function readPlannerWorkingMemoryForRouting({ sessionKey = "" } = {}) {
       memory_hit: hit,
       memory_miss: !hit,
       memory_snapshot: hit ? cloneJsonSafe(normalizedWorkingMemory) : null,
+      task_id: hit ? cleanText(normalizedWorkingMemory?.task_id || "") || null : null,
     },
   };
 }
@@ -663,13 +1075,82 @@ export function applyPlannerWorkingMemoryPatch({
 
   const sessionState = getPlannerConversationSessionState(normalizedSessionKey);
   const baseMemory = getCanonicalPlannerWorkingMemoryFromSession(sessionState) || buildEmptyPlannerWorkingMemory();
-  const nextMemory = {
+  const draftMemory = {
     ...baseMemory,
     ...normalizedPatch.updates,
     updated_at: new Date().toISOString(),
   };
+  if (Object.prototype.hasOwnProperty.call(normalizedPatch.updates, "slot_state")
+    && !Object.prototype.hasOwnProperty.call(normalizedPatch.updates, "unresolved_slots")) {
+    draftMemory.unresolved_slots = deriveUnresolvedSlotsFromSlotState(draftMemory.slot_state);
+  }
+  if (Object.prototype.hasOwnProperty.call(normalizedPatch.updates, "unresolved_slots")
+    && !Object.prototype.hasOwnProperty.call(normalizedPatch.updates, "slot_state")) {
+    draftMemory.slot_state = deriveSlotStateFromUnresolvedSlots(draftMemory.unresolved_slots, {
+      requiredBy: cleanText(draftMemory.last_selected_skill || draftMemory.current_owner_agent || draftMemory.last_selected_agent || "") || null,
+      source: "inferred",
+    });
+  }
+  draftMemory.slot_state = pruneExpiredWorkingMemorySlotState(
+    normalizeWorkingMemorySlotState(draftMemory.slot_state) || [],
+  );
+  draftMemory.unresolved_slots = deriveUnresolvedSlotsFromSlotState(draftMemory.slot_state);
+  const nextMemory = normalizePlannerWorkingMemory(draftMemory);
+  if (!nextMemory) {
+    return {
+      ok: false,
+      error: "invalid_working_memory_patch",
+      field: null,
+      source: cleanText(source) || "unknown",
+      data: null,
+      observability: {
+        memory_write_attempted: true,
+        memory_write_succeeded: false,
+        memory_snapshot: null,
+      },
+    };
+  }
   sessionState.working_memory = nextMemory;
   persistPlannerConversationMemory();
+
+  const taskPhaseTransition = baseMemory.task_phase !== nextMemory.task_phase
+    ? `${baseMemory.task_phase || "init"}->${nextMemory.task_phase || "init"}`
+    : null;
+  const taskStatusTransition = baseMemory.task_status !== nextMemory.task_status
+    ? `${baseMemory.task_status || "running"}->${nextMemory.task_status || "running"}`
+    : null;
+  const agentHandoff = cleanText(baseMemory.current_owner_agent || "") !== cleanText(nextMemory.current_owner_agent || "")
+    && cleanText(nextMemory.current_owner_agent || "")
+    ? {
+        from: cleanText(baseMemory.current_owner_agent || "") || null,
+        to: cleanText(nextMemory.current_owner_agent || "") || null,
+        reason: cleanText(nextMemory.handoff_reason || "") || null,
+      }
+    : null;
+  const retryAttempt = Number(nextMemory.retry_count || 0) > Number(baseMemory.retry_count || 0)
+    ? {
+        from: Number(baseMemory.retry_count || 0),
+        to: Number(nextMemory.retry_count || 0),
+        strategy: cleanText(nextMemory.retry_policy?.strategy || "") || null,
+        max_retries: Number.isFinite(Number(nextMemory.retry_policy?.max_retries))
+          ? Number(nextMemory.retry_policy.max_retries)
+          : null,
+      }
+    : null;
+  const baseSlotStateDigest = JSON.stringify(baseMemory.slot_state || []);
+  const nextSlotStateDigest = JSON.stringify(nextMemory.slot_state || []);
+  const slotUpdate = baseSlotStateDigest !== nextSlotStateDigest
+    ? {
+        missing: deriveUnresolvedSlotsFromSlotState((nextMemory.slot_state || []).filter((slot) => slot.status === "missing")),
+        filled_count: (nextMemory.slot_state || []).filter((slot) => slot.status === "filled").length,
+        invalid_count: (nextMemory.slot_state || []).filter((slot) => slot.status === "invalid").length,
+      }
+    : null;
+  const taskAbandoned = Array.isArray(nextMemory.abandoned_task_ids)
+    && Array.isArray(baseMemory.abandoned_task_ids)
+    && nextMemory.abandoned_task_ids.length > baseMemory.abandoned_task_ids.length
+    ? nextMemory.abandoned_task_ids[nextMemory.abandoned_task_ids.length - 1]
+    : null;
 
   return {
     ok: true,
@@ -679,6 +1160,18 @@ export function applyPlannerWorkingMemoryPatch({
       memory_write_attempted: true,
       memory_write_succeeded: true,
       memory_snapshot: cloneJsonSafe(nextMemory),
+      task_id: cleanText(nextMemory.task_id || "") || null,
+      task_phase_transition: taskPhaseTransition,
+      task_status_transition: taskStatusTransition,
+      agent_handoff: agentHandoff,
+      retry_attempt: retryAttempt,
+      slot_update: slotUpdate,
+      task_abandoned: taskAbandoned
+        ? {
+            task_id: taskAbandoned,
+            reason: "topic_switch",
+          }
+        : null,
     },
   };
 }

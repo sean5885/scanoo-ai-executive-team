@@ -183,6 +183,14 @@ const PLANNER_WORKING_MEMORY_MIN_CONFIDENCE = 0.35;
 const PLANNER_WORKING_MEMORY_RETRY_PATTERN = /(再試一次|再试一次|重試|重试|retry|run again|再來一次|再来一次)/i;
 const PLANNER_WORKING_MEMORY_TOPIC_SWITCH_PATTERN = /(換個題目|换个题目|換題|换题|改問|改问|另一題|另一题|new topic|different question)/i;
 const PLANNER_WORKING_MEMORY_ELLIPSIS_FOLLOW_UP_PATTERN = /^(繼續|继续|再來|再来|然後呢|然后呢|下一步|接著|接着|same task)$/i;
+const PLANNER_WORKING_MEMORY_RETRYABLE_ERRORS = new Set([
+  "tool_error",
+  "runtime_exception",
+]);
+const DEFAULT_PLANNER_WORKING_MEMORY_RETRY_POLICY = Object.freeze({
+  max_retries: 2,
+  strategy: "same_agent_then_reroute",
+});
 const PLANNER_WORKING_MEMORY_UNRESOLVED_SLOT_ACTIONS = Object.freeze({
   candidate_selection_required: "search_company_brain_docs",
   missing_document_reference: "search_company_brain_docs",
@@ -194,6 +202,14 @@ const PLANNER_WORKING_MEMORY_AGENT_ACTION_HINTS = Object.freeze({
   runtime_agent: "get_runtime_info",
   meeting_agent: "search_company_brain_docs",
   mixed_agent: "search_company_brain_docs",
+});
+const PLANNER_WORKING_MEMORY_ACTION_OWNER_HINTS = Object.freeze({
+  search_company_brain_docs: "doc_agent",
+  search_and_detail_doc: "doc_agent",
+  get_company_brain_doc_detail: "doc_agent",
+  search_and_summarize: "doc_agent",
+  document_summarize: "doc_agent",
+  get_runtime_info: "runtime_agent",
 });
 
 const executiveCollaborationSignals = [
@@ -3685,12 +3701,82 @@ function canUseWorkingMemoryAction(action = "", {
   return true;
 }
 
-function resolvePlannerWorkingMemoryActionFromSlots(unresolvedSlots = []) {
-  if (!Array.isArray(unresolvedSlots)) {
+function normalizePlannerWorkingMemoryRetryPolicy(retryPolicy = null) {
+  if (!retryPolicy || typeof retryPolicy !== "object" || Array.isArray(retryPolicy)) {
+    return { ...DEFAULT_PLANNER_WORKING_MEMORY_RETRY_POLICY };
+  }
+  const maxRetries = Number(retryPolicy.max_retries);
+  const strategy = cleanText(retryPolicy.strategy || "");
+  if (!Number.isFinite(maxRetries) || maxRetries < 0 || !strategy) {
+    return { ...DEFAULT_PLANNER_WORKING_MEMORY_RETRY_POLICY };
+  }
+  if (!["same_agent", "reroute", "same_agent_then_reroute"].includes(strategy)) {
+    return { ...DEFAULT_PLANNER_WORKING_MEMORY_RETRY_POLICY };
+  }
+  return {
+    max_retries: Math.floor(maxRetries),
+    strategy,
+  };
+}
+
+function derivePlannerWorkingMemorySlotState({
+  workingMemory = null,
+} = {}) {
+  const slotState = Array.isArray(workingMemory?.slot_state)
+    ? workingMemory.slot_state
+    : [];
+  const activeSlots = slotState.filter((slot) => {
+    const ttl = cleanText(slot?.ttl || "");
+    if (!ttl) {
+      return true;
+    }
+    const expiresAt = Date.parse(ttl);
+    return Number.isFinite(expiresAt) && expiresAt > Date.now();
+  });
+  if (activeSlots.length > 0) {
+    return activeSlots;
+  }
+  const unresolvedSlots = Array.isArray(workingMemory?.unresolved_slots)
+    ? workingMemory.unresolved_slots
+    : [];
+  return unresolvedSlots
+    .map((slotKey) => cleanText(slotKey))
+    .filter(Boolean)
+    .map((slotKey) => ({
+      slot_key: slotKey,
+      required_by: null,
+      status: "missing",
+      source: "inferred",
+      ttl: null,
+    }));
+}
+
+function derivePlannerWorkingMemoryUnresolvedSlots({
+  workingMemory = null,
+} = {}) {
+  const slotState = derivePlannerWorkingMemorySlotState({ workingMemory });
+  const unresolvedFromSlotState = Array.from(new Set(slotState
+    .filter((slot) => slot?.status === "missing" || slot?.status === "invalid")
+    .map((slot) => cleanText(slot?.slot_key || ""))
+    .filter(Boolean)));
+  if (unresolvedFromSlotState.length > 0) {
+    return unresolvedFromSlotState;
+  }
+  return Array.isArray(workingMemory?.unresolved_slots)
+    ? workingMemory.unresolved_slots
+      .map((slot) => cleanText(slot))
+      .filter(Boolean)
+    : [];
+}
+
+function resolvePlannerWorkingMemoryActionFromSlots(slotHints = []) {
+  if (!Array.isArray(slotHints)) {
     return "";
   }
-  for (const slot of unresolvedSlots) {
-    const normalizedSlot = cleanText(slot);
+  for (const slot of slotHints) {
+    const normalizedSlot = typeof slot === "string"
+      ? cleanText(slot)
+      : cleanText(slot?.slot_key || "");
     if (!normalizedSlot) {
       continue;
     }
@@ -3700,6 +3786,80 @@ function resolvePlannerWorkingMemoryActionFromSlots(unresolvedSlots = []) {
     }
   }
   return "";
+}
+
+function resolvePlannerWorkingMemoryTaskType(workingMemory = null) {
+  return cleanText(workingMemory?.task_type || workingMemory?.inferred_task_type || "");
+}
+
+function resolvePlannerWorkingMemoryOwnerAction({
+  workingMemory = null,
+  text = "",
+  semantics = null,
+} = {}) {
+  const currentOwnerAgent = cleanText(workingMemory?.current_owner_agent || workingMemory?.last_selected_agent || "");
+  const ownerActionHint = PLANNER_WORKING_MEMORY_AGENT_ACTION_HINTS[currentOwnerAgent] || "";
+  const nextBestAction = cleanText(workingMemory?.next_best_action || "");
+  const reusableSkillAction = cleanText(workingMemory?.last_selected_skill || "");
+  const candidateActions = [
+    nextBestAction,
+    ownerActionHint,
+    reusableSkillAction,
+  ];
+  return candidateActions.find((action) => canUseWorkingMemoryAction(action, { text, semantics })) || "";
+}
+
+function resolvePlannerWorkingMemoryRerouteAction({
+  workingMemory = null,
+  text = "",
+  semantics = null,
+} = {}) {
+  const taskType = resolvePlannerWorkingMemoryTaskType(workingMemory);
+  const mappedTaskTypeAction = (() => {
+    if (taskType === "runtime_info") {
+      return "get_runtime_info";
+    }
+    if (taskType === "skill_read") {
+      return "search_and_summarize";
+    }
+    if (taskType === "doc_write") {
+      return "create_doc";
+    }
+    if (taskType === "document_lookup") {
+      return "search_company_brain_docs";
+    }
+    return "";
+  })();
+  const currentOwnerAgent = cleanText(workingMemory?.current_owner_agent || "");
+  const ownerActionHint = PLANNER_WORKING_MEMORY_AGENT_ACTION_HINTS[currentOwnerAgent] || "";
+  const unresolvedAction = resolvePlannerWorkingMemoryActionFromSlots(
+    derivePlannerWorkingMemoryUnresolvedSlots({ workingMemory }),
+  );
+  const candidateActions = [
+    mappedTaskTypeAction,
+    unresolvedAction,
+    cleanText(workingMemory?.next_best_action || ""),
+  ];
+  return candidateActions.find((action) => action && action !== ownerActionHint && canUseWorkingMemoryAction(action, {
+    text,
+    semantics,
+  })) || "";
+}
+
+function derivePlannerWorkingMemoryRetryMode({
+  retryPolicy = null,
+  retryCount = 0,
+} = {}) {
+  const normalizedPolicy = normalizePlannerWorkingMemoryRetryPolicy(retryPolicy);
+  if (normalizedPolicy.strategy === "same_agent") {
+    return "same_agent";
+  }
+  if (normalizedPolicy.strategy === "reroute") {
+    return "reroute";
+  }
+  return retryCount + 1 >= normalizedPolicy.max_retries
+    ? "reroute"
+    : "same_agent";
 }
 
 function isPlannerWorkingMemoryTopicSwitch({
@@ -3718,7 +3878,7 @@ function isPlannerWorkingMemoryTopicSwitch({
   const normalizedSemantics = semantics && typeof semantics === "object" && !Array.isArray(semantics)
     ? semantics
     : derivePlannerUserInputSemantics(normalizedIntent);
-  const inferredTaskType = cleanText(workingMemory?.inferred_task_type || "");
+  const inferredTaskType = resolvePlannerWorkingMemoryTaskType(workingMemory);
   const normalizedTaskType = cleanText(taskType || "");
   if (normalizedSemantics.wants_runtime_info && inferredTaskType && inferredTaskType !== "runtime_info") {
     return true;
@@ -3768,13 +3928,42 @@ function resolvePlannerWorkingMemoryContinuation({
     : null;
   const hasConfidence = confidence !== null;
   const confidenceAllowed = !hasConfidence || confidence >= PLANNER_WORKING_MEMORY_MIN_CONFIDENCE;
+  const taskId = cleanText(workingMemory.task_id || "") || null;
+  const taskStatus = cleanText(workingMemory.task_status || "") || "running";
+  const taskPhase = cleanText(workingMemory.task_phase || "") || "init";
+  const retryCount = Number.isFinite(Number(workingMemory.retry_count))
+    ? Number(workingMemory.retry_count)
+    : 0;
+  const retryPolicy = normalizePlannerWorkingMemoryRetryPolicy(workingMemory.retry_policy);
+  const unresolvedSlots = derivePlannerWorkingMemoryUnresolvedSlots({ workingMemory });
   const topicSwitch = isPlannerWorkingMemoryTopicSwitch({
     userIntent,
     taskType,
     semantics,
     workingMemory,
   });
-  const unresolvedAction = resolvePlannerWorkingMemoryActionFromSlots(workingMemory.unresolved_slots);
+  observability.task_id = taskId;
+  observability.task_phase_transition = null;
+  observability.task_status_transition = null;
+  observability.agent_handoff = null;
+  observability.retry_attempt = null;
+  observability.slot_update = null;
+  observability.task_abandoned = topicSwitch && taskId
+    ? {
+        task_id: taskId,
+        reason: "topic_switch",
+      }
+    : null;
+  if (topicSwitch) {
+    return {
+      selected_action: null,
+      reason: null,
+      routing_reason: null,
+      payload: payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {},
+      observability,
+    };
+  }
+  const unresolvedAction = resolvePlannerWorkingMemoryActionFromSlots(unresolvedSlots);
   const normalizedIntent = cleanText(userIntent);
   const shouldContinueSameTask = Boolean(
     semantics.explicit_same_task
@@ -3785,14 +3974,94 @@ function resolvePlannerWorkingMemoryContinuation({
   let selectedAction = "";
   let reason = "";
   let routingReason = "";
-  if (confidenceAllowed && !topicSwitch && unresolvedAction && canUseWorkingMemoryAction(unresolvedAction, {
+  const runningOwnerAction = resolvePlannerWorkingMemoryOwnerAction({
+    workingMemory,
+    text: userIntent,
+    semantics,
+  });
+  if (
+    confidenceAllowed
+    && taskStatus === "failed"
+    && retryCount < retryPolicy.max_retries
+  ) {
+    const retryMode = derivePlannerWorkingMemoryRetryMode({
+      retryPolicy,
+      retryCount,
+    });
+    const retryAction = retryMode === "reroute"
+      ? resolvePlannerWorkingMemoryRerouteAction({
+          workingMemory,
+          text: userIntent,
+          semantics,
+        })
+      : runningOwnerAction;
+    if (retryAction && canUseWorkingMemoryAction(retryAction, { text: userIntent, semantics })) {
+      selectedAction = retryAction;
+      reason = retryMode === "reroute"
+        ? "working_memory_retry_reroute"
+        : "working_memory_retry_same_agent";
+      routingReason = reason;
+      observability.task_phase_transition = "failed->retrying";
+      observability.task_status_transition = "failed->failed";
+      observability.retry_attempt = {
+        task_id: taskId,
+        retry_count: retryCount + 1,
+        max_retries: retryPolicy.max_retries,
+        strategy: retryPolicy.strategy,
+        mode: retryMode,
+      };
+      if (retryMode === "reroute") {
+        const fromAgent = cleanText(workingMemory.current_owner_agent || "") || null;
+        const toAgent = PLANNER_WORKING_MEMORY_ACTION_OWNER_HINTS[retryAction] || null;
+        observability.agent_handoff = {
+          from: fromAgent,
+          to: toAgent,
+          reason: "retry",
+        };
+      }
+    }
+  } else if (
+    confidenceAllowed
+    && taskPhase === "waiting_user"
+    && unresolvedSlots.length > 0
+  ) {
+    const waitingActionCandidates = [
+      unresolvedAction,
+      cleanText(workingMemory.next_best_action || ""),
+      runningOwnerAction,
+    ];
+    const waitingAction = waitingActionCandidates.find((action) => canUseWorkingMemoryAction(action, {
+      text: userIntent,
+      semantics,
+    })) || "";
+    if (waitingAction) {
+      selectedAction = waitingAction;
+      reason = "working_memory_waiting_user_slot_fill";
+      routingReason = "working_memory_waiting_user_slot_fill";
+      observability.task_phase_transition = "waiting_user->executing";
+      observability.task_status_transition = "blocked->running";
+      observability.slot_update = {
+        mode: "slot_fill",
+        pending_slots: unresolvedSlots,
+      };
+    }
+  } else if (
+    confidenceAllowed
+    && taskStatus === "running"
+    && unresolvedSlots.length === 0
+    && runningOwnerAction
+  ) {
+    selectedAction = runningOwnerAction;
+    reason = "working_memory_running_owner";
+    routingReason = "working_memory_running_owner";
+  } else if (confidenceAllowed && unresolvedAction && canUseWorkingMemoryAction(unresolvedAction, {
     text: userIntent,
     semantics,
   })) {
     selectedAction = unresolvedAction;
     reason = "working_memory_unresolved_slots";
     routingReason = "working_memory_unresolved_slots";
-  } else if (confidenceAllowed && !topicSwitch && shouldContinueSameTask) {
+  } else if (confidenceAllowed && shouldContinueSameTask) {
     const skillAction = cleanText(workingMemory.last_selected_skill || "");
     const nextBestAction = cleanText(workingMemory.next_best_action || "");
     const agentActionHint = PLANNER_WORKING_MEMORY_AGENT_ACTION_HINTS[cleanText(workingMemory.last_selected_agent || "")] || "";

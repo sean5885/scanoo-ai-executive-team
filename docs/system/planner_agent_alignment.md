@@ -814,30 +814,44 @@ This summary layer is used only for planner prompt assembly. When conversation t
 
 The same planner memory layer is now persisted through a minimal JSON file store, so `latest_summary`, bounded `recent_messages`, and `last_compacted_at` survive process restart and are auto-loaded before later planner prompt assembly. When runtime doc-query context is empty, the planner now lazily restores `active_doc` / `active_candidates` / `active_theme` from that persisted summary before later flow routing and prompt assembly.
 
-The same session store now also carries a minimal **session-scoped working memory v1** block per `sessionKey` (conversation scope only, no cross-session persona memory, no vector retrieval):
+The same session store now also carries a minimal **session-scoped working memory v2** block per `sessionKey` (conversation scope only, no cross-session persona memory, no vector retrieval):
 
 - `current_goal`
 - `inferred_task_type`
+- `task_type`
+- `task_id`
+- `task_phase` (`init|planning|executing|waiting_user|retrying|done|failed`)
+- `task_status` (`running|blocked|completed|failed`)
 - `last_selected_agent`
 - `last_selected_skill`
+- `current_owner_agent`
+- `previous_owner_agent`
+- `handoff_reason` (`needs_tool|needs_user_input|capability_gap|retry`)
 - `last_tool_result_summary`
-- `unresolved_slots`
+- `slot_state[]` (`slot_key|required_by|status|source|ttl`)
+- compatibility `unresolved_slots` mirror (derived from `slot_state`)
 - `next_best_action`
 - `confidence`
+- `retry_count`
+- `retry_policy` (`max_retries|strategy`)
+- `abandoned_task_ids`
 - `updated_at`
 
 Runtime usage boundary:
 
 - planner/router pre-read now attempts to read this working-memory block before normal selector fallback
-- when the current turn is a same-task follow-up/retry and confidence is bounded, routing may reuse the previous action/skill hint instead of forcing a fresh planner generation
-- unresolved slot hints can steer the next action (for example candidate-selection gaps route back to bounded search)
-- clear topic-switch phrasing keeps fail-closed behavior and avoids stale-memory carryover
+- when `task_status=running`, routing prefers `current_owner_agent`/`next_best_action` continuity before reselecting a new path
+- when `task_phase=waiting_user`, user follow-up is treated as slot-fill continuation (not as a brand-new task)
+- when `task_status=failed` and `retry_count < retry_policy.max_retries`, routing enters bounded retry behavior (`same_agent` or `reroute` by policy)
+- slot hints now come from `slot_state`; expired TTL slots are ignored so stale gaps do not pollute new turns
+- clear topic-switch phrasing still keeps fail-closed behavior and now marks prior task id as abandoned
 - malformed/missing working-memory snapshots fail closed (treated as miss, not as valid routing input)
 
 Write boundary:
 
 - working-memory write-back is now centralized at the answer boundary in `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs`
 - write-back uses patch semantics over the existing session snapshot (no full-object blind overwrite per turn)
+- answer-boundary patch now updates `task_phase/task_status/slot_state/retry_count/handoff` together with the existing v1 fields
 - only stable final boundary outputs are eligible for write-back; intermediate planner/router states do not write
 
 Observed routing/write signals now include:
@@ -849,6 +863,13 @@ Observed routing/write signals now include:
 - `memory_write_attempted`
 - `memory_write_succeeded`
 - `memory_snapshot`
+- `task_id`
+- `task_phase_transition`
+- `task_status_transition`
+- `agent_handoff`
+- `retry_attempt`
+- `slot_update`
+- `task_abandoned`
 
 The executive planner decision prompt now also reads a bounded task-state summary from that same local `task lifecycle v1` store: before agent selection, `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` asks `/Users/seanhan/Documents/Playground/src/planner-task-lifecycle-v1.mjs` for the latest relevant snapshot summary and injects `unfinished_hint`, `blocked_hint`, and `in_progress_hint` into prompt assembly, so decisions can preferentially reference unfinished tasks, surface blocked-task risk, and reuse in-progress execution summaries without changing the public planner JSON shape.
 
