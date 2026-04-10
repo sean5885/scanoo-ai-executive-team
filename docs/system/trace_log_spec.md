@@ -173,8 +173,17 @@ All minimum trace/log events should align around these fields:
     - `task_trace_snapshot`
     - `task_trace_text`
     - `task_trace_event_alignment`
+    - artifact/dependency diagnostics surfaced in the same trace payload:
+      - `artifact_id`
+      - `artifact_type`
+      - `validity_status`
+      - `produced_by_step_id`
+      - `affected_downstream_steps`
+      - `dependency_type`
+      - `artifact_superseded`
+      - `dependency_blocked_step`
   - alignment contract:
-    - trace output is derived from existing `memory_snapshot`, `task_phase_transition`, `agent_handoff`, `retry_attempt`, and execution-plan observability (`plan_id`, `plan_status`, `current_step`, `step_transition`, `plan_invalidated`, `failure_class`, `recovery_policy`, `recovery_action`, `recovery_attempt_count`, `rollback_target_step_id`, `skipped_step_ids`, `resumed_from_waiting_user`, `resumed_from_retry`)
+    - trace output is derived from existing `memory_snapshot`, `task_phase_transition`, `agent_handoff`, `retry_attempt`, and execution-plan observability (`plan_id`, `plan_status`, `current_step`, `step_transition`, `plan_invalidated`, `failure_class`, `recovery_policy`, `recovery_action`, `recovery_attempt_count`, `rollback_target_step_id`, `skipped_step_ids`, `artifact_id`, `artifact_type`, `validity_status`, `produced_by_step_id`, `affected_downstream_steps`, `dependency_type`, `artifact_superseded`, `dependency_blocked_step`, `resumed_from_waiting_user`, `resumed_from_retry`)
     - it is a diagnostics formatter layer, not an independent state source
 - skill-backed `tool_execution` logs now also expose:
   - `skill_bridge`

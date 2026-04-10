@@ -80,6 +80,20 @@ const PLANNER_WORKING_MEMORY_RECOVERY_ACTIONS = new Set([
 ]);
 const PLANNER_WORKING_MEMORY_PLAN_STEP_LIMIT = 12;
 const PLANNER_WORKING_MEMORY_PLAN_REF_LIMIT = 8;
+const PLANNER_WORKING_MEMORY_PLAN_ARTIFACT_LIMIT = 24;
+const PLANNER_WORKING_MEMORY_PLAN_EDGE_LIMIT = 36;
+const PLANNER_WORKING_MEMORY_METADATA_KEY_LIMIT = 12;
+const PLANNER_WORKING_MEMORY_METADATA_ARRAY_LIMIT = 8;
+const PLANNER_WORKING_MEMORY_ARTIFACT_VALIDITY_STATUSES = new Set([
+  "valid",
+  "invalid",
+  "superseded",
+  "missing",
+]);
+const PLANNER_WORKING_MEMORY_DEPENDENCY_TYPES = new Set([
+  "hard",
+  "soft",
+]);
 const DEFAULT_PLANNER_WORKING_MEMORY_RETRY_POLICY = Object.freeze({
   max_retries: 2,
   strategy: "same_agent_then_reroute",
@@ -444,6 +458,361 @@ function normalizeWorkingMemoryExecutionPlanRecoveryState(value = null, { allowM
   return normalized;
 }
 
+function normalizeWorkingMemoryExecutionPlanArtifactValidityStatus(value = "", { allowNull = true } = {}) {
+  const normalized = cleanText(value || "");
+  if (!normalized) {
+    return allowNull ? null : null;
+  }
+  return PLANNER_WORKING_MEMORY_ARTIFACT_VALIDITY_STATUSES.has(normalized)
+    ? normalized
+    : null;
+}
+
+function normalizeWorkingMemoryExecutionPlanMetadataValue(value = null, depth = 0) {
+  if (value === null) {
+    return null;
+  }
+  if (typeof value === "string") {
+    return cleanText(value);
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : undefined;
+  }
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    if (depth > 0) {
+      return undefined;
+    }
+    const normalizedArray = [];
+    for (const item of value) {
+      const normalizedItem = normalizeWorkingMemoryExecutionPlanMetadataValue(item, depth + 1);
+      if (normalizedItem === undefined || Array.isArray(normalizedItem) || (normalizedItem && typeof normalizedItem === "object")) {
+        return undefined;
+      }
+      normalizedArray.push(normalizedItem);
+      if (normalizedArray.length >= PLANNER_WORKING_MEMORY_METADATA_ARRAY_LIMIT) {
+        break;
+      }
+    }
+    return normalizedArray;
+  }
+  if (value && typeof value === "object") {
+    if (depth > 0) {
+      return undefined;
+    }
+    const normalizedObject = {};
+    for (const [rawKey, rawValue] of Object.entries(value)) {
+      const key = normalizeWorkingMemoryString(rawKey);
+      if (!key) {
+        continue;
+      }
+      const normalizedValue = normalizeWorkingMemoryExecutionPlanMetadataValue(rawValue, depth + 1);
+      if (normalizedValue === undefined || (normalizedValue && typeof normalizedValue === "object" && !Array.isArray(normalizedValue))) {
+        return undefined;
+      }
+      normalizedObject[key] = normalizedValue;
+      if (Object.keys(normalizedObject).length >= PLANNER_WORKING_MEMORY_METADATA_KEY_LIMIT) {
+        break;
+      }
+    }
+    return normalizedObject;
+  }
+  return undefined;
+}
+
+function normalizeWorkingMemoryExecutionPlanMetadata(value = null, { allowNull = true } = {}) {
+  if (value === null || value === undefined || value === "") {
+    return allowNull ? null : null;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const normalized = {};
+  for (const [rawKey, rawValue] of Object.entries(value)) {
+    const key = normalizeWorkingMemoryString(rawKey);
+    if (!key) {
+      continue;
+    }
+    const normalizedValue = normalizeWorkingMemoryExecutionPlanMetadataValue(rawValue, 0);
+    if (normalizedValue === undefined) {
+      return null;
+    }
+    normalized[key] = normalizedValue;
+    if (Object.keys(normalized).length >= PLANNER_WORKING_MEMORY_METADATA_KEY_LIMIT) {
+      break;
+    }
+  }
+  return normalized;
+}
+
+function normalizeWorkingMemoryExecutionPlanArtifact(artifact = null, { allowPartial = false } = {}) {
+  if (!artifact || typeof artifact !== "object" || Array.isArray(artifact)) {
+    return null;
+  }
+  const hasField = (field) => Object.prototype.hasOwnProperty.call(artifact, field);
+  const artifactId = normalizeWorkingMemoryString(artifact.artifact_id);
+  if (!artifactId) {
+    return null;
+  }
+  const normalizedArtifact = {
+    artifact_id: artifactId,
+  };
+
+  const artifactType = normalizeWorkingMemoryString(artifact.artifact_type);
+  if (allowPartial) {
+    if (hasField("artifact_type")) {
+      if (!artifactType) {
+        return null;
+      }
+      normalizedArtifact.artifact_type = artifactType;
+    }
+  } else if (!artifactType) {
+    return null;
+  } else {
+    normalizedArtifact.artifact_type = artifactType;
+  }
+
+  const producedByStepId = normalizeWorkingMemoryString(artifact.produced_by_step_id);
+  if (allowPartial) {
+    if (hasField("produced_by_step_id")) {
+      if (!producedByStepId) {
+        return null;
+      }
+      normalizedArtifact.produced_by_step_id = producedByStepId;
+    }
+  } else if (!producedByStepId) {
+    return null;
+  } else {
+    normalizedArtifact.produced_by_step_id = producedByStepId;
+  }
+
+  const validityStatus = normalizeWorkingMemoryExecutionPlanArtifactValidityStatus(artifact.validity_status, {
+    allowNull: false,
+  });
+  if (allowPartial) {
+    if (hasField("validity_status")) {
+      if (!validityStatus) {
+        return null;
+      }
+      normalizedArtifact.validity_status = validityStatus;
+    }
+  } else if (!validityStatus) {
+    return null;
+  } else {
+    normalizedArtifact.validity_status = validityStatus;
+  }
+
+  const consumedByStepIds = normalizeWorkingMemoryExecutionPlanRefs(artifact.consumed_by_step_ids);
+  if (allowPartial) {
+    if (hasField("consumed_by_step_ids")) {
+      if (!Array.isArray(consumedByStepIds)) {
+        return null;
+      }
+      normalizedArtifact.consumed_by_step_ids = consumedByStepIds;
+    }
+  } else if (!Array.isArray(consumedByStepIds)) {
+    return null;
+  } else {
+    normalizedArtifact.consumed_by_step_ids = consumedByStepIds;
+  }
+
+  if (allowPartial) {
+    if (hasField("supersedes_artifact_id")) {
+      normalizedArtifact.supersedes_artifact_id = normalizeWorkingMemoryString(artifact.supersedes_artifact_id);
+    }
+  } else {
+    normalizedArtifact.supersedes_artifact_id = normalizeWorkingMemoryString(artifact.supersedes_artifact_id);
+  }
+
+  const metadata = normalizeWorkingMemoryExecutionPlanMetadata(artifact.metadata, {
+    allowNull: true,
+  });
+  if (allowPartial) {
+    if (hasField("metadata")) {
+      if (artifact.metadata !== null && artifact.metadata !== undefined && artifact.metadata !== "" && metadata === null) {
+        return null;
+      }
+      normalizedArtifact.metadata = metadata;
+    }
+  } else {
+    if (artifact.metadata !== null && artifact.metadata !== undefined && artifact.metadata !== "" && metadata === null) {
+      return null;
+    }
+    normalizedArtifact.metadata = metadata;
+  }
+
+  return normalizedArtifact;
+}
+
+function normalizeWorkingMemoryExecutionPlanArtifacts(
+  artifacts = [],
+  { allowPartial = false, allowMissing = true } = {},
+) {
+  if ((artifacts === null || artifacts === undefined || artifacts === "") && allowMissing) {
+    return [];
+  }
+  if (!Array.isArray(artifacts)) {
+    return null;
+  }
+  const normalizedArtifacts = [];
+  const seenArtifactIds = new Set();
+  for (const artifact of artifacts) {
+    const normalizedArtifact = normalizeWorkingMemoryExecutionPlanArtifact(artifact, { allowPartial });
+    if (!normalizedArtifact) {
+      return null;
+    }
+    if (seenArtifactIds.has(normalizedArtifact.artifact_id)) {
+      return null;
+    }
+    seenArtifactIds.add(normalizedArtifact.artifact_id);
+    normalizedArtifacts.push(normalizedArtifact);
+    if (normalizedArtifacts.length >= PLANNER_WORKING_MEMORY_PLAN_ARTIFACT_LIMIT) {
+      break;
+    }
+  }
+  return normalizedArtifacts;
+}
+
+function normalizeWorkingMemoryExecutionPlanDependencyEdge(edge = null) {
+  if (!edge || typeof edge !== "object" || Array.isArray(edge)) {
+    return null;
+  }
+  const fromStepId = normalizeWorkingMemoryString(edge.from_step_id);
+  const toStepId = normalizeWorkingMemoryString(edge.to_step_id);
+  const viaArtifactId = normalizeWorkingMemoryString(edge.via_artifact_id);
+  const dependencyType = cleanText(edge.dependency_type || "");
+  if (!fromStepId || !toStepId || !viaArtifactId || !PLANNER_WORKING_MEMORY_DEPENDENCY_TYPES.has(dependencyType)) {
+    return null;
+  }
+  return {
+    from_step_id: fromStepId,
+    to_step_id: toStepId,
+    via_artifact_id: viaArtifactId,
+    dependency_type: dependencyType,
+  };
+}
+
+function normalizeWorkingMemoryExecutionPlanDependencyEdges(edges = [], { allowMissing = true } = {}) {
+  if ((edges === null || edges === undefined || edges === "") && allowMissing) {
+    return [];
+  }
+  if (!Array.isArray(edges)) {
+    return null;
+  }
+  const normalizedEdges = [];
+  const seenKeys = new Set();
+  for (const edge of edges) {
+    const normalizedEdge = normalizeWorkingMemoryExecutionPlanDependencyEdge(edge);
+    if (!normalizedEdge) {
+      return null;
+    }
+    const edgeKey = `${normalizedEdge.from_step_id}->${normalizedEdge.to_step_id}#${normalizedEdge.via_artifact_id}`;
+    if (seenKeys.has(edgeKey)) {
+      return null;
+    }
+    seenKeys.add(edgeKey);
+    normalizedEdges.push(normalizedEdge);
+    if (normalizedEdges.length >= PLANNER_WORKING_MEMORY_PLAN_EDGE_LIMIT) {
+      break;
+    }
+  }
+  return normalizedEdges;
+}
+
+function isWorkingMemoryExecutionPlanGraphStepReferenceAllowed({
+  stepId = "",
+  activeStepIds = new Set(),
+  planId = "",
+  artifactMetadata = null,
+} = {}) {
+  const normalizedStepId = normalizeWorkingMemoryString(stepId);
+  if (!normalizedStepId) {
+    return false;
+  }
+  if (activeStepIds.has(normalizedStepId)) {
+    return true;
+  }
+  const artifactPlanId = cleanText(artifactMetadata?.plan_id || "");
+  return Boolean(artifactPlanId && planId && artifactPlanId !== planId);
+}
+
+function validateWorkingMemoryExecutionPlanGraph(plan = null) {
+  if (!plan || typeof plan !== "object" || Array.isArray(plan)) {
+    return false;
+  }
+  const activeStepIds = new Set(Array.isArray(plan.steps) ? plan.steps.map((step) => step.step_id) : []);
+  const planId = cleanText(plan.plan_id || "");
+  const artifacts = Array.isArray(plan.artifacts) ? plan.artifacts : [];
+  const dependencyEdges = Array.isArray(plan.dependency_edges) ? plan.dependency_edges : [];
+  const artifactMap = new Map(artifacts.map((artifact) => [artifact.artifact_id, artifact]));
+
+  for (const artifact of artifacts) {
+    if (!artifact?.artifact_id
+      || !artifact?.artifact_type
+      || !artifact?.produced_by_step_id
+      || !PLANNER_WORKING_MEMORY_ARTIFACT_VALIDITY_STATUSES.has(cleanText(artifact?.validity_status || ""))) {
+      return false;
+    }
+    if (!isWorkingMemoryExecutionPlanGraphStepReferenceAllowed({
+      stepId: artifact.produced_by_step_id,
+      activeStepIds,
+      planId,
+      artifactMetadata: artifact.metadata,
+    })) {
+      return false;
+    }
+    for (const consumedStepId of Array.isArray(artifact.consumed_by_step_ids) ? artifact.consumed_by_step_ids : []) {
+      if (!isWorkingMemoryExecutionPlanGraphStepReferenceAllowed({
+        stepId: consumedStepId,
+        activeStepIds,
+        planId,
+        artifactMetadata: artifact.metadata,
+      })) {
+        return false;
+      }
+    }
+  }
+
+  for (const artifact of artifacts) {
+    const supersedesId = normalizeWorkingMemoryString(artifact?.supersedes_artifact_id);
+    if (supersedesId && !artifactMap.has(supersedesId)) {
+      return false;
+    }
+  }
+
+  for (const edge of dependencyEdges) {
+    const artifact = artifactMap.get(edge.via_artifact_id);
+    if (!artifact) {
+      return false;
+    }
+    if (!isWorkingMemoryExecutionPlanGraphStepReferenceAllowed({
+      stepId: edge.from_step_id,
+      activeStepIds,
+      planId,
+      artifactMetadata: artifact.metadata,
+    })) {
+      return false;
+    }
+    if (!isWorkingMemoryExecutionPlanGraphStepReferenceAllowed({
+      stepId: edge.to_step_id,
+      activeStepIds,
+      planId,
+      artifactMetadata: artifact.metadata,
+    })) {
+      return false;
+    }
+    if (activeStepIds.has(edge.from_step_id)
+      && activeStepIds.has(artifact.produced_by_step_id)
+      && edge.from_step_id !== artifact.produced_by_step_id) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function normalizeWorkingMemoryExecutionPlanStep(step = null, { allowPartial = false } = {}) {
   if (!step || typeof step !== "object" || Array.isArray(step)) {
     return null;
@@ -658,8 +1027,20 @@ function normalizeWorkingMemoryExecutionPlan(value = null) {
     ? null
     : normalizeWorkingMemoryString(value.current_step_id);
   const steps = normalizeWorkingMemoryExecutionPlanSteps(value.steps);
+  const artifacts = normalizeWorkingMemoryExecutionPlanArtifacts(value.artifacts, {
+    allowPartial: false,
+    allowMissing: true,
+  });
+  const dependencyEdges = normalizeWorkingMemoryExecutionPlanDependencyEdges(value.dependency_edges, {
+    allowMissing: true,
+  });
 
-  if (!planId || !planStatus || !Array.isArray(steps) || currentStepId === undefined) {
+  if (!planId
+    || !planStatus
+    || !Array.isArray(steps)
+    || !Array.isArray(artifacts)
+    || !Array.isArray(dependencyEdges)
+    || currentStepId === undefined) {
     return null;
   }
   if (steps.length === 0 && planStatus !== "completed" && planStatus !== "invalidated") {
@@ -683,12 +1064,18 @@ function normalizeWorkingMemoryExecutionPlan(value = null) {
     resolvedCurrentStepId = null;
   }
 
-  return {
+  const normalizedPlan = {
     plan_id: planId,
     plan_status: planStatus,
     current_step_id: resolvedCurrentStepId,
     steps,
+    artifacts,
+    dependency_edges: dependencyEdges,
   };
+  if (!validateWorkingMemoryExecutionPlanGraph(normalizedPlan)) {
+    return null;
+  }
+  return normalizedPlan;
 }
 
 function normalizeWorkingMemoryExecutionPlanPatch(value = null) {
@@ -730,6 +1117,25 @@ function normalizeWorkingMemoryExecutionPlanPatch(value = null) {
     }
     normalizedPatch.steps = steps;
   }
+  if (hasField("artifacts")) {
+    const artifacts = normalizeWorkingMemoryExecutionPlanArtifacts(value.artifacts, {
+      allowPartial: true,
+      allowMissing: false,
+    });
+    if (!Array.isArray(artifacts)) {
+      return null;
+    }
+    normalizedPatch.artifacts = artifacts;
+  }
+  if (hasField("dependency_edges")) {
+    const dependencyEdges = normalizeWorkingMemoryExecutionPlanDependencyEdges(value.dependency_edges, {
+      allowMissing: false,
+    });
+    if (!Array.isArray(dependencyEdges)) {
+      return null;
+    }
+    normalizedPatch.dependency_edges = dependencyEdges;
+  }
   if (Object.keys(normalizedPatch).length === 0) {
     return null;
   }
@@ -750,13 +1156,24 @@ function mergeWorkingMemoryExecutionPlan(basePlan = null, patch = null) {
         plan_status: base.plan_status,
         current_step_id: base.current_step_id,
         steps: base.steps.map((step) => ({ ...step })),
+        artifacts: Array.isArray(base.artifacts) ? base.artifacts.map((artifact) => ({ ...artifact })) : [],
+        dependency_edges: Array.isArray(base.dependency_edges) ? base.dependency_edges.map((edge) => ({ ...edge })) : [],
       }
     : {
         plan_id: null,
         plan_status: "active",
         current_step_id: null,
         steps: [],
+        artifacts: [],
+        dependency_edges: [],
       };
+  const replacingPlan = base
+    && Object.prototype.hasOwnProperty.call(patch, "plan_id")
+    && cleanText(base.plan_id || "") !== cleanText(patch.plan_id || "");
+  if (replacingPlan) {
+    mergedPlan.current_step_id = null;
+    mergedPlan.steps = [];
+  }
 
   if (Object.prototype.hasOwnProperty.call(patch, "plan_id")) {
     mergedPlan.plan_id = patch.plan_id;
@@ -786,6 +1203,66 @@ function mergeWorkingMemoryExecutionPlan(basePlan = null, patch = null) {
     }
     mergedPlan.steps = stepOrder
       .map((stepId) => stepMap.get(stepId))
+      .filter(Boolean);
+  }
+  if (Array.isArray(patch.artifacts)) {
+    const artifactOrder = mergedPlan.artifacts.map((artifact) => artifact.artifact_id);
+    const artifactMap = new Map(mergedPlan.artifacts.map((artifact) => [artifact.artifact_id, { ...artifact }]));
+    for (const artifactPatch of patch.artifacts) {
+      const artifactId = normalizeWorkingMemoryString(artifactPatch?.artifact_id);
+      if (!artifactId) {
+        return null;
+      }
+      if (!artifactMap.has(artifactId)) {
+        artifactMap.set(artifactId, { artifact_id: artifactId });
+        artifactOrder.push(artifactId);
+      }
+      artifactMap.set(artifactId, {
+        ...artifactMap.get(artifactId),
+        ...artifactPatch,
+      });
+    }
+    mergedPlan.artifacts = artifactOrder
+      .map((artifactId) => artifactMap.get(artifactId))
+      .filter(Boolean);
+  }
+  if (Array.isArray(patch.dependency_edges)) {
+    const edgeKeyFor = (edge = null) => {
+      const from = normalizeWorkingMemoryString(edge?.from_step_id);
+      const to = normalizeWorkingMemoryString(edge?.to_step_id);
+      const via = normalizeWorkingMemoryString(edge?.via_artifact_id);
+      if (!from || !to || !via) {
+        return null;
+      }
+      return `${from}->${to}#${via}`;
+    };
+    const edgeOrder = [];
+    const edgeMap = new Map();
+    for (const existingEdge of mergedPlan.dependency_edges) {
+      const edgeKey = edgeKeyFor(existingEdge);
+      if (!edgeKey || edgeMap.has(edgeKey)) {
+        continue;
+      }
+      edgeOrder.push(edgeKey);
+      edgeMap.set(edgeKey, { ...existingEdge });
+    }
+    for (const edgePatch of patch.dependency_edges) {
+      const edgeKey = edgeKeyFor(edgePatch);
+      if (!edgeKey) {
+        return null;
+      }
+      if (!edgeMap.has(edgeKey)) {
+        edgeOrder.push(edgeKey);
+        edgeMap.set(edgeKey, { ...edgePatch });
+      } else {
+        edgeMap.set(edgeKey, {
+          ...edgeMap.get(edgeKey),
+          ...edgePatch,
+        });
+      }
+    }
+    mergedPlan.dependency_edges = edgeOrder
+      .map((edgeKey) => edgeMap.get(edgeKey))
       .filter(Boolean);
   }
 
@@ -825,6 +1302,90 @@ function buildExecutionPlanStepTransition(basePlan = null, nextPlan = null) {
     from_current_step_id: fromCurrentStep || null,
     to_current_step_id: toCurrentStep || null,
     steps: stepTransitions,
+  };
+}
+
+function buildExecutionPlanArtifactDiagnostics(basePlan = null, nextPlan = null) {
+  const normalizedBase = normalizeWorkingMemoryExecutionPlan(basePlan);
+  const normalizedNext = normalizeWorkingMemoryExecutionPlan(nextPlan);
+  if (!normalizedNext) {
+    return {
+      artifact_id: null,
+      artifact_type: null,
+      validity_status: null,
+      produced_by_step_id: null,
+      affected_downstream_steps: null,
+      dependency_type: null,
+      artifact_superseded: false,
+      dependency_blocked_step: null,
+    };
+  }
+  const baseArtifacts = Array.isArray(normalizedBase?.artifacts) ? normalizedBase.artifacts : [];
+  const nextArtifacts = Array.isArray(normalizedNext?.artifacts) ? normalizedNext.artifacts : [];
+  const nextEdges = Array.isArray(normalizedNext?.dependency_edges) ? normalizedNext.dependency_edges : [];
+  const baseArtifactMap = new Map(baseArtifacts.map((artifact) => [artifact.artifact_id, artifact]));
+  const candidateArtifacts = [];
+  for (const artifact of nextArtifacts) {
+    const previousArtifact = baseArtifactMap.get(artifact.artifact_id) || null;
+    const previousValidity = cleanText(previousArtifact?.validity_status || "") || null;
+    const nextValidity = cleanText(artifact.validity_status || "") || null;
+    if (!previousArtifact || previousValidity !== nextValidity || cleanText(artifact.supersedes_artifact_id || "")) {
+      candidateArtifacts.push({
+        artifact,
+        previous: previousArtifact,
+      });
+    }
+  }
+  const prioritized = candidateArtifacts.find((item) => cleanText(item?.artifact?.validity_status || "") === "invalid")
+    || candidateArtifacts.find((item) => cleanText(item?.artifact?.validity_status || "") === "missing")
+    || candidateArtifacts.find((item) => cleanText(item?.artifact?.validity_status || "") === "superseded")
+    || candidateArtifacts[0]
+    || null;
+  if (!prioritized?.artifact) {
+    return {
+      artifact_id: null,
+      artifact_type: null,
+      validity_status: null,
+      produced_by_step_id: null,
+      affected_downstream_steps: null,
+      dependency_type: null,
+      artifact_superseded: false,
+      dependency_blocked_step: null,
+    };
+  }
+  const artifact = prioritized.artifact;
+  const hardDownstream = nextEdges
+    .filter((edge) => edge.via_artifact_id === artifact.artifact_id && edge.dependency_type === "hard")
+    .map((edge) => edge.to_step_id)
+    .filter(Boolean);
+  const softDownstream = nextEdges
+    .filter((edge) => edge.via_artifact_id === artifact.artifact_id && edge.dependency_type === "soft")
+    .map((edge) => edge.to_step_id)
+    .filter(Boolean);
+  const dependencyType = hardDownstream.length > 0
+    ? "hard"
+    : softDownstream.length > 0
+      ? "soft"
+      : null;
+  const downstreamCandidates = dependencyType === "hard" ? hardDownstream : softDownstream;
+  const uniqueDownstreamSteps = Array.from(new Set(downstreamCandidates));
+  const stepMap = new Map((normalizedNext.steps || []).map((step) => [step.step_id, step]));
+  const blockedStep = dependencyType === "hard"
+    ? uniqueDownstreamSteps.find((stepId) => {
+        const stepStatus = cleanText(stepMap.get(stepId)?.status || "");
+        return stepStatus === "blocked" || stepStatus === "failed" || stepStatus === "running";
+      }) || uniqueDownstreamSteps[0] || null
+    : null;
+  return {
+    artifact_id: artifact.artifact_id || null,
+    artifact_type: artifact.artifact_type || null,
+    validity_status: artifact.validity_status || null,
+    produced_by_step_id: artifact.produced_by_step_id || null,
+    affected_downstream_steps: uniqueDownstreamSteps.length > 0 ? uniqueDownstreamSteps : null,
+    dependency_type: dependencyType,
+    artifact_superseded: cleanText(artifact.validity_status || "") === "superseded"
+      || Boolean(cleanText(artifact.supersedes_artifact_id || "")),
+    dependency_blocked_step: blockedStep,
   };
 }
 
@@ -1715,6 +2276,7 @@ export function applyPlannerWorkingMemoryPatch({
   const basePlan = normalizeWorkingMemoryExecutionPlan(baseMemory.execution_plan);
   const nextPlan = normalizeWorkingMemoryExecutionPlan(nextMemory.execution_plan);
   const planStepTransition = buildExecutionPlanStepTransition(basePlan, nextPlan);
+  const artifactDiagnostics = buildExecutionPlanArtifactDiagnostics(basePlan, nextPlan);
   const skippedStepIds = Array.isArray(planStepTransition?.steps)
     ? planStepTransition.steps
         .filter((step) => cleanText(step?.to || "") === "skipped")
@@ -1785,6 +2347,16 @@ export function applyPlannerWorkingMemoryPatch({
         : null,
       rollback_target_step_id: cleanText(recoverySignalState?.rollback_target_step_id || "") || null,
       skipped_step_ids: skippedStepIds.length > 0 ? skippedStepIds : null,
+      artifact_id: artifactDiagnostics.artifact_id || null,
+      artifact_type: artifactDiagnostics.artifact_type || null,
+      validity_status: artifactDiagnostics.validity_status || null,
+      produced_by_step_id: artifactDiagnostics.produced_by_step_id || null,
+      affected_downstream_steps: Array.isArray(artifactDiagnostics.affected_downstream_steps)
+        ? artifactDiagnostics.affected_downstream_steps
+        : null,
+      dependency_type: artifactDiagnostics.dependency_type || null,
+      artifact_superseded: artifactDiagnostics.artifact_superseded === true,
+      dependency_blocked_step: artifactDiagnostics.dependency_blocked_step || null,
       task_abandoned: taskAbandoned
         ? {
             task_id: taskAbandoned,

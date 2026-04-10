@@ -79,6 +79,18 @@ function normalizeExecutionPlan(plan = null) {
       current_step: null,
       steps: [],
       map: {},
+      artifacts: [],
+      dependency_edges: [],
+      primary_artifact: {
+        artifact_id: null,
+        artifact_type: null,
+        validity_status: null,
+        produced_by_step_id: null,
+        affected_downstream_steps: null,
+        dependency_type: null,
+        artifact_superseded: false,
+        dependency_blocked_step: null,
+      },
     };
   }
   const planId = cleanText(plan.plan_id || "");
@@ -116,16 +128,102 @@ function normalizeExecutionPlan(plan = null) {
         })
         .filter(Boolean)
     : [];
+  const normalizedArtifacts = Array.isArray(plan.artifacts)
+    ? plan.artifacts
+        .map((artifact) => {
+          const artifactId = cleanText(artifact?.artifact_id || "");
+          if (!artifactId) {
+            return null;
+          }
+          return {
+            artifact_id: artifactId,
+            artifact_type: cleanText(artifact?.artifact_type || "") || null,
+            produced_by_step_id: cleanText(artifact?.produced_by_step_id || "") || null,
+            validity_status: cleanText(artifact?.validity_status || "") || null,
+            supersedes_artifact_id: cleanText(artifact?.supersedes_artifact_id || "") || null,
+          };
+        })
+        .filter(Boolean)
+    : [];
+  const normalizedDependencyEdges = Array.isArray(plan.dependency_edges)
+    ? plan.dependency_edges
+        .map((edge) => {
+          const fromStepId = cleanText(edge?.from_step_id || "");
+          const toStepId = cleanText(edge?.to_step_id || "");
+          const viaArtifactId = cleanText(edge?.via_artifact_id || "");
+          const dependencyType = cleanText(edge?.dependency_type || "");
+          if (!fromStepId || !toStepId || !viaArtifactId || !dependencyType) {
+            return null;
+          }
+          return {
+            from_step_id: fromStepId,
+            to_step_id: toStepId,
+            via_artifact_id: viaArtifactId,
+            dependency_type: dependencyType,
+          };
+        })
+        .filter(Boolean)
+    : [];
   const map = {};
   for (const step of normalizedSteps) {
     map[step.step_id] = step.status;
   }
+  const artifactMap = {};
+  for (const artifact of normalizedArtifacts) {
+    artifactMap[artifact.artifact_id] = artifact.validity_status || "none";
+  }
+  const artifactPriority = normalizedArtifacts.find((artifact) => artifact.validity_status === "invalid")
+    || normalizedArtifacts.find((artifact) => artifact.validity_status === "missing")
+    || normalizedArtifacts.find((artifact) => artifact.validity_status === "superseded")
+    || normalizedArtifacts.find((artifact) => artifact.produced_by_step_id === currentStep)
+    || normalizedArtifacts[0]
+    || null;
+  const hardDownstream = artifactPriority
+    ? normalizedDependencyEdges
+      .filter((edge) => edge.via_artifact_id === artifactPriority.artifact_id && edge.dependency_type === "hard")
+      .map((edge) => edge.to_step_id)
+    : [];
+  const softDownstream = artifactPriority
+    ? normalizedDependencyEdges
+      .filter((edge) => edge.via_artifact_id === artifactPriority.artifact_id && edge.dependency_type === "soft")
+      .map((edge) => edge.to_step_id)
+    : [];
+  const dependencyType = hardDownstream.length > 0
+    ? "hard"
+    : softDownstream.length > 0
+      ? "soft"
+      : null;
+  const affectedDownstreamSteps = dependencyType === "hard"
+    ? hardDownstream
+    : softDownstream;
+  const dependencyBlockedStep = dependencyType === "hard"
+    ? affectedDownstreamSteps.find((stepId) => {
+        const stepStatus = cleanText(map[stepId] || "");
+        return stepStatus === "blocked" || stepStatus === "failed" || stepStatus === "running";
+      }) || affectedDownstreamSteps[0] || null
+    : null;
   return {
     plan_id: planId || null,
     plan_status: planStatus || null,
     current_step: currentStep || null,
     steps: normalizedSteps,
     map,
+    artifacts: normalizedArtifacts,
+    dependency_edges: normalizedDependencyEdges,
+    artifact_map: artifactMap,
+    primary_artifact: {
+      artifact_id: artifactPriority?.artifact_id || null,
+      artifact_type: artifactPriority?.artifact_type || null,
+      validity_status: artifactPriority?.validity_status || null,
+      produced_by_step_id: artifactPriority?.produced_by_step_id || null,
+      affected_downstream_steps: affectedDownstreamSteps.length > 0
+        ? Array.from(new Set(affectedDownstreamSteps))
+        : null,
+      dependency_type: dependencyType,
+      artifact_superseded: artifactPriority?.validity_status === "superseded"
+        || Boolean(cleanText(artifactPriority?.supersedes_artifact_id || "")),
+      dependency_blocked_step: dependencyBlockedStep,
+    },
   };
 }
 
@@ -170,10 +268,21 @@ function toSnapshot(memorySnapshot = null) {
         ? Number(currentPlanStep.recovery_state.recovery_attempt_count)
         : 0,
       current_step_rollback_target_step_id: currentPlanStep?.recovery_state?.rollback_target_step_id || null,
+      artifact_id: executionPlan.primary_artifact.artifact_id || null,
+      artifact_type: executionPlan.primary_artifact.artifact_type || null,
+      validity_status: executionPlan.primary_artifact.validity_status || null,
+      produced_by_step_id: executionPlan.primary_artifact.produced_by_step_id || null,
+      affected_downstream_steps: executionPlan.primary_artifact.affected_downstream_steps || null,
+      dependency_type: executionPlan.primary_artifact.dependency_type || null,
+      artifact_superseded: executionPlan.primary_artifact.artifact_superseded === true,
+      dependency_blocked_step: executionPlan.primary_artifact.dependency_blocked_step || null,
+      artifact_count: Array.isArray(executionPlan.artifacts) ? executionPlan.artifacts.length : 0,
+      dependency_edge_count: Array.isArray(executionPlan.dependency_edges) ? executionPlan.dependency_edges.length : 0,
       steps: executionPlan.steps,
     },
     _slot_map: slotState.map,
     _plan_step_map: executionPlan.map,
+    _artifact_map: executionPlan.artifact_map || {},
   };
 }
 
@@ -260,6 +369,14 @@ function buildDiffLines({
   addFieldDiff("current_step_recovery_action", previous.execution_plan.current_step_recovery_action, next.execution_plan.current_step_recovery_action);
   addFieldDiff("current_step_recovery_attempt_count", previous.execution_plan.current_step_recovery_attempt_count, next.execution_plan.current_step_recovery_attempt_count);
   addFieldDiff("current_step_rollback_target_step_id", previous.execution_plan.current_step_rollback_target_step_id, next.execution_plan.current_step_rollback_target_step_id);
+  addFieldDiff("artifact_id", previous.execution_plan.artifact_id, next.execution_plan.artifact_id);
+  addFieldDiff("artifact_type", previous.execution_plan.artifact_type, next.execution_plan.artifact_type);
+  addFieldDiff("validity_status", previous.execution_plan.validity_status, next.execution_plan.validity_status);
+  addFieldDiff("produced_by_step_id", previous.execution_plan.produced_by_step_id, next.execution_plan.produced_by_step_id);
+  addFieldDiff("affected_downstream_steps", previous.execution_plan.affected_downstream_steps, next.execution_plan.affected_downstream_steps);
+  addFieldDiff("dependency_type", previous.execution_plan.dependency_type, next.execution_plan.dependency_type);
+  addFieldDiff("artifact_superseded", previous.execution_plan.artifact_superseded, next.execution_plan.artifact_superseded);
+  addFieldDiff("dependency_blocked_step", previous.execution_plan.dependency_blocked_step, next.execution_plan.dependency_blocked_step);
 
   const slotKeys = Array.from(new Set([
     ...Object.keys(previous._slot_map || {}),
@@ -274,6 +391,13 @@ function buildDiffLines({
   ])).sort((left, right) => left.localeCompare(right));
   for (const stepId of planStepKeys) {
     addFieldDiff(`plan.step.${stepId}`, previous._plan_step_map[stepId] || "none", next._plan_step_map[stepId] || "none");
+  }
+  const artifactKeys = Array.from(new Set([
+    ...Object.keys(previous._artifact_map || {}),
+    ...Object.keys(next._artifact_map || {}),
+  ])).sort((left, right) => left.localeCompare(right));
+  for (const artifactId of artifactKeys) {
+    addFieldDiff(`plan.artifact.${artifactId}`, previous._artifact_map[artifactId] || "none", next._artifact_map[artifactId] || "none");
   }
 
   const phaseTransition = parseTransition(normalizedObservability.task_phase_transition);
@@ -367,6 +491,38 @@ function buildDiffLines({
     && !hasDiffPrefix("skipped_step_ids:")) {
     addDiffLine(`skipped_step_ids: ${formatValue(normalizedObservability.skipped_step_ids)}`);
   }
+  const artifactId = cleanText(normalizedObservability.artifact_id || "");
+  if (artifactId && !hasDiffPrefix("artifact_id:")) {
+    addDiffLine(`artifact_id: ${artifactId}`);
+  }
+  const artifactType = cleanText(normalizedObservability.artifact_type || "");
+  if (artifactType && !hasDiffPrefix("artifact_type:")) {
+    addDiffLine(`artifact_type: ${artifactType}`);
+  }
+  const validityStatus = cleanText(normalizedObservability.validity_status || "");
+  if (validityStatus && !hasDiffPrefix("validity_status:")) {
+    addDiffLine(`validity_status: ${validityStatus}`);
+  }
+  const producedByStepId = cleanText(normalizedObservability.produced_by_step_id || "");
+  if (producedByStepId && !hasDiffPrefix("produced_by_step_id:")) {
+    addDiffLine(`produced_by_step_id: ${producedByStepId}`);
+  }
+  if (Array.isArray(normalizedObservability.affected_downstream_steps)
+    && normalizedObservability.affected_downstream_steps.length > 0
+    && !hasDiffPrefix("affected_downstream_steps:")) {
+    addDiffLine(`affected_downstream_steps: ${formatValue(normalizedObservability.affected_downstream_steps)}`);
+  }
+  const dependencyType = cleanText(normalizedObservability.dependency_type || "");
+  if (dependencyType && !hasDiffPrefix("dependency_type:")) {
+    addDiffLine(`dependency_type: ${dependencyType}`);
+  }
+  if (normalizedObservability.artifact_superseded === true && !hasDiffPrefix("artifact_superseded:")) {
+    addDiffLine("artifact_superseded: true");
+  }
+  const dependencyBlockedStep = cleanText(normalizedObservability.dependency_blocked_step || "");
+  if (dependencyBlockedStep && !hasDiffPrefix("dependency_blocked_step:")) {
+    addDiffLine(`dependency_blocked_step: ${dependencyBlockedStep}`);
+  }
   if (normalizedObservability.resumed_from_waiting_user === true) {
     addDiffLine("resume: waiting_user");
   }
@@ -395,6 +551,7 @@ function buildTaskTraceText({
     `next_best_action: ${formatValue(next.next_best_action)}`,
     `plan: id=${formatValue(next.execution_plan.plan_id)} | status=${formatValue(next.execution_plan.plan_status)} | current_step=${formatValue(next.execution_plan.current_step)}`,
     `recovery: class=${formatValue(next.execution_plan.current_step_failure_class)} | policy=${formatValue(next.execution_plan.current_step_recovery_policy)} | action=${formatValue(next.execution_plan.current_step_recovery_action)} | attempts=${formatValue(next.execution_plan.current_step_recovery_attempt_count)} | rollback_target=${formatValue(next.execution_plan.current_step_rollback_target_step_id)}`,
+    `artifact: id=${formatValue(next.execution_plan.artifact_id)} | type=${formatValue(next.execution_plan.artifact_type)} | validity=${formatValue(next.execution_plan.validity_status)} | produced_by=${formatValue(next.execution_plan.produced_by_step_id)} | downstream=${formatValue(next.execution_plan.affected_downstream_steps)} | dependency=${formatValue(next.execution_plan.dependency_type)} | blocked_step=${formatValue(next.execution_plan.dependency_blocked_step)} | superseded=${formatValue(next.execution_plan.artifact_superseded)}`,
     `slot_state: missing=${formatValue(slots.missing)} | filled=${formatValue(slots.filled)} | invalid=${formatValue(slots.invalid)}`,
     `abandoned_task_ids: ${abandonedSummary}`,
   ];
@@ -421,7 +578,7 @@ export function buildPlannerTaskTraceDiagnostics({
     nextSnapshot: memorySnapshot,
     observability,
   });
-  const summary = `task=${formatValue(snapshot.task_id)} phase=${snapshot.task_phase} status=${snapshot.task_status} owner=${formatValue(snapshot.current_owner_agent)} plan=${formatValue(snapshot.execution_plan.plan_status)}:${formatValue(snapshot.execution_plan.current_step)} recovery=${formatValue(snapshot.execution_plan.current_step_recovery_action)} next=${formatValue(snapshot.next_best_action)}`;
+  const summary = `task=${formatValue(snapshot.task_id)} phase=${snapshot.task_phase} status=${snapshot.task_status} owner=${formatValue(snapshot.current_owner_agent)} plan=${formatValue(snapshot.execution_plan.plan_status)}:${formatValue(snapshot.execution_plan.current_step)} recovery=${formatValue(snapshot.execution_plan.current_step_recovery_action)} artifact=${formatValue(snapshot.execution_plan.artifact_id)}:${formatValue(snapshot.execution_plan.validity_status)} next=${formatValue(snapshot.next_best_action)}`;
   return {
     summary,
     snapshot: {
@@ -458,6 +615,15 @@ export function buildPlannerTaskTraceDiagnostics({
       recovery_action: Boolean(cleanText(observability?.recovery_action || "")),
       rollback_target_step_id: Boolean(cleanText(observability?.rollback_target_step_id || "")),
       skipped_step_ids: Array.isArray(observability?.skipped_step_ids) && observability.skipped_step_ids.length > 0,
+      artifact_id: Boolean(cleanText(observability?.artifact_id || "")),
+      artifact_type: Boolean(cleanText(observability?.artifact_type || "")),
+      validity_status: Boolean(cleanText(observability?.validity_status || "")),
+      produced_by_step_id: Boolean(cleanText(observability?.produced_by_step_id || "")),
+      affected_downstream_steps: Array.isArray(observability?.affected_downstream_steps)
+        && observability.affected_downstream_steps.length > 0,
+      dependency_type: Boolean(cleanText(observability?.dependency_type || "")),
+      artifact_superseded: observability?.artifact_superseded === true,
+      dependency_blocked_step: Boolean(cleanText(observability?.dependency_blocked_step || "")),
       resumed_from_waiting_user: observability?.resumed_from_waiting_user === true,
       resumed_from_retry: observability?.resumed_from_retry === true,
     },
