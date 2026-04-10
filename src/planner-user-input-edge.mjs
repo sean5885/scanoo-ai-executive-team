@@ -11,6 +11,7 @@ import { cleanText } from "./message-intent-utils.mjs";
 import { ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
 import { getPlannerSkillAction } from "./planner/skill-bridge.mjs";
 import { applyPlannerWorkingMemoryPatch, readPlannerWorkingMemoryForRouting } from "./planner-conversation-memory.mjs";
+import { buildPlannerTaskTraceDiagnostics } from "./planner-working-memory-trace.mjs";
 import { normalizeUserResponse } from "./user-response-normalizer.mjs";
 
 const REMINDER_REQUEST_PATTERNS = [
@@ -772,11 +773,12 @@ export async function runPlannerUserInputEdge({
     slot_update: null,
     task_abandoned: null,
   };
+  let previousWorkingMemory = null;
   if (shouldWriteWorkingMemory && typeof workingMemoryWriter === "function") {
     const previousWorkingMemoryRead = readPlannerWorkingMemoryForRouting({
       sessionKey,
     });
-    const previousWorkingMemory = previousWorkingMemoryRead?.ok === true
+    previousWorkingMemory = previousWorkingMemoryRead?.ok === true
       && previousWorkingMemoryRead?.data
       && typeof previousWorkingMemoryRead.data === "object"
       && !Array.isArray(previousWorkingMemoryRead.data)
@@ -801,20 +803,37 @@ export async function runPlannerUserInputEdge({
       source: "planner_answer_boundary_v1",
     }) || memoryWriteResult;
   }
+  const mergedMemoryObservability = {
+    ...derivedMemoryObservability,
+    ...(memoryWriteResult?.observability && typeof memoryWriteResult.observability === "object"
+      ? memoryWriteResult.observability
+      : {}),
+  };
+  const taskTrace = buildPlannerTaskTraceDiagnostics({
+    memoryStage: "answer_boundary_write_back",
+    memorySnapshot: mergedMemoryObservability.memory_snapshot || null,
+    previousMemorySnapshot: previousWorkingMemory,
+    observability: mergedMemoryObservability,
+  });
   logger?.info?.("planner_working_memory", {
     stage: "planner_working_memory",
     memory_stage: "answer_boundary_write_back",
     session_key: cleanText(sessionKey) || null,
     memory_write_attempted: shouldWriteWorkingMemory && typeof workingMemoryWriter === "function",
     memory_write_succeeded: memoryWriteResult?.ok === true,
-    memory_snapshot: memoryWriteResult?.observability?.memory_snapshot || null,
-    task_id: memoryWriteResult?.observability?.task_id || derivedMemoryObservability.task_id || null,
-    task_phase_transition: memoryWriteResult?.observability?.task_phase_transition || derivedMemoryObservability.task_phase_transition || null,
-    task_status_transition: memoryWriteResult?.observability?.task_status_transition || derivedMemoryObservability.task_status_transition || null,
-    agent_handoff: memoryWriteResult?.observability?.agent_handoff || derivedMemoryObservability.agent_handoff || null,
-    retry_attempt: memoryWriteResult?.observability?.retry_attempt || derivedMemoryObservability.retry_attempt || null,
-    slot_update: memoryWriteResult?.observability?.slot_update || derivedMemoryObservability.slot_update || null,
-    task_abandoned: memoryWriteResult?.observability?.task_abandoned || derivedMemoryObservability.task_abandoned || null,
+    memory_snapshot: mergedMemoryObservability.memory_snapshot || null,
+    task_id: mergedMemoryObservability.task_id || null,
+    task_phase_transition: mergedMemoryObservability.task_phase_transition || null,
+    task_status_transition: mergedMemoryObservability.task_status_transition || null,
+    agent_handoff: mergedMemoryObservability.agent_handoff || null,
+    retry_attempt: mergedMemoryObservability.retry_attempt || null,
+    slot_update: mergedMemoryObservability.slot_update || null,
+    task_abandoned: mergedMemoryObservability.task_abandoned || null,
+    task_trace_summary: taskTrace.summary,
+    task_trace_diff: taskTrace.diff,
+    task_trace_snapshot: taskTrace.snapshot,
+    task_trace_text: taskTrace.text,
+    task_trace_event_alignment: taskTrace.event_alignment,
   });
 
   return {

@@ -871,6 +871,24 @@ Observed routing/write signals now include:
 - `slot_update`
 - `task_abandoned`
 
+Working-memory v2 diagnostics now also includes one human-readable `task_trace` overlay derived from the same observed fields (no second state source):
+
+- formatter source: `/Users/seanhan/Documents/Playground/src/planner-working-memory-trace.mjs`
+- hook points:
+  - planner pre-read (after memory read)
+  - router decision (after selected action is resolved)
+  - answer-boundary write-back (after working-memory patch write returns)
+- each trace payload carries:
+  - normalized snapshot (`task_id/task_type/task_phase/task_status/owner/retry/next_best_action/slot_state/abandoned_task_ids`)
+  - deterministic diff lines (for example `task_phase: executing -> waiting_user`, `retry_count: 1 -> 2`, `slot.email: missing -> filled`)
+  - one multi-line `task_trace_text` summary intended for human debugging
+- event alignment is explicit and read-only:
+  - `memory_snapshot`
+  - `task_phase_transition`
+  - `agent_handoff`
+  - `retry_attempt`
+  - trace output must be derived from these existing signals instead of introducing an independent trace truth
+
 The executive planner decision prompt now also reads a bounded task-state summary from that same local `task lifecycle v1` store: before agent selection, `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` asks `/Users/seanhan/Documents/Playground/src/planner-task-lifecycle-v1.mjs` for the latest relevant snapshot summary and injects `unfinished_hint`, `blocked_hint`, and `in_progress_hint` into prompt assembly, so decisions can preferentially reference unfinished tasks, surface blocked-task risk, and reuse in-progress execution summaries without changing the public planner JSON shape.
 
 The normalized executive decision shape in that same module now also carries deterministic explainability metadata:
