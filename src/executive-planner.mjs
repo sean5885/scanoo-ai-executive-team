@@ -212,6 +212,20 @@ const PLANNER_WORKING_MEMORY_ACTION_OWNER_HINTS = Object.freeze({
   document_summarize: "doc_agent",
   get_runtime_info: "runtime_agent",
 });
+const PLANNER_WORKING_MEMORY_PLAN_STATUSES = new Set([
+  "active",
+  "paused",
+  "completed",
+  "invalidated",
+]);
+const PLANNER_WORKING_MEMORY_STEP_STATUSES = new Set([
+  "pending",
+  "running",
+  "blocked",
+  "completed",
+  "failed",
+  "skipped",
+]);
 
 const executiveCollaborationSignals = [
   "各個 agent",
@@ -3933,6 +3947,107 @@ function isPlannerWorkingMemoryTopicSwitch({
   return false;
 }
 
+function normalizePlannerWorkingMemoryExecutionPlan(plan = null) {
+  if (!plan || typeof plan !== "object" || Array.isArray(plan)) {
+    return null;
+  }
+  const planId = cleanText(plan.plan_id || "");
+  const planStatus = cleanText(plan.plan_status || "");
+  if (!planId || !PLANNER_WORKING_MEMORY_PLAN_STATUSES.has(planStatus)) {
+    return null;
+  }
+  const steps = Array.isArray(plan.steps)
+    ? plan.steps
+        .map((step) => {
+          const stepId = cleanText(step?.step_id || "");
+          const intendedAction = cleanText(step?.intended_action || "");
+          const status = cleanText(step?.status || "");
+          if (!stepId || !intendedAction || !PLANNER_WORKING_MEMORY_STEP_STATUSES.has(status)) {
+            return null;
+          }
+          return {
+            step_id: stepId,
+            intended_action: intendedAction,
+            status,
+            retryable: step?.retryable !== false,
+            slot_requirements: Array.isArray(step?.slot_requirements)
+              ? step.slot_requirements.map((slot) => cleanText(slot)).filter(Boolean)
+              : [],
+          };
+        })
+        .filter(Boolean)
+    : [];
+  if (steps.length === 0) {
+    return null;
+  }
+  const currentStepId = cleanText(plan.current_step_id || "") || null;
+  if (currentStepId && !steps.some((step) => step.step_id === currentStepId)) {
+    return null;
+  }
+  return {
+    plan_id: planId,
+    plan_status: planStatus,
+    current_step_id: currentStepId,
+    steps,
+  };
+}
+
+function resolvePlannerWorkingMemoryCurrentPlanStep(plan = null) {
+  const normalizedPlan = normalizePlannerWorkingMemoryExecutionPlan(plan);
+  if (!normalizedPlan || normalizedPlan.plan_status !== "active") {
+    return {
+      plan: normalizedPlan,
+      step: null,
+    };
+  }
+  const currentStep = normalizedPlan.current_step_id
+    ? normalizedPlan.steps.find((step) => step.step_id === normalizedPlan.current_step_id) || null
+    : normalizedPlan.steps.find((step) =>
+      step.status === "pending"
+      || step.status === "running"
+      || step.status === "blocked"
+      || step.status === "failed") || null;
+  return {
+    plan: normalizedPlan,
+    step: currentStep,
+  };
+}
+
+function resolvePlannerWorkingMemoryExecutionPlanAction({
+  workingMemory = null,
+  text = "",
+  semantics = null,
+  allowFailedStep = false,
+  allowBlockedStep = false,
+} = {}) {
+  const { plan, step } = resolvePlannerWorkingMemoryCurrentPlanStep(workingMemory?.execution_plan || null);
+  if (!plan || !step) {
+    return null;
+  }
+  if (step.status === "completed" || step.status === "skipped") {
+    return null;
+  }
+  if (step.status === "failed" && !allowFailedStep) {
+    return null;
+  }
+  if (step.status === "blocked" && !allowBlockedStep) {
+    return null;
+  }
+  const intendedAction = cleanText(step.intended_action || "");
+  if (!intendedAction || !canUseWorkingMemoryAction(intendedAction, { text, semantics })) {
+    return null;
+  }
+  return {
+    plan_id: plan.plan_id,
+    plan_status: plan.plan_status,
+    current_step_id: step.step_id,
+    step_status: step.status,
+    step_retryable: step.retryable !== false,
+    action: intendedAction,
+    slot_requirements: step.slot_requirements || [],
+  };
+}
+
 function resolvePlannerWorkingMemoryContinuation({
   userIntent = "",
   taskType = "",
@@ -3984,6 +4099,7 @@ function resolvePlannerWorkingMemoryContinuation({
     : 0;
   const retryPolicy = normalizePlannerWorkingMemoryRetryPolicy(workingMemory.retry_policy);
   const unresolvedSlots = derivePlannerWorkingMemoryUnresolvedSlots({ workingMemory });
+  const currentPlanStep = resolvePlannerWorkingMemoryCurrentPlanStep(workingMemory.execution_plan || null);
   const topicSwitch = isPlannerWorkingMemoryTopicSwitch({
     userIntent,
     taskType,
@@ -3996,6 +4112,18 @@ function resolvePlannerWorkingMemoryContinuation({
   observability.agent_handoff = null;
   observability.retry_attempt = null;
   observability.slot_update = null;
+  observability.plan_id = cleanText(currentPlanStep?.plan?.plan_id || "") || null;
+  observability.plan_status = cleanText(currentPlanStep?.plan?.plan_status || "") || null;
+  observability.current_step = cleanText(currentPlanStep?.step?.step_id || currentPlanStep?.plan?.current_step_id || "") || null;
+  observability.step_transition = null;
+  observability.resumed_from_waiting_user = false;
+  observability.resumed_from_retry = false;
+  observability.plan_invalidated = topicSwitch && currentPlanStep?.plan
+    ? {
+        plan_id: currentPlanStep.plan.plan_id,
+        reason: "topic_switch",
+      }
+    : null;
   observability.task_abandoned = topicSwitch && taskId
     ? {
         task_id: taskId,
@@ -4032,6 +4160,13 @@ function resolvePlannerWorkingMemoryContinuation({
     && taskStatus === "failed"
     && retryCount < retryPolicy.max_retries
   ) {
+    const retryPlanAction = resolvePlannerWorkingMemoryExecutionPlanAction({
+      workingMemory,
+      text: userIntent,
+      semantics,
+      allowFailedStep: true,
+      allowBlockedStep: true,
+    });
     const retryMode = derivePlannerWorkingMemoryRetryMode({
       retryPolicy,
       retryCount,
@@ -4042,12 +4177,14 @@ function resolvePlannerWorkingMemoryContinuation({
           text: userIntent,
           semantics,
         })
-      : runningOwnerAction;
+      : retryPlanAction?.action || runningOwnerAction;
     if (retryAction && canUseWorkingMemoryAction(retryAction, { text: userIntent, semantics })) {
       selectedAction = retryAction;
       reason = retryMode === "reroute"
         ? "working_memory_retry_reroute"
-        : "working_memory_retry_same_agent";
+        : retryPlanAction?.action && retryAction === retryPlanAction.action
+          ? "working_memory_retry_same_step"
+          : "working_memory_retry_same_agent";
       routingReason = reason;
       observability.task_phase_transition = "failed->retrying";
       observability.task_status_transition = "failed->failed";
@@ -4058,6 +4195,12 @@ function resolvePlannerWorkingMemoryContinuation({
         strategy: retryPolicy.strategy,
         mode: retryMode,
       };
+      observability.resumed_from_retry = Boolean(retryPlanAction?.action && retryAction === retryPlanAction.action);
+      if (retryPlanAction?.action && retryAction === retryPlanAction.action) {
+        observability.plan_id = retryPlanAction.plan_id || observability.plan_id;
+        observability.plan_status = retryPlanAction.plan_status || observability.plan_status;
+        observability.current_step = retryPlanAction.current_step_id || observability.current_step;
+      }
       if (retryMode === "reroute") {
         const fromAgent = cleanText(workingMemory.current_owner_agent || "") || null;
         const toAgent = PLANNER_WORKING_MEMORY_ACTION_OWNER_HINTS[retryAction] || null;
@@ -4073,7 +4216,15 @@ function resolvePlannerWorkingMemoryContinuation({
     && taskPhase === "waiting_user"
     && unresolvedSlots.length > 0
   ) {
+    const waitingPlanAction = resolvePlannerWorkingMemoryExecutionPlanAction({
+      workingMemory,
+      text: userIntent,
+      semantics,
+      allowBlockedStep: true,
+      allowFailedStep: true,
+    });
     const waitingActionCandidates = [
+      waitingPlanAction?.action || "",
       unresolvedAction,
       cleanText(workingMemory.next_best_action || ""),
       runningOwnerAction,
@@ -4084,17 +4235,49 @@ function resolvePlannerWorkingMemoryContinuation({
     })) || "";
     if (waitingAction) {
       selectedAction = waitingAction;
-      reason = "working_memory_waiting_user_slot_fill";
-      routingReason = "working_memory_waiting_user_slot_fill";
+      reason = waitingPlanAction?.action && waitingAction === waitingPlanAction.action
+        ? "working_memory_waiting_user_resume_plan_step"
+        : "working_memory_waiting_user_slot_fill";
+      routingReason = reason;
       observability.task_phase_transition = "waiting_user->executing";
       observability.task_status_transition = "blocked->running";
       observability.slot_update = {
         mode: "slot_fill",
         pending_slots: unresolvedSlots,
       };
+      observability.resumed_from_waiting_user = Boolean(waitingPlanAction?.action && waitingAction === waitingPlanAction.action);
+      if (waitingPlanAction?.action && waitingAction === waitingPlanAction.action) {
+        observability.plan_id = waitingPlanAction.plan_id || observability.plan_id;
+        observability.plan_status = waitingPlanAction.plan_status || observability.plan_status;
+        observability.current_step = waitingPlanAction.current_step_id || observability.current_step;
+      }
     }
-  } else if (
-    confidenceAllowed
+  }
+  if (
+    !selectedAction
+    && confidenceAllowed
+    && taskStatus === "running"
+    && unresolvedSlots.length === 0
+  ) {
+    const activePlanAction = resolvePlannerWorkingMemoryExecutionPlanAction({
+      workingMemory,
+      text: userIntent,
+      semantics,
+      allowBlockedStep: false,
+      allowFailedStep: false,
+    });
+    if (activePlanAction?.action) {
+      selectedAction = activePlanAction.action;
+      reason = "working_memory_active_plan_continuation";
+      routingReason = "working_memory_active_plan_continuation";
+      observability.plan_id = activePlanAction.plan_id || observability.plan_id;
+      observability.plan_status = activePlanAction.plan_status || observability.plan_status;
+      observability.current_step = activePlanAction.current_step_id || observability.current_step;
+    }
+  }
+  if (
+    !selectedAction
+    && confidenceAllowed
     && taskStatus === "running"
     && unresolvedSlots.length === 0
     && runningOwnerAction
@@ -4102,14 +4285,14 @@ function resolvePlannerWorkingMemoryContinuation({
     selectedAction = runningOwnerAction;
     reason = "working_memory_running_owner";
     routingReason = "working_memory_running_owner";
-  } else if (confidenceAllowed && unresolvedAction && canUseWorkingMemoryAction(unresolvedAction, {
+  } else if (!selectedAction && confidenceAllowed && unresolvedAction && canUseWorkingMemoryAction(unresolvedAction, {
     text: userIntent,
     semantics,
   })) {
     selectedAction = unresolvedAction;
     reason = "working_memory_unresolved_slots";
     routingReason = "working_memory_unresolved_slots";
-  } else if (confidenceAllowed && shouldContinueSameTask) {
+  } else if (!selectedAction && confidenceAllowed && shouldContinueSameTask) {
     const skillAction = cleanText(workingMemory.last_selected_skill || "");
     const nextBestAction = cleanText(workingMemory.next_best_action || "");
     const agentActionHint = PLANNER_WORKING_MEMORY_AGENT_ACTION_HINTS[cleanText(workingMemory.last_selected_agent || "")] || "";

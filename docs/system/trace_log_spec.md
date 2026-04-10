@@ -174,7 +174,7 @@ All minimum trace/log events should align around these fields:
     - `task_trace_text`
     - `task_trace_event_alignment`
   - alignment contract:
-    - trace output is derived from existing `memory_snapshot`, `task_phase_transition`, `agent_handoff`, and `retry_attempt`
+    - trace output is derived from existing `memory_snapshot`, `task_phase_transition`, `agent_handoff`, `retry_attempt`, and execution-plan observability (`plan_id`, `plan_status`, `current_step`, `step_transition`, `plan_invalidated`, `resumed_from_waiting_user`, `resumed_from_retry`)
     - it is a diagnostics formatter layer, not an independent state source
 - skill-backed `tool_execution` logs now also expose:
   - `skill_bridge`

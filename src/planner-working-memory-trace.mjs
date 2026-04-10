@@ -71,6 +71,47 @@ function summarizeAbandonedTaskIds(taskIds = []) {
   };
 }
 
+function normalizeExecutionPlan(plan = null) {
+  if (!plan || typeof plan !== "object" || Array.isArray(plan)) {
+    return {
+      plan_id: null,
+      plan_status: null,
+      current_step: null,
+      steps: [],
+      map: {},
+    };
+  }
+  const planId = cleanText(plan.plan_id || "");
+  const planStatus = cleanText(plan.plan_status || "");
+  const currentStep = cleanText(plan.current_step_id || "");
+  const normalizedSteps = Array.isArray(plan.steps)
+    ? plan.steps
+        .map((step) => {
+          const stepId = cleanText(step?.step_id || "");
+          const stepStatus = cleanText(step?.status || "");
+          if (!stepId || !stepStatus) {
+            return null;
+          }
+          return {
+            step_id: stepId,
+            status: stepStatus,
+          };
+        })
+        .filter(Boolean)
+    : [];
+  const map = {};
+  for (const step of normalizedSteps) {
+    map[step.step_id] = step.status;
+  }
+  return {
+    plan_id: planId || null,
+    plan_status: planStatus || null,
+    current_step: currentStep || null,
+    steps: normalizedSteps,
+    map,
+  };
+}
+
 function toSnapshot(memorySnapshot = null) {
   const snapshot = memorySnapshot && typeof memorySnapshot === "object" && !Array.isArray(memorySnapshot)
     ? memorySnapshot
@@ -78,6 +119,7 @@ function toSnapshot(memorySnapshot = null) {
   const retryPolicy = normalizeRetryPolicy(snapshot.retry_policy);
   const slotState = normalizeSlotState(snapshot.slot_state);
   const abandonedTaskIds = summarizeAbandonedTaskIds(snapshot.abandoned_task_ids);
+  const executionPlan = normalizeExecutionPlan(snapshot.execution_plan);
   return {
     task_id: cleanText(snapshot.task_id || "") || null,
     task_type: cleanText(snapshot.task_type || snapshot.inferred_task_type || "") || null,
@@ -97,7 +139,14 @@ function toSnapshot(memorySnapshot = null) {
     abandoned_task_ids: abandonedTaskIds.preview,
     abandoned_task_total: abandonedTaskIds.all.length,
     abandoned_task_hidden_count: abandonedTaskIds.hidden_count,
+    execution_plan: {
+      plan_id: executionPlan.plan_id,
+      plan_status: executionPlan.plan_status,
+      current_step: executionPlan.current_step,
+      steps: executionPlan.steps,
+    },
     _slot_map: slotState.map,
+    _plan_step_map: executionPlan.map,
   };
 }
 
@@ -176,6 +225,9 @@ function buildDiffLines({
   addFieldDiff("retry_policy.strategy", previous.retry_policy.strategy, next.retry_policy.strategy);
   addFieldDiff("next_best_action", previous.next_best_action, next.next_best_action);
   addFieldDiff("abandoned_task_ids", previous.abandoned_task_ids, next.abandoned_task_ids);
+  addFieldDiff("plan_id", previous.execution_plan.plan_id, next.execution_plan.plan_id);
+  addFieldDiff("plan_status", previous.execution_plan.plan_status, next.execution_plan.plan_status);
+  addFieldDiff("current_step", previous.execution_plan.current_step, next.execution_plan.current_step);
 
   const slotKeys = Array.from(new Set([
     ...Object.keys(previous._slot_map || {}),
@@ -183,6 +235,13 @@ function buildDiffLines({
   ])).sort((left, right) => left.localeCompare(right));
   for (const slotKey of slotKeys) {
     addFieldDiff(`slot.${slotKey}`, previous._slot_map[slotKey] || "none", next._slot_map[slotKey] || "none");
+  }
+  const planStepKeys = Array.from(new Set([
+    ...Object.keys(previous._plan_step_map || {}),
+    ...Object.keys(next._plan_step_map || {}),
+  ])).sort((left, right) => left.localeCompare(right));
+  for (const stepId of planStepKeys) {
+    addFieldDiff(`plan.step.${stepId}`, previous._plan_step_map[stepId] || "none", next._plan_step_map[stepId] || "none");
   }
 
   const phaseTransition = parseTransition(normalizedObservability.task_phase_transition);
@@ -230,6 +289,33 @@ function buildDiffLines({
       addDiffLine(`abandoned_task_ids: +${abandonedTaskId}`);
     }
   }
+  const stepTransition = normalizedObservability.step_transition;
+  if (stepTransition && typeof stepTransition === "object" && !Array.isArray(stepTransition)) {
+    const steps = Array.isArray(stepTransition.steps) ? stepTransition.steps : [];
+    for (const step of steps) {
+      const stepId = cleanText(step?.step_id || "");
+      if (!stepId) {
+        continue;
+      }
+      addDiffLine(`plan.step.${stepId}: ${formatValue(step?.from || null)} -> ${formatValue(step?.to || null)}`);
+    }
+    if (stepTransition.from_current_step_id || stepTransition.to_current_step_id) {
+      addDiffLine(`current_step: ${formatValue(stepTransition.from_current_step_id || null)} -> ${formatValue(stepTransition.to_current_step_id || null)}`);
+    }
+  }
+  const planInvalidated = normalizedObservability.plan_invalidated;
+  if (planInvalidated && typeof planInvalidated === "object" && !Array.isArray(planInvalidated)) {
+    const planId = cleanText(planInvalidated.plan_id || "");
+    if (planId && !hasDiffPrefix("plan_invalidated:")) {
+      addDiffLine(`plan_invalidated: ${planId} (${cleanText(planInvalidated.reason || "unknown") || "unknown"})`);
+    }
+  }
+  if (normalizedObservability.resumed_from_waiting_user === true) {
+    addDiffLine("resume: waiting_user");
+  }
+  if (normalizedObservability.resumed_from_retry === true) {
+    addDiffLine("resume: retry");
+  }
 
   return diffLines;
 }
@@ -250,6 +336,7 @@ function buildTaskTraceText({
     `owner: current=${formatValue(next.current_owner_agent)} | previous=${formatValue(next.previous_owner_agent)} | handoff=${formatValue(next.handoff_reason)}`,
     `retry: count=${next.retry_count} | policy=${next.retry_policy.strategy} (max=${next.retry_policy.max_retries})`,
     `next_best_action: ${formatValue(next.next_best_action)}`,
+    `plan: id=${formatValue(next.execution_plan.plan_id)} | status=${formatValue(next.execution_plan.plan_status)} | current_step=${formatValue(next.execution_plan.current_step)}`,
     `slot_state: missing=${formatValue(slots.missing)} | filled=${formatValue(slots.filled)} | invalid=${formatValue(slots.invalid)}`,
     `abandoned_task_ids: ${abandonedSummary}`,
   ];
@@ -276,7 +363,7 @@ export function buildPlannerTaskTraceDiagnostics({
     nextSnapshot: memorySnapshot,
     observability,
   });
-  const summary = `task=${formatValue(snapshot.task_id)} phase=${snapshot.task_phase} status=${snapshot.task_status} owner=${formatValue(snapshot.current_owner_agent)} next=${formatValue(snapshot.next_best_action)}`;
+  const summary = `task=${formatValue(snapshot.task_id)} phase=${snapshot.task_phase} status=${snapshot.task_status} owner=${formatValue(snapshot.current_owner_agent)} plan=${formatValue(snapshot.execution_plan.plan_status)}:${formatValue(snapshot.execution_plan.current_step)} next=${formatValue(snapshot.next_best_action)}`;
   return {
     summary,
     snapshot: {
@@ -290,6 +377,7 @@ export function buildPlannerTaskTraceDiagnostics({
       retry_count: snapshot.retry_count,
       retry_policy: snapshot.retry_policy,
       next_best_action: snapshot.next_best_action,
+      execution_plan: snapshot.execution_plan,
       slot_state: snapshot.slot_state,
       abandoned_task_ids: snapshot.abandoned_task_ids,
       abandoned_task_total: snapshot.abandoned_task_total,
@@ -305,6 +393,10 @@ export function buildPlannerTaskTraceDiagnostics({
       task_phase_transition: Boolean(cleanText(observability?.task_phase_transition || "")),
       agent_handoff: Boolean(observability?.agent_handoff && typeof observability.agent_handoff === "object"),
       retry_attempt: Boolean(observability?.retry_attempt && typeof observability.retry_attempt === "object"),
+      step_transition: Boolean(observability?.step_transition && typeof observability.step_transition === "object"),
+      plan_invalidated: Boolean(observability?.plan_invalidated && typeof observability.plan_invalidated === "object"),
+      resumed_from_waiting_user: observability?.resumed_from_waiting_user === true,
+      resumed_from_retry: observability?.resumed_from_retry === true,
     },
   };
 }
