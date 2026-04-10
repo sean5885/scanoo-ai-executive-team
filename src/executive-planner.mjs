@@ -48,6 +48,7 @@ import {
   recordPlannerConversationMessages,
   resetPlannerConversationMemory,
 } from "./planner-conversation-memory.mjs";
+import { buildPlannerTaskTraceDiagnostics } from "./planner-working-memory-trace.mjs";
 import {
   getPlannerDocQueryContext,
   hydratePlannerDocQueryRuntimeContext,
@@ -2067,6 +2068,46 @@ function emitPlannerRuntimeTrace(logger, event = {}) {
   logPlannerTrace(logger, level, event);
 }
 
+function logPlannerWorkingMemoryTrace({
+  logger = console,
+  memoryStage = "",
+  sessionKey = "",
+  observability = null,
+  previousMemorySnapshot = null,
+  selectedAction = null,
+  routingReason = null,
+  level = "debug",
+} = {}) {
+  const normalizedObservability = observability && typeof observability === "object" && !Array.isArray(observability)
+    ? observability
+    : {};
+  const taskTrace = buildPlannerTaskTraceDiagnostics({
+    memoryStage,
+    memorySnapshot: normalizedObservability.memory_snapshot || null,
+    previousMemorySnapshot,
+    observability: normalizedObservability,
+  });
+  const logLevel = typeof logger?.[level] === "function"
+    ? level
+    : typeof logger?.debug === "function"
+      ? "debug"
+      : "info";
+  logger?.[logLevel]?.("planner_working_memory", {
+    stage: "planner_working_memory",
+    memory_stage: cleanText(memoryStage) || null,
+    session_key: cleanText(sessionKey) || null,
+    selected_action: cleanText(selectedAction || "") || null,
+    routing_reason: cleanText(routingReason || "") || null,
+    ...normalizedObservability,
+    task_trace_summary: taskTrace.summary,
+    task_trace_diff: taskTrace.diff,
+    task_trace_snapshot: taskTrace.snapshot,
+    task_trace_text: taskTrace.text,
+    task_trace_event_alignment: taskTrace.event_alignment,
+  });
+  return taskTrace;
+}
+
 function buildPlannerStoppedResult({
   action = "",
   preset = "",
@@ -3908,6 +3949,13 @@ function resolvePlannerWorkingMemoryContinuation({
     memory_used_in_routing: false,
     memory_snapshot: readResult?.observability?.memory_snapshot || null,
   };
+  logPlannerWorkingMemoryTrace({
+    logger,
+    memoryStage: `${cleanText(stage) || "routing"}_pre_read`,
+    sessionKey,
+    observability,
+    level: "debug",
+  });
   const workingMemory = readResult?.data && typeof readResult.data === "object" && !Array.isArray(readResult.data)
     ? readResult.data
     : null;
@@ -4875,6 +4923,15 @@ export async function runPlannerToolFlow({
   if (memoryContinuation?.observability && typeof memoryContinuation.observability === "object") {
     memoryContinuation.observability.memory_used_in_routing = memoryUsedInRouting;
   }
+  logPlannerWorkingMemoryTrace({
+    logger,
+    memoryStage: "runPlannerToolFlow_router_decision",
+    sessionKey,
+    observability: memoryContinuation?.observability || null,
+    selectedAction: selection?.selected_action || null,
+    routingReason: selection?.routing_reason || null,
+    level: "debug",
+  });
   const selectionRoutingReason = normalizePlannerRoutingReason(cleanText(selection?.routing_reason || ""))
     || (cleanText(selection?.selected_action || "") ? "selector_match" : "routing_no_match");
   const selectionReasoning = normalizeDecisionReasoning({
@@ -7928,12 +7985,13 @@ export async function executePlannedUserInput({
       }
     : null;
   if (memorySeedObservability) {
-    logger?.debug?.("planner_working_memory", {
-      stage: "planner_working_memory",
-      memory_stage: "executePlannedUserInput_preplan",
-      session_key: cleanText(sessionKey) || null,
-      selected_action: cleanText(memorySeedDecision?.decision?.action || "") || null,
-      ...memorySeedObservability,
+    logPlannerWorkingMemoryTrace({
+      logger,
+      memoryStage: "executePlannedUserInput_preplan",
+      sessionKey,
+      observability: memorySeedObservability,
+      selectedAction: memorySeedDecision?.decision?.action || null,
+      level: "debug",
     });
   }
   const plannerVisibleMonitor = !decision?.error && !Array.isArray(decision?.steps)

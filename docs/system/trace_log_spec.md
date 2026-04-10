@@ -162,6 +162,20 @@ All minimum trace/log events should align around these fields:
   - `skill_selector_key`
   - `skill_surface_layer`
   - `skill_promotion_stage`
+- planner working-memory logs now also carry a readable task-trace diagnostics overlay derived from the same working-memory observability fields:
+  - hook stages:
+    - `runPlannerToolFlow_pre_read`
+    - `runPlannerToolFlow_router_decision`
+    - `answer_boundary_write_back`
+  - trace fields:
+    - `task_trace_summary`
+    - `task_trace_diff`
+    - `task_trace_snapshot`
+    - `task_trace_text`
+    - `task_trace_event_alignment`
+  - alignment contract:
+    - trace output is derived from existing `memory_snapshot`, `task_phase_transition`, `agent_handoff`, and `retry_attempt`
+    - it is a diagnostics formatter layer, not an independent state source
 - skill-backed `tool_execution` logs now also expose:
   - `skill_bridge`
   - `skill_name`
