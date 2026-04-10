@@ -284,6 +284,102 @@ test("task trace exposes recovery policy diagnostics fields", () => {
   assert.equal(trace.summary.includes("recovery="), true);
 });
 
+test("task trace shows artifact invalidation impact and dependency diagnostics", () => {
+  const trace = buildPlannerTaskTraceDiagnostics({
+    memoryStage: "answer_boundary_write_back",
+    previousMemorySnapshot: {
+      task_id: "task-artifact-trace",
+      execution_plan: {
+        plan_id: "plan-artifact-trace",
+        plan_status: "active",
+        current_step_id: "step-2",
+        steps: [
+          {
+            step_id: "step-1",
+            status: "completed",
+          },
+          {
+            step_id: "step-2",
+            status: "running",
+          },
+        ],
+        artifacts: [
+          {
+            artifact_id: "step-1_artifact_1",
+            artifact_type: "search_result",
+            produced_by_step_id: "step-1",
+            validity_status: "valid",
+            consumed_by_step_ids: ["step-2"],
+          },
+        ],
+        dependency_edges: [
+          {
+            from_step_id: "step-1",
+            to_step_id: "step-2",
+            via_artifact_id: "step-1_artifact_1",
+            dependency_type: "hard",
+          },
+        ],
+      },
+    },
+    memorySnapshot: {
+      task_id: "task-artifact-trace",
+      execution_plan: {
+        plan_id: "plan-artifact-trace",
+        plan_status: "active",
+        current_step_id: "step-1",
+        steps: [
+          {
+            step_id: "step-1",
+            status: "running",
+          },
+          {
+            step_id: "step-2",
+            status: "pending",
+          },
+        ],
+        artifacts: [
+          {
+            artifact_id: "step-1_artifact_1",
+            artifact_type: "search_result",
+            produced_by_step_id: "step-1",
+            validity_status: "invalid",
+            consumed_by_step_ids: ["step-2"],
+          },
+        ],
+        dependency_edges: [
+          {
+            from_step_id: "step-1",
+            to_step_id: "step-2",
+            via_artifact_id: "step-1_artifact_1",
+            dependency_type: "hard",
+          },
+        ],
+      },
+    },
+    observability: {
+      failure_class: "invalid_artifact",
+      recovery_policy: "rollback_to_step",
+      recovery_action: "rollback_to_step",
+      rollback_target_step_id: "step-1",
+      artifact_id: "step-1_artifact_1",
+      artifact_type: "search_result",
+      validity_status: "invalid",
+      produced_by_step_id: "step-1",
+      affected_downstream_steps: ["step-2"],
+      dependency_type: "hard",
+      dependency_blocked_step: "step-2",
+    },
+  });
+
+  assert.equal(trace.diff.includes("validity_status: valid -> invalid"), true);
+  assert.equal(trace.diff.includes("artifact_id: step-1_artifact_1"), true);
+  assert.equal(trace.diff.includes("affected_downstream_steps: [step-2]"), true);
+  assert.equal(trace.diff.includes("dependency_type: hard"), true);
+  assert.equal(trace.diff.includes("dependency_blocked_step: step-2"), true);
+  assert.match(trace.text, /artifact: id=step-1_artifact_1/);
+});
+
 test("planner logs task trace at memory pre-read and router decision", async () => {
   const sessionKey = "wm-trace-hook-router";
   resetPlannerRuntimeContext({ sessionKey });

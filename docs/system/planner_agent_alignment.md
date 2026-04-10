@@ -837,6 +837,9 @@ The same session store now also carries a minimal **session-scoped working memor
 - `abandoned_task_ids`
 - `execution_plan` (persistence v1 + plan-aware recovery policy v1)
   - per-step recovery fields: `failure_class`, `recovery_policy`, `recovery_state.last_failure_class`, `recovery_state.recovery_attempt_count`, `recovery_state.last_recovery_action`, `recovery_state.rollback_target_step_id`
+  - session-level artifact/dependency graph v1 fields:
+    - `artifacts[]` (`artifact_id`, `artifact_type`, `produced_by_step_id`, `validity_status=valid|invalid|superseded|missing`, `consumed_by_step_ids[]`, optional `supersedes_artifact_id`, optional conservative `metadata`)
+    - `dependency_edges[]` (`from_step_id`, `to_step_id`, `via_artifact_id`, `dependency_type=hard|soft`)
 - `updated_at`
 
 Runtime usage boundary:
@@ -845,9 +848,14 @@ Runtime usage boundary:
 - when `task_status=running`, routing prefers `current_owner_agent`/`next_best_action` continuity before reselecting a new path
 - when `task_phase=waiting_user`, user follow-up is treated as slot-fill continuation (not as a brand-new task)
 - when `task_status=failed` and an active plan step is failed, routing now prioritizes deterministic plan-aware recovery policy v1 from that step (`retry_same_step|reroute_owner|ask_user|skip_step|rollback_to_step`) before generic selector fallback
+- before active plan continuation, routing now verifies the current step's incoming artifact dependencies from the same session execution plan:
+  - invalid/missing `hard` dependency blocks direct continuation and enters recovery path
+  - recovery priority is `rollback_to_step` when producer step is deterministically resolvable from dependency graph, otherwise fail-closed `ask_user`
+  - invalid `soft` dependency does not hard-block execution but is emitted in trace diagnostics
 - unknown failure classes stay fail-closed (`ask_user` or no action), and do not silently blind-retry
 - slot hints now come from `slot_state`; expired TTL slots are ignored so stale gaps do not pollute new turns
 - clear topic-switch phrasing still keeps fail-closed behavior and now marks prior task id as abandoned
+- topic switch / plan invalidation does not delete historical artifact graph records, but new `plan_id` continuation is isolated so old-plan artifacts do not pollute new-plan routing
 - malformed/missing working-memory snapshots fail closed (treated as miss, not as valid routing input)
 
 Write boundary:
@@ -855,6 +863,7 @@ Write boundary:
 - working-memory write-back is now centralized at the answer boundary in `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs`
 - write-back uses patch semantics over the existing session snapshot (no full-object blind overwrite per turn)
 - answer-boundary patch now updates `task_phase/task_status/slot_state/retry_count/handoff` together with execution-plan persistence v1 and recovery policy v1 step fields through the same patch-merge write path
+- execution-plan patch write now also merges artifact/dependency graph updates (`artifacts[]`, `dependency_edges[]`, `artifact validity_status`, step/artifact references) instead of full-plan overwrite
 - only stable final boundary outputs are eligible for write-back; intermediate planner/router states do not write
 
 Observed routing/write signals now include:
@@ -879,6 +888,14 @@ Observed routing/write signals now include:
 - `recovery_attempt_count`
 - `rollback_target_step_id`
 - `skipped_step_ids`
+- `artifact_id`
+- `artifact_type`
+- `validity_status`
+- `produced_by_step_id`
+- `affected_downstream_steps`
+- `dependency_type`
+- `artifact_superseded`
+- `dependency_blocked_step`
 
 Working-memory v2 diagnostics now also includes one human-readable `task_trace` overlay derived from the same observed fields (no second state source):
 
@@ -897,6 +914,7 @@ Working-memory v2 diagnostics now also includes one human-readable `task_trace` 
   - `agent_handoff`
   - `retry_attempt`
   - `failure_class/recovery_policy/recovery_action/recovery_attempt_count/rollback_target_step_id/skipped_step_ids`
+  - `artifact_id/artifact_type/validity_status/produced_by_step_id/affected_downstream_steps/dependency_type/artifact_superseded/dependency_blocked_step`
   - trace output must be derived from these existing signals instead of introducing an independent trace truth
 
 The executive planner decision prompt now also reads a bounded task-state summary from that same local `task lifecycle v1` store: before agent selection, `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` asks `/Users/seanhan/Documents/Playground/src/planner-task-lifecycle-v1.mjs` for the latest relevant snapshot summary and injects `unfinished_hint`, `blocked_hint`, and `in_progress_hint` into prompt assembly, so decisions can preferentially reference unfinished tasks, surface blocked-task risk, and reuse in-progress execution summaries without changing the public planner JSON shape.

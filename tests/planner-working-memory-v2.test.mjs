@@ -61,6 +61,8 @@ function buildSeedExecutionPlan({
   planId = "plan-seed-v2",
   planStatus = "active",
   currentStepId = "step-1",
+  artifacts = [],
+  dependencyEdges = [],
   steps = [
     {
       step_id: "step-1",
@@ -88,6 +90,8 @@ function buildSeedExecutionPlan({
     plan_status: planStatus,
     current_step_id: currentStepId,
     steps,
+    artifacts,
+    dependency_edges: dependencyEdges,
   };
 }
 
@@ -213,6 +217,110 @@ test("v2 execution plan patch merges step updates without overwriting untouched 
   resetPlannerConversationMemory({ sessionKey });
 });
 
+test("v2 execution plan patch merges artifact graph updates without full overwrite", () => {
+  const sessionKey = "wm-v2-artifact-patch-merge";
+  resetPlannerRuntimeContext({ sessionKey });
+  resetPlannerConversationMemory({ sessionKey });
+  seedWorkingMemory(sessionKey, {
+    task_id: "task-v2-artifact-patch-merge",
+    execution_plan: buildSeedExecutionPlan({
+      planId: "plan-v2-artifact-patch-merge",
+      currentStepId: "step-2",
+      steps: [
+        {
+          step_id: "step-1",
+          step_type: "planner_action",
+          owner_agent: "doc_agent",
+          intended_action: "search_company_brain_docs",
+          status: "completed",
+          depends_on: [],
+          retryable: true,
+          artifact_refs: ["step-1_artifact_1"],
+          slot_requirements: [],
+        },
+        {
+          step_id: "step-2",
+          step_type: "planner_action",
+          owner_agent: "doc_agent",
+          intended_action: "get_company_brain_doc_detail",
+          status: "running",
+          depends_on: ["step-1"],
+          retryable: true,
+          artifact_refs: [],
+          slot_requirements: [],
+        },
+      ],
+      artifacts: [
+        {
+          artifact_id: "step-1_artifact_1",
+          artifact_type: "search_result",
+          produced_by_step_id: "step-1",
+          validity_status: "valid",
+          consumed_by_step_ids: ["step-2"],
+          supersedes_artifact_id: null,
+          metadata: {
+            plan_id: "plan-v2-artifact-patch-merge",
+          },
+        },
+      ],
+      dependencyEdges: [
+        {
+          from_step_id: "step-1",
+          to_step_id: "step-2",
+          via_artifact_id: "step-1_artifact_1",
+          dependency_type: "hard",
+        },
+      ],
+    }),
+  });
+
+  const mergeResult = applyPlannerWorkingMemoryPatch({
+    sessionKey,
+    source: "test_artifact_graph_patch_merge",
+    patch: {
+      execution_plan: {
+        artifacts: [
+          {
+            artifact_id: "step-1_artifact_1",
+            validity_status: "invalid",
+          },
+          {
+            artifact_id: "step-1_artifact_2",
+            artifact_type: "search_result",
+            produced_by_step_id: "step-1",
+            validity_status: "valid",
+            consumed_by_step_ids: ["step-2"],
+            supersedes_artifact_id: "step-1_artifact_1",
+            metadata: {
+              plan_id: "plan-v2-artifact-patch-merge",
+            },
+          },
+        ],
+        dependency_edges: [
+          {
+            from_step_id: "step-1",
+            to_step_id: "step-2",
+            via_artifact_id: "step-1_artifact_2",
+            dependency_type: "hard",
+          },
+        ],
+      },
+    },
+  });
+
+  assert.equal(mergeResult.ok, true);
+  const memory = getPlannerWorkingMemory({ sessionKey });
+  assert.equal(memory.execution_plan.steps.length, 2);
+  const oldArtifact = memory.execution_plan.artifacts.find((artifact) => artifact.artifact_id === "step-1_artifact_1");
+  const newArtifact = memory.execution_plan.artifacts.find((artifact) => artifact.artifact_id === "step-1_artifact_2");
+  assert.equal(oldArtifact?.validity_status, "invalid");
+  assert.equal(newArtifact?.supersedes_artifact_id, "step-1_artifact_1");
+  assert.equal(memory.execution_plan.dependency_edges.some((edge) => edge.via_artifact_id === "step-1_artifact_2"), true);
+
+  resetPlannerRuntimeContext({ sessionKey });
+  resetPlannerConversationMemory({ sessionKey });
+});
+
 test("v2 active execution plan continues current step before selector fallback", async () => {
   const sessionKey = "wm-v2-active-plan-continue";
   resetPlannerRuntimeContext({ sessionKey });
@@ -300,6 +408,220 @@ test("v2 active execution plan continues current step before selector fallback",
   assert.equal(result.selected_action, "get_company_brain_doc_detail");
   assert.equal(latestEvent.plan_id, "plan-v2-active-1");
   assert.equal(latestEvent.current_step, "step-2");
+
+  resetPlannerRuntimeContext({ sessionKey });
+  resetPlannerConversationMemory({ sessionKey });
+});
+
+test("v2 hard dependency invalid artifact blocks continuation and rolls back to producer step", async () => {
+  const sessionKey = "wm-v2-artifact-hard-block";
+  resetPlannerRuntimeContext({ sessionKey });
+  resetPlannerConversationMemory({ sessionKey });
+  seedWorkingMemory(sessionKey, {
+    task_id: "task-v2-artifact-hard-block",
+    task_phase: "executing",
+    task_status: "running",
+    execution_plan: buildSeedExecutionPlan({
+      planId: "plan-v2-artifact-hard-block",
+      planStatus: "active",
+      currentStepId: "step-2",
+      steps: [
+        {
+          step_id: "step-1",
+          step_type: "planner_action",
+          owner_agent: "doc_agent",
+          intended_action: "search_company_brain_docs",
+          status: "completed",
+          depends_on: [],
+          retryable: true,
+          artifact_refs: ["step-1_artifact_1"],
+          slot_requirements: [],
+        },
+        {
+          step_id: "step-2",
+          step_type: "planner_action",
+          owner_agent: "doc_agent",
+          intended_action: "get_company_brain_doc_detail",
+          status: "running",
+          depends_on: ["step-1"],
+          retryable: true,
+          artifact_refs: [],
+          slot_requirements: [],
+        },
+      ],
+      artifacts: [
+        {
+          artifact_id: "step-1_artifact_1",
+          artifact_type: "search_result",
+          produced_by_step_id: "step-1",
+          validity_status: "invalid",
+          consumed_by_step_ids: ["step-2"],
+          supersedes_artifact_id: null,
+          metadata: {
+            plan_id: "plan-v2-artifact-hard-block",
+          },
+        },
+      ],
+      dependencyEdges: [
+        {
+          from_step_id: "step-1",
+          to_step_id: "step-2",
+          via_artifact_id: "step-1_artifact_1",
+          dependency_type: "hard",
+        },
+      ],
+    }),
+  });
+
+  let dispatchAction = null;
+  const plannerEvents = [];
+  const result = await runPlannerToolFlow({
+    userIntent: "下一步",
+    payload: {},
+    sessionKey,
+    logger: {
+      info(event, payload) {
+        if (event === "planner_end_to_end") {
+          plannerEvents.push(payload);
+        }
+      },
+      debug() {},
+      warn() {},
+      error() {},
+    },
+    selector() {
+      return {
+        selected_action: null,
+        reason: "routing_no_match",
+        routing_reason: "routing_no_match",
+      };
+    },
+    async dispatcher({ action }) {
+      dispatchAction = action;
+      return {
+        ok: true,
+        action: "company_brain_docs_search",
+        items: [],
+        trace_id: "trace-wm-v2-hard-block",
+      };
+    },
+  });
+
+  const latestEvent = plannerEvents.at(-1) || {};
+  assert.equal(dispatchAction, "search_company_brain_docs");
+  assert.equal(result.selected_action, "search_company_brain_docs");
+  assert.equal(latestEvent.failure_class, "invalid_artifact");
+  assert.equal(latestEvent.recovery_action, "rollback_to_step");
+  assert.equal(latestEvent.rollback_target_step_id, "step-1");
+  assert.equal(latestEvent.artifact_id, "step-1_artifact_1");
+  assert.equal(latestEvent.dependency_type, "hard");
+
+  resetPlannerRuntimeContext({ sessionKey });
+  resetPlannerConversationMemory({ sessionKey });
+});
+
+test("v2 soft dependency invalid artifact does not block continuation and is visible in trace", async () => {
+  const sessionKey = "wm-v2-artifact-soft-continue";
+  resetPlannerRuntimeContext({ sessionKey });
+  resetPlannerConversationMemory({ sessionKey });
+  seedWorkingMemory(sessionKey, {
+    task_id: "task-v2-artifact-soft-continue",
+    task_phase: "executing",
+    task_status: "running",
+    execution_plan: buildSeedExecutionPlan({
+      planId: "plan-v2-artifact-soft-continue",
+      planStatus: "active",
+      currentStepId: "step-2",
+      steps: [
+        {
+          step_id: "step-1",
+          step_type: "planner_action",
+          owner_agent: "doc_agent",
+          intended_action: "search_company_brain_docs",
+          status: "completed",
+          depends_on: [],
+          retryable: true,
+          artifact_refs: ["step-1_artifact_1"],
+          slot_requirements: [],
+        },
+        {
+          step_id: "step-2",
+          step_type: "non_critical",
+          owner_agent: "doc_agent",
+          intended_action: "get_company_brain_doc_detail",
+          status: "running",
+          depends_on: ["step-1"],
+          retryable: true,
+          artifact_refs: [],
+          slot_requirements: [],
+        },
+      ],
+      artifacts: [
+        {
+          artifact_id: "step-1_artifact_1",
+          artifact_type: "search_result",
+          produced_by_step_id: "step-1",
+          validity_status: "invalid",
+          consumed_by_step_ids: ["step-2"],
+          supersedes_artifact_id: null,
+          metadata: {
+            plan_id: "plan-v2-artifact-soft-continue",
+          },
+        },
+      ],
+      dependencyEdges: [
+        {
+          from_step_id: "step-1",
+          to_step_id: "step-2",
+          via_artifact_id: "step-1_artifact_1",
+          dependency_type: "soft",
+        },
+      ],
+    }),
+  });
+
+  let dispatchAction = null;
+  const plannerEvents = [];
+  const result = await runPlannerToolFlow({
+    userIntent: "下一步",
+    payload: {},
+    sessionKey,
+    logger: {
+      info(event, payload) {
+        if (event === "planner_end_to_end") {
+          plannerEvents.push(payload);
+        }
+      },
+      debug() {},
+      warn() {},
+      error() {},
+    },
+    selector() {
+      return {
+        selected_action: null,
+        reason: "routing_no_match",
+        routing_reason: "routing_no_match",
+      };
+    },
+    async dispatcher({ action }) {
+      dispatchAction = action;
+      return {
+        ok: true,
+        action: "company_brain_doc_detail",
+        data: {
+          answer: "soft 依賴不中斷",
+        },
+        trace_id: "trace-wm-v2-soft-continue",
+      };
+    },
+  });
+
+  const latestEvent = plannerEvents.at(-1) || {};
+  assert.equal(dispatchAction, "get_company_brain_doc_detail");
+  assert.equal(result.selected_action, "get_company_brain_doc_detail");
+  assert.equal(latestEvent.dependency_type, "soft");
+  assert.equal(latestEvent.artifact_id, "step-1_artifact_1");
+  assert.equal(latestEvent.recovery_action || null, null);
 
   resetPlannerRuntimeContext({ sessionKey });
   resetPlannerConversationMemory({ sessionKey });
@@ -435,6 +757,16 @@ test("v2 execution plan persists multi-step progress and advances current step u
   assert.equal(memoryAfterStep1.execution_plan.steps[0].status, "completed");
   assert.equal(memoryAfterStep1.execution_plan.steps[1].status, "running");
   assert.equal(memoryAfterStep1.execution_plan.current_step_id, memoryAfterStep1.execution_plan.steps[1].step_id);
+  const producedArtifact = memoryAfterStep1.execution_plan.artifacts.find((artifact) =>
+    artifact.produced_by_step_id === memoryAfterStep1.execution_plan.steps[0].step_id
+    && artifact.validity_status === "valid");
+  assert.ok(producedArtifact);
+  const hardDependencyEdge = memoryAfterStep1.execution_plan.dependency_edges.find((edge) =>
+    edge.from_step_id === memoryAfterStep1.execution_plan.steps[0].step_id
+    && edge.to_step_id === memoryAfterStep1.execution_plan.steps[1].step_id
+    && edge.via_artifact_id === producedArtifact.artifact_id
+    && edge.dependency_type === "hard");
+  assert.ok(hardDependencyEdge);
   const persistedPlanId = memoryAfterStep1.execution_plan.plan_id;
 
   await runPlannerUserInputEdge({
@@ -465,6 +797,116 @@ test("v2 execution plan persists multi-step progress and advances current step u
   assert.equal(memoryAfterDone.execution_plan.plan_status, "completed");
   assert.equal(memoryAfterDone.execution_plan.current_step_id, null);
   assert.equal(memoryAfterDone.execution_plan.steps[1].status, "completed");
+
+  resetPlannerRuntimeContext({ sessionKey });
+  resetPlannerConversationMemory({ sessionKey });
+});
+
+test("v2 superseded artifact is preserved and downstream dependency is rebound to the new artifact", async () => {
+  const sessionKey = "wm-v2-artifact-supersede";
+  resetPlannerRuntimeContext({ sessionKey });
+  resetPlannerConversationMemory({ sessionKey });
+  seedWorkingMemory(sessionKey, {
+    task_id: "task-v2-artifact-supersede",
+    task_phase: "executing",
+    task_status: "running",
+    execution_plan: buildSeedExecutionPlan({
+      planId: "plan-v2-artifact-supersede",
+      planStatus: "active",
+      currentStepId: "step-1",
+      steps: [
+        {
+          step_id: "step-1",
+          step_type: "planner_action",
+          owner_agent: "doc_agent",
+          intended_action: "search_company_brain_docs",
+          status: "running",
+          depends_on: [],
+          retryable: true,
+          artifact_refs: ["step-1_artifact_1"],
+          slot_requirements: [],
+        },
+        {
+          step_id: "step-2",
+          step_type: "planner_action",
+          owner_agent: "doc_agent",
+          intended_action: "get_company_brain_doc_detail",
+          status: "pending",
+          depends_on: ["step-1"],
+          retryable: true,
+          artifact_refs: [],
+          slot_requirements: [],
+        },
+      ],
+      artifacts: [
+        {
+          artifact_id: "step-1_artifact_1",
+          artifact_type: "search_result",
+          produced_by_step_id: "step-1",
+          validity_status: "valid",
+          consumed_by_step_ids: ["step-2"],
+          supersedes_artifact_id: null,
+          metadata: {
+            plan_id: "plan-v2-artifact-supersede",
+          },
+        },
+      ],
+      dependencyEdges: [
+        {
+          from_step_id: "step-1",
+          to_step_id: "step-2",
+          via_artifact_id: "step-1_artifact_1",
+          dependency_type: "hard",
+        },
+      ],
+    }),
+  });
+
+  await runPlannerUserInputEdge({
+    text: "先重新搜尋",
+    sessionKey,
+    async plannerExecutor() {
+      return {
+        ok: true,
+        steps: [
+          { action: "search_company_brain_docs", params: { q: "onboarding" } },
+          { action: "get_company_brain_doc_detail", params: { doc_id: "doc_1" } },
+        ],
+        synthetic_agent_hint: {
+          agent: "doc_agent",
+        },
+        execution_result: {
+          ok: true,
+          steps: [
+            { action: "search_company_brain_docs" },
+            { action: "get_company_brain_doc_detail" },
+          ],
+          current_step_index: 1,
+          data: {
+            answer: "重新搜尋完成",
+            sources: ["doc_1"],
+            limitations: [],
+          },
+          trace_id: "trace-wm-v2-supersede",
+        },
+      };
+    },
+  });
+
+  const memory = getPlannerWorkingMemory({ sessionKey });
+  const oldArtifact = memory.execution_plan.artifacts.find((artifact) => artifact.artifact_id === "step-1_artifact_1");
+  const newArtifact = memory.execution_plan.artifacts.find((artifact) =>
+    artifact.artifact_id !== "step-1_artifact_1"
+    && artifact.produced_by_step_id === "step-1"
+    && artifact.validity_status === "valid");
+  assert.equal(oldArtifact?.validity_status, "superseded");
+  assert.ok(newArtifact);
+  const reboundEdge = memory.execution_plan.dependency_edges.find((edge) =>
+    edge.from_step_id === "step-1"
+    && edge.to_step_id === "step-2"
+    && edge.via_artifact_id === newArtifact.artifact_id
+    && edge.dependency_type === "hard");
+  assert.ok(reboundEdge);
 
   resetPlannerRuntimeContext({ sessionKey });
   resetPlannerConversationMemory({ sessionKey });
@@ -907,6 +1349,27 @@ test("v2 invalid_artifact rolls back to dependency step", async () => {
           slot_requirements: [],
         },
       ],
+      artifacts: [
+        {
+          artifact_id: "step-1_artifact_1",
+          artifact_type: "search_result",
+          produced_by_step_id: "step-1",
+          validity_status: "valid",
+          consumed_by_step_ids: ["step-2"],
+          supersedes_artifact_id: null,
+          metadata: {
+            plan_id: "plan-v2-recovery-rollback",
+          },
+        },
+      ],
+      dependencyEdges: [
+        {
+          from_step_id: "step-1",
+          to_step_id: "step-2",
+          via_artifact_id: "step-1_artifact_1",
+          dependency_type: "hard",
+        },
+      ],
     }),
   });
 
@@ -936,6 +1399,7 @@ test("v2 invalid_artifact rolls back to dependency step", async () => {
   const memory = getPlannerWorkingMemory({ sessionKey });
   const step1 = memory.execution_plan.steps.find((step) => step.step_id === "step-1");
   const step2 = memory.execution_plan.steps.find((step) => step.step_id === "step-2");
+  const artifact = memory.execution_plan.artifacts.find((item) => item.artifact_id === "step-1_artifact_1");
   assert.equal(memory.execution_plan.current_step_id, "step-1");
   assert.equal(step1?.status, "running");
   assert.equal(step2?.status, "pending");
@@ -943,6 +1407,7 @@ test("v2 invalid_artifact rolls back to dependency step", async () => {
   assert.equal(step2?.recovery_policy, "rollback_to_step");
   assert.equal(step2?.recovery_state?.last_recovery_action, "rollback_to_step");
   assert.equal(step2?.recovery_state?.rollback_target_step_id, "step-1");
+  assert.equal(artifact?.validity_status, "invalid");
 
   resetPlannerRuntimeContext({ sessionKey });
   resetPlannerConversationMemory({ sessionKey });
@@ -1028,14 +1493,14 @@ test("v2 skips non-critical step when retry is not allowed", async () => {
   });
 
   const memory = getPlannerWorkingMemory({ sessionKey });
-  const step2 = memory.execution_plan.steps.find((step) => step.step_id === "step-2");
-  const step3 = memory.execution_plan.steps.find((step) => step.step_id === "step-3");
+  const step2 = memory.execution_plan.steps.find((step) => step.intended_action === "search_and_summarize");
+  const step3 = memory.execution_plan.steps.find((step) => step.intended_action === "get_runtime_info");
   assert.equal(memory.task_phase, "executing");
   assert.equal(memory.task_status, "running");
   assert.equal(step2?.status, "skipped");
   assert.equal(step2?.recovery_policy, "skip_step");
   assert.equal(step2?.recovery_state?.last_recovery_action, "skip_step");
-  assert.equal(memory.execution_plan.current_step_id, "step-3");
+  assert.equal(memory.execution_plan.current_step_id, step3?.step_id || null);
   assert.equal(step3?.status, "running");
 
   resetPlannerRuntimeContext({ sessionKey });
@@ -1327,5 +1792,142 @@ test("v2 malformed execution plan fails closed without crashing runtime routing"
     reloadPlannerConversationMemory();
     rmSync(tempDir, { recursive: true, force: true });
     resetPlannerConversationMemory({ sessionKey: "wm-v2-invalid-plan" });
+  }
+});
+
+test("v2 malformed artifact graph fails closed when dependency edge references unknown artifact", async () => {
+  const originalPath = process.env.PLANNER_CONVERSATION_MEMORY_PATH;
+  const tempDir = mkdtempSync(join(tmpdir(), "planner-memory-v2-artifact-graph-"));
+  const tempStorePath = join(tempDir, "planner-conversation-memory.json");
+  try {
+    process.env.PLANNER_CONVERSATION_MEMORY_PATH = tempStorePath;
+    writeFileSync(tempStorePath, JSON.stringify({
+      latest_session_key: "wm-v2-invalid-artifact-graph",
+      sessions: {
+        "wm-v2-invalid-artifact-graph": {
+          recent_messages: [],
+          latest_summary: null,
+          turns_since_summary: 0,
+          chars_since_summary: 0,
+          total_turns: 0,
+          last_compacted_at: null,
+          working_memory: {
+            current_goal: "seed",
+            inferred_task_type: "document_lookup",
+            last_selected_agent: "doc_agent",
+            last_selected_skill: null,
+            last_tool_result_summary: "seed",
+            unresolved_slots: [],
+            next_best_action: "get_company_brain_doc_detail",
+            confidence: 0.8,
+            task_id: "task-invalid-artifact-graph",
+            task_type: "document_lookup",
+            task_phase: "executing",
+            task_status: "running",
+            current_owner_agent: "doc_agent",
+            previous_owner_agent: null,
+            handoff_reason: null,
+            retry_count: 0,
+            retry_policy: {
+              max_retries: 2,
+              strategy: "same_agent_then_reroute",
+            },
+            slot_state: [],
+            abandoned_task_ids: [],
+            execution_plan: {
+              plan_id: "plan-invalid-artifact-graph",
+              plan_status: "active",
+              current_step_id: "step-2",
+              steps: [
+                {
+                  step_id: "step-1",
+                  step_type: "planner_action",
+                  owner_agent: "doc_agent",
+                  intended_action: "search_company_brain_docs",
+                  status: "completed",
+                  depends_on: [],
+                  retryable: true,
+                  artifact_refs: [],
+                  slot_requirements: [],
+                },
+                {
+                  step_id: "step-2",
+                  step_type: "planner_action",
+                  owner_agent: "doc_agent",
+                  intended_action: "get_company_brain_doc_detail",
+                  status: "running",
+                  depends_on: ["step-1"],
+                  retryable: true,
+                  artifact_refs: [],
+                  slot_requirements: [],
+                },
+              ],
+              artifacts: [
+                {
+                  artifact_id: "step-1_artifact_1",
+                  artifact_type: "search_result",
+                  produced_by_step_id: "step-1",
+                  validity_status: "valid",
+                  consumed_by_step_ids: ["step-2"],
+                  supersedes_artifact_id: null,
+                  metadata: {
+                    plan_id: "plan-invalid-artifact-graph",
+                  },
+                },
+              ],
+              dependency_edges: [
+                {
+                  from_step_id: "step-1",
+                  to_step_id: "step-2",
+                  via_artifact_id: "missing-artifact-id",
+                  dependency_type: "hard",
+                },
+              ],
+            },
+            updated_at: "2026-04-09T00:00:00.000Z",
+          },
+        },
+      },
+    }, null, 2));
+
+    reloadPlannerConversationMemory();
+    let dispatcherCalled = false;
+    const result = await runPlannerToolFlow({
+      userIntent: "繼續",
+      payload: {},
+      sessionKey: "wm-v2-invalid-artifact-graph",
+      logger: {
+        info() {},
+        debug() {},
+        warn() {},
+        error() {},
+      },
+      selector() {
+        return {
+          selected_action: null,
+          reason: "routing_no_match",
+          routing_reason: "routing_no_match",
+        };
+      },
+      async dispatcher() {
+        dispatcherCalled = true;
+        return {
+          ok: true,
+        };
+      },
+    });
+
+    assert.equal(dispatcherCalled, false);
+    assert.equal(result.selected_action, null);
+    assert.equal(result.execution_result?.ok, false);
+  } finally {
+    if (originalPath === undefined) {
+      delete process.env.PLANNER_CONVERSATION_MEMORY_PATH;
+    } else {
+      process.env.PLANNER_CONVERSATION_MEMORY_PATH = originalPath;
+    }
+    reloadPlannerConversationMemory();
+    rmSync(tempDir, { recursive: true, force: true });
+    resetPlannerConversationMemory({ sessionKey: "wm-v2-invalid-artifact-graph" });
   }
 });

@@ -245,6 +245,16 @@ const PLANNER_WORKING_MEMORY_RECOVERY_ACTIONS = new Set([
   ...PLANNER_WORKING_MEMORY_RECOVERY_POLICIES,
   "failed",
 ]);
+const PLANNER_WORKING_MEMORY_ARTIFACT_VALIDITY_STATUSES = new Set([
+  "valid",
+  "invalid",
+  "superseded",
+  "missing",
+]);
+const PLANNER_WORKING_MEMORY_DEPENDENCY_TYPES = new Set([
+  "hard",
+  "soft",
+]);
 
 const executiveCollaborationSignals = [
   "各個 agent",
@@ -4031,6 +4041,150 @@ function normalizePlannerWorkingMemoryRecoveryState(value = null, { allowMissing
   return normalized;
 }
 
+function normalizePlannerWorkingMemoryArtifactValidityStatus(value = "", { allowNull = true } = {}) {
+  const normalized = cleanText(value || "");
+  if (!normalized) {
+    return allowNull ? null : null;
+  }
+  return PLANNER_WORKING_MEMORY_ARTIFACT_VALIDITY_STATUSES.has(normalized)
+    ? normalized
+    : null;
+}
+
+function normalizePlannerWorkingMemoryDependencyType(value = "", { allowNull = true } = {}) {
+  const normalized = cleanText(value || "");
+  if (!normalized) {
+    return allowNull ? null : null;
+  }
+  return PLANNER_WORKING_MEMORY_DEPENDENCY_TYPES.has(normalized)
+    ? normalized
+    : null;
+}
+
+function normalizePlannerWorkingMemoryExecutionPlanArtifacts(artifacts = []) {
+  if (artifacts === null || artifacts === undefined || artifacts === "") {
+    return [];
+  }
+  if (!Array.isArray(artifacts)) {
+    return null;
+  }
+  const normalizedArtifacts = [];
+  const seenArtifactIds = new Set();
+  for (const artifact of artifacts) {
+    if (!artifact || typeof artifact !== "object" || Array.isArray(artifact)) {
+      return null;
+    }
+    const artifactId = cleanText(artifact.artifact_id || "");
+    const artifactType = cleanText(artifact.artifact_type || "");
+    const producedByStepId = cleanText(artifact.produced_by_step_id || "");
+    const validityStatus = normalizePlannerWorkingMemoryArtifactValidityStatus(artifact.validity_status, { allowNull: false });
+    if (!artifactId || !artifactType || !producedByStepId || !validityStatus || seenArtifactIds.has(artifactId)) {
+      return null;
+    }
+    seenArtifactIds.add(artifactId);
+    normalizedArtifacts.push({
+      artifact_id: artifactId,
+      artifact_type: artifactType,
+      produced_by_step_id: producedByStepId,
+      validity_status: validityStatus,
+      consumed_by_step_ids: Array.isArray(artifact.consumed_by_step_ids)
+        ? Array.from(new Set(artifact.consumed_by_step_ids.map((item) => cleanText(item)).filter(Boolean)))
+        : [],
+      supersedes_artifact_id: cleanText(artifact.supersedes_artifact_id || "") || null,
+      metadata: artifact.metadata && typeof artifact.metadata === "object" && !Array.isArray(artifact.metadata)
+        ? { ...artifact.metadata }
+        : null,
+    });
+  }
+  return normalizedArtifacts;
+}
+
+function normalizePlannerWorkingMemoryExecutionPlanDependencyEdges(edges = []) {
+  if (edges === null || edges === undefined || edges === "") {
+    return [];
+  }
+  if (!Array.isArray(edges)) {
+    return null;
+  }
+  const normalizedEdges = [];
+  const seenEdgeKeys = new Set();
+  for (const edge of edges) {
+    if (!edge || typeof edge !== "object" || Array.isArray(edge)) {
+      return null;
+    }
+    const fromStepId = cleanText(edge.from_step_id || "");
+    const toStepId = cleanText(edge.to_step_id || "");
+    const viaArtifactId = cleanText(edge.via_artifact_id || "");
+    const dependencyType = normalizePlannerWorkingMemoryDependencyType(edge.dependency_type, { allowNull: false });
+    if (!fromStepId || !toStepId || !viaArtifactId || !dependencyType) {
+      return null;
+    }
+    const edgeKey = `${fromStepId}->${toStepId}#${viaArtifactId}`;
+    if (seenEdgeKeys.has(edgeKey)) {
+      return null;
+    }
+    seenEdgeKeys.add(edgeKey);
+    normalizedEdges.push({
+      from_step_id: fromStepId,
+      to_step_id: toStepId,
+      via_artifact_id: viaArtifactId,
+      dependency_type: dependencyType,
+    });
+  }
+  return normalizedEdges;
+}
+
+function validatePlannerWorkingMemoryExecutionPlanGraph(plan = null) {
+  if (!plan || typeof plan !== "object" || Array.isArray(plan)) {
+    return false;
+  }
+  const stepIds = new Set(Array.isArray(plan.steps) ? plan.steps.map((step) => step.step_id) : []);
+  const planId = cleanText(plan.plan_id || "");
+  const artifacts = Array.isArray(plan.artifacts) ? plan.artifacts : [];
+  const dependencyEdges = Array.isArray(plan.dependency_edges) ? plan.dependency_edges : [];
+  const artifactMap = new Map(artifacts.map((artifact) => [artifact.artifact_id, artifact]));
+  const canReferenceStep = (stepId = "", artifact = null) => {
+    const normalizedStepId = cleanText(stepId || "");
+    if (!normalizedStepId) {
+      return false;
+    }
+    if (stepIds.has(normalizedStepId)) {
+      return true;
+    }
+    const artifactPlanId = cleanText(artifact?.metadata?.plan_id || "");
+    return Boolean(artifactPlanId && planId && artifactPlanId !== planId);
+  };
+  for (const artifact of artifacts) {
+    if (!canReferenceStep(artifact.produced_by_step_id, artifact)) {
+      return false;
+    }
+    for (const consumedStepId of Array.isArray(artifact.consumed_by_step_ids) ? artifact.consumed_by_step_ids : []) {
+      if (!canReferenceStep(consumedStepId, artifact)) {
+        return false;
+      }
+    }
+    const supersedesId = cleanText(artifact.supersedes_artifact_id || "");
+    if (supersedesId && !artifactMap.has(supersedesId)) {
+      return false;
+    }
+  }
+  for (const edge of dependencyEdges) {
+    const artifact = artifactMap.get(edge.via_artifact_id);
+    if (!artifact) {
+      return false;
+    }
+    if (!canReferenceStep(edge.from_step_id, artifact) || !canReferenceStep(edge.to_step_id, artifact)) {
+      return false;
+    }
+    if (stepIds.has(edge.from_step_id)
+      && stepIds.has(artifact.produced_by_step_id)
+      && edge.from_step_id !== artifact.produced_by_step_id) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function normalizePlannerWorkingMemoryExecutionPlan(plan = null) {
   if (!plan || typeof plan !== "object" || Array.isArray(plan)) {
     return null;
@@ -4082,19 +4236,30 @@ function normalizePlannerWorkingMemoryExecutionPlan(plan = null) {
         })
         .filter(Boolean)
     : [];
+  const artifacts = normalizePlannerWorkingMemoryExecutionPlanArtifacts(plan.artifacts);
+  const dependencyEdges = normalizePlannerWorkingMemoryExecutionPlanDependencyEdges(plan.dependency_edges);
   if (steps.length === 0 && planStatus !== "completed" && planStatus !== "invalidated") {
+    return null;
+  }
+  if (!Array.isArray(artifacts) || !Array.isArray(dependencyEdges)) {
     return null;
   }
   const currentStepId = cleanText(plan.current_step_id || "") || null;
   if (currentStepId && !steps.some((step) => step.step_id === currentStepId)) {
     return null;
   }
-  return {
+  const normalizedPlan = {
     plan_id: planId,
     plan_status: planStatus,
     current_step_id: currentStepId,
     steps,
+    artifacts,
+    dependency_edges: dependencyEdges,
   };
+  if (!validatePlannerWorkingMemoryExecutionPlanGraph(normalizedPlan)) {
+    return null;
+  }
+  return normalizedPlan;
 }
 
 function resolvePlannerWorkingMemoryCurrentPlanStep(plan = null) {
@@ -4118,6 +4283,97 @@ function resolvePlannerWorkingMemoryCurrentPlanStep(plan = null) {
   };
 }
 
+function resolvePlannerWorkingMemoryCurrentStepDependencyGuard({
+  plan = null,
+  step = null,
+} = {}) {
+  if (!plan || !step) {
+    return {
+      blocked: false,
+      issue: null,
+    };
+  }
+  const dependencyEdges = Array.isArray(plan.dependency_edges) ? plan.dependency_edges : [];
+  const artifacts = Array.isArray(plan.artifacts) ? plan.artifacts : [];
+  if (dependencyEdges.length === 0 || artifacts.length === 0) {
+    return {
+      blocked: false,
+      issue: null,
+    };
+  }
+  const artifactMap = new Map(artifacts.map((artifact) => [artifact.artifact_id, artifact]));
+  const incomingEdges = dependencyEdges.filter((edge) => cleanText(edge?.to_step_id || "") === cleanText(step.step_id || ""));
+  if (incomingEdges.length === 0) {
+    return {
+      blocked: false,
+      issue: null,
+    };
+  }
+  const collectIssue = (edge = null, artifact = null) => {
+    const artifactId = cleanText(artifact?.artifact_id || edge?.via_artifact_id || "") || null;
+    const artifactType = cleanText(artifact?.artifact_type || "") || null;
+    const validityStatus = cleanText(artifact?.validity_status || "") || "missing";
+    const producedByStepId = cleanText(artifact?.produced_by_step_id || "") || null;
+    const dependencyType = cleanText(edge?.dependency_type || "") || null;
+    const affectedDownstreamSteps = dependencyEdges
+      .filter((candidate) =>
+        cleanText(candidate?.via_artifact_id || "") === artifactId
+        && cleanText(candidate?.dependency_type || "") === dependencyType)
+      .map((candidate) => cleanText(candidate?.to_step_id || ""))
+      .filter(Boolean);
+    return {
+      artifact_id: artifactId,
+      artifact_type: artifactType,
+      validity_status: validityStatus,
+      produced_by_step_id: producedByStepId,
+      affected_downstream_steps: affectedDownstreamSteps.length > 0
+        ? Array.from(new Set(affectedDownstreamSteps))
+        : null,
+      dependency_type: dependencyType,
+      artifact_superseded: validityStatus === "superseded" || Boolean(cleanText(artifact?.supersedes_artifact_id || "")),
+      dependency_blocked_step: cleanText(edge?.to_step_id || step.step_id || "") || null,
+      rollback_target_step_id: producedByStepId,
+    };
+  };
+
+  const hardIssue = incomingEdges
+    .map((edge) => {
+      const artifact = artifactMap.get(cleanText(edge?.via_artifact_id || "")) || null;
+      const validityStatus = cleanText(artifact?.validity_status || "") || "missing";
+      if (cleanText(edge?.dependency_type || "") !== "hard") {
+        return null;
+      }
+      if (validityStatus === "valid") {
+        return null;
+      }
+      return collectIssue(edge, artifact);
+    })
+    .find(Boolean);
+  if (hardIssue) {
+    return {
+      blocked: true,
+      issue: hardIssue,
+    };
+  }
+  const softIssue = incomingEdges
+    .map((edge) => {
+      const artifact = artifactMap.get(cleanText(edge?.via_artifact_id || "")) || null;
+      const validityStatus = cleanText(artifact?.validity_status || "") || "missing";
+      if (cleanText(edge?.dependency_type || "") !== "soft") {
+        return null;
+      }
+      if (validityStatus === "valid") {
+        return null;
+      }
+      return collectIssue(edge, artifact);
+    })
+    .find(Boolean);
+  return {
+    blocked: false,
+    issue: softIssue || null,
+  };
+}
+
 function resolvePlannerWorkingMemoryExecutionPlanAction({
   workingMemory = null,
   text = "",
@@ -4138,8 +4394,38 @@ function resolvePlannerWorkingMemoryExecutionPlanAction({
   if (step.status === "blocked" && !allowBlockedStep) {
     return null;
   }
+  const dependencyGuard = resolvePlannerWorkingMemoryCurrentStepDependencyGuard({
+    plan,
+    step,
+  });
+  if (dependencyGuard?.blocked) {
+    return {
+      plan_id: plan.plan_id,
+      plan_status: plan.plan_status,
+      current_step_id: step.step_id,
+      step_status: step.status,
+      step_retryable: step.retryable !== false,
+      action: null,
+      slot_requirements: step.slot_requirements || [],
+      blocked_by_dependency: true,
+      dependency_issue: dependencyGuard.issue,
+    };
+  }
   const intendedAction = cleanText(step.intended_action || "");
   if (!intendedAction || !canUseWorkingMemoryAction(intendedAction, { text, semantics })) {
+    if (dependencyGuard?.issue) {
+      return {
+        plan_id: plan.plan_id,
+        plan_status: plan.plan_status,
+        current_step_id: step.step_id,
+        step_status: step.status,
+        step_retryable: step.retryable !== false,
+        action: null,
+        slot_requirements: step.slot_requirements || [],
+        blocked_by_dependency: false,
+        dependency_issue: dependencyGuard.issue,
+      };
+    }
     return null;
   }
   return {
@@ -4150,6 +4436,8 @@ function resolvePlannerWorkingMemoryExecutionPlanAction({
     step_retryable: step.retryable !== false,
     action: intendedAction,
     slot_requirements: step.slot_requirements || [],
+    blocked_by_dependency: false,
+    dependency_issue: dependencyGuard?.issue || null,
   };
 }
 
@@ -4354,6 +4642,14 @@ function resolvePlannerWorkingMemoryContinuation({
   observability.recovery_attempt_count = null;
   observability.rollback_target_step_id = null;
   observability.skipped_step_ids = null;
+  observability.artifact_id = null;
+  observability.artifact_type = null;
+  observability.validity_status = null;
+  observability.produced_by_step_id = null;
+  observability.affected_downstream_steps = null;
+  observability.dependency_type = null;
+  observability.artifact_superseded = false;
+  observability.dependency_blocked_step = null;
   observability.resumed_from_waiting_user = false;
   observability.resumed_from_retry = false;
   observability.plan_invalidated = topicSwitch && currentPlanStep?.plan
@@ -4377,6 +4673,22 @@ function resolvePlannerWorkingMemoryContinuation({
       observability,
     };
   }
+  const dependencyGuard = resolvePlannerWorkingMemoryCurrentStepDependencyGuard({
+    plan: currentPlanStep?.plan || null,
+    step: currentPlanStep?.step || null,
+  });
+  if (dependencyGuard?.issue && typeof dependencyGuard.issue === "object") {
+    observability.artifact_id = dependencyGuard.issue.artifact_id || null;
+    observability.artifact_type = dependencyGuard.issue.artifact_type || null;
+    observability.validity_status = dependencyGuard.issue.validity_status || null;
+    observability.produced_by_step_id = dependencyGuard.issue.produced_by_step_id || null;
+    observability.affected_downstream_steps = Array.isArray(dependencyGuard.issue.affected_downstream_steps)
+      ? dependencyGuard.issue.affected_downstream_steps
+      : null;
+    observability.dependency_type = dependencyGuard.issue.dependency_type || null;
+    observability.artifact_superseded = dependencyGuard.issue.artifact_superseded === true;
+    observability.dependency_blocked_step = dependencyGuard.issue.dependency_blocked_step || null;
+  }
   const unresolvedAction = resolvePlannerWorkingMemoryActionFromSlots(unresolvedSlots);
   const normalizedIntent = cleanText(userIntent);
   const shouldContinueSameTask = Boolean(
@@ -4395,6 +4707,46 @@ function resolvePlannerWorkingMemoryContinuation({
     semantics,
   });
   if (
+    confidenceAllowed
+    && taskStatus === "running"
+    && dependencyGuard?.blocked
+  ) {
+    recoveryDecisionLocked = true;
+    observability.failure_class = "invalid_artifact";
+    observability.recovery_policy = dependencyGuard?.issue?.rollback_target_step_id
+      ? "rollback_to_step"
+      : "ask_user";
+    observability.recovery_action = observability.recovery_policy;
+    observability.rollback_target_step_id = dependencyGuard?.issue?.rollback_target_step_id || null;
+    observability.recovery_attempt_count = retryCount + 1;
+    const rollbackTargetStepId = cleanText(dependencyGuard?.issue?.rollback_target_step_id || "") || null;
+    const rollbackTargetStep = rollbackTargetStepId
+      ? (currentPlanStep?.plan?.steps || []).find((candidate) => cleanText(candidate?.step_id || "") === rollbackTargetStepId) || null
+      : null;
+    const rollbackAction = cleanText(rollbackTargetStep?.intended_action || "");
+    if (rollbackAction && canUseWorkingMemoryAction(rollbackAction, { text: userIntent, semantics })) {
+      selectedAction = rollbackAction;
+      reason = "working_memory_artifact_dependency_rollback";
+      routingReason = reason;
+      observability.current_step = rollbackTargetStepId || observability.current_step;
+      observability.task_phase_transition = "executing->retrying";
+      observability.task_status_transition = "running->failed";
+      observability.retry_attempt = {
+        task_id: taskId,
+        from: retryCount,
+        retry_count: retryCount + 1,
+        max_retries: retryPolicy.max_retries,
+        strategy: retryPolicy.strategy,
+        mode: "same_step",
+      };
+      observability.resumed_from_retry = true;
+    } else {
+      reason = "working_memory_artifact_dependency_ask_user";
+      routingReason = reason;
+      observability.task_phase_transition = "executing->waiting_user";
+      observability.task_status_transition = "running->blocked";
+    }
+  } else if (
     confidenceAllowed
     && taskStatus === "failed"
   ) {
@@ -4452,6 +4804,30 @@ function resolvePlannerWorkingMemoryContinuation({
         allowFailedStep: true,
         allowBlockedStep: true,
       });
+      if (retryPlanAction?.blocked_by_dependency) {
+        recoveryDecisionLocked = true;
+        const dependencyIssue = retryPlanAction.dependency_issue || {};
+        observability.failure_class = "invalid_artifact";
+        observability.recovery_policy = dependencyIssue.rollback_target_step_id
+          ? "rollback_to_step"
+          : "ask_user";
+        observability.recovery_action = observability.recovery_policy;
+        observability.rollback_target_step_id = dependencyIssue.rollback_target_step_id || null;
+        observability.artifact_id = dependencyIssue.artifact_id || observability.artifact_id;
+        observability.artifact_type = dependencyIssue.artifact_type || observability.artifact_type;
+        observability.validity_status = dependencyIssue.validity_status || observability.validity_status;
+        observability.produced_by_step_id = dependencyIssue.produced_by_step_id || observability.produced_by_step_id;
+        observability.affected_downstream_steps = Array.isArray(dependencyIssue.affected_downstream_steps)
+          ? dependencyIssue.affected_downstream_steps
+          : observability.affected_downstream_steps;
+        observability.dependency_type = dependencyIssue.dependency_type || observability.dependency_type;
+        observability.artifact_superseded = dependencyIssue.artifact_superseded === true || observability.artifact_superseded === true;
+        observability.dependency_blocked_step = dependencyIssue.dependency_blocked_step || observability.dependency_blocked_step;
+        observability.task_phase_transition = "failed->waiting_user";
+        observability.task_status_transition = "failed->blocked";
+        reason = "working_memory_artifact_dependency_ask_user";
+        routingReason = reason;
+      }
       const retryMode = derivePlannerWorkingMemoryRetryMode({
         retryPolicy,
         retryCount,
@@ -4463,7 +4839,7 @@ function resolvePlannerWorkingMemoryContinuation({
             semantics,
           })
         : retryPlanAction?.action || runningOwnerAction;
-      if (retryAction && canUseWorkingMemoryAction(retryAction, { text: userIntent, semantics })) {
+      if (!recoveryDecisionLocked && retryAction && canUseWorkingMemoryAction(retryAction, { text: userIntent, semantics })) {
         selectedAction = retryAction;
         reason = retryMode === "reroute"
           ? "working_memory_retry_reroute"
@@ -4512,6 +4888,30 @@ function resolvePlannerWorkingMemoryContinuation({
       allowBlockedStep: true,
       allowFailedStep: true,
     });
+    if (waitingPlanAction?.blocked_by_dependency) {
+      recoveryDecisionLocked = true;
+      const dependencyIssue = waitingPlanAction.dependency_issue || {};
+      observability.failure_class = "invalid_artifact";
+      observability.recovery_policy = dependencyIssue.rollback_target_step_id
+        ? "rollback_to_step"
+        : "ask_user";
+      observability.recovery_action = observability.recovery_policy;
+      observability.rollback_target_step_id = dependencyIssue.rollback_target_step_id || null;
+      observability.artifact_id = dependencyIssue.artifact_id || observability.artifact_id;
+      observability.artifact_type = dependencyIssue.artifact_type || observability.artifact_type;
+      observability.validity_status = dependencyIssue.validity_status || observability.validity_status;
+      observability.produced_by_step_id = dependencyIssue.produced_by_step_id || observability.produced_by_step_id;
+      observability.affected_downstream_steps = Array.isArray(dependencyIssue.affected_downstream_steps)
+        ? dependencyIssue.affected_downstream_steps
+        : observability.affected_downstream_steps;
+      observability.dependency_type = dependencyIssue.dependency_type || observability.dependency_type;
+      observability.artifact_superseded = dependencyIssue.artifact_superseded === true || observability.artifact_superseded === true;
+      observability.dependency_blocked_step = dependencyIssue.dependency_blocked_step || observability.dependency_blocked_step;
+      observability.task_phase_transition = "waiting_user->waiting_user";
+      observability.task_status_transition = "blocked->blocked";
+      reason = "working_memory_artifact_dependency_ask_user";
+      routingReason = reason;
+    }
     const waitingActionCandidates = [
       waitingPlanAction?.action || "",
       unresolvedAction,
@@ -4522,7 +4922,7 @@ function resolvePlannerWorkingMemoryContinuation({
       text: userIntent,
       semantics,
     })) || "";
-    if (waitingAction) {
+    if (!recoveryDecisionLocked && waitingAction) {
       selectedAction = waitingAction;
       reason = waitingPlanAction?.action && waitingAction === waitingPlanAction.action
         ? "working_memory_waiting_user_resume_plan_step"
