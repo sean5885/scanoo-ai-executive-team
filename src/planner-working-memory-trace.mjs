@@ -1645,15 +1645,3 @@ export function buildPlannerTaskTraceDiagnostics({
     },
   };
 }
-  const toolLayer = snapshot?.__tool_layer_contract || null;
-  if (toolLayer) {
-    lines.push(
-      `tool_layer: action=${formatValue(toolLayer.action)} | capability=${formatValue(toolLayer.capability)} | valid=${formatValue(toolLayer.valid)} | invalid_reason=${formatValue(toolLayer.invalid_reason)} | missing_args=${formatValue(toolLayer.missing_args)}`
-    );
-  }
-  const toolExec = snapshot?.__tool_execution || null;
-  if (toolExec) {
-    lines.push(
-      `tool_exec: action=${formatValue(toolExec.action)} | ok=${formatValue(toolExec.ok)} | next=${formatValue(toolExec.next)}`
-    );
-  }

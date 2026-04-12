@@ -143,6 +143,9 @@ import {
   isSlotActuallyMissing,
 } from "./truly-missing-slot.mjs";
 import { buildRetryContextPack } from "./retry-context-pack.mjs";
+import { resolveToolContract, validateToolInvocation } from "./tool-layer-contract.mjs";
+import { executeTool } from "./tool-execution-runtime.mjs";
+import { resolveToolResultContinuation } from "./tool-result-continuation.mjs";
 
 const executiveStartSignals = [
   "agent",
@@ -7428,6 +7431,63 @@ export async function dispatchPlannerTool({
   return finalResult;
 }
 
+async function runSafeToolExecution(action = "", actionArgs = {}, ctx = {}) {
+  const normalizedAction = cleanText(action || "");
+  if (!normalizedAction || !ctx || typeof ctx !== "object" || Array.isArray(ctx)) {
+    return null;
+  }
+
+  const toolContract = resolveToolContract(normalizedAction);
+  if (!toolContract) {
+    return null;
+  }
+
+  const toolCheck = validateToolInvocation(normalizedAction, actionArgs || {});
+  ctx.__tool_layer_contract = {
+    action: normalizedAction,
+    capability: toolContract.capability,
+    valid: toolCheck.ok === true,
+    invalid_reason: toolCheck.ok ? null : toolCheck.reason,
+    missing_args: Array.isArray(toolCheck.missing) ? toolCheck.missing : [],
+  };
+
+  if (!toolCheck.ok) {
+    ctx.__tool_layer_blocked = true;
+    return {
+      next_action: "resume_previous_task",
+      reason: "tool_layer_blocked",
+      resume: true,
+    };
+  }
+
+  try {
+    const toolRes = await executeTool(normalizedAction, actionArgs || {}, ctx);
+    ctx.__tool_execution = toolRes;
+    if (!toolRes?.ok) {
+      ctx.__tool_execution_failed = true;
+    }
+  } catch (_) {
+    ctx.__tool_execution_failed = true;
+  }
+
+  if (ctx.__tool_execution) {
+    const continuation = resolveToolResultContinuation(ctx.__tool_execution, ctx);
+    ctx.__tool_result_continuation = continuation;
+    if (continuation?.next_action === "retry") {
+      ctx.__resumed_from_tool_failure = true;
+    }
+    if (continuation?.next_action === "continue_planner") {
+      ctx.__resumed_from_tool_success = true;
+    }
+    if (continuation?.next_action === "fallback") {
+      ctx.__tool_fallback_triggered = true;
+    }
+    return continuation;
+  }
+
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Planner end-to-end flow runtime
 // ---------------------------------------------------------------------------
@@ -7808,6 +7868,13 @@ export async function runPlannerToolFlow({
         payload: agentInput.payload,
         logger,
         sessionKey,
+      });
+      await runSafeToolExecution(selection.selected_action, dispatchPayload, {
+        retry_count: Number.isFinite(Number(workingMemorySnapshot?.retry_count))
+          ? Number(workingMemorySnapshot.retry_count)
+          : 0,
+        retry_policy: workingMemorySnapshot?.retry_policy || null,
+        waiting_user: workingMemorySnapshot?.task_phase === "waiting_user",
       });
       executionResult = await dispatcher({
         action: selection.selected_action,
@@ -11428,36 +11495,3 @@ export async function planExecutiveTurn({
   });
   return blockedDecision;
 }
-import { resolveToolContract, validateToolInvocation } from './tool-layer-contract.mjs';
-  const toolContract = resolveToolContract(nextBestAction);
-  if (toolContract) {
-    const toolCheck = validateToolInvocation(nextBestAction, actionArgs || {});
-    ctx.__tool_layer_contract = {
-      action: nextBestAction,
-      capability: toolContract.capability,
-      valid: toolCheck.ok,
-      invalid_reason: toolCheck.ok ? null : toolCheck.reason,
-      missing_args: toolCheck.missing || [],
-    };
-
-    if (!toolCheck.ok) {
-      plannerDecision = 'resume_previous_task';
-      ctx.__tool_layer_blocked = true;
-    }
-  }
-import { executeTool } from './tool-execution-runtime.mjs';
-  // --- tool execution ---
-  if (ctx?.__tool_layer_contract?.valid) {
-    const toolRes = await executeTool(
-      ctx.__tool_layer_contract.action,
-      actionArgs || {},
-      ctx
-    );
-
-    ctx.__tool_execution = toolRes;
-
-    if (!toolRes.ok) {
-      plannerDecision = 'resume_previous_task';
-      ctx.__tool_execution_failed = true;
-    }
-  }
