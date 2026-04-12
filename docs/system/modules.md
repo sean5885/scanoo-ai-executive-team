@@ -130,16 +130,18 @@ Current-truth docs for onboarding are:
   - `decision-engine-promotion` v1 now adds one gated override layer over advisor diagnostics:
     - promotion allow/deny/threshold truth is centralized in `/Users/seanhan/Documents/Playground/src/promotion-control-surface.mjs` (single authority)
     - v1 control surface policy:
-      - `allowed_actions = ask_user|fail`
-      - `denied_actions = proceed|retry|reroute|rollback|skip`
+      - `allowed_actions = ask_user|retry|fail`
+      - `denied_actions = proceed|reroute|rollback|skip`
       - `ineffective_threshold = 3`
       - if an action appears in `rollback_disabled_actions`, promotion is blocked even if it is in `allowed_actions`
     - promotion prerequisites are all required: action policy says `promotion_allowed=true`, `advisor_alignment.promotion_candidate=true`, `alignment_type=exact_match`, evidence complete, no malformed/unknown/conflicting signals, and no readiness/outcome/recovery/artifact conflict against the promoted action
+    - promoted `retry` is additionally gated by deterministic retry-only checks: `outcome.retry_worthiness=true`, `outcome_status!=failed`, `readiness.is_ready=true`, no `invalid_artifact`/`blocked_dependency`, retry budget not exhausted, and no rollback flag for `retry`
     - when the gate passes, planner/router can apply deterministic override on the same low-risk fail-soft/fail-closed boundary; when blocked, behavior stays on existing routing/recovery authority and only emits diagnostics (`decision_promotion`, `decision_promotion_summary`)
     - the same diagnostics payload now also carries `promotion_policy` / `promotion_policy_summary` so trace can answer current allow-list, rollback-disabled actions, and threshold in one place
     - the same boundary now also emits `promotion_audit` / `promotion_audit_summary` per step:
       - required audit fields include `promotion_audit_id`, `promoted_action`, `promotion_applied`, `promotion_context`, `promotion_outcome`, `promotion_effectiveness`, `rollback_flag`, `audit_version`
-      - deterministic effectiveness rules cover promoted `ask_user` and `fail` outcomes; malformed/conflicting audits are fail-closed and excluded from ineffective streak counting
+      - deterministic effectiveness rules cover promoted `ask_user`, `retry`, and `fail` outcomes; malformed/conflicting audits are fail-closed and excluded from ineffective streak counting
+      - promoted `retry` audit marks `effective` when pre-retry failed/partial outcome is improved to `success`, otherwise `ineffective`
       - rollback safety threshold source is the same centralized control surface (`ineffective_threshold=3` in v1) and disables future promotion for that action without retroactively changing already-executed actions
   - final HTTP/chat response is normalized into `answer -> sources -> limitations`
   - for explicit plugin capability handoff (`requested_capability=scanoo_compare|scanoo_diagnose`), `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` now executes one lane-primary fast-path before planner; success returns immediately and does not enter planner timeout recovery for that turn

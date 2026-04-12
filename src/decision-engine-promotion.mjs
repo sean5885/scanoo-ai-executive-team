@@ -32,6 +32,15 @@ export const DECISION_ENGINE_PROMOTION_REASON_CODES = Object.freeze([
   "conflicting_signals",
   "ask_user_signals_missing",
   "fail_signals_missing",
+  "retry_not_worthy",
+  "retry_outcome_failed",
+  "retry_readiness_not_ready",
+  "retry_readiness_blocked",
+  "retry_invalid_artifact",
+  "retry_blocked_dependency",
+  "retry_budget_exhausted",
+  "retry_budget_unknown",
+  "retry_gate_passed",
   "safety_gate_passed",
   "promotion_applied",
 ]);
@@ -44,6 +53,16 @@ const ASK_USER_FRIENDLY_BLOCKING_REASONS = new Set([
 
 const FAIL_CLOSED_BLOCKING_REASONS = new Set([
   "blocked_dependency",
+  "plan_invalidated",
+  "malformed_plan_state",
+]);
+
+const RETRY_BLOCKING_REASONS = new Set([
+  "invalid_artifact",
+  "blocked_dependency",
+  "missing_slot",
+  "recovery_in_progress",
+  "owner_mismatch",
   "plan_invalidated",
   "malformed_plan_state",
 ]);
@@ -90,6 +109,12 @@ const DEFAULT_PROMOTION_AUDIT_STATE = Object.freeze({
       last_audit_id: null,
     },
     fail: {
+      consecutive_ineffective: 0,
+      promotion_disabled: false,
+      last_effectiveness: null,
+      last_audit_id: null,
+    },
+    retry: {
       consecutive_ineffective: 0,
       promotion_disabled: false,
       last_effectiveness: null,
@@ -298,6 +323,7 @@ function resolveMalformedOrUnknownSignals({
   readiness = null,
   outcome = null,
   recovery = null,
+  artifact = null,
   task_plan = null,
 } = {}) {
   if (!normalizeAction(advisor_action)) {
@@ -324,10 +350,128 @@ function resolveMalformedOrUnknownSignals({
   if (recovery !== null && toObject(recovery) === null) {
     return true;
   }
+  if (artifact !== null && toObject(artifact) === null) {
+    return true;
+  }
   if (task_plan !== null && toObject(task_plan) === null) {
     return true;
   }
   return false;
+}
+
+function resolveOptionalNonNegativeNumber(value = null) {
+  if (!Number.isFinite(Number(value))) {
+    return null;
+  }
+  return Math.max(0, Number(value));
+}
+
+function resolveRetryBudgetState(recovery = null) {
+  const recoveryObject = toObject(recovery) || {};
+  const retryAllowedFieldPresent = typeof recoveryObject.retry_allowed === "boolean";
+  const retryAllowed = retryAllowedFieldPresent
+    ? recoveryObject.retry_allowed === true
+    : true;
+  const recoveryAttemptCount = resolveOptionalNonNegativeNumber(recoveryObject.recovery_attempt_count);
+  const retryBudgetMax = resolveOptionalNonNegativeNumber(
+    recoveryObject.retry_budget_max
+      ?? recoveryObject.max_retries
+      ?? recoveryObject.retry_budget_limit
+      ?? recoveryObject.retry_budget_total
+      ?? null,
+  );
+  const retryBudgetRemainingExplicit = resolveOptionalNonNegativeNumber(
+    recoveryObject.retry_budget_remaining ?? null,
+  );
+  const retryBudgetExhaustedExplicit = recoveryObject.retry_budget_exhausted === true;
+  const retryBudgetRemaining = retryBudgetRemainingExplicit !== null
+    ? retryBudgetRemainingExplicit
+    : (retryBudgetMax !== null && recoveryAttemptCount !== null
+      ? Math.max(0, retryBudgetMax - recoveryAttemptCount)
+      : null);
+  const retryBudgetExhausted = retryBudgetExhaustedExplicit
+    || retryAllowed === false
+    || (retryBudgetMax !== null && recoveryAttemptCount !== null && recoveryAttemptCount >= retryBudgetMax)
+    || (retryBudgetRemaining !== null && retryBudgetRemaining <= 0);
+  const hasBudgetSignal = retryBudgetExhaustedExplicit
+    || retryBudgetRemainingExplicit !== null
+    || (retryBudgetMax !== null && recoveryAttemptCount !== null);
+  return {
+    retry_allowed: retryAllowed,
+    retry_budget_known: hasBudgetSignal || retryAllowedFieldPresent,
+    has_budget_signal: hasBudgetSignal,
+    retry_budget_exhausted: retryBudgetExhausted,
+    retry_budget_max: retryBudgetMax,
+    retry_budget_remaining: retryBudgetRemaining,
+    recovery_attempt_count: recoveryAttemptCount,
+  };
+}
+
+function evaluateRetrySafety({
+  readiness = null,
+  outcome = null,
+  recovery = null,
+  artifact = null,
+} = {}) {
+  const readinessObject = toObject(readiness) || {};
+  const outcomeObject = toObject(outcome) || {};
+  const artifactObject = toObject(artifact) || {};
+  const blockingReasonCodes = uniqueStrings(readinessObject.blocking_reason_codes);
+  const missingSlots = uniqueStrings(readinessObject.missing_slots);
+  const readinessRecommendedAction = normalizeAction(readinessObject.recommended_action);
+  const outcomeStatus = cleanText(outcomeObject.outcome_status || "");
+  const retryWorthiness = outcomeObject.retry_worthiness === true;
+  const invalidArtifacts = toArray(readinessObject.invalid_artifacts).filter((item) => toObject(item));
+  const blockedDependencies = toArray(readinessObject.blocked_dependencies).filter((item) => toObject(item));
+  const artifactValidity = cleanText(artifactObject.validity_status || "");
+  const artifactInvalidCount = resolveOptionalNonNegativeNumber(artifactObject.invalid_artifact_count) || 0;
+  const blockedDependencyCount = resolveOptionalNonNegativeNumber(artifactObject.blocked_dependency_count) || 0;
+  const hasInvalidArtifact = invalidArtifacts.length > 0
+    || artifactInvalidCount > 0
+    || artifactValidity === "invalid"
+    || blockingReasonCodes.includes("invalid_artifact");
+  const hasBlockedDependency = blockedDependencies.length > 0
+    || blockedDependencyCount > 0
+    || Boolean(cleanText(artifactObject.dependency_blocked_step || ""))
+    || blockingReasonCodes.includes("blocked_dependency");
+  const hasBlockingReadiness = readinessObject.is_ready !== true
+    || missingSlots.length > 0
+    || blockingReasonCodes.some((reasonCode) => RETRY_BLOCKING_REASONS.has(reasonCode))
+    || readinessObject.owner_ready === false
+    || readinessObject.recovery_ready === false
+    || (readinessRecommendedAction && readinessRecommendedAction !== "retry");
+  const retryBudgetState = resolveRetryBudgetState(recovery);
+
+  const conflictingSignals = [];
+  if (!retryWorthiness) {
+    conflictingSignals.push("retry_not_worthy");
+  }
+  if (outcomeStatus === "failed") {
+    conflictingSignals.push("retry_outcome_failed");
+  }
+  if (readinessObject.is_ready !== true) {
+    conflictingSignals.push("retry_readiness_not_ready");
+  }
+  if (hasInvalidArtifact) {
+    conflictingSignals.push("retry_invalid_artifact");
+  }
+  if (hasBlockedDependency) {
+    conflictingSignals.push("retry_blocked_dependency");
+  }
+  if (hasBlockingReadiness && !hasInvalidArtifact && !hasBlockedDependency) {
+    conflictingSignals.push("retry_readiness_blocked");
+  }
+  if (retryBudgetState.retry_budget_exhausted) {
+    conflictingSignals.push("retry_budget_exhausted");
+  } else if (!retryBudgetState.has_budget_signal) {
+    conflictingSignals.push("retry_budget_unknown");
+  }
+
+  return {
+    gatePassed: conflictingSignals.length === 0,
+    reasonCodes: uniqueStrings(conflictingSignals),
+    confidence: conflictingSignals.length === 0 ? "high" : "low",
+  };
 }
 
 function evaluateAskUserSafety({
@@ -507,13 +651,13 @@ export function evaluateDecisionEnginePromotion({
     pushReason("promotion_policy_fail_closed");
   }
 
-  if (alignmentType !== "exact_match") {
+  if (actionPolicy?.requires_exact_match === true && alignmentType !== "exact_match") {
     pushReason("alignment_not_exact_match");
   }
   if (!promotionCandidate) {
     pushReason("alignment_not_promotion_candidate");
   }
-  if (!evidenceComplete) {
+  if (actionPolicy?.requires_complete_evidence === true && !evidenceComplete) {
     pushReason("evidence_incomplete");
   }
 
@@ -550,6 +694,13 @@ export function evaluateDecisionEnginePromotion({
       task_plan,
       advisor_reason_codes: advisorReasonCodes,
     });
+  } else if (advisorAction === "retry" && actionPolicy?.promotion_allowed === true) {
+    actionSafety = evaluateRetrySafety({
+      readiness,
+      outcome,
+      recovery,
+      artifact,
+    });
   }
   for (const reasonCode of actionSafety.reasonCodes) {
     pushReason(reasonCode);
@@ -557,6 +708,9 @@ export function evaluateDecisionEnginePromotion({
 
   const safetyGatePassed = reasonCodes.length === 0 && actionSafety.gatePassed;
   if (safetyGatePassed) {
+    if (advisorAction === "retry") {
+      pushReason("retry_gate_passed");
+    }
     pushReason("safety_gate_passed");
     pushReason("promotion_applied");
   }
@@ -601,9 +755,24 @@ function normalizeDecisionPromotionAuditContext({
   const recoverySummary = toObject(recovery);
   const artifactSummary = toObject(artifact);
   const taskPlanSummary = toObject(task_plan);
+  const advisorAction = normalizeAction(advisorObject.recommended_next_action || alignmentObject.advisor_action || "") || null;
+  const promotionCandidate = alignmentObject.promotion_candidate === true;
+  const alignmentType = cleanText(alignmentObject.alignment_type || "") || null;
+  const retryCase = advisorAction === "retry";
+  const advisorAlignmentSummary = `advisor_action=${advisorAction || "none"} alignment_type=${alignmentType || "unknown"} promotion_candidate=${promotionCandidate ? "true" : "false"} retry_case=${retryCase ? "true" : "false"}`;
   return {
-    advisor_action: normalizeAction(advisorObject.recommended_next_action || alignmentObject.advisor_action || "") || null,
-    alignment_type: cleanText(alignmentObject.alignment_type || "") || null,
+    advisor_action: advisorAction,
+    alignment_type: alignmentType,
+    advisor_alignment: {
+      advisor_action: advisorAction,
+      actual_action: normalizeAction(alignmentObject.actual_action || "") || null,
+      is_aligned: alignmentObject.is_aligned === true,
+      alignment_type: alignmentType,
+      promotion_candidate: promotionCandidate,
+      retry_case: retryCase,
+    },
+    advisor_alignment_summary: advisorAlignmentSummary,
+    retry_case: retryCase,
     decision_reason_codes: uniqueStrings(advisorObject.decision_reason_codes),
     readiness_summary: readinessSummary || null,
     outcome_summary: outcomeSummary || null,
@@ -669,6 +838,23 @@ function hasHardFailureSignal(context = null) {
   return recoveryAction === "failed";
 }
 
+function resolveOutcomeImprovementRank(outcomeStatus = "") {
+  const normalizedStatus = normalizeOutcomeStatus(outcomeStatus || "");
+  if (normalizedStatus === "success") {
+    return 3;
+  }
+  if (normalizedStatus === "partial") {
+    return 2;
+  }
+  if (normalizedStatus === "blocked") {
+    return 1;
+  }
+  if (normalizedStatus === "failed") {
+    return 0;
+  }
+  return null;
+}
+
 function resolveDecisionPromotionEffectiveness({
   promoted_action = null,
   promotion_applied = false,
@@ -713,6 +899,10 @@ function resolveDecisionPromotionEffectiveness({
   const recoverySummary = toObject(context.recovery_summary) || {};
   const recoveryAction = normalizeAction(recoverySummary.recovery_action || recoverySummary.recovery_policy || "");
   const recoverableSignal = Boolean(recoveryAction && PROMOTION_RECOVERABLE_ACTIONS.has(recoveryAction));
+  const previousOutcomeSummary = toObject(context.outcome_summary) || {};
+  const previousOutcomeStatus = normalizeOutcomeStatus(previousOutcomeSummary.outcome_status || "");
+  const previousRank = resolveOutcomeImprovementRank(previousOutcomeStatus);
+  const nextRank = resolveOutcomeImprovementRank(outcomeStatus);
 
   if (promotedAction === "ask_user") {
     if (outcomeStatus === "success") {
@@ -788,6 +978,55 @@ function resolveDecisionPromotionEffectiveness({
     };
   }
 
+  if (promotedAction === "retry") {
+    if (outcomeStatus === "success") {
+      if (previousOutcomeStatus === "success") {
+        return {
+          promotion_effectiveness: "ineffective",
+          audit_fail_closed: false,
+          audit_reason_codes: ["retry_no_improvement"],
+          countable: true,
+        };
+      }
+      if (previousOutcomeStatus === "failed" || previousOutcomeStatus === "partial") {
+        return {
+          promotion_effectiveness: "effective",
+          audit_fail_closed: false,
+          audit_reason_codes: ["retry_improved_to_success"],
+          countable: true,
+        };
+      }
+      return {
+        promotion_effectiveness: "effective",
+        audit_fail_closed: false,
+        audit_reason_codes: ["outcome_success"],
+        countable: true,
+      };
+    }
+    if (previousRank !== null && nextRank !== null && nextRank <= previousRank) {
+      return {
+        promotion_effectiveness: "ineffective",
+        audit_fail_closed: false,
+        audit_reason_codes: ["retry_no_improvement"],
+        countable: true,
+      };
+    }
+    if (outcomeStatus === "failed" || finalStepStatus === "failed") {
+      return {
+        promotion_effectiveness: "ineffective",
+        audit_fail_closed: false,
+        audit_reason_codes: ["retry_outcome_failed"],
+        countable: true,
+      };
+    }
+    return {
+      promotion_effectiveness: "ineffective",
+      audit_fail_closed: false,
+      audit_reason_codes: ["retry_effectiveness_unknown"],
+      countable: true,
+    };
+  }
+
   if (outcomeStatus === "success") {
     return {
       promotion_effectiveness: "effective",
@@ -833,6 +1072,7 @@ export function createDecisionPromotionAuditState(state = null) {
   return {
     actions: {
       ask_user: normalizePromotionActionState(actions.ask_user || DEFAULT_PROMOTION_AUDIT_STATE.actions.ask_user),
+      retry: normalizePromotionActionState(actions.retry || DEFAULT_PROMOTION_AUDIT_STATE.actions.retry),
       fail: normalizePromotionActionState(actions.fail || DEFAULT_PROMOTION_AUDIT_STATE.actions.fail),
     },
   };

@@ -136,6 +136,27 @@ function normalizeRecoverySummary(recovery = null) {
   const recoveryAction = cleanText(normalized.recovery_action || "") || null;
   const recoveryPolicy = cleanText(normalized.recovery_policy || "") || null;
   const rollbackTargetStepId = cleanText(normalized.rollback_target_step_id || "") || null;
+  const recoveryAttemptCount = Number.isFinite(Number(normalized.recovery_attempt_count))
+    ? Number(normalized.recovery_attempt_count)
+    : 0;
+  const retryBudgetMax = Number.isFinite(Number(
+    normalized.retry_budget_max
+      ?? normalized.max_retries
+      ?? normalized.retry_budget_limit
+      ?? normalized.retry_budget_total,
+  ))
+    ? Math.max(0, Number(
+      normalized.retry_budget_max
+        ?? normalized.max_retries
+        ?? normalized.retry_budget_limit
+        ?? normalized.retry_budget_total,
+    ))
+    : null;
+  const retryBudgetRemaining = Number.isFinite(Number(normalized.retry_budget_remaining))
+    ? Math.max(0, Number(normalized.retry_budget_remaining))
+    : (retryBudgetMax !== null
+      ? Math.max(0, retryBudgetMax - recoveryAttemptCount)
+      : null);
   const retryAllowed = typeof normalized.retry_allowed === "boolean"
     ? normalized.retry_allowed
     : true;
@@ -146,11 +167,14 @@ function normalizeRecoverySummary(recovery = null) {
   return {
     recovery_action: recoveryAction,
     recovery_policy: recoveryPolicy,
-    recovery_attempt_count: Number.isFinite(Number(normalized.recovery_attempt_count))
-      ? Number(normalized.recovery_attempt_count)
-      : 0,
+    recovery_attempt_count: recoveryAttemptCount,
     rollback_target_step_id: rollbackTargetStepId,
     retry_allowed: retryAllowed,
+    retry_budget_max: retryBudgetMax,
+    retry_budget_remaining: retryBudgetRemaining,
+    retry_budget_exhausted: normalized.retry_budget_exhausted === true
+      || (retryBudgetRemaining !== null && retryBudgetRemaining <= 0)
+      || retryAllowed === false,
     skip_allowed: skipAllowed,
     rollback_available: Boolean(rollbackTargetStepId) || normalized.rollback_available === true,
     continuation_allowed: normalized.continuation_allowed === false
