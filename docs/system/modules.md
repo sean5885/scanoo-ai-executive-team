@@ -429,6 +429,8 @@ Current-truth docs for onboarding are:
     - global aggregated metrics (`continuation`, `redundant ask`, `slot resume`, `decision promotion`, `reroute quality`, `usage issue/continuity distribution`)
     - global summary (`top issues`, `divergence patterns`, `promotion performance`, `pause recommendations`, `overall intelligence signal`)
   - malformed fixtures fail closed with `contract_violation` shape; runner does not silently skip invalid case structures
+  - checked-in fixture pack currently contains 114 multi-turn real-world cases, including hardening categories for ambiguous utterances, short utterances, typos, multi-intent requests, supplement-data turns, emotional statements, and half-sentence inputs
+  - default CLI case-count target for this runner is `100~140` (`DEFAULT_USAGE_EVAL_CASE_COUNT_MIN/MAX`)
 - Boundary:
   - this path is offline eval simulation only
   - no external dependencies, no runtime side effects, and no public API shape change
