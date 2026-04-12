@@ -10,6 +10,7 @@ import {
   buildDecisionMetricsScoreboard,
   formatDecisionMetricsScoreboardSummary,
 } from "./decision-metrics-scoreboard.mjs";
+import { extractUsageLayerDiagnostics } from "./usage-layer-intelligence-pass.mjs";
 
 const ABANDONED_TASK_PREVIEW_LIMIT = 3;
 
@@ -679,6 +680,43 @@ function normalizeDecisionScoreboardObservability(observability = null) {
   };
 }
 
+function normalizeUsageLayerObservability(observability = null) {
+  const normalizedObservability = observability && typeof observability === "object" && !Array.isArray(observability)
+    ? observability
+    : {};
+  const usageSource = normalizedObservability.usage_layer
+    && typeof normalizedObservability.usage_layer === "object"
+    && !Array.isArray(normalizedObservability.usage_layer)
+    ? normalizedObservability.usage_layer
+    : normalizedObservability;
+  const normalizedUsage = extractUsageLayerDiagnostics({
+    diagnostics: {
+      interpreted_as_continuation: usageSource.interpreted_as_continuation,
+      interpreted_as_new_task: usageSource.interpreted_as_new_task,
+      redundant_question_detected: usageSource.redundant_question_detected,
+      owner_selection_feels_consistent: usageSource.owner_selection_feels_consistent,
+      response_continuity_score: cleanText(usageSource.response_continuity_score || ""),
+      usage_issue_codes: usageSource.usage_issue_codes,
+    },
+  });
+  const summary = cleanText(normalizedObservability.usage_layer_summary || "") || null;
+  const present = Boolean(
+    normalizedObservability.usage_layer
+    || summary
+    || normalizedUsage.interpreted_as_continuation === true
+    || normalizedUsage.interpreted_as_new_task === true
+    || normalizedUsage.redundant_question_detected === true
+    || normalizedUsage.owner_selection_feels_consistent === false
+    || normalizedUsage.response_continuity_score !== "low"
+    || normalizedUsage.usage_issue_codes.length > 0,
+  );
+  return {
+    present,
+    ...normalizedUsage,
+    summary,
+  };
+}
+
 function formatAdvisorReasons(reasonCodes = []) {
   return Array.isArray(reasonCodes) && reasonCodes.length > 0
     ? `[${reasonCodes.join(", ")}]`
@@ -771,6 +809,7 @@ function buildDiffLines({
   const promotionPolicyObservability = normalizePromotionPolicyObservability(normalizedObservability);
   const promotionAuditObservability = normalizePromotionAuditObservability(normalizedObservability);
   const decisionScoreboardObservability = normalizeDecisionScoreboardObservability(normalizedObservability);
+  const usageLayerObservability = normalizeUsageLayerObservability(normalizedObservability);
   const diffLines = [];
   const seen = new Set();
   const addDiffLine = (line = "") => {
@@ -1121,6 +1160,17 @@ function buildDiffLines({
   if (normalizedObservability.resumed_from_retry === true) {
     addDiffLine("resume: retry");
   }
+  if (usageLayerObservability.present) {
+    addDiffLine(`usage_layer.interpreted_as_continuation: ${usageLayerObservability.interpreted_as_continuation ? "true" : "false"}`);
+    addDiffLine(`usage_layer.interpreted_as_new_task: ${usageLayerObservability.interpreted_as_new_task ? "true" : "false"}`);
+    addDiffLine(`usage_layer.redundant_question_detected: ${usageLayerObservability.redundant_question_detected ? "true" : "false"}`);
+    addDiffLine(`usage_layer.owner_selection_feels_consistent: ${usageLayerObservability.owner_selection_feels_consistent ? "true" : "false"}`);
+    addDiffLine(`usage_layer.response_continuity_score: ${usageLayerObservability.response_continuity_score}`);
+    addDiffLine(`usage_layer.usage_issue_codes: ${formatValue(usageLayerObservability.usage_issue_codes)}`);
+    if (usageLayerObservability.summary) {
+      addDiffLine(`usage_layer_summary: ${usageLayerObservability.summary}`);
+    }
+  }
 
   return diffLines;
 }
@@ -1140,6 +1190,7 @@ function buildTaskTraceText({
   const promotionPolicy = normalizePromotionPolicyObservability(readinessObservability);
   const promotionAudit = normalizePromotionAuditObservability(readinessObservability);
   const decisionScoreboard = normalizeDecisionScoreboardObservability(readinessObservability);
+  const usageLayer = normalizeUsageLayerObservability(readinessObservability);
   const readinessInvalidArtifacts = summarizeReadinessArtifacts(readiness.invalid_artifacts);
   const readinessBlockedDependencies = summarizeBlockedDependencies(readiness.blocked_dependencies);
   const abandonedSummary = next.abandoned_task_hidden_count > 0
@@ -1159,6 +1210,7 @@ function buildTaskTraceText({
     `promotion_policy: version=${formatValue(promotionPolicy.promotion_policy_version)} | allowed_actions=${formatValue(promotionPolicy.allowed_actions)} | rollback_disabled_actions=${formatValue(promotionPolicy.rollback_disabled_actions)} | ineffective_threshold=${formatValue(promotionPolicy.ineffective_threshold)} | summary=${formatValue(promotionPolicy.summary)}`,
     `promotion_audit: promoted_action=${formatValue(promotionAudit.promoted_action)} | promotion_effectiveness=${formatValue(promotionAudit.promotion_effectiveness)} | rollback_flag=${formatValue(promotionAudit.rollback_flag)} | summary=${formatValue(promotionAudit.summary)}`,
     `decision_scoreboard: highest_maturity_actions=${formatValue(decisionScoreboard.highest_maturity_actions)} | rollback_disabled_actions=${formatValue(decisionScoreboard.rollback_disabled_actions)} | summary=${formatValue(decisionScoreboard.summary)}`,
+    `usage_layer: continuation=${usageLayer.interpreted_as_continuation ? "true" : "false"} | new_task=${usageLayer.interpreted_as_new_task ? "true" : "false"} | redundant_ask=${usageLayer.redundant_question_detected ? "true" : "false"} | owner_consistent=${usageLayer.owner_selection_feels_consistent ? "true" : "false"} | response_continuity=${usageLayer.response_continuity_score} | issues=${formatValue(usageLayer.usage_issue_codes)} | summary=${formatValue(usageLayer.summary)}`,
     `artifact: id=${formatValue(next.execution_plan.artifact_id)} | type=${formatValue(next.execution_plan.artifact_type)} | validity=${formatValue(next.execution_plan.validity_status)} | produced_by=${formatValue(next.execution_plan.produced_by_step_id)} | downstream=${formatValue(next.execution_plan.affected_downstream_steps)} | dependency=${formatValue(next.execution_plan.dependency_type)} | blocked_step=${formatValue(next.execution_plan.dependency_blocked_step)} | superseded=${formatValue(next.execution_plan.artifact_superseded)}`,
     `readiness: is_ready=${formatValue(readiness.is_ready)} | reasons=${formatValue(readiness.blocking_reason_codes)} | missing_slots=${formatValue(readiness.missing_slots)} | invalid_artifacts=${formatValue(readinessInvalidArtifacts)} | blocked_dependencies=${formatValue(readinessBlockedDependencies)} | owner_ready=${formatValue(readiness.owner_ready)} | recovery_ready=${formatValue(readiness.recovery_ready)} | recommended_action=${formatValue(readiness.recommended_action)}`,
     `slot_state: missing=${formatValue(slots.missing)} | filled=${formatValue(slots.filled)} | invalid=${formatValue(slots.invalid)}`,
@@ -1189,6 +1241,7 @@ export function buildPlannerTaskTraceDiagnostics({
   const promotionPolicyObservability = normalizePromotionPolicyObservability(observability);
   const promotionAuditObservability = normalizePromotionAuditObservability(observability);
   const decisionScoreboardObservability = normalizeDecisionScoreboardObservability(observability);
+  const usageLayerObservability = normalizeUsageLayerObservability(observability);
   const readinessInvalidArtifacts = summarizeReadinessArtifacts(readinessObservability.invalid_artifacts);
   const readinessBlockedDependencies = summarizeBlockedDependencies(readinessObservability.blocked_dependencies);
   const diff = buildDiffLines({
@@ -1196,7 +1249,7 @@ export function buildPlannerTaskTraceDiagnostics({
     nextSnapshot: memorySnapshot,
     observability,
   });
-  const summary = `task=${formatValue(snapshot.task_id)} phase=${snapshot.task_phase} status=${snapshot.task_status} owner=${formatValue(snapshot.current_owner_agent)} plan=${formatValue(snapshot.execution_plan.plan_status)}:${formatValue(snapshot.execution_plan.current_step)} recovery=${formatValue(snapshot.execution_plan.current_step_recovery_action)} readiness=${formatValue(readinessObservability.is_ready)}:${formatValue(readinessObservability.recommended_action)} outcome=${formatValue(outcomeObservability?.outcome_status || null)}:${formatValue(outcomeObservability?.retry_worthiness)} advisor=${formatValue(advisorObservability.recommended_next_action)}:${formatValue(advisorObservability.decision_confidence)} advisor_alignment=${formatAdvisorAlignment(advisorObservability.alignment)} decision_promotion=${formatValue(promotionObservability.promoted_action)}:${formatValue(promotionObservability.promotion_applied)}:${formatValue(promotionObservability.safety_gate_passed)}:${formatValue(promotionObservability.reroute_target)}:${formatValue(promotionObservability.reroute_reason)} promotion_policy=${formatValue(promotionPolicyObservability.allowed_actions)}:${formatValue(promotionPolicyObservability.rollback_disabled_actions)}:${formatValue(promotionPolicyObservability.ineffective_threshold)} promotion_audit=${formatValue(promotionAuditObservability.promoted_action)}:${formatValue(promotionAuditObservability.promotion_effectiveness)}:${formatValue(promotionAuditObservability.rollback_flag)} decision_scoreboard=${formatValue(decisionScoreboardObservability.highest_maturity_actions)}:${formatValue(decisionScoreboardObservability.rollback_disabled_actions)} artifact=${formatValue(snapshot.execution_plan.artifact_id)}:${formatValue(snapshot.execution_plan.validity_status)} next=${formatValue(snapshot.next_best_action)}`;
+  const summary = `task=${formatValue(snapshot.task_id)} phase=${snapshot.task_phase} status=${snapshot.task_status} owner=${formatValue(snapshot.current_owner_agent)} plan=${formatValue(snapshot.execution_plan.plan_status)}:${formatValue(snapshot.execution_plan.current_step)} recovery=${formatValue(snapshot.execution_plan.current_step_recovery_action)} readiness=${formatValue(readinessObservability.is_ready)}:${formatValue(readinessObservability.recommended_action)} outcome=${formatValue(outcomeObservability?.outcome_status || null)}:${formatValue(outcomeObservability?.retry_worthiness)} advisor=${formatValue(advisorObservability.recommended_next_action)}:${formatValue(advisorObservability.decision_confidence)} advisor_alignment=${formatAdvisorAlignment(advisorObservability.alignment)} decision_promotion=${formatValue(promotionObservability.promoted_action)}:${formatValue(promotionObservability.promotion_applied)}:${formatValue(promotionObservability.safety_gate_passed)}:${formatValue(promotionObservability.reroute_target)}:${formatValue(promotionObservability.reroute_reason)} promotion_policy=${formatValue(promotionPolicyObservability.allowed_actions)}:${formatValue(promotionPolicyObservability.rollback_disabled_actions)}:${formatValue(promotionPolicyObservability.ineffective_threshold)} promotion_audit=${formatValue(promotionAuditObservability.promoted_action)}:${formatValue(promotionAuditObservability.promotion_effectiveness)}:${formatValue(promotionAuditObservability.rollback_flag)} decision_scoreboard=${formatValue(decisionScoreboardObservability.highest_maturity_actions)}:${formatValue(decisionScoreboardObservability.rollback_disabled_actions)} usage_layer=${formatValue(usageLayerObservability.interpreted_as_continuation)}:${formatValue(usageLayerObservability.interpreted_as_new_task)}:${formatValue(usageLayerObservability.redundant_question_detected)}:${formatValue(usageLayerObservability.owner_selection_feels_consistent)}:${formatValue(usageLayerObservability.response_continuity_score)}:${formatValue(usageLayerObservability.usage_issue_codes)} artifact=${formatValue(snapshot.execution_plan.artifact_id)}:${formatValue(snapshot.execution_plan.validity_status)} next=${formatValue(snapshot.next_best_action)}`;
   return {
     summary,
     snapshot: {
@@ -1283,6 +1336,15 @@ export function buildPlannerTaskTraceDiagnostics({
       decision_scoreboard_summary: decisionScoreboardObservability.summary,
       highest_maturity_actions: decisionScoreboardObservability.highest_maturity_actions,
       rollback_disabled_actions: decisionScoreboardObservability.rollback_disabled_actions,
+      usage_layer: {
+        interpreted_as_continuation: usageLayerObservability.interpreted_as_continuation,
+        interpreted_as_new_task: usageLayerObservability.interpreted_as_new_task,
+        redundant_question_detected: usageLayerObservability.redundant_question_detected,
+        owner_selection_feels_consistent: usageLayerObservability.owner_selection_feels_consistent,
+        response_continuity_score: usageLayerObservability.response_continuity_score,
+        usage_issue_codes: usageLayerObservability.usage_issue_codes,
+      },
+      usage_layer_summary: usageLayerObservability.summary,
       slot_state: snapshot.slot_state,
       abandoned_task_ids: snapshot.abandoned_task_ids,
       abandoned_task_total: snapshot.abandoned_task_total,
@@ -1369,6 +1431,14 @@ export function buildPlannerTaskTraceDiagnostics({
       decision_scoreboard_summary: Boolean(cleanText(observability?.decision_scoreboard_summary || "")),
       highest_maturity_actions: Array.isArray(observability?.highest_maturity_actions),
       rollback_disabled_actions: Array.isArray(observability?.rollback_disabled_actions),
+      usage_layer: Boolean(observability?.usage_layer && typeof observability.usage_layer === "object"),
+      usage_layer_interpreted_as_continuation: typeof usageLayerObservability.interpreted_as_continuation === "boolean",
+      usage_layer_interpreted_as_new_task: typeof usageLayerObservability.interpreted_as_new_task === "boolean",
+      usage_layer_redundant_question_detected: typeof usageLayerObservability.redundant_question_detected === "boolean",
+      usage_layer_owner_selection_feels_consistent: typeof usageLayerObservability.owner_selection_feels_consistent === "boolean",
+      usage_layer_response_continuity_score: Boolean(cleanText(usageLayerObservability.response_continuity_score || "")),
+      usage_layer_usage_issue_codes: Array.isArray(usageLayerObservability.usage_issue_codes),
+      usage_layer_summary: Boolean(cleanText(observability?.usage_layer_summary || "")),
       resumed_from_waiting_user: observability?.resumed_from_waiting_user === true,
       resumed_from_retry: observability?.resumed_from_retry === true,
     },

@@ -104,6 +104,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/promotion-control-surface.mjs`
   - `/Users/seanhan/Documents/Playground/src/decision-metrics-scoreboard.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner-working-memory-trace.mjs`
+  - `/Users/seanhan/Documents/Playground/src/usage-layer-intelligence-pass.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner-ingress-contract.mjs`
   - `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
   - `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`
@@ -119,6 +120,9 @@ Current-truth docs for onboarding are:
   - planner ingress now only escalates high-confidence doc/runtime phrasings; generic wording such as standalone "整理" or "風險" no longer forces document/runtime routing by itself
   - planner flow ownership between `runtime_info`, `doc_query`, `okr`, `bd`, and `delivery` is now explicit in code rather than inferred from flow priority or registration order
   - active-plan continuation now runs one deterministic session-level pre-execution readiness gate before dispatching the current step action
+  - planner working-memory continuation now also has one deterministic usage-layer tightening pass:
+    - short/high-related follow-ups prefer same-task continuation over accidental new-task reset
+    - `waiting_user` with already-filled slots resumes the current plan step instead of re-asking user by default
   - that gate is fail-closed and state-derived (slot/artifact/dependency/owner/recovery/plan integrity checks), and does not introduce a second planner/workflow truth source
   - when readiness is blocked, planner routing is lockable for the turn and reuses existing controlled paths (`ask_user` / `retry` / `reroute` / `rollback` / `skip` / fail-closed stop) instead of executing the intended action directly
   - the same step/recovery/readiness signals now feed a deterministic outcome scorer v1 (`success|partial|blocked|failed`) plus `outcome_confidence`, `outcome_evidence`, `artifact_quality`, `retry_worthiness`, and `user_visible_completeness`, and malformed outcome payloads are rejected fail-closed
@@ -172,6 +176,9 @@ Current-truth docs for onboarding are:
   - if docs search still cannot resolve a document id, the lane now returns one bounded diagnose-contract missing-document reply instead of dropping to a generic fallback
   - when explicit Scanoo lane-primary fast-path does not return a bounded reply and runtime falls back to planner, the same turn no longer re-enters timeout-triggered lane fallback (`request_timeout -> lane fallback`) again
   - `user-response-normalizer.mjs` now only reads canonical `execution_result.data.answer / sources / limitations`
+  - answer boundary now also runs a deterministic usage-layer intelligence pass:
+    - emits `usage_layer.interpreted_as_continuation`, `usage_layer.interpreted_as_new_task`, `usage_layer.redundant_question_detected`, `usage_layer.owner_selection_feels_consistent`, `usage_layer.response_continuity_score`, `usage_layer.usage_issue_codes`, and `usage_layer_summary` into planner working-memory observability
+    - applies bounded continuity copy polish on continuation/retry/reroute replies so user-facing sources preserve “接著處理” context instead of resetting tone
   - delivery/onboarding single-hit company-brain search replies now answer first with the matched document title plus bounded location/checklist/step hints from indexed snippets, instead of only repeating the generic "已索引文件" search copy
   - canonical user replies now degrade gracefully when only partial `sources / limitations` are present, instead of collapsing straight to a full-failure generic reply
   - when the planner result would otherwise degrade to a generic failure, `user-response-normalizer.mjs` now performs a minimal mixed-request decomposition for copy/image/send-style asks and upgrades the reply to partial success if a text-draft subtask is still doable

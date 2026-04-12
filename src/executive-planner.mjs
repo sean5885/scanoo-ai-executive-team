@@ -50,6 +50,10 @@ import {
 } from "./planner-conversation-memory.mjs";
 import { buildPlannerTaskTraceDiagnostics } from "./planner-working-memory-trace.mjs";
 import {
+  evaluateUsageLayerIntelligencePass,
+  extractUsageLayerDiagnostics,
+} from "./usage-layer-intelligence-pass.mjs";
+import {
   getPlannerDocQueryContext,
   hydratePlannerDocQueryRuntimeContext,
   plannerDocQueryFlow,
@@ -4826,6 +4830,12 @@ function applyPlannerExecutionOutcomeObservability({
     if (transition.endsWith("->failed")) {
       return "failed";
     }
+    if (transition.endsWith("->running")) {
+      return "running";
+    }
+    if (transition.endsWith("->completed")) {
+      return "completed";
+    }
     if (normalizedStepStatus) {
       return normalizedStepStatus;
     }
@@ -5302,6 +5312,9 @@ function resolvePlannerWorkingMemoryContinuation({
   logger = console,
   stage = "routing",
 } = {}) {
+  const normalizedPayload = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? payload
+    : {};
   const readResult = readPlannerWorkingMemoryForRouting({ sessionKey });
   const observability = {
     memory_read_attempted: true,
@@ -5334,6 +5347,35 @@ function resolvePlannerWorkingMemoryContinuation({
     reroute_reason: null,
     reroute_source: null,
     reroute_target_verified: null,
+    usage_layer: null,
+    usage_layer_summary: null,
+  };
+  const applyUsageLayerPass = ({
+    selectedAction = "",
+    routingReason = "",
+    unresolvedSlots = [],
+    currentPlanStep = null,
+    candidateActions = [],
+    workingMemory = null,
+    semantics = null,
+  } = {}) => {
+    const usagePass = evaluateUsageLayerIntelligencePass({
+      requestText: userIntent,
+      taskType,
+      workingMemory,
+      observability,
+      unresolvedSlots,
+      currentPlanStep: currentPlanStep?.step || null,
+      semantics,
+      routingReason,
+      selectedAction,
+      candidateActions,
+      plannerEnvelope: null,
+      userResponse: null,
+    });
+    observability.usage_layer = extractUsageLayerDiagnostics(usagePass);
+    observability.usage_layer_summary = cleanText(usagePass?.summary || "") || null;
+    return usagePass;
   };
   logPlannerWorkingMemoryTrace({
     logger,
@@ -5347,13 +5389,22 @@ function resolvePlannerWorkingMemoryContinuation({
     : null;
 
   if (!workingMemory) {
+    applyUsageLayerPass({
+      selectedAction: "",
+      routingReason: "working_memory_miss_new_task",
+      unresolvedSlots: [],
+      currentPlanStep: null,
+      candidateActions: [],
+      workingMemory: null,
+      semantics: null,
+    });
     return {
       selected_action: null,
       reason: null,
       routing_reason: null,
       routing_locked: false,
       stop_error: null,
-      payload: payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {},
+      payload: normalizedPayload,
       observability,
     };
   }
@@ -5451,13 +5502,22 @@ function resolvePlannerWorkingMemoryContinuation({
       }
     : null;
   if (topicSwitch) {
+    applyUsageLayerPass({
+      selectedAction: "",
+      routingReason: "topic_switch_new_task",
+      unresolvedSlots,
+      currentPlanStep,
+      candidateActions: [],
+      workingMemory,
+      semantics,
+    });
     return {
       selected_action: null,
       reason: null,
       routing_reason: null,
       routing_locked: false,
       stop_error: null,
-      payload: payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {},
+      payload: normalizedPayload,
       observability,
     };
   }
@@ -5536,7 +5596,32 @@ function resolvePlannerWorkingMemoryContinuation({
     text: userIntent,
     semantics,
   });
-  if (confidenceAllowed && executionReadiness && executionReadiness.is_ready === false) {
+  const waitingResumePlanAction = confidenceAllowed
+    && taskPhase === "waiting_user"
+    && unresolvedSlots.length === 0
+    ? resolvePlannerWorkingMemoryExecutionPlanAction({
+        workingMemory,
+        text: userIntent,
+        semantics,
+        allowBlockedStep: true,
+        allowFailedStep: true,
+      })
+    : null;
+  const waitingResumeAction = cleanText(
+    waitingResumePlanAction?.action
+    || currentPlanStep?.step?.intended_action
+    || runningOwnerAction
+    || workingMemory?.next_best_action
+    || "",
+  );
+  const shouldForceWaitingResume = Boolean(
+    confidenceAllowed
+    && taskPhase === "waiting_user"
+    && unresolvedSlots.length === 0
+    && waitingResumeAction
+    && canUseWorkingMemoryAction(waitingResumeAction, { text: userIntent, semantics }),
+  );
+  if (confidenceAllowed && executionReadiness && executionReadiness.is_ready === false && !shouldForceWaitingResume) {
     recoveryDecisionLocked = true;
     routingLocked = true;
     const primaryReadinessReason = resolvePlannerExecutionReadinessPrimaryReason(executionReadiness);
@@ -5883,6 +5968,26 @@ function resolvePlannerWorkingMemoryContinuation({
         observability.current_step = waitingPlanAction.current_step_id || observability.current_step;
       }
     }
+  } else if (
+    confidenceAllowed
+    && taskPhase === "waiting_user"
+    && unresolvedSlots.length === 0
+  ) {
+    if (waitingResumeAction && canUseWorkingMemoryAction(waitingResumeAction, { text: userIntent, semantics })) {
+      selectedAction = waitingResumeAction;
+      reason = "working_memory_waiting_user_resume_plan_step";
+      routingReason = reason;
+      observability.task_phase_transition = "waiting_user->executing";
+      observability.task_status_transition = "blocked->running";
+      observability.slot_update = {
+        mode: "slot_resume",
+        pending_slots: [],
+      };
+      observability.resumed_from_waiting_user = true;
+      observability.plan_id = waitingResumePlanAction?.plan_id || observability.plan_id;
+      observability.plan_status = waitingResumePlanAction?.plan_status || observability.plan_status;
+      observability.current_step = waitingResumePlanAction?.current_step_id || observability.current_step;
+    }
   }
   if (
     !selectedAction
@@ -5953,6 +6058,45 @@ function resolvePlannerWorkingMemoryContinuation({
         ? "working_memory_reuse_skill"
         : "working_memory_reuse_action";
       routingReason = reason;
+    }
+  }
+  if (!selectedAction && !recoveryDecisionLocked && confidenceAllowed) {
+    const usageFallback = evaluateUsageLayerIntelligencePass({
+      requestText: userIntent,
+      taskType,
+      workingMemory,
+      observability,
+      unresolvedSlots,
+      currentPlanStep: currentPlanStep?.step || null,
+      semantics,
+      routingReason,
+      selectedAction: "",
+      candidateActions: [
+        cleanText(currentPlanStep?.step?.intended_action || ""),
+        unresolvedAction,
+        cleanText(workingMemory?.next_best_action || ""),
+        runningOwnerAction,
+        cleanText(workingMemory?.last_selected_skill || ""),
+      ],
+      plannerEnvelope: null,
+      userResponse: null,
+    });
+    if (usageFallback?.behavior?.prefer_continuation === true) {
+      const continuationCandidates = Array.isArray(usageFallback?.behavior?.continuation_action_candidates)
+        ? usageFallback.behavior.continuation_action_candidates
+          .map((candidate) => cleanText(candidate))
+          .filter(Boolean)
+        : [];
+      const fallbackAction = continuationCandidates
+        .find((candidate) => canUseWorkingMemoryAction(candidate, { text: userIntent, semantics })) || "";
+      if (fallbackAction) {
+        selectedAction = fallbackAction;
+        const activeStepAction = cleanText(currentPlanStep?.step?.intended_action || "");
+        reason = fallbackAction === activeStepAction
+          ? "working_memory_active_plan_continuation"
+          : "working_memory_reuse_action";
+        routingReason = reason;
+      }
     }
   }
 
@@ -6252,6 +6396,21 @@ function resolvePlannerWorkingMemoryContinuation({
   observability.rollback_disabled_actions = Array.isArray(decisionScoreboard.rollback_disabled_actions)
     ? decisionScoreboard.rollback_disabled_actions
     : [];
+  applyUsageLayerPass({
+    selectedAction,
+    routingReason,
+    unresolvedSlots,
+    currentPlanStep,
+    candidateActions: [
+      cleanText(currentPlanStep?.step?.intended_action || ""),
+      unresolvedAction,
+      cleanText(workingMemory?.next_best_action || ""),
+      runningOwnerAction,
+      cleanText(workingMemory?.last_selected_skill || ""),
+    ],
+    workingMemory,
+    semantics,
+  });
   observability.memory_used_in_routing = Boolean(selectedAction) || routingLocked;
   return {
     selected_action: selectedAction || null,
@@ -6259,7 +6418,7 @@ function resolvePlannerWorkingMemoryContinuation({
     routing_reason: routingReason || null,
     routing_locked: routingLocked === true,
     stop_error: cleanText(stopError || "") || null,
-    payload: payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {},
+    payload: normalizedPayload,
     observability,
   };
 }

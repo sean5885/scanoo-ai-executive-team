@@ -1413,6 +1413,99 @@ test("v2 waiting_user continuation resumes current plan step instead of rebuildi
   resetPlannerConversationMemory({ sessionKey });
 });
 
+test("v2 waiting_user with already-filled slots resumes step instead of asking user again", async () => {
+  const sessionKey = "wm-v2-waiting-filled-resume";
+  resetPlannerRuntimeContext({ sessionKey });
+  resetPlannerConversationMemory({ sessionKey });
+  seedWorkingMemory(sessionKey, {
+    task_id: "task-v2-waiting-filled-1",
+    task_phase: "waiting_user",
+    task_status: "blocked",
+    unresolved_slots: [],
+    slot_state: [
+      {
+        slot_key: "candidate_selection_required",
+        required_by: "get_company_brain_doc_detail",
+        status: "filled",
+        source: "user",
+        ttl: "2030-01-01T00:00:00.000Z",
+      },
+    ],
+    execution_plan: buildSeedExecutionPlan({
+      planId: "plan-v2-waiting-filled-1",
+      planStatus: "active",
+      currentStepId: "step-2",
+      steps: [
+        {
+          step_id: "step-1",
+          step_type: "planner_action",
+          owner_agent: "doc_agent",
+          intended_action: "search_company_brain_docs",
+          status: "completed",
+          depends_on: [],
+          retryable: true,
+          artifact_refs: ["doc_candidates"],
+          slot_requirements: [],
+        },
+        {
+          step_id: "step-2",
+          step_type: "planner_action",
+          owner_agent: "doc_agent",
+          intended_action: "get_company_brain_doc_detail",
+          status: "blocked",
+          depends_on: ["step-1"],
+          retryable: true,
+          artifact_refs: [],
+          slot_requirements: ["candidate_selection_required"],
+        },
+      ],
+    }),
+  });
+
+  let dispatchAction = null;
+  const plannerEvents = [];
+  await runPlannerToolFlow({
+    userIntent: "繼續",
+    payload: {},
+    sessionKey,
+    logger: {
+      info(event, payload) {
+        if (event === "planner_end_to_end") {
+          plannerEvents.push(payload);
+        }
+      },
+      debug() {},
+      warn() {},
+      error() {},
+    },
+    selector() {
+      return {
+        selected_action: null,
+        reason: "routing_no_match",
+        routing_reason: "routing_no_match",
+      };
+    },
+    async dispatcher({ action }) {
+      dispatchAction = action;
+      return {
+        ok: true,
+        action: "company_brain_doc_detail",
+        item: { doc_id: "doc_1" },
+        trace_id: "trace-wm-v2-waiting-filled",
+      };
+    },
+  });
+
+  const latestEvent = plannerEvents.at(-1) || {};
+  assert.equal(dispatchAction, "get_company_brain_doc_detail");
+  assert.equal(latestEvent.resumed_from_waiting_user, true);
+  assert.equal(latestEvent.recovery_action, null);
+  assert.equal(latestEvent.plan_id, "plan-v2-waiting-filled-1");
+
+  resetPlannerRuntimeContext({ sessionKey });
+  resetPlannerConversationMemory({ sessionKey });
+});
+
 test("v2 retries with same agent before reroute when failure budget remains", async () => {
   const sessionKey = "wm-v2-retry-same";
   resetPlannerRuntimeContext({ sessionKey });

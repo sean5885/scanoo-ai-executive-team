@@ -64,6 +64,7 @@ test("runPlannerUserInputEdge keeps planner execute -> envelope -> normalize on 
         limitations: [],
       };
     },
+    workingMemoryWriter: null,
   });
 
   assert.equal(result.plannerResult, plannerResult);
@@ -233,4 +234,132 @@ test("runPlannerUserInputEdge skips working-memory write when response is not st
   });
 
   assert.equal(writeAttempted, false);
+});
+
+test("runPlannerUserInputEdge adds retry continuity context and usage-layer diagnostics", async () => {
+  const memoryLogs = [];
+  const result = await runPlannerUserInputEdge({
+    text: "再試一次",
+    sessionKey: "wm-usage-retry",
+    logger: {
+      info(event, payload) {
+        if (event === "planner_working_memory") {
+          memoryLogs.push(payload);
+        }
+      },
+      debug() {},
+      warn() {},
+      error() {},
+    },
+    async plannerExecutor() {
+      return {
+        ok: true,
+        action: "search_company_brain_docs",
+        synthetic_agent_hint: {
+          agent: "doc_agent",
+        },
+        execution_result: {
+          ok: true,
+          data: {
+            answer: "已完成重試。",
+            sources: [],
+            limitations: [],
+          },
+        },
+      };
+    },
+    workingMemoryWriter() {
+      return {
+        ok: true,
+        observability: {
+          memory_snapshot: {
+            task_id: "task-usage-retry",
+            task_type: "document_lookup",
+            task_phase: "retrying",
+            task_status: "failed",
+            current_owner_agent: "doc_agent",
+            next_best_action: "search_company_brain_docs",
+            unresolved_slots: [],
+            slot_state: [],
+          },
+          resumed_from_retry: true,
+          recovery_action: "retry_same_step",
+        },
+      };
+    },
+  });
+
+  assert.equal(result.userResponse.ok, true);
+  assert.match((result.userResponse.sources || [])[0] || "", /上一輪|重試/);
+  const boundaryLog = memoryLogs.find((item) => item?.memory_stage === "answer_boundary_write_back");
+  assert.ok(boundaryLog);
+  assert.equal(typeof boundaryLog?.usage_layer_summary, "string");
+  assert.equal(boundaryLog?.usage_layer?.interpreted_as_continuation, true);
+});
+
+test("runPlannerUserInputEdge adds reroute continuity context and surfaces usage issue codes", async () => {
+  const memoryLogs = [];
+  const result = await runPlannerUserInputEdge({
+    text: "接著改由 runtime 處理",
+    sessionKey: "wm-usage-reroute",
+    logger: {
+      info(event, payload) {
+        if (event === "planner_working_memory") {
+          memoryLogs.push(payload);
+        }
+      },
+      debug() {},
+      warn() {},
+      error() {},
+    },
+    async plannerExecutor() {
+      return {
+        ok: true,
+        action: "get_runtime_info",
+        synthetic_agent_hint: {
+          agent: "runtime_agent",
+        },
+        execution_result: {
+          ok: true,
+          data: {
+            answer: "runtime 路徑已更新。",
+            sources: [],
+            limitations: [],
+          },
+        },
+      };
+    },
+    workingMemoryWriter() {
+      return {
+        ok: true,
+        observability: {
+          memory_snapshot: {
+            task_id: "task-usage-reroute",
+            task_type: "document_lookup",
+            task_phase: "retrying",
+            task_status: "failed",
+            current_owner_agent: "runtime_agent",
+            previous_owner_agent: "doc_agent",
+            next_best_action: "get_runtime_info",
+            unresolved_slots: [],
+            slot_state: [],
+          },
+          resumed_from_retry: true,
+          recovery_action: "reroute_owner",
+          agent_handoff: {
+            from: "doc_agent",
+            to: "runtime_agent",
+            reason: "capability_gap",
+          },
+        },
+      };
+    },
+  });
+
+  assert.equal(result.userResponse.ok, true);
+  assert.match((result.userResponse.sources || [])[0] || "", /改由 runtime_agent/);
+  const boundaryLog = memoryLogs.find((item) => item?.memory_stage === "answer_boundary_write_back");
+  assert.ok(boundaryLog);
+  assert.equal(Array.isArray(boundaryLog?.usage_layer?.usage_issue_codes), true);
+  assert.equal(boundaryLog.usage_layer.usage_issue_codes.includes("reroute_without_user_visible_context"), true);
 });
