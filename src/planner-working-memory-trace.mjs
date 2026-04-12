@@ -1,5 +1,6 @@
 import { cleanText } from "./message-intent-utils.mjs";
 import { normalizeExecutionOutcome } from "./execution-outcome-scorer.mjs";
+import { formatAdvisorAlignmentSummary } from "./advisor-alignment-evaluator.mjs";
 
 const ABANDONED_TASK_PREVIEW_LIMIT = 3;
 
@@ -426,21 +427,34 @@ function normalizeOutcomeObservability(observability = null, snapshot = null) {
   return snapshotOutcome;
 }
 
-function normalizeAdvisorComparison(value = null) {
+function normalizeAdvisorAlignment(value = null) {
   const normalized = value && typeof value === "object" && !Array.isArray(value)
     ? value
     : null;
   if (!normalized) {
     return null;
   }
-  const recommendedNextAction = cleanText(normalized.recommended_next_action || "");
-  const actualNextAction = cleanText(normalized.actual_next_action || "");
+  const advisorAction = cleanText(normalized.advisor_action || normalized.recommended_next_action || "");
+  const actualAction = cleanText(normalized.actual_action || normalized.actual_next_action || "");
+  const alignmentType = cleanText(normalized.alignment_type || "");
+  const divergenceReasonCodes = Array.isArray(normalized.divergence_reason_codes)
+    ? normalized.divergence_reason_codes.map((item) => cleanText(item)).filter(Boolean)
+    : [];
+  const evaluatorVersion = cleanText(normalized.evaluator_version || "");
   return {
-    recommended_next_action: recommendedNextAction || null,
-    actual_next_action: actualNextAction || null,
+    advisor_action: advisorAction || null,
+    actual_action: actualAction || null,
+    recommended_next_action: advisorAction || null,
+    actual_next_action: actualAction || null,
     is_aligned: typeof normalized.is_aligned === "boolean"
       ? normalized.is_aligned
       : null,
+    alignment_type: alignmentType || null,
+    divergence_reason_codes: divergenceReasonCodes,
+    promotion_candidate: typeof normalized.promotion_candidate === "boolean"
+      ? normalized.promotion_candidate
+      : null,
+    evaluator_version: evaluatorVersion || null,
   };
 }
 
@@ -456,6 +470,11 @@ function normalizeAdvisorObservability(observability = null) {
   const reasonCodes = Array.isArray(advisorObject.decision_reason_codes)
     ? advisorObject.decision_reason_codes.map((item) => cleanText(item)).filter(Boolean)
     : [];
+  const alignment = normalizeAdvisorAlignment(
+    normalizedObservability.advisor_alignment
+    || normalizedObservability.advisor_vs_actual,
+  );
+  const alignmentSummaryFromObservability = cleanText(normalizedObservability.advisor_alignment_summary || "") || null;
   return {
     recommended_next_action: cleanText(advisorObject.recommended_next_action || "") || null,
     decision_reason_codes: reasonCodes,
@@ -465,7 +484,9 @@ function normalizeAdvisorObservability(observability = null) {
       ? advisorObject.based_on
       : null,
     based_on_summary: cleanText(normalizedObservability.advisor_based_on_summary || "") || null,
-    versus_actual: normalizeAdvisorComparison(normalizedObservability.advisor_vs_actual),
+    alignment,
+    alignment_summary: alignmentSummaryFromObservability
+      || (alignment ? formatAdvisorAlignmentSummary(alignment) : null),
   };
 }
 
@@ -475,17 +496,21 @@ function formatAdvisorReasons(reasonCodes = []) {
     : "[]";
 }
 
-function formatAdvisorVsActual(versusActual = null) {
-  const normalized = normalizeAdvisorComparison(versusActual);
+function formatAdvisorAlignment(alignment = null) {
+  const normalized = normalizeAdvisorAlignment(alignment);
   if (!normalized) {
     return "none";
   }
-  const recommended = cleanText(normalized.recommended_next_action || "") || "none";
-  const actual = cleanText(normalized.actual_next_action || "") || "none";
+  const advisorAction = cleanText(normalized.advisor_action || "") || "none";
+  const actualAction = cleanText(normalized.actual_action || "") || "none";
+  const alignmentType = cleanText(normalized.alignment_type || "") || "unknown";
+  const divergenceReasonCodes = Array.isArray(normalized.divergence_reason_codes)
+    ? normalized.divergence_reason_codes
+    : [];
   const aligned = typeof normalized.is_aligned === "boolean"
     ? (normalized.is_aligned ? "aligned" : "mismatch")
     : "unknown";
-  return `${recommended} vs ${actual} (${aligned})`;
+  return `${advisorAction} vs ${actualAction} (${aligned}/${alignmentType}; reasons=${formatValue(divergenceReasonCodes)}; promotion=${formatValue(normalized.promotion_candidate)})`;
 }
 
 function formatOutcomeEvidence(evidence = null) {
@@ -821,8 +846,11 @@ function buildDiffLines({
   if (advisorObservability.based_on_summary && !hasDiffPrefix("advisor_based_on_summary:")) {
     addDiffLine(`advisor_based_on_summary: ${advisorObservability.based_on_summary}`);
   }
-  if (advisorObservability.versus_actual && !hasDiffPrefix("advisor_vs_actual:")) {
-    addDiffLine(`advisor_vs_actual: ${formatAdvisorVsActual(advisorObservability.versus_actual)}`);
+  if (advisorObservability.alignment && !hasDiffPrefix("advisor_alignment:")) {
+    addDiffLine(`advisor_alignment: ${formatAdvisorAlignment(advisorObservability.alignment)}`);
+  }
+  if (advisorObservability.alignment_summary && !hasDiffPrefix("advisor_alignment_summary:")) {
+    addDiffLine(`advisor_alignment_summary: ${advisorObservability.alignment_summary}`);
   }
   if (normalizedObservability.resumed_from_waiting_user === true) {
     addDiffLine("resume: waiting_user");
@@ -859,7 +887,7 @@ function buildTaskTraceText({
     `plan: id=${formatValue(next.execution_plan.plan_id)} | status=${formatValue(next.execution_plan.plan_status)} | current_step=${formatValue(next.execution_plan.current_step)}`,
     `recovery: class=${formatValue(next.execution_plan.current_step_failure_class)} | policy=${formatValue(next.execution_plan.current_step_recovery_policy)} | action=${formatValue(next.execution_plan.current_step_recovery_action)} | attempts=${formatValue(next.execution_plan.current_step_recovery_attempt_count)} | rollback_target=${formatValue(next.execution_plan.current_step_rollback_target_step_id)}`,
     `outcome: status=${formatValue(outcome?.outcome_status || null)} | confidence=${formatValue(outcome?.outcome_confidence ?? null)} | evidence=${formatOutcomeEvidence(outcome?.outcome_evidence || null)} | artifact_quality=${formatValue(outcome?.artifact_quality || null)} | retry_worthiness=${formatValue(typeof outcome?.retry_worthiness === "boolean" ? outcome.retry_worthiness : null)} | user_visible=${formatValue(outcome?.user_visible_completeness || null)}`,
-    `advisor: action=${formatValue(advisor.recommended_next_action)} | reasons=${formatAdvisorReasons(advisor.decision_reason_codes)} | confidence=${formatValue(advisor.decision_confidence)} | based_on=${formatValue(advisor.based_on_summary)} | vs_actual=${formatAdvisorVsActual(advisor.versus_actual)}`,
+    `advisor: action=${formatValue(advisor.recommended_next_action)} | reasons=${formatAdvisorReasons(advisor.decision_reason_codes)} | confidence=${formatValue(advisor.decision_confidence)} | based_on=${formatValue(advisor.based_on_summary)} | alignment=${formatAdvisorAlignment(advisor.alignment)} | alignment_summary=${formatValue(advisor.alignment_summary)}`,
     `artifact: id=${formatValue(next.execution_plan.artifact_id)} | type=${formatValue(next.execution_plan.artifact_type)} | validity=${formatValue(next.execution_plan.validity_status)} | produced_by=${formatValue(next.execution_plan.produced_by_step_id)} | downstream=${formatValue(next.execution_plan.affected_downstream_steps)} | dependency=${formatValue(next.execution_plan.dependency_type)} | blocked_step=${formatValue(next.execution_plan.dependency_blocked_step)} | superseded=${formatValue(next.execution_plan.artifact_superseded)}`,
     `readiness: is_ready=${formatValue(readiness.is_ready)} | reasons=${formatValue(readiness.blocking_reason_codes)} | missing_slots=${formatValue(readiness.missing_slots)} | invalid_artifacts=${formatValue(readinessInvalidArtifacts)} | blocked_dependencies=${formatValue(readinessBlockedDependencies)} | owner_ready=${formatValue(readiness.owner_ready)} | recovery_ready=${formatValue(readiness.recovery_ready)} | recommended_action=${formatValue(readiness.recommended_action)}`,
     `slot_state: missing=${formatValue(slots.missing)} | filled=${formatValue(slots.filled)} | invalid=${formatValue(slots.invalid)}`,
@@ -893,7 +921,7 @@ export function buildPlannerTaskTraceDiagnostics({
     nextSnapshot: memorySnapshot,
     observability,
   });
-  const summary = `task=${formatValue(snapshot.task_id)} phase=${snapshot.task_phase} status=${snapshot.task_status} owner=${formatValue(snapshot.current_owner_agent)} plan=${formatValue(snapshot.execution_plan.plan_status)}:${formatValue(snapshot.execution_plan.current_step)} recovery=${formatValue(snapshot.execution_plan.current_step_recovery_action)} readiness=${formatValue(readinessObservability.is_ready)}:${formatValue(readinessObservability.recommended_action)} outcome=${formatValue(outcomeObservability?.outcome_status || null)}:${formatValue(outcomeObservability?.retry_worthiness)} advisor=${formatValue(advisorObservability.recommended_next_action)}:${formatValue(advisorObservability.decision_confidence)} artifact=${formatValue(snapshot.execution_plan.artifact_id)}:${formatValue(snapshot.execution_plan.validity_status)} next=${formatValue(snapshot.next_best_action)}`;
+  const summary = `task=${formatValue(snapshot.task_id)} phase=${snapshot.task_phase} status=${snapshot.task_status} owner=${formatValue(snapshot.current_owner_agent)} plan=${formatValue(snapshot.execution_plan.plan_status)}:${formatValue(snapshot.execution_plan.current_step)} recovery=${formatValue(snapshot.execution_plan.current_step_recovery_action)} readiness=${formatValue(readinessObservability.is_ready)}:${formatValue(readinessObservability.recommended_action)} outcome=${formatValue(outcomeObservability?.outcome_status || null)}:${formatValue(outcomeObservability?.retry_worthiness)} advisor=${formatValue(advisorObservability.recommended_next_action)}:${formatValue(advisorObservability.decision_confidence)} advisor_alignment=${formatAdvisorAlignment(advisorObservability.alignment)} artifact=${formatValue(snapshot.execution_plan.artifact_id)}:${formatValue(snapshot.execution_plan.validity_status)} next=${formatValue(snapshot.next_best_action)}`;
   return {
     summary,
     snapshot: {
@@ -938,7 +966,9 @@ export function buildPlannerTaskTraceDiagnostics({
           }
         : null,
       advisor_based_on_summary: advisorObservability.based_on_summary,
-      advisor_vs_actual: advisorObservability.versus_actual,
+      advisor_alignment: advisorObservability.alignment,
+      advisor_alignment_summary: advisorObservability.alignment_summary,
+      advisor_vs_actual: advisorObservability.alignment,
       slot_state: snapshot.slot_state,
       abandoned_task_ids: snapshot.abandoned_task_ids,
       abandoned_task_total: snapshot.abandoned_task_total,
@@ -992,7 +1022,14 @@ export function buildPlannerTaskTraceDiagnostics({
         && advisorObservability.decision_reason_codes.length > 0,
       advisor_decision_confidence: Boolean(cleanText(advisorObservability.decision_confidence || "")),
       advisor_based_on_summary: Boolean(cleanText(advisorObservability.based_on_summary || "")),
-      advisor_vs_actual: Boolean(advisorObservability.versus_actual),
+      advisor_alignment: Boolean(advisorObservability.alignment),
+      advisor_alignment_is_aligned: typeof advisorObservability.alignment?.is_aligned === "boolean",
+      advisor_alignment_type: Boolean(cleanText(advisorObservability.alignment?.alignment_type || "")),
+      advisor_alignment_divergence_reason_codes: Array.isArray(advisorObservability.alignment?.divergence_reason_codes)
+        && advisorObservability.alignment.divergence_reason_codes.length > 0,
+      advisor_alignment_promotion_candidate: typeof advisorObservability.alignment?.promotion_candidate === "boolean",
+      advisor_alignment_summary: Boolean(cleanText(advisorObservability.alignment_summary || "")),
+      advisor_vs_actual: Boolean(advisorObservability.alignment),
       resumed_from_waiting_user: observability?.resumed_from_waiting_user === true,
       resumed_from_retry: observability?.resumed_from_retry === true,
     },

@@ -310,19 +310,27 @@ test("task trace diagnostics expose advisor recommendation and comparison", () =
         advisor_version: STEP_DECISION_ADVISOR_VERSION,
       },
       advisor_based_on_summary: "readiness=true ; reasons=none ; outcome=partial",
-      advisor_vs_actual: {
-        recommended_next_action: "retry",
-        actual_next_action: "ask_user",
+      advisor_alignment: {
+        advisor_action: "retry",
+        actual_action: "ask_user",
         is_aligned: false,
+        alignment_type: "acceptable_divergence",
+        divergence_reason_codes: ["actual_more_conservative"],
+        promotion_candidate: false,
+        evaluator_version: "advisor_alignment_evaluator_v1",
       },
+      advisor_alignment_summary: "advisor=retry actual=ask_user aligned=false type=acceptable_divergence reasons=[actual_more_conservative] promotion_candidate=false",
     },
   });
 
   assert.equal(trace.diff.includes("advisor.recommended_next_action: retry"), true);
   assert.equal(trace.diff.includes("advisor.decision_confidence: high"), true);
-  assert.equal(trace.diff.some((line) => line.startsWith("advisor_vs_actual:")), true);
+  assert.equal(trace.diff.some((line) => line.startsWith("advisor_alignment:")), true);
+  assert.equal(trace.diff.some((line) => line.startsWith("advisor_alignment_summary:")), true);
   assert.match(trace.text, /advisor: action=retry/);
   assert.equal(trace.event_alignment.advisor_recommended_next_action, true);
+  assert.equal(trace.event_alignment.advisor_alignment, true);
+  assert.equal(trace.event_alignment.advisor_alignment_summary, true);
   assert.equal(trace.event_alignment.advisor_vs_actual, true);
 });
 

@@ -114,6 +114,7 @@ import {
   formatStepDecisionAdvisorBasedOnSummary,
   resolveStepDecisionAdvisorActualAction,
 } from "./step-decision-advisor.mjs";
+import { formatAdvisorAlignmentSummary } from "./advisor-alignment-evaluator.mjs";
 import { getStoredAccountContext } from "./lark-user-auth.mjs";
 import { getDbPath } from "./db.mjs";
 
@@ -4640,6 +4641,8 @@ function applyStepDecisionAdvisorObservability({
     observability.advisor = null;
     observability.advisor_based_on_summary = null;
     observability.advisor_vs_actual = null;
+    observability.advisor_alignment = null;
+    observability.advisor_alignment_summary = null;
     return;
   }
   const blockedDependencies = Array.isArray(observability.blocked_dependencies)
@@ -4696,6 +4699,8 @@ function applyStepDecisionAdvisorObservability({
   observability.advisor = advisorDecision;
   observability.advisor_based_on_summary = formatStepDecisionAdvisorBasedOnSummary(advisorDecision.based_on);
   observability.advisor_vs_actual = null;
+  observability.advisor_alignment = null;
+  observability.advisor_alignment_summary = null;
 }
 
 function applyStepDecisionAdvisorComparisonObservability({
@@ -4720,10 +4725,39 @@ function applyStepDecisionAdvisorComparisonObservability({
     routing_locked: routingLocked === true,
     stop_error: stopError,
   });
-  observability.advisor_vs_actual = buildStepDecisionAdvisorComparison({
+  const advisorAlignment = buildStepDecisionAdvisorComparison({
     decision: observability.advisor,
     actual_next_action: actualNextAction,
+    alignment_context: {
+      readiness: observability.readiness && typeof observability.readiness === "object" && !Array.isArray(observability.readiness)
+        ? observability.readiness
+        : null,
+      outcome: {
+        outcome_status: observability.outcome_status,
+        outcome_confidence: observability.outcome_confidence,
+        outcome_evidence: observability.outcome_evidence,
+        artifact_quality: observability.artifact_quality,
+        retry_worthiness: observability.retry_worthiness,
+        user_visible_completeness: observability.user_visible_completeness,
+      },
+      recovery: {
+        recovery_policy: cleanText(observability.recovery_policy || "") || null,
+        recovery_action: cleanText(observability.recovery_action || "") || null,
+        recovery_attempt_count: Number.isFinite(Number(observability.recovery_attempt_count))
+          ? Number(observability.recovery_attempt_count)
+          : 0,
+      },
+      routing_overrode_advisor: routingLocked === false
+        && Boolean(cleanText(selectedAction || ""))
+        && cleanText(observability.advisor.recommended_next_action || "") !== "proceed"
+        && actualNextAction === "proceed",
+      recovery_overrode_advisor: Boolean(cleanText(observability.recovery_action || "")),
+      malformed_input: observability.advisor?.based_on?.task_plan_summary?.malformed_input === true,
+    },
   });
+  observability.advisor_vs_actual = advisorAlignment;
+  observability.advisor_alignment = advisorAlignment;
+  observability.advisor_alignment_summary = formatAdvisorAlignmentSummary(advisorAlignment);
 }
 
 function resolveTaskTransitionTarget(transition = "", fallback = "") {
@@ -4953,6 +4987,8 @@ function resolvePlannerWorkingMemoryContinuation({
     advisor: null,
     advisor_based_on_summary: null,
     advisor_vs_actual: null,
+    advisor_alignment: null,
+    advisor_alignment_summary: null,
   };
   logPlannerWorkingMemoryTrace({
     logger,
@@ -5041,6 +5077,8 @@ function resolvePlannerWorkingMemoryContinuation({
   observability.advisor = null;
   observability.advisor_based_on_summary = null;
   observability.advisor_vs_actual = null;
+  observability.advisor_alignment = null;
+  observability.advisor_alignment_summary = null;
   observability.plan_invalidated = topicSwitch && currentPlanStep?.plan
     ? {
         plan_id: currentPlanStep.plan.plan_id,

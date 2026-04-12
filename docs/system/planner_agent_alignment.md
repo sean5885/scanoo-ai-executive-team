@@ -20,6 +20,8 @@ Current runtime anchor:
 
 - `/Users/seanhan/Documents/Playground/src/executive-planner.mjs`
 - `/Users/seanhan/Documents/Playground/src/execution-readiness-gate.mjs`
+- `/Users/seanhan/Documents/Playground/src/step-decision-advisor.mjs`
+- `/Users/seanhan/Documents/Playground/src/advisor-alignment-evaluator.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-ingress-contract.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-working-memory-trace.mjs`
@@ -956,6 +958,11 @@ Observed routing/write signals now include:
 - `owner_ready`
 - `recovery_ready`
 - `recommended_action`
+- `advisor`
+- `advisor_based_on_summary`
+- `advisor_alignment`
+- `advisor_alignment_summary`
+- compatibility `advisor_vs_actual` mirror
 
 Working-memory v2 diagnostics now also includes one human-readable `task_trace` overlay derived from the same observed fields (no second state source):
 
@@ -982,6 +989,8 @@ Working-memory v2 diagnostics now also includes one human-readable `task_trace` 
   - `outcome_status/outcome_confidence/outcome_evidence/artifact_quality/retry_worthiness/user_visible_completeness`
   - `artifact_id/artifact_type/validity_status/produced_by_step_id/affected_downstream_steps/dependency_type/artifact_superseded/dependency_blocked_step`
   - `readiness.is_ready/blocking_reason_codes/missing_slots/invalid_artifacts/blocked_dependencies/owner_ready/recovery_ready/recommended_action`
+  - `advisor.recommended_next_action/advisor.decision_reason_codes/advisor.decision_confidence/advisor_based_on_summary`
+  - `advisor_alignment.is_aligned/advisor_alignment.alignment_type/advisor_alignment.divergence_reason_codes/advisor_alignment.promotion_candidate/advisor_alignment_summary`
   - trace output must be derived from these existing signals instead of introducing an independent trace truth
 
 The executive planner decision prompt now also reads a bounded task-state summary from that same local `task lifecycle v1` store: before agent selection, `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` asks `/Users/seanhan/Documents/Playground/src/planner-task-lifecycle-v1.mjs` for the latest relevant snapshot summary and injects `unfinished_hint`, `blocked_hint`, and `in_progress_hint` into prompt assembly, so decisions can preferentially reference unfinished tasks, surface blocked-task risk, and reuse in-progress execution summaries without changing the public planner JSON shape.

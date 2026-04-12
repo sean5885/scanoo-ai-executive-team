@@ -99,6 +99,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/execution-readiness-gate.mjs`
   - `/Users/seanhan/Documents/Playground/src/execution-outcome-scorer.mjs`
   - `/Users/seanhan/Documents/Playground/src/step-decision-advisor.mjs`
+  - `/Users/seanhan/Documents/Playground/src/advisor-alignment-evaluator.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner-working-memory-trace.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner-ingress-contract.mjs`
   - `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
@@ -119,6 +120,11 @@ Current-truth docs for onboarding are:
   - when readiness is blocked, planner routing is lockable for the turn and reuses existing controlled paths (`ask_user` / `retry` / `reroute` / `rollback` / `skip` / fail-closed stop) instead of executing the intended action directly
   - the same step/recovery/readiness signals now feed a deterministic outcome scorer v1 (`success|partial|blocked|failed`) plus `outcome_confidence`, `outcome_evidence`, `artifact_quality`, `retry_worthiness`, and `user_visible_completeness`, and malformed outcome payloads are rejected fail-closed
   - the same execution-state signals now also feed a deterministic `step-decision-advisor` v1 that emits advisory-only `recommended_next_action` with reason codes/confidence/based-on summaries at router and answer-boundary trace points; this layer does not take routing authority, does not mutate step status/outcome/recovery authority fields, and remains fail-closed on malformed inputs
+  - advisor recommendation vs actual execution/routing is now evaluated by a deterministic diagnostics-first `advisor-alignment-evaluator` v1:
+    - output shape: `advisor_action`, `actual_action`, `is_aligned`, `alignment_type`, `divergence_reason_codes`, `promotion_candidate`, `evaluator_version`
+    - alignment types: `exact_match|acceptable_divergence|hard_divergence|unknown`
+    - malformed/missing inputs are fail-closed to `alignment_type=unknown`
+    - this evaluator is advisory-only and does not change routing/recovery authority
   - final HTTP/chat response is normalized into `answer -> sources -> limitations`
   - for explicit plugin capability handoff (`requested_capability=scanoo_compare|scanoo_diagnose`), `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` now executes one lane-primary fast-path before planner; success returns immediately and does not enter planner timeout recovery for that turn
   - `scanoo-compare` still reuses that same answer-edge helper, but now has one extra fail-soft branch in `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`: when compare evidence is insufficient and did not already resolve to a doc-read action, it hard-shapes the fallback search query by extracting up to two `*店` compare targets plus matched metric terms from `流量 / 轉化 / 留存 / 排名`, strips the minimal stopwords `比較 / 一下 / 幫我 / 看看`, prefers the form `A店 vs B店 + 指標`, and then calls `/Users/seanhan/Documents/Playground/src/read-runtime.mjs -> searchCompanyBrainDocsFromRuntime(...)`; compare candidates pass a lane-local relevance gate (`demo/verify/success/test/final validation/minimal/artifact/stub/sample` hard filter + required `entity identifier + comparable metric + time/data` signals), and the fallback contract stays explicit: `>=2` valid entity+metric evidence -> normal compare, `>=1` -> partial compare with clear missing-dimension report, `0` -> non-generic gap report with concrete data requests
@@ -143,6 +149,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/tests/user-response-normalizer.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/answer-service.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/step-decision-advisor-v1.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/advisor-alignment-evaluator-v1.test.mjs`
 
 ### 4. Skill Runtime
 

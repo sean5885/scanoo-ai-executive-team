@@ -607,7 +607,12 @@ test("answer boundary write-back log carries slot diff trace", async () => {
   assert.equal(typeof boundaryLog.advisor, "object");
   assert.equal(Array.isArray(boundaryLog.advisor?.decision_reason_codes), true);
   assert.equal(typeof boundaryLog.advisor_based_on_summary, "string");
+  assert.equal(typeof boundaryLog.advisor_alignment, "object");
+  assert.equal(typeof boundaryLog.advisor_alignment?.is_aligned, "boolean");
+  assert.equal(typeof boundaryLog.advisor_alignment_summary, "string");
   assert.equal(typeof boundaryLog.task_trace_event_alignment?.advisor_recommended_next_action, "boolean");
+  assert.equal(typeof boundaryLog.task_trace_event_alignment?.advisor_alignment, "boolean");
+  assert.equal(typeof boundaryLog.task_trace_event_alignment?.advisor_alignment_summary, "boolean");
 
   resetPlannerRuntimeContext({ sessionKey });
   resetPlannerConversationMemory({ sessionKey });

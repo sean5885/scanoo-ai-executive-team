@@ -1,4 +1,7 @@
 import { cleanText } from "./message-intent-utils.mjs";
+import {
+  evaluateAdvisorAlignment,
+} from "./advisor-alignment-evaluator.mjs";
 
 export const STEP_DECISION_ADVISOR_VERSION = "step_decision_advisor_v1";
 
@@ -560,27 +563,28 @@ export function resolveStepDecisionAdvisorActualAction({
 export function buildStepDecisionAdvisorComparison({
   decision = null,
   actual_next_action = "",
+  alignment_context = null,
 } = {}) {
   const normalizedDecision = toObject(decision) || {};
   const recommendedAction = normalizeDecisionAction(normalizedDecision.recommended_next_action);
   const actualAction = normalizeDecisionAction(actual_next_action);
-  if (!recommendedAction) {
-    return {
-      recommended_next_action: null,
-      actual_next_action: actualAction,
-      is_aligned: null,
-    };
-  }
-  if (!actualAction) {
-    return {
-      recommended_next_action: recommendedAction,
-      actual_next_action: null,
-      is_aligned: null,
-    };
-  }
+  const normalizedAlignmentContext = toObject(alignment_context) || {};
+  const alignment = evaluateAdvisorAlignment({
+    advisor_action: recommendedAction,
+    actual_action: actualAction,
+    readiness: toObject(normalizedAlignmentContext.readiness),
+    outcome: toObject(normalizedAlignmentContext.outcome),
+    recovery: toObject(normalizedAlignmentContext.recovery),
+    routing_overrode_advisor: normalizedAlignmentContext.routing_overrode_advisor === true,
+    recovery_overrode_advisor: normalizedAlignmentContext.recovery_overrode_advisor === true,
+    malformed_input: normalizedAlignmentContext.malformed_input === true,
+    evidence_complete: typeof normalizedAlignmentContext.evidence_complete === "boolean"
+      ? normalizedAlignmentContext.evidence_complete
+      : null,
+  });
   return {
-    recommended_next_action: recommendedAction,
-    actual_next_action: actualAction,
-    is_aligned: recommendedAction === actualAction,
+    ...alignment,
+    recommended_next_action: alignment.advisor_action,
+    actual_next_action: alignment.actual_action,
   };
 }
