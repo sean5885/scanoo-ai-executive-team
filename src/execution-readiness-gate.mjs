@@ -1,4 +1,5 @@
 import { cleanText } from "./message-intent-utils.mjs";
+import { hasAnyTrulyMissingRequiredSlot } from "./truly-missing-slot.mjs";
 
 export const EXECUTION_READINESS_RECOMMENDED_ACTIONS = Object.freeze([
   "proceed",
@@ -66,31 +67,6 @@ function isRecoveryInProgress({
     return stepStatus === "failed" || stepStatus === "blocked";
   }
   return false;
-}
-
-function normalizeFilledSlotMap(slotState = []) {
-  const now = Date.now();
-  const slotMap = new Map();
-  for (const slot of toArray(slotState)) {
-    const slotObject = toObject(slot);
-    if (!slotObject) {
-      continue;
-    }
-    const slotKey = cleanText(slotObject.slot_key || "");
-    const slotStatus = cleanText(slotObject.status || "");
-    if (!slotKey || !slotStatus) {
-      continue;
-    }
-    const ttl = cleanText(slotObject.ttl || "");
-    if (ttl) {
-      const expiresAt = Date.parse(ttl);
-      if (Number.isFinite(expiresAt) && expiresAt <= now) {
-        continue;
-      }
-    }
-    slotMap.set(slotKey, slotStatus);
-  }
-  return slotMap;
 }
 
 function buildExecutionReadinessResult() {
@@ -174,13 +150,16 @@ export function evaluateExecutionReadiness({
   const artifactMap = new Map(planArtifacts
     .map((item) => [cleanText(item.artifact_id || ""), item])
     .filter(([artifactId]) => Boolean(artifactId)));
-  const unresolvedSlotSet = new Set(uniqueStrings(unresolved_slots));
-  const filledSlotMap = normalizeFilledSlotMap(slot_state);
   const slotRequirements = uniqueStrings(normalizedStep.slot_requirements);
-  const missingSlots = slotRequirements.filter((slotKey) => (
-    unresolvedSlotSet.has(slotKey)
-    || cleanText(filledSlotMap.get(slotKey) || "") !== "filled"
-  ));
+  const trulyMissingSlotCheck = hasAnyTrulyMissingRequiredSlot({
+    required_slots: slotRequirements,
+    slot_state,
+    unresolved_slots,
+  });
+  if (trulyMissingSlotCheck.malformed_input) {
+    return toMalformedResult(readiness);
+  }
+  const missingSlots = trulyMissingSlotCheck.truly_missing_slots;
   if (missingSlots.length > 0) {
     readiness.missing_slots = missingSlots;
     addBlockingReason(readiness, "missing_slot", "ask_user");

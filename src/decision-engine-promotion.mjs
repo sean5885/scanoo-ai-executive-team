@@ -6,6 +6,7 @@ import {
   resolvePromotionActionPolicy,
   resolvePromotionControlSurface,
 } from "./promotion-control-surface.mjs";
+import { hasAnyTrulyMissingRequiredSlot } from "./truly-missing-slot.mjs";
 
 export const DECISION_ENGINE_PROMOTION_VERSION = "decision_engine_promotion_v1";
 export const DECISION_ENGINE_PROMOTION_AUDIT_VERSION = "decision_engine_promotion_audit_v1";
@@ -31,6 +32,13 @@ export const DECISION_ENGINE_PROMOTION_REASON_CODES = Object.freeze([
   "malformed_or_unknown_signals",
   "conflicting_signals",
   "ask_user_signals_missing",
+  "ask_user_no_truly_missing_slot",
+  "ask_user_resume_action_available",
+  "ask_user_slot_suppressed",
+  "ask_user_waiting_user_slots_filled",
+  "ask_user_continuation_ready",
+  "ask_user_slot_input_malformed",
+  "ask_user_rollback_disabled",
   "fail_signals_missing",
   "retry_not_worthy",
   "retry_outcome_failed",
@@ -632,22 +640,80 @@ function evaluateAskUserSafety({
   recovery = null,
   task_plan = null,
   advisor_reason_codes = [],
+  ask_user_gate = null,
+  action_policy = null,
 } = {}) {
   const readinessObject = toObject(readiness) || {};
   const outcomeObject = toObject(outcome) || {};
   const recoveryObject = toObject(recovery) || {};
   const taskPlanObject = toObject(task_plan) || {};
+  const askUserGateObject = toObject(ask_user_gate) || {};
+  const actionPolicy = toObject(action_policy) || {};
   const blockingReasonCodes = uniqueStrings(readinessObject.blocking_reason_codes);
-  const missingSlots = uniqueStrings(readinessObject.missing_slots);
+  const missingSlotsFromReadiness = uniqueStrings(readinessObject.missing_slots);
   const readinessRecommendedAction = normalizeAction(readinessObject.recommended_action);
   const outcomeStatus = cleanText(outcomeObject.outcome_status || "");
   const recoveryAction = cleanText(recoveryObject.recovery_action || recoveryObject.recovery_policy || "");
   const advisorReasonCodes = uniqueStrings(advisor_reason_codes);
-
-  const hasAskUserSignal = missingSlots.length > 0
-    || blockingReasonCodes.some((reasonCode) => ASK_USER_FRIENDLY_BLOCKING_REASONS.has(reasonCode))
-    || readinessRecommendedAction === "ask_user"
-    || outcomeStatus === "blocked";
+  const taskPhase = cleanText(askUserGateObject.task_phase || "");
+  const currentStepAction = cleanText(askUserGateObject.current_step_action || "");
+  const nextBestAction = cleanText(askUserGateObject.next_best_action || "");
+  const currentStepResumeAvailable = askUserGateObject.current_step_resume_available === true
+    || Boolean(currentStepAction);
+  const nextBestActionAvailable = askUserGateObject.next_best_action_available === true
+    || Boolean(nextBestAction);
+  const hasResumeAction = currentStepResumeAvailable
+    || nextBestActionAvailable
+    || askUserGateObject.resume_action_available === true;
+  const slotSuppressedAsk = askUserGateObject.slot_suppressed_ask === true;
+  const requiredSlots = uniqueStrings([
+    ...toArray(askUserGateObject.required_slots),
+    ...missingSlotsFromReadiness,
+  ]);
+  const unresolvedSlots = uniqueStrings(askUserGateObject.unresolved_slots);
+  const trulyMissingSlotsFromGate = uniqueStrings(askUserGateObject.truly_missing_slots);
+  const slotMissingCheck = hasAnyTrulyMissingRequiredSlot({
+    required_slots: requiredSlots,
+    unresolved_slots: unresolvedSlots,
+    slot_state: toArray(askUserGateObject.slot_state),
+  });
+  const malformedSlotInput = askUserGateObject.malformed_input === true
+    || slotMissingCheck.malformed_input === true
+    || (askUserGateObject.slot_state !== null
+      && askUserGateObject.slot_state !== undefined
+      && !Array.isArray(askUserGateObject.slot_state))
+    || (askUserGateObject.required_slots !== null
+      && askUserGateObject.required_slots !== undefined
+      && !Array.isArray(askUserGateObject.required_slots))
+    || (askUserGateObject.unresolved_slots !== null
+      && askUserGateObject.unresolved_slots !== undefined
+      && !Array.isArray(askUserGateObject.unresolved_slots));
+  const trulyMissingSlots = trulyMissingSlotsFromGate.length > 0
+    ? trulyMissingSlotsFromGate
+    : slotMissingCheck.truly_missing_slots;
+  const hasTrulyMissingSlot = trulyMissingSlots.length > 0;
+  const waitingUserSlotsFilled = askUserGateObject.waiting_user_all_required_slots_filled === true
+    || (taskPhase === "waiting_user"
+      && slotMissingCheck.required_slots.length > 0
+      && slotMissingCheck.has_any_truly_missing_required_slot !== true
+      && malformedSlotInput !== true);
+  const readinessCanContinue = readinessObject.is_ready === true
+    || (readinessRecommendedAction
+      && readinessRecommendedAction !== "ask_user"
+      && readinessRecommendedAction !== "fail");
+  const recoveryCanContinue = new Set([
+    "retry_same_step",
+    "reroute_owner",
+    "rollback_to_step",
+    "skip_step",
+    "proceed",
+  ]).has(cleanText(recoveryAction || ""));
+  const outcomeCanContinue = outcomeStatus === "success"
+    || (outcomeStatus === "partial" && outcomeObject.retry_worthiness !== false && readinessObject.is_ready === true);
+  const continuationReady = askUserGateObject.continuation_ready === true
+    || readinessCanContinue
+    || recoveryCanContinue
+    || outcomeCanContinue;
 
   const hasFailClosedSignal = resolveHardFailClosedSignal({
     readiness,
@@ -659,27 +725,55 @@ function evaluateAskUserSafety({
     || reasonCode === "outcome_failed"
     || reasonCode === "blocked_dependency");
 
-  const conflictingSignals = [];
-  if (!hasAskUserSignal) {
-    conflictingSignals.push("ask_user_signals_missing");
+  const blockedReasonCodes = [];
+  if (actionPolicy.rollback_disabled === true) {
+    blockedReasonCodes.push("ask_user_rollback_disabled");
+  }
+  if (malformedSlotInput) {
+    blockedReasonCodes.push("ask_user_slot_input_malformed");
+  }
+  if (!hasTrulyMissingSlot) {
+    blockedReasonCodes.push("ask_user_no_truly_missing_slot");
+    blockedReasonCodes.push("ask_user_signals_missing");
+  }
+  if (hasResumeAction) {
+    blockedReasonCodes.push("ask_user_resume_action_available");
+  }
+  if (slotSuppressedAsk) {
+    blockedReasonCodes.push("ask_user_slot_suppressed");
+  }
+  if (waitingUserSlotsFilled) {
+    blockedReasonCodes.push("ask_user_waiting_user_slots_filled");
+  }
+  if (continuationReady) {
+    blockedReasonCodes.push("ask_user_continuation_ready");
   }
   if (hasFailClosedSignal) {
-    conflictingSignals.push("conflicting_signals");
+    blockedReasonCodes.push("conflicting_signals");
   }
   if (readinessRecommendedAction && readinessRecommendedAction !== "ask_user") {
-    conflictingSignals.push("conflicting_signals");
+    blockedReasonCodes.push("conflicting_signals");
   }
   if (outcomeStatus === "success") {
-    conflictingSignals.push("conflicting_signals");
+    blockedReasonCodes.push("conflicting_signals");
   }
   if (recoveryAction && recoveryAction !== "ask_user") {
-    conflictingSignals.push("conflicting_signals");
+    blockedReasonCodes.push("conflicting_signals");
   }
+  const normalizedBlockedReasonCodes = uniqueStrings(blockedReasonCodes);
+  const resumeInsteadOfAsk = waitingUserSlotsFilled
+    || (hasResumeAction && !hasTrulyMissingSlot);
 
   return {
-    gatePassed: conflictingSignals.length === 0,
-    reasonCodes: uniqueStrings(conflictingSignals),
-    confidence: hasAskUserSignal && conflictingSignals.length === 0 ? "high" : "low",
+    gatePassed: normalizedBlockedReasonCodes.length === 0,
+    reasonCodes: normalizedBlockedReasonCodes,
+    confidence: hasTrulyMissingSlot && normalizedBlockedReasonCodes.length === 0 ? "high" : "low",
+    ask_user_gate: {
+      truly_missing_slots: trulyMissingSlots,
+      blocked_reason_codes: normalizedBlockedReasonCodes,
+      promotion_allowed: normalizedBlockedReasonCodes.length === 0,
+      resume_instead_of_ask: resumeInsteadOfAsk,
+    },
   };
 }
 
@@ -759,6 +853,7 @@ export function evaluateDecisionEnginePromotion({
   promotion_policy = null,
   decision_scoreboard = null,
   reroute_context = null,
+  ask_user_gate = null,
 } = {}) {
   const advisorObject = toObject(advisor) || {};
   const alignment = toObject(advisor_alignment) || {};
@@ -833,14 +928,19 @@ export function evaluateDecisionEnginePromotion({
     reasonCodes: [],
     confidence: "low",
   };
-  if (advisorAction === "ask_user" && actionPolicy?.promotion_allowed === true) {
-    actionSafety = evaluateAskUserSafety({
+  const askUserSafety = advisorAction === "ask_user"
+    ? evaluateAskUserSafety({
       readiness,
       outcome,
       recovery,
       task_plan,
       advisor_reason_codes: advisorReasonCodes,
-    });
+      ask_user_gate,
+      action_policy: actionPolicy,
+    })
+    : null;
+  if (advisorAction === "ask_user") {
+    actionSafety = askUserSafety || actionSafety;
   } else if (advisorAction === "fail" && actionPolicy?.promotion_allowed === true) {
     actionSafety = evaluateFailSafety({
       readiness,
@@ -902,6 +1002,22 @@ export function evaluateDecisionEnginePromotion({
     || "",
   ) || null;
   const rerouteSource = cleanText(rerouteContext.reroute_source || "") || null;
+  const askUserGate = askUserSafety?.ask_user_gate && typeof askUserSafety.ask_user_gate === "object"
+    ? askUserSafety.ask_user_gate
+    : {
+      truly_missing_slots: [],
+      blocked_reason_codes: [],
+      promotion_allowed: false,
+      resume_instead_of_ask: false,
+    };
+  const askUserBlockedReason = advisorAction === "ask_user"
+    ? (cleanText(askUserGate.blocked_reason_codes?.[0] || "") || null)
+    : null;
+  const askUserRecalibrated = advisorAction === "ask_user"
+    && askUserGate.blocked_reason_codes.length > 0;
+  const askUserRecalibrationSummary = advisorAction === "ask_user"
+    ? `promotion_allowed=${askUserGate.promotion_allowed ? "true" : "false"} resume_instead_of_ask=${askUserGate.resume_instead_of_ask ? "true" : "false"} truly_missing_slots=${askUserGate.truly_missing_slots.length > 0 ? `[${askUserGate.truly_missing_slots.join(", ")}]` : "[]"} blocked_reasons=${askUserGate.blocked_reason_codes.length > 0 ? `[${askUserGate.blocked_reason_codes.join(", ")}]` : "[]"}`
+    : null;
 
   return {
     promoted_action: safetyGatePassed ? advisorAction : null,
@@ -929,6 +1045,12 @@ export function evaluateDecisionEnginePromotion({
     current_owner_agent: safetyGatePassed && advisorAction === "reroute"
       ? currentOwnerAgent
       : null,
+    ask_user_gate: advisorAction === "ask_user"
+      ? askUserGate
+      : null,
+    ask_user_blocked_reason: askUserBlockedReason,
+    ask_user_recalibrated: askUserRecalibrated,
+    ask_user_recalibration_summary: askUserRecalibrationSummary,
     promotion_version: DECISION_ENGINE_PROMOTION_VERSION,
     promotion_policy_version: cleanText(promotionPolicy.promotion_policy_version || "") || null,
   };

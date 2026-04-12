@@ -97,6 +97,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs`
   - `/Users/seanhan/Documents/Playground/src/executive-planner.mjs`
   - `/Users/seanhan/Documents/Playground/src/execution-readiness-gate.mjs`
+  - `/Users/seanhan/Documents/Playground/src/truly-missing-slot.mjs`
   - `/Users/seanhan/Documents/Playground/src/execution-outcome-scorer.mjs`
   - `/Users/seanhan/Documents/Playground/src/step-decision-advisor.mjs`
   - `/Users/seanhan/Documents/Playground/src/advisor-alignment-evaluator.mjs`
@@ -123,6 +124,8 @@ Current-truth docs for onboarding are:
   - planner working-memory continuation now also has one deterministic usage-layer tightening pass:
     - short/high-related follow-ups prefer same-task continuation over accidental new-task reset
     - `waiting_user` with already-filled slots resumes the current plan step instead of re-asking user by default
+    - slot missingness now uses one shared helper (`/Users/seanhan/Documents/Playground/src/truly-missing-slot.mjs`) across readiness gate / usage layer / decision-promotion ask-user gate
+    - in `waiting_user`, if required slots are all actually filled (not invalid and not ttl-expired), unresolved slots are treated as empty and runtime prefers resuming current-step/next-best action over reopening the same ask
     - when planner/advisor surface suggests `ask_user` but slot-state already has valid reusable `filled` slots, runtime now suppresses redundant ask promotion and resumes current-step/next-best continuation instead (`slot_suppressed_ask`)
     - non-promotion owner continuity now has a guard: selector output keeps `current_owner_agent` unless reroute/owner-mismatch/capability-gap/explicit step-owner switch is present
     - retry continuation is now forced by state (`task_phase=retrying` or `recovery_action=retry_same_step`) and no longer treated as a fresh task by default
@@ -143,6 +146,16 @@ Current-truth docs for onboarding are:
       - `ineffective_threshold = 3`
       - if an action appears in `rollback_disabled_actions`, promotion is blocked even if it is in `allowed_actions`
     - promotion prerequisites are all required: action policy says `promotion_allowed=true`, `advisor_alignment.promotion_candidate=true`, `alignment_type=exact_match`, evidence complete, no malformed/unknown/conflicting signals, and no readiness/outcome/recovery/artifact conflict against the promoted action
+    - promoted `ask_user` is recalibrated fail-closed and is allowed only when all deterministic conditions hold:
+      - advisor recommends `ask_user` and alignment is exact-match/evidence-complete
+      - at least one truly missing required slot exists (missing entry OR `status!=filled` OR invalid OR ttl expired)
+      - no resumable `current_step`/`next_best_action` path exists
+      - no `slot_suppressed_ask` signal
+      - not in `waiting_user` with all required slots already filled
+      - readiness/outcome/recovery do not already indicate direct continuation
+      - `ask_user` is not rollback-disabled by promotion policy
+      - malformed slot gate input fails closed
+    - when the ask-user recalibration gate blocks promotion, `ask_user` stays advisory-only and runtime continues on existing resume/next-best fail-soft paths
     - promoted `retry` is additionally gated by deterministic retry-only checks: `outcome.retry_worthiness=true`, `outcome_status!=failed`, `readiness.is_ready=true`, no `invalid_artifact`/`blocked_dependency`, retry budget not exhausted, and no rollback flag for `retry`
     - promoted `reroute` is additionally gated as bounded fail-closed:
       - explicit `owner_mismatch` or `capability_gap` signal
@@ -169,6 +182,13 @@ Current-truth docs for onboarding are:
       - `decision_scoreboard_summary`
       - `highest_maturity_actions`
       - `rollback_disabled_actions`
+      - `ask_user_gate.truly_missing_slots`
+      - `ask_user_gate.blocked_reason_codes`
+      - `ask_user_gate.promotion_allowed`
+      - `ask_user_gate.resume_instead_of_ask`
+      - `ask_user_blocked_reason`
+      - `ask_user_recalibrated`
+      - `ask_user_recalibration_summary`
   - final HTTP/chat response is normalized into `answer -> sources -> limitations`
   - for explicit plugin capability handoff (`requested_capability=scanoo_compare|scanoo_diagnose`), `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` now executes one lane-primary fast-path before planner; success returns immediately and does not enter planner timeout recovery for that turn
   - `scanoo-compare` still reuses that same answer-edge helper, but now has one extra fail-soft branch in `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`: when compare evidence is insufficient and did not already resolve to a doc-read action, it hard-shapes the fallback search query by extracting up to two `*店` compare targets plus matched metric terms from `流量 / 轉化 / 留存 / 排名`, strips the minimal stopwords `比較 / 一下 / 幫我 / 看看`, prefers the form `A店 vs B店 + 指標`, and then calls `/Users/seanhan/Documents/Playground/src/read-runtime.mjs -> searchCompanyBrainDocsFromRuntime(...)`; compare candidates pass a lane-local relevance gate (`demo/verify/success/test/final validation/minimal/artifact/stub/sample` hard filter + required `entity identifier + comparable metric + time/data` signals), and the fallback contract stays explicit: `>=2` valid entity+metric evidence -> normal compare, `>=1` -> partial compare with clear missing-dimension report, `0` -> non-generic gap report with concrete data requests
@@ -199,6 +219,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/tests/advisor-alignment-evaluator-v1.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/decision-metrics-scoreboard.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/decision-engine-promotion-v1.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/truly-missing-slot.test.mjs`
 
 ### 4. Skill Runtime
 

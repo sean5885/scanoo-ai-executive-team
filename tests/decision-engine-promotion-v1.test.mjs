@@ -118,6 +118,26 @@ function buildPromotionInput(overrides = {}) {
       current_step_id: "step-1",
       malformed_input: false,
     },
+    ask_user_gate: {
+      task_phase: "executing",
+      required_slots: ["doc_id"],
+      unresolved_slots: ["doc_id"],
+      slot_state: [
+        {
+          slot_key: "doc_id",
+          status: "missing",
+        },
+      ],
+      current_step_action: null,
+      next_best_action: null,
+      current_step_resume_available: false,
+      next_best_action_available: false,
+      resume_action_available: false,
+      slot_suppressed_ask: false,
+      waiting_user_all_required_slots_filled: false,
+      continuation_ready: false,
+      malformed_input: false,
+    },
     evidence_complete: true,
     ...(overrides || {}),
   };
@@ -289,7 +309,165 @@ test("advisor=ask_user with full gate conditions applies promotion", () => {
   assert.equal(decision.promotion_applied, true);
   assert.equal(decision.promoted_action, "ask_user");
   assert.equal(decision.safety_gate_passed, true);
+  assert.deepEqual(decision.ask_user_gate?.truly_missing_slots, ["doc_id"]);
+  assert.equal(decision.ask_user_gate?.promotion_allowed, true);
   assert.equal(decision.promotion_version, DECISION_ENGINE_PROMOTION_VERSION);
+});
+
+test("ask_user promotion blocks when required slot is already filled and valid", () => {
+  const decision = evaluateDecisionEnginePromotion(buildPromotionInput({
+    readiness: {
+      is_ready: false,
+      blocking_reason_codes: [],
+      missing_slots: [],
+      recommended_action: "ask_user",
+    },
+    ask_user_gate: {
+      task_phase: "executing",
+      required_slots: ["doc_id"],
+      unresolved_slots: ["doc_id"],
+      slot_state: [
+        {
+          slot_key: "doc_id",
+          status: "filled",
+          ttl: "2099-01-01T00:00:00.000Z",
+        },
+      ],
+      current_step_resume_available: false,
+      next_best_action_available: false,
+      resume_action_available: false,
+      slot_suppressed_ask: false,
+      waiting_user_all_required_slots_filled: false,
+      continuation_ready: false,
+      malformed_input: false,
+    },
+  }));
+
+  assert.equal(decision.promotion_applied, false);
+  assert.equal(decision.promoted_action, null);
+  assert.equal(decision.ask_user_gate?.promotion_allowed, false);
+  assert.equal(decision.ask_user_gate?.blocked_reason_codes.includes("ask_user_no_truly_missing_slot"), true);
+});
+
+test("waiting_user with all required slots filled blocks ask_user and prefers resume", () => {
+  const decision = evaluateDecisionEnginePromotion(buildPromotionInput({
+    readiness: {
+      is_ready: false,
+      blocking_reason_codes: [],
+      missing_slots: [],
+      recommended_action: "ask_user",
+    },
+    ask_user_gate: {
+      task_phase: "waiting_user",
+      required_slots: ["doc_id"],
+      unresolved_slots: ["doc_id"],
+      slot_state: [
+        {
+          slot_key: "doc_id",
+          status: "filled",
+          ttl: "2099-01-01T00:00:00.000Z",
+        },
+      ],
+      current_step_action: "search_company_brain_docs",
+      next_best_action: "search_company_brain_docs",
+      current_step_resume_available: true,
+      next_best_action_available: true,
+      resume_action_available: true,
+      slot_suppressed_ask: false,
+      waiting_user_all_required_slots_filled: true,
+      continuation_ready: true,
+      malformed_input: false,
+    },
+  }));
+
+  assert.equal(decision.promotion_applied, false);
+  assert.equal(decision.ask_user_gate?.resume_instead_of_ask, true);
+  assert.equal(decision.ask_user_gate?.blocked_reason_codes.includes("ask_user_waiting_user_slots_filled"), true);
+  assert.equal(decision.ask_user_gate?.blocked_reason_codes.includes("ask_user_resume_action_available"), true);
+});
+
+test("ask_user promotion blocks when continuation is already possible", () => {
+  const decision = evaluateDecisionEnginePromotion(buildPromotionInput({
+    readiness: {
+      is_ready: true,
+      blocking_reason_codes: [],
+      missing_slots: [],
+      recommended_action: "proceed",
+    },
+    outcome: {
+      outcome_status: "success",
+      retry_worthiness: false,
+    },
+    recovery: {
+      recovery_policy: "retry_same_step",
+      recovery_action: "retry_same_step",
+      recovery_attempt_count: 1,
+    },
+    ask_user_gate: {
+      task_phase: "executing",
+      required_slots: ["doc_id"],
+      unresolved_slots: [],
+      slot_state: [
+        {
+          slot_key: "doc_id",
+          status: "filled",
+          ttl: "2099-01-01T00:00:00.000Z",
+        },
+      ],
+      current_step_resume_available: true,
+      next_best_action_available: true,
+      resume_action_available: true,
+      slot_suppressed_ask: false,
+      waiting_user_all_required_slots_filled: false,
+      continuation_ready: true,
+      malformed_input: false,
+    },
+  }));
+
+  assert.equal(decision.promotion_applied, false);
+  assert.equal(decision.ask_user_gate?.blocked_reason_codes.includes("ask_user_continuation_ready"), true);
+});
+
+test("slot_suppressed_ask condition blocks ask_user promotion", () => {
+  const decision = evaluateDecisionEnginePromotion(buildPromotionInput({
+    ask_user_gate: {
+      task_phase: "waiting_user",
+      required_slots: ["doc_id"],
+      unresolved_slots: ["doc_id"],
+      slot_state: [
+        {
+          slot_key: "doc_id",
+          status: "missing",
+        },
+      ],
+      current_step_resume_available: true,
+      next_best_action_available: true,
+      resume_action_available: true,
+      slot_suppressed_ask: true,
+      waiting_user_all_required_slots_filled: false,
+      continuation_ready: false,
+      malformed_input: false,
+    },
+  }));
+
+  assert.equal(decision.promotion_applied, false);
+  assert.equal(decision.ask_user_gate?.blocked_reason_codes.includes("ask_user_slot_suppressed"), true);
+});
+
+test("malformed ask_user slot gate input fails closed", () => {
+  const decision = evaluateDecisionEnginePromotion(buildPromotionInput({
+    ask_user_gate: {
+      task_phase: "waiting_user",
+      required_slots: ["doc_id"],
+      unresolved_slots: ["doc_id"],
+      slot_state: "malformed",
+      malformed_input: true,
+    },
+  }));
+
+  assert.equal(decision.promotion_applied, false);
+  assert.equal(decision.ask_user_gate?.promotion_allowed, false);
+  assert.equal(decision.ask_user_gate?.blocked_reason_codes.includes("ask_user_slot_input_malformed"), true);
 });
 
 test("advisor=fail with full gate conditions applies promotion", () => {
@@ -456,6 +634,7 @@ test("rollback-disabled action is blocked even when allow-list would allow it", 
   assert.equal(decision.promotion_applied, false);
   assert.equal(decision.promoted_action, null);
   assert.equal(decision.promotion_reason_codes.includes("promotion_disabled_by_rollback_flag"), true);
+  assert.equal(decision.ask_user_gate?.blocked_reason_codes.includes("ask_user_rollback_disabled"), true);
 });
 
 test("rollback flag blocks retry promotion", () => {
@@ -1337,6 +1516,14 @@ test("trace diagnostics expose promotion applied and blocked outcomes", () => {
         promotion_reason_codes: ["safety_gate_passed", "promotion_applied"],
         promotion_confidence: "high",
         safety_gate_passed: true,
+        ask_user_gate: {
+          truly_missing_slots: ["doc_id"],
+          blocked_reason_codes: [],
+          promotion_allowed: true,
+          resume_instead_of_ask: false,
+        },
+        ask_user_recalibrated: false,
+        ask_user_recalibration_summary: "promotion_allowed=true resume_instead_of_ask=false truly_missing_slots=[doc_id] blocked_reasons=[]",
         promotion_version: DECISION_ENGINE_PROMOTION_VERSION,
       },
       decision_promotion_summary: "promotion_applied=true action=ask_user safety_gate_passed=true confidence=high reasons=[safety_gate_passed, promotion_applied] version=decision_engine_promotion_v1",
@@ -1373,6 +1560,15 @@ test("trace diagnostics expose promotion applied and blocked outcomes", () => {
         promotion_reason_codes: ["unsupported_advisor_action"],
         promotion_confidence: "low",
         safety_gate_passed: false,
+        ask_user_gate: {
+          truly_missing_slots: [],
+          blocked_reason_codes: ["ask_user_waiting_user_slots_filled", "ask_user_resume_action_available"],
+          promotion_allowed: false,
+          resume_instead_of_ask: true,
+        },
+        ask_user_blocked_reason: "ask_user_waiting_user_slots_filled",
+        ask_user_recalibrated: true,
+        ask_user_recalibration_summary: "promotion_allowed=false resume_instead_of_ask=true truly_missing_slots=[] blocked_reasons=[ask_user_waiting_user_slots_filled, ask_user_resume_action_available]",
         promotion_version: DECISION_ENGINE_PROMOTION_VERSION,
       },
       decision_promotion_summary: "promotion_applied=false action=none safety_gate_passed=false confidence=low reasons=[unsupported_advisor_action] version=decision_engine_promotion_v1",
@@ -1403,10 +1599,13 @@ test("trace diagnostics expose promotion applied and blocked outcomes", () => {
   assert.equal(appliedTrace.diff.some((line) => line.startsWith("promotion_policy.rollback_disabled_actions:")), true);
   assert.equal(appliedTrace.diff.some((line) => line.startsWith("promotion_policy.ineffective_threshold:")), true);
   assert.equal(appliedTrace.diff.some((line) => line.startsWith("promotion_policy_summary:")), true);
+  assert.equal(appliedTrace.diff.some((line) => line.startsWith("ask_user_gate.truly_missing_slots:")), true);
   assert.equal(appliedTrace.snapshot.decision_promotion?.promotion_applied, true);
+  assert.deepEqual(appliedTrace.snapshot.ask_user_gate?.truly_missing_slots, ["doc_id"]);
   assert.deepEqual(appliedTrace.snapshot.promotion_policy?.allowed_actions, ["ask_user", "retry", "reroute", "fail"]);
   assert.equal(appliedTrace.snapshot.promotion_audit?.promotion_effectiveness, "effective");
   assert.equal(appliedTrace.event_alignment.decision_promotion, true);
+  assert.equal(appliedTrace.event_alignment.ask_user_gate, true);
   assert.equal(appliedTrace.event_alignment.promotion_policy, true);
   assert.equal(appliedTrace.event_alignment.promotion_policy_summary, true);
   assert.equal(appliedTrace.event_alignment.decision_promotion_summary, true);
@@ -1416,9 +1615,14 @@ test("trace diagnostics expose promotion applied and blocked outcomes", () => {
   assert.equal(blockedTrace.snapshot.decision_promotion?.safety_gate_passed, false);
   assert.deepEqual(blockedTrace.snapshot.promotion_policy?.rollback_disabled_actions, ["ask_user"]);
   assert.equal(blockedTrace.snapshot.promotion_audit?.rollback_flag, true);
+  assert.equal(blockedTrace.snapshot.ask_user_recalibrated, true);
+  assert.equal(blockedTrace.snapshot.ask_user_blocked_reason, "ask_user_waiting_user_slots_filled");
+  assert.equal(blockedTrace.snapshot.ask_user_gate?.resume_instead_of_ask, true);
   assert.equal(blockedTrace.diff.includes("promotion_audit.rollback_flag: true"), true);
+  assert.equal(blockedTrace.diff.some((line) => line.startsWith("ask_user_recalibration_summary:")), true);
   assert.equal(blockedTrace.event_alignment.decision_promotion_reason_codes, true);
   assert.equal(blockedTrace.event_alignment.promotion_audit_rollback_flag, true);
+  assert.equal(blockedTrace.event_alignment.ask_user_recalibration_summary, true);
 });
 
 test("trace diagnostics expose retry promotion decisions and gate block reasons", () => {

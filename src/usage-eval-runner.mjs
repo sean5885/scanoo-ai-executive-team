@@ -236,7 +236,16 @@ export function classifyUsageIssueVisibilityForTurn({
 } = {}) {
   const normalizedUsageLayer = toObject(usage_layer) || {};
   const rawDetectedCodes = normalizeIssueCodes(normalizedUsageLayer.usage_issue_codes);
-  const slotSuppressedAsk = normalizedUsageLayer.slot_suppressed_ask === true;
+  const askUserGate = toObject(decision_promotion?.ask_user_gate) || {};
+  const askUserGateBlockedReasons = toArray(askUserGate.blocked_reason_codes).map((code) => cleanText(code)).filter(Boolean);
+  const askUserGateSuppressed = askUserGate.resume_instead_of_ask === true
+    || askUserGateBlockedReasons.includes("ask_user_no_truly_missing_slot")
+    || askUserGateBlockedReasons.includes("ask_user_waiting_user_slots_filled")
+    || askUserGateBlockedReasons.includes("ask_user_resume_action_available")
+    || askUserGateBlockedReasons.includes("ask_user_slot_suppressed")
+    || askUserGateBlockedReasons.includes("ask_user_continuation_ready");
+  const slotSuppressedAsk = normalizedUsageLayer.slot_suppressed_ask === true
+    || askUserGateSuppressed;
   const retryContextApplied = normalizedUsageLayer.retry_context_applied === true;
 
   const validFilledSlot = hasValidFilledSlotSnapshot(slot_state_snapshot);
@@ -1859,6 +1868,20 @@ function runUsageEvalTurn({
     routing_overrode_advisor: hintTags.has("routing_override"),
     recovery_overrode_advisor: hintTags.has("recovery_override"),
   });
+  const unresolvedSlotsForGate = mode === TURN_MODE.SLOT_FILLED_RESUME
+    ? []
+    : mode === TURN_MODE.SLOT_MISSING && !hintTags.has("redundant_ask")
+      ? ["doc_id"]
+      : toArray(state.unresolved_slots);
+  const slotStateForGate = mode === TURN_MODE.SLOT_FILLED_RESUME
+    ? [{ slot_key: "doc_id", status: "filled" }]
+    : toArray(state?.slot_state);
+  const currentStepActionForGate = mode === TURN_MODE.CONTINUATION_MISSED
+    ? ""
+    : cleanText(state?.next_best_action || "search_company_brain_docs");
+  const nextBestActionForGate = mode === TURN_MODE.CONTINUATION_MISSED
+    ? ""
+    : cleanText(state?.next_best_action || "search_company_brain_docs");
   const decisionPromotion = evaluateDecisionEnginePromotion({
     advisor,
     advisor_alignment: advisorAlignment,
@@ -1873,6 +1896,22 @@ function runUsageEvalTurn({
       ? buildHealthyRerouteScoreboard()
       : null,
     reroute_context: rerouteContext,
+    ask_user_gate: {
+      task_phase: mode === TURN_MODE.SLOT_MISSING || mode === TURN_MODE.SLOT_FILLED_RESUME
+        ? "waiting_user"
+        : cleanText(state?.task_phase || "executing"),
+      required_slots: toArray(readiness?.missing_slots),
+      unresolved_slots: unresolvedSlotsForGate,
+      slot_state: slotStateForGate,
+      current_step_action: currentStepActionForGate || null,
+      next_best_action: nextBestActionForGate || null,
+      current_step_resume_available: Boolean(currentStepActionForGate),
+      next_best_action_available: Boolean(nextBestActionForGate),
+      resume_action_available: Boolean(currentStepActionForGate || nextBestActionForGate),
+      slot_suppressed_ask: hintTags.has("redundant_ask"),
+      waiting_user_all_required_slots_filled: mode === TURN_MODE.SLOT_FILLED_RESUME,
+      continuation_ready: mode === TURN_MODE.SLOT_FILLED_RESUME || mode === TURN_MODE.CONTINUATION,
+    },
   });
   const finalAuditOutcome = resolveFinalAuditOutcome({
     mode,
@@ -1905,27 +1944,27 @@ function runUsageEvalTurn({
     mode,
     hint_tags: hintTags,
   });
-  const unresolvedSlots = mode === TURN_MODE.SLOT_FILLED_RESUME
-    ? []
-    : mode === TURN_MODE.SLOT_MISSING && !hintTags.has("redundant_ask")
-      ? ["doc_id"]
-      : toArray(state.unresolved_slots);
+  const unresolvedSlots = unresolvedSlotsForGate;
+  const usageSlotState = mode === TURN_MODE.SLOT_FILLED_RESUME
+    ? [{ slot_key: "doc_id", status: "filled" }]
+    : mode === TURN_MODE.SLOT_MISSING && hintTags.has("redundant_ask")
+      ? [{ slot_key: "doc_id", status: "filled" }]
+      : toArray(workingMemory?.slot_state);
+  const usageWorkingMemory = {
+    ...workingMemory,
+    task_phase: mode === TURN_MODE.SLOT_FILLED_RESUME
+      ? "waiting_user"
+      : workingMemory.task_phase,
+    unresolved_slots: unresolvedSlots,
+    slot_state: usageSlotState,
+  };
   const selectedActionForUsage = mode === TURN_MODE.CONTINUATION_MISSED
     ? ""
     : actualAction;
   const usagePass = evaluateUsageLayerIntelligencePass({
     requestText: cleanText(turn?.user_input || ""),
     taskType: mode === TURN_MODE.TOPIC_SWITCH ? "runtime_info" : state.task_type,
-    workingMemory: {
-      ...workingMemory,
-      task_phase: mode === TURN_MODE.SLOT_FILLED_RESUME
-        ? "waiting_user"
-        : workingMemory.task_phase,
-      unresolved_slots: unresolvedSlots,
-      slot_state: mode === TURN_MODE.SLOT_FILLED_RESUME
-        ? [{ slot_key: "doc_id", status: "filled" }]
-        : workingMemory.slot_state,
-    },
+    workingMemory: usageWorkingMemory,
     unresolvedSlots,
     currentPlanStep: buildCurrentPlanStep({
       state,
@@ -1976,7 +2015,7 @@ function runUsageEvalTurn({
     decision_promotion: decisionPromotion,
     promotion_audit: updatedAuditRecord,
     user_response: userResponse,
-    slot_state_snapshot: toArray(workingMemory?.slot_state),
+    slot_state_snapshot: usageSlotState,
     unresolved_slots_snapshot: toArray(unresolvedSlots),
   });
   const nextState = applyStateTransition({

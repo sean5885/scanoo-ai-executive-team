@@ -138,6 +138,10 @@ import {
 } from "./decision-metrics-scoreboard.mjs";
 import { getStoredAccountContext } from "./lark-user-auth.mjs";
 import { getDbPath } from "./db.mjs";
+import {
+  hasAnyTrulyMissingRequiredSlot,
+  isSlotActuallyMissing,
+} from "./truly-missing-slot.mjs";
 
 const executiveStartSignals = [
   "agent",
@@ -3927,21 +3931,6 @@ function derivePlannerWorkingMemorySlotState({
     }));
 }
 
-function hasPlannerWorkingMemorySlotInvalidMarker(slot = null) {
-  if (!slot || typeof slot !== "object" || Array.isArray(slot)) {
-    return false;
-  }
-  if (slot.invalid === true || slot.is_invalid === true || slot.invalidated === true || slot.is_invalidated === true) {
-    return true;
-  }
-  const status = cleanText(slot?.status || "");
-  if (status === "invalid") {
-    return true;
-  }
-  const validityStatus = cleanText(slot?.validity_status || slot?.validity || "");
-  return validityStatus === "invalid" || validityStatus === "invalidated";
-}
-
 function derivePlannerWorkingMemorySlotCoverage({
   workingMemory = null,
   unresolvedSlots = [],
@@ -3950,22 +3939,23 @@ function derivePlannerWorkingMemorySlotCoverage({
   const normalizedUnresolved = Array.isArray(unresolvedSlots)
     ? unresolvedSlots.map((slot) => cleanText(slot)).filter(Boolean)
     : [];
+  const trulyMissingCheck = hasAnyTrulyMissingRequiredSlot({
+    required_slots: normalizedUnresolved,
+    unresolved_slots: normalizedUnresolved,
+    slot_state: slotState,
+  });
   const filledSlotKeys = new Set(slotState
-    .filter((slot) => cleanText(slot?.status || "") === "filled" && !hasPlannerWorkingMemorySlotInvalidMarker(slot))
+    .filter((slot) => {
+      const slotKey = cleanText(slot?.slot_key || "");
+      if (!slotKey) {
+        return false;
+      }
+      return isSlotActuallyMissing(slot) !== true;
+    })
     .map((slot) => cleanText(slot?.slot_key || ""))
     .filter(Boolean));
-  const hasStateMissing = slotState.some((slot) => {
-    const slotKey = cleanText(slot?.slot_key || "");
-    if (!slotKey || filledSlotKeys.has(slotKey)) {
-      return false;
-    }
-    if (hasPlannerWorkingMemorySlotInvalidMarker(slot)) {
-      return true;
-    }
-    const status = cleanText(slot?.status || "");
-    return status === "missing" || status === "invalid";
-  });
-  const hasUnresolvedGap = normalizedUnresolved.some((slotKey) => !filledSlotKeys.has(slotKey));
+  const hasStateMissing = slotState.some((slot) => isSlotActuallyMissing(slot) === true);
+  const hasUnresolvedGap = trulyMissingCheck.has_any_truly_missing_required_slot === true;
   return {
     slot_state: slotState,
     filled_slot_keys: Array.from(filledSlotKeys),
@@ -3988,7 +3978,7 @@ function derivePlannerWorkingMemoryUnresolvedSlots({
   });
   const slotState = slotCoverage.slot_state;
   const unresolvedFromSlotState = Array.from(new Set(slotState
-    .filter((slot) => slot?.status === "missing" || slot?.status === "invalid")
+    .filter((slot) => isSlotActuallyMissing(slot) === true)
     .map((slot) => cleanText(slot?.slot_key || ""))
     .filter(Boolean)));
   if (unresolvedFromSlotState.length > 0) {
@@ -5078,6 +5068,10 @@ function applyStepDecisionAdvisorObservability({
   observability.reroute_reason = null;
   observability.reroute_source = null;
   observability.reroute_target_verified = null;
+  observability.ask_user_gate = null;
+  observability.ask_user_blocked_reason = null;
+  observability.ask_user_recalibrated = false;
+  observability.ask_user_recalibration_summary = null;
 }
 
 function applyStepDecisionAdvisorComparisonObservability({
@@ -5090,6 +5084,7 @@ function applyStepDecisionAdvisorComparisonObservability({
   promotionPolicy = null,
   decisionScoreboard = null,
   rerouteContext = null,
+  askUserGateContext = null,
 } = {}) {
   if (!observability || typeof observability !== "object" || Array.isArray(observability)) {
     return null;
@@ -5153,9 +5148,14 @@ function applyStepDecisionAdvisorComparisonObservability({
     promotion_policy: promotionPolicy,
     decision_scoreboard: decisionScoreboard,
     reroute_context: rerouteContext,
+    ask_user_gate: askUserGateContext,
   });
   observability.decision_promotion = promotionDecision;
   observability.decision_promotion_summary = formatDecisionPromotionSummary(promotionDecision);
+  observability.ask_user_gate = promotionDecision?.ask_user_gate || null;
+  observability.ask_user_blocked_reason = cleanText(promotionDecision?.ask_user_blocked_reason || "") || null;
+  observability.ask_user_recalibrated = promotionDecision?.ask_user_recalibrated === true;
+  observability.ask_user_recalibration_summary = cleanText(promotionDecision?.ask_user_recalibration_summary || "") || null;
   return {
     actual_next_action: actualNextAction,
     promotion_decision: promotionDecision,
@@ -5408,6 +5408,10 @@ function resolvePlannerWorkingMemoryContinuation({
     reroute_reason: null,
     reroute_source: null,
     reroute_target_verified: null,
+    ask_user_gate: null,
+    ask_user_blocked_reason: null,
+    ask_user_recalibrated: false,
+    ask_user_recalibration_summary: null,
     slot_suppressed_ask: false,
     usage_layer: null,
     usage_layer_summary: null,
@@ -5486,6 +5490,30 @@ function resolvePlannerWorkingMemoryContinuation({
   const retryPolicy = normalizePlannerWorkingMemoryRetryPolicy(workingMemory.retry_policy);
   const unresolvedSlots = derivePlannerWorkingMemoryUnresolvedSlots({ workingMemory });
   const currentPlanStep = resolvePlannerWorkingMemoryCurrentPlanStep(workingMemory.execution_plan || null);
+  const currentStepSlotRequirements = Array.from(new Set(
+    (Array.isArray(currentPlanStep?.step?.slot_requirements)
+      ? currentPlanStep.step.slot_requirements
+      : [])
+      .map((slot) => cleanText(slot))
+      .filter(Boolean),
+  ));
+  const waitingUserSlotCoverage = hasAnyTrulyMissingRequiredSlot({
+    required_slots: [
+      ...currentStepSlotRequirements,
+      ...unresolvedSlots,
+    ],
+    unresolved_slots: unresolvedSlots,
+    slot_state: Array.isArray(workingMemory?.slot_state)
+      ? workingMemory.slot_state
+      : [],
+  });
+  const waitingUserRequiredSlotsFilled = taskPhase === "waiting_user"
+    && waitingUserSlotCoverage.required_slots.length > 0
+    && waitingUserSlotCoverage.malformed_input !== true
+    && waitingUserSlotCoverage.has_any_truly_missing_required_slot !== true;
+  const effectiveUnresolvedSlots = waitingUserRequiredSlotsFilled
+    ? []
+    : unresolvedSlots;
   const topicSwitch = isPlannerWorkingMemoryTopicSwitch({
     userIntent,
     taskType,
@@ -5551,6 +5579,10 @@ function resolvePlannerWorkingMemoryContinuation({
   observability.reroute_reason = null;
   observability.reroute_source = null;
   observability.reroute_target_verified = null;
+  observability.ask_user_gate = null;
+  observability.ask_user_blocked_reason = null;
+  observability.ask_user_recalibrated = false;
+  observability.ask_user_recalibration_summary = null;
   observability.slot_suppressed_ask = false;
   observability.plan_invalidated = topicSwitch && currentPlanStep?.plan
     ? {
@@ -5568,7 +5600,7 @@ function resolvePlannerWorkingMemoryContinuation({
     applyUsageLayerPass({
       selectedAction: "",
       routingReason: "topic_switch_new_task",
-      unresolvedSlots,
+      unresolvedSlots: effectiveUnresolvedSlots,
       currentPlanStep,
       candidateActions: [],
       workingMemory,
@@ -5602,7 +5634,7 @@ function resolvePlannerWorkingMemoryContinuation({
   }
   const normalizedIntent = cleanText(userIntent);
   const waitingUserSlotFillAttempt = taskPhase === "waiting_user"
-    && unresolvedSlots.length > 0
+    && effectiveUnresolvedSlots.length > 0
     && normalizedIntent
     && !PLANNER_WORKING_MEMORY_ELLIPSIS_FOLLOW_UP_PATTERN.test(normalizedIntent);
   const readinessSlotStateOverride = (() => {
@@ -5613,7 +5645,7 @@ function resolvePlannerWorkingMemoryContinuation({
       ...(Array.isArray(currentPlanStep?.step?.slot_requirements)
         ? currentPlanStep.step.slot_requirements
         : []),
-      ...unresolvedSlots,
+      ...effectiveUnresolvedSlots,
     ].map((slotKey) => cleanText(slotKey)).filter(Boolean)));
     if (provisionalSlotKeys.length === 0) {
       return [];
@@ -5629,8 +5661,8 @@ function resolvePlannerWorkingMemoryContinuation({
   })();
   const readinessUnresolvedSlots = waitingUserSlotFillAttempt
     ? []
-    : unresolvedSlots;
-  const unresolvedAction = resolvePlannerWorkingMemoryActionFromSlots(unresolvedSlots);
+    : effectiveUnresolvedSlots;
+  const unresolvedAction = resolvePlannerWorkingMemoryActionFromSlots(effectiveUnresolvedSlots);
   const executionReadiness = resolvePlannerExecutionReadiness({
     workingMemory,
     currentPlanStep,
@@ -5661,7 +5693,7 @@ function resolvePlannerWorkingMemoryContinuation({
   });
   const waitingResumePlanAction = confidenceAllowed
     && taskPhase === "waiting_user"
-    && unresolvedSlots.length === 0
+    && effectiveUnresolvedSlots.length === 0
     ? resolvePlannerWorkingMemoryExecutionPlanAction({
         workingMemory,
         text: userIntent,
@@ -5680,13 +5712,13 @@ function resolvePlannerWorkingMemoryContinuation({
   const shouldForceWaitingResume = Boolean(
     confidenceAllowed
     && taskPhase === "waiting_user"
-    && unresolvedSlots.length === 0
+    && effectiveUnresolvedSlots.length === 0
     && waitingResumeAction
     && canUseWorkingMemoryAction(waitingResumeAction, { text: userIntent, semantics }),
   );
   const slotCoverageForSuppression = derivePlannerWorkingMemorySlotCoverage({
     workingMemory,
-    unresolvedSlots,
+    unresolvedSlots: effectiveUnresolvedSlots,
   });
   if (confidenceAllowed && executionReadiness && executionReadiness.is_ready === false && !shouldForceWaitingResume) {
     recoveryDecisionLocked = true;
@@ -5708,7 +5740,7 @@ function resolvePlannerWorkingMemoryContinuation({
         mode: "ask_user",
         pending_slots: Array.isArray(executionReadiness.missing_slots)
           ? executionReadiness.missing_slots
-          : unresolvedSlots,
+          : effectiveUnresolvedSlots,
       };
     };
     if (recommendedAction === "rollback") {
@@ -5973,7 +6005,7 @@ function resolvePlannerWorkingMemoryContinuation({
   } else if (
     confidenceAllowed
     && taskPhase === "waiting_user"
-    && unresolvedSlots.length > 0
+    && effectiveUnresolvedSlots.length > 0
   ) {
     const waitingPlanAction = resolvePlannerWorkingMemoryExecutionPlanAction({
       workingMemory,
@@ -6026,7 +6058,7 @@ function resolvePlannerWorkingMemoryContinuation({
       observability.task_status_transition = "blocked->running";
       observability.slot_update = {
         mode: "slot_fill",
-        pending_slots: unresolvedSlots,
+        pending_slots: effectiveUnresolvedSlots,
       };
       observability.resumed_from_waiting_user = Boolean(waitingPlanAction?.action && waitingAction === waitingPlanAction.action);
       if (waitingPlanAction?.action && waitingAction === waitingPlanAction.action) {
@@ -6038,7 +6070,7 @@ function resolvePlannerWorkingMemoryContinuation({
   } else if (
     confidenceAllowed
     && taskPhase === "waiting_user"
-    && unresolvedSlots.length === 0
+    && effectiveUnresolvedSlots.length === 0
   ) {
     if (waitingResumeAction && canUseWorkingMemoryAction(waitingResumeAction, { text: userIntent, semantics })) {
       selectedAction = waitingResumeAction;
@@ -6061,7 +6093,7 @@ function resolvePlannerWorkingMemoryContinuation({
     && !recoveryDecisionLocked
     && confidenceAllowed
     && taskStatus === "running"
-    && unresolvedSlots.length === 0
+    && effectiveUnresolvedSlots.length === 0
   ) {
     const activePlanAction = resolvePlannerWorkingMemoryExecutionPlanAction({
       workingMemory,
@@ -6084,7 +6116,7 @@ function resolvePlannerWorkingMemoryContinuation({
     && !recoveryDecisionLocked
     && confidenceAllowed
     && taskStatus === "running"
-    && unresolvedSlots.length === 0
+    && effectiveUnresolvedSlots.length === 0
     && runningOwnerAction
   ) {
     selectedAction = runningOwnerAction;
@@ -6180,7 +6212,7 @@ function resolvePlannerWorkingMemoryContinuation({
       taskType,
       workingMemory,
       observability,
-      unresolvedSlots,
+      unresolvedSlots: effectiveUnresolvedSlots,
       currentPlanStep: currentPlanStep?.step || null,
       semantics,
       routingReason,
@@ -6218,7 +6250,7 @@ function resolvePlannerWorkingMemoryContinuation({
     observability,
     currentPlanStep,
     executionReadiness,
-    unresolvedSlots,
+    unresolvedSlots: effectiveUnresolvedSlots,
     stopError,
   });
   applyStepDecisionAdvisorObservability({
@@ -6250,6 +6282,42 @@ function resolvePlannerWorkingMemoryContinuation({
     text: userIntent,
     semantics,
   });
+  const currentStepAction = cleanText(currentPlanStep?.step?.intended_action || "");
+  const nextBestAction = cleanText(workingMemory?.next_best_action || "");
+  const currentStepResumeAvailable = Boolean(
+    currentStepAction
+    && canUseWorkingMemoryAction(currentStepAction, { text: userIntent, semantics }),
+  );
+  const nextBestActionAvailable = Boolean(
+    nextBestAction
+    && canUseWorkingMemoryAction(nextBestAction, { text: userIntent, semantics }),
+  );
+  const waitingResumeAvailable = Boolean(
+    waitingResumeAction
+    && canUseWorkingMemoryAction(waitingResumeAction, { text: userIntent, semantics }),
+  );
+  const askUserGateContext = {
+    task_phase: taskPhase,
+    required_slots: waitingUserSlotCoverage.required_slots,
+    unresolved_slots: effectiveUnresolvedSlots,
+    truly_missing_slots: waitingUserSlotCoverage.truly_missing_slots,
+    slot_state: Array.isArray(workingMemory?.slot_state)
+      ? workingMemory.slot_state
+      : [],
+    current_step_action: currentStepAction || null,
+    next_best_action: nextBestAction || null,
+    current_step_resume_available: currentStepResumeAvailable,
+    next_best_action_available: nextBestActionAvailable,
+    resume_action_available: waitingResumeAvailable,
+    slot_suppressed_ask: observability.slot_suppressed_ask === true
+      || (slotCoverageForSuppression.has_reusable_filled_slot && !slotCoverageForSuppression.has_missing_slots),
+    waiting_user_all_required_slots_filled: waitingUserRequiredSlotsFilled,
+    continuation_ready: shouldForceWaitingResume
+      || waitingResumeAvailable
+      || currentStepResumeAvailable
+      || nextBestActionAvailable,
+    malformed_input: waitingUserSlotCoverage.malformed_input === true,
+  };
   const advisorComparison = applyStepDecisionAdvisorComparisonObservability({
     observability,
     selectedAction,
@@ -6260,6 +6328,7 @@ function resolvePlannerWorkingMemoryContinuation({
     promotionPolicy,
     decisionScoreboard: prePromotionScoreboard,
     rerouteContext: rerouteDecisionContext,
+    askUserGateContext,
   });
   let promotionDecision = advisorComparison?.promotion_decision
     && typeof advisorComparison.promotion_decision === "object"
@@ -6294,6 +6363,10 @@ function resolvePlannerWorkingMemoryContinuation({
     };
     observability.decision_promotion = gatedPromotionDecision;
     observability.decision_promotion_summary = formatDecisionPromotionSummary(gatedPromotionDecision);
+    observability.ask_user_gate = gatedPromotionDecision.ask_user_gate || null;
+    observability.ask_user_blocked_reason = cleanText(gatedPromotionDecision.ask_user_blocked_reason || "") || null;
+    observability.ask_user_recalibrated = gatedPromotionDecision.ask_user_recalibrated === true;
+    observability.ask_user_recalibration_summary = cleanText(gatedPromotionDecision.ask_user_recalibration_summary || "") || null;
     promotionDecision = gatedPromotionDecision;
   }
   const promotedAction = cleanText(promotionDecision?.promoted_action || "");
@@ -6311,7 +6384,7 @@ function resolvePlannerWorkingMemoryContinuation({
         mode: "ask_user",
         pending_slots: Array.isArray(executionReadiness?.missing_slots)
           ? executionReadiness.missing_slots
-          : unresolvedSlots,
+          : effectiveUnresolvedSlots,
       };
       if (!cleanText(stopError || "")) {
         stopError = resolvePlannerExecutionReadinessPrimaryReason(executionReadiness) || "missing_slot";
@@ -6513,7 +6586,7 @@ function resolvePlannerWorkingMemoryContinuation({
   applyUsageLayerPass({
     selectedAction,
     routingReason,
-    unresolvedSlots,
+    unresolvedSlots: effectiveUnresolvedSlots,
     currentPlanStep,
     candidateActions: [
       cleanText(currentPlanStep?.step?.intended_action || ""),

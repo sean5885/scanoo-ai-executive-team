@@ -337,6 +337,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
     - `retry_context_success_rate`
     - `slot_ask_suppression_success_rate`
   - `overall_intelligence_signal` 仍維持 deterministic 規則，但在 user-visible issue 相對 detected issue 明顯下降時可提升一級
+  - decision promotion judge 會在同一條 eval path 傳入 ask-user gate context（`required_slots` / `unresolved_slots` / `slot_state` / `waiting_user_all_required_slots_filled` / `continuation_ready` / resume 可用性），讓 `slot_ask_suppression_success_rate` 與 ask-user promotion metrics 對齊 runtime 的 ask-user recalibration gate
 - `RDR` 目前先保留 TODO，只做 case log，不宣稱已收斂成穩定自動 judge
 - 由於目前 repo 本地沒有 stored explicit user auth / account context，checked-in pack 會把 auth-required company-brain read 與 account-required cloud-doc workflow case 標成 `fail_closed`；這是當前 code truth，不是宣稱能力不存在
 
