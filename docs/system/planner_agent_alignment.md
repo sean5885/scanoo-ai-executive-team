@@ -23,6 +23,7 @@ Current runtime anchor:
 - `/Users/seanhan/Documents/Playground/src/step-decision-advisor.mjs`
 - `/Users/seanhan/Documents/Playground/src/advisor-alignment-evaluator.mjs`
 - `/Users/seanhan/Documents/Playground/src/decision-engine-promotion.mjs`
+- `/Users/seanhan/Documents/Playground/src/decision-metrics-scoreboard.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-ingress-contract.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-working-memory-trace.mjs`
@@ -969,6 +970,10 @@ Observed routing/write signals now include:
 - `promotion_policy_summary`
 - `promotion_audit`
 - `promotion_audit_summary`
+- `decision_scoreboard`
+- `decision_scoreboard_summary`
+- `highest_maturity_actions`
+- `rollback_disabled_actions`
 - compatibility `advisor_vs_actual` mirror
 
 `decision-engine-promotion` now also writes a deterministic promotion audit / rollback safety v1 record into the same observability payload:
@@ -1007,6 +1012,11 @@ Observed routing/write signals now include:
 - rollback safety gate reads centralized threshold v1 (`promotion_policy.ineffective_threshold`, currently `N=3`):
   - when the same promoted action accumulates consecutive `ineffective` audits, `rollback_flag=true` and future promotion for that action is disabled (advisory-only)
   - gate only affects future promotion eligibility and does not retroactively mutate already-executed behavior
+- the same audit state now also tracks deterministic per-action counters (`promotion_applied_count`, alignment split, effectiveness split, rollback flag count), and `/Users/seanhan/Documents/Playground/src/decision-metrics-scoreboard.mjs` aggregates those counters into one per-session/per-memory scoreboard snapshot without introducing a second authority
+- scoreboard output is diagnostics-first and deterministic:
+  - action entry shape: `action_name`, `promotion_enabled`, `promotion_applied_count`, `exact_match_count`, `acceptable_divergence_count`, `hard_divergence_count`, `effective_count`, `ineffective_count`, `rollback_flag_count`, `current_rollback_disabled`, `maturity_signal`, `scoreboard_version`
+  - trace-facing summary fields: `decision_scoreboard_summary`, `highest_maturity_actions`, `rollback_disabled_actions`
+  - malformed scoreboard input fails closed into empty actions with explicit reason code
 
 Working-memory v2 diagnostics now also includes one human-readable `task_trace` overlay derived from the same observed fields (no second state source):
 
@@ -1038,6 +1048,7 @@ Working-memory v2 diagnostics now also includes one human-readable `task_trace` 
   - `decision_promotion.promoted_action/decision_promotion.promotion_applied/decision_promotion.promotion_reason_codes/decision_promotion.safety_gate_passed/decision_promotion_summary`
   - `promotion_policy.allowed_actions/promotion_policy.rollback_disabled_actions/promotion_policy.ineffective_threshold/promotion_policy_summary`
   - `promotion_audit.promoted_action/promotion_audit.promotion_effectiveness/promotion_audit.rollback_flag/promotion_audit_summary`
+  - `decision_scoreboard.actions/decision_scoreboard_summary/highest_maturity_actions/rollback_disabled_actions`
   - trace output must be derived from these existing signals instead of introducing an independent trace truth
 
 The executive planner decision prompt now also reads a bounded task-state summary from that same local `task lifecycle v1` store: before agent selection, `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` asks `/Users/seanhan/Documents/Playground/src/planner-task-lifecycle-v1.mjs` for the latest relevant snapshot summary and injects `unfinished_hint`, `blocked_hint`, and `in_progress_hint` into prompt assembly, so decisions can preferentially reference unfinished tasks, surface blocked-task risk, and reuse in-progress execution summaries without changing the public planner JSON shape.

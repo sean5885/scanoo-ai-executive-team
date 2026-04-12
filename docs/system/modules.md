@@ -102,6 +102,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/advisor-alignment-evaluator.mjs`
   - `/Users/seanhan/Documents/Playground/src/decision-engine-promotion.mjs`
   - `/Users/seanhan/Documents/Playground/src/promotion-control-surface.mjs`
+  - `/Users/seanhan/Documents/Playground/src/decision-metrics-scoreboard.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner-working-memory-trace.mjs`
   - `/Users/seanhan/Documents/Playground/src/planner-ingress-contract.mjs`
   - `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
@@ -143,6 +144,16 @@ Current-truth docs for onboarding are:
       - deterministic effectiveness rules cover promoted `ask_user`, `retry`, and `fail` outcomes; malformed/conflicting audits are fail-closed and excluded from ineffective streak counting
       - promoted `retry` audit marks `effective` when pre-retry failed/partial outcome is improved to `success`, otherwise `ineffective`
       - rollback safety threshold source is the same centralized control surface (`ineffective_threshold=3` in v1) and disables future promotion for that action without retroactively changing already-executed actions
+    - the same promotion-audit state now also keeps deterministic per-action metrics counters (`promotion_applied_count`, alignment split, effectiveness split, rollback flag count) so scoreboard aggregation does not create a second truth source
+    - `/Users/seanhan/Documents/Playground/src/decision-metrics-scoreboard.mjs` builds one per-session/per-memory snapshot from existing observability + promotion control surface:
+      - action entry fields: `action_name`, `promotion_enabled`, `promotion_applied_count`, `exact_match_count`, `acceptable_divergence_count`, `hard_divergence_count`, `effective_count`, `ineffective_count`, `rollback_flag_count`, `current_rollback_disabled`, `maturity_signal`, `scoreboard_version`
+      - conservative deterministic maturity rule: `high|medium|low` (fixed threshold, no statistical model)
+      - malformed input fails closed into empty scoreboard payload with explicit reason code
+    - planner observability / trace now also exposes:
+      - `decision_scoreboard.actions`
+      - `decision_scoreboard_summary`
+      - `highest_maturity_actions`
+      - `rollback_disabled_actions`
   - final HTTP/chat response is normalized into `answer -> sources -> limitations`
   - for explicit plugin capability handoff (`requested_capability=scanoo_compare|scanoo_diagnose`), `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` now executes one lane-primary fast-path before planner; success returns immediately and does not enter planner timeout recovery for that turn
   - `scanoo-compare` still reuses that same answer-edge helper, but now has one extra fail-soft branch in `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`: when compare evidence is insufficient and did not already resolve to a doc-read action, it hard-shapes the fallback search query by extracting up to two `*店` compare targets plus matched metric terms from `流量 / 轉化 / 留存 / 排名`, strips the minimal stopwords `比較 / 一下 / 幫我 / 看看`, prefers the form `A店 vs B店 + 指標`, and then calls `/Users/seanhan/Documents/Playground/src/read-runtime.mjs -> searchCompanyBrainDocsFromRuntime(...)`; compare candidates pass a lane-local relevance gate (`demo/verify/success/test/final validation/minimal/artifact/stub/sample` hard filter + required `entity identifier + comparable metric + time/data` signals), and the fallback contract stays explicit: `>=2` valid entity+metric evidence -> normal compare, `>=1` -> partial compare with clear missing-dimension report, `0` -> non-generic gap report with concrete data requests
@@ -168,6 +179,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/tests/answer-service.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/step-decision-advisor-v1.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/advisor-alignment-evaluator-v1.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/decision-metrics-scoreboard.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/decision-engine-promotion-v1.test.mjs`
 
 ### 4. Skill Runtime

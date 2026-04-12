@@ -6,6 +6,10 @@ import {
   formatDecisionPromotionAuditSummary,
 } from "./decision-engine-promotion.mjs";
 import { formatPromotionControlSurfaceSummary } from "./promotion-control-surface.mjs";
+import {
+  buildDecisionMetricsScoreboard,
+  formatDecisionMetricsScoreboardSummary,
+} from "./decision-metrics-scoreboard.mjs";
 
 const ABANDONED_TASK_PREVIEW_LIMIT = 3;
 
@@ -624,6 +628,49 @@ function normalizePromotionAuditObservability(observability = null) {
   };
 }
 
+function normalizeDecisionScoreboardObservability(observability = null) {
+  const normalizedObservability = observability && typeof observability === "object" && !Array.isArray(observability)
+    ? observability
+    : {};
+  const providedScoreboard = normalizedObservability.decision_scoreboard
+    && typeof normalizedObservability.decision_scoreboard === "object"
+    && !Array.isArray(normalizedObservability.decision_scoreboard)
+    ? normalizedObservability.decision_scoreboard
+    : null;
+  const resolvedScoreboard = providedScoreboard
+    || buildDecisionMetricsScoreboard({
+      promotion_policy: normalizedObservability.promotion_policy || null,
+      observability: normalizedObservability,
+    });
+  const summaryFromObservability = cleanText(normalizedObservability.decision_scoreboard_summary || "") || null;
+  const normalizedSummary = summaryFromObservability || formatDecisionMetricsScoreboardSummary(resolvedScoreboard);
+  const highestMaturityActions = Array.isArray(normalizedObservability.highest_maturity_actions)
+    ? normalizedObservability.highest_maturity_actions.map((item) => cleanText(item)).filter(Boolean)
+    : Array.isArray(resolvedScoreboard.highest_maturity_actions)
+      ? resolvedScoreboard.highest_maturity_actions
+      : [];
+  const rollbackDisabledActions = Array.isArray(normalizedObservability.rollback_disabled_actions)
+    ? normalizedObservability.rollback_disabled_actions.map((item) => cleanText(item)).filter(Boolean)
+    : Array.isArray(resolvedScoreboard.rollback_disabled_actions)
+      ? resolvedScoreboard.rollback_disabled_actions
+      : [];
+  const actions = Array.isArray(resolvedScoreboard.actions)
+    ? resolvedScoreboard.actions
+    : [];
+  return {
+    present: Boolean(
+      providedScoreboard
+      || summaryFromObservability
+      || actions.length > 0,
+    ),
+    scoreboard: resolvedScoreboard,
+    actions,
+    summary: normalizedSummary,
+    highest_maturity_actions: highestMaturityActions,
+    rollback_disabled_actions: rollbackDisabledActions,
+  };
+}
+
 function formatAdvisorReasons(reasonCodes = []) {
   return Array.isArray(reasonCodes) && reasonCodes.length > 0
     ? `[${reasonCodes.join(", ")}]`
@@ -715,6 +762,7 @@ function buildDiffLines({
   const promotionObservability = normalizeDecisionPromotionObservability(normalizedObservability);
   const promotionPolicyObservability = normalizePromotionPolicyObservability(normalizedObservability);
   const promotionAuditObservability = normalizePromotionAuditObservability(normalizedObservability);
+  const decisionScoreboardObservability = normalizeDecisionScoreboardObservability(normalizedObservability);
   const diffLines = [];
   const seen = new Set();
   const addDiffLine = (line = "") => {
@@ -1039,6 +1087,17 @@ function buildDiffLines({
       addDiffLine(`promotion_audit_summary: ${promotionAuditObservability.summary}`);
     }
   }
+  if (decisionScoreboardObservability.present) {
+    if (decisionScoreboardObservability.summary && !hasDiffPrefix("decision_scoreboard_summary:")) {
+      addDiffLine(`decision_scoreboard_summary: ${decisionScoreboardObservability.summary}`);
+    }
+    if (!hasDiffPrefix("highest_maturity_actions:")) {
+      addDiffLine(`highest_maturity_actions: ${formatValue(decisionScoreboardObservability.highest_maturity_actions)}`);
+    }
+    if (!hasDiffPrefix("rollback_disabled_actions:")) {
+      addDiffLine(`rollback_disabled_actions: ${formatValue(decisionScoreboardObservability.rollback_disabled_actions)}`);
+    }
+  }
   if (normalizedObservability.resumed_from_waiting_user === true) {
     addDiffLine("resume: waiting_user");
   }
@@ -1063,6 +1122,7 @@ function buildTaskTraceText({
   const promotion = normalizeDecisionPromotionObservability(readinessObservability);
   const promotionPolicy = normalizePromotionPolicyObservability(readinessObservability);
   const promotionAudit = normalizePromotionAuditObservability(readinessObservability);
+  const decisionScoreboard = normalizeDecisionScoreboardObservability(readinessObservability);
   const readinessInvalidArtifacts = summarizeReadinessArtifacts(readiness.invalid_artifacts);
   const readinessBlockedDependencies = summarizeBlockedDependencies(readiness.blocked_dependencies);
   const abandonedSummary = next.abandoned_task_hidden_count > 0
@@ -1081,6 +1141,7 @@ function buildTaskTraceText({
     `decision_promotion: promoted_action=${formatValue(promotion.promoted_action)} | promotion_applied=${formatValue(promotion.promotion_applied)} | reason_codes=${formatValue(promotion.promotion_reason_codes)} | safety_gate_passed=${formatValue(promotion.safety_gate_passed)} | summary=${formatValue(promotion.summary)}`,
     `promotion_policy: version=${formatValue(promotionPolicy.promotion_policy_version)} | allowed_actions=${formatValue(promotionPolicy.allowed_actions)} | rollback_disabled_actions=${formatValue(promotionPolicy.rollback_disabled_actions)} | ineffective_threshold=${formatValue(promotionPolicy.ineffective_threshold)} | summary=${formatValue(promotionPolicy.summary)}`,
     `promotion_audit: promoted_action=${formatValue(promotionAudit.promoted_action)} | promotion_effectiveness=${formatValue(promotionAudit.promotion_effectiveness)} | rollback_flag=${formatValue(promotionAudit.rollback_flag)} | summary=${formatValue(promotionAudit.summary)}`,
+    `decision_scoreboard: highest_maturity_actions=${formatValue(decisionScoreboard.highest_maturity_actions)} | rollback_disabled_actions=${formatValue(decisionScoreboard.rollback_disabled_actions)} | summary=${formatValue(decisionScoreboard.summary)}`,
     `artifact: id=${formatValue(next.execution_plan.artifact_id)} | type=${formatValue(next.execution_plan.artifact_type)} | validity=${formatValue(next.execution_plan.validity_status)} | produced_by=${formatValue(next.execution_plan.produced_by_step_id)} | downstream=${formatValue(next.execution_plan.affected_downstream_steps)} | dependency=${formatValue(next.execution_plan.dependency_type)} | blocked_step=${formatValue(next.execution_plan.dependency_blocked_step)} | superseded=${formatValue(next.execution_plan.artifact_superseded)}`,
     `readiness: is_ready=${formatValue(readiness.is_ready)} | reasons=${formatValue(readiness.blocking_reason_codes)} | missing_slots=${formatValue(readiness.missing_slots)} | invalid_artifacts=${formatValue(readinessInvalidArtifacts)} | blocked_dependencies=${formatValue(readinessBlockedDependencies)} | owner_ready=${formatValue(readiness.owner_ready)} | recovery_ready=${formatValue(readiness.recovery_ready)} | recommended_action=${formatValue(readiness.recommended_action)}`,
     `slot_state: missing=${formatValue(slots.missing)} | filled=${formatValue(slots.filled)} | invalid=${formatValue(slots.invalid)}`,
@@ -1110,6 +1171,7 @@ export function buildPlannerTaskTraceDiagnostics({
   const promotionObservability = normalizeDecisionPromotionObservability(observability);
   const promotionPolicyObservability = normalizePromotionPolicyObservability(observability);
   const promotionAuditObservability = normalizePromotionAuditObservability(observability);
+  const decisionScoreboardObservability = normalizeDecisionScoreboardObservability(observability);
   const readinessInvalidArtifacts = summarizeReadinessArtifacts(readinessObservability.invalid_artifacts);
   const readinessBlockedDependencies = summarizeBlockedDependencies(readinessObservability.blocked_dependencies);
   const diff = buildDiffLines({
@@ -1117,7 +1179,7 @@ export function buildPlannerTaskTraceDiagnostics({
     nextSnapshot: memorySnapshot,
     observability,
   });
-  const summary = `task=${formatValue(snapshot.task_id)} phase=${snapshot.task_phase} status=${snapshot.task_status} owner=${formatValue(snapshot.current_owner_agent)} plan=${formatValue(snapshot.execution_plan.plan_status)}:${formatValue(snapshot.execution_plan.current_step)} recovery=${formatValue(snapshot.execution_plan.current_step_recovery_action)} readiness=${formatValue(readinessObservability.is_ready)}:${formatValue(readinessObservability.recommended_action)} outcome=${formatValue(outcomeObservability?.outcome_status || null)}:${formatValue(outcomeObservability?.retry_worthiness)} advisor=${formatValue(advisorObservability.recommended_next_action)}:${formatValue(advisorObservability.decision_confidence)} advisor_alignment=${formatAdvisorAlignment(advisorObservability.alignment)} decision_promotion=${formatValue(promotionObservability.promoted_action)}:${formatValue(promotionObservability.promotion_applied)}:${formatValue(promotionObservability.safety_gate_passed)} promotion_policy=${formatValue(promotionPolicyObservability.allowed_actions)}:${formatValue(promotionPolicyObservability.rollback_disabled_actions)}:${formatValue(promotionPolicyObservability.ineffective_threshold)} promotion_audit=${formatValue(promotionAuditObservability.promoted_action)}:${formatValue(promotionAuditObservability.promotion_effectiveness)}:${formatValue(promotionAuditObservability.rollback_flag)} artifact=${formatValue(snapshot.execution_plan.artifact_id)}:${formatValue(snapshot.execution_plan.validity_status)} next=${formatValue(snapshot.next_best_action)}`;
+  const summary = `task=${formatValue(snapshot.task_id)} phase=${snapshot.task_phase} status=${snapshot.task_status} owner=${formatValue(snapshot.current_owner_agent)} plan=${formatValue(snapshot.execution_plan.plan_status)}:${formatValue(snapshot.execution_plan.current_step)} recovery=${formatValue(snapshot.execution_plan.current_step_recovery_action)} readiness=${formatValue(readinessObservability.is_ready)}:${formatValue(readinessObservability.recommended_action)} outcome=${formatValue(outcomeObservability?.outcome_status || null)}:${formatValue(outcomeObservability?.retry_worthiness)} advisor=${formatValue(advisorObservability.recommended_next_action)}:${formatValue(advisorObservability.decision_confidence)} advisor_alignment=${formatAdvisorAlignment(advisorObservability.alignment)} decision_promotion=${formatValue(promotionObservability.promoted_action)}:${formatValue(promotionObservability.promotion_applied)}:${formatValue(promotionObservability.safety_gate_passed)} promotion_policy=${formatValue(promotionPolicyObservability.allowed_actions)}:${formatValue(promotionPolicyObservability.rollback_disabled_actions)}:${formatValue(promotionPolicyObservability.ineffective_threshold)} promotion_audit=${formatValue(promotionAuditObservability.promoted_action)}:${formatValue(promotionAuditObservability.promotion_effectiveness)}:${formatValue(promotionAuditObservability.rollback_flag)} decision_scoreboard=${formatValue(decisionScoreboardObservability.highest_maturity_actions)}:${formatValue(decisionScoreboardObservability.rollback_disabled_actions)} artifact=${formatValue(snapshot.execution_plan.artifact_id)}:${formatValue(snapshot.execution_plan.validity_status)} next=${formatValue(snapshot.next_best_action)}`;
   return {
     summary,
     snapshot: {
@@ -1194,6 +1256,10 @@ export function buildPlannerTaskTraceDiagnostics({
         promotion_outcome: promotionAuditObservability.promotion_outcome,
       },
       promotion_audit_summary: promotionAuditObservability.summary,
+      decision_scoreboard: decisionScoreboardObservability.scoreboard,
+      decision_scoreboard_summary: decisionScoreboardObservability.summary,
+      highest_maturity_actions: decisionScoreboardObservability.highest_maturity_actions,
+      rollback_disabled_actions: decisionScoreboardObservability.rollback_disabled_actions,
       slot_state: snapshot.slot_state,
       abandoned_task_ids: snapshot.abandoned_task_ids,
       abandoned_task_total: snapshot.abandoned_task_total,
@@ -1272,6 +1338,10 @@ export function buildPlannerTaskTraceDiagnostics({
       promotion_audit_effectiveness: Boolean(cleanText(observability?.promotion_audit?.promotion_effectiveness || "")),
       promotion_audit_rollback_flag: typeof observability?.promotion_audit?.rollback_flag === "boolean",
       promotion_audit_summary: Boolean(cleanText(observability?.promotion_audit_summary || "")),
+      decision_scoreboard: Boolean(observability?.decision_scoreboard && typeof observability.decision_scoreboard === "object"),
+      decision_scoreboard_summary: Boolean(cleanText(observability?.decision_scoreboard_summary || "")),
+      highest_maturity_actions: Array.isArray(observability?.highest_maturity_actions),
+      rollback_disabled_actions: Array.isArray(observability?.rollback_disabled_actions),
       resumed_from_waiting_user: observability?.resumed_from_waiting_user === true,
       resumed_from_retry: observability?.resumed_from_retry === true,
     },

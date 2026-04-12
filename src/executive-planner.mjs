@@ -128,6 +128,10 @@ import {
   DECISION_ENGINE_PROMOTION_ROLLBACK_REASON_CODE,
 } from "./decision-engine-promotion.mjs";
 import { formatPromotionControlSurfaceSummary } from "./promotion-control-surface.mjs";
+import {
+  buildDecisionMetricsScoreboard,
+  formatDecisionMetricsScoreboardSummary,
+} from "./decision-metrics-scoreboard.mjs";
 import { getStoredAccountContext } from "./lark-user-auth.mjs";
 import { getDbPath } from "./db.mjs";
 
@@ -4717,6 +4721,10 @@ function applyStepDecisionAdvisorObservability({
     observability.promotion_policy_summary = null;
     observability.promotion_audit = null;
     observability.promotion_audit_summary = null;
+    observability.decision_scoreboard = null;
+    observability.decision_scoreboard_summary = null;
+    observability.highest_maturity_actions = null;
+    observability.rollback_disabled_actions = null;
     return;
   }
   const blockedDependencies = Array.isArray(observability.blocked_dependencies)
@@ -4795,6 +4803,10 @@ function applyStepDecisionAdvisorObservability({
   observability.promotion_policy_summary = null;
   observability.promotion_audit = null;
   observability.promotion_audit_summary = null;
+  observability.decision_scoreboard = null;
+  observability.decision_scoreboard_summary = null;
+  observability.highest_maturity_actions = null;
+  observability.rollback_disabled_actions = null;
 }
 
 function applyStepDecisionAdvisorComparisonObservability({
@@ -5110,6 +5122,10 @@ function resolvePlannerWorkingMemoryContinuation({
     promotion_policy_summary: null,
     promotion_audit: null,
     promotion_audit_summary: null,
+    decision_scoreboard: null,
+    decision_scoreboard_summary: null,
+    highest_maturity_actions: null,
+    rollback_disabled_actions: null,
   };
   logPlannerWorkingMemoryTrace({
     logger,
@@ -5206,6 +5222,10 @@ function resolvePlannerWorkingMemoryContinuation({
   observability.promotion_policy_summary = null;
   observability.promotion_audit = null;
   observability.promotion_audit_summary = null;
+  observability.decision_scoreboard = null;
+  observability.decision_scoreboard_summary = null;
+  observability.highest_maturity_actions = null;
+  observability.rollback_disabled_actions = null;
   observability.plan_invalidated = topicSwitch && currentPlanStep?.plan
     ? {
         plan_id: currentPlanStep.plan.plan_id,
@@ -5911,6 +5931,19 @@ function resolvePlannerWorkingMemoryContinuation({
   });
   observability.promotion_audit = promotionSafetyResult.audit_record;
   observability.promotion_audit_summary = formatDecisionPromotionAuditSummary(promotionSafetyResult.audit_record);
+  const decisionScoreboard = buildDecisionMetricsScoreboard({
+    promotion_audit_state: promotionSafetyResult.next_state,
+    promotion_policy: promotionPolicy,
+    observability,
+  });
+  observability.decision_scoreboard = decisionScoreboard;
+  observability.decision_scoreboard_summary = formatDecisionMetricsScoreboardSummary(decisionScoreboard);
+  observability.highest_maturity_actions = Array.isArray(decisionScoreboard.highest_maturity_actions)
+    ? decisionScoreboard.highest_maturity_actions
+    : [];
+  observability.rollback_disabled_actions = Array.isArray(decisionScoreboard.rollback_disabled_actions)
+    ? decisionScoreboard.rollback_disabled_actions
+    : [];
   observability.memory_used_in_routing = Boolean(selectedAction) || routingLocked;
   return {
     selected_action: selectedAction || null,
