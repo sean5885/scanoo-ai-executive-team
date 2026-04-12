@@ -117,7 +117,14 @@ import {
 import { formatAdvisorAlignmentSummary } from "./advisor-alignment-evaluator.mjs";
 import {
   evaluateDecisionEnginePromotion,
+  buildDecisionPromotionAuditRecord,
+  applyDecisionPromotionAuditSafety,
+  createDecisionPromotionAuditState,
+  resolveDecisionPromotionRollbackGate,
+  formatDecisionPromotionAuditSummary,
   formatDecisionPromotionSummary,
+  DECISION_ENGINE_PROMOTION_ROLLBACK_REASON_CODE,
+  DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD,
 } from "./decision-engine-promotion.mjs";
 import { getStoredAccountContext } from "./lark-user-auth.mjs";
 import { getDbPath } from "./db.mjs";
@@ -277,6 +284,8 @@ const PLANNER_WORKING_MEMORY_NON_CRITICAL_STEP_TYPES = new Set([
   "optional",
   "best_effort",
 ]);
+const DEFAULT_PLANNER_PROMOTION_AUDIT_SESSION_KEY = "__default__";
+const plannerPromotionAuditStates = new Map();
 
 const executiveCollaborationSignals = [
   "各個 agent",
@@ -2562,9 +2571,60 @@ function buildPlannerPresetOutput({
   };
 }
 
+function normalizePlannerPromotionAuditSessionKey(sessionKey = "") {
+  const normalized = cleanText(sessionKey || "");
+  return normalized || DEFAULT_PLANNER_PROMOTION_AUDIT_SESSION_KEY;
+}
+
+function getPlannerPromotionAuditState({ sessionKey = "" } = {}) {
+  const key = normalizePlannerPromotionAuditSessionKey(sessionKey);
+  const existingState = plannerPromotionAuditStates.get(key);
+  if (existingState && typeof existingState === "object" && !Array.isArray(existingState)) {
+    return createDecisionPromotionAuditState(existingState);
+  }
+  const initialState = createDecisionPromotionAuditState();
+  plannerPromotionAuditStates.set(key, initialState);
+  return initialState;
+}
+
+function setPlannerPromotionAuditState({
+  sessionKey = "",
+  state = null,
+} = {}) {
+  const key = normalizePlannerPromotionAuditSessionKey(sessionKey);
+  const normalizedState = createDecisionPromotionAuditState(state);
+  plannerPromotionAuditStates.set(key, normalizedState);
+  return normalizedState;
+}
+
+function resetPlannerPromotionAuditState({ sessionKey = "" } = {}) {
+  const normalizedSessionKey = cleanText(sessionKey || "");
+  if (!normalizedSessionKey) {
+    plannerPromotionAuditStates.clear();
+    return;
+  }
+  const key = normalizePlannerPromotionAuditSessionKey(normalizedSessionKey);
+  plannerPromotionAuditStates.delete(key);
+}
+
+function appendUniqueReasonCode(reasonCodes = [], reasonCode = "") {
+  const normalizedReasonCode = cleanText(reasonCode || "");
+  if (!normalizedReasonCode) {
+    return Array.isArray(reasonCodes) ? reasonCodes : [];
+  }
+  const normalizedReasonCodes = Array.isArray(reasonCodes)
+    ? reasonCodes.map((item) => cleanText(item)).filter(Boolean)
+    : [];
+  if (!normalizedReasonCodes.includes(normalizedReasonCode)) {
+    normalizedReasonCodes.push(normalizedReasonCode);
+  }
+  return normalizedReasonCodes;
+}
+
 export function resetPlannerRuntimeContext({ sessionKey = "" } = {}) {
   resetPlannerFlowContexts(plannerFlows, { sessionKey });
   resetPlannerConversationMemory({ sessionKey });
+  resetPlannerPromotionAuditState({ sessionKey });
   resetPlannerTaskLifecycleStore().catch(() => {});
 }
 
@@ -4649,6 +4709,8 @@ function applyStepDecisionAdvisorObservability({
     observability.advisor_alignment_summary = null;
     observability.decision_promotion = null;
     observability.decision_promotion_summary = null;
+    observability.promotion_audit = null;
+    observability.promotion_audit_summary = null;
     return;
   }
   const blockedDependencies = Array.isArray(observability.blocked_dependencies)
@@ -4709,6 +4771,8 @@ function applyStepDecisionAdvisorObservability({
   observability.advisor_alignment_summary = null;
   observability.decision_promotion = null;
   observability.decision_promotion_summary = null;
+  observability.promotion_audit = null;
+  observability.promotion_audit_summary = null;
 }
 
 function applyStepDecisionAdvisorComparisonObservability({
@@ -5018,6 +5082,8 @@ function resolvePlannerWorkingMemoryContinuation({
     advisor_alignment_summary: null,
     decision_promotion: null,
     decision_promotion_summary: null,
+    promotion_audit: null,
+    promotion_audit_summary: null,
   };
   logPlannerWorkingMemoryTrace({
     logger,
@@ -5110,6 +5176,8 @@ function resolvePlannerWorkingMemoryContinuation({
   observability.advisor_alignment_summary = null;
   observability.decision_promotion = null;
   observability.decision_promotion_summary = null;
+  observability.promotion_audit = null;
+  observability.promotion_audit_summary = null;
   observability.plan_invalidated = topicSwitch && currentPlanStep?.plan
     ? {
         plan_id: currentPlanStep.plan.plan_id,
@@ -5648,11 +5716,38 @@ function resolvePlannerWorkingMemoryContinuation({
     taskPhase: resolveTaskTransitionTarget(observability.task_phase_transition, taskPhase),
     taskStatus: resolveTaskTransitionTarget(observability.task_status_transition, taskStatus),
   });
-  const promotionDecision = advisorComparison?.promotion_decision
+  const promotionAuditState = getPlannerPromotionAuditState({ sessionKey });
+  let promotionDecision = advisorComparison?.promotion_decision
     && typeof advisorComparison.promotion_decision === "object"
     && !Array.isArray(advisorComparison.promotion_decision)
     ? advisorComparison.promotion_decision
     : null;
+  const promotionCandidateAction = cleanText(promotionDecision?.promoted_action || "");
+  const promotionRollbackGate = resolveDecisionPromotionRollbackGate({
+    state: promotionAuditState,
+    promoted_action: promotionCandidateAction,
+    threshold: DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD,
+  });
+  if (
+    promotionDecision?.promotion_applied === true
+    && (promotionCandidateAction === "ask_user" || promotionCandidateAction === "fail")
+    && promotionRollbackGate.promotion_allowed !== true
+  ) {
+    const gatedPromotionDecision = {
+      ...promotionDecision,
+      promoted_action: null,
+      promotion_applied: false,
+      safety_gate_passed: false,
+      promotion_confidence: "low",
+      promotion_reason_codes: appendUniqueReasonCode(
+        promotionDecision?.promotion_reason_codes,
+        DECISION_ENGINE_PROMOTION_ROLLBACK_REASON_CODE,
+      ),
+    };
+    observability.decision_promotion = gatedPromotionDecision;
+    observability.decision_promotion_summary = formatDecisionPromotionSummary(gatedPromotionDecision);
+    promotionDecision = gatedPromotionDecision;
+  }
   const promotedAction = cleanText(promotionDecision?.promoted_action || "");
   if (promotionDecision?.promotion_applied === true && (promotedAction === "ask_user" || promotedAction === "fail")) {
     routingLocked = true;
@@ -5685,6 +5780,63 @@ function resolvePlannerWorkingMemoryContinuation({
       }
     }
   }
+  const finalTaskStatus = resolveTaskTransitionTarget(observability.task_status_transition, taskStatus);
+  const advisorBasedOn = observability.advisor?.based_on
+    && typeof observability.advisor.based_on === "object"
+    && !Array.isArray(observability.advisor.based_on)
+    ? observability.advisor.based_on
+    : {};
+  const promotionAuditRecord = buildDecisionPromotionAuditRecord({
+    promoted_action: promotedAction || promotionCandidateAction || null,
+    promotion_decision: promotionDecision,
+    advisor: observability.advisor || null,
+    advisor_alignment: observability.advisor_alignment || observability.advisor_vs_actual || null,
+    readiness: advisorBasedOn.readiness_summary || observability.readiness || null,
+    outcome: advisorBasedOn.outcome_summary || {
+      outcome_status: observability.outcome_status,
+      outcome_confidence: observability.outcome_confidence,
+      outcome_evidence: observability.outcome_evidence,
+      artifact_quality: observability.artifact_quality,
+      retry_worthiness: observability.retry_worthiness,
+      user_visible_completeness: observability.user_visible_completeness,
+    },
+    recovery: advisorBasedOn.recovery_summary || {
+      recovery_policy: observability.recovery_policy,
+      recovery_action: observability.recovery_action,
+      recovery_attempt_count: observability.recovery_attempt_count,
+      rollback_target_step_id: observability.rollback_target_step_id,
+    },
+    artifact: advisorBasedOn.artifact_summary || {
+      artifact_id: observability.artifact_id,
+      artifact_type: observability.artifact_type,
+      validity_status: observability.validity_status,
+      produced_by_step_id: observability.produced_by_step_id,
+      affected_downstream_steps: observability.affected_downstream_steps,
+      dependency_type: observability.dependency_type,
+      dependency_blocked_step: observability.dependency_blocked_step,
+    },
+    task_plan: advisorBasedOn.task_plan_summary || {
+      task_id: taskId,
+      plan_id: observability.plan_id,
+      plan_status: observability.plan_status,
+      current_step_id: observability.current_step,
+    },
+    final_step_status: finalTaskStatus,
+    outcome_status: observability.outcome_status,
+    user_visible_completeness: observability.user_visible_completeness,
+    rollback_flag: promotionRollbackGate.rollback_flag === true,
+  });
+  const promotionSafetyResult = applyDecisionPromotionAuditSafety({
+    state: promotionAuditState,
+    audit_record: promotionAuditRecord,
+    threshold: DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD,
+  });
+  setPlannerPromotionAuditState({
+    sessionKey,
+    state: promotionSafetyResult.next_state,
+  });
+  observability.promotion_audit = promotionSafetyResult.audit_record;
+  observability.promotion_audit_summary = formatDecisionPromotionAuditSummary(promotionSafetyResult.audit_record);
   observability.memory_used_in_routing = Boolean(selectedAction) || routingLocked;
   return {
     selected_action: selectedAction || null,
