@@ -19,8 +19,8 @@ import {
 import { resolvePromotionControlSurface } from "./promotion-control-surface.mjs";
 
 export const USAGE_EVAL_RUNNER_VERSION = "usage_eval_runner_v2";
-export const DEFAULT_USAGE_EVAL_CASE_COUNT_MIN = 30;
-export const DEFAULT_USAGE_EVAL_CASE_COUNT_MAX = 50;
+export const DEFAULT_USAGE_EVAL_CASE_COUNT_MIN = 100;
+export const DEFAULT_USAGE_EVAL_CASE_COUNT_MAX = 140;
 export const DEFAULT_USAGE_EVAL_TOP_N = 5;
 export const DEFAULT_USAGE_EVAL_FIXTURE_PATH = new URL("../tests/fixtures/usage-eval-cases.json", import.meta.url);
 

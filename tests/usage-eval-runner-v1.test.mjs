@@ -33,6 +33,38 @@ test("usage eval runner executes multi-turn case and captures per-turn surfaces"
   }
 });
 
+test("usage eval fixture provides 100+ real-world hardening coverage", () => {
+  const loaded = loadUsageEvalCasesFromJson();
+  assert.equal(Array.isArray(loaded.cases), true);
+  assert.equal(loaded.cases.length >= 100, true);
+
+  const requiredCategoryPrefixes = [
+    "rw-amb-",
+    "rw-short-",
+    "rw-typo-",
+    "rw-multi-",
+    "rw-supp-",
+    "rw-emotion-",
+    "rw-frag-",
+  ];
+  for (const prefix of requiredCategoryPrefixes) {
+    const cases = loaded.cases.filter((item) => String(item?.case_id || "").startsWith(prefix));
+    assert.equal(cases.length >= 10, true, `missing real-world category coverage: ${prefix}`);
+  }
+
+  const allInputs = loaded.cases.flatMap((testCase) =>
+    (Array.isArray(testCase?.turns) ? testCase.turns : [])
+      .map((turn) => String(turn?.user_input || "").trim()),
+  );
+
+  assert.equal(allInputs.some((input) => input.length > 0 && input.length <= 3), true);
+  assert.equal(allInputs.some((input) => /onboading|depoly|runtiem|重式|繼序|處裡/i.test(input)), true);
+  assert.equal(allInputs.some((input) => /並|順便|同時/.test(input)), true);
+  assert.equal(allInputs.some((input) => /補資料|補上|owner=|deadline=|doc-\d+/i.test(input)), true);
+  assert.equal(allInputs.some((input) => /急|焦慮|崩潰|拜託|慌|救火/.test(input)), true);
+  assert.equal(allInputs.some((input) => /\.{3}|…/.test(input)), true);
+});
+
 test("usage eval runner aggregates deterministic metrics correctly", () => {
   const run = runUsageEvalRunner({
     case_count_target: { min: 1, max: 10 },
