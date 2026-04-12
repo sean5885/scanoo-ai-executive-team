@@ -165,6 +165,24 @@ test("retry continuity suppression keeps retry issue detected but not exposed", 
   assert.equal(visibility.suppression_flags.retry.successful, true);
 });
 
+test("usage eval runner mirrors continuity copy for retry-ineffective turn", () => {
+  const result = runUsageEvalCase({
+    case_id: "retry-copy-001",
+    description: "retry ineffective response should still keep continuation tone",
+    turns: [
+      { user_input: "先整理", expected_behavior_hint: "start_task" },
+      { user_input: "retry", expected_behavior_hint: "retry retry_ineffective" },
+    ],
+  });
+
+  assert.equal(result.ok, true);
+  const retryTurn = result.turns[1];
+  assert.equal(retryTurn.mode, "retry");
+  assert.equal(retryTurn.issue_exposed_codes.includes("retry_without_contextual_response"), false);
+  assert.equal(Array.isArray(retryTurn.user_response?.sources), true);
+  assert.equal(retryTurn.user_response.sources.length > 0, true);
+});
+
 test("detected and user-visible issue distributions stay separated in aggregation", () => {
   const run = runUsageEvalRunner({
     case_count_target: { min: 1, max: 10 },
