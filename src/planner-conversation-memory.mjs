@@ -3,6 +3,10 @@ import { dirname } from "node:path";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { cleanText } from "./message-intent-utils.mjs";
 import { getPlannerFlowOwnership } from "./planner-flow-runtime.mjs";
+import {
+  buildExecutionOutcomeObservability,
+  normalizeExecutionOutcome,
+} from "./execution-outcome-scorer.mjs";
 
 const PLANNER_SUMMARY_TRIGGER_TURNS = 6;
 const PLANNER_SUMMARY_TRIGGER_CHARS = 2400;
@@ -986,6 +990,22 @@ function normalizeWorkingMemoryExecutionPlanStep(step = null, { allowPartial = f
       return null;
     }
     normalizedStep.recovery_state = recoveryState;
+  }
+
+  if (allowPartial) {
+    if (hasField("outcome")) {
+      const outcome = normalizeExecutionOutcome(step.outcome, { allowNull: true });
+      if (step.outcome !== null && step.outcome !== undefined && step.outcome !== "" && !outcome) {
+        return null;
+      }
+      normalizedStep.outcome = outcome;
+    }
+  } else {
+    const outcome = normalizeExecutionOutcome(step.outcome, { allowNull: true });
+    if (step.outcome !== null && step.outcome !== undefined && step.outcome !== "" && !outcome) {
+      return null;
+    }
+    normalizedStep.outcome = outcome;
   }
 
   return normalizedStep;
@@ -2301,6 +2321,7 @@ export function applyPlannerWorkingMemoryPatch({
     && !Array.isArray(recoverySignalStep.recovery_state)
     ? recoverySignalStep.recovery_state
     : null;
+  const recoverySignalOutcomeObservability = buildExecutionOutcomeObservability(recoverySignalStep?.outcome || null);
   const planInvalidated = (() => {
     if (!basePlan) {
       return null;
@@ -2346,6 +2367,12 @@ export function applyPlannerWorkingMemoryPatch({
         ? Number(recoverySignalState.recovery_attempt_count)
         : null,
       rollback_target_step_id: cleanText(recoverySignalState?.rollback_target_step_id || "") || null,
+      outcome_status: recoverySignalOutcomeObservability.outcome_status,
+      outcome_confidence: recoverySignalOutcomeObservability.outcome_confidence,
+      outcome_evidence: recoverySignalOutcomeObservability.outcome_evidence,
+      artifact_quality: recoverySignalOutcomeObservability.artifact_quality,
+      retry_worthiness: recoverySignalOutcomeObservability.retry_worthiness,
+      user_visible_completeness: recoverySignalOutcomeObservability.user_visible_completeness,
       skipped_step_ids: skippedStepIds.length > 0 ? skippedStepIds : null,
       artifact_id: artifactDiagnostics.artifact_id || null,
       artifact_type: artifactDiagnostics.artifact_type || null,

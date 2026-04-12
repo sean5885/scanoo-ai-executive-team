@@ -1,4 +1,5 @@
 import { cleanText } from "./message-intent-utils.mjs";
+import { normalizeExecutionOutcome } from "./execution-outcome-scorer.mjs";
 
 const ABANDONED_TASK_PREVIEW_LIMIT = 3;
 
@@ -109,6 +110,7 @@ function normalizeExecutionPlan(plan = null) {
             status: stepStatus,
             failure_class: cleanText(step?.failure_class || "") || null,
             recovery_policy: cleanText(step?.recovery_policy || "") || null,
+            outcome: normalizeExecutionOutcome(step?.outcome, { allowNull: true }),
             recovery_state: step?.recovery_state && typeof step.recovery_state === "object" && !Array.isArray(step.recovery_state)
               ? {
                   last_failure_class: cleanText(step.recovery_state.last_failure_class || "") || null,
@@ -227,6 +229,35 @@ function normalizeExecutionPlan(plan = null) {
   };
 }
 
+function resolveFocusPlanStep(executionPlan = null) {
+  const normalizedPlan = executionPlan && typeof executionPlan === "object" && !Array.isArray(executionPlan)
+    ? executionPlan
+    : null;
+  if (!normalizedPlan || !Array.isArray(normalizedPlan.steps) || normalizedPlan.steps.length === 0) {
+    return null;
+  }
+  if (normalizedPlan.current_step) {
+    const currentStep = normalizedPlan.steps.find((step) => step.step_id === normalizedPlan.current_step) || null;
+    if (currentStep) {
+      return currentStep;
+    }
+  }
+  const producedByStepId = cleanText(normalizedPlan?.primary_artifact?.produced_by_step_id || "");
+  if (producedByStepId) {
+    const producedStep = normalizedPlan.steps.find((step) => step.step_id === producedByStepId) || null;
+    if (producedStep) {
+      return producedStep;
+    }
+  }
+  for (let index = normalizedPlan.steps.length - 1; index >= 0; index -= 1) {
+    const step = normalizedPlan.steps[index];
+    if (normalizeExecutionOutcome(step?.outcome, { allowNull: true })) {
+      return step;
+    }
+  }
+  return normalizedPlan.steps[normalizedPlan.steps.length - 1] || null;
+}
+
 function toSnapshot(memorySnapshot = null) {
   const snapshot = memorySnapshot && typeof memorySnapshot === "object" && !Array.isArray(memorySnapshot)
     ? memorySnapshot
@@ -235,9 +266,8 @@ function toSnapshot(memorySnapshot = null) {
   const slotState = normalizeSlotState(snapshot.slot_state);
   const abandonedTaskIds = summarizeAbandonedTaskIds(snapshot.abandoned_task_ids);
   const executionPlan = normalizeExecutionPlan(snapshot.execution_plan);
-  const currentPlanStep = executionPlan.current_step
-    ? executionPlan.steps.find((step) => step.step_id === executionPlan.current_step) || null
-    : null;
+  const currentPlanStep = resolveFocusPlanStep(executionPlan);
+  const currentPlanStepOutcome = normalizeExecutionOutcome(currentPlanStep?.outcome, { allowNull: true });
   return {
     task_id: cleanText(snapshot.task_id || "") || null,
     task_type: cleanText(snapshot.task_type || snapshot.inferred_task_type || "") || null,
@@ -268,6 +298,14 @@ function toSnapshot(memorySnapshot = null) {
         ? Number(currentPlanStep.recovery_state.recovery_attempt_count)
         : 0,
       current_step_rollback_target_step_id: currentPlanStep?.recovery_state?.rollback_target_step_id || null,
+      current_step_outcome_status: currentPlanStepOutcome?.outcome_status || null,
+      current_step_outcome_confidence: currentPlanStepOutcome?.outcome_confidence ?? null,
+      current_step_outcome_evidence: currentPlanStepOutcome?.outcome_evidence || null,
+      current_step_artifact_quality: currentPlanStepOutcome?.artifact_quality || null,
+      current_step_retry_worthiness: typeof currentPlanStepOutcome?.retry_worthiness === "boolean"
+        ? currentPlanStepOutcome.retry_worthiness
+        : null,
+      current_step_user_visible_completeness: currentPlanStepOutcome?.user_visible_completeness || null,
       artifact_id: executionPlan.primary_artifact.artifact_id || null,
       artifact_type: executionPlan.primary_artifact.artifact_type || null,
       validity_status: executionPlan.primary_artifact.validity_status || null,
@@ -362,6 +400,57 @@ function normalizeReadinessObservability(observability = null) {
   };
 }
 
+function normalizeOutcomeObservability(observability = null, snapshot = null) {
+  const normalizedObservability = observability && typeof observability === "object" && !Array.isArray(observability)
+    ? observability
+    : {};
+  const normalizedFromObservability = normalizeExecutionOutcome({
+    outcome_status: normalizedObservability.outcome_status,
+    outcome_confidence: normalizedObservability.outcome_confidence,
+    outcome_evidence: normalizedObservability.outcome_evidence,
+    artifact_quality: normalizedObservability.artifact_quality,
+    retry_worthiness: normalizedObservability.retry_worthiness,
+    user_visible_completeness: normalizedObservability.user_visible_completeness,
+  }, { allowNull: true });
+  if (normalizedFromObservability) {
+    return normalizedFromObservability;
+  }
+  const snapshotOutcome = normalizeExecutionOutcome({
+    outcome_status: snapshot?.execution_plan?.current_step_outcome_status,
+    outcome_confidence: snapshot?.execution_plan?.current_step_outcome_confidence,
+    outcome_evidence: snapshot?.execution_plan?.current_step_outcome_evidence,
+    artifact_quality: snapshot?.execution_plan?.current_step_artifact_quality,
+    retry_worthiness: snapshot?.execution_plan?.current_step_retry_worthiness,
+    user_visible_completeness: snapshot?.execution_plan?.current_step_user_visible_completeness,
+  }, { allowNull: true });
+  return snapshotOutcome;
+}
+
+function formatOutcomeEvidence(evidence = null) {
+  const normalizedEvidence = evidence && typeof evidence === "object" && !Array.isArray(evidence)
+    ? evidence
+    : null;
+  if (!normalizedEvidence) {
+    return "none";
+  }
+  const slotsFilledCount = Number.isFinite(Number(normalizedEvidence.slots_filled_count))
+    ? Number(normalizedEvidence.slots_filled_count)
+    : 0;
+  const slotsMissingCount = Number.isFinite(Number(normalizedEvidence.slots_missing_count))
+    ? Number(normalizedEvidence.slots_missing_count)
+    : 0;
+  const artifactsProducedCount = Number.isFinite(Number(normalizedEvidence.artifacts_produced_count))
+    ? Number(normalizedEvidence.artifacts_produced_count)
+    : 0;
+  const errorsEncountered = Array.isArray(normalizedEvidence.errors_encountered)
+    ? normalizedEvidence.errors_encountered.map((item) => cleanText(item)).filter(Boolean)
+    : [];
+  const recoveryActionsTaken = Array.isArray(normalizedEvidence.recovery_actions_taken)
+    ? normalizedEvidence.recovery_actions_taken.map((item) => cleanText(item)).filter(Boolean)
+    : [];
+  return `slots=${slotsFilledCount}/${slotsMissingCount} artifacts=${artifactsProducedCount} errors=${formatValue(errorsEncountered)} recovery=${formatValue(recoveryActionsTaken)}`;
+}
+
 function summarizeReadinessArtifacts(invalidArtifacts = []) {
   if (!Array.isArray(invalidArtifacts) || invalidArtifacts.length === 0) {
     return [];
@@ -400,6 +489,7 @@ function buildDiffLines({
     ? observability
     : {};
   const readinessObservability = normalizeReadinessObservability(normalizedObservability);
+  const outcomeObservability = normalizeOutcomeObservability(normalizedObservability, next);
   const diffLines = [];
   const seen = new Set();
   const addDiffLine = (line = "") => {
@@ -444,6 +534,12 @@ function buildDiffLines({
   addFieldDiff("current_step_recovery_action", previous.execution_plan.current_step_recovery_action, next.execution_plan.current_step_recovery_action);
   addFieldDiff("current_step_recovery_attempt_count", previous.execution_plan.current_step_recovery_attempt_count, next.execution_plan.current_step_recovery_attempt_count);
   addFieldDiff("current_step_rollback_target_step_id", previous.execution_plan.current_step_rollback_target_step_id, next.execution_plan.current_step_rollback_target_step_id);
+  addFieldDiff("outcome_status", previous.execution_plan.current_step_outcome_status, next.execution_plan.current_step_outcome_status);
+  addFieldDiff("outcome_confidence", previous.execution_plan.current_step_outcome_confidence, next.execution_plan.current_step_outcome_confidence);
+  addFieldDiff("outcome_evidence", formatOutcomeEvidence(previous.execution_plan.current_step_outcome_evidence), formatOutcomeEvidence(next.execution_plan.current_step_outcome_evidence));
+  addFieldDiff("artifact_quality", previous.execution_plan.current_step_artifact_quality, next.execution_plan.current_step_artifact_quality);
+  addFieldDiff("retry_worthiness", previous.execution_plan.current_step_retry_worthiness, next.execution_plan.current_step_retry_worthiness);
+  addFieldDiff("user_visible_completeness", previous.execution_plan.current_step_user_visible_completeness, next.execution_plan.current_step_user_visible_completeness);
   addFieldDiff("artifact_id", previous.execution_plan.artifact_id, next.execution_plan.artifact_id);
   addFieldDiff("artifact_type", previous.execution_plan.artifact_type, next.execution_plan.artifact_type);
   addFieldDiff("validity_status", previous.execution_plan.validity_status, next.execution_plan.validity_status);
@@ -628,6 +724,26 @@ function buildDiffLines({
   if (readinessObservability.recommended_action && !hasDiffPrefix("recommended_action:")) {
     addDiffLine(`recommended_action: ${readinessObservability.recommended_action}`);
   }
+  if (outcomeObservability?.outcome_status && !hasDiffPrefix("outcome_status:")) {
+    addDiffLine(`outcome_status: ${outcomeObservability.outcome_status}`);
+  }
+  if (outcomeObservability?.outcome_confidence !== null
+    && outcomeObservability?.outcome_confidence !== undefined
+    && !hasDiffPrefix("outcome_confidence:")) {
+    addDiffLine(`outcome_confidence: ${formatValue(outcomeObservability.outcome_confidence)}`);
+  }
+  if (outcomeObservability?.outcome_evidence && !hasDiffPrefix("outcome_evidence:")) {
+    addDiffLine(`outcome_evidence: ${formatOutcomeEvidence(outcomeObservability.outcome_evidence)}`);
+  }
+  if (outcomeObservability?.artifact_quality && !hasDiffPrefix("artifact_quality:")) {
+    addDiffLine(`artifact_quality: ${outcomeObservability.artifact_quality}`);
+  }
+  if (typeof outcomeObservability?.retry_worthiness === "boolean" && !hasDiffPrefix("retry_worthiness:")) {
+    addDiffLine(`retry_worthiness: ${outcomeObservability.retry_worthiness ? "true" : "false"}`);
+  }
+  if (outcomeObservability?.user_visible_completeness && !hasDiffPrefix("user_visible_completeness:")) {
+    addDiffLine(`user_visible_completeness: ${outcomeObservability.user_visible_completeness}`);
+  }
   if (normalizedObservability.resumed_from_waiting_user === true) {
     addDiffLine("resume: waiting_user");
   }
@@ -647,6 +763,7 @@ function buildTaskTraceText({
   const next = toSnapshot(snapshot);
   const slots = next.slot_state;
   const readiness = normalizeReadinessObservability(readinessObservability);
+  const outcome = normalizeOutcomeObservability(readinessObservability, next);
   const readinessInvalidArtifacts = summarizeReadinessArtifacts(readiness.invalid_artifacts);
   const readinessBlockedDependencies = summarizeBlockedDependencies(readiness.blocked_dependencies);
   const abandonedSummary = next.abandoned_task_hidden_count > 0
@@ -660,6 +777,7 @@ function buildTaskTraceText({
     `next_best_action: ${formatValue(next.next_best_action)}`,
     `plan: id=${formatValue(next.execution_plan.plan_id)} | status=${formatValue(next.execution_plan.plan_status)} | current_step=${formatValue(next.execution_plan.current_step)}`,
     `recovery: class=${formatValue(next.execution_plan.current_step_failure_class)} | policy=${formatValue(next.execution_plan.current_step_recovery_policy)} | action=${formatValue(next.execution_plan.current_step_recovery_action)} | attempts=${formatValue(next.execution_plan.current_step_recovery_attempt_count)} | rollback_target=${formatValue(next.execution_plan.current_step_rollback_target_step_id)}`,
+    `outcome: status=${formatValue(outcome?.outcome_status || null)} | confidence=${formatValue(outcome?.outcome_confidence ?? null)} | evidence=${formatOutcomeEvidence(outcome?.outcome_evidence || null)} | artifact_quality=${formatValue(outcome?.artifact_quality || null)} | retry_worthiness=${formatValue(typeof outcome?.retry_worthiness === "boolean" ? outcome.retry_worthiness : null)} | user_visible=${formatValue(outcome?.user_visible_completeness || null)}`,
     `artifact: id=${formatValue(next.execution_plan.artifact_id)} | type=${formatValue(next.execution_plan.artifact_type)} | validity=${formatValue(next.execution_plan.validity_status)} | produced_by=${formatValue(next.execution_plan.produced_by_step_id)} | downstream=${formatValue(next.execution_plan.affected_downstream_steps)} | dependency=${formatValue(next.execution_plan.dependency_type)} | blocked_step=${formatValue(next.execution_plan.dependency_blocked_step)} | superseded=${formatValue(next.execution_plan.artifact_superseded)}`,
     `readiness: is_ready=${formatValue(readiness.is_ready)} | reasons=${formatValue(readiness.blocking_reason_codes)} | missing_slots=${formatValue(readiness.missing_slots)} | invalid_artifacts=${formatValue(readinessInvalidArtifacts)} | blocked_dependencies=${formatValue(readinessBlockedDependencies)} | owner_ready=${formatValue(readiness.owner_ready)} | recovery_ready=${formatValue(readiness.recovery_ready)} | recommended_action=${formatValue(readiness.recommended_action)}`,
     `slot_state: missing=${formatValue(slots.missing)} | filled=${formatValue(slots.filled)} | invalid=${formatValue(slots.invalid)}`,
@@ -684,6 +802,7 @@ export function buildPlannerTaskTraceDiagnostics({
 } = {}) {
   const snapshot = toSnapshot(memorySnapshot);
   const readinessObservability = normalizeReadinessObservability(observability);
+  const outcomeObservability = normalizeOutcomeObservability(observability, snapshot);
   const readinessInvalidArtifacts = summarizeReadinessArtifacts(readinessObservability.invalid_artifacts);
   const readinessBlockedDependencies = summarizeBlockedDependencies(readinessObservability.blocked_dependencies);
   const diff = buildDiffLines({
@@ -691,7 +810,7 @@ export function buildPlannerTaskTraceDiagnostics({
     nextSnapshot: memorySnapshot,
     observability,
   });
-  const summary = `task=${formatValue(snapshot.task_id)} phase=${snapshot.task_phase} status=${snapshot.task_status} owner=${formatValue(snapshot.current_owner_agent)} plan=${formatValue(snapshot.execution_plan.plan_status)}:${formatValue(snapshot.execution_plan.current_step)} recovery=${formatValue(snapshot.execution_plan.current_step_recovery_action)} readiness=${formatValue(readinessObservability.is_ready)}:${formatValue(readinessObservability.recommended_action)} artifact=${formatValue(snapshot.execution_plan.artifact_id)}:${formatValue(snapshot.execution_plan.validity_status)} next=${formatValue(snapshot.next_best_action)}`;
+  const summary = `task=${formatValue(snapshot.task_id)} phase=${snapshot.task_phase} status=${snapshot.task_status} owner=${formatValue(snapshot.current_owner_agent)} plan=${formatValue(snapshot.execution_plan.plan_status)}:${formatValue(snapshot.execution_plan.current_step)} recovery=${formatValue(snapshot.execution_plan.current_step_recovery_action)} readiness=${formatValue(readinessObservability.is_ready)}:${formatValue(readinessObservability.recommended_action)} outcome=${formatValue(outcomeObservability?.outcome_status || null)}:${formatValue(outcomeObservability?.retry_worthiness)} artifact=${formatValue(snapshot.execution_plan.artifact_id)}:${formatValue(snapshot.execution_plan.validity_status)} next=${formatValue(snapshot.next_best_action)}`;
   return {
     summary,
     snapshot: {
@@ -716,6 +835,16 @@ export function buildPlannerTaskTraceDiagnostics({
         recovery_ready: readinessObservability.recovery_ready,
         recommended_action: readinessObservability.recommended_action,
       },
+      outcome: outcomeObservability
+        ? {
+            outcome_status: outcomeObservability.outcome_status,
+            outcome_confidence: outcomeObservability.outcome_confidence,
+            outcome_evidence: outcomeObservability.outcome_evidence,
+            artifact_quality: outcomeObservability.artifact_quality,
+            retry_worthiness: outcomeObservability.retry_worthiness,
+            user_visible_completeness: outcomeObservability.user_visible_completeness,
+          }
+        : null,
       slot_state: snapshot.slot_state,
       abandoned_task_ids: snapshot.abandoned_task_ids,
       abandoned_task_total: snapshot.abandoned_task_total,
@@ -758,6 +887,12 @@ export function buildPlannerTaskTraceDiagnostics({
       owner_ready: typeof readinessObservability.owner_ready === "boolean",
       recovery_ready: typeof readinessObservability.recovery_ready === "boolean",
       recommended_action: Boolean(cleanText(readinessObservability.recommended_action || "")),
+      outcome_status: Boolean(cleanText(outcomeObservability?.outcome_status || "")),
+      outcome_confidence: outcomeObservability?.outcome_confidence !== null && outcomeObservability?.outcome_confidence !== undefined,
+      outcome_evidence: Boolean(outcomeObservability?.outcome_evidence),
+      artifact_quality: Boolean(cleanText(outcomeObservability?.artifact_quality || "")),
+      retry_worthiness: typeof outcomeObservability?.retry_worthiness === "boolean",
+      user_visible_completeness: Boolean(cleanText(outcomeObservability?.user_visible_completeness || "")),
       resumed_from_waiting_user: observability?.resumed_from_waiting_user === true,
       resumed_from_retry: observability?.resumed_from_retry === true,
     },
