@@ -1,0 +1,281 @@
+[
+  {
+    "case_id": "cont-001",
+    "description": "Follow-up continuation after selecting a candidate document",
+    "turns": [
+      { "user_input": "幫我找 onboarding 文件", "expected_behavior_hint": "start_task" },
+      { "user_input": "第一份", "expected_behavior_hint": "continuation slot_filled_resume" },
+      { "user_input": "繼續整理重點", "expected_behavior_hint": "continuation with_context" }
+    ]
+  },
+  {
+    "case_id": "cont-002",
+    "description": "Follow-up continuation with explicit next-step request",
+    "turns": [
+      { "user_input": "先查一下部署 runbook", "expected_behavior_hint": "start_task" },
+      { "user_input": "接著下一步", "expected_behavior_hint": "continuation with_context" },
+      { "user_input": "再來補限制", "expected_behavior_hint": "continuation" }
+    ]
+  },
+  {
+    "case_id": "cont-003",
+    "description": "Continuation but model resets like a new task",
+    "turns": [
+      { "user_input": "幫我整理 OKR 週報", "expected_behavior_hint": "start_task" },
+      { "user_input": "第一份", "expected_behavior_hint": "continuation_missed" },
+      { "user_input": "繼續", "expected_behavior_hint": "continuation" }
+    ]
+  },
+  {
+    "case_id": "cont-004",
+    "description": "Continuation with compact deictic reference",
+    "turns": [
+      { "user_input": "查 cloud doc 審核狀態", "expected_behavior_hint": "start_task" },
+      { "user_input": "這份", "expected_behavior_hint": "continuation with_context" },
+      { "user_input": "好，下一步", "expected_behavior_hint": "continuation" }
+    ]
+  },
+  {
+    "case_id": "cont-005",
+    "description": "Continuation with short high-related utterances",
+    "turns": [
+      { "user_input": "先看 runtime 檔案路徑", "expected_behavior_hint": "start_task runtime" },
+      { "user_input": "繼續", "expected_behavior_hint": "continuation runtime with_context" },
+      { "user_input": "再來", "expected_behavior_hint": "continuation runtime" }
+    ]
+  },
+  {
+    "case_id": "cont-006",
+    "description": "Continuation where context phrase is omitted",
+    "turns": [
+      { "user_input": "幫我整理交付流程", "expected_behavior_hint": "start_task" },
+      { "user_input": "第二份", "expected_behavior_hint": "continuation actual_ask_user" },
+      { "user_input": "繼續", "expected_behavior_hint": "continuation" }
+    ]
+  },
+  {
+    "case_id": "slot-001",
+    "description": "Slot missing then user fills and flow resumes",
+    "turns": [
+      { "user_input": "幫我打開文件內容", "expected_behavior_hint": "start_task" },
+      { "user_input": "直接打開", "expected_behavior_hint": "slot_missing" },
+      { "user_input": "doc-12", "expected_behavior_hint": "slot_filled_resume continuation with_context" }
+    ]
+  },
+  {
+    "case_id": "slot-002",
+    "description": "Slot filling with explicit document id",
+    "turns": [
+      { "user_input": "幫我看這份文件", "expected_behavior_hint": "start_task" },
+      { "user_input": "這份先打開", "expected_behavior_hint": "slot_missing" },
+      { "user_input": "文件編號是 doc-88", "expected_behavior_hint": "slot_filled_resume continuation with_context" }
+    ]
+  },
+  {
+    "case_id": "slot-003",
+    "description": "Redundant ask even though slot already filled",
+    "turns": [
+      { "user_input": "幫我整理會議摘要", "expected_behavior_hint": "start_task" },
+      { "user_input": "我已經給你文件編號了", "expected_behavior_hint": "slot_missing redundant_ask" },
+      { "user_input": "繼續處理", "expected_behavior_hint": "continuation" }
+    ]
+  },
+  {
+    "case_id": "slot-004",
+    "description": "Slot resume after waiting-user phase",
+    "turns": [
+      { "user_input": "請先查 onboarding SOP", "expected_behavior_hint": "start_task" },
+      { "user_input": "直接給我細節", "expected_behavior_hint": "slot_missing" },
+      { "user_input": "補上：doc-21", "expected_behavior_hint": "slot_filled_resume continuation with_context" },
+      { "user_input": "再補第二段", "expected_behavior_hint": "continuation" }
+    ]
+  },
+  {
+    "case_id": "slot-005",
+    "description": "Slot fill followed by normal continuation",
+    "turns": [
+      { "user_input": "幫我整理知識庫文檔", "expected_behavior_hint": "start_task" },
+      { "user_input": "先打開這份", "expected_behavior_hint": "slot_missing" },
+      { "user_input": "doc-101", "expected_behavior_hint": "slot_filled_resume continuation with_context" },
+      { "user_input": "繼續總結", "expected_behavior_hint": "continuation" }
+    ]
+  },
+  {
+    "case_id": "slot-006",
+    "description": "Slot filling but response continuity is weak",
+    "turns": [
+      { "user_input": "幫我查詢路由文檔", "expected_behavior_hint": "start_task" },
+      { "user_input": "打開內容", "expected_behavior_hint": "slot_missing" },
+      { "user_input": "doc-7", "expected_behavior_hint": "slot_filled_resume" }
+    ]
+  },
+  {
+    "case_id": "retry-001",
+    "description": "Retry path succeeds after transient error",
+    "turns": [
+      { "user_input": "幫我整理最近對話", "expected_behavior_hint": "start_task" },
+      { "user_input": "剛剛失敗了，再試一次", "expected_behavior_hint": "retry retry_effective with_context" },
+      { "user_input": "繼續", "expected_behavior_hint": "continuation" }
+    ]
+  },
+  {
+    "case_id": "retry-002",
+    "description": "Retry remains ineffective",
+    "turns": [
+      { "user_input": "幫我查 runtime 指標", "expected_behavior_hint": "start_task runtime" },
+      { "user_input": "retry 一次", "expected_behavior_hint": "retry retry_ineffective actual_ask_user" },
+      { "user_input": "再試看看", "expected_behavior_hint": "retry retry_ineffective" }
+    ]
+  },
+  {
+    "case_id": "retry-003",
+    "description": "Retry then recovers successfully",
+    "turns": [
+      { "user_input": "幫我跑一次文檔分類", "expected_behavior_hint": "start_task" },
+      { "user_input": "重試", "expected_behavior_hint": "retry retry_effective with_context" },
+      { "user_input": "下一步", "expected_behavior_hint": "continuation" }
+    ]
+  },
+  {
+    "case_id": "retry-004",
+    "description": "Retry with weak context copy",
+    "turns": [
+      { "user_input": "查一下 delivery checklist", "expected_behavior_hint": "start_task" },
+      { "user_input": "再跑一次", "expected_behavior_hint": "retry retry_effective" },
+      { "user_input": "繼續整理", "expected_behavior_hint": "continuation" }
+    ]
+  },
+  {
+    "case_id": "retry-005",
+    "description": "Retry mixed with continuation",
+    "turns": [
+      { "user_input": "幫我收斂這份顧問報告", "expected_behavior_hint": "start_task" },
+      { "user_input": "重試一下", "expected_behavior_hint": "retry retry_effective with_context" },
+      { "user_input": "再來", "expected_behavior_hint": "continuation with_context" },
+      { "user_input": "補第二段", "expected_behavior_hint": "continuation" }
+    ]
+  },
+  {
+    "case_id": "reroute-001",
+    "description": "Reroute succeeds to runtime owner",
+    "turns": [
+      { "user_input": "幫我先看文件摘要", "expected_behavior_hint": "start_task" },
+      { "user_input": "改由 runtime 代理處理", "expected_behavior_hint": "reroute reroute_effective with_context" },
+      { "user_input": "繼續", "expected_behavior_hint": "continuation runtime" }
+    ]
+  },
+  {
+    "case_id": "reroute-002",
+    "description": "Reroute is applied but ineffective",
+    "turns": [
+      { "user_input": "這題先查文檔", "expected_behavior_hint": "start_task" },
+      { "user_input": "轉給 runtime", "expected_behavior_hint": "reroute reroute_ineffective" },
+      { "user_input": "再看一次", "expected_behavior_hint": "retry retry_ineffective" }
+    ]
+  },
+  {
+    "case_id": "reroute-003",
+    "description": "Reroute then continues with new owner",
+    "turns": [
+      { "user_input": "先幫我看流程文件", "expected_behavior_hint": "start_task" },
+      { "user_input": "換人處理", "expected_behavior_hint": "reroute reroute_effective with_context" },
+      { "user_input": "下一步", "expected_behavior_hint": "continuation with_context" },
+      { "user_input": "再來", "expected_behavior_hint": "continuation" }
+    ]
+  },
+  {
+    "case_id": "reroute-004",
+    "description": "Reroute with unstable target verification",
+    "turns": [
+      { "user_input": "查這份文件的 runtime 相依", "expected_behavior_hint": "start_task" },
+      { "user_input": "reroute", "expected_behavior_hint": "reroute reroute_ineffective" },
+      { "user_input": "繼續看看", "expected_behavior_hint": "continuation" }
+    ]
+  },
+  {
+    "case_id": "reroute-005",
+    "description": "Reroute effective but later continuation resets",
+    "turns": [
+      { "user_input": "幫我整理資料來源", "expected_behavior_hint": "start_task" },
+      { "user_input": "改由 runtime 處理", "expected_behavior_hint": "reroute reroute_effective with_context" },
+      { "user_input": "第一份", "expected_behavior_hint": "continuation_missed" }
+    ]
+  },
+  {
+    "case_id": "switch-001",
+    "description": "Explicit topic switch from document to runtime",
+    "turns": [
+      { "user_input": "幫我找 onboarding 文件", "expected_behavior_hint": "start_task" },
+      { "user_input": "換個題目，查今天 runtime health", "expected_behavior_hint": "topic_switch runtime" },
+      { "user_input": "再補 detail", "expected_behavior_hint": "continuation runtime" }
+    ]
+  },
+  {
+    "case_id": "switch-002",
+    "description": "Explicit topic switch to calendar-like request",
+    "turns": [
+      { "user_input": "先整理這份文檔", "expected_behavior_hint": "start_task" },
+      { "user_input": "改問：今天行程有哪些", "expected_behavior_hint": "topic_switch runtime" },
+      { "user_input": "繼續", "expected_behavior_hint": "continuation runtime" }
+    ]
+  },
+  {
+    "case_id": "switch-003",
+    "description": "Topic switch followed by retry",
+    "turns": [
+      { "user_input": "幫我查 docs", "expected_behavior_hint": "start_task" },
+      { "user_input": "new topic: runtime pid", "expected_behavior_hint": "topic_switch runtime" },
+      { "user_input": "retry", "expected_behavior_hint": "retry retry_effective with_context" }
+    ]
+  },
+  {
+    "case_id": "switch-004",
+    "description": "Topic switch with fail-closed promotion",
+    "turns": [
+      { "user_input": "先看文件摘要", "expected_behavior_hint": "start_task" },
+      { "user_input": "換題：我要直接發送訊息", "expected_behavior_hint": "topic_switch" },
+      { "user_input": "如果不安全就停下", "expected_behavior_hint": "promote_fail actual_ask_user" }
+    ]
+  },
+  {
+    "case_id": "mixed-001",
+    "description": "Mixed flow: slot missing -> fill -> reroute -> continue",
+    "turns": [
+      { "user_input": "幫我打開文件", "expected_behavior_hint": "start_task" },
+      { "user_input": "直接打開就好", "expected_behavior_hint": "slot_missing" },
+      { "user_input": "doc-19", "expected_behavior_hint": "slot_filled_resume continuation with_context" },
+      { "user_input": "改由 runtime 接手", "expected_behavior_hint": "reroute reroute_effective with_context" },
+      { "user_input": "繼續", "expected_behavior_hint": "continuation runtime" }
+    ]
+  },
+  {
+    "case_id": "mixed-002",
+    "description": "Mixed flow: retry ineffective then reroute",
+    "turns": [
+      { "user_input": "幫我整理這份分析", "expected_behavior_hint": "start_task" },
+      { "user_input": "重試一下", "expected_behavior_hint": "retry retry_ineffective" },
+      { "user_input": "那就改由 runtime", "expected_behavior_hint": "reroute reroute_effective with_context" },
+      { "user_input": "接著", "expected_behavior_hint": "continuation runtime" }
+    ]
+  },
+  {
+    "case_id": "mixed-003",
+    "description": "Mixed flow: continuation miss then recovery",
+    "turns": [
+      { "user_input": "先幫我查 onboarding", "expected_behavior_hint": "start_task" },
+      { "user_input": "第一份", "expected_behavior_hint": "continuation_missed" },
+      { "user_input": "補上 doc-52", "expected_behavior_hint": "slot_filled_resume continuation with_context" },
+      { "user_input": "retry", "expected_behavior_hint": "retry retry_effective with_context" }
+    ]
+  },
+  {
+    "case_id": "mixed-004",
+    "description": "Mixed flow: fail-close decision after unstable retries",
+    "turns": [
+      { "user_input": "幫我整理跨部門決策紀錄", "expected_behavior_hint": "start_task" },
+      { "user_input": "retry", "expected_behavior_hint": "retry retry_ineffective" },
+      { "user_input": "再 retry", "expected_behavior_hint": "retry retry_ineffective" },
+      { "user_input": "如果不安全就停止", "expected_behavior_hint": "promote_fail" }
+    ]
+  }
+]

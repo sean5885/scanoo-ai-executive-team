@@ -70,6 +70,8 @@ test("usage pass detects redundant ask when slot is already filled", () => {
 
   assert.equal(pass.diagnostics.redundant_question_detected, true);
   assert.equal(pass.diagnostics.usage_issue_codes.includes("redundant_slot_ask"), true);
+  assert.equal(pass.diagnostics.slot_suppressed_ask, true);
+  assert.equal(pass.behavior.ask_user_suppressed, true);
 });
 
 test("usage pass marks obvious topic switch as new task", () => {
@@ -139,7 +141,74 @@ test("usage pass and continuity copy expose reroute context to user-visible sour
     },
   });
   assert.equal(Array.isArray(patched.sources), true);
-  assert.match(patched.sources[0] || "", /改由 runtime_agent/);
+  assert.match(patched.sources[0] || "", /改由 runtime_agent|這一步我改由/);
+});
+
+test("usage pass marks retry continuity when retry response keeps contextual copy", () => {
+  const pass = evaluateUsageLayerIntelligencePass({
+    requestText: "retry 一次",
+    workingMemory: {
+      task_id: "task-usage-retry-context",
+      task_type: "document_lookup",
+      task_phase: "retrying",
+      task_status: "failed",
+      next_best_action: "search_company_brain_docs",
+      slot_state: [],
+    },
+    observability: {
+      recovery_action: "retry_same_step",
+      resumed_from_retry: true,
+    },
+    userResponse: {
+      ok: true,
+      answer: "我剛剛那一步再幫你確認一下，現在接著處理。",
+      sources: [],
+      limitations: [],
+    },
+  });
+
+  assert.equal(pass.diagnostics.interpreted_as_continuation, true);
+  assert.equal(pass.diagnostics.retry_context_applied, true);
+  assert.equal(pass.diagnostics.usage_issue_codes.includes("retry_without_contextual_response"), false);
+});
+
+test("usage pass scores low when multiple usage issues coexist", () => {
+  const pass = evaluateUsageLayerIntelligencePass({
+    requestText: "再試一次",
+    taskType: "document_lookup",
+    workingMemory: {
+      task_id: "task-usage-multi-issue",
+      task_type: "document_lookup",
+      task_phase: "retrying",
+      task_status: "failed",
+      current_owner_agent: "runtime_agent",
+      previous_owner_agent: "doc_agent",
+      slot_state: [
+        {
+          slot_key: "candidate_selection_required",
+          status: "filled",
+          ttl: "2030-01-01T00:00:00.000Z",
+        },
+      ],
+    },
+    observability: {
+      recovery_action: "ask_user",
+      recommended_action: "ask_user",
+      current_owner_agent: "runtime_agent",
+      previous_owner_agent: "doc_agent",
+      resumed_from_retry: true,
+    },
+    userResponse: {
+      ok: false,
+      answer: "請再補一次文件編號。",
+      sources: [],
+      limitations: ["請補文件編號"],
+    },
+  });
+
+  assert.equal(pass.diagnostics.usage_issue_codes.includes("redundant_slot_ask"), true);
+  assert.equal(pass.diagnostics.usage_issue_codes.includes("unnecessary_owner_switch"), true);
+  assert.equal(pass.diagnostics.response_continuity_score, "low");
 });
 
 test("malformed usage input fails closed", () => {

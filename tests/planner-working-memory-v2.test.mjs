@@ -146,6 +146,140 @@ test("v2 keeps running task owner stable across multi-step follow-ups", async ()
   resetPlannerConversationMemory({ sessionKey });
 });
 
+test("v2 owner continuity guard blocks unnecessary selector owner switch", async () => {
+  const sessionKey = "wm-v2-owner-guard-block-switch";
+  resetPlannerRuntimeContext({ sessionKey });
+  resetPlannerConversationMemory({ sessionKey });
+  seedWorkingMemory(sessionKey, {
+    task_id: "task-v2-owner-guard-block-switch",
+    task_phase: "executing",
+    task_status: "running",
+    current_owner_agent: "doc_agent",
+    next_best_action: "search_company_brain_docs",
+    execution_plan: buildSeedExecutionPlan({
+      planId: "plan-v2-owner-guard-block-switch",
+      currentStepId: "step-owner-guard-1",
+      steps: [
+        {
+          step_id: "step-owner-guard-1",
+          step_type: "planner_action",
+          owner_agent: "doc_agent",
+          intended_action: "search_company_brain_docs",
+          status: "running",
+          depends_on: [],
+          retryable: true,
+          artifact_refs: [],
+          slot_requirements: [],
+        },
+      ],
+    }),
+  });
+
+  let dispatchAction = null;
+  const result = await runPlannerToolFlow({
+    userIntent: "下一步",
+    payload: {},
+    sessionKey,
+    disableAutoRouting: true,
+    selector() {
+      return {
+        selected_action: "get_runtime_info",
+        reason: "selector_get_runtime_info",
+        routing_reason: "selector_get_runtime_info",
+      };
+    },
+    async dispatcher({ action }) {
+      dispatchAction = action;
+      return {
+        ok: true,
+        action: "company_brain_docs_search",
+        items: [],
+        trace_id: "trace-wm-v2-owner-guard-block-switch",
+      };
+    },
+  });
+
+  assert.equal(dispatchAction, "search_company_brain_docs");
+  assert.equal(result.selected_action, "search_company_brain_docs");
+
+  resetPlannerRuntimeContext({ sessionKey });
+  resetPlannerConversationMemory({ sessionKey });
+});
+
+test("v2 owner continuity guard does not block selector reroute when capability gap is explicit", async () => {
+  const sessionKey = "wm-v2-owner-guard-allow-reroute";
+  resetPlannerRuntimeContext({ sessionKey });
+  resetPlannerConversationMemory({ sessionKey });
+  seedWorkingMemory(sessionKey, {
+    task_id: "task-v2-owner-guard-allow-reroute",
+    task_type: "runtime_info",
+    inferred_task_type: "runtime_info",
+    task_phase: "failed",
+    task_status: "failed",
+    current_owner_agent: "doc_agent",
+    previous_owner_agent: "doc_agent",
+    retry_count: 1,
+    next_best_action: "get_runtime_info",
+    execution_plan: buildSeedExecutionPlan({
+      planId: "plan-v2-owner-guard-allow-reroute",
+      currentStepId: "step-owner-guard-allow-reroute-1",
+      steps: [
+        {
+          step_id: "step-owner-guard-allow-reroute-1",
+          step_type: "planner_action",
+          owner_agent: "doc_agent",
+          intended_action: "search_company_brain_docs",
+          status: "failed",
+          depends_on: [],
+          retryable: false,
+          artifact_refs: [],
+          slot_requirements: [],
+          failure_class: "capability_gap",
+          recovery_policy: "reroute_owner",
+          recovery_state: {
+            last_failure_class: "capability_gap",
+            recovery_attempt_count: 2,
+            last_recovery_action: "reroute_owner",
+            rollback_target_step_id: null,
+          },
+        },
+      ],
+    }),
+  });
+
+  let dispatchAction = null;
+  const result = await runPlannerToolFlow({
+    userIntent: "再試一次",
+    payload: {},
+    sessionKey,
+    disableAutoRouting: true,
+    selector() {
+      return {
+        selected_action: "get_runtime_info",
+        reason: "selector_get_runtime_info",
+        routing_reason: "selector_get_runtime_info",
+      };
+    },
+    async dispatcher({ action }) {
+      dispatchAction = action;
+      return {
+        ok: true,
+        action: "runtime_info",
+        db_path: "/tmp/runtime-v2.db",
+        node_pid: 888,
+        cwd: "/tmp",
+        trace_id: "trace-wm-v2-owner-guard-allow-reroute",
+      };
+    },
+  });
+
+  assert.equal(dispatchAction, "get_runtime_info");
+  assert.equal(result.selected_action, "get_runtime_info");
+
+  resetPlannerRuntimeContext({ sessionKey });
+  resetPlannerConversationMemory({ sessionKey });
+});
+
 test("v2 execution plan patch merges step updates without overwriting untouched steps", () => {
   const sessionKey = "wm-v2-plan-patch-merge";
   resetPlannerRuntimeContext({ sessionKey });
@@ -1421,7 +1555,7 @@ test("v2 waiting_user with already-filled slots resumes step instead of asking u
     task_id: "task-v2-waiting-filled-1",
     task_phase: "waiting_user",
     task_status: "blocked",
-    unresolved_slots: [],
+    unresolved_slots: ["candidate_selection_required"],
     slot_state: [
       {
         slot_key: "candidate_selection_required",

@@ -107,6 +107,7 @@ const WORKING_MEMORY_NON_CRITICAL_STEP_TYPES = new Set([
   "optional",
   "best_effort",
 ]);
+const EDGE_ASK_COPY_PATTERN = /(請|请).{0,8}(補|提供|確認|确认|說|说)|please\s+(share|provide|confirm)|(?:補|提供|confirm).{0,10}(資訊|信息|資料|资料|detail)/i;
 
 function resolveEdgeExecution(result = {}) {
   return result?.execution_result && typeof result.execution_result === "object"
@@ -398,6 +399,58 @@ function adaptPlannerResultForEdge(result = {}, { requestText = "" } = {}) {
   }
 
   return result;
+}
+
+function applyUsageLayerAskSuppressionHook({
+  userResponse = null,
+  diagnostics = null,
+  usagePass = null,
+  memorySnapshot = null,
+} = {}) {
+  if (!userResponse || typeof userResponse !== "object" || Array.isArray(userResponse)) {
+    return userResponse;
+  }
+  if (diagnostics?.slot_suppressed_ask !== true) {
+    return userResponse;
+  }
+  const normalizedLimitations = Array.isArray(userResponse.limitations)
+    ? userResponse.limitations.map((line) => cleanText(line)).filter(Boolean)
+    : [];
+  const normalizedSources = Array.isArray(userResponse.sources)
+    ? userResponse.sources.map((line) => cleanText(line)).filter(Boolean)
+    : [];
+  const answer = cleanText(userResponse.answer || "");
+  const askCopyInAnswer = EDGE_ASK_COPY_PATTERN.test(answer);
+  const filteredLimitations = normalizedLimitations.filter((line) => !EDGE_ASK_COPY_PATTERN.test(line));
+  const suppressionAction = cleanText(
+    usagePass?.behavior?.suppression_target_action
+    || memorySnapshot?.next_best_action
+    || "",
+  );
+  if (!askCopyInAnswer && filteredLimitations.length === normalizedLimitations.length) {
+    return {
+      ...userResponse,
+      sources: [
+        "已偵測到可重用 slot，這輪不再重複 ask_user。",
+        ...normalizedSources,
+      ],
+    };
+  }
+  const fallbackLimitations = filteredLimitations.length > 0
+    ? filteredLimitations
+    : suppressionAction
+      ? [`已優先改回 ${suppressionAction} 繼續處理。`]
+      : [];
+  return {
+    ...userResponse,
+    ok: true,
+    answer: "你剛剛提供的必要資訊已可用，我直接接續原步驟處理，不再重複向你詢問。",
+    sources: [
+      "已偵測到可重用 slot，這輪不再重複 ask_user。",
+      ...normalizedSources,
+    ],
+    limitations: fallbackLimitations,
+  };
 }
 
 function isStablePlannerAnswerBoundary({
@@ -2955,7 +3008,7 @@ export async function runPlannerUserInputEdge({
     && !Array.isArray(mergedMemoryObservability.memory_snapshot)
     ? mergedMemoryObservability.memory_snapshot
     : previousWorkingMemory;
-  const usageLayerPass = evaluateUsageLayerIntelligencePass({
+  const usageLayerPassInput = {
     requestText: text,
     taskType: cleanText(usageLayerMemorySnapshot?.task_type || usageLayerMemorySnapshot?.inferred_task_type || "") || "",
     workingMemory: usageLayerMemorySnapshot,
@@ -2982,15 +3035,27 @@ export async function runPlannerUserInputEdge({
     ],
     plannerEnvelope,
     userResponse,
+  };
+  const usageLayerPass = evaluateUsageLayerIntelligencePass(usageLayerPassInput);
+  let usageLayerDiagnostics = extractUsageLayerDiagnostics(usageLayerPass);
+  userResponse = applyUsageLayerAskSuppressionHook({
+    userResponse,
+    diagnostics: usageLayerDiagnostics,
+    usagePass: usageLayerPass,
+    memorySnapshot: usageLayerMemorySnapshot,
   });
-  const usageLayerDiagnostics = extractUsageLayerDiagnostics(usageLayerPass);
-  mergedMemoryObservability.usage_layer = usageLayerDiagnostics;
-  mergedMemoryObservability.usage_layer_summary = cleanText(usageLayerPass?.summary || "") || null;
   userResponse = applyUsageLayerContinuityCopy({
     userResponse,
     diagnostics: usageLayerDiagnostics,
     observability: mergedMemoryObservability,
   });
+  const postCopyUsagePass = evaluateUsageLayerIntelligencePass({
+    ...usageLayerPassInput,
+    userResponse,
+  });
+  usageLayerDiagnostics = extractUsageLayerDiagnostics(postCopyUsagePass);
+  mergedMemoryObservability.usage_layer = usageLayerDiagnostics;
+  mergedMemoryObservability.usage_layer_summary = cleanText(postCopyUsagePass?.summary || "") || null;
   const taskTrace = buildPlannerTaskTraceDiagnostics({
     memoryStage: "answer_boundary_write_back",
     memorySnapshot: mergedMemoryObservability.memory_snapshot || null,
