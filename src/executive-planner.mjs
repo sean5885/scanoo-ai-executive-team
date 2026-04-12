@@ -3927,10 +3927,66 @@ function derivePlannerWorkingMemorySlotState({
     }));
 }
 
+function hasPlannerWorkingMemorySlotInvalidMarker(slot = null) {
+  if (!slot || typeof slot !== "object" || Array.isArray(slot)) {
+    return false;
+  }
+  if (slot.invalid === true || slot.is_invalid === true || slot.invalidated === true || slot.is_invalidated === true) {
+    return true;
+  }
+  const status = cleanText(slot?.status || "");
+  if (status === "invalid") {
+    return true;
+  }
+  const validityStatus = cleanText(slot?.validity_status || slot?.validity || "");
+  return validityStatus === "invalid" || validityStatus === "invalidated";
+}
+
+function derivePlannerWorkingMemorySlotCoverage({
+  workingMemory = null,
+  unresolvedSlots = [],
+} = {}) {
+  const slotState = derivePlannerWorkingMemorySlotState({ workingMemory });
+  const normalizedUnresolved = Array.isArray(unresolvedSlots)
+    ? unresolvedSlots.map((slot) => cleanText(slot)).filter(Boolean)
+    : [];
+  const filledSlotKeys = new Set(slotState
+    .filter((slot) => cleanText(slot?.status || "") === "filled" && !hasPlannerWorkingMemorySlotInvalidMarker(slot))
+    .map((slot) => cleanText(slot?.slot_key || ""))
+    .filter(Boolean));
+  const hasStateMissing = slotState.some((slot) => {
+    const slotKey = cleanText(slot?.slot_key || "");
+    if (!slotKey || filledSlotKeys.has(slotKey)) {
+      return false;
+    }
+    if (hasPlannerWorkingMemorySlotInvalidMarker(slot)) {
+      return true;
+    }
+    const status = cleanText(slot?.status || "");
+    return status === "missing" || status === "invalid";
+  });
+  const hasUnresolvedGap = normalizedUnresolved.some((slotKey) => !filledSlotKeys.has(slotKey));
+  return {
+    slot_state: slotState,
+    filled_slot_keys: Array.from(filledSlotKeys),
+    unresolved_slots: normalizedUnresolved,
+    has_missing_slots: hasStateMissing || hasUnresolvedGap,
+    has_reusable_filled_slot: filledSlotKeys.size > 0,
+    unresolved_slots_covered: normalizedUnresolved.length > 0
+      && normalizedUnresolved.every((slotKey) => filledSlotKeys.has(slotKey)),
+  };
+}
+
 function derivePlannerWorkingMemoryUnresolvedSlots({
   workingMemory = null,
 } = {}) {
-  const slotState = derivePlannerWorkingMemorySlotState({ workingMemory });
+  const slotCoverage = derivePlannerWorkingMemorySlotCoverage({
+    workingMemory,
+    unresolvedSlots: Array.isArray(workingMemory?.unresolved_slots)
+      ? workingMemory.unresolved_slots
+      : [],
+  });
+  const slotState = slotCoverage.slot_state;
   const unresolvedFromSlotState = Array.from(new Set(slotState
     .filter((slot) => slot?.status === "missing" || slot?.status === "invalid")
     .map((slot) => cleanText(slot?.slot_key || ""))
@@ -3938,11 +3994,16 @@ function derivePlannerWorkingMemoryUnresolvedSlots({
   if (unresolvedFromSlotState.length > 0) {
     return unresolvedFromSlotState;
   }
-  return Array.isArray(workingMemory?.unresolved_slots)
+  const fallbackUnresolved = Array.isArray(workingMemory?.unresolved_slots)
     ? workingMemory.unresolved_slots
       .map((slot) => cleanText(slot))
       .filter(Boolean)
     : [];
+  if (fallbackUnresolved.length === 0) {
+    return [];
+  }
+  const filledSlotKeys = new Set(slotCoverage.filled_slot_keys || []);
+  return fallbackUnresolved.filter((slotKey) => !filledSlotKeys.has(slotKey));
 }
 
 function resolvePlannerWorkingMemoryActionFromSlots(slotHints = []) {
@@ -5347,6 +5408,7 @@ function resolvePlannerWorkingMemoryContinuation({
     reroute_reason: null,
     reroute_source: null,
     reroute_target_verified: null,
+    slot_suppressed_ask: false,
     usage_layer: null,
     usage_layer_summary: null,
   };
@@ -5489,6 +5551,7 @@ function resolvePlannerWorkingMemoryContinuation({
   observability.reroute_reason = null;
   observability.reroute_source = null;
   observability.reroute_target_verified = null;
+  observability.slot_suppressed_ask = false;
   observability.plan_invalidated = topicSwitch && currentPlanStep?.plan
     ? {
         plan_id: currentPlanStep.plan.plan_id,
@@ -5621,6 +5684,10 @@ function resolvePlannerWorkingMemoryContinuation({
     && waitingResumeAction
     && canUseWorkingMemoryAction(waitingResumeAction, { text: userIntent, semantics }),
   );
+  const slotCoverageForSuppression = derivePlannerWorkingMemorySlotCoverage({
+    workingMemory,
+    unresolvedSlots,
+  });
   if (confidenceAllowed && executionReadiness && executionReadiness.is_ready === false && !shouldForceWaitingResume) {
     recoveryDecisionLocked = true;
     routingLocked = true;
@@ -6058,6 +6125,53 @@ function resolvePlannerWorkingMemoryContinuation({
         ? "working_memory_reuse_skill"
         : "working_memory_reuse_action";
       routingReason = reason;
+    }
+  }
+  const askLikeSignal = cleanText(observability?.recovery_action || "") === "ask_user"
+    || cleanText(observability?.recovery_policy || "") === "ask_user"
+    || cleanText(observability?.recommended_action || "") === "ask_user"
+    || cleanText(observability?.decision_promotion?.promoted_action || "") === "ask_user";
+  if (
+    confidenceAllowed
+    && askLikeSignal
+    && slotCoverageForSuppression.has_reusable_filled_slot
+    && !slotCoverageForSuppression.has_missing_slots
+  ) {
+    const suppressionCandidates = [
+      waitingResumePlanAction?.action || "",
+      cleanText(currentPlanStep?.step?.intended_action || ""),
+      runningOwnerAction,
+      cleanText(workingMemory?.next_best_action || ""),
+      cleanText(workingMemory?.last_selected_skill || ""),
+    ].map((candidate) => cleanText(candidate)).filter(Boolean);
+    const suppressionAction = suppressionCandidates.find((candidate) => canUseWorkingMemoryAction(candidate, {
+      text: userIntent,
+      semantics,
+    })) || "";
+    if (suppressionAction) {
+      selectedAction = suppressionAction;
+      reason = taskPhase === "waiting_user"
+        ? "working_memory_slot_suppressed_resume_plan_step"
+        : "working_memory_slot_suppressed_resume";
+      routingReason = reason;
+      routingLocked = false;
+      recoveryDecisionLocked = false;
+      stopError = null;
+      observability.slot_suppressed_ask = true;
+      observability.recovery_policy = null;
+      observability.recovery_action = null;
+      observability.task_phase_transition = `${taskPhase}->executing`;
+      observability.task_status_transition = `${taskStatus}->running`;
+      observability.slot_update = {
+        mode: "slot_resume",
+        pending_slots: [],
+      };
+      observability.resumed_from_waiting_user = taskPhase === "waiting_user";
+      if (waitingResumePlanAction?.action && suppressionAction === waitingResumePlanAction.action) {
+        observability.plan_id = waitingResumePlanAction.plan_id || observability.plan_id;
+        observability.plan_status = waitingResumePlanAction.plan_status || observability.plan_status;
+        observability.current_step = waitingResumePlanAction.current_step_id || observability.current_step;
+      }
     }
   }
   if (!selectedAction && !recoveryDecisionLocked && confidenceAllowed) {
@@ -6608,6 +6722,149 @@ export function shouldPreferSelectorAction({
     && Boolean(normalizedSelectorAction)
     && normalizedSelectorAction !== normalizedHardRoutedAction
     && normalizedSelectorAction !== "search_and_detail_doc";
+}
+
+function resolveSelectionOwnerAgent({
+  action = "",
+  workingMemory = null,
+  currentPlanStep = null,
+} = {}) {
+  const normalizedAction = cleanText(action || "");
+  if (!normalizedAction) {
+    return null;
+  }
+  const planStep = currentPlanStep?.step && typeof currentPlanStep.step === "object" && !Array.isArray(currentPlanStep.step)
+    ? currentPlanStep.step
+    : null;
+  if (cleanText(planStep?.intended_action || "") === normalizedAction) {
+    const stepOwner = cleanText(planStep?.owner_agent || "");
+    if (stepOwner) {
+      return stepOwner;
+    }
+  }
+  const actionOwner = cleanText(PLANNER_WORKING_MEMORY_ACTION_OWNER_HINTS[normalizedAction] || "");
+  if (actionOwner) {
+    return actionOwner;
+  }
+  const nextBestAction = cleanText(workingMemory?.next_best_action || "");
+  if (nextBestAction && nextBestAction === normalizedAction) {
+    return cleanText(workingMemory?.current_owner_agent || workingMemory?.last_selected_agent || "") || null;
+  }
+  return null;
+}
+
+function shouldAllowOwnerSwitchForSelection({
+  selectedOwner = "",
+  currentOwner = "",
+  observability = null,
+  currentPlanStep = null,
+} = {}) {
+  const normalizedSelectedOwner = cleanText(selectedOwner || "");
+  const normalizedCurrentOwner = cleanText(currentOwner || "");
+  if (!normalizedSelectedOwner || !normalizedCurrentOwner || normalizedSelectedOwner === normalizedCurrentOwner) {
+    return true;
+  }
+  const failureClass = cleanText(observability?.failure_class || "");
+  const recoveryAction = cleanText(observability?.recovery_action || "");
+  const recoveryPolicy = cleanText(observability?.recovery_policy || "");
+  const handoffReason = cleanText(observability?.agent_handoff?.reason || observability?.reroute_reason || "");
+  const readinessReasons = Array.isArray(observability?.blocking_reason_codes)
+    ? observability.blocking_reason_codes.map((item) => cleanText(item)).filter(Boolean)
+    : [];
+  const explicitOwnerMismatch = failureClass === "owner_mismatch"
+    || handoffReason === "owner_mismatch"
+    || readinessReasons.includes("owner_mismatch");
+  const explicitCapabilityGap = failureClass === "capability_gap"
+    || handoffReason === "capability_gap";
+  const rerouteAllowed = recoveryAction === "reroute_owner" || recoveryPolicy === "reroute_owner";
+  const expectedOwner = cleanText(currentPlanStep?.step?.owner_agent || "");
+  const explicitStepOwnerSwitch = Boolean(expectedOwner && normalizedSelectedOwner === expectedOwner && expectedOwner !== normalizedCurrentOwner);
+  return rerouteAllowed
+    || explicitOwnerMismatch
+    || explicitCapabilityGap
+    || explicitStepOwnerSwitch;
+}
+
+function applyOwnerContinuitySelectionGuard({
+  selection = null,
+  userIntent = "",
+  workingMemory = null,
+  observability = null,
+} = {}) {
+  if (!selection || typeof selection !== "object" || Array.isArray(selection)) {
+    return {
+      selection,
+      guard_applied: false,
+    };
+  }
+  const selectedAction = cleanText(selection?.selected_action || "");
+  if (!selectedAction) {
+    return {
+      selection,
+      guard_applied: false,
+    };
+  }
+  const currentPlanStep = resolvePlannerWorkingMemoryCurrentPlanStep(workingMemory?.execution_plan || null);
+  const currentOwner = cleanText(workingMemory?.current_owner_agent || workingMemory?.last_selected_agent || "");
+  const selectedOwner = resolveSelectionOwnerAgent({
+    action: selectedAction,
+    workingMemory,
+    currentPlanStep,
+  });
+  if (!currentOwner || !selectedOwner || currentOwner === selectedOwner) {
+    return {
+      selection,
+      guard_applied: false,
+    };
+  }
+  const allowSwitch = shouldAllowOwnerSwitchForSelection({
+    selectedOwner,
+    currentOwner,
+    observability,
+    currentPlanStep,
+  });
+  if (allowSwitch) {
+    return {
+      selection,
+      guard_applied: false,
+    };
+  }
+  const semantics = derivePlannerUserInputSemantics(userIntent);
+  const ownerAction = resolvePlannerWorkingMemoryOwnerAction({
+    workingMemory,
+    text: userIntent,
+    semantics,
+  });
+  const fallbackAction = cleanText(ownerAction || "");
+  const fallbackOwner = resolveSelectionOwnerAgent({
+    action: fallbackAction,
+    workingMemory,
+    currentPlanStep,
+  });
+  if (!fallbackAction || fallbackAction === selectedAction || !canUseWorkingMemoryAction(fallbackAction, { text: userIntent, semantics })) {
+    return {
+      selection,
+      guard_applied: false,
+    };
+  }
+  if (!fallbackOwner || fallbackOwner !== currentOwner) {
+    return {
+      selection,
+      guard_applied: false,
+    };
+  }
+  return {
+    selection: {
+      ...selection,
+      selected_action: fallbackAction,
+      reason: `owner continuity guard: 保持 ${currentOwner}，不做非必要 owner 切換。`,
+      routing_reason: normalizePlannerRoutingReason(
+        cleanText(selection?.routing_reason || ""),
+        "working_memory_owner_continuity_guard",
+      ) || "working_memory_owner_continuity_guard",
+    },
+    guard_applied: true,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -7189,7 +7446,7 @@ export async function runPlannerToolFlow({
       hardRoutedAction: !disableAutoRouting ? routedFlow.action : null,
       selectorAction: selectorSelection?.selected_action,
     });
-  const selection = normalizedForcedSelection
+  const initialSelection = normalizedForcedSelection
     ? normalizedForcedSelection
     : lockedMemorySelection
     ? lockedMemorySelection
@@ -7214,9 +7471,26 @@ export async function runPlannerToolFlow({
         ) || "hard_route_match",
       }
     : selectorSelection;
+  const workingMemorySnapshot = memoryContinuation?.observability?.memory_snapshot
+    && typeof memoryContinuation.observability.memory_snapshot === "object"
+    && !Array.isArray(memoryContinuation.observability.memory_snapshot)
+    ? memoryContinuation.observability.memory_snapshot
+    : null;
+  const ownerGuardedSelection = (!normalizedForcedSelection && !memoryRoutingLocked && !taskLifecycleFollowUp?.selected_action)
+    ? applyOwnerContinuitySelectionGuard({
+        selection: initialSelection,
+        userIntent: agentInput.user_intent,
+        workingMemory: workingMemorySnapshot,
+        observability: memoryContinuation?.observability || null,
+      })
+    : { selection: initialSelection, guard_applied: false };
+  const selection = ownerGuardedSelection.selection;
   const memoryUsedInRouting = memoryRoutingLocked || Boolean(memorySelection && selection === memorySelection);
   if (memoryContinuation?.observability && typeof memoryContinuation.observability === "object") {
     memoryContinuation.observability.memory_used_in_routing = memoryUsedInRouting;
+    if (ownerGuardedSelection.guard_applied === true) {
+      memoryContinuation.observability.owner_continuity_guard_applied = true;
+    }
   }
   logPlannerWorkingMemoryTrace({
     logger,

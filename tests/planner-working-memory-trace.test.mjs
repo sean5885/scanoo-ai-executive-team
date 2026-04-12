@@ -462,19 +462,27 @@ test("task trace exposes usage-layer diagnostics and continuity summary", () => 
         interpreted_as_new_task: false,
         redundant_question_detected: false,
         owner_selection_feels_consistent: true,
+        slot_suppressed_ask: true,
+        retry_context_applied: true,
         response_continuity_score: "high",
         usage_issue_codes: [],
       },
-      usage_layer_summary: "continuation=true new_task=false redundant_ask=false owner_consistent=true response_continuity=high issues=none",
+      usage_layer_summary: "continuation=true new_task=false redundant_ask=false owner_consistent=true slot_suppressed_ask=true retry_context_applied=true response_continuity=high issues=none",
     },
   });
 
   assert.equal(trace.snapshot.usage_layer.interpreted_as_continuation, true);
   assert.equal(trace.snapshot.usage_layer.response_continuity_score, "high");
+  assert.equal(trace.snapshot.usage_layer.slot_suppressed_ask, true);
+  assert.equal(trace.snapshot.usage_layer.retry_context_applied, true);
   assert.equal(trace.diff.includes("usage_layer.interpreted_as_continuation: true"), true);
+  assert.equal(trace.diff.includes("usage_layer.slot_suppressed_ask: true"), true);
+  assert.equal(trace.diff.includes("usage_layer.retry_context_applied: true"), true);
   assert.equal(trace.diff.includes("usage_layer.response_continuity_score: high"), true);
   assert.match(trace.text, /usage_layer: continuation=true/);
   assert.equal(trace.event_alignment.usage_layer, true);
+  assert.equal(trace.event_alignment.usage_layer_slot_suppressed_ask, true);
+  assert.equal(trace.event_alignment.usage_layer_retry_context_applied, true);
   assert.equal(trace.event_alignment.usage_layer_summary, true);
 });
 

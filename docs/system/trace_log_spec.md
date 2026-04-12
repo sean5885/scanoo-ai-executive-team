@@ -237,6 +237,8 @@ All minimum trace/log events should align around these fields:
       - `usage_layer.interpreted_as_new_task`
       - `usage_layer.redundant_question_detected`
       - `usage_layer.owner_selection_feels_consistent`
+      - `usage_layer.slot_suppressed_ask`
+      - `usage_layer.retry_context_applied`
       - `usage_layer.response_continuity_score`
       - `usage_layer.usage_issue_codes`
       - `usage_layer_summary`

@@ -862,7 +862,10 @@ Runtime usage boundary:
 - when `task_status=running`, routing prefers `current_owner_agent`/`next_best_action` continuity before reselecting a new path
 - when `task_phase=waiting_user`, user follow-up is treated as slot-fill continuation (not as a brand-new task)
 - when `task_phase=waiting_user` and required user slots are already filled, routing now resumes the current plan step (`working_memory_waiting_user_resume_plan_step`) instead of re-asking by default
+- when planner/advisor/recovery signals suggest `ask_user` but slot-state already contains valid reusable `filled` slots, routing suppresses that ask path and resumes deterministic continuation (`working_memory_slot_suppressed_resume[_plan_step]`, `slot_suppressed_ask=true`)
+- selector output now runs one owner-continuity guard before dispatch: if no explicit reroute requirement (`capability_gap|owner_mismatch|step.owner_agent` mismatch), runtime keeps `current_owner_agent` and avoids non-essential owner switch
 - when `task_status=failed` and an active plan step is failed, routing now prioritizes deterministic plan-aware recovery policy v1 from that step (`retry_same_step|reroute_owner|ask_user|skip_step|rollback_to_step`) before generic selector fallback
+- retry continuity is now state-forced (`task_phase=retrying` or `recovery_action=retry_same_step`) so retry follow-ups are interpreted as continuation unless explicit topic-switch signals appear
 - before active plan continuation, routing now verifies the current step's incoming artifact dependencies from the same session execution plan:
   - invalid/missing `hard` dependency blocks direct continuation and enters recovery path
   - recovery priority is `rollback_to_step` when producer step is deterministically resolvable from dependency graph, otherwise fail-closed `ask_user`
@@ -933,6 +936,8 @@ Observed routing/write signals now include:
 - `agent_handoff`
 - `retry_attempt`
 - `slot_update`
+- `slot_suppressed_ask`
+- `owner_continuity_guard_applied`
 - `task_abandoned`
 - `failure_class`
 - `recovery_policy`
@@ -1061,7 +1066,7 @@ Working-memory v2 diagnostics now also includes one human-readable `task_trace` 
   - `promotion_policy.allowed_actions/promotion_policy.rollback_disabled_actions/promotion_policy.ineffective_threshold/promotion_policy_summary`
   - `promotion_audit.promoted_action/promotion_audit.promotion_effectiveness/promotion_audit.rollback_flag/promotion_audit_summary`
   - `decision_scoreboard.actions/decision_scoreboard_summary/highest_maturity_actions/rollback_disabled_actions`
-  - `usage_layer.interpreted_as_continuation/usage_layer.interpreted_as_new_task/usage_layer.redundant_question_detected/usage_layer.owner_selection_feels_consistent/usage_layer.response_continuity_score/usage_layer.usage_issue_codes/usage_layer_summary`
+  - `usage_layer.interpreted_as_continuation/usage_layer.interpreted_as_new_task/usage_layer.redundant_question_detected/usage_layer.owner_selection_feels_consistent/usage_layer.slot_suppressed_ask/usage_layer.retry_context_applied/usage_layer.response_continuity_score/usage_layer.usage_issue_codes/usage_layer_summary`
   - trace output must be derived from these existing signals instead of introducing an independent trace truth
 
 The executive planner decision prompt now also reads a bounded task-state summary from that same local `task lifecycle v1` store: before agent selection, `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` asks `/Users/seanhan/Documents/Playground/src/planner-task-lifecycle-v1.mjs` for the latest relevant snapshot summary and injects `unfinished_hint`, `blocked_hint`, and `in_progress_hint` into prompt assembly, so decisions can preferentially reference unfinished tasks, surface blocked-task risk, and reuse in-progress execution summaries without changing the public planner JSON shape.

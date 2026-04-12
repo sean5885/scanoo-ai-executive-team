@@ -290,11 +290,12 @@ test("runPlannerUserInputEdge adds retry continuity context and usage-layer diag
   });
 
   assert.equal(result.userResponse.ok, true);
-  assert.match((result.userResponse.sources || [])[0] || "", /上一輪|重試/);
+  assert.match((result.userResponse.sources || [])[0] || "", /上一輪|重試|剛剛那一步|核對/);
   const boundaryLog = memoryLogs.find((item) => item?.memory_stage === "answer_boundary_write_back");
   assert.ok(boundaryLog);
   assert.equal(typeof boundaryLog?.usage_layer_summary, "string");
   assert.equal(boundaryLog?.usage_layer?.interpreted_as_continuation, true);
+  assert.equal(boundaryLog?.usage_layer?.retry_context_applied, true);
 });
 
 test("runPlannerUserInputEdge adds reroute continuity context and surfaces usage issue codes", async () => {
@@ -361,5 +362,69 @@ test("runPlannerUserInputEdge adds reroute continuity context and surfaces usage
   const boundaryLog = memoryLogs.find((item) => item?.memory_stage === "answer_boundary_write_back");
   assert.ok(boundaryLog);
   assert.equal(Array.isArray(boundaryLog?.usage_layer?.usage_issue_codes), true);
-  assert.equal(boundaryLog.usage_layer.usage_issue_codes.includes("reroute_without_user_visible_context"), true);
+  assert.equal(boundaryLog.usage_layer.usage_issue_codes.includes("reroute_without_user_visible_context"), false);
+});
+
+test("runPlannerUserInputEdge suppresses redundant ask_user when filled slot is reusable", async () => {
+  const memoryLogs = [];
+  const result = await runPlannerUserInputEdge({
+    text: "我剛剛已經給過了",
+    sessionKey: "wm-usage-slot-suppress",
+    logger: {
+      info(event, payload) {
+        if (event === "planner_working_memory") {
+          memoryLogs.push(payload);
+        }
+      },
+      debug() {},
+      warn() {},
+      error() {},
+    },
+    async plannerExecutor() {
+      return {
+        ok: false,
+        error: "missing_slot",
+        execution_result: {
+          ok: false,
+          data: {
+            answer: "請再提供文件編號。",
+            sources: [],
+            limitations: ["請補文件編號"],
+          },
+        },
+      };
+    },
+    workingMemoryWriter() {
+      return {
+        ok: true,
+        observability: {
+          slot_suppressed_ask: true,
+          recovery_action: "ask_user",
+          recommended_action: "ask_user",
+          memory_snapshot: {
+            task_id: "task-usage-slot-suppress",
+            task_type: "document_lookup",
+            task_phase: "waiting_user",
+            task_status: "blocked",
+            current_owner_agent: "doc_agent",
+            next_best_action: "get_company_brain_doc_detail",
+            unresolved_slots: [],
+            slot_state: [
+              {
+                slot_key: "candidate_selection_required",
+                status: "filled",
+                ttl: "2030-01-01T00:00:00.000Z",
+              },
+            ],
+          },
+        },
+      };
+    },
+  });
+
+  assert.equal(result.userResponse.ok, true);
+  assert.match(result.userResponse.answer || "", /不再重複向你詢問|直接接續原步驟/);
+  const boundaryLog = memoryLogs.find((item) => item?.memory_stage === "answer_boundary_write_back");
+  assert.ok(boundaryLog);
+  assert.equal(boundaryLog?.usage_layer?.slot_suppressed_ask, true);
 });

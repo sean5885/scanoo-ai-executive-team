@@ -43,20 +43,72 @@ function collectSimilarityTokens(input = "") {
   return Array.from(new Set(normalized.split(" ").map((token) => cleanText(token)).filter((token) => token.length >= 2)));
 }
 
-function hasAnyMissingSlots(slotState = [], unresolvedSlots = []) {
-  const unresolved = normalizeList(unresolvedSlots);
-  if (unresolved.length > 0) {
+function isSlotTtlValid(ttl = "") {
+  const normalized = cleanText(ttl || "");
+  if (!normalized) {
     return true;
   }
-  const normalizedSlotState = Array.isArray(slotState)
-    ? slotState
-      .map((slot) => ({
-        slot_key: cleanText(slot?.slot_key || ""),
-        status: cleanText(slot?.status || ""),
-      }))
-      .filter((slot) => slot.slot_key && slot.status)
-    : [];
-  return normalizedSlotState.some((slot) => slot.status === "missing" || slot.status === "invalid");
+  const expiresAt = Date.parse(normalized);
+  return Number.isFinite(expiresAt) && expiresAt > Date.now();
+}
+
+function hasSlotInvalidMarker(slot = null) {
+  if (!slot || typeof slot !== "object" || Array.isArray(slot)) {
+    return false;
+  }
+  if (slot.invalid === true || slot.is_invalid === true || slot.invalidated === true || slot.is_invalidated === true) {
+    return true;
+  }
+  const status = cleanText(slot.status || "");
+  if (status === "invalid") {
+    return true;
+  }
+  const validityStatus = cleanText(slot.validity_status || slot.validity || "");
+  return validityStatus === "invalid" || validityStatus === "invalidated";
+}
+
+function normalizeSlotStateEntries(slotState = []) {
+  if (!Array.isArray(slotState)) {
+    return [];
+  }
+  return slotState
+    .map((slot) => ({
+      slot_key: cleanText(slot?.slot_key || ""),
+      status: cleanText(slot?.status || ""),
+      ttl_valid: isSlotTtlValid(slot?.ttl || ""),
+      invalid_marked: hasSlotInvalidMarker(slot),
+    }))
+    .filter((slot) => slot.slot_key && slot.status);
+}
+
+function deriveSlotCoverage(slotState = [], unresolvedSlots = []) {
+  const normalizedSlots = normalizeSlotStateEntries(slotState);
+  const unresolved = normalizeList(unresolvedSlots);
+  const filledSlotKeys = new Set(normalizedSlots
+    .filter((slot) => slot.status === "filled" && slot.ttl_valid && !slot.invalid_marked)
+    .map((slot) => slot.slot_key));
+  const unresolvedSlotsCovered = unresolved.length > 0
+    && unresolved.every((slotKey) => filledSlotKeys.has(slotKey));
+  const hasStateMissing = normalizedSlots.some((slot) => {
+    if (filledSlotKeys.has(slot.slot_key)) {
+      return false;
+    }
+    if (slot.invalid_marked) {
+      return true;
+    }
+    if (!slot.ttl_valid) {
+      return true;
+    }
+    return slot.status === "missing" || slot.status === "invalid";
+  });
+  const hasUnresolvedGap = unresolved.some((slotKey) => !filledSlotKeys.has(slotKey));
+  return {
+    has_missing_slots: hasStateMissing || hasUnresolvedGap,
+    has_reusable_filled_slot: filledSlotKeys.size > 0,
+    unresolved_slots_covered: unresolvedSlotsCovered,
+    filled_slot_keys: Array.from(filledSlotKeys),
+    unresolved_slots: unresolved,
+  };
 }
 
 function hasContextualContinuityInResponse(userResponse = null) {
@@ -78,50 +130,82 @@ function resolveOwnerConsistency({
     : null;
   const fromOwner = cleanText(handoff?.from || observability?.previous_owner_agent || workingMemory?.previous_owner_agent || "") || null;
   const toOwner = cleanText(handoff?.to || observability?.current_owner_agent || workingMemory?.current_owner_agent || "") || null;
+  const currentOwnerFromObservability = cleanText(observability?.current_owner_agent || "");
+  const previousOwnerFromObservability = cleanText(observability?.previous_owner_agent || "");
+  const currentOwnerFromMemory = cleanText(workingMemory?.current_owner_agent || "");
+  const previousOwnerFromMemory = cleanText(workingMemory?.previous_owner_agent || "");
+  const effectiveFromOwner = fromOwner
+    || previousOwnerFromObservability
+    || previousOwnerFromMemory
+    || currentOwnerFromMemory
+    || null;
+  const effectiveToOwner = toOwner
+    || currentOwnerFromObservability
+    || currentOwnerFromMemory
+    || null;
   const currentStepOwner = cleanText(currentPlanStep?.owner_agent || "") || null;
-  if (!handoff) {
+  const hasOwnerSwitch = Boolean(effectiveFromOwner && effectiveToOwner && effectiveFromOwner !== effectiveToOwner);
+
+  if (!hasOwnerSwitch && !handoff) {
     return {
       feelsConsistent: true,
       unnecessarySwitch: false,
-      fromOwner,
-      toOwner,
+      fromOwner: effectiveFromOwner,
+      toOwner: effectiveToOwner,
     };
   }
-  if (!fromOwner || !toOwner || fromOwner === toOwner) {
+
+  if (!effectiveFromOwner || !effectiveToOwner || effectiveFromOwner === effectiveToOwner) {
     return {
-      feelsConsistent: false,
-      unnecessarySwitch: true,
-      fromOwner,
-      toOwner,
+      feelsConsistent: true,
+      unnecessarySwitch: false,
+      fromOwner: effectiveFromOwner,
+      toOwner: effectiveToOwner,
     };
   }
+
   const recoveryAction = cleanText(observability?.recovery_action || "");
+  const recoveryPolicy = cleanText(observability?.recovery_policy || "");
   const failureClass = cleanText(observability?.failure_class || "");
   const promotionAction = cleanText(observability?.decision_promotion?.promoted_action || "");
-  const switchExpected = recoveryAction === "reroute_owner"
-    || failureClass === "capability_gap"
-    || promotionAction === "reroute";
+  const readinessReasons = normalizeList(observability?.readiness?.blocking_reason_codes || observability?.blocking_reason_codes || []);
+  const rerouteReason = cleanText(observability?.reroute_reason || observability?.agent_handoff?.reason || "");
+  const explicitOwnerMismatch = failureClass === "owner_mismatch"
+    || rerouteReason === "owner_mismatch"
+    || readinessReasons.includes("owner_mismatch");
+  const explicitCapabilityGap = failureClass === "capability_gap"
+    || rerouteReason === "capability_gap";
+  const explicitStepOwnerSwitch = Boolean(currentStepOwner && effectiveToOwner === currentStepOwner && effectiveFromOwner !== currentStepOwner);
+  const switchExpected = promotionAction === "reroute"
+    || recoveryAction === "reroute_owner"
+    || recoveryPolicy === "reroute_owner"
+    || explicitCapabilityGap
+    || explicitOwnerMismatch
+    || explicitStepOwnerSwitch;
+
   if (!switchExpected) {
     return {
       feelsConsistent: false,
       unnecessarySwitch: true,
-      fromOwner,
-      toOwner,
+      fromOwner: effectiveFromOwner,
+      toOwner: effectiveToOwner,
     };
   }
-  if (currentStepOwner && toOwner !== currentStepOwner && failureClass !== "capability_gap") {
+
+  if (currentStepOwner && effectiveToOwner !== currentStepOwner && !explicitCapabilityGap && !explicitOwnerMismatch) {
     return {
       feelsConsistent: false,
       unnecessarySwitch: true,
-      fromOwner,
-      toOwner,
+      fromOwner: effectiveFromOwner,
+      toOwner: effectiveToOwner,
     };
   }
+
   return {
     feelsConsistent: true,
     unnecessarySwitch: false,
-    fromOwner,
-    toOwner,
+    fromOwner: effectiveFromOwner,
+    toOwner: effectiveToOwner,
   };
 }
 
@@ -150,6 +234,12 @@ function deriveContinuationSignal({
   const explicitSameTask = semantics?.explicit_same_task === true;
   const resumedFromWaitingUser = observability?.resumed_from_waiting_user === true;
   const resumedFromRetry = observability?.resumed_from_retry === true;
+  const recoveryAction = cleanText(observability?.recovery_action || "");
+  const recoveryPolicy = cleanText(observability?.recovery_policy || "");
+  const retryContextForced = taskPhase === "retrying"
+    || resumedFromRetry
+    || recoveryAction === "retry_same_step"
+    || recoveryPolicy === "retry_same_step";
   const topicSwitch = TOPIC_SWITCH_PATTERN.test(normalizedText)
     || Boolean(normalizedTaskType && cleanText(workingMemory?.task_type || "") && normalizedTaskType !== cleanText(workingMemory?.task_type || ""));
 
@@ -173,7 +263,7 @@ function deriveContinuationSignal({
   const shouldPreferContinuation = !topicSwitch && (
     explicitSameTask
     || resumedFromWaitingUser
-    || resumedFromRetry
+    || retryContextForced
     || reasonSuggestsContinuation
     || (taskPhase === "waiting_user" && unresolved.length > 0 && Boolean(normalizedText))
     || (hasActiveTask && shortInput && highRelated)
@@ -182,7 +272,8 @@ function deriveContinuationSignal({
   const interpretedAsContinuation = Boolean(
     !topicSwitch
     && (
-      reasonSuggestsContinuation
+      retryContextForced
+      || reasonSuggestsContinuation
       || resumedFromWaitingUser
       || resumedFromRetry
       || (shouldPreferContinuation && Boolean(normalizedSelectedAction || currentStepAction || nextBestAction))
@@ -206,36 +297,64 @@ function deriveContinuationSignal({
     shouldPreferContinuation,
     interpretedAsContinuation,
     interpretedAsNewTask,
+    retryContextForced,
     continuationCandidates: normalizedCandidates,
     unresolvedSlots: unresolved,
   };
 }
 
-function resolveRedundantAsk({
+function resolveAskSuppression({
   userResponse = null,
   observability = null,
-  workingMemory = null,
-  unresolvedSlots = [],
+  slotCoverage = null,
 } = {}) {
-  const hasMissing = hasAnyMissingSlots(
-    workingMemory?.slot_state,
-    unresolvedSlots,
-  );
   const recoveryAction = cleanText(observability?.recovery_action || "");
+  const recoveryPolicy = cleanText(observability?.recovery_policy || "");
   const recommendedAction = cleanText(observability?.recommended_action || observability?.readiness?.recommended_action || "");
-  const askLikeAction = recoveryAction === "ask_user" || recommendedAction === "ask_user";
-  if (!hasMissing && askLikeAction) {
-    return true;
+  const promotedAction = cleanText(observability?.decision_promotion?.promoted_action || "");
+  const askLikeAction = recoveryAction === "ask_user"
+    || recoveryPolicy === "ask_user"
+    || recommendedAction === "ask_user"
+    || promotedAction === "ask_user";
+  const hasMissing = slotCoverage?.has_missing_slots === true;
+  const hasReusableFilled = slotCoverage?.has_reusable_filled_slot === true;
+
+  if (askLikeAction && !hasMissing && hasReusableFilled) {
+    return {
+      redundantQuestionDetected: true,
+      slotSuppressedAsk: true,
+      askLikeAction: true,
+    };
   }
+
   if (hasMissing) {
-    return false;
+    return {
+      redundantQuestionDetected: false,
+      slotSuppressedAsk: false,
+      askLikeAction,
+    };
   }
+
   const answer = cleanText(userResponse?.answer || "");
   const limitations = normalizeList(userResponse?.limitations || []);
-  if (ASK_USER_COPY_PATTERN.test(answer)) {
-    return true;
+  const askCopyDetected = ASK_USER_COPY_PATTERN.test(answer)
+    || limitations.some((line) => ASK_USER_COPY_PATTERN.test(line));
+  return {
+    redundantQuestionDetected: askCopyDetected,
+    slotSuppressedAsk: askCopyDetected && hasReusableFilled,
+    askLikeAction,
+  };
+}
+
+function resolveRetryContextApplied({
+  retryContextForced = false,
+  canJudgeResponseContext = false,
+  hasContextualContinuity = false,
+} = {}) {
+  if (!retryContextForced || !canJudgeResponseContext) {
+    return false;
   }
-  return limitations.some((line) => ASK_USER_COPY_PATTERN.test(line));
+  return hasContextualContinuity;
 }
 
 function resolveResponseContinuityScore({
@@ -243,24 +362,23 @@ function resolveResponseContinuityScore({
   ownerSelectionFeelsConsistent = true,
   redundantQuestionDetected = false,
   hasContextualContinuity = false,
+  retryOrRerouteInProgress = false,
+  retryContextApplied = false,
+  issueCount = 0,
 } = {}) {
-  let score = 0;
-  if (interpretedAsContinuation) {
-    score += 1;
+  if (issueCount >= 2) {
+    return "low";
   }
-  if (ownerSelectionFeelsConsistent) {
-    score += 1;
+  if (issueCount >= 1) {
+    return "medium";
   }
-  if (!redundantQuestionDetected) {
-    score += 1;
-  }
-  if (hasContextualContinuity) {
-    score += 1;
-  }
-  if (score >= 3) {
+  const retryRerouteContextOk = !retryOrRerouteInProgress
+    || retryContextApplied
+    || hasContextualContinuity;
+  if (interpretedAsContinuation && ownerSelectionFeelsConsistent && !redundantQuestionDetected && retryRerouteContextOk) {
     return "high";
   }
-  if (score >= 2) {
+  if (interpretedAsContinuation || hasContextualContinuity) {
     return "medium";
   }
   return "low";
@@ -282,6 +400,8 @@ function buildUsageLayerSummary(diagnostics = null) {
     `new_task=${diagnostics.interpreted_as_new_task ? "true" : "false"}`,
     `redundant_ask=${diagnostics.redundant_question_detected ? "true" : "false"}`,
     `owner_consistent=${diagnostics.owner_selection_feels_consistent ? "true" : "false"}`,
+    `slot_suppressed_ask=${diagnostics.slot_suppressed_ask ? "true" : "false"}`,
+    `retry_context_applied=${diagnostics.retry_context_applied ? "true" : "false"}`,
     `response_continuity=${diagnostics.response_continuity_score}`,
     `issues=${diagnostics.usage_issue_codes.length > 0 ? diagnostics.usage_issue_codes.join("|") : "none"}`,
   ].join(" ");
@@ -297,6 +417,8 @@ export function evaluateUsageLayerIntelligencePass(input = {}) {
       interpreted_as_new_task: true,
       redundant_question_detected: false,
       owner_selection_feels_consistent: true,
+      slot_suppressed_ask: false,
+      retry_context_applied: false,
       response_continuity_score: "low",
       usage_issue_codes: [],
     };
@@ -308,6 +430,7 @@ export function evaluateUsageLayerIntelligencePass(input = {}) {
       behavior: {
         prefer_continuation: false,
         continuation_action_candidates: [],
+        slot_suppressed_ask: false,
       },
     };
   }
@@ -327,6 +450,10 @@ export function evaluateUsageLayerIntelligencePass(input = {}) {
     || observability?.missing_slots
     || workingMemory?.unresolved_slots
     || [],
+  );
+  const slotCoverage = deriveSlotCoverage(
+    workingMemory?.slot_state,
+    unresolvedSlots,
   );
   const currentPlanStep = normalizedInput.currentPlanStep && typeof normalizedInput.currentPlanStep === "object" && !Array.isArray(normalizedInput.currentPlanStep)
     ? normalizedInput.currentPlanStep
@@ -351,15 +478,21 @@ export function evaluateUsageLayerIntelligencePass(input = {}) {
     currentPlanStep,
   });
 
-  const redundantQuestionDetected = resolveRedundantAsk({
+  const askSuppression = resolveAskSuppression({
     userResponse,
     observability,
-    workingMemory,
-    unresolvedSlots,
+    slotCoverage,
   });
+  const redundantQuestionDetected = askSuppression.redundantQuestionDetected;
+  const slotSuppressedAsk = askSuppression.slotSuppressedAsk || observability?.slot_suppressed_ask === true;
 
   const hasContextualContinuity = hasContextualContinuityInResponse(userResponse);
   const canJudgeResponseContext = Boolean(userResponse && typeof userResponse === "object" && !Array.isArray(userResponse));
+  const retryContextApplied = resolveRetryContextApplied({
+    retryContextForced: continuationSignal.retryContextForced,
+    canJudgeResponseContext,
+    hasContextualContinuity,
+  });
 
   const issueCodes = [];
   if (continuationSignal.shouldPreferContinuation && continuationSignal.interpretedAsNewTask) {
@@ -371,32 +504,37 @@ export function evaluateUsageLayerIntelligencePass(input = {}) {
   if (ownerConsistency.unnecessarySwitch) {
     issueCodes.push("unnecessary_owner_switch");
   }
+
   const rerouteInProgress = cleanText(observability?.recovery_action || "") === "reroute_owner"
+    || cleanText(observability?.recovery_policy || "") === "reroute_owner"
     || cleanText(observability?.decision_promotion?.promoted_action || "") === "reroute";
-  const retryInProgress = cleanText(observability?.recovery_action || "") === "retry_same_step"
-    || observability?.resumed_from_retry === true;
+  const retryInProgress = continuationSignal.retryContextForced;
   const waitingResumeExpected = cleanText(workingMemory?.task_phase || "") === "waiting_user"
-    && unresolvedSlots.length === 0;
+    && !slotCoverage.has_missing_slots;
 
   if (canJudgeResponseContext && rerouteInProgress && !hasContextualContinuity) {
     issueCodes.push("reroute_without_user_visible_context");
   }
-  if (canJudgeResponseContext && retryInProgress && !hasContextualContinuity) {
+  if (canJudgeResponseContext && retryInProgress && !retryContextApplied) {
     issueCodes.push("retry_without_contextual_response");
   }
-  if (waitingResumeExpected && !continuationSignal.interpretedAsContinuation) {
+  if (waitingResumeExpected && (!continuationSignal.interpretedAsContinuation || askSuppression.askLikeAction)) {
     issueCodes.push("slot_fill_not_resumed");
   }
 
+  const dedupedIssues = dedupeIssueCodes(issueCodes);
   const responseContinuityScore = resolveResponseContinuityScore({
     interpretedAsContinuation: continuationSignal.interpretedAsContinuation,
     ownerSelectionFeelsConsistent: ownerConsistency.feelsConsistent,
     redundantQuestionDetected,
     hasContextualContinuity,
+    retryOrRerouteInProgress: retryInProgress || rerouteInProgress,
+    retryContextApplied,
+    issueCount: dedupedIssues.length,
   });
 
   if (canJudgeResponseContext && continuationSignal.shouldPreferContinuation && responseContinuityScore === "low") {
-    issueCodes.push("over_reset_response");
+    dedupedIssues.push("over_reset_response");
   }
 
   const diagnostics = {
@@ -404,9 +542,14 @@ export function evaluateUsageLayerIntelligencePass(input = {}) {
     interpreted_as_new_task: continuationSignal.interpretedAsNewTask,
     redundant_question_detected: redundantQuestionDetected,
     owner_selection_feels_consistent: ownerConsistency.feelsConsistent,
+    slot_suppressed_ask: slotSuppressedAsk,
+    retry_context_applied: retryContextApplied,
     response_continuity_score: responseContinuityScore,
-    usage_issue_codes: dedupeIssueCodes(issueCodes),
+    usage_issue_codes: dedupeIssueCodes(dedupedIssues),
   };
+
+  const continuationActionCandidates = continuationSignal.continuationCandidates;
+  const preferredContinuationAction = continuationActionCandidates.find(Boolean) || null;
 
   return {
     ok: true,
@@ -415,10 +558,15 @@ export function evaluateUsageLayerIntelligencePass(input = {}) {
     summary: buildUsageLayerSummary(diagnostics),
     behavior: {
       prefer_continuation: continuationSignal.shouldPreferContinuation,
-      continuation_action_candidates: continuationSignal.continuationCandidates,
+      continuation_action_candidates: continuationActionCandidates,
       short_follow_up: continuationSignal.shortInput,
       high_related: continuationSignal.highRelated,
       overlap_tokens: continuationSignal.overlap_tokens,
+      slot_suppressed_ask: slotSuppressedAsk,
+      ask_user_suppressed: slotSuppressedAsk,
+      suppression_target_action: slotSuppressedAsk ? preferredContinuationAction : null,
+      retry_context_forced: continuationSignal.retryContextForced,
+      waiting_user_all_required_slots_filled: waitingResumeExpected,
     },
   };
 }
@@ -452,16 +600,22 @@ export function applyUsageLayerContinuityCopy({
     return userResponse;
   }
 
-  let continuityLine = "接著上一輪，我先沿著原本路徑繼續處理。";
+  const fromOwner = cleanText(observability?.agent_handoff?.from || observability?.previous_owner_agent || "");
+  const toOwner = cleanText(observability?.agent_handoff?.to || observability?.current_owner_agent || observability?.reroute_target || "");
+  const ownerChanged = Boolean(fromOwner && toOwner && fromOwner !== toOwner);
+
+  let continuityLine = "我先沿著上一個步驟接著處理。";
   if (observability?.resumed_from_waiting_user === true) {
-    continuityLine = "接著你剛補的資訊，我已恢復原本那一步繼續處理。";
-  } else if (recoveryAction === "reroute_owner") {
-    const rerouteTarget = cleanText(observability?.agent_handoff?.to || observability?.reroute_target || "");
-    continuityLine = rerouteTarget
-      ? `接著上一輪，我已改由 ${rerouteTarget} 這條路徑續處理。`
-      : "接著上一輪，我已改由更合適的路徑續處理。";
+    continuityLine = "我接著你剛補的資訊，把原本那一步續上。";
+  } else if (recoveryAction === "reroute_owner" && (ownerChanged || toOwner)) {
+    continuityLine = toOwner
+      ? `這一步我改由 ${toOwner} 處理，接著往下完成。`
+      : "這一步我改由更合適的 owner 處理，接著往下完成。";
   } else if (observability?.resumed_from_retry === true || recoveryAction === "retry_same_step") {
-    continuityLine = "接著上一輪失敗的步驟，我已在同一路徑重試並繼續處理。";
+    const cueSeed = (cleanText(userResponse?.answer || "").length + normalizeList(userResponse?.limitations || []).length) % 2;
+    continuityLine = cueSeed === 0
+      ? "我剛剛那一步再幫你確認一下，現在接著處理。"
+      : "上一個步驟我再核對了一次，接著往下做。";
   }
 
   return {
@@ -480,6 +634,8 @@ export function extractUsageLayerDiagnostics(passResult = null) {
       interpreted_as_new_task: true,
       redundant_question_detected: false,
       owner_selection_feels_consistent: true,
+      slot_suppressed_ask: false,
+      retry_context_applied: false,
       response_continuity_score: "low",
       usage_issue_codes: [],
     };
@@ -491,6 +647,8 @@ export function extractUsageLayerDiagnostics(passResult = null) {
         interpreted_as_new_task: true,
         redundant_question_detected: false,
         owner_selection_feels_consistent: true,
+        slot_suppressed_ask: false,
+        retry_context_applied: false,
         response_continuity_score: "low",
         usage_issue_codes: [],
       };

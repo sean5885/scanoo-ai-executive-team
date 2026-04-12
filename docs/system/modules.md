@@ -123,6 +123,9 @@ Current-truth docs for onboarding are:
   - planner working-memory continuation now also has one deterministic usage-layer tightening pass:
     - short/high-related follow-ups prefer same-task continuation over accidental new-task reset
     - `waiting_user` with already-filled slots resumes the current plan step instead of re-asking user by default
+    - when planner/advisor surface suggests `ask_user` but slot-state already has valid reusable `filled` slots, runtime now suppresses redundant ask promotion and resumes current-step/next-best continuation instead (`slot_suppressed_ask`)
+    - non-promotion owner continuity now has a guard: selector output keeps `current_owner_agent` unless reroute/owner-mismatch/capability-gap/explicit step-owner switch is present
+    - retry continuation is now forced by state (`task_phase=retrying` or `recovery_action=retry_same_step`) and no longer treated as a fresh task by default
   - that gate is fail-closed and state-derived (slot/artifact/dependency/owner/recovery/plan integrity checks), and does not introduce a second planner/workflow truth source
   - when readiness is blocked, planner routing is lockable for the turn and reuses existing controlled paths (`ask_user` / `retry` / `reroute` / `rollback` / `skip` / fail-closed stop) instead of executing the intended action directly
   - the same step/recovery/readiness signals now feed a deterministic outcome scorer v1 (`success|partial|blocked|failed`) plus `outcome_confidence`, `outcome_evidence`, `artifact_quality`, `retry_worthiness`, and `user_visible_completeness`, and malformed outcome payloads are rejected fail-closed
@@ -177,8 +180,8 @@ Current-truth docs for onboarding are:
   - when explicit Scanoo lane-primary fast-path does not return a bounded reply and runtime falls back to planner, the same turn no longer re-enters timeout-triggered lane fallback (`request_timeout -> lane fallback`) again
   - `user-response-normalizer.mjs` now only reads canonical `execution_result.data.answer / sources / limitations`
   - answer boundary now also runs a deterministic usage-layer intelligence pass:
-    - emits `usage_layer.interpreted_as_continuation`, `usage_layer.interpreted_as_new_task`, `usage_layer.redundant_question_detected`, `usage_layer.owner_selection_feels_consistent`, `usage_layer.response_continuity_score`, `usage_layer.usage_issue_codes`, and `usage_layer_summary` into planner working-memory observability
-    - applies bounded continuity copy polish on continuation/retry/reroute replies so user-facing sources preserve “接著處理” context instead of resetting tone
+    - emits `usage_layer.interpreted_as_continuation`, `usage_layer.interpreted_as_new_task`, `usage_layer.redundant_question_detected`, `usage_layer.owner_selection_feels_consistent`, `usage_layer.slot_suppressed_ask`, `usage_layer.retry_context_applied`, `usage_layer.response_continuity_score`, `usage_layer.usage_issue_codes`, and `usage_layer_summary` into planner working-memory observability
+    - applies bounded continuity copy polish on continuation/retry/reroute replies so user-facing sources preserve continuation context while avoiding unnecessary “換流程” tone when owner is unchanged
   - delivery/onboarding single-hit company-brain search replies now answer first with the matched document title plus bounded location/checklist/step hints from indexed snippets, instead of only repeating the generic "已索引文件" search copy
   - canonical user replies now degrade gracefully when only partial `sources / limitations` are present, instead of collapsing straight to a full-failure generic reply
   - when the planner result would otherwise degrade to a generic failure, `user-response-normalizer.mjs` now performs a minimal mixed-request decomposition for copy/image/send-style asks and upgrades the reply to partial success if a text-draft subtask is still doable
@@ -382,6 +385,32 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/tests/executive-closed-loop.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/executive-evolution-metrics.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/executive-evolution-replay.test.mjs`
+
+### 7B. Usage/Decision Evaluation Runner (Real-World Pass V1)
+
+- Implemented:
+  - `/Users/seanhan/Documents/Playground/src/usage-eval-runner.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/fixtures/usage-eval-cases.json`
+  - `/Users/seanhan/Documents/Playground/tests/usage-eval-runner-v1.test.mjs`
+- Current truth:
+  - this is a pure evaluation/measurement layer; it does not change planner routing or decision behavior
+  - the runner executes multi-turn test cases and collects turn-level observability surfaces:
+    - `usage_layer`
+    - `decision_promotion`
+    - `advisor_alignment`
+    - `outcome`
+    - `readiness`
+    - simplified trace snapshot (`case_id`, `turn_index`, `action.actual/promoted`, `usage_issue_codes`, `response_continuity_score`, `outcome_status`)
+  - output is deterministic and bounded to:
+    - per-case summary
+    - global aggregated metrics (`continuation`, `redundant ask`, `slot resume`, `decision promotion`, `reroute quality`, `usage issue/continuity distribution`)
+    - global summary (`top issues`, `divergence patterns`, `promotion performance`, `pause recommendations`, `overall intelligence signal`)
+  - malformed fixtures fail closed with `contract_violation` shape; runner does not silently skip invalid case structures
+- Boundary:
+  - this path is offline eval simulation only
+  - no external dependencies, no runtime side effects, and no public API shape change
+- Evidence:
+  - `/Users/seanhan/Documents/Playground/tests/usage-eval-runner-v1.test.mjs`
 
 ### 8. Classification and Plugin Adapters
 

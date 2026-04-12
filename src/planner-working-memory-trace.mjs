@@ -695,6 +695,8 @@ function normalizeUsageLayerObservability(observability = null) {
       interpreted_as_new_task: usageSource.interpreted_as_new_task,
       redundant_question_detected: usageSource.redundant_question_detected,
       owner_selection_feels_consistent: usageSource.owner_selection_feels_consistent,
+      slot_suppressed_ask: usageSource.slot_suppressed_ask,
+      retry_context_applied: usageSource.retry_context_applied,
       response_continuity_score: cleanText(usageSource.response_continuity_score || ""),
       usage_issue_codes: usageSource.usage_issue_codes,
     },
@@ -707,6 +709,8 @@ function normalizeUsageLayerObservability(observability = null) {
     || normalizedUsage.interpreted_as_new_task === true
     || normalizedUsage.redundant_question_detected === true
     || normalizedUsage.owner_selection_feels_consistent === false
+    || normalizedUsage.slot_suppressed_ask === true
+    || normalizedUsage.retry_context_applied === true
     || normalizedUsage.response_continuity_score !== "low"
     || normalizedUsage.usage_issue_codes.length > 0,
   );
@@ -1165,6 +1169,8 @@ function buildDiffLines({
     addDiffLine(`usage_layer.interpreted_as_new_task: ${usageLayerObservability.interpreted_as_new_task ? "true" : "false"}`);
     addDiffLine(`usage_layer.redundant_question_detected: ${usageLayerObservability.redundant_question_detected ? "true" : "false"}`);
     addDiffLine(`usage_layer.owner_selection_feels_consistent: ${usageLayerObservability.owner_selection_feels_consistent ? "true" : "false"}`);
+    addDiffLine(`usage_layer.slot_suppressed_ask: ${usageLayerObservability.slot_suppressed_ask ? "true" : "false"}`);
+    addDiffLine(`usage_layer.retry_context_applied: ${usageLayerObservability.retry_context_applied ? "true" : "false"}`);
     addDiffLine(`usage_layer.response_continuity_score: ${usageLayerObservability.response_continuity_score}`);
     addDiffLine(`usage_layer.usage_issue_codes: ${formatValue(usageLayerObservability.usage_issue_codes)}`);
     if (usageLayerObservability.summary) {
@@ -1210,7 +1216,7 @@ function buildTaskTraceText({
     `promotion_policy: version=${formatValue(promotionPolicy.promotion_policy_version)} | allowed_actions=${formatValue(promotionPolicy.allowed_actions)} | rollback_disabled_actions=${formatValue(promotionPolicy.rollback_disabled_actions)} | ineffective_threshold=${formatValue(promotionPolicy.ineffective_threshold)} | summary=${formatValue(promotionPolicy.summary)}`,
     `promotion_audit: promoted_action=${formatValue(promotionAudit.promoted_action)} | promotion_effectiveness=${formatValue(promotionAudit.promotion_effectiveness)} | rollback_flag=${formatValue(promotionAudit.rollback_flag)} | summary=${formatValue(promotionAudit.summary)}`,
     `decision_scoreboard: highest_maturity_actions=${formatValue(decisionScoreboard.highest_maturity_actions)} | rollback_disabled_actions=${formatValue(decisionScoreboard.rollback_disabled_actions)} | summary=${formatValue(decisionScoreboard.summary)}`,
-    `usage_layer: continuation=${usageLayer.interpreted_as_continuation ? "true" : "false"} | new_task=${usageLayer.interpreted_as_new_task ? "true" : "false"} | redundant_ask=${usageLayer.redundant_question_detected ? "true" : "false"} | owner_consistent=${usageLayer.owner_selection_feels_consistent ? "true" : "false"} | response_continuity=${usageLayer.response_continuity_score} | issues=${formatValue(usageLayer.usage_issue_codes)} | summary=${formatValue(usageLayer.summary)}`,
+    `usage_layer: continuation=${usageLayer.interpreted_as_continuation ? "true" : "false"} | new_task=${usageLayer.interpreted_as_new_task ? "true" : "false"} | redundant_ask=${usageLayer.redundant_question_detected ? "true" : "false"} | owner_consistent=${usageLayer.owner_selection_feels_consistent ? "true" : "false"} | slot_suppressed_ask=${usageLayer.slot_suppressed_ask ? "true" : "false"} | retry_context_applied=${usageLayer.retry_context_applied ? "true" : "false"} | response_continuity=${usageLayer.response_continuity_score} | issues=${formatValue(usageLayer.usage_issue_codes)} | summary=${formatValue(usageLayer.summary)}`,
     `artifact: id=${formatValue(next.execution_plan.artifact_id)} | type=${formatValue(next.execution_plan.artifact_type)} | validity=${formatValue(next.execution_plan.validity_status)} | produced_by=${formatValue(next.execution_plan.produced_by_step_id)} | downstream=${formatValue(next.execution_plan.affected_downstream_steps)} | dependency=${formatValue(next.execution_plan.dependency_type)} | blocked_step=${formatValue(next.execution_plan.dependency_blocked_step)} | superseded=${formatValue(next.execution_plan.artifact_superseded)}`,
     `readiness: is_ready=${formatValue(readiness.is_ready)} | reasons=${formatValue(readiness.blocking_reason_codes)} | missing_slots=${formatValue(readiness.missing_slots)} | invalid_artifacts=${formatValue(readinessInvalidArtifacts)} | blocked_dependencies=${formatValue(readinessBlockedDependencies)} | owner_ready=${formatValue(readiness.owner_ready)} | recovery_ready=${formatValue(readiness.recovery_ready)} | recommended_action=${formatValue(readiness.recommended_action)}`,
     `slot_state: missing=${formatValue(slots.missing)} | filled=${formatValue(slots.filled)} | invalid=${formatValue(slots.invalid)}`,
@@ -1249,7 +1255,7 @@ export function buildPlannerTaskTraceDiagnostics({
     nextSnapshot: memorySnapshot,
     observability,
   });
-  const summary = `task=${formatValue(snapshot.task_id)} phase=${snapshot.task_phase} status=${snapshot.task_status} owner=${formatValue(snapshot.current_owner_agent)} plan=${formatValue(snapshot.execution_plan.plan_status)}:${formatValue(snapshot.execution_plan.current_step)} recovery=${formatValue(snapshot.execution_plan.current_step_recovery_action)} readiness=${formatValue(readinessObservability.is_ready)}:${formatValue(readinessObservability.recommended_action)} outcome=${formatValue(outcomeObservability?.outcome_status || null)}:${formatValue(outcomeObservability?.retry_worthiness)} advisor=${formatValue(advisorObservability.recommended_next_action)}:${formatValue(advisorObservability.decision_confidence)} advisor_alignment=${formatAdvisorAlignment(advisorObservability.alignment)} decision_promotion=${formatValue(promotionObservability.promoted_action)}:${formatValue(promotionObservability.promotion_applied)}:${formatValue(promotionObservability.safety_gate_passed)}:${formatValue(promotionObservability.reroute_target)}:${formatValue(promotionObservability.reroute_reason)} promotion_policy=${formatValue(promotionPolicyObservability.allowed_actions)}:${formatValue(promotionPolicyObservability.rollback_disabled_actions)}:${formatValue(promotionPolicyObservability.ineffective_threshold)} promotion_audit=${formatValue(promotionAuditObservability.promoted_action)}:${formatValue(promotionAuditObservability.promotion_effectiveness)}:${formatValue(promotionAuditObservability.rollback_flag)} decision_scoreboard=${formatValue(decisionScoreboardObservability.highest_maturity_actions)}:${formatValue(decisionScoreboardObservability.rollback_disabled_actions)} usage_layer=${formatValue(usageLayerObservability.interpreted_as_continuation)}:${formatValue(usageLayerObservability.interpreted_as_new_task)}:${formatValue(usageLayerObservability.redundant_question_detected)}:${formatValue(usageLayerObservability.owner_selection_feels_consistent)}:${formatValue(usageLayerObservability.response_continuity_score)}:${formatValue(usageLayerObservability.usage_issue_codes)} artifact=${formatValue(snapshot.execution_plan.artifact_id)}:${formatValue(snapshot.execution_plan.validity_status)} next=${formatValue(snapshot.next_best_action)}`;
+  const summary = `task=${formatValue(snapshot.task_id)} phase=${snapshot.task_phase} status=${snapshot.task_status} owner=${formatValue(snapshot.current_owner_agent)} plan=${formatValue(snapshot.execution_plan.plan_status)}:${formatValue(snapshot.execution_plan.current_step)} recovery=${formatValue(snapshot.execution_plan.current_step_recovery_action)} readiness=${formatValue(readinessObservability.is_ready)}:${formatValue(readinessObservability.recommended_action)} outcome=${formatValue(outcomeObservability?.outcome_status || null)}:${formatValue(outcomeObservability?.retry_worthiness)} advisor=${formatValue(advisorObservability.recommended_next_action)}:${formatValue(advisorObservability.decision_confidence)} advisor_alignment=${formatAdvisorAlignment(advisorObservability.alignment)} decision_promotion=${formatValue(promotionObservability.promoted_action)}:${formatValue(promotionObservability.promotion_applied)}:${formatValue(promotionObservability.safety_gate_passed)}:${formatValue(promotionObservability.reroute_target)}:${formatValue(promotionObservability.reroute_reason)} promotion_policy=${formatValue(promotionPolicyObservability.allowed_actions)}:${formatValue(promotionPolicyObservability.rollback_disabled_actions)}:${formatValue(promotionPolicyObservability.ineffective_threshold)} promotion_audit=${formatValue(promotionAuditObservability.promoted_action)}:${formatValue(promotionAuditObservability.promotion_effectiveness)}:${formatValue(promotionAuditObservability.rollback_flag)} decision_scoreboard=${formatValue(decisionScoreboardObservability.highest_maturity_actions)}:${formatValue(decisionScoreboardObservability.rollback_disabled_actions)} usage_layer=${formatValue(usageLayerObservability.interpreted_as_continuation)}:${formatValue(usageLayerObservability.interpreted_as_new_task)}:${formatValue(usageLayerObservability.redundant_question_detected)}:${formatValue(usageLayerObservability.owner_selection_feels_consistent)}:${formatValue(usageLayerObservability.slot_suppressed_ask)}:${formatValue(usageLayerObservability.retry_context_applied)}:${formatValue(usageLayerObservability.response_continuity_score)}:${formatValue(usageLayerObservability.usage_issue_codes)} artifact=${formatValue(snapshot.execution_plan.artifact_id)}:${formatValue(snapshot.execution_plan.validity_status)} next=${formatValue(snapshot.next_best_action)}`;
   return {
     summary,
     snapshot: {
@@ -1341,6 +1347,8 @@ export function buildPlannerTaskTraceDiagnostics({
         interpreted_as_new_task: usageLayerObservability.interpreted_as_new_task,
         redundant_question_detected: usageLayerObservability.redundant_question_detected,
         owner_selection_feels_consistent: usageLayerObservability.owner_selection_feels_consistent,
+        slot_suppressed_ask: usageLayerObservability.slot_suppressed_ask,
+        retry_context_applied: usageLayerObservability.retry_context_applied,
         response_continuity_score: usageLayerObservability.response_continuity_score,
         usage_issue_codes: usageLayerObservability.usage_issue_codes,
       },
@@ -1436,6 +1444,8 @@ export function buildPlannerTaskTraceDiagnostics({
       usage_layer_interpreted_as_new_task: typeof usageLayerObservability.interpreted_as_new_task === "boolean",
       usage_layer_redundant_question_detected: typeof usageLayerObservability.redundant_question_detected === "boolean",
       usage_layer_owner_selection_feels_consistent: typeof usageLayerObservability.owner_selection_feels_consistent === "boolean",
+      usage_layer_slot_suppressed_ask: typeof usageLayerObservability.slot_suppressed_ask === "boolean",
+      usage_layer_retry_context_applied: typeof usageLayerObservability.retry_context_applied === "boolean",
       usage_layer_response_continuity_score: Boolean(cleanText(usageLayerObservability.response_continuity_score || "")),
       usage_layer_usage_issue_codes: Array.isArray(usageLayerObservability.usage_issue_codes),
       usage_layer_summary: Boolean(cleanText(observability?.usage_layer_summary || "")),

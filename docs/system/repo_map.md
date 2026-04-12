@@ -78,6 +78,13 @@ This file explains which directories are part of the current runtime, which are 
   - executive replay fixtures
   - real-user review fixtures
 
+### `/Users/seanhan/Documents/Playground/tests/fixtures`
+
+- checked-in local evaluation fixture directory
+- current examples:
+  - `/Users/seanhan/Documents/Playground/tests/fixtures/usage-eval-cases.json`
+    - multi-turn real-world usage eval pass v1 cases for usage-layer + decision-engine measurement
+
 ### `/Users/seanhan/Documents/Playground/config`
 
 - small repo-local config directory
@@ -117,6 +124,8 @@ This file explains which directories are part of the current runtime, which are 
 - `/Users/seanhan/Documents/Playground/src/planner-ingress-contract.mjs`
 - `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
 - `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`
+- `/Users/seanhan/Documents/Playground/src/usage-eval-runner.mjs`
+  - evaluation-only runner for multi-turn usage-layer/decision-engine measurement (non-runtime control path)
 - `/Users/seanhan/Documents/Playground/src/answer-service.mjs`
   - real file, but secondary helper rather than the main public `/answer` path
 - Current truth:
