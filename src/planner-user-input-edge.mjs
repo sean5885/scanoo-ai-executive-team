@@ -1415,6 +1415,12 @@ function deriveFailureClassFromPlannerError(plannerError = "") {
   if (normalizedError === "invalid_artifact" || normalizedError === "artifact_invalid") {
     return "invalid_artifact";
   }
+  if (normalizedError === "missing_slot") {
+    return "missing_slot";
+  }
+  if (normalizedError === "owner_mismatch") {
+    return "capability_gap";
+  }
   if (normalizedError === "capability_gap") {
     return "capability_gap";
   }
@@ -2322,6 +2328,16 @@ function buildWorkingMemoryPatch({
   };
   const previousPhase = cleanText(previousWorkingMemory?.task_phase || "") || null;
   const previousStatus = cleanText(previousWorkingMemory?.task_status || "") || null;
+  const readinessFromExecution = (() => {
+    const readinessCandidate = plannerEnvelope?.execution_result?.data?.readiness
+      || plannerResult?.execution_result?.data?.readiness
+      || null;
+    return readinessCandidate
+      && typeof readinessCandidate === "object"
+      && !Array.isArray(readinessCandidate)
+      ? readinessCandidate
+      : null;
+  })();
   const observability = {
     task_id: taskId,
     task_phase_transition: previousPhase && previousPhase !== patch.task_phase
@@ -2369,6 +2385,45 @@ function buildWorkingMemoryPatch({
     dependency_type: executionPlan.observability?.dependency_type || null,
     artifact_superseded: executionPlan.observability?.artifact_superseded === true,
     dependency_blocked_step: executionPlan.observability?.dependency_blocked_step || null,
+    readiness: readinessFromExecution
+      ? {
+          is_ready: readinessFromExecution.is_ready === true,
+          blocking_reason_codes: Array.isArray(readinessFromExecution.blocking_reason_codes)
+            ? readinessFromExecution.blocking_reason_codes
+            : [],
+          missing_slots: Array.isArray(readinessFromExecution.missing_slots)
+            ? readinessFromExecution.missing_slots
+            : [],
+          invalid_artifacts: Array.isArray(readinessFromExecution.invalid_artifacts)
+            ? readinessFromExecution.invalid_artifacts
+            : [],
+          blocked_dependencies: Array.isArray(readinessFromExecution.blocked_dependencies)
+            ? readinessFromExecution.blocked_dependencies
+            : [],
+          owner_ready: readinessFromExecution.owner_ready !== false,
+          recovery_ready: readinessFromExecution.recovery_ready !== false,
+          recommended_action: cleanText(readinessFromExecution.recommended_action || "") || null,
+        }
+      : null,
+    blocking_reason_codes: Array.isArray(readinessFromExecution?.blocking_reason_codes)
+      ? readinessFromExecution.blocking_reason_codes
+      : [],
+    missing_slots: Array.isArray(readinessFromExecution?.missing_slots)
+      ? readinessFromExecution.missing_slots
+      : [],
+    invalid_artifacts: Array.isArray(readinessFromExecution?.invalid_artifacts)
+      ? readinessFromExecution.invalid_artifacts
+      : [],
+    blocked_dependencies: Array.isArray(readinessFromExecution?.blocked_dependencies)
+      ? readinessFromExecution.blocked_dependencies
+      : [],
+    owner_ready: typeof readinessFromExecution?.owner_ready === "boolean"
+      ? readinessFromExecution.owner_ready
+      : null,
+    recovery_ready: typeof readinessFromExecution?.recovery_ready === "boolean"
+      ? readinessFromExecution.recovery_ready
+      : null,
+    recommended_action: cleanText(readinessFromExecution?.recommended_action || "") || null,
     resumed_from_waiting_user: executionPlan.observability?.resumed_from_waiting_user === true,
     resumed_from_retry: executionPlan.observability?.resumed_from_retry === true,
     task_abandoned: topicSwitch && previousTaskId
@@ -2478,6 +2533,14 @@ export async function runPlannerUserInputEdge({
     dependency_type: null,
     artifact_superseded: false,
     dependency_blocked_step: null,
+    readiness: null,
+    blocking_reason_codes: [],
+    missing_slots: [],
+    invalid_artifacts: [],
+    blocked_dependencies: [],
+    owner_ready: null,
+    recovery_ready: null,
+    recommended_action: null,
     resumed_from_waiting_user: false,
     resumed_from_retry: false,
     task_abandoned: null,
@@ -2562,6 +2625,26 @@ export async function runPlannerUserInputEdge({
     dependency_type: mergedMemoryObservability.dependency_type || null,
     artifact_superseded: mergedMemoryObservability.artifact_superseded === true,
     dependency_blocked_step: mergedMemoryObservability.dependency_blocked_step || null,
+    readiness: mergedMemoryObservability.readiness || null,
+    blocking_reason_codes: Array.isArray(mergedMemoryObservability.blocking_reason_codes)
+      ? mergedMemoryObservability.blocking_reason_codes
+      : [],
+    missing_slots: Array.isArray(mergedMemoryObservability.missing_slots)
+      ? mergedMemoryObservability.missing_slots
+      : [],
+    invalid_artifacts: Array.isArray(mergedMemoryObservability.invalid_artifacts)
+      ? mergedMemoryObservability.invalid_artifacts
+      : [],
+    blocked_dependencies: Array.isArray(mergedMemoryObservability.blocked_dependencies)
+      ? mergedMemoryObservability.blocked_dependencies
+      : [],
+    owner_ready: typeof mergedMemoryObservability.owner_ready === "boolean"
+      ? mergedMemoryObservability.owner_ready
+      : null,
+    recovery_ready: typeof mergedMemoryObservability.recovery_ready === "boolean"
+      ? mergedMemoryObservability.recovery_ready
+      : null,
+    recommended_action: cleanText(mergedMemoryObservability.recommended_action || "") || null,
     resumed_from_waiting_user: mergedMemoryObservability.resumed_from_waiting_user === true,
     resumed_from_retry: mergedMemoryObservability.resumed_from_retry === true,
     task_abandoned: mergedMemoryObservability.task_abandoned || null,

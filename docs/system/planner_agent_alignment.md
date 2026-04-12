@@ -19,8 +19,10 @@ It is an alignment document:
 Current runtime anchor:
 
 - `/Users/seanhan/Documents/Playground/src/executive-planner.mjs`
+- `/Users/seanhan/Documents/Playground/src/execution-readiness-gate.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-ingress-contract.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs`
+- `/Users/seanhan/Documents/Playground/src/planner-working-memory-trace.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-flow-runtime.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-runtime-info-flow.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-okr-flow.mjs`
@@ -852,6 +854,34 @@ Runtime usage boundary:
   - invalid/missing `hard` dependency blocks direct continuation and enters recovery path
   - recovery priority is `rollback_to_step` when producer step is deterministically resolvable from dependency graph, otherwise fail-closed `ask_user`
   - invalid `soft` dependency does not hard-block execution but is emitted in trace diagnostics
+- before current-step execution, routing now also runs one deterministic execution readiness gate derived from the same working-memory execution plan state:
+  - readiness output shape:
+    - `is_ready`
+    - `blocking_reason_codes[]`
+    - `missing_slots[]`
+    - `invalid_artifacts[]`
+    - `blocked_dependencies[]`
+    - `owner_ready`
+    - `recovery_ready`
+    - `recommended_action` (`proceed|ask_user|retry|reroute|rollback|skip|fail`)
+  - supported blocking codes:
+    - `missing_slot`
+    - `invalid_artifact`
+    - `blocked_dependency`
+    - `owner_mismatch`
+    - `recovery_in_progress`
+    - `plan_invalidated`
+    - `malformed_plan_state`
+  - gate checks are centralized on current step state and stay fail-closed:
+    - slot readiness (`slot_requirements`)
+    - artifact readiness (`hard` artifact dependency validity)
+    - upstream dependency completion (`depends_on`)
+    - owner readiness (`current_owner_agent` vs `step.owner_agent`)
+    - recovery readiness (`rollback`/`retry` in progress)
+    - plan/task invalidation (`plan_status=invalidated` or task abandoned)
+  - when `is_ready=false`, intended action is not dispatched directly; planner follows recommended controlled paths and can lock routing for that turn
+  - blocked dependency remains fail-closed in v1 (`recommended_action=fail`), not implicit wait
+  - waiting-user slot-fill continuation may provisionally mark required slots as filled for that readiness check pass, while dependency/owner/recovery/plan checks remain enforced
 - unknown failure classes stay fail-closed (`ask_user` or no action), and do not silently blind-retry
 - slot hints now come from `slot_state`; expired TTL slots are ignored so stale gaps do not pollute new turns
 - clear topic-switch phrasing still keeps fail-closed behavior and now marks prior task id as abandoned
@@ -896,6 +926,14 @@ Observed routing/write signals now include:
 - `dependency_type`
 - `artifact_superseded`
 - `dependency_blocked_step`
+- `readiness`
+- `blocking_reason_codes`
+- `missing_slots`
+- `invalid_artifacts`
+- `blocked_dependencies`
+- `owner_ready`
+- `recovery_ready`
+- `recommended_action`
 
 Working-memory v2 diagnostics now also includes one human-readable `task_trace` overlay derived from the same observed fields (no second state source):
 
@@ -915,6 +953,7 @@ Working-memory v2 diagnostics now also includes one human-readable `task_trace` 
   - `retry_attempt`
   - `failure_class/recovery_policy/recovery_action/recovery_attempt_count/rollback_target_step_id/skipped_step_ids`
   - `artifact_id/artifact_type/validity_status/produced_by_step_id/affected_downstream_steps/dependency_type/artifact_superseded/dependency_blocked_step`
+  - `readiness.is_ready/blocking_reason_codes/missing_slots/invalid_artifacts/blocked_dependencies/owner_ready/recovery_ready/recommended_action`
   - trace output must be derived from these existing signals instead of introducing an independent trace truth
 
 The executive planner decision prompt now also reads a bounded task-state summary from that same local `task lifecycle v1` store: before agent selection, `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` asks `/Users/seanhan/Documents/Playground/src/planner-task-lifecycle-v1.mjs` for the latest relevant snapshot summary and injects `unfinished_hint`, `blocked_hint`, and `in_progress_hint` into prompt assembly, so decisions can preferentially reference unfinished tasks, surface blocked-task risk, and reuse in-progress execution summaries without changing the public planner JSON shape.

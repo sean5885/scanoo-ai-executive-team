@@ -380,6 +380,61 @@ test("task trace shows artifact invalidation impact and dependency diagnostics",
   assert.match(trace.text, /artifact: id=step-1_artifact_1/);
 });
 
+test("task trace includes readiness gate diagnostics in diff and summary text", () => {
+  const trace = buildPlannerTaskTraceDiagnostics({
+    memoryStage: "runPlannerToolFlow_router_decision",
+    memorySnapshot: {
+      task_id: "task-readiness-trace",
+      task_type: "document_lookup",
+      task_phase: "executing",
+      task_status: "running",
+      current_owner_agent: "doc_agent",
+      execution_plan: {
+        plan_id: "plan-readiness-trace",
+        plan_status: "active",
+        current_step_id: "step-2",
+        steps: [
+          {
+            step_id: "step-1",
+            status: "completed",
+          },
+          {
+            step_id: "step-2",
+            status: "running",
+          },
+        ],
+      },
+    },
+    observability: {
+      readiness: {
+        is_ready: false,
+        blocking_reason_codes: ["missing_slot", "owner_mismatch"],
+        missing_slots: ["candidate_selection_required"],
+        invalid_artifacts: [],
+        blocked_dependencies: [],
+        owner_ready: false,
+        recovery_ready: true,
+        recommended_action: "ask_user",
+      },
+      blocking_reason_codes: ["missing_slot", "owner_mismatch"],
+      missing_slots: ["candidate_selection_required"],
+      owner_ready: false,
+      recovery_ready: true,
+      recommended_action: "ask_user",
+    },
+  });
+
+  assert.equal(trace.diff.includes("readiness.is_ready: false"), true);
+  assert.equal(trace.diff.includes("blocking_reason_codes: [missing_slot, owner_mismatch]"), true);
+  assert.equal(trace.diff.includes("missing_slots: [candidate_selection_required]"), true);
+  assert.equal(trace.diff.includes("owner_ready: false"), true);
+  assert.equal(trace.diff.includes("recommended_action: ask_user"), true);
+  assert.match(trace.text, /readiness: is_ready=false/);
+  assert.equal(trace.event_alignment.readiness_is_ready, true);
+  assert.equal(trace.event_alignment.blocking_reason_codes, true);
+  assert.equal(trace.event_alignment.recommended_action, true);
+});
+
 test("planner logs task trace at memory pre-read and router decision", async () => {
   const sessionKey = "wm-trace-hook-router";
   resetPlannerRuntimeContext({ sessionKey });
