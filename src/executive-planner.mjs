@@ -11434,3 +11434,16 @@ if (isLikelyContinuation && plannerDecision === 'new_task') {
   plannerDecision = 'resume_previous_task';
   ctx.__forced_continuation = true;
 }
+// --- slot fill must resume (fail-closed) ---
+if (
+  ctx?.waiting_user &&
+  Array.isArray(ctx?.required_slots) &&
+  ctx.required_slots.every(k => ctx?.slots?.[k] != null)
+) {
+  ctx.__force_resume_after_slot_fill = true;
+}
+
+if (ctx?.__force_resume_after_slot_fill) {
+  plannerDecision = 'resume_previous_task';
+  ctx.__slot_fill_resumed = true;
+}

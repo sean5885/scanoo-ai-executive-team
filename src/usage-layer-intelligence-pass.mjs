@@ -675,3 +675,7 @@ export function extractUsageLayerDiagnostics(passResult = null) {
         usage_issue_codes: [],
       };
 }
+// --- slot fill resume signal ---
+if (ctx?.__slot_fill_resumed) {
+  result.slot_fill_resumed = true;
+}
