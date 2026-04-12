@@ -15,7 +15,7 @@ import {
 } from "./decision-engine-promotion.mjs";
 import { resolvePromotionControlSurface } from "./promotion-control-surface.mjs";
 
-export const USAGE_EVAL_RUNNER_VERSION = "usage_eval_runner_v1";
+export const USAGE_EVAL_RUNNER_VERSION = "usage_eval_runner_v2";
 export const DEFAULT_USAGE_EVAL_CASE_COUNT_MIN = 30;
 export const DEFAULT_USAGE_EVAL_CASE_COUNT_MAX = 50;
 export const DEFAULT_USAGE_EVAL_TOP_N = 5;
@@ -61,6 +61,10 @@ const CONTINUATION_PATTERN = /^(繼續|继续|接著|接着|下一步|再來|再
 const RETRY_PATTERN = /(重試|重试|retry|再試|再试|再跑一次)/i;
 const REROUTE_PATTERN = /(改由|換人|换人|轉給|转给|reroute|交給別的|交给别的)/i;
 const SLOT_FILL_PATTERN = /(補上|补上|提供|給你|给你|編號是|编号是|doc[-_\s]?\d+)/i;
+const CONTINUITY_TONE_PATTERN = /(接著|接着|延續|延续|上一輪|上一轮|剛補|刚补|繼續|继续|續上|续上|沿用|改由|重試|重试|retry|reroute)/i;
+const LONG_RESET_PATTERN = /(先從頭|先从头|重新開始|重新开始|重頭開始|重头开始|完整重述|完整說明|完整说明|先重述|先說明背景|先说明背景)/i;
+const NEW_TASK_OPENING_PATTERN = /^(我先|先|收到|好|好的).{0,20}(新任務|新任务|當作新任務|当作新任务|切到新題目|切到新题目|重新開始|重新开始|第一版答案)/i;
+const FIRST_SENTENCE_BACKGROUND_RESET_PATTERN = /^(我先|先).{0,24}(重新|重述|說明|说明|背景|從頭|从头)/i;
 
 function toObject(value = null) {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -105,6 +109,228 @@ function topDistribution(counter = {}, topN = DEFAULT_USAGE_EVAL_TOP_N) {
       return left.key.localeCompare(right.key);
     })
     .slice(0, Math.max(1, Number(topN) || DEFAULT_USAGE_EVAL_TOP_N));
+}
+
+function normalizeIssueCodes(value = null) {
+  const normalized = Array.isArray(value)
+    ? value
+    : [];
+  return Array.from(new Set(
+    normalized
+      .map((code) => cleanText(code))
+      .filter(Boolean),
+  ));
+}
+
+function normalizeUserResponseForTurn(user_response = null) {
+  const normalized = toObject(user_response);
+  if (!normalized) {
+    return null;
+  }
+  return {
+    answer: cleanText(normalized.answer || ""),
+    sources: toArray(normalized.sources).map((line) => cleanText(line)).filter(Boolean),
+    limitations: toArray(normalized.limitations).map((line) => cleanText(line)).filter(Boolean),
+  };
+}
+
+function extractFirstSentence(input = "") {
+  const normalized = cleanText(input || "");
+  if (!normalized) {
+    return "";
+  }
+  const first = normalized
+    .split(/[。！？!?]/)
+    .map((part) => cleanText(part))
+    .find(Boolean);
+  return cleanText(first || "");
+}
+
+function slotSnapshotEntryIsValid(slot = null) {
+  const normalized = toObject(slot);
+  if (!normalized) {
+    return false;
+  }
+  const status = cleanText(normalized.status || "");
+  if (status !== "filled") {
+    return false;
+  }
+  const invalid = normalized.invalid === true
+    || normalized.is_invalid === true
+    || normalized.invalidated === true
+    || normalized.is_invalidated === true;
+  if (invalid) {
+    return false;
+  }
+  const validityStatus = cleanText(normalized.validity_status || normalized.validity || "");
+  if (validityStatus === "invalid" || validityStatus === "invalidated") {
+    return false;
+  }
+  const ttl = cleanText(normalized.ttl || "");
+  if (!ttl) {
+    return true;
+  }
+  const ttlDate = Date.parse(ttl);
+  return Number.isFinite(ttlDate) && ttlDate > Date.now();
+}
+
+function hasValidFilledSlotSnapshot(slot_state_snapshot = null) {
+  return toArray(slot_state_snapshot).some((slot) => slotSnapshotEntryIsValid(slot));
+}
+
+function responseLooksLikeLongReset(user_response = null) {
+  const normalized = normalizeUserResponseForTurn(user_response);
+  if (!normalized) {
+    return false;
+  }
+  const answer = cleanText(normalized.answer || "");
+  if (!answer) {
+    return false;
+  }
+  if (LONG_RESET_PATTERN.test(answer)) {
+    return true;
+  }
+  const firstSentence = extractFirstSentence(answer);
+  return FIRST_SENTENCE_BACKGROUND_RESET_PATTERN.test(firstSentence);
+}
+
+function responseHasNewTaskOpening(user_response = null) {
+  const normalized = normalizeUserResponseForTurn(user_response);
+  if (!normalized) {
+    return false;
+  }
+  const firstSentence = extractFirstSentence(normalized.answer || "");
+  return NEW_TASK_OPENING_PATTERN.test(firstSentence);
+}
+
+function responseHasContinuationTone(user_response = null) {
+  const normalized = normalizeUserResponseForTurn(user_response);
+  if (!normalized) {
+    return false;
+  }
+  if (responseHasNewTaskOpening(normalized)) {
+    return false;
+  }
+  const segments = [
+    cleanText(normalized.answer || ""),
+    ...toArray(normalized.sources),
+    ...toArray(normalized.limitations),
+  ].map((segment) => cleanText(segment)).filter(Boolean);
+  return segments.some((segment) => CONTINUITY_TONE_PATTERN.test(segment));
+}
+
+function isAskUserPromotionExecuted(decision_promotion = null) {
+  const normalized = toObject(decision_promotion);
+  if (!normalized) {
+    return false;
+  }
+  return normalized.promotion_applied === true
+    && cleanText(normalized.promoted_action || "") === "ask_user";
+}
+
+export function classifyUsageIssueVisibilityForTurn({
+  usage_layer = null,
+  decision_promotion = null,
+  slot_state_snapshot = [],
+  user_response = null,
+} = {}) {
+  const normalizedUsageLayer = toObject(usage_layer) || {};
+  const rawDetectedCodes = normalizeIssueCodes(normalizedUsageLayer.usage_issue_codes);
+  const slotSuppressedAsk = normalizedUsageLayer.slot_suppressed_ask === true;
+  const retryContextApplied = normalizedUsageLayer.retry_context_applied === true;
+
+  const validFilledSlot = hasValidFilledSlotSnapshot(slot_state_snapshot);
+  const noAskUserExecuted = !isAskUserPromotionExecuted(decision_promotion);
+
+  const transformedDetected = [];
+  const suppressedCodes = [];
+  for (const code of rawDetectedCodes) {
+    if (
+      code === "redundant_slot_ask"
+      && slotSuppressedAsk
+      && validFilledSlot
+      && noAskUserExecuted
+    ) {
+      transformedDetected.push("redundant_slot_ask_suppressed");
+      suppressedCodes.push("redundant_slot_ask_suppressed");
+      continue;
+    }
+    transformedDetected.push(code);
+  }
+  const detectedCodes = Array.from(new Set(transformedDetected));
+
+  const exposedSet = new Set(detectedCodes);
+  if (suppressedCodes.includes("redundant_slot_ask_suppressed")) {
+    exposedSet.delete("redundant_slot_ask");
+    exposedSet.delete("redundant_slot_ask_suppressed");
+  }
+
+  const retrySuppressionEligible = detectedCodes.includes("retry_without_contextual_response")
+    && retryContextApplied
+    && !responseLooksLikeLongReset(user_response)
+    && responseHasContinuationTone(user_response);
+  if (retrySuppressionEligible) {
+    exposedSet.delete("retry_without_contextual_response");
+    suppressedCodes.push("retry_without_contextual_response");
+  }
+
+  const exposedCodes = Array.from(exposedSet);
+  const slotSuppressionSuccessful = slotSuppressedAsk
+    && !exposedCodes.includes("redundant_slot_ask")
+    && !exposedCodes.includes("redundant_slot_ask_suppressed");
+  const retrySuppressionSuccessful = retryContextApplied
+    && !exposedCodes.includes("retry_without_contextual_response");
+
+  return {
+    issue_detected: detectedCodes.length > 0,
+    issue_exposed_to_user: exposedCodes.length > 0,
+    issue_detected_codes: detectedCodes,
+    issue_exposed_codes: exposedCodes,
+    issue_suppressed_codes: Array.from(new Set(suppressedCodes)),
+    suppression_flags: {
+      slot: {
+        applied: slotSuppressedAsk,
+        successful: slotSuppressionSuccessful,
+      },
+      retry: {
+        applied: retryContextApplied,
+        successful: retrySuppressionSuccessful,
+      },
+    },
+  };
+}
+
+function ensureTurnIssueVisibility(turn = null) {
+  const normalizedTurn = toObject(turn) || {};
+  const existingDetected = normalizeIssueCodes(normalizedTurn.issue_detected_codes);
+  const existingExposed = normalizeIssueCodes(normalizedTurn.issue_exposed_codes);
+  const existingSuppressed = normalizeIssueCodes(normalizedTurn.issue_suppressed_codes);
+  const existingFlags = toObject(normalizedTurn.suppression_flags);
+  if (existingDetected.length > 0 || existingExposed.length > 0 || existingSuppressed.length > 0 || existingFlags) {
+    return {
+      issue_detected: existingDetected.length > 0,
+      issue_exposed_to_user: existingExposed.length > 0,
+      issue_detected_codes: existingDetected,
+      issue_exposed_codes: existingExposed,
+      issue_suppressed_codes: existingSuppressed,
+      suppression_flags: {
+        slot: {
+          applied: existingFlags?.slot?.applied === true,
+          successful: existingFlags?.slot?.successful === true,
+        },
+        retry: {
+          applied: existingFlags?.retry?.applied === true,
+          successful: existingFlags?.retry?.successful === true,
+        },
+      },
+    };
+  }
+  return classifyUsageIssueVisibilityForTurn({
+    usage_layer: normalizedTurn.usage_layer,
+    decision_promotion: normalizedTurn.decision_promotion,
+    slot_state_snapshot: normalizedTurn.slot_state_snapshot,
+    user_response: normalizedTurn.user_response,
+  });
 }
 
 function normalizeHintTags(value = "") {
@@ -576,6 +802,9 @@ function buildTraceSnapshot({
   promoted_action = null,
   usage_layer = null,
   outcome = null,
+  issue_detected_codes = [],
+  issue_exposed_codes = [],
+  suppression_flags = null,
 } = {}) {
   return {
     case_id: cleanText(case_id || ""),
@@ -585,6 +814,18 @@ function buildTraceSnapshot({
       promoted: cleanText(promoted_action || "") || null,
     },
     usage_issue_codes: toArray(usage_layer?.usage_issue_codes).map((code) => cleanText(code)).filter(Boolean),
+    issue_detected_codes: normalizeIssueCodes(issue_detected_codes),
+    issue_exposed_codes: normalizeIssueCodes(issue_exposed_codes),
+    suppression_flags: {
+      slot: {
+        applied: suppression_flags?.slot?.applied === true,
+        successful: suppression_flags?.slot?.successful === true,
+      },
+      retry: {
+        applied: suppression_flags?.retry?.applied === true,
+        successful: suppression_flags?.retry?.successful === true,
+      },
+    },
     response_continuity_score: cleanText(usage_layer?.response_continuity_score || "") || "low",
     outcome_status: cleanText(outcome?.outcome_status || "") || null,
   };
@@ -862,15 +1103,27 @@ function buildTurnResult({
   advisor_alignment = null,
   decision_promotion = null,
   promotion_audit = null,
+  user_response = null,
+  slot_state_snapshot = [],
+  unresolved_slots_snapshot = [],
 } = {}) {
   const usageLayer = toObject(usage_pass?.diagnostics) || {
     interpreted_as_continuation: false,
     interpreted_as_new_task: true,
     redundant_question_detected: false,
     owner_selection_feels_consistent: true,
+    slot_suppressed_ask: false,
+    retry_context_applied: false,
     response_continuity_score: "low",
     usage_issue_codes: [],
   };
+  const normalizedUserResponse = normalizeUserResponseForTurn(user_response);
+  const issueVisibility = classifyUsageIssueVisibilityForTurn({
+    usage_layer: usageLayer,
+    decision_promotion,
+    slot_state_snapshot,
+    user_response: normalizedUserResponse,
+  });
   const trace_snapshot = buildTraceSnapshot({
     case_id,
     turn_index,
@@ -878,6 +1131,9 @@ function buildTurnResult({
     promoted_action: cleanText(decision_promotion?.promoted_action || "") || null,
     usage_layer: usageLayer,
     outcome,
+    issue_detected_codes: issueVisibility.issue_detected_codes,
+    issue_exposed_codes: issueVisibility.issue_exposed_codes,
+    suppression_flags: issueVisibility.suppression_flags,
   });
   return {
     turn_index,
@@ -896,6 +1152,15 @@ function buildTurnResult({
     outcome: toObject(outcome) || null,
     readiness: toObject(readiness) || null,
     promotion_audit: toObject(promotion_audit) || null,
+    slot_state_snapshot: toArray(slot_state_snapshot).map((slot) => toObject(slot)).filter(Boolean),
+    unresolved_slots_snapshot: toArray(unresolved_slots_snapshot).map((slot) => cleanText(slot)).filter(Boolean),
+    user_response: normalizedUserResponse,
+    issue_detected: issueVisibility.issue_detected,
+    issue_exposed_to_user: issueVisibility.issue_exposed_to_user,
+    issue_detected_codes: issueVisibility.issue_detected_codes,
+    issue_exposed_codes: issueVisibility.issue_exposed_codes,
+    issue_suppressed_codes: issueVisibility.issue_suppressed_codes,
+    suppression_flags: issueVisibility.suppression_flags,
     trace_snapshot,
   };
 }
@@ -913,11 +1178,32 @@ function summarizeCaseTurnResults(caseResult = null) {
     && turn?.readiness?.is_ready === true
     && cleanText(turn?.actual_action || "") !== "ask_user");
   const promotedTurns = turns.filter((turn) => turn?.decision_promotion?.promotion_applied === true);
-  const issueCounter = {};
+  const detectedIssueCounter = {};
+  const exposedIssueCounter = {};
   const outcomeCounter = {};
+  let issueDetectedCount = 0;
+  let issueExposedCount = 0;
+  let redundantDetectedCount = 0;
+  let redundantExposedCount = 0;
   for (const turn of turns) {
-    for (const code of toArray(turn?.usage_layer?.usage_issue_codes)) {
-      issueCounter[cleanText(code)] = Number(issueCounter[cleanText(code)] || 0) + 1;
+    const issueVisibility = ensureTurnIssueVisibility(turn);
+    if (issueVisibility.issue_detected === true) {
+      issueDetectedCount += 1;
+    }
+    if (issueVisibility.issue_exposed_to_user === true) {
+      issueExposedCount += 1;
+    }
+    for (const code of issueVisibility.issue_detected_codes) {
+      detectedIssueCounter[code] = Number(detectedIssueCounter[code] || 0) + 1;
+      if (code === "redundant_slot_ask" || code === "redundant_slot_ask_suppressed") {
+        redundantDetectedCount += 1;
+      }
+    }
+    for (const code of issueVisibility.issue_exposed_codes) {
+      exposedIssueCounter[code] = Number(exposedIssueCounter[code] || 0) + 1;
+      if (code === "redundant_slot_ask" || code === "redundant_slot_ask_suppressed") {
+        redundantExposedCount += 1;
+      }
     }
     const outcomeStatus = cleanText(turn?.outcome?.outcome_status || "");
     if (outcomeStatus) {
@@ -932,12 +1218,24 @@ function summarizeCaseTurnResults(caseResult = null) {
     continuation_hits: continuationHits.length,
     continuation_rate: ratio(continuationHits.length, continuationTurns.length),
     mistaken_new_task_count: mistakenNewTask.length,
-    redundant_question_count: redundantAsks.length,
+    issue_detected_count: issueDetectedCount,
+    issue_exposed_count: issueExposedCount,
+    redundant_question_detected_count: Math.max(redundantAsks.length, redundantDetectedCount),
+    redundant_question_exposed_count: redundantExposedCount,
+    redundant_question_count: redundantExposedCount,
     slot_fill_resume_attempts: slotResumeAttempts.length,
     slot_fill_resume_successes: slotResumeSuccesses.length,
     slot_fill_resume_success_rate: ratio(slotResumeSuccesses.length, slotResumeAttempts.length),
     promotions_applied_count: promotedTurns.length,
-    top_usage_issue_codes: topDistribution(issueCounter, 3).map((item) => ({
+    top_detected_issue_codes: topDistribution(detectedIssueCounter, 3).map((item) => ({
+      issue_code: item.key,
+      count: item.count,
+    })),
+    top_user_visible_issue_codes: topDistribution(exposedIssueCounter, 3).map((item) => ({
+      issue_code: item.key,
+      count: item.count,
+    })),
+    top_usage_issue_codes: topDistribution(exposedIssueCounter, 3).map((item) => ({
       issue_code: item.key,
       count: item.count,
     })),
@@ -951,9 +1249,19 @@ function initializeAggregates() {
     continuation_intent_turns: 0,
     continuation_hits: 0,
     mistaken_new_task_count: 0,
+    issue_detected_turn_count: 0,
+    issue_exposed_turn_count: 0,
+    redundant_question_detected_count: 0,
+    redundant_question_exposed_count: 0,
     redundant_question_count: 0,
     slot_fill_resume_attempts: 0,
     slot_fill_resume_successes: 0,
+    slot_ask_suppressed_turn_count: 0,
+    slot_ask_suppression_success_turn_count: 0,
+    retry_context_applied_turn_count: 0,
+    retry_context_success_turn_count: 0,
+    suppressible_issue_detected_count: 0,
+    suppressible_issue_suppressed_count: 0,
     promotion_applied_count_by_action: Object.fromEntries(PROMOTION_ACTIONS.map((action) => [action, 0])),
     promotion_effective_count_by_action: Object.fromEntries(PROMOTION_ACTIONS.map((action) => [action, 0])),
     promotion_ineffective_count_by_action: Object.fromEntries(PROMOTION_ACTIONS.map((action) => [action, 0])),
@@ -961,6 +1269,8 @@ function initializeAggregates() {
     reroute_applied_count: 0,
     reroute_effective_count: 0,
     reroute_ineffective_count: 0,
+    issue_detected_code_distribution: {},
+    issue_exposed_code_distribution: {},
     usage_issue_code_distribution: {},
     response_continuity_score_distribution: Object.fromEntries(CONTINUITY_SCORES.map((score) => [score, 0])),
     divergence_pattern_distribution: {},
@@ -990,11 +1300,29 @@ function accumulateTurnMetrics(aggregates = null, turn = null) {
       next.continuation_hits += 1;
     }
   }
-  const issueCodes = toArray(turn?.usage_layer?.usage_issue_codes).map((code) => cleanText(code)).filter(Boolean);
-  if (issueCodes.includes("mistaken_new_task")) {
+  const issueVisibility = ensureTurnIssueVisibility(turn);
+  const detectedIssueCodes = issueVisibility.issue_detected_codes;
+  const exposedIssueCodes = issueVisibility.issue_exposed_codes;
+  const suppressedIssueCodes = issueVisibility.issue_suppressed_codes;
+  if (issueVisibility.issue_detected === true) {
+    next.issue_detected_turn_count += 1;
+  }
+  if (issueVisibility.issue_exposed_to_user === true) {
+    next.issue_exposed_turn_count += 1;
+  }
+  if (detectedIssueCodes.includes("mistaken_new_task")) {
     next.mistaken_new_task_count += 1;
   }
-  if (turn?.usage_layer?.redundant_question_detected === true) {
+  const redundantDetected = detectedIssueCodes.includes("redundant_slot_ask")
+    || detectedIssueCodes.includes("redundant_slot_ask_suppressed")
+    || turn?.usage_layer?.redundant_question_detected === true;
+  const redundantExposed = exposedIssueCodes.includes("redundant_slot_ask")
+    || exposedIssueCodes.includes("redundant_slot_ask_suppressed");
+  if (redundantDetected) {
+    next.redundant_question_detected_count += 1;
+  }
+  if (redundantExposed) {
+    next.redundant_question_exposed_count += 1;
     next.redundant_question_count += 1;
   }
   if (turn?.turn_intent?.slot_resume_attempt === true) {
@@ -1006,9 +1334,34 @@ function accumulateTurnMetrics(aggregates = null, turn = null) {
       next.slot_fill_resume_successes += 1;
     }
   }
-  for (const issueCode of issueCodes) {
-    next.usage_issue_code_distribution[issueCode] = Number(next.usage_issue_code_distribution[issueCode] || 0) + 1;
+  for (const issueCode of detectedIssueCodes) {
+    next.issue_detected_code_distribution[issueCode] = Number(next.issue_detected_code_distribution[issueCode] || 0) + 1;
+    if (issueCode === "redundant_slot_ask" || issueCode === "redundant_slot_ask_suppressed" || issueCode === "retry_without_contextual_response") {
+      next.suppressible_issue_detected_count += 1;
+    }
   }
+  for (const issueCode of exposedIssueCodes) {
+    next.issue_exposed_code_distribution[issueCode] = Number(next.issue_exposed_code_distribution[issueCode] || 0) + 1;
+  }
+  next.usage_issue_code_distribution = { ...next.issue_exposed_code_distribution };
+  for (const issueCode of suppressedIssueCodes) {
+    if (issueCode === "redundant_slot_ask_suppressed" || issueCode === "retry_without_contextual_response") {
+      next.suppressible_issue_suppressed_count += 1;
+    }
+  }
+  if (issueVisibility.suppression_flags?.slot?.applied === true) {
+    next.slot_ask_suppressed_turn_count += 1;
+    if (issueVisibility.suppression_flags?.slot?.successful === true) {
+      next.slot_ask_suppression_success_turn_count += 1;
+    }
+  }
+  if (issueVisibility.suppression_flags?.retry?.applied === true) {
+    next.retry_context_applied_turn_count += 1;
+    if (issueVisibility.suppression_flags?.retry?.successful === true) {
+      next.retry_context_success_turn_count += 1;
+    }
+  }
+
   const continuityScore = cleanText(turn?.usage_layer?.response_continuity_score || "");
   if (continuityScore && Object.prototype.hasOwnProperty.call(next.response_continuity_score_distribution, continuityScore)) {
     next.response_continuity_score_distribution[continuityScore] += 1;
@@ -1129,9 +1482,24 @@ function buildPromotionPauseRecommendations(actionPerformance = []) {
 function resolveOverallIntelligenceSignal(metrics = null) {
   const continuationRate = Number(metrics?.continuation_quality?.continuation_rate || 0);
   const mistakenRate = Number(metrics?.continuation_quality?.mistaken_new_task_rate || 0);
-  const redundantRate = Number(metrics?.redundant_ask?.redundant_question_rate || 0);
+  const redundantRate = Number(metrics?.redundant_ask?.redundant_question_exposed_rate || metrics?.redundant_ask?.redundant_question_rate || 0);
   const promotionRate = Number(metrics?.decision_engine?.promotion_effectiveness_rate || 0);
   const rerouteRate = Number(metrics?.reroute_quality?.reroute_effective_rate || 0);
+  const detectedIssueRate = Number(
+    metrics?.issue_visibility?.detected_issue_event_rate
+    || metrics?.issue_visibility?.detected_issue_rate
+    || 0,
+  );
+  const exposedIssueRate = Number(
+    metrics?.issue_visibility?.exposed_issue_event_rate
+    || metrics?.issue_visibility?.exposed_issue_rate
+    || detectedIssueRate,
+  );
+  const issueDrop = detectedIssueRate - exposedIssueRate;
+  const hasMeaningfulIssueDrop = issueDrop >= 0.08
+    && exposedIssueRate <= detectedIssueRate * 0.75;
+
+  let baseSignal = "low";
   if (
     continuationRate >= 0.85
     && mistakenRate <= 0.1
@@ -1139,17 +1507,26 @@ function resolveOverallIntelligenceSignal(metrics = null) {
     && promotionRate >= 0.6
     && rerouteRate >= 0.55
   ) {
-    return "high";
-  }
-  if (
+    baseSignal = "high";
+  } else if (
     continuationRate >= 0.65
     && mistakenRate <= 0.25
     && redundantRate <= 0.3
     && promotionRate >= 0.35
   ) {
+    baseSignal = "medium";
+  }
+
+  if (!hasMeaningfulIssueDrop) {
+    return baseSignal;
+  }
+  if (baseSignal === "low") {
     return "medium";
   }
-  return "low";
+  if (baseSignal === "medium") {
+    return "high";
+  }
+  return baseSignal;
 }
 
 function buildAggregatedMetrics(aggregates = null) {
@@ -1158,6 +1535,23 @@ function buildAggregatedMetrics(aggregates = null) {
     sum + Number(normalized.promotion_effective_count_by_action[action] || 0), 0);
   const ineffectiveTotal = PROMOTION_ACTIONS.reduce((sum, action) =>
     sum + Number(normalized.promotion_ineffective_count_by_action[action] || 0), 0);
+  const redundantDetectedCount = Number(normalized.redundant_question_detected_count || 0);
+  const redundantExposedCount = Number(normalized.redundant_question_exposed_count || 0);
+  const totalTurns = Number(normalized.total_turns || 0);
+  const issueDetectedCount = Number(normalized.issue_detected_turn_count || 0);
+  const issueExposedCount = Number(normalized.issue_exposed_turn_count || 0);
+  const slotSuppressedTurnCount = Number(normalized.slot_ask_suppressed_turn_count || 0);
+  const slotSuppressionSuccessTurnCount = Number(normalized.slot_ask_suppression_success_turn_count || 0);
+  const retryContextAppliedTurnCount = Number(normalized.retry_context_applied_turn_count || 0);
+  const retryContextSuccessTurnCount = Number(normalized.retry_context_success_turn_count || 0);
+  const suppressibleDetectedCount = Number(normalized.suppressible_issue_detected_count || 0);
+  const suppressibleSuppressedCount = Number(normalized.suppressible_issue_suppressed_count || 0);
+  const detectedIssueEventCount = Object.values(toObject(normalized.issue_detected_code_distribution) || {})
+    .reduce((sum, count) => sum + Number(count || 0), 0);
+  const exposedIssueEventCount = Object.values(toObject(normalized.issue_exposed_code_distribution) || {})
+    .reduce((sum, count) => sum + Number(count || 0), 0);
+  const retryContextSuccessRate = ratio(retryContextSuccessTurnCount, retryContextAppliedTurnCount);
+  const slotAskSuppressionSuccessRate = ratio(slotSuppressionSuccessTurnCount, slotSuppressedTurnCount);
   return {
     continuation_quality: {
       continuation_rate: ratio(normalized.continuation_hits, normalized.continuation_intent_turns),
@@ -1166,16 +1560,49 @@ function buildAggregatedMetrics(aggregates = null) {
       continuation_hits: normalized.continuation_hits,
       mistaken_new_task_count: normalized.mistaken_new_task_count,
     },
+    issue_visibility: {
+      issue_detected_turn_count: issueDetectedCount,
+      issue_exposed_turn_count: issueExposedCount,
+      issue_detected_event_count: detectedIssueEventCount,
+      issue_exposed_event_count: exposedIssueEventCount,
+      detected_issue_rate: ratio(issueDetectedCount, totalTurns),
+      exposed_issue_rate: ratio(issueExposedCount, totalTurns),
+      detected_issue_event_rate: ratio(detectedIssueEventCount, totalTurns),
+      exposed_issue_event_rate: ratio(exposedIssueEventCount, totalTurns),
+      detected_minus_exposed_rate: ratio(issueDetectedCount - issueExposedCount, totalTurns),
+      detected_minus_exposed_event_rate: ratio(detectedIssueEventCount - exposedIssueEventCount, totalTurns),
+    },
     redundant_ask: {
-      redundant_question_rate: ratio(normalized.redundant_question_count, normalized.total_turns),
-      redundant_question_count: normalized.redundant_question_count,
-      total_turns: normalized.total_turns,
+      redundant_question_detected_rate: ratio(redundantDetectedCount, totalTurns),
+      redundant_question_exposed_rate: ratio(redundantExposedCount, totalTurns),
+      redundant_question_rate: ratio(redundantExposedCount, totalTurns),
+      redundant_question_detected_count: redundantDetectedCount,
+      redundant_question_exposed_count: redundantExposedCount,
+      redundant_question_count: redundantExposedCount,
+      total_turns: totalTurns,
     },
     slot_resume_quality: {
       slot_fill_resume_success_rate: ratio(normalized.slot_fill_resume_successes, normalized.slot_fill_resume_attempts),
       slot_fill_resume_attempts: normalized.slot_fill_resume_attempts,
       slot_fill_resume_successes: normalized.slot_fill_resume_successes,
     },
+    retry_context_quality: {
+      retry_context_applied_turn_count: retryContextAppliedTurnCount,
+      retry_context_success_turn_count: retryContextSuccessTurnCount,
+      retry_context_success_rate: retryContextSuccessRate,
+    },
+    slot_ask_suppression_quality: {
+      slot_ask_suppressed_turn_count: slotSuppressedTurnCount,
+      slot_ask_suppression_success_turn_count: slotSuppressionSuccessTurnCount,
+      slot_ask_suppression_success_rate: slotAskSuppressionSuccessRate,
+    },
+    suppression_effectiveness: {
+      suppressed_count: suppressibleSuppressedCount,
+      detected_count: suppressibleDetectedCount,
+      suppressed_ratio: ratio(suppressibleSuppressedCount, suppressibleDetectedCount),
+    },
+    retry_context_success_rate: retryContextSuccessRate,
+    slot_ask_suppression_success_rate: slotAskSuppressionSuccessRate,
     decision_engine: {
       promotion_applied_count_by_action: normalized.promotion_applied_count_by_action,
       promotion_effectiveness_rate: ratio(effectiveTotal, effectiveTotal + ineffectiveTotal),
@@ -1190,7 +1617,11 @@ function buildAggregatedMetrics(aggregates = null) {
       reroute_ineffective_count: normalized.reroute_ineffective_count,
     },
     usage_layer: {
-      usage_issue_code_distribution: normalized.usage_issue_code_distribution,
+      issue_detected_count_by_code: normalized.issue_detected_code_distribution,
+      issue_exposed_count_by_code: normalized.issue_exposed_code_distribution,
+      raw_issue_distribution: normalized.issue_detected_code_distribution,
+      user_visible_issue_distribution: normalized.issue_exposed_code_distribution,
+      usage_issue_code_distribution: normalized.issue_exposed_code_distribution,
       response_continuity_score_distribution: normalized.response_continuity_score_distribution,
     },
   };
@@ -1206,7 +1637,13 @@ function buildGlobalSummary({
   const actionPerformance = buildActionPerformance(normalizedAggregates);
   const bestWorst = resolveBestWorstPromotionAction(actionPerformance);
   const pauseRecommendations = buildPromotionPauseRecommendations(actionPerformance);
-  const topIssues = topDistribution(normalizedAggregates.usage_issue_code_distribution, DEFAULT_USAGE_EVAL_TOP_N)
+  const topDetectedIssues = topDistribution(normalizedAggregates.issue_detected_code_distribution, DEFAULT_USAGE_EVAL_TOP_N)
+    .map((item) => ({
+      issue_code: item.key,
+      count: item.count,
+      rate: ratio(item.count, normalizedAggregates.total_turns),
+    }));
+  const topUserVisibleIssues = topDistribution(normalizedAggregates.issue_exposed_code_distribution, DEFAULT_USAGE_EVAL_TOP_N)
     .map((item) => ({
       issue_code: item.key,
       count: item.count,
@@ -1222,8 +1659,20 @@ function buildGlobalSummary({
     state: final_promotion_state,
     promotion_policy: resolvePromotionControlSurface(),
   });
+  const suppressionEffectiveness = toObject(metrics?.suppression_effectiveness) || {
+    suppressed_count: Number(normalizedAggregates.suppressible_issue_suppressed_count || 0),
+    detected_count: Number(normalizedAggregates.suppressible_issue_detected_count || 0),
+    suppressed_ratio: ratio(
+      Number(normalizedAggregates.suppressible_issue_suppressed_count || 0),
+      Number(normalizedAggregates.suppressible_issue_detected_count || 0),
+    ),
+  };
   return {
-    top_usage_issues: topIssues,
+    raw_issue_distribution: normalizedAggregates.issue_detected_code_distribution,
+    user_visible_issue_distribution: normalizedAggregates.issue_exposed_code_distribution,
+    top_detected_issues: topDetectedIssues,
+    top_user_visible_issues: topUserVisibleIssues,
+    top_usage_issues: topUserVisibleIssues,
     most_common_divergence_pattern: divergencePatterns[0] || null,
     divergence_pattern_distribution: divergencePatterns,
     action_promotion_performance: {
@@ -1238,6 +1687,9 @@ function buildGlobalSummary({
     ])).sort((left, right) => left.localeCompare(right)),
     pause_promotion_recommendations: pauseRecommendations,
     rollback_disabled_actions: rollbackDisabledActions,
+    suppression_effectiveness: suppressionEffectiveness,
+    retry_context_success_rate: Number(metrics?.retry_context_quality?.retry_context_success_rate || 0),
+    slot_ask_suppression_success_rate: Number(metrics?.slot_ask_suppression_quality?.slot_ask_suppression_success_rate || 0),
     overall_intelligence_signal: resolveOverallIntelligenceSignal(metrics),
   };
 }
@@ -1523,6 +1975,9 @@ function runUsageEvalTurn({
     advisor_alignment: advisorAlignment,
     decision_promotion: decisionPromotion,
     promotion_audit: updatedAuditRecord,
+    user_response: userResponse,
+    slot_state_snapshot: toArray(workingMemory?.slot_state),
+    unresolved_slots_snapshot: toArray(unresolvedSlots),
   });
   const nextState = applyStateTransition({
     state: {
@@ -1749,10 +2204,19 @@ function formatRunnerTextReport(run = null) {
   lines.push(`continuation_rate=${Number(continuation.continuation_rate || 0).toFixed(4)} | mistaken_new_task_rate=${Number(continuation.mistaken_new_task_rate || 0).toFixed(4)}`);
   lines.push(`redundant_question_rate=${Number(redundant.redundant_question_rate || 0).toFixed(4)} | slot_fill_resume_success_rate=${Number(slotResume.slot_fill_resume_success_rate || 0).toFixed(4)}`);
   lines.push(`promotion_effectiveness_rate=${Number(decision.promotion_effectiveness_rate || 0).toFixed(4)} | reroute_effective_rate=${Number(reroute.reroute_effective_rate || 0).toFixed(4)}`);
+  lines.push(`retry_context_success_rate=${Number(report.summary?.retry_context_success_rate || 0).toFixed(4)} | slot_ask_suppression_success_rate=${Number(report.summary?.slot_ask_suppression_success_rate || 0).toFixed(4)}`);
   lines.push(`overall_intelligence_signal=${cleanText(report.summary?.overall_intelligence_signal || "") || "low"}`);
-  const topIssue = toArray(report.summary?.top_usage_issues)[0];
-  if (topIssue) {
-    lines.push(`top_usage_issue=${cleanText(topIssue.issue_code || "")}:${Number(topIssue.count || 0)}`);
+  const topDetectedIssue = toArray(report.summary?.top_detected_issues)[0];
+  if (topDetectedIssue) {
+    lines.push(`top_detected_issue=${cleanText(topDetectedIssue.issue_code || "")}:${Number(topDetectedIssue.count || 0)}`);
+  }
+  const topUserVisibleIssue = toArray(report.summary?.top_user_visible_issues)[0];
+  if (topUserVisibleIssue) {
+    lines.push(`top_user_visible_issue=${cleanText(topUserVisibleIssue.issue_code || "")}:${Number(topUserVisibleIssue.count || 0)}`);
+  }
+  const suppression = toObject(report.summary?.suppression_effectiveness);
+  if (suppression) {
+    lines.push(`suppression_effectiveness=${Number(suppression.suppressed_count || 0)}/${Number(suppression.detected_count || 0)} (${Number(suppression.suppressed_ratio || 0).toFixed(4)})`);
   }
   const divergence = toObject(report.summary?.most_common_divergence_pattern);
   if (divergence) {
