@@ -965,7 +965,28 @@ Observed routing/write signals now include:
 - `advisor_alignment_summary`
 - `decision_promotion`
 - `decision_promotion_summary`
+- `promotion_audit`
+- `promotion_audit_summary`
 - compatibility `advisor_vs_actual` mirror
+
+`decision-engine-promotion` now also writes a deterministic promotion audit / rollback safety v1 record into the same observability payload:
+
+- `promotion_audit` minimum shape:
+  - `promotion_audit_id`
+  - `promoted_action`
+  - `promotion_applied`
+  - `promotion_context` (`advisor_action`, `alignment_type`, `decision_reason_codes`, `readiness/outcome/recovery/artifact/task_plan summary`)
+  - `promotion_outcome` (`final_step_status`, `outcome_status`, `user_visible_completeness`)
+  - `promotion_effectiveness` (`effective|ineffective|unknown`)
+  - `rollback_flag`
+  - `audit_version`
+- effectiveness scoring stays deterministic and fail-closed:
+  - promoted `ask_user`: successful slot recovery path -> `effective`; stuck/no-response path -> `ineffective|unknown`
+  - promoted `fail`: unsafe path correctly blocked -> `effective`; recoverable path incorrectly blocked -> `ineffective`
+  - malformed/conflicting audit payloads stay fail-closed and are excluded from ineffective streak counting
+- rollback safety gate is currently fixed-threshold v1 (`N=3`):
+  - when the same promoted action accumulates consecutive `ineffective` audits, `rollback_flag=true` and future promotion for that action is disabled (advisory-only)
+  - gate only affects future promotion eligibility and does not retroactively mutate already-executed behavior
 
 Working-memory v2 diagnostics now also includes one human-readable `task_trace` overlay derived from the same observed fields (no second state source):
 
@@ -995,6 +1016,7 @@ Working-memory v2 diagnostics now also includes one human-readable `task_trace` 
   - `advisor.recommended_next_action/advisor.decision_reason_codes/advisor.decision_confidence/advisor_based_on_summary`
   - `advisor_alignment.is_aligned/advisor_alignment.alignment_type/advisor_alignment.divergence_reason_codes/advisor_alignment.promotion_candidate/advisor_alignment_summary`
   - `decision_promotion.promoted_action/decision_promotion.promotion_applied/decision_promotion.promotion_reason_codes/decision_promotion.safety_gate_passed/decision_promotion_summary`
+  - `promotion_audit.promoted_action/promotion_audit.promotion_effectiveness/promotion_audit.rollback_flag/promotion_audit_summary`
   - trace output must be derived from these existing signals instead of introducing an independent trace truth
 
 The executive planner decision prompt now also reads a bounded task-state summary from that same local `task lifecycle v1` store: before agent selection, `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` asks `/Users/seanhan/Documents/Playground/src/planner-task-lifecycle-v1.mjs` for the latest relevant snapshot summary and injects `unfinished_hint`, `blocked_hint`, and `in_progress_hint` into prompt assembly, so decisions can preferentially reference unfinished tasks, surface blocked-task risk, and reuse in-progress execution summaries without changing the public planner JSON shape.

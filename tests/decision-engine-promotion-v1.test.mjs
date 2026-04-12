@@ -7,7 +7,13 @@ const testDb = await createTestDbHarness();
 const [
   {
     DECISION_ENGINE_PROMOTION_VERSION,
+    DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD,
     evaluateDecisionEnginePromotion,
+    buildDecisionPromotionAuditRecord,
+    applyDecisionPromotionAuditSafety,
+    createDecisionPromotionAuditState,
+    resolveDecisionPromotionRollbackGate,
+    formatDecisionPromotionAuditSummary,
   },
   { buildPlannerTaskTraceDiagnostics },
   {
@@ -103,6 +109,32 @@ function buildPromotionInput(overrides = {}) {
       malformed_input: false,
     },
     evidence_complete: true,
+    ...(overrides || {}),
+  };
+}
+
+function buildPromotionAuditRecordInput(overrides = {}) {
+  const promotionSeed = buildPromotionInput();
+  return {
+    promoted_action: "ask_user",
+    promotion_decision: {
+      promoted_action: "ask_user",
+      promotion_applied: true,
+      promotion_reason_codes: ["safety_gate_passed", "promotion_applied"],
+      promotion_confidence: "high",
+      safety_gate_passed: true,
+      promotion_version: DECISION_ENGINE_PROMOTION_VERSION,
+    },
+    advisor: promotionSeed.advisor,
+    advisor_alignment: promotionSeed.advisor_alignment,
+    readiness: promotionSeed.readiness,
+    outcome: promotionSeed.outcome,
+    recovery: promotionSeed.recovery,
+    artifact: promotionSeed.artifact,
+    task_plan: promotionSeed.task_plan,
+    final_step_status: "blocked",
+    outcome_status: "blocked",
+    user_visible_completeness: "none",
     ...(overrides || {}),
   };
 }
@@ -247,6 +279,224 @@ test("conflicting readiness/outcome/recovery signals block promotion", () => {
   assert.equal(decision.promotion_reason_codes.includes("conflicting_signals"), true);
 });
 
+test("promotion audit marks ask_user slot recovery as effective", () => {
+  const auditRecord = buildDecisionPromotionAuditRecord(buildPromotionAuditRecordInput({
+    final_step_status: "completed",
+    outcome_status: "success",
+    user_visible_completeness: "complete",
+    outcome: {
+      outcome_status: "success",
+      retry_worthiness: false,
+    },
+  }));
+
+  assert.equal(auditRecord.promoted_action, "ask_user");
+  assert.equal(auditRecord.promotion_applied, true);
+  assert.equal(auditRecord.promotion_effectiveness, "effective");
+  assert.equal(auditRecord.rollback_flag, false);
+});
+
+test("promotion audit marks ask_user no-response/stuck as ineffective or unknown", () => {
+  const auditRecord = buildDecisionPromotionAuditRecord(buildPromotionAuditRecordInput({
+    final_step_status: "blocked",
+    outcome_status: "blocked",
+    user_visible_completeness: "none",
+  }));
+
+  assert.equal(auditRecord.promoted_action, "ask_user");
+  assert.equal(["ineffective", "unknown"].includes(auditRecord.promotion_effectiveness), true);
+});
+
+test("promotion audit marks fail that prevents unsafe continuation as effective", () => {
+  const failInput = buildPromotionInput({
+    advisor: {
+      recommended_next_action: "fail",
+      decision_reason_codes: ["plan_invalidated", "outcome_failed"],
+    },
+    advisor_alignment: {
+      advisor_action: "fail",
+      actual_action: "fail",
+      is_aligned: true,
+      alignment_type: "exact_match",
+      divergence_reason_codes: [],
+      promotion_candidate: true,
+      evaluator_version: "advisor_alignment_evaluator_v1",
+    },
+    readiness: {
+      is_ready: false,
+      blocking_reason_codes: ["plan_invalidated"],
+      missing_slots: [],
+      recommended_action: "fail",
+    },
+    outcome: {
+      outcome_status: "failed",
+      retry_worthiness: false,
+    },
+    recovery: {
+      recovery_policy: "failed",
+      recovery_action: "failed",
+      recovery_attempt_count: 1,
+    },
+    task_plan: {
+      task_id: "task-1",
+      plan_id: "plan-1",
+      plan_status: "invalidated",
+      current_step_id: "step-1",
+      malformed_input: false,
+    },
+  });
+  const auditRecord = buildDecisionPromotionAuditRecord({
+    promoted_action: "fail",
+    promotion_decision: {
+      promoted_action: "fail",
+      promotion_applied: true,
+      promotion_reason_codes: ["safety_gate_passed", "promotion_applied"],
+      promotion_confidence: "high",
+      safety_gate_passed: true,
+      promotion_version: DECISION_ENGINE_PROMOTION_VERSION,
+    },
+    advisor: failInput.advisor,
+    advisor_alignment: failInput.advisor_alignment,
+    readiness: failInput.readiness,
+    outcome: failInput.outcome,
+    recovery: failInput.recovery,
+    artifact: failInput.artifact,
+    task_plan: failInput.task_plan,
+    final_step_status: "failed",
+    outcome_status: "failed",
+    user_visible_completeness: "none",
+  });
+
+  assert.equal(auditRecord.promoted_action, "fail");
+  assert.equal(auditRecord.promotion_effectiveness, "effective");
+});
+
+test("promotion audit marks fail that blocks recoverable flow as ineffective", () => {
+  const auditRecord = buildDecisionPromotionAuditRecord({
+    ...buildPromotionAuditRecordInput({
+      promoted_action: "fail",
+      promotion_decision: {
+        promoted_action: "fail",
+        promotion_applied: true,
+        promotion_reason_codes: ["safety_gate_passed", "promotion_applied"],
+        promotion_confidence: "medium",
+        safety_gate_passed: true,
+        promotion_version: DECISION_ENGINE_PROMOTION_VERSION,
+      },
+      advisor: {
+        recommended_next_action: "fail",
+        decision_reason_codes: ["outcome_failed"],
+      },
+      advisor_alignment: {
+        advisor_action: "fail",
+        actual_action: "fail",
+        is_aligned: true,
+        alignment_type: "exact_match",
+        divergence_reason_codes: [],
+        promotion_candidate: true,
+        evaluator_version: "advisor_alignment_evaluator_v1",
+      },
+      readiness: {
+        is_ready: true,
+        blocking_reason_codes: [],
+        missing_slots: [],
+        recommended_action: "retry",
+      },
+      outcome: {
+        outcome_status: "success",
+        retry_worthiness: true,
+      },
+      recovery: {
+        recovery_policy: "retry_same_step",
+        recovery_action: "retry_same_step",
+        recovery_attempt_count: 1,
+      },
+      final_step_status: "completed",
+      outcome_status: "success",
+      user_visible_completeness: "complete",
+    }),
+  });
+
+  assert.equal(auditRecord.promoted_action, "fail");
+  assert.equal(auditRecord.promotion_effectiveness, "ineffective");
+});
+
+test("consecutive ineffective promotions trigger rollback flag and future gate-off", () => {
+  let promotionState = createDecisionPromotionAuditState();
+  let lastSafetyResult = null;
+  for (let index = 0; index < DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD; index += 1) {
+    const auditRecord = buildDecisionPromotionAuditRecord(buildPromotionAuditRecordInput({
+      audit_id: `audit-ask-user-${index + 1}`,
+      final_step_status: "blocked",
+      outcome_status: "blocked",
+      user_visible_completeness: "none",
+    }));
+    lastSafetyResult = applyDecisionPromotionAuditSafety({
+      state: promotionState,
+      audit_record: auditRecord,
+      threshold: DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD,
+    });
+    promotionState = lastSafetyResult.next_state;
+  }
+
+  assert.ok(lastSafetyResult);
+  assert.equal(lastSafetyResult.audit_record.rollback_flag, true);
+  assert.equal(lastSafetyResult.next_state.actions.ask_user.promotion_disabled, true);
+  assert.equal(lastSafetyResult.next_state.actions.ask_user.consecutive_ineffective, DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD);
+  const rollbackGate = resolveDecisionPromotionRollbackGate({
+    state: promotionState,
+    promoted_action: "ask_user",
+    threshold: DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD,
+  });
+  assert.equal(rollbackGate.promotion_allowed, false);
+  assert.equal(rollbackGate.rollback_flag, true);
+});
+
+test("malformed or conflicting audit fails closed and is excluded from effectiveness counting", () => {
+  let promotionState = createDecisionPromotionAuditState();
+  const ineffectiveAudit = buildDecisionPromotionAuditRecord(buildPromotionAuditRecordInput({
+    audit_id: "audit-seed-1",
+    final_step_status: "blocked",
+    outcome_status: "blocked",
+  }));
+  let safetyResult = applyDecisionPromotionAuditSafety({
+    state: promotionState,
+    audit_record: ineffectiveAudit,
+    threshold: 3,
+  });
+  promotionState = safetyResult.next_state;
+  assert.equal(promotionState.actions.ask_user.consecutive_ineffective, 1);
+
+  const malformedAudit = buildDecisionPromotionAuditRecord({
+    ...buildPromotionAuditRecordInput({
+      audit_id: "audit-malformed",
+      promoted_action: null,
+      advisor: {
+        recommended_next_action: null,
+        decision_reason_codes: [],
+      },
+      promotion_decision: {
+        promoted_action: null,
+        promotion_applied: true,
+      },
+      final_step_status: null,
+      outcome_status: null,
+    }),
+  });
+  assert.equal(malformedAudit.audit_fail_closed, true);
+  assert.equal(malformedAudit.effectiveness_counted, false);
+  safetyResult = applyDecisionPromotionAuditSafety({
+    state: promotionState,
+    audit_record: malformedAudit,
+    threshold: 3,
+  });
+  promotionState = safetyResult.next_state;
+
+  assert.equal(promotionState.actions.ask_user.consecutive_ineffective, 1);
+  assert.equal(safetyResult.audit_record.rollback_flag, false);
+  assert.match(formatDecisionPromotionAuditSummary(malformedAudit), /action=none/);
+});
+
 test("trace diagnostics expose promotion applied and blocked outcomes", () => {
   const appliedTrace = buildPlannerTaskTraceDiagnostics({
     memoryStage: "runPlannerToolFlow_router_decision",
@@ -266,6 +516,20 @@ test("trace diagnostics expose promotion applied and blocked outcomes", () => {
         promotion_version: DECISION_ENGINE_PROMOTION_VERSION,
       },
       decision_promotion_summary: "promotion_applied=true action=ask_user safety_gate_passed=true confidence=high reasons=[safety_gate_passed, promotion_applied] version=decision_engine_promotion_v1",
+      promotion_audit: {
+        promotion_audit_id: "audit-applied-1",
+        promoted_action: "ask_user",
+        promotion_applied: true,
+        promotion_effectiveness: "effective",
+        rollback_flag: false,
+        audit_version: "decision_engine_promotion_audit_v1",
+        promotion_outcome: {
+          final_step_status: "completed",
+          outcome_status: "success",
+          user_visible_completeness: "complete",
+        },
+      },
+      promotion_audit_summary: "id=audit-applied-1 action=ask_user applied=true effectiveness=effective rollback_flag=false final_step_status=completed outcome_status=success user_visible_completeness=complete reasons=[] version=decision_engine_promotion_audit_v1",
     },
   });
   const blockedTrace = buildPlannerTaskTraceDiagnostics({
@@ -286,17 +550,39 @@ test("trace diagnostics expose promotion applied and blocked outcomes", () => {
         promotion_version: DECISION_ENGINE_PROMOTION_VERSION,
       },
       decision_promotion_summary: "promotion_applied=false action=none safety_gate_passed=false confidence=low reasons=[unsupported_advisor_action] version=decision_engine_promotion_v1",
+      promotion_audit: {
+        promotion_audit_id: "audit-blocked-1",
+        promoted_action: "ask_user",
+        promotion_applied: true,
+        promotion_effectiveness: "ineffective",
+        rollback_flag: true,
+        audit_version: "decision_engine_promotion_audit_v1",
+        promotion_outcome: {
+          final_step_status: "blocked",
+          outcome_status: "blocked",
+          user_visible_completeness: "none",
+        },
+      },
+      promotion_audit_summary: "id=audit-blocked-1 action=ask_user applied=true effectiveness=ineffective rollback_flag=true final_step_status=blocked outcome_status=blocked user_visible_completeness=none reasons=[] version=decision_engine_promotion_audit_v1",
     },
   });
 
   assert.equal(appliedTrace.diff.includes("decision_promotion.promotion_applied: true"), true);
   assert.equal(appliedTrace.diff.some((line) => line.startsWith("decision_promotion_summary:")), true);
+  assert.equal(appliedTrace.diff.includes("promotion_audit.promotion_effectiveness: effective"), true);
+  assert.equal(appliedTrace.diff.includes("promotion_audit.rollback_flag: false"), true);
   assert.equal(appliedTrace.snapshot.decision_promotion?.promotion_applied, true);
+  assert.equal(appliedTrace.snapshot.promotion_audit?.promotion_effectiveness, "effective");
   assert.equal(appliedTrace.event_alignment.decision_promotion, true);
   assert.equal(appliedTrace.event_alignment.decision_promotion_summary, true);
+  assert.equal(appliedTrace.event_alignment.promotion_audit_effectiveness, true);
+  assert.equal(appliedTrace.event_alignment.promotion_audit_summary, true);
   assert.equal(blockedTrace.diff.includes("decision_promotion.promotion_applied: false"), true);
   assert.equal(blockedTrace.snapshot.decision_promotion?.safety_gate_passed, false);
+  assert.equal(blockedTrace.snapshot.promotion_audit?.rollback_flag, true);
+  assert.equal(blockedTrace.diff.includes("promotion_audit.rollback_flag: true"), true);
   assert.equal(blockedTrace.event_alignment.decision_promotion_reason_codes, true);
+  assert.equal(blockedTrace.event_alignment.promotion_audit_rollback_flag, true);
 });
 
 test("promotion diagnostics do not break existing fail-closed boundary", async () => {
@@ -390,6 +676,10 @@ test("promotion diagnostics do not break existing fail-closed boundary", async (
   assert.ok(routerDecisionLog);
   assert.equal(typeof routerDecisionLog?.decision_promotion, "object");
   assert.equal(routerDecisionLog?.decision_promotion?.promotion_applied, false);
+  assert.equal(typeof routerDecisionLog?.promotion_audit, "object");
+  assert.equal(typeof routerDecisionLog?.promotion_audit?.promotion_effectiveness, "string");
+  assert.equal(typeof routerDecisionLog?.promotion_audit?.rollback_flag, "boolean");
+  assert.equal(typeof routerDecisionLog?.promotion_audit_summary, "string");
   assert.equal(result.selected_action, null);
   assert.equal(result.execution_result?.ok, false);
 
