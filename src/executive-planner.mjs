@@ -108,6 +108,12 @@ import {
   normalizeExecutionOutcome,
   scoreExecutionOutcome,
 } from "./execution-outcome-scorer.mjs";
+import {
+  adviseStepNextAction,
+  buildStepDecisionAdvisorComparison,
+  formatStepDecisionAdvisorBasedOnSummary,
+  resolveStepDecisionAdvisorActualAction,
+} from "./step-decision-advisor.mjs";
 import { getStoredAccountContext } from "./lark-user-auth.mjs";
 import { getDbPath } from "./db.mjs";
 
@@ -260,6 +266,11 @@ const PLANNER_WORKING_MEMORY_ARTIFACT_VALIDITY_STATUSES = new Set([
 const PLANNER_WORKING_MEMORY_DEPENDENCY_TYPES = new Set([
   "hard",
   "soft",
+]);
+const PLANNER_WORKING_MEMORY_NON_CRITICAL_STEP_TYPES = new Set([
+  "non_critical",
+  "optional",
+  "best_effort",
 ]);
 
 const executiveCollaborationSignals = [
@@ -4600,6 +4611,130 @@ function applyPlannerExecutionOutcomeObservability({
   }
 }
 
+function isNonCriticalExecutionPlanStep(step = null) {
+  const stepType = cleanText(step?.step_type || "");
+  return PLANNER_WORKING_MEMORY_NON_CRITICAL_STEP_TYPES.has(stepType);
+}
+
+function applyStepDecisionAdvisorObservability({
+  observability = null,
+  currentPlanStep = null,
+  taskId = null,
+} = {}) {
+  if (!observability || typeof observability !== "object" || Array.isArray(observability)) {
+    return;
+  }
+  const normalizedStep = currentPlanStep?.step && typeof currentPlanStep.step === "object" && !Array.isArray(currentPlanStep.step)
+    ? currentPlanStep.step
+    : null;
+  const normalizedReadiness = observability.readiness && typeof observability.readiness === "object" && !Array.isArray(observability.readiness)
+    ? observability.readiness
+    : null;
+  const hasAdvisableStep = Boolean(
+    cleanText(observability.plan_id || "")
+    || cleanText(observability.current_step || "")
+    || normalizedReadiness
+    || cleanText(observability.outcome_status || ""),
+  );
+  if (!hasAdvisableStep) {
+    observability.advisor = null;
+    observability.advisor_based_on_summary = null;
+    observability.advisor_vs_actual = null;
+    return;
+  }
+  const blockedDependencies = Array.isArray(observability.blocked_dependencies)
+    ? observability.blocked_dependencies
+    : [];
+  const invalidArtifacts = Array.isArray(observability.invalid_artifacts)
+    ? observability.invalid_artifacts
+    : [];
+  const advisorDecision = adviseStepNextAction({
+    readiness: normalizedReadiness,
+    outcome: {
+      outcome_status: observability.outcome_status,
+      outcome_confidence: observability.outcome_confidence,
+      outcome_evidence: observability.outcome_evidence,
+      artifact_quality: observability.artifact_quality,
+      retry_worthiness: observability.retry_worthiness,
+      user_visible_completeness: observability.user_visible_completeness,
+    },
+    recovery: {
+      recovery_policy: cleanText(observability.recovery_policy || "") || null,
+      recovery_action: cleanText(observability.recovery_action || "") || null,
+      recovery_attempt_count: Number.isFinite(Number(observability.recovery_attempt_count))
+        ? Number(observability.recovery_attempt_count)
+        : 0,
+      rollback_target_step_id: cleanText(observability.rollback_target_step_id || "") || null,
+      retry_allowed: normalizedStep?.retryable !== false,
+      skip_allowed: cleanText(observability.recovery_action || "") === "skip_step"
+        || cleanText(observability.recovery_policy || "") === "skip_step"
+        || isNonCriticalExecutionPlanStep(normalizedStep),
+      continuation_allowed: cleanText(observability.recovery_action || "") !== "failed",
+    },
+    artifact: {
+      artifact_id: cleanText(observability.artifact_id || "") || null,
+      artifact_type: cleanText(observability.artifact_type || "") || null,
+      validity_status: cleanText(observability.validity_status || "") || null,
+      dependency_type: cleanText(observability.dependency_type || "") || null,
+      dependency_blocked_step: cleanText(observability.dependency_blocked_step || "") || null,
+      invalid_artifacts: invalidArtifacts,
+      blocked_dependency_count: blockedDependencies.length,
+      dependencies_allow_skip: blockedDependencies.length === 0,
+    },
+    task_plan: {
+      task_id: cleanText(taskId || "") || null,
+      plan_id: cleanText(observability.plan_id || "") || null,
+      plan_status: cleanText(observability.plan_status || "") || null,
+      current_step_id: cleanText(observability.current_step || "") || null,
+      current_step_status: cleanText(normalizedStep?.status || "") || null,
+      failure_class: cleanText(observability.failure_class || "") || null,
+      step_retryable: normalizedStep?.retryable !== false,
+      step_non_critical: isNonCriticalExecutionPlanStep(normalizedStep),
+      malformed_input: Boolean(cleanText(observability.plan_id || "") && cleanText(observability.current_step || "") && !normalizedStep),
+    },
+  });
+  observability.advisor = advisorDecision;
+  observability.advisor_based_on_summary = formatStepDecisionAdvisorBasedOnSummary(advisorDecision.based_on);
+  observability.advisor_vs_actual = null;
+}
+
+function applyStepDecisionAdvisorComparisonObservability({
+  observability = null,
+  selectedAction = "",
+  routingLocked = false,
+  stopError = "",
+  taskPhase = "",
+  taskStatus = "",
+} = {}) {
+  if (!observability || typeof observability !== "object" || Array.isArray(observability)) {
+    return;
+  }
+  if (!observability.advisor || typeof observability.advisor !== "object" || Array.isArray(observability.advisor)) {
+    return;
+  }
+  const actualNextAction = resolveStepDecisionAdvisorActualAction({
+    selected_action: selectedAction,
+    recovery_action: cleanText(observability.recovery_action || "") || null,
+    task_phase: taskPhase,
+    task_status: taskStatus,
+    routing_locked: routingLocked === true,
+    stop_error: stopError,
+  });
+  observability.advisor_vs_actual = buildStepDecisionAdvisorComparison({
+    decision: observability.advisor,
+    actual_next_action: actualNextAction,
+  });
+}
+
+function resolveTaskTransitionTarget(transition = "", fallback = "") {
+  const normalizedTransition = cleanText(transition || "");
+  if (!normalizedTransition || !normalizedTransition.includes("->")) {
+    return cleanText(fallback || "") || null;
+  }
+  const [, toRaw] = normalizedTransition.split("->");
+  return cleanText(toRaw || "") || cleanText(fallback || "") || null;
+}
+
 function resolvePlannerWorkingMemoryExecutionPlanAction({
   workingMemory = null,
   text = "",
@@ -4815,6 +4950,9 @@ function resolvePlannerWorkingMemoryContinuation({
     artifact_quality: null,
     retry_worthiness: null,
     user_visible_completeness: null,
+    advisor: null,
+    advisor_based_on_summary: null,
+    advisor_vs_actual: null,
   };
   logPlannerWorkingMemoryTrace({
     logger,
@@ -4900,6 +5038,9 @@ function resolvePlannerWorkingMemoryContinuation({
   observability.artifact_quality = null;
   observability.retry_worthiness = null;
   observability.user_visible_completeness = null;
+  observability.advisor = null;
+  observability.advisor_based_on_summary = null;
+  observability.advisor_vs_actual = null;
   observability.plan_invalidated = topicSwitch && currentPlanStep?.plan
     ? {
         plan_id: currentPlanStep.plan.plan_id,
@@ -5424,6 +5565,19 @@ function resolvePlannerWorkingMemoryContinuation({
     executionReadiness,
     unresolvedSlots,
     stopError,
+  });
+  applyStepDecisionAdvisorObservability({
+    observability,
+    currentPlanStep,
+    taskId,
+  });
+  applyStepDecisionAdvisorComparisonObservability({
+    observability,
+    selectedAction,
+    routingLocked,
+    stopError,
+    taskPhase: resolveTaskTransitionTarget(observability.task_phase_transition, taskPhase),
+    taskStatus: resolveTaskTransitionTarget(observability.task_status_transition, taskStatus),
   });
   observability.memory_used_in_routing = Boolean(selectedAction) || routingLocked;
   return {

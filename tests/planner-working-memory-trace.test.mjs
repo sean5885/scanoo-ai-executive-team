@@ -604,6 +604,10 @@ test("answer boundary write-back log carries slot diff trace", async () => {
   assert.ok(boundaryLog);
   assert.equal(Array.isArray(boundaryLog.task_trace_diff), true);
   assert.equal(boundaryLog.task_trace_diff.includes("slot.email: missing -> filled"), true);
+  assert.equal(typeof boundaryLog.advisor, "object");
+  assert.equal(Array.isArray(boundaryLog.advisor?.decision_reason_codes), true);
+  assert.equal(typeof boundaryLog.advisor_based_on_summary, "string");
+  assert.equal(typeof boundaryLog.task_trace_event_alignment?.advisor_recommended_next_action, "boolean");
 
   resetPlannerRuntimeContext({ sessionKey });
   resetPlannerConversationMemory({ sessionKey });

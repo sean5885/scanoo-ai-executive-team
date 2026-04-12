@@ -18,6 +18,12 @@ import {
   normalizeExecutionOutcome,
   scoreExecutionOutcome,
 } from "./execution-outcome-scorer.mjs";
+import {
+  adviseStepNextAction,
+  buildStepDecisionAdvisorComparison,
+  formatStepDecisionAdvisorBasedOnSummary,
+  resolveStepDecisionAdvisorActualAction,
+} from "./step-decision-advisor.mjs";
 
 const REMINDER_REQUEST_PATTERNS = [
   /提醒/u,
@@ -1460,6 +1466,115 @@ function deriveWorkingMemoryFailureClass({
   return null;
 }
 
+function resolveTaskTransitionTarget(transition = "", fallback = "") {
+  const normalizedTransition = cleanText(transition || "");
+  if (!normalizedTransition || !normalizedTransition.includes("->")) {
+    return cleanText(fallback || "") || null;
+  }
+  const [, toRaw] = normalizedTransition.split("->");
+  return cleanText(toRaw || "") || cleanText(fallback || "") || null;
+}
+
+function applyStepDecisionAdvisorToObservability({
+  observability = null,
+  executionPlanPatch = null,
+  selectedAction = "",
+  taskPhase = "",
+  taskStatus = "",
+  taskId = null,
+} = {}) {
+  if (!observability || typeof observability !== "object" || Array.isArray(observability)) {
+    return;
+  }
+  const currentStepId = cleanText(observability.current_step || "");
+  const planSteps = Array.isArray(executionPlanPatch?.steps)
+    ? executionPlanPatch.steps
+    : [];
+  const currentStep = currentStepId
+    ? planSteps.find((step) => cleanText(step?.step_id || "") === currentStepId) || null
+    : null;
+  const normalizedReadiness = observability.readiness && typeof observability.readiness === "object" && !Array.isArray(observability.readiness)
+    ? observability.readiness
+    : null;
+  const hasAdvisableStep = Boolean(
+    cleanText(observability.plan_id || "")
+    || currentStepId
+    || normalizedReadiness
+    || cleanText(observability.outcome_status || ""),
+  );
+  if (!hasAdvisableStep) {
+    observability.advisor = null;
+    observability.advisor_based_on_summary = null;
+    observability.advisor_vs_actual = null;
+    return;
+  }
+  const invalidArtifacts = Array.isArray(observability.invalid_artifacts)
+    ? observability.invalid_artifacts
+    : [];
+  const blockedDependencies = Array.isArray(observability.blocked_dependencies)
+    ? observability.blocked_dependencies
+    : [];
+  const advisorDecision = adviseStepNextAction({
+    readiness: normalizedReadiness,
+    outcome: {
+      outcome_status: observability.outcome_status,
+      outcome_confidence: observability.outcome_confidence,
+      outcome_evidence: observability.outcome_evidence,
+      artifact_quality: observability.artifact_quality,
+      retry_worthiness: observability.retry_worthiness,
+      user_visible_completeness: observability.user_visible_completeness,
+    },
+    recovery: {
+      recovery_policy: cleanText(observability.recovery_policy || "") || null,
+      recovery_action: cleanText(observability.recovery_action || "") || null,
+      recovery_attempt_count: Number.isFinite(Number(observability.recovery_attempt_count))
+        ? Number(observability.recovery_attempt_count)
+        : 0,
+      rollback_target_step_id: cleanText(observability.rollback_target_step_id || "") || null,
+      retry_allowed: currentStep?.retryable !== false,
+      skip_allowed: cleanText(observability.recovery_action || "") === "skip_step"
+        || cleanText(observability.recovery_policy || "") === "skip_step"
+        || isNonCriticalExecutionPlanStep(currentStep),
+      continuation_allowed: cleanText(observability.recovery_action || "") !== "failed",
+    },
+    artifact: {
+      artifact_id: cleanText(observability.artifact_id || "") || null,
+      artifact_type: cleanText(observability.artifact_type || "") || null,
+      validity_status: cleanText(observability.validity_status || "") || null,
+      dependency_type: cleanText(observability.dependency_type || "") || null,
+      dependency_blocked_step: cleanText(observability.dependency_blocked_step || "") || null,
+      invalid_artifacts: invalidArtifacts,
+      blocked_dependency_count: blockedDependencies.length,
+      dependencies_allow_skip: blockedDependencies.length === 0,
+    },
+    task_plan: {
+      task_id: cleanText(taskId || "") || null,
+      plan_id: cleanText(observability.plan_id || "") || null,
+      plan_status: cleanText(observability.plan_status || "") || null,
+      current_step_id: currentStepId || null,
+      current_step_status: cleanText(currentStep?.status || "") || null,
+      failure_class: cleanText(observability.failure_class || "") || null,
+      step_retryable: currentStep?.retryable !== false,
+      step_non_critical: isNonCriticalExecutionPlanStep(currentStep),
+      malformed_input: Boolean(cleanText(observability.plan_id || "") && currentStepId && !currentStep),
+    },
+  });
+  observability.advisor = advisorDecision;
+  observability.advisor_based_on_summary = formatStepDecisionAdvisorBasedOnSummary(advisorDecision.based_on);
+  const actualNextAction = resolveStepDecisionAdvisorActualAction({
+    selected_action: selectedAction,
+    recovery_action: cleanText(observability.recovery_action || "") || null,
+    task_phase: resolveTaskTransitionTarget(observability.task_phase_transition, taskPhase),
+    task_status: resolveTaskTransitionTarget(observability.task_status_transition, taskStatus),
+    routing_locked: false,
+    stop_error: cleanText(observability.failure_class || "") || null,
+  });
+  observability.advisor_vs_actual = buildStepDecisionAdvisorComparison({
+    decision: advisorDecision,
+    actual_next_action: actualNextAction,
+  });
+}
+
 function resolveExecutionReadinessFromPlannerOutputs({
   plannerEnvelope = null,
   plannerResult = null,
@@ -2544,6 +2659,9 @@ function buildWorkingMemoryPatch({
     recommended_action: cleanText(readinessFromExecution?.recommended_action || "") || null,
     resumed_from_waiting_user: executionPlan.observability?.resumed_from_waiting_user === true,
     resumed_from_retry: executionPlan.observability?.resumed_from_retry === true,
+    advisor: null,
+    advisor_based_on_summary: null,
+    advisor_vs_actual: null,
     task_abandoned: topicSwitch && previousTaskId
       ? {
           task_id: previousTaskId,
@@ -2558,6 +2676,14 @@ function buildWorkingMemoryPatch({
       technical_slots: unresolvedSlots.filter((slotKey) => cleanText(slotKey || "") === "response_not_success"),
     };
   }
+  applyStepDecisionAdvisorToObservability({
+    observability,
+    executionPlanPatch: executionPlan.patch,
+    selectedAction,
+    taskPhase: patch.task_phase,
+    taskStatus: patch.task_status,
+    taskId,
+  });
   return {
     patch,
     observability,
@@ -2667,6 +2793,9 @@ export async function runPlannerUserInputEdge({
     recommended_action: null,
     resumed_from_waiting_user: false,
     resumed_from_retry: false,
+    advisor: null,
+    advisor_based_on_summary: null,
+    advisor_vs_actual: null,
     task_abandoned: null,
   };
   let previousWorkingMemory = null;
@@ -2777,6 +2906,17 @@ export async function runPlannerUserInputEdge({
       ? mergedMemoryObservability.recovery_ready
       : null,
     recommended_action: cleanText(mergedMemoryObservability.recommended_action || "") || null,
+    advisor: mergedMemoryObservability.advisor
+      && typeof mergedMemoryObservability.advisor === "object"
+      && !Array.isArray(mergedMemoryObservability.advisor)
+      ? mergedMemoryObservability.advisor
+      : null,
+    advisor_based_on_summary: cleanText(mergedMemoryObservability.advisor_based_on_summary || "") || null,
+    advisor_vs_actual: mergedMemoryObservability.advisor_vs_actual
+      && typeof mergedMemoryObservability.advisor_vs_actual === "object"
+      && !Array.isArray(mergedMemoryObservability.advisor_vs_actual)
+      ? mergedMemoryObservability.advisor_vs_actual
+      : null,
     resumed_from_waiting_user: mergedMemoryObservability.resumed_from_waiting_user === true,
     resumed_from_retry: mergedMemoryObservability.resumed_from_retry === true,
     task_abandoned: mergedMemoryObservability.task_abandoned || null,
