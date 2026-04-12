@@ -3,6 +3,7 @@ import {
   hasAnyTrulyMissingRequiredSlot,
   isSlotActuallyMissing,
 } from "./truly-missing-slot.mjs";
+import { buildRetryContextPack } from "./retry-context-pack.mjs";
 
 const CONTINUATION_REASON_PATTERNS = [
   /^working_memory_/i,
@@ -12,7 +13,7 @@ const CONTINUATION_REASON_PATTERNS = [
 const TOPIC_SWITCH_PATTERN = /(換個題目|换个题目|換題|换题|改問|改问|另一題|另一题|new topic|different question)/i;
 const SHORT_FOLLOW_UP_PATTERN = /^(繼續|继续|接著|接着|下一步|再來|再来|好|好的|ok|okay|retry|重試|重试|第一份|第一個|第一个|第二份|第二個|第二个|這個|这个|就這個|就这个|選這個|选这个)$/i;
 const ASK_USER_COPY_PATTERN = /(請|请).{0,8}(補|提供|確認|确认|說|说)|please\s+(share|provide|confirm)|(?:補|提供|confirm).{0,10}(資訊|信息|資料|资料|detail)/i;
-const CONTINUITY_COPY_PATTERN = /(接著|接着|延續|延续|上一輪|上一轮|剛剛|刚刚|繼續|继续|改由|reroute|retry)/i;
+const CONTINUITY_COPY_PATTERN = /(接著|接着|延續|延续|上一輪|上一轮|剛剛|刚刚|繼續|继续|改由|reroute|retry|重試|重试|重新嘗試|重新尝试|再嘗試|再尝试|往下處理|往下处理)/i;
 
 export const USAGE_LAYER_ISSUE_CODES = Object.freeze([
   "mistaken_new_task",
@@ -392,6 +393,7 @@ export function evaluateUsageLayerIntelligencePass(input = {}) {
       owner_selection_feels_consistent: true,
       slot_suppressed_ask: false,
       retry_context_applied: false,
+      retry_context_quality: null,
       response_continuity_score: "low",
       usage_issue_codes: [],
     };
@@ -510,6 +512,39 @@ export function evaluateUsageLayerIntelligencePass(input = {}) {
     dedupedIssues.push("over_reset_response");
   }
 
+  const retrySlots = {};
+  for (const slotEntry of Array.isArray(workingMemory?.slot_state) ? workingMemory.slot_state : []) {
+    const slotKey = cleanText(slotEntry?.slot_key || slotEntry?.key || "");
+    if (!slotKey) {
+      continue;
+    }
+    const slotFilled = isSlotActuallyMissing(slotEntry) !== true;
+    retrySlots[slotKey] = slotFilled ? true : null;
+  }
+  const retryPack = buildRetryContextPack({
+    intent: cleanText(workingMemory?.task_type || normalizedInput.taskType || "") || null,
+    slots: retrySlots,
+    required_slots: unresolvedSlots,
+    waiting_user: cleanText(workingMemory?.task_phase || "") === "waiting_user",
+    last_failure: {
+      class: cleanText(observability?.failure_class || "") || null,
+    },
+    last_action: cleanText(
+      normalizedInput.selectedAction
+      || normalizedInput?.plannerEnvelope?.action
+      || currentPlanStep?.intended_action
+      || workingMemory?.next_best_action
+      || "",
+    ),
+    user_input_delta: requestText,
+  });
+  let retryContextQuality = null;
+  if (retryPack.degraded_retry) {
+    retryContextQuality = "low";
+  } else if (retryPack.resume_instead_of_retry) {
+    retryContextQuality = "high";
+  }
+
   const diagnostics = {
     interpreted_as_continuation: continuationSignal.interpretedAsContinuation,
     interpreted_as_new_task: continuationSignal.interpretedAsNewTask,
@@ -517,6 +552,7 @@ export function evaluateUsageLayerIntelligencePass(input = {}) {
     owner_selection_feels_consistent: ownerConsistency.feelsConsistent,
     slot_suppressed_ask: slotSuppressedAsk,
     retry_context_applied: retryContextApplied,
+    retry_context_quality: retryContextQuality,
     response_continuity_score: responseContinuityScore,
     usage_issue_codes: dedupeIssueCodes(dedupedIssues),
   };
@@ -609,6 +645,7 @@ export function extractUsageLayerDiagnostics(passResult = null) {
       owner_selection_feels_consistent: true,
       slot_suppressed_ask: false,
       retry_context_applied: false,
+      retry_context_quality: null,
       response_continuity_score: "low",
       usage_issue_codes: [],
     };
@@ -622,6 +659,7 @@ export function extractUsageLayerDiagnostics(passResult = null) {
         owner_selection_feels_consistent: true,
         slot_suppressed_ask: false,
         retry_context_applied: false,
+        retry_context_quality: null,
         response_continuity_score: "low",
         usage_issue_codes: [],
       };

@@ -321,9 +321,11 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - 若 runner 看到 timeout 但無法分進明確 family，summary 會把它記到 `unclassified_timeout`
 - CLI 會印出 case start/done/timeout 與 stuck warning，方便直接定位是哪一條 case 長時間沒有結束
 - usage eval runner v2（`/Users/seanhan/Documents/Playground/src/usage-eval-runner.mjs`）在同一條 evaluation-only path 內新增 issue visibility 分層，不改 planner/decision/runtime：
+  - runner turn simulation 會先跑一次 usage-layer pass，再套用同一個 `applyUsageLayerContinuityCopy(...)`（與 answer-boundary 相同 helper）補 continuity source，最後用補後回覆重跑 usage-layer diagnostics；這讓 eval 對 retry/reroute continuity 的判讀與 runtime answer-boundary 更一致
   - 每個 turn 會同時輸出：
     - `issue_detected_codes[]`（raw detected）
     - `issue_exposed_codes[]`（user-visible）
+    - `trace_snapshot.retry_context_quality`（`high|low|null`，由 retry-context pack 判定）
     - `suppression_flags.slot` / `suppression_flags.retry`
   - `redundant_slot_ask` 若符合 suppression 條件（`slot_suppressed_ask=true` + slot reusable valid + 未實際 promotion ask_user），會在 detected 層改標 `redundant_slot_ask_suppressed`，且不計入 exposed 層
   - `retry_without_contextual_response` 若符合 retry continuity suppression 條件（`retry_context_applied=true` + 無 long reset + 有 continuity tone），保留 detected，但不計入 exposed

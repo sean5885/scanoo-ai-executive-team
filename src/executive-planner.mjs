@@ -142,6 +142,7 @@ import {
   hasAnyTrulyMissingRequiredSlot,
   isSlotActuallyMissing,
 } from "./truly-missing-slot.mjs";
+import { buildRetryContextPack } from "./retry-context-pack.mjs";
 
 const executiveStartSignals = [
   "agent",
@@ -5376,6 +5377,7 @@ function resolvePlannerWorkingMemoryContinuation({
   const normalizedPayload = payload && typeof payload === "object" && !Array.isArray(payload)
     ? payload
     : {};
+  const ctx = { ...normalizedPayload };
   const readResult = readPlannerWorkingMemoryForRouting({ sessionKey });
   const observability = {
     memory_read_attempted: true,
@@ -5470,7 +5472,7 @@ function resolvePlannerWorkingMemoryContinuation({
       routing_reason: null,
       routing_locked: false,
       stop_error: null,
-      payload: normalizedPayload,
+      payload: ctx,
       observability,
     };
   }
@@ -5514,6 +5516,62 @@ function resolvePlannerWorkingMemoryContinuation({
   const effectiveUnresolvedSlots = waitingUserRequiredSlotsFilled
     ? []
     : unresolvedSlots;
+  const retrySlots = {};
+  for (const slotEntry of Array.isArray(workingMemory?.slot_state) ? workingMemory.slot_state : []) {
+    const slotKey = cleanText(slotEntry?.slot_key || slotEntry?.key || "");
+    if (!slotKey) {
+      continue;
+    }
+    const status = cleanText(slotEntry?.status || "");
+    const slotFilled = status === "filled"
+      && slotEntry?.valid !== false
+      && slotEntry?.expired !== true;
+    if (slotFilled) {
+      retrySlots[slotKey] = true;
+    } else if (!Object.prototype.hasOwnProperty.call(retrySlots, slotKey)) {
+      retrySlots[slotKey] = null;
+    }
+  }
+  const retryRecoveryState = normalizePlannerWorkingMemoryRecoveryState(workingMemory?.recovery_state, { allowMissing: true })
+    || buildDefaultPlannerWorkingMemoryRecoveryState();
+  const retryPack = buildRetryContextPack({
+    intent: cleanText(
+      taskType
+      || resolvePlannerWorkingMemoryTaskType(workingMemory)
+      || workingMemory?.current_goal
+      || currentPlanStep?.step?.intended_action
+      || "",
+    ) || null,
+    slots: retrySlots,
+    required_slots: Array.from(new Set(
+      (Array.isArray(waitingUserSlotCoverage.required_slots) ? waitingUserSlotCoverage.required_slots : [])
+        .map((slotKey) => cleanText(slotKey))
+        .filter(Boolean),
+    )),
+    waiting_user: taskPhase === "waiting_user",
+    last_failure: {
+      class: retryRecoveryState.last_failure_class || null,
+    },
+    last_action: cleanText(currentPlanStep?.step?.intended_action || workingMemory?.next_best_action || ""),
+    user_input_delta: userIntent,
+  });
+
+  if (retryPack.resume_instead_of_retry) {
+    ctx.__retry_mode = "resume";
+    ctx.__resumable_step = retryPack.resumable_step;
+    ctx.__retry_user_visible_message =
+      (retryPack.latest_user_delta ? `你剛補充了「${retryPack.latest_user_delta}」，` : ``) +
+      (retryPack.resumable_step
+        ? `我現在直接接著幫你處理「${retryPack.resumable_step}」。`
+        : `我直接接著幫你處理下一步。`);
+  }
+
+  if (retryPack.degraded_retry) {
+    ctx.__retry_mode = "degraded";
+    ctx.__retry_degraded_reason = retryPack.degraded_reason_codes;
+    ctx.__retry_user_visible_message = `目前資訊還不完整，我先整理已知內容再幫你往下處理。`;
+  }
+
   const topicSwitch = isPlannerWorkingMemoryTopicSwitch({
     userIntent,
     taskType,
@@ -5612,7 +5670,7 @@ function resolvePlannerWorkingMemoryContinuation({
       routing_reason: null,
       routing_locked: false,
       stop_error: null,
-      payload: normalizedPayload,
+      payload: ctx,
       observability,
     };
   }
@@ -5703,7 +5761,8 @@ function resolvePlannerWorkingMemoryContinuation({
       })
     : null;
   const waitingResumeAction = cleanText(
-    waitingResumePlanAction?.action
+    retryPack.resumable_step
+    || waitingResumePlanAction?.action
     || currentPlanStep?.step?.intended_action
     || runningOwnerAction
     || workingMemory?.next_best_action
@@ -6312,7 +6371,8 @@ function resolvePlannerWorkingMemoryContinuation({
     slot_suppressed_ask: observability.slot_suppressed_ask === true
       || (slotCoverageForSuppression.has_reusable_filled_slot && !slotCoverageForSuppression.has_missing_slots),
     waiting_user_all_required_slots_filled: waitingUserRequiredSlotsFilled,
-    continuation_ready: shouldForceWaitingResume
+    continuation_ready: retryPack.continuation_ready === true
+      || shouldForceWaitingResume
       || waitingResumeAvailable
       || currentStepResumeAvailable
       || nextBestActionAvailable,
@@ -6605,7 +6665,7 @@ function resolvePlannerWorkingMemoryContinuation({
     routing_reason: routingReason || null,
     routing_locked: routingLocked === true,
     stop_error: cleanText(stopError || "") || null,
-    payload: normalizedPayload,
+    payload: ctx,
     observability,
   };
 }

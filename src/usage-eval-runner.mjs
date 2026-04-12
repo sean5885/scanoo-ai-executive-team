@@ -3,7 +3,10 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { cleanText } from "./message-intent-utils.mjs";
-import { evaluateUsageLayerIntelligencePass } from "./usage-layer-intelligence-pass.mjs";
+import {
+  applyUsageLayerContinuityCopy,
+  evaluateUsageLayerIntelligencePass,
+} from "./usage-layer-intelligence-pass.mjs";
 import { scoreExecutionOutcome } from "./execution-outcome-scorer.mjs";
 import { evaluateAdvisorAlignment } from "./advisor-alignment-evaluator.mjs";
 import {
@@ -1822,7 +1825,7 @@ function runUsageEvalTurn({
     state,
     hint_tags: hintTags,
   });
-  const userResponse = buildUserResponse({
+  let userResponse = buildUserResponse({
     mode,
     hint_tags: hintTags,
     owner_agent: state.current_owner_agent,
@@ -1961,7 +1964,23 @@ function runUsageEvalTurn({
   const selectedActionForUsage = mode === TURN_MODE.CONTINUATION_MISSED
     ? ""
     : actualAction;
-  const usagePass = evaluateUsageLayerIntelligencePass({
+  const usageObservability = {
+    ...readiness,
+    readiness,
+    recovery_action: cleanText(recovery.recovery_action || ""),
+    recommended_action: cleanText(readiness.recommended_action || ""),
+    resumed_from_waiting_user: mode === TURN_MODE.SLOT_FILLED_RESUME,
+    resumed_from_retry: mode === TURN_MODE.RETRY,
+    agent_handoff: mode === TURN_MODE.REROUTE
+      ? {
+          from: state.current_owner_agent,
+          to: rerouteContext?.reroute_target || "runtime_agent",
+          reason: "owner_mismatch",
+        }
+      : null,
+    decision_promotion: decisionPromotion,
+  };
+  const usagePassInput = {
     requestText: cleanText(turn?.user_input || ""),
     taskType: mode === TURN_MODE.TOPIC_SWITCH ? "runtime_info" : state.task_type,
     workingMemory: usageWorkingMemory,
@@ -1980,22 +1999,17 @@ function runUsageEvalTurn({
           : mode === TURN_MODE.CONTINUATION
             ? "working_memory_follow_up"
             : "selector_new_task",
-    observability: {
-      ...readiness,
-      readiness,
-      recovery_action: cleanText(recovery.recovery_action || ""),
-      recommended_action: cleanText(readiness.recommended_action || ""),
-      resumed_from_waiting_user: mode === TURN_MODE.SLOT_FILLED_RESUME,
-      resumed_from_retry: mode === TURN_MODE.RETRY,
-      agent_handoff: mode === TURN_MODE.REROUTE
-        ? {
-            from: state.current_owner_agent,
-            to: rerouteContext?.reroute_target || "runtime_agent",
-            reason: "owner_mismatch",
-          }
-        : null,
-      decision_promotion: decisionPromotion,
-    },
+    observability: usageObservability,
+    userResponse,
+  };
+  const preCopyUsagePass = evaluateUsageLayerIntelligencePass(usagePassInput);
+  userResponse = applyUsageLayerContinuityCopy({
+    userResponse,
+    diagnostics: toObject(preCopyUsagePass?.diagnostics),
+    observability: usageObservability,
+  });
+  const usagePass = evaluateUsageLayerIntelligencePass({
+    ...usagePassInput,
     userResponse,
   });
   const turnResult = buildTurnResult({
