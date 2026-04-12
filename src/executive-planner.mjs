@@ -11461,3 +11461,26 @@ import { executeTool } from './tool-execution-runtime.mjs';
       ctx.__tool_execution_failed = true;
     }
   }
+import { resolveToolResultContinuation } from './tool-result-continuation.mjs';
+  if (ctx?.__tool_execution) {
+    const continuation = resolveToolResultContinuation(ctx.__tool_execution, ctx);
+    ctx.__tool_result_continuation = continuation;
+
+    if (continuation?.next_action === 'retry') {
+      plannerDecision = 'resume_previous_task';
+      ctx.__resumed_from_tool_failure = true;
+    }
+
+    if (continuation?.next_action === 'continue_planner') {
+      ctx.__resumed_from_tool_success = true;
+    }
+
+    if (continuation?.next_action === 'ask_user') {
+      plannerDecision = 'ask_user';
+    }
+
+    if (continuation?.next_action === 'fallback') {
+      plannerDecision = 'resume_previous_task';
+      ctx.__tool_fallback_triggered = true;
+    }
+  }

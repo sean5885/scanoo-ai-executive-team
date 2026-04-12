@@ -1657,3 +1657,9 @@ export function buildPlannerTaskTraceDiagnostics({
       `tool_exec: action=${formatValue(toolExec.action)} | ok=${formatValue(toolExec.ok)} | next=${formatValue(toolExec.next)}`
     );
   }
+  const toolCont = snapshot?.__tool_result_continuation || null;
+  if (toolCont) {
+    lines.push(
+      `tool_result: next_action=${formatValue(toolCont.next_action)} | reason=${formatValue(toolCont.reason)} | resume=${formatValue(toolCont.resume)}`
+    );
+  }
