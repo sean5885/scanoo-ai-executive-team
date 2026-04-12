@@ -1,7 +1,7 @@
 export const TOOL_LAYER_REGISTRY = {
   search_company_brain_docs: {
     capability: "knowledge_retrieval",
-    required_args: ["query"],
+    required_args: ["query", "q"],
     on_success_next: "continue_planner",
     on_failure_next: "retry_or_fallback",
   },
