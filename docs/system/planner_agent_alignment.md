@@ -839,6 +839,13 @@ The same session store now also carries a minimal **session-scoped working memor
 - `abandoned_task_ids`
 - `execution_plan` (persistence v1 + plan-aware recovery policy v1)
   - per-step recovery fields: `failure_class`, `recovery_policy`, `recovery_state.last_failure_class`, `recovery_state.recovery_attempt_count`, `recovery_state.last_recovery_action`, `recovery_state.rollback_target_step_id`
+  - per-step deterministic outcome scorer v1 fields:
+    - `outcome.outcome_status` (`success|partial|blocked|failed`)
+    - `outcome.outcome_confidence` (`0..1` or `low|medium|high`)
+    - `outcome.outcome_evidence` (`slots_filled_count`, `slots_missing_count`, `artifacts_produced_count`, `errors_encountered[]`, `recovery_actions_taken[]`)
+    - `outcome.artifact_quality` (`valid|invalid|weak|unknown`)
+    - `outcome.retry_worthiness` (`boolean`)
+    - `outcome.user_visible_completeness` (`complete|partial|none`)
   - session-level artifact/dependency graph v1 fields:
     - `artifacts[]` (`artifact_id`, `artifact_type`, `produced_by_step_id`, `validity_status=valid|invalid|superseded|missing`, `consumed_by_step_ids[]`, optional `supersedes_artifact_id`, optional conservative `metadata`)
     - `dependency_edges[]` (`from_step_id`, `to_step_id`, `via_artifact_id`, `dependency_type=hard|soft`)
@@ -882,6 +889,14 @@ Runtime usage boundary:
   - when `is_ready=false`, intended action is not dispatched directly; planner follows recommended controlled paths and can lock routing for that turn
   - blocked dependency remains fail-closed in v1 (`recommended_action=fail`), not implicit wait
   - waiting-user slot-fill continuation may provisionally mark required slots as filled for that readiness check pass, while dependency/owner/recovery/plan checks remain enforced
+- deterministic outcome scorer v1 now runs on the same step/readiness/recovery/artifact signals:
+  - `readiness blocked -> outcome_status=blocked`
+  - `terminal fail-closed/recovery failed -> outcome_status=failed`
+  - `required slots fulfilled + no error + completed step -> outcome_status=success`
+  - otherwise `partial`
+  - retry-worthiness is fail-closed and deterministic:
+    - `tool_error|timeout` + `artifact_quality!=invalid` -> `true`
+    - `missing_slot|invalid_artifact|unknown` -> `false`
 - unknown failure classes stay fail-closed (`ask_user` or no action), and do not silently blind-retry
 - slot hints now come from `slot_state`; expired TTL slots are ignored so stale gaps do not pollute new turns
 - clear topic-switch phrasing still keeps fail-closed behavior and now marks prior task id as abandoned
@@ -893,6 +908,7 @@ Write boundary:
 - working-memory write-back is now centralized at the answer boundary in `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs`
 - write-back uses patch semantics over the existing session snapshot (no full-object blind overwrite per turn)
 - answer-boundary patch now updates `task_phase/task_status/slot_state/retry_count/handoff` together with execution-plan persistence v1 and recovery policy v1 step fields through the same patch-merge write path
+- answer-boundary patch now also writes per-step `outcome` via patch-merge semantics and does not overwrite existing `step.status` just because outcome changed
 - execution-plan patch write now also merges artifact/dependency graph updates (`artifacts[]`, `dependency_edges[]`, `artifact validity_status`, step/artifact references) instead of full-plan overwrite
 - only stable final boundary outputs are eligible for write-back; intermediate planner/router states do not write
 
@@ -917,6 +933,12 @@ Observed routing/write signals now include:
 - `recovery_action`
 - `recovery_attempt_count`
 - `rollback_target_step_id`
+- `outcome_status`
+- `outcome_confidence`
+- `outcome_evidence`
+- `artifact_quality`
+- `retry_worthiness`
+- `user_visible_completeness`
 - `skipped_step_ids`
 - `artifact_id`
 - `artifact_type`
@@ -946,12 +968,18 @@ Working-memory v2 diagnostics now also includes one human-readable `task_trace` 
   - normalized snapshot (`task_id/task_type/task_phase/task_status/owner/retry/next_best_action/slot_state/abandoned_task_ids`)
   - deterministic diff lines (for example `task_phase: executing -> waiting_user`, `retry_count: 1 -> 2`, `slot.email: missing -> filled`)
   - one multi-line `task_trace_text` summary intended for human debugging
+  - outcome projection uses one deterministic `focus step` selection so `current_step=null` plans still expose stable outcome diagnostics:
+    - `current_step_id` if available
+    - otherwise `primary_artifact.produced_by_step_id`
+    - otherwise the last step carrying a valid `outcome`
+    - otherwise the last step in plan order
 - event alignment is explicit and read-only:
   - `memory_snapshot`
   - `task_phase_transition`
   - `agent_handoff`
   - `retry_attempt`
   - `failure_class/recovery_policy/recovery_action/recovery_attempt_count/rollback_target_step_id/skipped_step_ids`
+  - `outcome_status/outcome_confidence/outcome_evidence/artifact_quality/retry_worthiness/user_visible_completeness`
   - `artifact_id/artifact_type/validity_status/produced_by_step_id/affected_downstream_steps/dependency_type/artifact_superseded/dependency_blocked_step`
   - `readiness.is_ready/blocking_reason_codes/missing_slots/invalid_artifacts/blocked_dependencies/owner_ready/recovery_ready/recommended_action`
   - trace output must be derived from these existing signals instead of introducing an independent trace truth

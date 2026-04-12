@@ -13,6 +13,11 @@ import { getPlannerSkillAction } from "./planner/skill-bridge.mjs";
 import { applyPlannerWorkingMemoryPatch, readPlannerWorkingMemoryForRouting } from "./planner-conversation-memory.mjs";
 import { buildPlannerTaskTraceDiagnostics } from "./planner-working-memory-trace.mjs";
 import { normalizeUserResponse } from "./user-response-normalizer.mjs";
+import {
+  buildExecutionOutcomeObservability,
+  normalizeExecutionOutcome,
+  scoreExecutionOutcome,
+} from "./execution-outcome-scorer.mjs";
 
 const REMINDER_REQUEST_PATTERNS = [
   /提醒/u,
@@ -1012,9 +1017,11 @@ function normalizeExecutionPlan(plan = null) {
           const failureClass = normalizeExecutionPlanFailureClass(step?.failure_class, { allowNull: true });
           const recoveryPolicy = normalizeExecutionPlanRecoveryPolicy(step?.recovery_policy, { allowNull: true });
           const recoveryState = normalizeExecutionPlanRecoveryState(step?.recovery_state, { allowMissing: true });
+          const outcome = normalizeExecutionOutcome(step?.outcome, { allowNull: true });
           if ((step?.failure_class !== null && step?.failure_class !== undefined && step?.failure_class !== "" && !failureClass)
             || (step?.recovery_policy !== null && step?.recovery_policy !== undefined && step?.recovery_policy !== "" && !recoveryPolicy)
-            || !recoveryState) {
+            || !recoveryState
+            || ((step?.outcome !== null && step?.outcome !== undefined && step?.outcome !== "") && !outcome)) {
             return null;
           }
           return {
@@ -1030,6 +1037,7 @@ function normalizeExecutionPlan(plan = null) {
             failure_class: failureClass,
             recovery_policy: recoveryPolicy,
             recovery_state: recoveryState,
+            outcome,
           };
         })
         .filter(Boolean)
@@ -1452,6 +1460,35 @@ function deriveWorkingMemoryFailureClass({
   return null;
 }
 
+function resolveExecutionReadinessFromPlannerOutputs({
+  plannerEnvelope = null,
+  plannerResult = null,
+} = {}) {
+  const readinessCandidate = plannerEnvelope?.execution_result?.data?.readiness
+    || plannerResult?.execution_result?.data?.readiness
+    || null;
+  return readinessCandidate
+    && typeof readinessCandidate === "object"
+    && !Array.isArray(readinessCandidate)
+    ? readinessCandidate
+    : null;
+}
+
+function resolveExecutionPlanStepArtifactsProducedCount({
+  stepId = "",
+  artifacts = [],
+} = {}) {
+  const normalizedStepId = cleanText(stepId || "");
+  if (!normalizedStepId || !Array.isArray(artifacts)) {
+    return 0;
+  }
+  return artifacts
+    .filter((artifact) =>
+      cleanText(artifact?.produced_by_step_id || "") === normalizedStepId
+      && cleanText(artifact?.validity_status || "") === "valid")
+    .length;
+}
+
 function isNonCriticalExecutionPlanStep(step = null) {
   const stepType = cleanText(step?.step_type || "");
   return WORKING_MEMORY_NON_CRITICAL_STEP_TYPES.has(stepType);
@@ -1634,6 +1671,10 @@ function buildWorkingMemoryExecutionPlanPatch({
   retryPolicy = DEFAULT_WORKING_MEMORY_RETRY_POLICY,
 } = {}) {
   const previousPlan = normalizeExecutionPlan(previousWorkingMemory?.execution_plan);
+  const readinessFromExecution = resolveExecutionReadinessFromPlannerOutputs({
+    plannerEnvelope,
+    plannerResult,
+  });
   const planActions = collectExecutionPlanActions({
     plannerResult,
     plannerEnvelope,
@@ -1665,6 +1706,12 @@ function buildWorkingMemoryExecutionPlanPatch({
         dependency_type: null,
         artifact_superseded: false,
         dependency_blocked_step: null,
+        outcome_status: null,
+        outcome_confidence: null,
+        outcome_evidence: null,
+        artifact_quality: null,
+        retry_worthiness: null,
+        user_visible_completeness: null,
         resumed_from_waiting_user: false,
         resumed_from_retry: false,
       },
@@ -1712,6 +1759,7 @@ function buildWorkingMemoryExecutionPlanPatch({
     const previousRecoveryPolicy = normalizeExecutionPlanRecoveryPolicy(previousStep?.recovery_policy, { allowNull: true });
     const previousRecoveryState = normalizeExecutionPlanRecoveryState(previousStep?.recovery_state, { allowMissing: true })
       || buildDefaultExecutionPlanRecoveryState();
+    const previousOutcome = normalizeExecutionOutcome(previousStep?.outcome, { allowNull: true });
     steps.push({
       step_id: stepId,
       step_type: cleanText(previousStep?.step_type || "") || "planner_action",
@@ -1725,6 +1773,7 @@ function buildWorkingMemoryExecutionPlanPatch({
       failure_class: previousFailureClass,
       recovery_policy: previousRecoveryPolicy,
       recovery_state: previousRecoveryState,
+      outcome: previousOutcome,
     });
   }
 
@@ -1753,6 +1802,12 @@ function buildWorkingMemoryExecutionPlanPatch({
         dependency_type: null,
         artifact_superseded: false,
         dependency_blocked_step: null,
+        outcome_status: null,
+        outcome_confidence: null,
+        outcome_evidence: null,
+        artifact_quality: null,
+        retry_worthiness: null,
+        user_visible_completeness: null,
         resumed_from_waiting_user: false,
         resumed_from_retry: false,
       },
@@ -2076,6 +2131,51 @@ function buildWorkingMemoryExecutionPlanPatch({
       ? Array.from(new Set(downstreamSteps))
       : null;
   }
+  const runtimeError = cleanText(runtimeResult?.error || plannerResult?.error || "");
+  const currentStepIdForOutcome = activeStepIndex !== null
+    ? cleanText(steps[activeStepIndex]?.step_id || "")
+    : "";
+  const hasVisibleOutput = Boolean(
+    cleanText(userResponse?.answer || "")
+    || (Array.isArray(userResponse?.sources) && userResponse.sources.length > 0)
+    || (Array.isArray(userResponse?.limitations) && userResponse.limitations.length > 0),
+  );
+  for (const step of steps) {
+    const stepId = cleanText(step?.step_id || "");
+    const isCurrentStep = Boolean(stepId && currentStepIdForOutcome && stepId === currentStepIdForOutcome);
+    const latestStepArtifact = resolveExecutionPlanLatestArtifactForStep({
+      artifacts: graphState.artifacts,
+      planId,
+      stepId,
+    });
+    const stepMissingSlots = (() => {
+      if (isCurrentStep && Array.isArray(readinessFromExecution?.missing_slots)) {
+        return readinessFromExecution.missing_slots;
+      }
+      return cleanText(step?.status || "") === "blocked"
+        ? (Array.isArray(step?.slot_requirements) ? step.slot_requirements : [])
+        : [];
+    })();
+    step.outcome = scoreExecutionOutcome({
+      stepStatus: cleanText(step?.status || ""),
+      requiredSlots: Array.isArray(step?.slot_requirements) ? step.slot_requirements : [],
+      missingSlots: stepMissingSlots,
+      artifactsProducedCount: resolveExecutionPlanStepArtifactsProducedCount({
+        stepId,
+        artifacts: graphState.artifacts,
+      }),
+      error: isCurrentStep ? runtimeError : "",
+      failureClass: step?.failure_class || null,
+      readiness: isCurrentStep ? readinessFromExecution : null,
+      recoveryAction: step?.recovery_state?.last_recovery_action || null,
+      recoveryPolicy: step?.recovery_policy || null,
+      artifactValidityStatus: cleanText(latestStepArtifact?.validity_status || "") || null,
+      hasUserVisibleOutputFlag: isCurrentStep ? hasVisibleOutput : false,
+      userVisibleAnswer: isCurrentStep ? userResponse?.answer || "" : "",
+      userVisibleSources: isCurrentStep ? userResponse?.sources || [] : [],
+      userVisibleLimitations: isCurrentStep ? userResponse?.limitations || [] : [],
+    });
+  }
 
   const allStepsCompleted = steps.every((step) => step.status === "completed" || step.status === "skipped");
   const planStatus = (() => {
@@ -2112,6 +2212,16 @@ function buildWorkingMemoryExecutionPlanPatch({
         .map((step) => cleanText(step?.step_id || ""))
         .filter(Boolean)
     : [];
+  const observedOutcomeStep = currentStepId
+    ? steps.find((step) => cleanText(step?.step_id || "") === cleanText(currentStepId || "")) || null
+    : steps
+        .slice()
+        .reverse()
+        .find((step) => {
+          const status = cleanText(step?.status || "");
+          return status === "completed" || status === "blocked" || status === "failed";
+        }) || null;
+  const observedOutcome = buildExecutionOutcomeObservability(observedOutcomeStep?.outcome || null);
   return {
     patch: nextPlan,
     phaseAndStatus: resolvedPhaseAndStatus,
@@ -2132,6 +2242,12 @@ function buildWorkingMemoryExecutionPlanPatch({
       recovery_action: appliedRecoveryAction,
       recovery_attempt_count: appliedRecoveryAttemptCount,
       rollback_target_step_id: appliedRollbackTargetStepId,
+      outcome_status: observedOutcome.outcome_status,
+      outcome_confidence: observedOutcome.outcome_confidence,
+      outcome_evidence: observedOutcome.outcome_evidence,
+      artifact_quality: observedOutcome.artifact_quality,
+      retry_worthiness: observedOutcome.retry_worthiness,
+      user_visible_completeness: observedOutcome.user_visible_completeness,
       skipped_step_ids: skippedStepIds.length > 0 ? skippedStepIds : null,
       artifact_id: observedArtifact?.artifact_id || null,
       artifact_type: observedArtifact?.artifact_type || null,
@@ -2328,16 +2444,10 @@ function buildWorkingMemoryPatch({
   };
   const previousPhase = cleanText(previousWorkingMemory?.task_phase || "") || null;
   const previousStatus = cleanText(previousWorkingMemory?.task_status || "") || null;
-  const readinessFromExecution = (() => {
-    const readinessCandidate = plannerEnvelope?.execution_result?.data?.readiness
-      || plannerResult?.execution_result?.data?.readiness
-      || null;
-    return readinessCandidate
-      && typeof readinessCandidate === "object"
-      && !Array.isArray(readinessCandidate)
-      ? readinessCandidate
-      : null;
-  })();
+  const readinessFromExecution = resolveExecutionReadinessFromPlannerOutputs({
+    plannerEnvelope,
+    plannerResult,
+  });
   const observability = {
     task_id: taskId,
     task_phase_transition: previousPhase && previousPhase !== patch.task_phase
@@ -2376,6 +2486,14 @@ function buildWorkingMemoryPatch({
     recovery_action: executionPlan.observability?.recovery_action || null,
     recovery_attempt_count: executionPlan.observability?.recovery_attempt_count ?? null,
     rollback_target_step_id: executionPlan.observability?.rollback_target_step_id || null,
+    outcome_status: executionPlan.observability?.outcome_status || null,
+    outcome_confidence: executionPlan.observability?.outcome_confidence ?? null,
+    outcome_evidence: executionPlan.observability?.outcome_evidence || null,
+    artifact_quality: executionPlan.observability?.artifact_quality || null,
+    retry_worthiness: typeof executionPlan.observability?.retry_worthiness === "boolean"
+      ? executionPlan.observability.retry_worthiness
+      : null,
+    user_visible_completeness: executionPlan.observability?.user_visible_completeness || null,
     skipped_step_ids: executionPlan.observability?.skipped_step_ids || null,
     artifact_id: executionPlan.observability?.artifact_id || null,
     artifact_type: executionPlan.observability?.artifact_type || null,
@@ -2524,6 +2642,12 @@ export async function runPlannerUserInputEdge({
     recovery_action: null,
     recovery_attempt_count: null,
     rollback_target_step_id: null,
+    outcome_status: null,
+    outcome_confidence: null,
+    outcome_evidence: null,
+    artifact_quality: null,
+    retry_worthiness: null,
+    user_visible_completeness: null,
     skipped_step_ids: null,
     artifact_id: null,
     artifact_type: null,
@@ -2612,6 +2736,14 @@ export async function runPlannerUserInputEdge({
       ? Number(mergedMemoryObservability.recovery_attempt_count)
       : null,
     rollback_target_step_id: mergedMemoryObservability.rollback_target_step_id || null,
+    outcome_status: mergedMemoryObservability.outcome_status || null,
+    outcome_confidence: mergedMemoryObservability.outcome_confidence ?? null,
+    outcome_evidence: mergedMemoryObservability.outcome_evidence || null,
+    artifact_quality: mergedMemoryObservability.artifact_quality || null,
+    retry_worthiness: typeof mergedMemoryObservability.retry_worthiness === "boolean"
+      ? mergedMemoryObservability.retry_worthiness
+      : null,
+    user_visible_completeness: mergedMemoryObservability.user_visible_completeness || null,
     skipped_step_ids: Array.isArray(mergedMemoryObservability.skipped_step_ids)
       ? mergedMemoryObservability.skipped_step_ids
       : null,

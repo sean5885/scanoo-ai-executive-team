@@ -103,6 +103,11 @@ import {
   searchCompanyBrainDocsAction,
 } from "./company-brain-query.mjs";
 import { evaluateExecutionReadiness } from "./execution-readiness-gate.mjs";
+import {
+  buildExecutionOutcomeObservability,
+  normalizeExecutionOutcome,
+  scoreExecutionOutcome,
+} from "./execution-outcome-scorer.mjs";
 import { getStoredAccountContext } from "./lark-user-auth.mjs";
 import { getDbPath } from "./db.mjs";
 
@@ -4206,12 +4211,14 @@ function normalizePlannerWorkingMemoryExecutionPlan(plan = null) {
           const failureClass = normalizePlannerWorkingMemoryFailureClass(step?.failure_class, { allowNull: true });
           const recoveryPolicy = normalizePlannerWorkingMemoryRecoveryPolicy(step?.recovery_policy, { allowNull: true });
           const recoveryState = normalizePlannerWorkingMemoryRecoveryState(step?.recovery_state, { allowMissing: true });
+          const outcome = normalizeExecutionOutcome(step?.outcome, { allowNull: true });
           if (!stepId || !intendedAction || !PLANNER_WORKING_MEMORY_STEP_STATUSES.has(status)) {
             return null;
           }
           if ((step?.failure_class !== null && step?.failure_class !== undefined && step?.failure_class !== "" && !failureClass)
             || (step?.recovery_policy !== null && step?.recovery_policy !== undefined && step?.recovery_policy !== "" && !recoveryPolicy)
-            || !recoveryState) {
+            || !recoveryState
+            || ((step?.outcome !== null && step?.outcome !== undefined && step?.outcome !== "") && !outcome)) {
             return null;
           }
           return {
@@ -4233,6 +4240,7 @@ function normalizePlannerWorkingMemoryExecutionPlan(plan = null) {
             failure_class: failureClass,
             recovery_policy: recoveryPolicy,
             recovery_state: recoveryState,
+            outcome,
           };
         })
         .filter(Boolean)
@@ -4502,6 +4510,96 @@ function resolvePlannerExecutionReadiness({
   });
 }
 
+function derivePlannerRecoveryPolicyFromOutcome({
+  outcomeStatus = "",
+  retryWorthiness = null,
+} = {}) {
+  const normalizedStatus = cleanText(outcomeStatus || "");
+  if (normalizedStatus === "blocked") {
+    return "ask_user";
+  }
+  if (normalizedStatus === "failed") {
+    return "ask_user";
+  }
+  if (normalizedStatus === "partial" && retryWorthiness === true) {
+    return "retry_same_step";
+  }
+  return null;
+}
+
+function applyPlannerExecutionOutcomeObservability({
+  observability = null,
+  currentPlanStep = null,
+  executionReadiness = null,
+  unresolvedSlots = [],
+  stopError = "",
+} = {}) {
+  if (!observability || typeof observability !== "object" || Array.isArray(observability)) {
+    return;
+  }
+  const normalizedStep = currentPlanStep?.step && typeof currentPlanStep.step === "object" && !Array.isArray(currentPlanStep.step)
+    ? currentPlanStep.step
+    : null;
+  const normalizedReadiness = executionReadiness && typeof executionReadiness === "object" && !Array.isArray(executionReadiness)
+    ? executionReadiness
+    : observability.readiness;
+  const stepStatus = (() => {
+    const transition = cleanText(observability.task_status_transition || "");
+    const normalizedStepStatus = cleanText(normalizedStep?.status || "");
+    if (transition.endsWith("->blocked")) {
+      return "blocked";
+    }
+    if (transition.endsWith("->failed")) {
+      return "failed";
+    }
+    if (normalizedStepStatus) {
+      return normalizedStepStatus;
+    }
+    if (cleanText(observability.recovery_action || "") === "failed") {
+      return "failed";
+    }
+    if (cleanText(observability.recovery_action || "") === "ask_user") {
+      return "blocked";
+    }
+    return "";
+  })();
+  const outcome = scoreExecutionOutcome({
+    stepStatus,
+    requiredSlots: Array.isArray(normalizedStep?.slot_requirements)
+      ? normalizedStep.slot_requirements
+      : [],
+    missingSlots: Array.isArray(normalizedReadiness?.missing_slots)
+      ? normalizedReadiness.missing_slots
+      : Array.isArray(unresolvedSlots)
+        ? unresolvedSlots
+        : [],
+    artifactsProducedCount: 0,
+    error: cleanText(stopError || ""),
+    failureClass: cleanText(observability.failure_class || ""),
+    readiness: normalizedReadiness,
+    recoveryAction: cleanText(observability.recovery_action || ""),
+    recoveryPolicy: cleanText(observability.recovery_policy || ""),
+    artifactValidityStatus: cleanText(observability.validity_status || "") || null,
+    hasUserVisibleOutputFlag: false,
+  });
+  const outcomeObservability = buildExecutionOutcomeObservability(outcome);
+  Object.assign(observability, outcomeObservability);
+  const fallbackRecoveryPolicy = derivePlannerRecoveryPolicyFromOutcome({
+    outcomeStatus: outcomeObservability.outcome_status,
+    retryWorthiness: outcomeObservability.retry_worthiness,
+  });
+  if (!cleanText(observability.recovery_policy || "") && fallbackRecoveryPolicy) {
+    observability.recovery_policy = fallbackRecoveryPolicy;
+  }
+  if (!cleanText(observability.recovery_action || "")) {
+    if (observability.recovery_policy === "retry_same_step") {
+      observability.recovery_action = "retry_same_step";
+    } else if (observability.recovery_policy === "ask_user") {
+      observability.recovery_action = "ask_user";
+    }
+  }
+}
+
 function resolvePlannerWorkingMemoryExecutionPlanAction({
   workingMemory = null,
   text = "",
@@ -4711,6 +4809,12 @@ function resolvePlannerWorkingMemoryContinuation({
     memory_miss: readResult?.observability?.memory_miss !== false,
     memory_used_in_routing: false,
     memory_snapshot: readResult?.observability?.memory_snapshot || null,
+    outcome_status: null,
+    outcome_confidence: null,
+    outcome_evidence: null,
+    artifact_quality: null,
+    retry_worthiness: null,
+    user_visible_completeness: null,
   };
   logPlannerWorkingMemoryTrace({
     logger,
@@ -4790,6 +4894,12 @@ function resolvePlannerWorkingMemoryContinuation({
   observability.owner_ready = null;
   observability.recovery_ready = null;
   observability.recommended_action = null;
+  observability.outcome_status = null;
+  observability.outcome_confidence = null;
+  observability.outcome_evidence = null;
+  observability.artifact_quality = null;
+  observability.retry_worthiness = null;
+  observability.user_visible_completeness = null;
   observability.plan_invalidated = topicSwitch && currentPlanStep?.plan
     ? {
         plan_id: currentPlanStep.plan.plan_id,
@@ -5308,6 +5418,13 @@ function resolvePlannerWorkingMemoryContinuation({
     }
   }
 
+  applyPlannerExecutionOutcomeObservability({
+    observability,
+    currentPlanStep,
+    executionReadiness,
+    unresolvedSlots,
+    stopError,
+  });
   observability.memory_used_in_routing = Boolean(selectedAction) || routingLocked;
   return {
     selected_action: selectedAction || null,
