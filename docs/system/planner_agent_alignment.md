@@ -28,6 +28,7 @@ Current runtime anchor:
 - `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-working-memory-trace.mjs`
 - `/Users/seanhan/Documents/Playground/src/usage-layer-intelligence-pass.mjs`
+- `/Users/seanhan/Documents/Playground/src/retry-context-pack.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-flow-runtime.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-runtime-info-flow.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-okr-flow.mjs`
@@ -56,6 +57,7 @@ Current minimum runtime responsibilities already implemented there:
 - preset-level final output validation
 - normalized fail-soft error handling
 - minimal retry policy
+- bounded retry-context packing for `resume` vs `degraded` continuation hints
 - minimal input self-healing
 - planner stop boundary
 - bounded planner-side `synthetic_agent_hint` derivation on planner output
@@ -997,6 +999,7 @@ Observed routing/write signals now include:
   - `outcome.retry_worthiness=true` and `outcome_status!=failed`
   - `readiness.is_ready=true` with no invalid artifact / blocked dependency blockers
   - retry budget is not exhausted
+  - retry context is not degraded by `/Users/seanhan/Documents/Playground/src/retry-context-pack.mjs` (degraded => fail-closed)
   - `retry` is not disabled by rollback safety (`rollback_disabled_actions`)
 - promoted `reroute` is also conditional-only and bounded:
   - advisor recommends `reroute` and alignment is `promotion_candidate=true` with `alignment_type=exact_match`
@@ -1062,12 +1065,15 @@ Working-memory v2 diagnostics now also includes one human-readable `task_trace` 
   - `readiness.is_ready/blocking_reason_codes/missing_slots/invalid_artifacts/blocked_dependencies/owner_ready/recovery_ready/recommended_action`
   - `advisor.recommended_next_action/advisor.decision_reason_codes/advisor.decision_confidence/advisor_based_on_summary`
   - `advisor_alignment.is_aligned/advisor_alignment.alignment_type/advisor_alignment.divergence_reason_codes/advisor_alignment.promotion_candidate/advisor_alignment_summary`
-  - `decision_promotion.promoted_action/decision_promotion.promotion_applied/decision_promotion.promotion_reason_codes/decision_promotion.safety_gate_passed/decision_promotion_summary`
+  - `decision_promotion.promoted_action/decision_promotion.promotion_applied/decision_promotion.promotion_reason_codes/decision_promotion.safety_gate_passed/decision_promotion.retry_blocked/decision_promotion.retry_blocked_reason/decision_promotion_summary`
   - `promotion_policy.allowed_actions/promotion_policy.rollback_disabled_actions/promotion_policy.ineffective_threshold/promotion_policy_summary`
   - `promotion_audit.promoted_action/promotion_audit.promotion_effectiveness/promotion_audit.rollback_flag/promotion_audit_summary`
   - `decision_scoreboard.actions/decision_scoreboard_summary/highest_maturity_actions/rollback_disabled_actions`
-  - `usage_layer.interpreted_as_continuation/usage_layer.interpreted_as_new_task/usage_layer.redundant_question_detected/usage_layer.owner_selection_feels_consistent/usage_layer.slot_suppressed_ask/usage_layer.retry_context_applied/usage_layer.response_continuity_score/usage_layer.usage_issue_codes/usage_layer_summary`
+  - `retry_context.mode/retry_context.degraded_reason/retry_context.resumable_step`
+  - `usage_layer.interpreted_as_continuation/usage_layer.interpreted_as_new_task/usage_layer.redundant_question_detected/usage_layer.owner_selection_feels_consistent/usage_layer.slot_suppressed_ask/usage_layer.retry_context_applied/usage_layer.retry_context_quality/usage_layer.response_continuity_score/usage_layer.usage_issue_codes/usage_layer_summary`
   - trace output must be derived from these existing signals instead of introducing an independent trace truth
+
+Working-memory continuation now also runs one bounded retry-context pack in `/Users/seanhan/Documents/Playground/src/retry-context-pack.mjs` from current `task_phase / slot_state / required_slots / recovery_state / last_action` signals. The pack remains local-only and currently feeds planner continuation payload hints (`__retry_mode`, optional `__resumable_step`, optional `__retry_degraded_reason`, optional `__retry_user_visible_message`) plus `ask_user` gate continuity context; it does not change the public planner response envelope or planner contract schema.
 
 The executive planner decision prompt now also reads a bounded task-state summary from that same local `task lifecycle v1` store: before agent selection, `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` asks `/Users/seanhan/Documents/Playground/src/planner-task-lifecycle-v1.mjs` for the latest relevant snapshot summary and injects `unfinished_hint`, `blocked_hint`, and `in_progress_hint` into prompt assembly, so decisions can preferentially reference unfinished tasks, surface blocked-task risk, and reuse in-progress execution summaries without changing the public planner JSON shape.
 

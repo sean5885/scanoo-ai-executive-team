@@ -5559,11 +5559,17 @@ function resolvePlannerWorkingMemoryContinuation({
   if (retryPack.resume_instead_of_retry) {
     ctx.__retry_mode = "resume";
     ctx.__resumable_step = retryPack.resumable_step;
+    ctx.__retry_user_visible_message =
+      (retryPack.latest_user_delta ? `你剛補充了「${retryPack.latest_user_delta}」，` : ``) +
+      (retryPack.resumable_step
+        ? `我現在直接接著幫你處理「${retryPack.resumable_step}」。`
+        : `我直接接著幫你處理下一步。`);
   }
 
   if (retryPack.degraded_retry) {
     ctx.__retry_mode = "degraded";
     ctx.__retry_degraded_reason = retryPack.degraded_reason_codes;
+    ctx.__retry_user_visible_message = `目前資訊還不完整，我先整理已知內容再幫你往下處理。`;
   }
 
   const topicSwitch = isPlannerWorkingMemoryTopicSwitch({
