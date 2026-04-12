@@ -11,7 +11,8 @@ export async function executeTool(action, args = {}, ctx = {}) {
     let result = null;
 
     if (action === 'search_company_brain_docs') {
-      result = { docs: [`result for ${args.query}`] };
+      const query = args?.q ?? args?.query ?? '';
+      result = { docs: [`result for ${query}`] };
     }
 
     if (action === 'official_read_document') {

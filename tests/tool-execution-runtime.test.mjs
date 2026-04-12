@@ -1,8 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { executeTool } from '../src/tool-execution-runtime.mjs';
+import { validateToolInvocation } from '../src/tool-layer-contract.mjs';
 
-test('search_company_brain_docs executes successfully', async () => {
+test('search_company_brain_docs executes successfully with canonical q', async () => {
+  const res = await executeTool('search_company_brain_docs', { q: 'scanoo' }, {});
+  assert.equal(res.ok, true);
+  assert.equal(res.action, 'search_company_brain_docs');
+  assert.equal(res.next, 'continue_planner');
+});
+
+test('search_company_brain_docs executes successfully with legacy query alias', async () => {
   const res = await executeTool('search_company_brain_docs', { query: 'scanoo' }, {});
   assert.equal(res.ok, true);
   assert.equal(res.action, 'search_company_brain_docs');
@@ -19,4 +27,21 @@ test('unknown tool returns failure', async () => {
   const res = await executeTool('unknown_tool', {}, {});
   assert.equal(res.ok, false);
   assert.equal(res.error, 'unknown_tool_action');
+});
+
+test('validateToolInvocation accepts canonical q for search_company_brain_docs', () => {
+  const check = validateToolInvocation('search_company_brain_docs', { q: 'lobster' });
+  assert.equal(check.ok, true);
+});
+
+test('validateToolInvocation accepts legacy query alias for search_company_brain_docs', () => {
+  const check = validateToolInvocation('search_company_brain_docs', { query: 'lobster' });
+  assert.equal(check.ok, true);
+});
+
+test('validateToolInvocation rejects missing search query payload', () => {
+  const check = validateToolInvocation('search_company_brain_docs', {});
+  assert.equal(check.ok, false);
+  assert.equal(check.reason, 'missing_required_args');
+  assert.deepEqual(check.missing, ['q']);
 });
