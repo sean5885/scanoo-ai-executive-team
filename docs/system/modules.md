@@ -431,6 +431,13 @@ Current-truth docs for onboarding are:
   - malformed fixtures fail closed with `contract_violation` shape; runner does not silently skip invalid case structures
   - checked-in fixture pack currently contains 114 multi-turn real-world cases, including hardening categories for ambiguous utterances, short utterances, typos, multi-intent requests, supplement-data turns, emotional statements, and half-sentence inputs
   - default CLI case-count target for this runner is `100~140` (`DEFAULT_USAGE_EVAL_CASE_COUNT_MIN/MAX`)
+  - direct CLI run now enforces hard regression guardrails and exits non-zero with `[REGRESSION_GUARDRAIL_FAIL]` when any of these checks degrade:
+    - `summary.overall_intelligence_signal` must stay `high`
+    - `aggregated_metrics.continuation_quality.mistaken_new_task_rate` must stay `0`
+    - `aggregated_metrics.redundant_ask.redundant_question_rate` must stay `0`
+    - `aggregated_metrics.continuation_quality.continuation_rate` must stay `>= 0.99`
+    - `aggregated_metrics.slot_resume_quality.slot_fill_resume_success_rate` must stay `>= 0.99`
+    - `summary.retry_context_success_rate` must stay `>= 0.99`
 - Boundary:
   - this path is offline eval simulation only
   - no external dependencies, no runtime side effects, and no public API shape change

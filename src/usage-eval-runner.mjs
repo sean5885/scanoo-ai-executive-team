@@ -2292,6 +2292,39 @@ function formatRunnerTextReport(run = null) {
   return lines.join("\n");
 }
 
+function enforceRegressionGuardrails(result = {}) {
+  const report = toObject(result) || {};
+  const continuation = toObject(report.aggregated_metrics?.continuation_quality) || {};
+  const redundant = toObject(report.aggregated_metrics?.redundant_ask) || {};
+  const slotResume = toObject(report.aggregated_metrics?.slot_resume_quality) || {};
+  const summary = toObject(report.summary) || {};
+  const fail = (msg) => {
+    console.error(`[REGRESSION_GUARDRAIL_FAIL] ${msg}`);
+    process.exit(1);
+  };
+  if (report.ok !== true) {
+    fail("usage_eval_runner result is not ok");
+  }
+  if (cleanText(summary.overall_intelligence_signal || "") !== "high") {
+    fail("overall_intelligence_signal dropped");
+  }
+  if (Number(continuation.mistaken_new_task_rate || 0) > 0) {
+    fail("mistaken_new_task_rate must stay 0");
+  }
+  if (Number(redundant.redundant_question_rate || 0) > 0) {
+    fail("redundant_question_rate must stay 0");
+  }
+  if (Number(continuation.continuation_rate || 0) < 0.99) {
+    fail("continuation_rate dropped below 0.99");
+  }
+  if (Number(slotResume.slot_fill_resume_success_rate || 0) < 0.99) {
+    fail("slot_fill_resume_success_rate dropped");
+  }
+  if (Number(summary.retry_context_success_rate || 0) < 0.99) {
+    fail("retry_context_success_rate dropped");
+  }
+}
+
 function isDirectRun() {
   if (!process.argv[1]) {
     return false;
@@ -2314,6 +2347,7 @@ if (isDirectRun()) {
       ...run,
       fixture_source_path: cleanText(loaded.source_path || ""),
     };
+    enforceRegressionGuardrails(output);
     if (args.json) {
       console.log(JSON.stringify(output, null, 2));
     } else {
