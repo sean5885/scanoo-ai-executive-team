@@ -5404,6 +5404,18 @@ function resolvePlannerWorkingMemoryFailedStepRecovery({
   return response;
 }
 
+function collectRoutingHints(ctx = {}) {
+  return {
+    persona: cleanText(ctx?.persona_hint || ctx?.selected_persona || "") || null,
+    lane: cleanText(ctx?.lane_hint || ctx?.selected_lane || "") || null,
+    knowledge: cleanText(ctx?.knowledge_hint || ctx?.selected_knowledge_agent || "") || null,
+  };
+}
+
+function decidePrimaryRoute(ctx = {}) {
+  return cleanText(ctx?.__planner_decision || ctx?.next_best_action || "") || "continue";
+}
+
 function resolvePlannerWorkingMemoryContinuation({
   userIntent = "",
   taskType = "",
@@ -5416,6 +5428,12 @@ function resolvePlannerWorkingMemoryContinuation({
     ? payload
     : {};
   const ctx = { ...normalizedPayload };
+  const routingHints = collectRoutingHints(ctx);
+  let plannerDecision = decidePrimaryRoute(ctx);
+  ctx.__routing_decision = {
+    primary: plannerDecision,
+    hints: routingHints,
+  };
   const readResult = readPlannerWorkingMemoryForRouting({ sessionKey });
   const observability = {
     memory_read_attempted: true,
@@ -6349,6 +6367,12 @@ function resolvePlannerWorkingMemoryContinuation({
       }
     }
   }
+
+  plannerDecision = cleanText(selectedAction || plannerDecision || "") || "continue";
+  ctx.__routing_decision = {
+    primary: plannerDecision,
+    hints: routingHints,
+  };
 
   applyPlannerExecutionOutcomeObservability({
     observability,

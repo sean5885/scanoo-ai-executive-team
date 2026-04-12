@@ -244,6 +244,11 @@ All minimum trace/log events should align around these fields:
       - `ask_user_blocked_reason`
       - `ask_user_recalibrated`
       - `ask_user_recalibration_summary`
+    - routing-authority diagnostics surfaced in the same trace payload:
+      - `routing_decision.primary`
+      - `routing_decision.hints.persona`
+      - `routing_decision.hints.lane`
+      - `routing_decision.hints.knowledge`
     - deterministic usage-layer diagnostics surfaced in the same trace payload:
       - `usage_layer.interpreted_as_continuation`
       - `usage_layer.interpreted_as_new_task`

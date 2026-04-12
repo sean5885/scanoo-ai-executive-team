@@ -279,6 +279,16 @@ function toSnapshot(memorySnapshot = null) {
   const executionPlan = normalizeExecutionPlan(snapshot.execution_plan);
   const currentPlanStep = resolveFocusPlanStep(executionPlan);
   const currentPlanStepOutcome = normalizeExecutionOutcome(currentPlanStep?.outcome, { allowNull: true });
+  const routingDecisionRaw = snapshot.__routing_decision
+    && typeof snapshot.__routing_decision === "object"
+    && !Array.isArray(snapshot.__routing_decision)
+    ? snapshot.__routing_decision
+    : null;
+  const routingHintsRaw = routingDecisionRaw?.hints
+    && typeof routingDecisionRaw.hints === "object"
+    && !Array.isArray(routingDecisionRaw.hints)
+    ? routingDecisionRaw.hints
+    : null;
   return {
     task_id: cleanText(snapshot.task_id || "") || null,
     task_type: cleanText(snapshot.task_type || snapshot.inferred_task_type || "") || null,
@@ -290,6 +300,16 @@ function toSnapshot(memorySnapshot = null) {
     retry_count: normalizeRetryCount(snapshot.retry_count),
     retry_policy: retryPolicy,
     next_best_action: cleanText(snapshot.next_best_action || "") || null,
+    routing_decision: routingDecisionRaw
+      ? {
+          primary: cleanText(routingDecisionRaw.primary || "") || null,
+          hints: {
+            persona: cleanText(routingHintsRaw?.persona || "") || null,
+            lane: cleanText(routingHintsRaw?.lane || "") || null,
+            knowledge: cleanText(routingHintsRaw?.knowledge || "") || null,
+          },
+        }
+      : null,
     slot_state: {
       missing: slotState.missing,
       filled: slotState.filled,
@@ -1350,6 +1370,7 @@ function buildTaskTraceText({
     snapshot,
     observability: readinessObservability,
   });
+  const routing = next?.routing_decision || null;
   const readinessInvalidArtifacts = summarizeReadinessArtifacts(readiness.invalid_artifacts);
   const readinessBlockedDependencies = summarizeBlockedDependencies(readiness.blocked_dependencies);
   const abandonedSummary = next.abandoned_task_hidden_count > 0
@@ -1362,6 +1383,11 @@ function buildTaskTraceText({
     `retry: count=${next.retry_count} | policy=${next.retry_policy.strategy} (max=${next.retry_policy.max_retries})`,
     `retry_context: mode=${formatValue(retryContext.mode)} | degraded_reason=${formatValue(retryContext.degraded_reason)} | resumable_step=${formatValue(retryContext.resumable_step)}`,
     `next_best_action: ${formatValue(next.next_best_action)}`,
+    ...(routing
+      ? [
+          `routing: primary=${formatValue(routing.primary)} | persona=${formatValue(routing.hints?.persona)} | lane=${formatValue(routing.hints?.lane)} | knowledge=${formatValue(routing.hints?.knowledge)}`,
+        ]
+      : []),
     `plan: id=${formatValue(next.execution_plan.plan_id)} | status=${formatValue(next.execution_plan.plan_status)} | current_step=${formatValue(next.execution_plan.current_step)}`,
     `recovery: class=${formatValue(next.execution_plan.current_step_failure_class)} | policy=${formatValue(next.execution_plan.current_step_recovery_policy)} | action=${formatValue(next.execution_plan.current_step_recovery_action)} | attempts=${formatValue(next.execution_plan.current_step_recovery_attempt_count)} | rollback_target=${formatValue(next.execution_plan.current_step_rollback_target_step_id)}`,
     `outcome: status=${formatValue(outcome?.outcome_status || null)} | confidence=${formatValue(outcome?.outcome_confidence ?? null)} | evidence=${formatOutcomeEvidence(outcome?.outcome_evidence || null)} | artifact_quality=${formatValue(outcome?.artifact_quality || null)} | retry_worthiness=${formatValue(typeof outcome?.retry_worthiness === "boolean" ? outcome.retry_worthiness : null)} | user_visible=${formatValue(outcome?.user_visible_completeness || null)}`,
