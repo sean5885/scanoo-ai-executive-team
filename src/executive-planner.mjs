@@ -102,6 +102,7 @@ import {
   listCompanyBrainDocsAction,
   searchCompanyBrainDocsAction,
 } from "./company-brain-query.mjs";
+import { evaluateExecutionReadiness } from "./execution-readiness-gate.mjs";
 import { getStoredAccountContext } from "./lark-user-auth.mjs";
 import { getDbPath } from "./db.mjs";
 
@@ -4374,6 +4375,133 @@ function resolvePlannerWorkingMemoryCurrentStepDependencyGuard({
   };
 }
 
+function resolvePlannerExecutionReadinessPrimaryReason(readiness = null) {
+  if (!readiness || typeof readiness !== "object" || Array.isArray(readiness)) {
+    return "";
+  }
+  return cleanText((Array.isArray(readiness.blocking_reason_codes) ? readiness.blocking_reason_codes[0] : "") || "");
+}
+
+function resolvePlannerExecutionReadinessFailureClass(readiness = null) {
+  if (!readiness || typeof readiness !== "object" || Array.isArray(readiness)) {
+    return null;
+  }
+  const blockingReasons = Array.isArray(readiness.blocking_reason_codes)
+    ? readiness.blocking_reason_codes.map((item) => cleanText(item)).filter(Boolean)
+    : [];
+  if (blockingReasons.includes("invalid_artifact")) {
+    return "invalid_artifact";
+  }
+  if (blockingReasons.includes("missing_slot")) {
+    return "missing_slot";
+  }
+  if (blockingReasons.includes("owner_mismatch")) {
+    return "capability_gap";
+  }
+  if (blockingReasons.includes("recovery_in_progress")) {
+    return "tool_error";
+  }
+  if (blockingReasons.includes("blocked_dependency")
+    || blockingReasons.includes("plan_invalidated")
+    || blockingReasons.includes("malformed_plan_state")) {
+    return "unknown";
+  }
+  return null;
+}
+
+function applyPlannerExecutionReadinessObservability({
+  observability = null,
+  readiness = null,
+} = {}) {
+  if (!observability || typeof observability !== "object" || Array.isArray(observability)) {
+    return;
+  }
+  const normalizedReadiness = readiness && typeof readiness === "object" && !Array.isArray(readiness)
+    ? readiness
+    : null;
+  observability.readiness = normalizedReadiness
+    ? {
+        is_ready: normalizedReadiness.is_ready === true,
+        blocking_reason_codes: Array.isArray(normalizedReadiness.blocking_reason_codes)
+          ? normalizedReadiness.blocking_reason_codes
+          : [],
+        missing_slots: Array.isArray(normalizedReadiness.missing_slots)
+          ? normalizedReadiness.missing_slots
+          : [],
+        invalid_artifacts: Array.isArray(normalizedReadiness.invalid_artifacts)
+          ? normalizedReadiness.invalid_artifacts
+          : [],
+        blocked_dependencies: Array.isArray(normalizedReadiness.blocked_dependencies)
+          ? normalizedReadiness.blocked_dependencies
+          : [],
+        owner_ready: normalizedReadiness.owner_ready !== false,
+        recovery_ready: normalizedReadiness.recovery_ready !== false,
+        recommended_action: cleanText(normalizedReadiness.recommended_action || "") || "proceed",
+      }
+    : null;
+  observability.blocking_reason_codes = observability.readiness?.blocking_reason_codes || [];
+  observability.missing_slots = observability.readiness?.missing_slots || [];
+  observability.invalid_artifacts = observability.readiness?.invalid_artifacts || [];
+  observability.blocked_dependencies = observability.readiness?.blocked_dependencies || [];
+  observability.owner_ready = typeof observability.readiness?.owner_ready === "boolean"
+    ? observability.readiness.owner_ready
+    : null;
+  observability.recovery_ready = typeof observability.readiness?.recovery_ready === "boolean"
+    ? observability.readiness.recovery_ready
+    : null;
+  observability.recommended_action = observability.readiness?.recommended_action || null;
+  const firstInvalidArtifact = Array.isArray(observability.readiness?.invalid_artifacts)
+    ? observability.readiness.invalid_artifacts.find((item) => item && typeof item === "object") || null
+    : null;
+  if (firstInvalidArtifact) {
+    observability.artifact_id = cleanText(firstInvalidArtifact.artifact_id || "") || observability.artifact_id;
+    observability.artifact_type = cleanText(firstInvalidArtifact.artifact_type || "") || observability.artifact_type;
+    observability.validity_status = cleanText(firstInvalidArtifact.validity_status || "") || observability.validity_status;
+    observability.produced_by_step_id = cleanText(firstInvalidArtifact.produced_by_step_id || "") || observability.produced_by_step_id;
+    observability.affected_downstream_steps = Array.isArray(firstInvalidArtifact.affected_downstream_steps)
+      ? firstInvalidArtifact.affected_downstream_steps
+      : observability.affected_downstream_steps;
+    observability.dependency_type = cleanText(firstInvalidArtifact.dependency_type || "") || observability.dependency_type;
+    observability.dependency_blocked_step = cleanText(firstInvalidArtifact.blocked_step_id || "") || observability.dependency_blocked_step;
+  }
+  if ((!observability.dependency_blocked_step || observability.dependency_blocked_step === "none")
+    && Array.isArray(observability.readiness?.blocked_dependencies)
+    && observability.readiness.blocked_dependencies.length > 0) {
+    observability.dependency_blocked_step = cleanText(observability.readiness.blocked_dependencies[0]?.step_id || "") || null;
+  }
+}
+
+function resolvePlannerExecutionReadiness({
+  workingMemory = null,
+  currentPlanStep = null,
+  unresolvedSlots = [],
+  taskId = null,
+  slotStateOverride = null,
+} = {}) {
+  const rawExecutionPlan = workingMemory?.execution_plan;
+  const hasRawPlan = rawExecutionPlan && typeof rawExecutionPlan === "object" && !Array.isArray(rawExecutionPlan);
+  const planStatus = cleanText(currentPlanStep?.plan?.plan_status || rawExecutionPlan?.plan_status || "");
+  if (!hasRawPlan && !currentPlanStep?.plan) {
+    return null;
+  }
+  if (planStatus && planStatus !== "active" && planStatus !== "invalidated") {
+    return null;
+  }
+  return evaluateExecutionReadiness({
+    plan: currentPlanStep?.plan || rawExecutionPlan || null,
+    step: currentPlanStep?.step || null,
+    current_owner_agent: cleanText(workingMemory?.current_owner_agent || "") || null,
+    task_id: cleanText(taskId || "") || null,
+    abandoned_task_ids: Array.isArray(workingMemory?.abandoned_task_ids) ? workingMemory.abandoned_task_ids : [],
+    unresolved_slots: Array.isArray(unresolvedSlots) ? unresolvedSlots : [],
+    slot_state: Array.isArray(slotStateOverride)
+      ? slotStateOverride
+      : Array.isArray(workingMemory?.slot_state)
+        ? workingMemory.slot_state
+        : [],
+  });
+}
+
 function resolvePlannerWorkingMemoryExecutionPlanAction({
   workingMemory = null,
   text = "",
@@ -4600,6 +4728,8 @@ function resolvePlannerWorkingMemoryContinuation({
       selected_action: null,
       reason: null,
       routing_reason: null,
+      routing_locked: false,
+      stop_error: null,
       payload: payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {},
       observability,
     };
@@ -4652,6 +4782,14 @@ function resolvePlannerWorkingMemoryContinuation({
   observability.dependency_blocked_step = null;
   observability.resumed_from_waiting_user = false;
   observability.resumed_from_retry = false;
+  observability.readiness = null;
+  observability.blocking_reason_codes = [];
+  observability.missing_slots = [];
+  observability.invalid_artifacts = [];
+  observability.blocked_dependencies = [];
+  observability.owner_ready = null;
+  observability.recovery_ready = null;
+  observability.recommended_action = null;
   observability.plan_invalidated = topicSwitch && currentPlanStep?.plan
     ? {
         plan_id: currentPlanStep.plan.plan_id,
@@ -4669,6 +4807,8 @@ function resolvePlannerWorkingMemoryContinuation({
       selected_action: null,
       reason: null,
       routing_reason: null,
+      routing_locked: false,
+      stop_error: null,
       payload: payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {},
       observability,
     };
@@ -4689,8 +4829,48 @@ function resolvePlannerWorkingMemoryContinuation({
     observability.artifact_superseded = dependencyGuard.issue.artifact_superseded === true;
     observability.dependency_blocked_step = dependencyGuard.issue.dependency_blocked_step || null;
   }
-  const unresolvedAction = resolvePlannerWorkingMemoryActionFromSlots(unresolvedSlots);
   const normalizedIntent = cleanText(userIntent);
+  const waitingUserSlotFillAttempt = taskPhase === "waiting_user"
+    && unresolvedSlots.length > 0
+    && normalizedIntent
+    && !PLANNER_WORKING_MEMORY_ELLIPSIS_FOLLOW_UP_PATTERN.test(normalizedIntent);
+  const readinessSlotStateOverride = (() => {
+    if (!waitingUserSlotFillAttempt) {
+      return null;
+    }
+    const provisionalSlotKeys = Array.from(new Set([
+      ...(Array.isArray(currentPlanStep?.step?.slot_requirements)
+        ? currentPlanStep.step.slot_requirements
+        : []),
+      ...unresolvedSlots,
+    ].map((slotKey) => cleanText(slotKey)).filter(Boolean)));
+    if (provisionalSlotKeys.length === 0) {
+      return [];
+    }
+    const requiredBy = cleanText(currentPlanStep?.step?.intended_action || "") || null;
+    return provisionalSlotKeys.map((slotKey) => ({
+      slot_key: slotKey,
+      required_by: requiredBy,
+      status: "filled",
+      source: "inferred",
+      ttl: null,
+    }));
+  })();
+  const readinessUnresolvedSlots = waitingUserSlotFillAttempt
+    ? []
+    : unresolvedSlots;
+  const unresolvedAction = resolvePlannerWorkingMemoryActionFromSlots(unresolvedSlots);
+  const executionReadiness = resolvePlannerExecutionReadiness({
+    workingMemory,
+    currentPlanStep,
+    unresolvedSlots: readinessUnresolvedSlots,
+    taskId,
+    slotStateOverride: readinessSlotStateOverride,
+  });
+  applyPlannerExecutionReadinessObservability({
+    observability,
+    readiness: executionReadiness,
+  });
   const shouldContinueSameTask = Boolean(
     semantics.explicit_same_task
     || PLANNER_WORKING_MEMORY_RETRY_PATTERN.test(normalizedIntent)
@@ -4700,51 +4880,165 @@ function resolvePlannerWorkingMemoryContinuation({
   let selectedAction = "";
   let reason = "";
   let routingReason = "";
+  let routingLocked = false;
+  let stopError = null;
   let recoveryDecisionLocked = false;
   const runningOwnerAction = resolvePlannerWorkingMemoryOwnerAction({
     workingMemory,
     text: userIntent,
     semantics,
   });
-  if (
-    confidenceAllowed
-    && taskStatus === "running"
-    && dependencyGuard?.blocked
-  ) {
+  if (confidenceAllowed && executionReadiness && executionReadiness.is_ready === false) {
     recoveryDecisionLocked = true;
-    observability.failure_class = "invalid_artifact";
-    observability.recovery_policy = dependencyGuard?.issue?.rollback_target_step_id
-      ? "rollback_to_step"
-      : "ask_user";
-    observability.recovery_action = observability.recovery_policy;
-    observability.rollback_target_step_id = dependencyGuard?.issue?.rollback_target_step_id || null;
-    observability.recovery_attempt_count = retryCount + 1;
-    const rollbackTargetStepId = cleanText(dependencyGuard?.issue?.rollback_target_step_id || "") || null;
+    routingLocked = true;
+    const primaryReadinessReason = resolvePlannerExecutionReadinessPrimaryReason(executionReadiness);
+    stopError = primaryReadinessReason || null;
+    observability.failure_class = resolvePlannerExecutionReadinessFailureClass(executionReadiness);
+    const recommendedAction = cleanText(executionReadiness.recommended_action || "") || "fail";
+    const rollbackTargetStepId = cleanText(executionReadiness.rollback_target_step_id || "") || null;
     const rollbackTargetStep = rollbackTargetStepId
       ? (currentPlanStep?.plan?.steps || []).find((candidate) => cleanText(candidate?.step_id || "") === rollbackTargetStepId) || null
       : null;
-    const rollbackAction = cleanText(rollbackTargetStep?.intended_action || "");
-    if (rollbackAction && canUseWorkingMemoryAction(rollbackAction, { text: userIntent, semantics })) {
-      selectedAction = rollbackAction;
-      reason = "working_memory_artifact_dependency_rollback";
-      routingReason = reason;
-      observability.current_step = rollbackTargetStepId || observability.current_step;
-      observability.task_phase_transition = "executing->retrying";
-      observability.task_status_transition = "running->failed";
-      observability.retry_attempt = {
-        task_id: taskId,
-        from: retryCount,
-        retry_count: retryCount + 1,
-        max_retries: retryPolicy.max_retries,
-        strategy: retryPolicy.strategy,
-        mode: "same_step",
+    const transitionToWaitingUser = () => {
+      observability.task_phase_transition = `${taskPhase}->waiting_user`;
+      observability.task_status_transition = `${taskStatus}->blocked`;
+      observability.recovery_policy = "ask_user";
+      observability.recovery_action = "ask_user";
+      observability.slot_update = {
+        mode: "ask_user",
+        pending_slots: Array.isArray(executionReadiness.missing_slots)
+          ? executionReadiness.missing_slots
+          : unresolvedSlots,
       };
-      observability.resumed_from_retry = true;
-    } else {
-      reason = "working_memory_artifact_dependency_ask_user";
+    };
+    if (recommendedAction === "rollback") {
+      const rollbackAction = cleanText(rollbackTargetStep?.intended_action || "");
+      observability.recovery_policy = "rollback_to_step";
+      observability.recovery_action = "rollback_to_step";
+      observability.rollback_target_step_id = rollbackTargetStepId || null;
+      observability.recovery_attempt_count = retryCount + 1;
+      if (rollbackAction && canUseWorkingMemoryAction(rollbackAction, { text: userIntent, semantics })) {
+        selectedAction = rollbackAction;
+        reason = "working_memory_execution_readiness_rollback";
+        routingReason = reason;
+        observability.current_step = rollbackTargetStepId || observability.current_step;
+        observability.task_phase_transition = `${taskPhase}->retrying`;
+        observability.task_status_transition = `${taskStatus}->failed`;
+        observability.retry_attempt = {
+          task_id: taskId,
+          from: retryCount,
+          retry_count: retryCount + 1,
+          max_retries: retryPolicy.max_retries,
+          strategy: retryPolicy.strategy,
+          mode: "same_step",
+        };
+        observability.resumed_from_retry = true;
+      } else {
+        reason = "working_memory_execution_readiness_ask_user";
+        routingReason = reason;
+        transitionToWaitingUser();
+      }
+    } else if (recommendedAction === "reroute") {
+      const rerouteAction = resolvePlannerWorkingMemoryRerouteAction({
+        workingMemory,
+        text: userIntent,
+        semantics,
+      });
+      observability.recovery_policy = "reroute_owner";
+      observability.recovery_action = "reroute_owner";
+      observability.recovery_attempt_count = retryCount + 1;
+      if (rerouteAction && canUseWorkingMemoryAction(rerouteAction, { text: userIntent, semantics })) {
+        selectedAction = rerouteAction;
+        reason = "working_memory_execution_readiness_reroute";
+        routingReason = reason;
+        observability.task_phase_transition = `${taskPhase}->retrying`;
+        observability.task_status_transition = `${taskStatus}->failed`;
+        observability.retry_attempt = {
+          task_id: taskId,
+          from: retryCount,
+          retry_count: retryCount + 1,
+          max_retries: retryPolicy.max_retries,
+          strategy: retryPolicy.strategy,
+          mode: "reroute",
+        };
+        observability.agent_handoff = {
+          from: cleanText(workingMemory.current_owner_agent || "") || null,
+          to: PLANNER_WORKING_MEMORY_ACTION_OWNER_HINTS[rerouteAction] || null,
+          reason: "capability_gap",
+        };
+        observability.resumed_from_retry = true;
+      } else {
+        reason = "working_memory_execution_readiness_ask_user";
+        routingReason = reason;
+        transitionToWaitingUser();
+      }
+    } else if (recommendedAction === "retry") {
+      const retryAction = cleanText(currentPlanStep?.step?.intended_action || "");
+      observability.recovery_policy = "retry_same_step";
+      observability.recovery_action = "retry_same_step";
+      observability.recovery_attempt_count = retryCount + 1;
+      if (retryAction && canUseWorkingMemoryAction(retryAction, { text: userIntent, semantics })) {
+        selectedAction = retryAction;
+        reason = "working_memory_execution_readiness_retry";
+        routingReason = reason;
+        observability.task_phase_transition = `${taskPhase}->retrying`;
+        observability.task_status_transition = `${taskStatus}->failed`;
+        observability.retry_attempt = {
+          task_id: taskId,
+          from: retryCount,
+          retry_count: retryCount + 1,
+          max_retries: retryPolicy.max_retries,
+          strategy: retryPolicy.strategy,
+          mode: "same_step",
+        };
+        observability.resumed_from_retry = true;
+      } else {
+        reason = "working_memory_execution_readiness_fail_closed";
+        routingReason = reason;
+        observability.task_phase_transition = `${taskPhase}->failed`;
+        observability.task_status_transition = `${taskStatus}->failed`;
+      }
+    } else if (recommendedAction === "skip") {
+      const currentIndex = (currentPlanStep?.plan?.steps || []).findIndex((candidate) =>
+        cleanText(candidate?.step_id || "") === cleanText(currentPlanStep?.step?.step_id || ""));
+      const nextStep = currentIndex >= 0
+        ? (currentPlanStep?.plan?.steps || []).slice(currentIndex + 1).find((candidate) =>
+          candidate
+          && cleanText(candidate.status || "") !== "completed"
+          && cleanText(candidate.status || "") !== "skipped")
+        : null;
+      const skipAction = cleanText(nextStep?.intended_action || "");
+      observability.recovery_policy = "skip_step";
+      observability.recovery_action = "skip_step";
+      observability.skipped_step_ids = currentPlanStep?.step?.step_id
+        ? [currentPlanStep.step.step_id]
+        : null;
+      if (skipAction && canUseWorkingMemoryAction(skipAction, { text: userIntent, semantics })) {
+        selectedAction = skipAction;
+        reason = "working_memory_execution_readiness_skip";
+        routingReason = reason;
+        observability.current_step = cleanText(nextStep?.step_id || "") || observability.current_step;
+        observability.task_phase_transition = `${taskPhase}->executing`;
+        observability.task_status_transition = `${taskStatus}->running`;
+      } else {
+        reason = "working_memory_execution_readiness_fail_closed";
+        routingReason = reason;
+        observability.task_phase_transition = `${taskPhase}->failed`;
+        observability.task_status_transition = `${taskStatus}->failed`;
+      }
+    } else if (recommendedAction === "ask_user") {
+      reason = "working_memory_execution_readiness_ask_user";
       routingReason = reason;
-      observability.task_phase_transition = "executing->waiting_user";
-      observability.task_status_transition = "running->blocked";
+      transitionToWaitingUser();
+      stopError = primaryReadinessReason || "missing_slot";
+    } else {
+      reason = "working_memory_execution_readiness_fail_closed";
+      routingReason = reason;
+      observability.recovery_policy = "ask_user";
+      observability.recovery_action = "failed";
+      observability.task_phase_transition = `${taskPhase}->failed`;
+      observability.task_status_transition = `${taskStatus}->failed`;
+      stopError = primaryReadinessReason || "business_error";
     }
   } else if (
     confidenceAllowed
@@ -5014,11 +5308,13 @@ function resolvePlannerWorkingMemoryContinuation({
     }
   }
 
-  observability.memory_used_in_routing = Boolean(selectedAction);
+  observability.memory_used_in_routing = Boolean(selectedAction) || routingLocked;
   return {
     selected_action: selectedAction || null,
     reason: reason || null,
     routing_reason: routingReason || null,
+    routing_locked: routingLocked === true,
+    stop_error: cleanText(stopError || "") || null,
     payload: payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {},
     observability,
   };
@@ -5703,8 +5999,9 @@ export async function runPlannerToolFlow({
     logger,
     stage: "runPlannerToolFlow",
   });
+  const memoryRoutingLocked = !normalizedForcedSelection && memoryContinuation?.routing_locked === true;
   const plannerDocQueryContext = getPlannerDocQueryContext({ sessionKey });
-  const taskLifecycleFollowUp = (!disableAutoRouting && !normalizedForcedSelection)
+  const taskLifecycleFollowUp = (!disableAutoRouting && !normalizedForcedSelection && !memoryRoutingLocked)
     ? await maybeRunPlannerTaskLifecycleFollowUp({
         userIntent: agentInput.user_intent,
         activeDoc: plannerDocQueryContext.activeDoc,
@@ -5720,6 +6017,13 @@ export async function runPlannerToolFlow({
         payload: agentInput.payload,
         context: null,
       }
+    : memoryRoutingLocked
+      ? {
+          flow: null,
+          action: null,
+          payload: memoryContinuation?.payload || agentInput.payload,
+          context: null,
+        }
     : taskLifecycleFollowUp?.selected_action
       ? {
           flow: null,
@@ -5744,13 +6048,25 @@ export async function runPlannerToolFlow({
   const hardRoutedAction = taskLifecycleFollowUp?.selected_action || (!disableAutoRouting ? routedFlow.action : null);
   const routedPayload = taskLifecycleFollowUp?.execution_result?.data || routedFlow.payload;
   const selectorSelection = normalizedForcedSelection
+    || memoryRoutingLocked
     ? null
     : selector({
         userIntent: agentInput.user_intent,
         taskType: agentInput.task_type,
         logger,
       });
+  const lockedMemorySelection = !normalizedForcedSelection && memoryRoutingLocked
+    ? {
+        selected_action: cleanText(memoryContinuation?.selected_action || "") || null,
+        reason: cleanText(memoryContinuation?.reason || "") || "working_memory_execution_readiness_gate",
+        routing_reason: normalizePlannerRoutingReason(
+          cleanText(memoryContinuation?.routing_reason || ""),
+          "working_memory_execution_readiness_gate",
+        ) || "working_memory_execution_readiness_gate",
+      }
+    : null;
   const memorySelection = !normalizedForcedSelection
+    && !memoryRoutingLocked
     && !taskLifecycleFollowUp?.selected_action
     && !disableAutoRouting
     && !cleanText(hardRoutedAction || "")
@@ -5772,6 +6088,8 @@ export async function runPlannerToolFlow({
     });
   const selection = normalizedForcedSelection
     ? normalizedForcedSelection
+    : lockedMemorySelection
+    ? lockedMemorySelection
     : prefersSelectorSelection
     ? {
         ...selectorSelection,
@@ -5793,7 +6111,7 @@ export async function runPlannerToolFlow({
         ) || "hard_route_match",
       }
     : selectorSelection;
-  const memoryUsedInRouting = Boolean(memorySelection && selection === memorySelection);
+  const memoryUsedInRouting = memoryRoutingLocked || Boolean(memorySelection && selection === memorySelection);
   if (memoryContinuation?.observability && typeof memoryContinuation.observability === "object") {
     memoryContinuation.observability.memory_used_in_routing = memoryUsedInRouting;
   }
@@ -5853,6 +6171,9 @@ export async function runPlannerToolFlow({
   let traceId = null;
   let lifecycleSnapshot = taskLifecycleFollowUp?.snapshot || null;
   const selectionAction = cleanText(selection?.selected_action || "");
+  const lockedStopError = memoryRoutingLocked
+    ? cleanText(memoryContinuation?.stop_error || "")
+    : "";
 
   if (!selectionAction) {
     maybeInvokePlannerHook(hooks, "onEscalation", {
@@ -5861,14 +6182,22 @@ export async function runPlannerToolFlow({
     });
     executionResult = buildPlannerStoppedResult({
       action: null,
-      error: "business_error",
+      error: lockedStopError || "business_error",
       data: {
         reason: selectionRoutingReason,
-        message: "未命中受控工具規則，保持空選擇。",
+        message: memoryRoutingLocked
+          ? "execution_readiness_gate_blocked"
+          : "未命中受控工具規則，保持空選擇。",
         routing_reason: selectionRoutingReason,
+        ...(memoryRoutingLocked && memoryContinuation?.observability?.readiness
+          ? {
+              readiness: memoryContinuation.observability.readiness,
+              recommended_action: cleanText(memoryContinuation?.observability?.recommended_action || "") || null,
+            }
+          : {}),
       },
       traceId: null,
-      stopReason: "business_error",
+      stopReason: lockedStopError || "business_error",
     });
   } else if (
     !taskLifecycleFollowUp?.execution_result

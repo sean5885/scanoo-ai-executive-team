@@ -315,6 +315,80 @@ function parseTransition(transition = "") {
   };
 }
 
+function normalizeReadinessObservability(observability = null) {
+  const normalizedObservability = observability && typeof observability === "object" && !Array.isArray(observability)
+    ? observability
+    : {};
+  const readinessObject = normalizedObservability.readiness
+    && typeof normalizedObservability.readiness === "object"
+    && !Array.isArray(normalizedObservability.readiness)
+    ? normalizedObservability.readiness
+    : {};
+  return {
+    is_ready: typeof readinessObject.is_ready === "boolean"
+      ? readinessObject.is_ready
+      : null,
+    blocking_reason_codes: Array.isArray(readinessObject.blocking_reason_codes)
+      ? readinessObject.blocking_reason_codes.map((item) => cleanText(item)).filter(Boolean)
+      : Array.isArray(normalizedObservability.blocking_reason_codes)
+        ? normalizedObservability.blocking_reason_codes.map((item) => cleanText(item)).filter(Boolean)
+        : [],
+    missing_slots: Array.isArray(readinessObject.missing_slots)
+      ? readinessObject.missing_slots.map((item) => cleanText(item)).filter(Boolean)
+      : Array.isArray(normalizedObservability.missing_slots)
+        ? normalizedObservability.missing_slots.map((item) => cleanText(item)).filter(Boolean)
+        : [],
+    invalid_artifacts: Array.isArray(readinessObject.invalid_artifacts)
+      ? readinessObject.invalid_artifacts
+      : Array.isArray(normalizedObservability.invalid_artifacts)
+        ? normalizedObservability.invalid_artifacts
+        : [],
+    blocked_dependencies: Array.isArray(readinessObject.blocked_dependencies)
+      ? readinessObject.blocked_dependencies
+      : Array.isArray(normalizedObservability.blocked_dependencies)
+        ? normalizedObservability.blocked_dependencies
+        : [],
+    owner_ready: typeof readinessObject.owner_ready === "boolean"
+      ? readinessObject.owner_ready
+      : typeof normalizedObservability.owner_ready === "boolean"
+        ? normalizedObservability.owner_ready
+        : null,
+    recovery_ready: typeof readinessObject.recovery_ready === "boolean"
+      ? readinessObject.recovery_ready
+      : typeof normalizedObservability.recovery_ready === "boolean"
+        ? normalizedObservability.recovery_ready
+        : null,
+    recommended_action: cleanText(readinessObject.recommended_action || normalizedObservability.recommended_action || "") || null,
+  };
+}
+
+function summarizeReadinessArtifacts(invalidArtifacts = []) {
+  if (!Array.isArray(invalidArtifacts) || invalidArtifacts.length === 0) {
+    return [];
+  }
+  return invalidArtifacts
+    .map((artifact) => {
+      const artifactId = cleanText(artifact?.artifact_id || "") || "unknown";
+      const validityStatus = cleanText(artifact?.validity_status || "") || "unknown";
+      const blockedStep = cleanText(artifact?.blocked_step_id || "") || "unknown";
+      return `${artifactId}:${validityStatus}->${blockedStep}`;
+    })
+    .filter(Boolean);
+}
+
+function summarizeBlockedDependencies(blockedDependencies = []) {
+  if (!Array.isArray(blockedDependencies) || blockedDependencies.length === 0) {
+    return [];
+  }
+  return blockedDependencies
+    .map((dependency) => {
+      const stepId = cleanText(dependency?.step_id || "") || "unknown";
+      const status = cleanText(dependency?.status || "") || "unknown";
+      return `${stepId}:${status}`;
+    })
+    .filter(Boolean);
+}
+
 function buildDiffLines({
   previousSnapshot = null,
   nextSnapshot = null,
@@ -325,6 +399,7 @@ function buildDiffLines({
   const normalizedObservability = observability && typeof observability === "object" && !Array.isArray(observability)
     ? observability
     : {};
+  const readinessObservability = normalizeReadinessObservability(normalizedObservability);
   const diffLines = [];
   const seen = new Set();
   const addDiffLine = (line = "") => {
@@ -523,6 +598,36 @@ function buildDiffLines({
   if (dependencyBlockedStep && !hasDiffPrefix("dependency_blocked_step:")) {
     addDiffLine(`dependency_blocked_step: ${dependencyBlockedStep}`);
   }
+  if (typeof readinessObservability.is_ready === "boolean" && !hasDiffPrefix("readiness.is_ready:")) {
+    addDiffLine(`readiness.is_ready: ${readinessObservability.is_ready ? "true" : "false"}`);
+  }
+  if (Array.isArray(readinessObservability.blocking_reason_codes)
+    && readinessObservability.blocking_reason_codes.length > 0
+    && !hasDiffPrefix("blocking_reason_codes:")) {
+    addDiffLine(`blocking_reason_codes: ${formatValue(readinessObservability.blocking_reason_codes)}`);
+  }
+  if (Array.isArray(readinessObservability.missing_slots)
+    && readinessObservability.missing_slots.length > 0
+    && !hasDiffPrefix("missing_slots:")) {
+    addDiffLine(`missing_slots: ${formatValue(readinessObservability.missing_slots)}`);
+  }
+  const readinessInvalidArtifacts = summarizeReadinessArtifacts(readinessObservability.invalid_artifacts);
+  if (readinessInvalidArtifacts.length > 0 && !hasDiffPrefix("invalid_artifacts:")) {
+    addDiffLine(`invalid_artifacts: ${formatValue(readinessInvalidArtifacts)}`);
+  }
+  const readinessBlockedDependencies = summarizeBlockedDependencies(readinessObservability.blocked_dependencies);
+  if (readinessBlockedDependencies.length > 0 && !hasDiffPrefix("blocked_dependencies:")) {
+    addDiffLine(`blocked_dependencies: ${formatValue(readinessBlockedDependencies)}`);
+  }
+  if (typeof readinessObservability.owner_ready === "boolean" && !hasDiffPrefix("owner_ready:")) {
+    addDiffLine(`owner_ready: ${readinessObservability.owner_ready ? "true" : "false"}`);
+  }
+  if (typeof readinessObservability.recovery_ready === "boolean" && !hasDiffPrefix("recovery_ready:")) {
+    addDiffLine(`recovery_ready: ${readinessObservability.recovery_ready ? "true" : "false"}`);
+  }
+  if (readinessObservability.recommended_action && !hasDiffPrefix("recommended_action:")) {
+    addDiffLine(`recommended_action: ${readinessObservability.recommended_action}`);
+  }
   if (normalizedObservability.resumed_from_waiting_user === true) {
     addDiffLine("resume: waiting_user");
   }
@@ -537,9 +642,13 @@ function buildTaskTraceText({
   memoryStage = "",
   snapshot = null,
   diffLines = [],
+  readinessObservability = null,
 } = {}) {
   const next = toSnapshot(snapshot);
   const slots = next.slot_state;
+  const readiness = normalizeReadinessObservability(readinessObservability);
+  const readinessInvalidArtifacts = summarizeReadinessArtifacts(readiness.invalid_artifacts);
+  const readinessBlockedDependencies = summarizeBlockedDependencies(readiness.blocked_dependencies);
   const abandonedSummary = next.abandoned_task_hidden_count > 0
     ? `${formatValue(next.abandoned_task_ids)} (+${next.abandoned_task_hidden_count} more)`
     : formatValue(next.abandoned_task_ids);
@@ -552,6 +661,7 @@ function buildTaskTraceText({
     `plan: id=${formatValue(next.execution_plan.plan_id)} | status=${formatValue(next.execution_plan.plan_status)} | current_step=${formatValue(next.execution_plan.current_step)}`,
     `recovery: class=${formatValue(next.execution_plan.current_step_failure_class)} | policy=${formatValue(next.execution_plan.current_step_recovery_policy)} | action=${formatValue(next.execution_plan.current_step_recovery_action)} | attempts=${formatValue(next.execution_plan.current_step_recovery_attempt_count)} | rollback_target=${formatValue(next.execution_plan.current_step_rollback_target_step_id)}`,
     `artifact: id=${formatValue(next.execution_plan.artifact_id)} | type=${formatValue(next.execution_plan.artifact_type)} | validity=${formatValue(next.execution_plan.validity_status)} | produced_by=${formatValue(next.execution_plan.produced_by_step_id)} | downstream=${formatValue(next.execution_plan.affected_downstream_steps)} | dependency=${formatValue(next.execution_plan.dependency_type)} | blocked_step=${formatValue(next.execution_plan.dependency_blocked_step)} | superseded=${formatValue(next.execution_plan.artifact_superseded)}`,
+    `readiness: is_ready=${formatValue(readiness.is_ready)} | reasons=${formatValue(readiness.blocking_reason_codes)} | missing_slots=${formatValue(readiness.missing_slots)} | invalid_artifacts=${formatValue(readinessInvalidArtifacts)} | blocked_dependencies=${formatValue(readinessBlockedDependencies)} | owner_ready=${formatValue(readiness.owner_ready)} | recovery_ready=${formatValue(readiness.recovery_ready)} | recommended_action=${formatValue(readiness.recommended_action)}`,
     `slot_state: missing=${formatValue(slots.missing)} | filled=${formatValue(slots.filled)} | invalid=${formatValue(slots.invalid)}`,
     `abandoned_task_ids: ${abandonedSummary}`,
   ];
@@ -573,12 +683,15 @@ export function buildPlannerTaskTraceDiagnostics({
   observability = null,
 } = {}) {
   const snapshot = toSnapshot(memorySnapshot);
+  const readinessObservability = normalizeReadinessObservability(observability);
+  const readinessInvalidArtifacts = summarizeReadinessArtifacts(readinessObservability.invalid_artifacts);
+  const readinessBlockedDependencies = summarizeBlockedDependencies(readinessObservability.blocked_dependencies);
   const diff = buildDiffLines({
     previousSnapshot: previousMemorySnapshot,
     nextSnapshot: memorySnapshot,
     observability,
   });
-  const summary = `task=${formatValue(snapshot.task_id)} phase=${snapshot.task_phase} status=${snapshot.task_status} owner=${formatValue(snapshot.current_owner_agent)} plan=${formatValue(snapshot.execution_plan.plan_status)}:${formatValue(snapshot.execution_plan.current_step)} recovery=${formatValue(snapshot.execution_plan.current_step_recovery_action)} artifact=${formatValue(snapshot.execution_plan.artifact_id)}:${formatValue(snapshot.execution_plan.validity_status)} next=${formatValue(snapshot.next_best_action)}`;
+  const summary = `task=${formatValue(snapshot.task_id)} phase=${snapshot.task_phase} status=${snapshot.task_status} owner=${formatValue(snapshot.current_owner_agent)} plan=${formatValue(snapshot.execution_plan.plan_status)}:${formatValue(snapshot.execution_plan.current_step)} recovery=${formatValue(snapshot.execution_plan.current_step_recovery_action)} readiness=${formatValue(readinessObservability.is_ready)}:${formatValue(readinessObservability.recommended_action)} artifact=${formatValue(snapshot.execution_plan.artifact_id)}:${formatValue(snapshot.execution_plan.validity_status)} next=${formatValue(snapshot.next_best_action)}`;
   return {
     summary,
     snapshot: {
@@ -593,6 +706,16 @@ export function buildPlannerTaskTraceDiagnostics({
       retry_policy: snapshot.retry_policy,
       next_best_action: snapshot.next_best_action,
       execution_plan: snapshot.execution_plan,
+      readiness: {
+        is_ready: readinessObservability.is_ready,
+        blocking_reason_codes: readinessObservability.blocking_reason_codes,
+        missing_slots: readinessObservability.missing_slots,
+        invalid_artifacts: readinessInvalidArtifacts,
+        blocked_dependencies: readinessBlockedDependencies,
+        owner_ready: readinessObservability.owner_ready,
+        recovery_ready: readinessObservability.recovery_ready,
+        recommended_action: readinessObservability.recommended_action,
+      },
       slot_state: snapshot.slot_state,
       abandoned_task_ids: snapshot.abandoned_task_ids,
       abandoned_task_total: snapshot.abandoned_task_total,
@@ -602,6 +725,7 @@ export function buildPlannerTaskTraceDiagnostics({
       memoryStage,
       snapshot: memorySnapshot,
       diffLines: diff,
+      readinessObservability: observability,
     }),
     event_alignment: {
       memory_snapshot: Boolean(memorySnapshot && typeof memorySnapshot === "object" && !Array.isArray(memorySnapshot)),
@@ -624,6 +748,16 @@ export function buildPlannerTaskTraceDiagnostics({
       dependency_type: Boolean(cleanText(observability?.dependency_type || "")),
       artifact_superseded: observability?.artifact_superseded === true,
       dependency_blocked_step: Boolean(cleanText(observability?.dependency_blocked_step || "")),
+      readiness_is_ready: typeof readinessObservability.is_ready === "boolean",
+      blocking_reason_codes: Array.isArray(readinessObservability.blocking_reason_codes)
+        && readinessObservability.blocking_reason_codes.length > 0,
+      missing_slots: Array.isArray(readinessObservability.missing_slots)
+        && readinessObservability.missing_slots.length > 0,
+      invalid_artifacts: readinessInvalidArtifacts.length > 0,
+      blocked_dependencies: readinessBlockedDependencies.length > 0,
+      owner_ready: typeof readinessObservability.owner_ready === "boolean",
+      recovery_ready: typeof readinessObservability.recovery_ready === "boolean",
+      recommended_action: Boolean(cleanText(readinessObservability.recommended_action || "")),
       resumed_from_waiting_user: observability?.resumed_from_waiting_user === true,
       resumed_from_retry: observability?.resumed_from_retry === true,
     },

@@ -142,6 +142,9 @@ Current public `/answer` path:
 2. `http-server.mjs` calls `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs`
 3. `planner-user-input-edge.mjs` calls `executePlannedUserInput(...)`
 4. `executive-planner.mjs` resolves planner action or controlled failure
+   - before active current-step continuation, planner runs one deterministic execution-readiness gate from the same session working-memory execution plan state
+   - readiness is fail-closed and checks slot/artifact/dependency/owner/recovery/plan validity on current step, returning `is_ready`, blocking diagnostics, and `recommended_action`
+   - when `is_ready=false`, planner does not dispatch intended step action directly; it follows existing controlled paths (`ask_user` / `retry` / `reroute` / `rollback` / `skip` / fail-closed stop)
 5. planner reads and tool results remain internal runtime state
 6. `user-response-normalizer.mjs` converts the planner envelope into the public response shape:
    - `answer`
@@ -162,6 +165,7 @@ Current truth:
 - answer evidence is surfaced through canonical source mapping before public rendering
 - the checked-in normalizer now reads only canonical `execution_result.data.answer / sources / limitations`
 - session working-memory v2 write-back is centralized at this answer boundary (not mid-planner): only stable final outputs write patch updates; patch writes now include task/phase/status/owner/retry/slot updates, plus execution-plan persistence v1 updates (`plan_status`, `current_step_id`, `step.status`, `artifact_refs`, `slot_requirements`), plan-aware recovery policy v1 step fields (`failure_class`, `recovery_policy`, `recovery_state.last_failure_class`, `recovery_state.recovery_attempt_count`, `recovery_state.last_recovery_action`, `recovery_state.rollback_target_step_id`), and artifact/dependency graph v1 updates (`artifacts[]`, `dependency_edges[]`, `validity_status`, `supersedes_artifact_id`, `consumed_by_step_ids[]`) via patch-merge semantics together with v1-compatible fields; malformed/missing memory reads or malformed artifact graph snapshots fail closed and are treated as miss during pre-routing reuse
+- answer-boundary working-memory observability write-back now also carries readiness diagnostics when present (`readiness`, `blocking_reason_codes`, `missing_slots`, `invalid_artifacts`, `blocked_dependencies`, `owner_ready`, `recovery_ready`, `recommended_action`) so read/write observability stays aligned with pre-execution gating decisions
 - planner JSON requests now attempt to prepend one optional file-backed action system prompt (`/Users/seanhan/Documents/Playground/src/prompts/action-system-prompt.txt`) before the existing planner system prompt; when the file is missing/unreadable this step fail-soft skips and keeps the prior prompt path
 
 ### Secondary Retrieval-Answer Helper

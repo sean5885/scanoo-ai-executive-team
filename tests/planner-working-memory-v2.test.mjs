@@ -19,10 +19,12 @@ const [
     resetPlannerConversationMemory,
   },
   { runPlannerUserInputEdge },
+  { evaluateExecutionReadiness },
 ] = await Promise.all([
   import("../src/executive-planner.mjs"),
   import("../src/planner-conversation-memory.mjs"),
   import("../src/planner-user-input-edge.mjs"),
+  import("../src/execution-readiness-gate.mjs"),
 ]);
 
 function seedWorkingMemory(sessionKey, patch = {}) {
@@ -515,6 +517,12 @@ test("v2 hard dependency invalid artifact blocks continuation and rolls back to 
   assert.equal(latestEvent.rollback_target_step_id, "step-1");
   assert.equal(latestEvent.artifact_id, "step-1_artifact_1");
   assert.equal(latestEvent.dependency_type, "hard");
+  assert.equal(latestEvent.readiness?.is_ready, false);
+  assert.equal(latestEvent.recommended_action, "rollback");
+  assert.equal(Array.isArray(latestEvent.blocking_reason_codes), true);
+  assert.equal(latestEvent.blocking_reason_codes.includes("invalid_artifact"), true);
+  assert.equal(Array.isArray(latestEvent.invalid_artifacts), true);
+  assert.equal(latestEvent.invalid_artifacts.length > 0, true);
 
   resetPlannerRuntimeContext({ sessionKey });
   resetPlannerConversationMemory({ sessionKey });
@@ -622,6 +630,407 @@ test("v2 soft dependency invalid artifact does not block continuation and is vis
   assert.equal(latestEvent.dependency_type, "soft");
   assert.equal(latestEvent.artifact_id, "step-1_artifact_1");
   assert.equal(latestEvent.recovery_action || null, null);
+
+  resetPlannerRuntimeContext({ sessionKey });
+  resetPlannerConversationMemory({ sessionKey });
+});
+
+test("v2 readiness gate blocks slot-missing step and routes ask_user before selector dispatch", async () => {
+  const sessionKey = "wm-v2-readiness-slot-missing";
+  resetPlannerRuntimeContext({ sessionKey });
+  resetPlannerConversationMemory({ sessionKey });
+  seedWorkingMemory(sessionKey, {
+    task_id: "task-v2-readiness-slot-missing",
+    task_phase: "executing",
+    task_status: "running",
+    unresolved_slots: ["candidate_selection_required"],
+    slot_state: [
+      {
+        slot_key: "candidate_selection_required",
+        required_by: "get_company_brain_doc_detail",
+        status: "missing",
+        source: "inferred",
+        ttl: "2030-01-01T00:00:00.000Z",
+      },
+    ],
+    execution_plan: buildSeedExecutionPlan({
+      planId: "plan-v2-readiness-slot-missing",
+      planStatus: "active",
+      currentStepId: "step-slot-1",
+      steps: [
+        {
+          step_id: "step-slot-1",
+          step_type: "planner_action",
+          owner_agent: "doc_agent",
+          intended_action: "get_company_brain_doc_detail",
+          status: "running",
+          depends_on: [],
+          retryable: true,
+          artifact_refs: [],
+          slot_requirements: ["candidate_selection_required"],
+        },
+      ],
+    }),
+  });
+
+  let dispatcherCalled = false;
+  const plannerEvents = [];
+  const result = await runPlannerToolFlow({
+    userIntent: "下一步",
+    payload: {},
+    sessionKey,
+    disableAutoRouting: true,
+    logger: {
+      info(event, payload) {
+        if (event === "planner_end_to_end") {
+          plannerEvents.push(payload);
+        }
+      },
+      debug() {},
+      warn() {},
+      error() {},
+    },
+    selector() {
+      return {
+        selected_action: "get_runtime_info",
+        reason: "selector_runtime_info",
+        routing_reason: "selector_get_runtime_info",
+      };
+    },
+    async dispatcher() {
+      dispatcherCalled = true;
+      return {
+        ok: true,
+      };
+    },
+  });
+
+  const latestEvent = plannerEvents.at(-1) || {};
+  assert.equal(dispatcherCalled, false);
+  assert.equal(result.selected_action, null);
+  assert.equal(result.execution_result?.error, "missing_slot");
+  assert.equal(latestEvent.readiness?.is_ready, false);
+  assert.equal(latestEvent.recommended_action, "ask_user");
+  assert.equal(latestEvent.blocking_reason_codes.includes("missing_slot"), true);
+  assert.equal(latestEvent.missing_slots.includes("candidate_selection_required"), true);
+
+  resetPlannerRuntimeContext({ sessionKey });
+  resetPlannerConversationMemory({ sessionKey });
+});
+
+test("v2 readiness gate blocks non-completed dependency with fail-closed recommendation", async () => {
+  const sessionKey = "wm-v2-readiness-blocked-dependency";
+  resetPlannerRuntimeContext({ sessionKey });
+  resetPlannerConversationMemory({ sessionKey });
+  seedWorkingMemory(sessionKey, {
+    task_id: "task-v2-readiness-blocked-dependency",
+    task_phase: "executing",
+    task_status: "running",
+    execution_plan: buildSeedExecutionPlan({
+      planId: "plan-v2-readiness-blocked-dependency",
+      planStatus: "active",
+      currentStepId: "step-dep-2",
+      steps: [
+        {
+          step_id: "step-dep-1",
+          step_type: "planner_action",
+          owner_agent: "doc_agent",
+          intended_action: "search_company_brain_docs",
+          status: "running",
+          depends_on: [],
+          retryable: true,
+          artifact_refs: [],
+          slot_requirements: [],
+        },
+        {
+          step_id: "step-dep-2",
+          step_type: "planner_action",
+          owner_agent: "doc_agent",
+          intended_action: "get_company_brain_doc_detail",
+          status: "running",
+          depends_on: ["step-dep-1"],
+          retryable: true,
+          artifact_refs: [],
+          slot_requirements: [],
+        },
+      ],
+    }),
+  });
+
+  let dispatcherCalled = false;
+  const plannerEvents = [];
+  const result = await runPlannerToolFlow({
+    userIntent: "下一步",
+    payload: {},
+    sessionKey,
+    disableAutoRouting: true,
+    logger: {
+      info(event, payload) {
+        if (event === "planner_end_to_end") {
+          plannerEvents.push(payload);
+        }
+      },
+      debug() {},
+      warn() {},
+      error() {},
+    },
+    selector() {
+      return {
+        selected_action: "get_runtime_info",
+        reason: "selector_runtime_info",
+        routing_reason: "selector_get_runtime_info",
+      };
+    },
+    async dispatcher() {
+      dispatcherCalled = true;
+      return {
+        ok: true,
+      };
+    },
+  });
+
+  const latestEvent = plannerEvents.at(-1) || {};
+  assert.equal(dispatcherCalled, false);
+  assert.equal(result.selected_action, null);
+  assert.equal(result.execution_result?.error, "blocked_dependency");
+  assert.equal(latestEvent.readiness?.is_ready, false);
+  assert.equal(latestEvent.recommended_action, "fail");
+  assert.equal(latestEvent.blocking_reason_codes.includes("blocked_dependency"), true);
+  assert.equal(Array.isArray(latestEvent.blocked_dependencies), true);
+  assert.equal(latestEvent.blocked_dependencies[0]?.step_id, "step-dep-1");
+
+  resetPlannerRuntimeContext({ sessionKey });
+  resetPlannerConversationMemory({ sessionKey });
+});
+
+test("v2 readiness gate blocks owner mismatch and reroutes through controlled path", async () => {
+  const sessionKey = "wm-v2-readiness-owner-mismatch";
+  resetPlannerRuntimeContext({ sessionKey });
+  resetPlannerConversationMemory({ sessionKey });
+  seedWorkingMemory(sessionKey, {
+    task_id: "task-v2-readiness-owner-mismatch",
+    task_type: "runtime_info",
+    inferred_task_type: "runtime_info",
+    task_phase: "executing",
+    task_status: "running",
+    current_owner_agent: "doc_agent",
+    execution_plan: buildSeedExecutionPlan({
+      planId: "plan-v2-readiness-owner-mismatch",
+      planStatus: "active",
+      currentStepId: "step-owner-1",
+      steps: [
+        {
+          step_id: "step-owner-1",
+          step_type: "planner_action",
+          owner_agent: "runtime_agent",
+          intended_action: "get_runtime_info",
+          status: "running",
+          depends_on: [],
+          retryable: true,
+          artifact_refs: [],
+          slot_requirements: [],
+        },
+      ],
+    }),
+  });
+
+  let dispatchAction = null;
+  const plannerEvents = [];
+  const result = await runPlannerToolFlow({
+    userIntent: "下一步",
+    payload: {},
+    sessionKey,
+    disableAutoRouting: true,
+    logger: {
+      info(event, payload) {
+        if (event === "planner_end_to_end") {
+          plannerEvents.push(payload);
+        }
+      },
+      debug() {},
+      warn() {},
+      error() {},
+    },
+    selector() {
+      return {
+        selected_action: null,
+        reason: "routing_no_match",
+        routing_reason: "routing_no_match",
+      };
+    },
+    async dispatcher({ action }) {
+      dispatchAction = action;
+      return {
+        ok: true,
+        action: "runtime_info",
+        trace_id: "trace-wm-v2-readiness-owner-mismatch",
+      };
+    },
+  });
+
+  const latestEvent = plannerEvents.at(-1) || {};
+  assert.equal(dispatchAction, "get_runtime_info");
+  assert.equal(result.selected_action, "get_runtime_info");
+  assert.equal(latestEvent.readiness?.is_ready, false);
+  assert.equal(latestEvent.recommended_action, "reroute");
+  assert.equal(latestEvent.blocking_reason_codes.includes("owner_mismatch"), true);
+  assert.equal(latestEvent.owner_ready, false);
+
+  resetPlannerRuntimeContext({ sessionKey });
+  resetPlannerConversationMemory({ sessionKey });
+});
+
+test("v2 readiness gate marks in-progress recovery and routes retry path", async () => {
+  const sessionKey = "wm-v2-readiness-recovery-in-progress";
+  resetPlannerRuntimeContext({ sessionKey });
+  resetPlannerConversationMemory({ sessionKey });
+  seedWorkingMemory(sessionKey, {
+    task_id: "task-v2-readiness-recovery-in-progress",
+    task_phase: "executing",
+    task_status: "running",
+    retry_count: 1,
+    execution_plan: buildSeedExecutionPlan({
+      planId: "plan-v2-readiness-recovery-in-progress",
+      planStatus: "active",
+      currentStepId: "step-recovery-1",
+      steps: [
+        {
+          step_id: "step-recovery-1",
+          step_type: "planner_action",
+          owner_agent: "doc_agent",
+          intended_action: "search_company_brain_docs",
+          status: "failed",
+          depends_on: [],
+          retryable: true,
+          artifact_refs: [],
+          slot_requirements: [],
+          failure_class: "tool_error",
+          recovery_policy: "retry_same_step",
+          recovery_state: {
+            last_failure_class: "tool_error",
+            recovery_attempt_count: 1,
+            last_recovery_action: "retry_same_step",
+            rollback_target_step_id: null,
+          },
+        },
+      ],
+    }),
+  });
+
+  let dispatchAction = null;
+  const plannerEvents = [];
+  const result = await runPlannerToolFlow({
+    userIntent: "再試一次",
+    payload: {},
+    sessionKey,
+    disableAutoRouting: true,
+    logger: {
+      info(event, payload) {
+        if (event === "planner_end_to_end") {
+          plannerEvents.push(payload);
+        }
+      },
+      debug() {},
+      warn() {},
+      error() {},
+    },
+    selector() {
+      return {
+        selected_action: null,
+        reason: "routing_no_match",
+        routing_reason: "routing_no_match",
+      };
+    },
+    async dispatcher({ action }) {
+      dispatchAction = action;
+      return {
+        ok: true,
+        action: "company_brain_docs_search",
+        items: [],
+        trace_id: "trace-wm-v2-readiness-retry",
+      };
+    },
+  });
+
+  const latestEvent = plannerEvents.at(-1) || {};
+  assert.equal(dispatchAction, "search_company_brain_docs");
+  assert.equal(result.selected_action, "search_company_brain_docs");
+  assert.equal(latestEvent.readiness?.is_ready, false);
+  assert.equal(latestEvent.recommended_action, "retry");
+  assert.equal(latestEvent.blocking_reason_codes.includes("recovery_in_progress"), true);
+  assert.equal(latestEvent.recovery_ready, false);
+
+  resetPlannerRuntimeContext({ sessionKey });
+  resetPlannerConversationMemory({ sessionKey });
+});
+
+test("v2 readiness gate blocks invalidated plan as fail-closed before selector dispatch", async () => {
+  const sessionKey = "wm-v2-readiness-plan-invalidated";
+  resetPlannerRuntimeContext({ sessionKey });
+  resetPlannerConversationMemory({ sessionKey });
+  seedWorkingMemory(sessionKey, {
+    task_id: "task-v2-readiness-plan-invalidated",
+    task_phase: "executing",
+    task_status: "running",
+    execution_plan: buildSeedExecutionPlan({
+      planId: "plan-v2-readiness-plan-invalidated",
+      planStatus: "invalidated",
+      currentStepId: "step-invalidated-1",
+      steps: [
+        {
+          step_id: "step-invalidated-1",
+          step_type: "planner_action",
+          owner_agent: "doc_agent",
+          intended_action: "search_company_brain_docs",
+          status: "running",
+          depends_on: [],
+          retryable: true,
+          artifact_refs: [],
+          slot_requirements: [],
+        },
+      ],
+    }),
+  });
+
+  let dispatcherCalled = false;
+  const plannerEvents = [];
+  const result = await runPlannerToolFlow({
+    userIntent: "下一步",
+    payload: {},
+    sessionKey,
+    disableAutoRouting: true,
+    logger: {
+      info(event, payload) {
+        if (event === "planner_end_to_end") {
+          plannerEvents.push(payload);
+        }
+      },
+      debug() {},
+      warn() {},
+      error() {},
+    },
+    selector() {
+      return {
+        selected_action: "get_runtime_info",
+        reason: "selector_runtime_info",
+        routing_reason: "selector_get_runtime_info",
+      };
+    },
+    async dispatcher() {
+      dispatcherCalled = true;
+      return {
+        ok: true,
+      };
+    },
+  });
+
+  const latestEvent = plannerEvents.at(-1) || {};
+  assert.equal(dispatcherCalled, false);
+  assert.equal(result.selected_action, null);
+  assert.equal(result.execution_result?.error, "plan_invalidated");
+  assert.equal(latestEvent.readiness?.is_ready, false);
+  assert.equal(latestEvent.recommended_action, "fail");
+  assert.equal(latestEvent.blocking_reason_codes.includes("plan_invalidated"), true);
 
   resetPlannerRuntimeContext({ sessionKey });
   resetPlannerConversationMemory({ sessionKey });
@@ -1700,6 +2109,26 @@ test("v2 ignores expired slot TTL so stale slots do not affect later routing", a
 
   resetPlannerRuntimeContext({ sessionKey });
   resetPlannerConversationMemory({ sessionKey });
+});
+
+test("v2 readiness gate fails closed on malformed plan state", () => {
+  const readiness = evaluateExecutionReadiness({
+    plan: {
+      plan_id: "plan-malformed-readiness",
+      plan_status: "active",
+      current_step_id: "step-1",
+      steps: "invalid-shape",
+    },
+    step: null,
+    current_owner_agent: "doc_agent",
+    task_id: "task-malformed-readiness",
+    unresolved_slots: [],
+    slot_state: [],
+  });
+
+  assert.equal(readiness.is_ready, false);
+  assert.equal(readiness.recommended_action, "fail");
+  assert.equal(readiness.blocking_reason_codes.includes("malformed_plan_state"), true);
 });
 
 test("v2 malformed execution plan fails closed without crashing runtime routing", async () => {
