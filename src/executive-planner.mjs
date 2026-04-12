@@ -11421,3 +11421,16 @@ export async function planExecutiveTurn({
   });
   return blockedDecision;
 }
+// --- continuation fail-closed ---
+const isLikelyContinuation =
+  !!ctx?.last_intent &&
+  (
+    ctx?.user_input_delta ||
+    ctx?.waiting_user ||
+    ctx?.__retry_mode === 'resume'
+  );
+
+if (isLikelyContinuation && plannerDecision === 'new_task') {
+  plannerDecision = 'resume_previous_task';
+  ctx.__forced_continuation = true;
+}

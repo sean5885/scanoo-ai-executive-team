@@ -664,3 +664,14 @@ export function extractUsageLayerDiagnostics(passResult = null) {
         usage_issue_codes: [],
       };
 }
+// --- tighten continuation detection ---
+if (
+  ctx?.last_intent &&
+  (
+    ctx?.user_input_delta ||
+    ctx?.waiting_user ||
+    ctx?.__retry_mode === 'resume'
+  )
+) {
+  result.is_continuation = true;
+}
