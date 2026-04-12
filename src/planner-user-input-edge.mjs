@@ -24,6 +24,7 @@ import {
   formatStepDecisionAdvisorBasedOnSummary,
   resolveStepDecisionAdvisorActualAction,
 } from "./step-decision-advisor.mjs";
+import { formatAdvisorAlignmentSummary } from "./advisor-alignment-evaluator.mjs";
 
 const REMINDER_REQUEST_PATTERNS = [
   /提醒/u,
@@ -1506,6 +1507,8 @@ function applyStepDecisionAdvisorToObservability({
     observability.advisor = null;
     observability.advisor_based_on_summary = null;
     observability.advisor_vs_actual = null;
+    observability.advisor_alignment = null;
+    observability.advisor_alignment_summary = null;
     return;
   }
   const invalidArtifacts = Array.isArray(observability.invalid_artifacts)
@@ -1569,10 +1572,36 @@ function applyStepDecisionAdvisorToObservability({
     routing_locked: false,
     stop_error: cleanText(observability.failure_class || "") || null,
   });
-  observability.advisor_vs_actual = buildStepDecisionAdvisorComparison({
+  const advisorAlignment = buildStepDecisionAdvisorComparison({
     decision: advisorDecision,
     actual_next_action: actualNextAction,
+    alignment_context: {
+      readiness: normalizedReadiness,
+      outcome: {
+        outcome_status: observability.outcome_status,
+        outcome_confidence: observability.outcome_confidence,
+        outcome_evidence: observability.outcome_evidence,
+        artifact_quality: observability.artifact_quality,
+        retry_worthiness: observability.retry_worthiness,
+        user_visible_completeness: observability.user_visible_completeness,
+      },
+      recovery: {
+        recovery_policy: cleanText(observability.recovery_policy || "") || null,
+        recovery_action: cleanText(observability.recovery_action || "") || null,
+        recovery_attempt_count: Number.isFinite(Number(observability.recovery_attempt_count))
+          ? Number(observability.recovery_attempt_count)
+          : 0,
+      },
+      routing_overrode_advisor: Boolean(cleanText(selectedAction || ""))
+        && cleanText(advisorDecision.recommended_next_action || "") !== "proceed"
+        && actualNextAction === "proceed",
+      recovery_overrode_advisor: Boolean(cleanText(observability.recovery_action || "")),
+      malformed_input: Boolean(cleanText(observability.plan_id || "") && currentStepId && !currentStep),
+    },
   });
+  observability.advisor_vs_actual = advisorAlignment;
+  observability.advisor_alignment = advisorAlignment;
+  observability.advisor_alignment_summary = formatAdvisorAlignmentSummary(advisorAlignment);
 }
 
 function resolveExecutionReadinessFromPlannerOutputs({
@@ -2662,6 +2691,8 @@ function buildWorkingMemoryPatch({
     advisor: null,
     advisor_based_on_summary: null,
     advisor_vs_actual: null,
+    advisor_alignment: null,
+    advisor_alignment_summary: null,
     task_abandoned: topicSwitch && previousTaskId
       ? {
           task_id: previousTaskId,
@@ -2796,6 +2827,8 @@ export async function runPlannerUserInputEdge({
     advisor: null,
     advisor_based_on_summary: null,
     advisor_vs_actual: null,
+    advisor_alignment: null,
+    advisor_alignment_summary: null,
     task_abandoned: null,
   };
   let previousWorkingMemory = null;
@@ -2917,6 +2950,12 @@ export async function runPlannerUserInputEdge({
       && !Array.isArray(mergedMemoryObservability.advisor_vs_actual)
       ? mergedMemoryObservability.advisor_vs_actual
       : null,
+    advisor_alignment: mergedMemoryObservability.advisor_alignment
+      && typeof mergedMemoryObservability.advisor_alignment === "object"
+      && !Array.isArray(mergedMemoryObservability.advisor_alignment)
+      ? mergedMemoryObservability.advisor_alignment
+      : null,
+    advisor_alignment_summary: cleanText(mergedMemoryObservability.advisor_alignment_summary || "") || null,
     resumed_from_waiting_user: mergedMemoryObservability.resumed_from_waiting_user === true,
     resumed_from_retry: mergedMemoryObservability.resumed_from_retry === true,
     task_abandoned: mergedMemoryObservability.task_abandoned || null,
