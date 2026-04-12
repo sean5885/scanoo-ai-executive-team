@@ -11428,3 +11428,20 @@ export async function planExecutiveTurn({
   });
   return blockedDecision;
 }
+import { resolveToolContract, validateToolInvocation } from './tool-layer-contract.mjs';
+  const toolContract = resolveToolContract(nextBestAction);
+  if (toolContract) {
+    const toolCheck = validateToolInvocation(nextBestAction, actionArgs || {});
+    ctx.__tool_layer_contract = {
+      action: nextBestAction,
+      capability: toolContract.capability,
+      valid: toolCheck.ok,
+      invalid_reason: toolCheck.ok ? null : toolCheck.reason,
+      missing_args: toolCheck.missing || [],
+    };
+
+    if (!toolCheck.ok) {
+      plannerDecision = 'resume_previous_task';
+      ctx.__tool_layer_blocked = true;
+    }
+  }
