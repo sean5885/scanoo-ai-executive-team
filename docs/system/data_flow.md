@@ -148,8 +148,9 @@ Current public `/answer` path:
    - planner/router observability now also emits a deterministic `step decision advisor` result for that same step (`recommended_next_action`, reason codes, confidence, based-on summary), derived only from existing readiness/outcome/recovery/artifact/task-plan state
    - the same state also feeds a deterministic `advisor alignment evaluator` v1 (`advisor_action`, `actual_action`, `is_aligned`, `alignment_type`, `divergence_reason_codes`, `promotion_candidate`, `evaluator_version`) plus `advisor_alignment_summary`; malformed/missing inputs fail closed as `alignment_type=unknown`
    - the same advisor/alignment evidence then feeds `decision-engine-promotion` v1 gate:
-     - v1 allow-list: `ask_user` and `fail` only
-     - `proceed|retry|reroute|rollback|skip` remain advisory-only
+     - promotion policy truth is read from centralized control surface (`/Users/seanhan/Documents/Playground/src/promotion-control-surface.mjs`)
+     - v1 control surface policy: `allowed_actions=ask_user|fail`, `denied_actions=proceed|retry|reroute|rollback|skip`, `ineffective_threshold=3`
+     - if the action is currently flagged in `rollback_disabled_actions`, promotion stays blocked even when it appears in the allow-list
      - override is applied only when all promotion prerequisites pass; otherwise the planner keeps existing routing/recovery authority and emits blocked diagnostics
 5. planner reads and tool results remain internal runtime state
 6. `user-response-normalizer.mjs` converts the planner envelope into the public response shape:
@@ -175,6 +176,7 @@ Current truth:
 - answer-boundary working-memory observability write-back now also carries readiness diagnostics when present (`readiness`, `blocking_reason_codes`, `missing_slots`, `invalid_artifacts`, `blocked_dependencies`, `owner_ready`, `recovery_ready`, `recommended_action`) so read/write observability stays aligned with pre-execution gating decisions
 - answer-boundary and routing observability now also carry deterministic outcome diagnostics (`outcome_status`, `outcome_confidence`, `outcome_evidence`, `artifact_quality`, `retry_worthiness`, `user_visible_completeness`) so recovery/trace paths can answer "success level" and "worth retrying" from one rule-based source
 - answer-boundary observability now also carries the same `step decision advisor` fields (`advisor.recommended_next_action`, `advisor.decision_reason_codes`, `advisor.decision_confidence`, `advisor_based_on_summary`) and deterministic advisor-alignment diagnostics (`advisor_alignment`, `advisor_alignment_summary`; compatibility mirror `advisor_vs_actual`) together with promotion-gate diagnostics (`decision_promotion`, `decision_promotion_summary`) without overwriting `step.status/outcome/recovery`
+- answer-boundary/routing observability now also carries promotion control-surface diagnostics (`promotion_policy.allowed_actions`, `promotion_policy.rollback_disabled_actions`, `promotion_policy.ineffective_threshold`, `promotion_policy_summary`) so trace can explain policy-level gate blocks deterministically
 - planner JSON requests now attempt to prepend one optional file-backed action system prompt (`/Users/seanhan/Documents/Playground/src/prompts/action-system-prompt.txt`) before the existing planner system prompt; when the file is missing/unreadable this step fail-soft skips and keeps the prior prompt path
 
 ### Secondary Retrieval-Answer Helper

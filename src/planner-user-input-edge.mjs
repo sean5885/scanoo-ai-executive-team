@@ -1515,6 +1515,8 @@ function applyStepDecisionAdvisorToObservability({
     observability.advisor_alignment_summary = null;
     observability.decision_promotion = null;
     observability.decision_promotion_summary = null;
+    observability.promotion_policy = null;
+    observability.promotion_policy_summary = null;
     return;
   }
   const invalidArtifacts = Array.isArray(observability.invalid_artifacts)
@@ -1619,6 +1621,8 @@ function applyStepDecisionAdvisorToObservability({
   });
   observability.decision_promotion = promotionDecision;
   observability.decision_promotion_summary = formatDecisionPromotionSummary(promotionDecision);
+  observability.promotion_policy = null;
+  observability.promotion_policy_summary = null;
 }
 
 function resolveExecutionReadinessFromPlannerOutputs({
@@ -2712,6 +2716,8 @@ function buildWorkingMemoryPatch({
     advisor_alignment_summary: null,
     decision_promotion: null,
     decision_promotion_summary: null,
+    promotion_policy: null,
+    promotion_policy_summary: null,
     task_abandoned: topicSwitch && previousTaskId
       ? {
           task_id: previousTaskId,
@@ -2850,6 +2856,8 @@ export async function runPlannerUserInputEdge({
     advisor_alignment_summary: null,
     decision_promotion: null,
     decision_promotion_summary: null,
+    promotion_policy: null,
+    promotion_policy_summary: null,
     task_abandoned: null,
   };
   let previousWorkingMemory = null;
@@ -2983,6 +2991,12 @@ export async function runPlannerUserInputEdge({
       ? mergedMemoryObservability.decision_promotion
       : null,
     decision_promotion_summary: cleanText(mergedMemoryObservability.decision_promotion_summary || "") || null,
+    promotion_policy: mergedMemoryObservability.promotion_policy
+      && typeof mergedMemoryObservability.promotion_policy === "object"
+      && !Array.isArray(mergedMemoryObservability.promotion_policy)
+      ? mergedMemoryObservability.promotion_policy
+      : null,
+    promotion_policy_summary: cleanText(mergedMemoryObservability.promotion_policy_summary || "") || null,
     resumed_from_waiting_user: mergedMemoryObservability.resumed_from_waiting_user === true,
     resumed_from_retry: mergedMemoryObservability.resumed_from_retry === true,
     task_abandoned: mergedMemoryObservability.task_abandoned || null,

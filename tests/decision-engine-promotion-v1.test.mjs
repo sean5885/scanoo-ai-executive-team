@@ -12,6 +12,7 @@ const [
     buildDecisionPromotionAuditRecord,
     applyDecisionPromotionAuditSafety,
     createDecisionPromotionAuditState,
+    resolveDecisionPromotionPolicy,
     resolveDecisionPromotionRollbackGate,
     formatDecisionPromotionAuditSummary,
   },
@@ -24,11 +25,17 @@ const [
     applyPlannerWorkingMemoryPatch,
     resetPlannerConversationMemory,
   },
+  {
+    PROMOTION_CONTROL_SURFACE_VERSION,
+    resolvePromotionControlSurface,
+    formatPromotionControlSurfaceSummary,
+  },
 ] = await Promise.all([
   import("../src/decision-engine-promotion.mjs"),
   import("../src/planner-working-memory-trace.mjs"),
   import("../src/executive-planner.mjs"),
   import("../src/planner-conversation-memory.mjs"),
+  import("../src/promotion-control-surface.mjs"),
 ]);
 
 test.after(() => {
@@ -227,6 +234,147 @@ test("advisor=retry never promotes even with exact alignment", () => {
   assert.equal(decision.promotion_applied, false);
   assert.equal(decision.promoted_action, null);
   assert.equal(decision.promotion_reason_codes.includes("unsupported_advisor_action"), true);
+});
+
+test("retry/reroute/rollback/skip stay advisory-only in v1 policy", () => {
+  const deniedActions = ["retry", "reroute", "rollback", "skip"];
+  for (const deniedAction of deniedActions) {
+    const decision = evaluateDecisionEnginePromotion(buildPromotionInput({
+      advisor: {
+        recommended_next_action: deniedAction,
+        decision_reason_codes: ["advisory_only_v1"],
+      },
+      advisor_alignment: {
+        advisor_action: deniedAction,
+        actual_action: deniedAction,
+        is_aligned: true,
+        alignment_type: "exact_match",
+        divergence_reason_codes: [],
+        promotion_candidate: true,
+        evaluator_version: "advisor_alignment_evaluator_v1",
+      },
+      readiness: {
+        is_ready: true,
+        blocking_reason_codes: [],
+        missing_slots: [],
+        recommended_action: deniedAction,
+      },
+      outcome: {
+        outcome_status: "partial",
+        retry_worthiness: true,
+      },
+      recovery: {
+        recovery_policy: "retry_same_step",
+        recovery_action: "retry_same_step",
+        recovery_attempt_count: 1,
+      },
+    }));
+
+    assert.equal(decision.promotion_applied, false);
+    assert.equal(decision.promoted_action, null);
+    assert.equal(decision.promotion_reason_codes.includes("unsupported_advisor_action"), true);
+  }
+});
+
+test("rollback-disabled action is blocked even when allow-list would allow it", () => {
+  const policy = resolvePromotionControlSurface({
+    rollback_disabled_actions: ["ask_user"],
+  });
+  const decision = evaluateDecisionEnginePromotion(buildPromotionInput({
+    promotion_policy: policy,
+  }));
+
+  assert.equal(decision.promotion_applied, false);
+  assert.equal(decision.promoted_action, null);
+  assert.equal(decision.promotion_reason_codes.includes("promotion_disabled_by_rollback_flag"), true);
+});
+
+test("promotion gate reads control surface policy instead of hardcoded allow-list", () => {
+  const policy = resolveDecisionPromotionPolicy({
+    promotion_policy: {
+      promotion_policy_version: "test_policy_fail_only",
+      allowed_actions: ["fail"],
+      denied_actions: ["proceed", "ask_user", "retry", "reroute", "rollback", "skip"],
+      ineffective_threshold: 4,
+      policy_reason_codes: ["policy_allow_list", "policy_deny_list"],
+    },
+  });
+  const decision = evaluateDecisionEnginePromotion(buildPromotionInput({
+    promotion_policy: policy,
+  }));
+
+  assert.equal(decision.promotion_applied, false);
+  assert.equal(decision.promoted_action, null);
+  assert.equal(decision.promotion_reason_codes.includes("promotion_denied_by_policy"), true);
+});
+
+test("malformed promotion policy fails closed", () => {
+  const malformedPolicy = {
+    promotion_policy_version: "bad_policy",
+    allowed_actions: ["ask_user", "not_a_real_action"],
+    denied_actions: ["retry", "reroute"],
+    ineffective_threshold: "NaN",
+  };
+  const decision = evaluateDecisionEnginePromotion(buildPromotionInput({
+    promotion_policy: malformedPolicy,
+  }));
+
+  assert.equal(decision.promotion_applied, false);
+  assert.equal(decision.promoted_action, null);
+  assert.equal(decision.promotion_reason_codes.includes("promotion_policy_fail_closed"), true);
+});
+
+test("promotion control surface v1 exposes required policy fields", () => {
+  const policy = resolvePromotionControlSurface();
+
+  assert.equal(policy.promotion_policy_version, PROMOTION_CONTROL_SURFACE_VERSION);
+  assert.equal(Array.isArray(policy.allowed_actions), true);
+  assert.equal(Array.isArray(policy.denied_actions), true);
+  assert.equal(Array.isArray(policy.rollback_disabled_actions), true);
+  assert.equal(Number.isFinite(Number(policy.ineffective_threshold)), true);
+  assert.equal(typeof policy.action_policy_map, "object");
+  assert.equal(Array.isArray(policy.policy_reason_codes), true);
+  assert.equal(typeof policy.action_policy_map.ask_user?.promotion_allowed, "boolean");
+  assert.equal(typeof policy.action_policy_map.ask_user?.rollback_disabled, "boolean");
+  assert.equal(typeof policy.action_policy_map.ask_user?.requires_exact_match, "boolean");
+  assert.equal(typeof policy.action_policy_map.ask_user?.requires_complete_evidence, "boolean");
+  assert.equal(typeof formatPromotionControlSurfaceSummary(policy), "string");
+});
+
+test("rollback gate threshold is sourced from control surface policy", () => {
+  const state = createDecisionPromotionAuditState({
+    actions: {
+      ask_user: {
+        consecutive_ineffective: 4,
+        promotion_disabled: false,
+        last_effectiveness: "ineffective",
+        last_audit_id: "audit-threshold",
+      },
+      fail: {
+        consecutive_ineffective: 0,
+        promotion_disabled: false,
+        last_effectiveness: null,
+        last_audit_id: null,
+      },
+    },
+  });
+  const policy = resolveDecisionPromotionPolicy({
+    promotion_policy: {
+      promotion_policy_version: "threshold_5_policy",
+      allowed_actions: ["ask_user", "fail"],
+      denied_actions: ["proceed", "retry", "reroute", "rollback", "skip"],
+      ineffective_threshold: 5,
+    },
+  });
+  const rollbackGate = resolveDecisionPromotionRollbackGate({
+    state,
+    promoted_action: "ask_user",
+    promotion_policy: policy,
+  });
+
+  assert.equal(rollbackGate.threshold, 5);
+  assert.equal(rollbackGate.promotion_allowed, true);
+  assert.equal(rollbackGate.rollback_flag, false);
 });
 
 test("evidence incomplete blocks promotion", () => {
@@ -498,6 +646,10 @@ test("malformed or conflicting audit fails closed and is excluded from effective
 });
 
 test("trace diagnostics expose promotion applied and blocked outcomes", () => {
+  const appliedPolicy = resolvePromotionControlSurface();
+  const blockedPolicy = resolvePromotionControlSurface({
+    rollback_disabled_actions: ["ask_user"],
+  });
   const appliedTrace = buildPlannerTaskTraceDiagnostics({
     memoryStage: "runPlannerToolFlow_router_decision",
     memorySnapshot: {
@@ -516,6 +668,8 @@ test("trace diagnostics expose promotion applied and blocked outcomes", () => {
         promotion_version: DECISION_ENGINE_PROMOTION_VERSION,
       },
       decision_promotion_summary: "promotion_applied=true action=ask_user safety_gate_passed=true confidence=high reasons=[safety_gate_passed, promotion_applied] version=decision_engine_promotion_v1",
+      promotion_policy: appliedPolicy,
+      promotion_policy_summary: formatPromotionControlSurfaceSummary(appliedPolicy),
       promotion_audit: {
         promotion_audit_id: "audit-applied-1",
         promoted_action: "ask_user",
@@ -550,6 +704,8 @@ test("trace diagnostics expose promotion applied and blocked outcomes", () => {
         promotion_version: DECISION_ENGINE_PROMOTION_VERSION,
       },
       decision_promotion_summary: "promotion_applied=false action=none safety_gate_passed=false confidence=low reasons=[unsupported_advisor_action] version=decision_engine_promotion_v1",
+      promotion_policy: blockedPolicy,
+      promotion_policy_summary: formatPromotionControlSurfaceSummary(blockedPolicy),
       promotion_audit: {
         promotion_audit_id: "audit-blocked-1",
         promoted_action: "ask_user",
@@ -571,14 +727,22 @@ test("trace diagnostics expose promotion applied and blocked outcomes", () => {
   assert.equal(appliedTrace.diff.some((line) => line.startsWith("decision_promotion_summary:")), true);
   assert.equal(appliedTrace.diff.includes("promotion_audit.promotion_effectiveness: effective"), true);
   assert.equal(appliedTrace.diff.includes("promotion_audit.rollback_flag: false"), true);
+  assert.equal(appliedTrace.diff.some((line) => line.startsWith("promotion_policy.allowed_actions:")), true);
+  assert.equal(appliedTrace.diff.some((line) => line.startsWith("promotion_policy.rollback_disabled_actions:")), true);
+  assert.equal(appliedTrace.diff.some((line) => line.startsWith("promotion_policy.ineffective_threshold:")), true);
+  assert.equal(appliedTrace.diff.some((line) => line.startsWith("promotion_policy_summary:")), true);
   assert.equal(appliedTrace.snapshot.decision_promotion?.promotion_applied, true);
+  assert.deepEqual(appliedTrace.snapshot.promotion_policy?.allowed_actions, ["ask_user", "fail"]);
   assert.equal(appliedTrace.snapshot.promotion_audit?.promotion_effectiveness, "effective");
   assert.equal(appliedTrace.event_alignment.decision_promotion, true);
+  assert.equal(appliedTrace.event_alignment.promotion_policy, true);
+  assert.equal(appliedTrace.event_alignment.promotion_policy_summary, true);
   assert.equal(appliedTrace.event_alignment.decision_promotion_summary, true);
   assert.equal(appliedTrace.event_alignment.promotion_audit_effectiveness, true);
   assert.equal(appliedTrace.event_alignment.promotion_audit_summary, true);
   assert.equal(blockedTrace.diff.includes("decision_promotion.promotion_applied: false"), true);
   assert.equal(blockedTrace.snapshot.decision_promotion?.safety_gate_passed, false);
+  assert.deepEqual(blockedTrace.snapshot.promotion_policy?.rollback_disabled_actions, ["ask_user"]);
   assert.equal(blockedTrace.snapshot.promotion_audit?.rollback_flag, true);
   assert.equal(blockedTrace.diff.includes("promotion_audit.rollback_flag: true"), true);
   assert.equal(blockedTrace.event_alignment.decision_promotion_reason_codes, true);
