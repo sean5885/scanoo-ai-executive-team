@@ -11445,3 +11445,19 @@ import { resolveToolContract, validateToolInvocation } from './tool-layer-contra
       ctx.__tool_layer_blocked = true;
     }
   }
+import { executeTool } from './tool-execution-runtime.mjs';
+  // --- tool execution ---
+  if (ctx?.__tool_layer_contract?.valid) {
+    const toolRes = await executeTool(
+      ctx.__tool_layer_contract.action,
+      actionArgs || {},
+      ctx
+    );
+
+    ctx.__tool_execution = toolRes;
+
+    if (!toolRes.ok) {
+      plannerDecision = 'resume_previous_task';
+      ctx.__tool_execution_failed = true;
+    }
+  }
