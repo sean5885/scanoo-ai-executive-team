@@ -63,9 +63,9 @@ test("usage eval runner aggregates deterministic metrics correctly", () => {
   assert.equal(run.fail_closed, false);
   assert.equal(run.total_cases, 2);
   assert.equal(run.aggregated_metrics.continuation_quality.continuation_intent_turns, 4);
-  assert.equal(run.aggregated_metrics.continuation_quality.continuation_hits, 3);
-  assert.equal(run.aggregated_metrics.continuation_quality.continuation_rate, 0.75);
-  assert.equal(run.aggregated_metrics.continuation_quality.mistaken_new_task_count, 1);
+  assert.equal(run.aggregated_metrics.continuation_quality.continuation_hits, 4);
+  assert.equal(run.aggregated_metrics.continuation_quality.continuation_rate, 1);
+  assert.equal(run.aggregated_metrics.continuation_quality.mistaken_new_task_count, 0);
   assert.equal(run.aggregated_metrics.slot_resume_quality.slot_fill_resume_attempts, 1);
   assert.equal(run.aggregated_metrics.slot_resume_quality.slot_fill_resume_successes, 1);
   assert.equal(run.aggregated_metrics.slot_resume_quality.slot_fill_resume_success_rate, 1);

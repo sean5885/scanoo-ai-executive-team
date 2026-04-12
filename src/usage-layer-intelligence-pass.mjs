@@ -12,6 +12,7 @@ const CONTINUATION_REASON_PATTERNS = [
 
 const TOPIC_SWITCH_PATTERN = /(換個題目|换个题目|換題|换题|改問|改问|另一題|另一题|new topic|different question)/i;
 const SHORT_FOLLOW_UP_PATTERN = /^(繼續|继续|接著|接着|下一步|再來|再来|好|好的|ok|okay|retry|重試|重试|第一份|第一個|第一个|第二份|第二個|第二个|這個|这个|就這個|就这个|選這個|选这个)$/i;
+const CANDIDATE_SELECTION_PATTERN = /^(?:第\s*\d+[份个個]?|第[一二三四五六七八九十][份个個]?|第一份|第一個|第一个|第二份|第二個|第二个|這個|这个|就這個|就这个|選這個|选这个)$/i;
 const ASK_USER_COPY_PATTERN = /(請|请).{0,8}(補|提供|確認|确认|說|说)|please\s+(share|provide|confirm)|(?:補|提供|confirm).{0,10}(資訊|信息|資料|资料|detail)/i;
 const CONTINUITY_COPY_PATTERN = /(接著|接着|延續|延续|上一輪|上一轮|剛剛|刚刚|繼續|继续|改由|reroute|retry|重試|重试|重新嘗試|重新尝试|再嘗試|再尝试|往下處理|往下处理)/i;
 
@@ -227,9 +228,10 @@ function deriveContinuationSignal({
   ].join(" "));
   const requestTokens = collectSimilarityTokens(normalizedText);
   const overlap = requestTokens.filter((token) => contextTokens.includes(token));
+  const selectionFollowUp = CANDIDATE_SELECTION_PATTERN.test(normalizedText);
   const highRelated = overlap.length > 0
     || SHORT_FOLLOW_UP_PATTERN.test(normalizedText)
-    || (/^(第\s*\d+|第[一二三四五六七八九十])[份个個]?$/i.test(normalizedText));
+    || selectionFollowUp;
 
   const reasonSuggestsContinuation = CONTINUATION_REASON_PATTERNS.some((pattern) => pattern.test(normalizedRoutingReason));
   const hasActiveTask = Boolean(cleanText(workingMemory?.task_id || "") && ["running", "blocked", "failed"].includes(taskStatus || "running"));
@@ -242,6 +244,14 @@ function deriveContinuationSignal({
     || (taskPhase === "waiting_user" && unresolved.length > 0 && Boolean(normalizedText))
     || (hasActiveTask && shortInput && highRelated)
   );
+  const hasContinuationAction = Boolean(normalizedSelectedAction || currentStepAction || nextBestAction);
+  const continuationWithoutAction = Boolean(
+    shouldPreferContinuation
+    && hasActiveTask
+    && shortInput
+    && selectionFollowUp
+    && !hasContinuationAction
+  );
 
   const interpretedAsContinuation = Boolean(
     !topicSwitch
@@ -250,7 +260,8 @@ function deriveContinuationSignal({
       || reasonSuggestsContinuation
       || resumedFromWaitingUser
       || resumedFromRetry
-      || (shouldPreferContinuation && Boolean(normalizedSelectedAction || currentStepAction || nextBestAction))
+      || (shouldPreferContinuation && hasContinuationAction)
+      || continuationWithoutAction
     )
   );
 

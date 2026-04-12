@@ -41,6 +41,35 @@ test("usage pass treats short slot-fill follow-up as continuation", () => {
   assert.equal(pass.diagnostics.response_continuity_score, "high");
 });
 
+test("usage pass treats candidate-selection follow-up as continuation without action hints", () => {
+  const pass = evaluateUsageLayerIntelligencePass({
+    requestText: "第一份",
+    taskType: "document_lookup",
+    workingMemory: {
+      task_id: "task-usage-selection-no-action",
+      task_type: "document_lookup",
+      task_phase: "executing",
+      task_status: "running",
+      current_goal: "整理文件並完成下一步",
+      next_best_action: null,
+      unresolved_slots: [],
+      slot_state: [],
+    },
+    unresolvedSlots: [],
+    currentPlanStep: {
+      step_id: "step-2",
+      owner_agent: "doc_agent",
+      intended_action: null,
+    },
+    selectedAction: "",
+    routingReason: "selector_new_task",
+  });
+
+  assert.equal(pass.ok, true);
+  assert.equal(pass.diagnostics.interpreted_as_continuation, true);
+  assert.equal(pass.diagnostics.interpreted_as_new_task, false);
+});
+
 test("usage pass detects redundant ask when slot is already filled", () => {
   const pass = evaluateUsageLayerIntelligencePass({
     requestText: "我剛剛已經給你了",
