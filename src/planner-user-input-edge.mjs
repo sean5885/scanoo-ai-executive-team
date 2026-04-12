@@ -29,6 +29,10 @@ import {
   evaluateDecisionEnginePromotion,
   formatDecisionPromotionSummary,
 } from "./decision-engine-promotion.mjs";
+import {
+  buildDecisionMetricsScoreboard,
+  formatDecisionMetricsScoreboardSummary,
+} from "./decision-metrics-scoreboard.mjs";
 
 const REMINDER_REQUEST_PATTERNS = [
   /提醒/u,
@@ -1517,6 +1521,10 @@ function applyStepDecisionAdvisorToObservability({
     observability.decision_promotion_summary = null;
     observability.promotion_policy = null;
     observability.promotion_policy_summary = null;
+    observability.decision_scoreboard = null;
+    observability.decision_scoreboard_summary = null;
+    observability.highest_maturity_actions = null;
+    observability.rollback_disabled_actions = null;
     return;
   }
   const invalidArtifacts = Array.isArray(observability.invalid_artifacts)
@@ -1623,6 +1631,17 @@ function applyStepDecisionAdvisorToObservability({
   observability.decision_promotion_summary = formatDecisionPromotionSummary(promotionDecision);
   observability.promotion_policy = null;
   observability.promotion_policy_summary = null;
+  const decisionScoreboard = buildDecisionMetricsScoreboard({
+    observability,
+  });
+  observability.decision_scoreboard = decisionScoreboard;
+  observability.decision_scoreboard_summary = formatDecisionMetricsScoreboardSummary(decisionScoreboard);
+  observability.highest_maturity_actions = Array.isArray(decisionScoreboard.highest_maturity_actions)
+    ? decisionScoreboard.highest_maturity_actions
+    : [];
+  observability.rollback_disabled_actions = Array.isArray(decisionScoreboard.rollback_disabled_actions)
+    ? decisionScoreboard.rollback_disabled_actions
+    : [];
 }
 
 function resolveExecutionReadinessFromPlannerOutputs({
@@ -2718,6 +2737,10 @@ function buildWorkingMemoryPatch({
     decision_promotion_summary: null,
     promotion_policy: null,
     promotion_policy_summary: null,
+    decision_scoreboard: null,
+    decision_scoreboard_summary: null,
+    highest_maturity_actions: null,
+    rollback_disabled_actions: null,
     task_abandoned: topicSwitch && previousTaskId
       ? {
           task_id: previousTaskId,
@@ -2858,6 +2881,10 @@ export async function runPlannerUserInputEdge({
     decision_promotion_summary: null,
     promotion_policy: null,
     promotion_policy_summary: null,
+    decision_scoreboard: null,
+    decision_scoreboard_summary: null,
+    highest_maturity_actions: null,
+    rollback_disabled_actions: null,
     task_abandoned: null,
   };
   let previousWorkingMemory = null;
@@ -2997,6 +3024,18 @@ export async function runPlannerUserInputEdge({
       ? mergedMemoryObservability.promotion_policy
       : null,
     promotion_policy_summary: cleanText(mergedMemoryObservability.promotion_policy_summary || "") || null,
+    decision_scoreboard: mergedMemoryObservability.decision_scoreboard
+      && typeof mergedMemoryObservability.decision_scoreboard === "object"
+      && !Array.isArray(mergedMemoryObservability.decision_scoreboard)
+      ? mergedMemoryObservability.decision_scoreboard
+      : null,
+    decision_scoreboard_summary: cleanText(mergedMemoryObservability.decision_scoreboard_summary || "") || null,
+    highest_maturity_actions: Array.isArray(mergedMemoryObservability.highest_maturity_actions)
+      ? mergedMemoryObservability.highest_maturity_actions
+      : [],
+    rollback_disabled_actions: Array.isArray(mergedMemoryObservability.rollback_disabled_actions)
+      ? mergedMemoryObservability.rollback_disabled_actions
+      : [],
     resumed_from_waiting_user: mergedMemoryObservability.resumed_from_waiting_user === true,
     resumed_from_retry: mergedMemoryObservability.resumed_from_retry === true,
     task_abandoned: mergedMemoryObservability.task_abandoned || null,

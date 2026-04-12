@@ -107,18 +107,45 @@ const DEFAULT_PROMOTION_AUDIT_STATE = Object.freeze({
       promotion_disabled: false,
       last_effectiveness: null,
       last_audit_id: null,
+      metrics: {
+        promotion_applied_count: 0,
+        exact_match_count: 0,
+        acceptable_divergence_count: 0,
+        hard_divergence_count: 0,
+        effective_count: 0,
+        ineffective_count: 0,
+        rollback_flag_count: 0,
+      },
     },
     fail: {
       consecutive_ineffective: 0,
       promotion_disabled: false,
       last_effectiveness: null,
       last_audit_id: null,
+      metrics: {
+        promotion_applied_count: 0,
+        exact_match_count: 0,
+        acceptable_divergence_count: 0,
+        hard_divergence_count: 0,
+        effective_count: 0,
+        ineffective_count: 0,
+        rollback_flag_count: 0,
+      },
     },
     retry: {
       consecutive_ineffective: 0,
       promotion_disabled: false,
       last_effectiveness: null,
       last_audit_id: null,
+      metrics: {
+        promotion_applied_count: 0,
+        exact_match_count: 0,
+        acceptable_divergence_count: 0,
+        hard_divergence_count: 0,
+        effective_count: 0,
+        ineffective_count: 0,
+        rollback_flag_count: 0,
+      },
     },
   },
 });
@@ -1063,7 +1090,71 @@ function normalizePromotionActionState(actionState = null) {
       ? cleanText(normalized.last_effectiveness || "")
       : null,
     last_audit_id: cleanText(normalized.last_audit_id || "") || null,
+    metrics: normalizePromotionActionMetrics(normalized.metrics),
   };
+}
+
+function normalizePromotionActionMetrics(metrics = null) {
+  const normalizedMetrics = toObject(metrics) || {};
+  return {
+    promotion_applied_count: Number.isFinite(Number(normalizedMetrics.promotion_applied_count))
+      ? Math.max(0, Number(normalizedMetrics.promotion_applied_count))
+      : 0,
+    exact_match_count: Number.isFinite(Number(normalizedMetrics.exact_match_count))
+      ? Math.max(0, Number(normalizedMetrics.exact_match_count))
+      : 0,
+    acceptable_divergence_count: Number.isFinite(Number(normalizedMetrics.acceptable_divergence_count))
+      ? Math.max(0, Number(normalizedMetrics.acceptable_divergence_count))
+      : 0,
+    hard_divergence_count: Number.isFinite(Number(normalizedMetrics.hard_divergence_count))
+      ? Math.max(0, Number(normalizedMetrics.hard_divergence_count))
+      : 0,
+    effective_count: Number.isFinite(Number(normalizedMetrics.effective_count))
+      ? Math.max(0, Number(normalizedMetrics.effective_count))
+      : 0,
+    ineffective_count: Number.isFinite(Number(normalizedMetrics.ineffective_count))
+      ? Math.max(0, Number(normalizedMetrics.ineffective_count))
+      : 0,
+    rollback_flag_count: Number.isFinite(Number(normalizedMetrics.rollback_flag_count))
+      ? Math.max(0, Number(normalizedMetrics.rollback_flag_count))
+      : 0,
+  };
+}
+
+function applyPromotionAuditMetrics({
+  metrics = null,
+  audit_record = null,
+  rollback_flag = false,
+} = {}) {
+  const nextMetrics = normalizePromotionActionMetrics(metrics);
+  const normalizedAudit = toObject(audit_record) || {};
+  const normalizedContext = toObject(normalizedAudit.promotion_context) || {};
+  const promotionApplied = normalizedAudit.promotion_applied === true;
+  const alignmentType = cleanText(
+    normalizedContext.alignment_type
+    || normalizedContext?.advisor_alignment?.alignment_type
+    || "",
+  );
+  const promotionEffectiveness = cleanText(normalizedAudit.promotion_effectiveness || "");
+  if (alignmentType === "exact_match") {
+    nextMetrics.exact_match_count += 1;
+  } else if (alignmentType === "acceptable_divergence") {
+    nextMetrics.acceptable_divergence_count += 1;
+  } else if (alignmentType === "hard_divergence") {
+    nextMetrics.hard_divergence_count += 1;
+  }
+  if (promotionApplied) {
+    nextMetrics.promotion_applied_count += 1;
+  }
+  if (promotionEffectiveness === "effective") {
+    nextMetrics.effective_count += 1;
+  } else if (promotionEffectiveness === "ineffective") {
+    nextMetrics.ineffective_count += 1;
+  }
+  if (rollback_flag === true) {
+    nextMetrics.rollback_flag_count += 1;
+  }
+  return nextMetrics;
 }
 
 export function createDecisionPromotionAuditState(state = null) {
@@ -1239,6 +1330,14 @@ export function applyDecisionPromotionAuditSafety({
       actionState.promotion_disabled = true;
     }
   }
+  const nextRollbackFlag = actionState.promotion_disabled === true;
+  if (!auditFailClosed && !auditConflicting) {
+    actionState.metrics = applyPromotionAuditMetrics({
+      metrics: actionState.metrics,
+      audit_record: normalizedAudit,
+      rollback_flag: nextRollbackFlag,
+    });
+  }
 
   const nextState = {
     ...normalizedState,
@@ -1251,7 +1350,7 @@ export function applyDecisionPromotionAuditSafety({
     next_state: nextState,
     audit_record: {
       ...normalizedAudit,
-      rollback_flag: actionState.promotion_disabled === true,
+      rollback_flag: nextRollbackFlag,
     },
   };
 }
