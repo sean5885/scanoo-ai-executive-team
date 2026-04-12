@@ -232,6 +232,14 @@ All minimum trace/log events should align around these fields:
       - `decision_scoreboard_summary`
       - `highest_maturity_actions`
       - `rollback_disabled_actions`
+    - deterministic usage-layer diagnostics surfaced in the same trace payload:
+      - `usage_layer.interpreted_as_continuation`
+      - `usage_layer.interpreted_as_new_task`
+      - `usage_layer.redundant_question_detected`
+      - `usage_layer.owner_selection_feels_consistent`
+      - `usage_layer.response_continuity_score`
+      - `usage_layer.usage_issue_codes`
+      - `usage_layer_summary`
       - v1 allow/deny/threshold truth comes from centralized promotion control surface:
         - `allowed_actions=ask_user|retry|reroute|fail`
         - `denied_actions=proceed|rollback|skip`
@@ -250,7 +258,7 @@ All minimum trace/log events should align around these fields:
         - else the last step with a valid `outcome`
         - else the last step in plan order
   - alignment contract:
-    - trace output is derived from existing `memory_snapshot`, `task_phase_transition`, `agent_handoff`, `retry_attempt`, and execution-plan observability (`plan_id`, `plan_status`, `current_step`, `step_transition`, `plan_invalidated`, `failure_class`, `recovery_policy`, `recovery_action`, `recovery_attempt_count`, `rollback_target_step_id`, `skipped_step_ids`, `artifact_id`, `artifact_type`, `validity_status`, `produced_by_step_id`, `affected_downstream_steps`, `dependency_type`, `artifact_superseded`, `dependency_blocked_step`, `readiness`, `blocking_reason_codes`, `missing_slots`, `invalid_artifacts`, `blocked_dependencies`, `owner_ready`, `recovery_ready`, `recommended_action`, `outcome_status`, `outcome_confidence`, `outcome_evidence`, `artifact_quality`, `retry_worthiness`, `user_visible_completeness`, `advisor`, `advisor_based_on_summary`, `advisor_alignment`, `advisor_alignment_summary`, `advisor_vs_actual`, `decision_promotion`, `decision_promotion_summary`, `promotion_policy`, `promotion_policy_summary`, `promotion_audit`, `promotion_audit_summary`, `decision_scoreboard`, `decision_scoreboard_summary`, `highest_maturity_actions`, `rollback_disabled_actions`, `resumed_from_waiting_user`, `resumed_from_retry`)
+    - trace output is derived from existing `memory_snapshot`, `task_phase_transition`, `agent_handoff`, `retry_attempt`, and execution-plan observability (`plan_id`, `plan_status`, `current_step`, `step_transition`, `plan_invalidated`, `failure_class`, `recovery_policy`, `recovery_action`, `recovery_attempt_count`, `rollback_target_step_id`, `skipped_step_ids`, `artifact_id`, `artifact_type`, `validity_status`, `produced_by_step_id`, `affected_downstream_steps`, `dependency_type`, `artifact_superseded`, `dependency_blocked_step`, `readiness`, `blocking_reason_codes`, `missing_slots`, `invalid_artifacts`, `blocked_dependencies`, `owner_ready`, `recovery_ready`, `recommended_action`, `outcome_status`, `outcome_confidence`, `outcome_evidence`, `artifact_quality`, `retry_worthiness`, `user_visible_completeness`, `advisor`, `advisor_based_on_summary`, `advisor_alignment`, `advisor_alignment_summary`, `advisor_vs_actual`, `decision_promotion`, `decision_promotion_summary`, `promotion_policy`, `promotion_policy_summary`, `promotion_audit`, `promotion_audit_summary`, `decision_scoreboard`, `decision_scoreboard_summary`, `highest_maturity_actions`, `rollback_disabled_actions`, `usage_layer`, `usage_layer_summary`, `resumed_from_waiting_user`, `resumed_from_retry`)
     - it is a diagnostics formatter layer, not an independent state source
 - skill-backed `tool_execution` logs now also expose:
   - `skill_bridge`

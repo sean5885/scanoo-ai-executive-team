@@ -161,8 +161,11 @@ Current public `/answer` path:
        - no `invalid_artifact` / `blocked_dependency` conflict
        - no recovery conflict (`rollback_to_step` / `failed` / hard-fail / exhausted retry budget)
        - reroute health baseline must exist and be non-low for `ask_user|retry|fail`; otherwise fail-closed
-       - planner apply stage must verify one deterministic reroute target; unverifiable/ambiguous target fails closed
+     - planner apply stage must verify one deterministic reroute target; unverifiable/ambiguous target fails closed
      - override is applied only when all promotion prerequisites pass; otherwise the planner keeps existing routing/recovery authority and emits blocked diagnostics
+   - deterministic usage-layer tightening is now applied on top of the same working-memory continuation boundary:
+     - short/high-related follow-ups can stay on continuation path without opening a new task
+     - `waiting_user` turns with already-filled slots resume the current plan step (`working_memory_waiting_user_resume_plan_step`) instead of redundant ask
 5. planner reads and tool results remain internal runtime state
 6. `user-response-normalizer.mjs` converts the planner envelope into the public response shape:
    - `answer`
@@ -188,6 +191,15 @@ Current truth:
 - answer-boundary and routing observability now also carry deterministic outcome diagnostics (`outcome_status`, `outcome_confidence`, `outcome_evidence`, `artifact_quality`, `retry_worthiness`, `user_visible_completeness`) so recovery/trace paths can answer "success level" and "worth retrying" from one rule-based source
 - answer-boundary observability now also carries the same `step decision advisor` fields (`advisor.recommended_next_action`, `advisor.decision_reason_codes`, `advisor.decision_confidence`, `advisor_based_on_summary`) and deterministic advisor-alignment diagnostics (`advisor_alignment`, `advisor_alignment_summary`; compatibility mirror `advisor_vs_actual`) together with promotion-gate diagnostics (`decision_promotion`, `decision_promotion_summary`) without overwriting `step.status/outcome/recovery`
 - answer-boundary/routing observability now also carries promotion control-surface diagnostics (`promotion_policy.allowed_actions`, `promotion_policy.rollback_disabled_actions`, `promotion_policy.ineffective_threshold`, `promotion_policy_summary`) so trace can explain policy-level gate blocks deterministically
+- answer-boundary observability now also carries usage-layer diagnostics and summary:
+  - `usage_layer.interpreted_as_continuation`
+  - `usage_layer.interpreted_as_new_task`
+  - `usage_layer.redundant_question_detected`
+  - `usage_layer.owner_selection_feels_consistent`
+  - `usage_layer.response_continuity_score`
+  - `usage_layer.usage_issue_codes`
+  - `usage_layer_summary`
+- when the same usage-layer pass detects continuation/retry/reroute continuity gaps, `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs` now prepends one bounded contextual source line (for example slot-fill resume, retry resume, reroute handoff) instead of resetting reply tone as a fresh task
 - planner JSON requests now attempt to prepend one optional file-backed action system prompt (`/Users/seanhan/Documents/Playground/src/prompts/action-system-prompt.txt`) before the existing planner system prompt; when the file is missing/unreadable this step fail-soft skips and keeps the prior prompt path
 
 ### Secondary Retrieval-Answer Helper

@@ -19,6 +19,11 @@ import {
   scoreExecutionOutcome,
 } from "./execution-outcome-scorer.mjs";
 import {
+  applyUsageLayerContinuityCopy,
+  evaluateUsageLayerIntelligencePass,
+  extractUsageLayerDiagnostics,
+} from "./usage-layer-intelligence-pass.mjs";
+import {
   adviseStepNextAction,
   buildStepDecisionAdvisorComparison,
   formatStepDecisionAdvisorBasedOnSummary,
@@ -408,6 +413,26 @@ function isStablePlannerAnswerBoundary({
     && !Array.isArray(userResponse)
     && typeof userResponse.answer === "string",
   );
+}
+
+function resolveCurrentPlanStepFromSnapshot(memorySnapshot = null) {
+  if (!memorySnapshot || typeof memorySnapshot !== "object" || Array.isArray(memorySnapshot)) {
+    return null;
+  }
+  const plan = memorySnapshot.execution_plan && typeof memorySnapshot.execution_plan === "object" && !Array.isArray(memorySnapshot.execution_plan)
+    ? memorySnapshot.execution_plan
+    : null;
+  if (!plan || !Array.isArray(plan.steps) || plan.steps.length === 0) {
+    return null;
+  }
+  const currentStepId = cleanText(plan.current_step_id || "");
+  if (!currentStepId) {
+    return null;
+  }
+  const step = plan.steps.find((item) => cleanText(item?.step_id || "") === currentStepId) || null;
+  return step && typeof step === "object" && !Array.isArray(step)
+    ? step
+    : null;
 }
 
 function inferWorkingMemoryTaskType(action = "") {
@@ -2810,7 +2835,7 @@ export async function runPlannerUserInputEdge({
   const plannerEnvelope = typeof envelopeDecorator === "function"
     ? envelopeDecorator(baseEnvelope, plannerResult)
     : baseEnvelope;
-  const userResponse = responseNormalizer({
+  let userResponse = responseNormalizer({
     plannerResult,
     plannerEnvelope,
     requestText: text,
@@ -2886,6 +2911,8 @@ export async function runPlannerUserInputEdge({
     highest_maturity_actions: null,
     rollback_disabled_actions: null,
     task_abandoned: null,
+    usage_layer: null,
+    usage_layer_summary: null,
   };
   let previousWorkingMemory = null;
   if (shouldWriteWorkingMemory && typeof workingMemoryWriter === "function") {
@@ -2923,6 +2950,47 @@ export async function runPlannerUserInputEdge({
       ? memoryWriteResult.observability
       : {}),
   };
+  const usageLayerMemorySnapshot = mergedMemoryObservability.memory_snapshot
+    && typeof mergedMemoryObservability.memory_snapshot === "object"
+    && !Array.isArray(mergedMemoryObservability.memory_snapshot)
+    ? mergedMemoryObservability.memory_snapshot
+    : previousWorkingMemory;
+  const usageLayerPass = evaluateUsageLayerIntelligencePass({
+    requestText: text,
+    taskType: cleanText(usageLayerMemorySnapshot?.task_type || usageLayerMemorySnapshot?.inferred_task_type || "") || "",
+    workingMemory: usageLayerMemorySnapshot,
+    observability: mergedMemoryObservability,
+    unresolvedSlots: Array.isArray(usageLayerMemorySnapshot?.unresolved_slots)
+      ? usageLayerMemorySnapshot.unresolved_slots
+      : mergedMemoryObservability.missing_slots,
+    currentPlanStep: resolveCurrentPlanStepFromSnapshot(usageLayerMemorySnapshot),
+    routingReason: cleanText(
+      plannerEnvelope?.trace?.fallback_reason
+      || plannerResult?.routing_reason
+      || mergedMemoryObservability?.recommended_action
+      || "",
+    ) || "",
+    selectedAction: cleanText(
+      plannerEnvelope?.action
+      || plannerResult?.action
+      || plannerEnvelope?.trace?.chosen_action
+      || "",
+    ) || "",
+    candidateActions: [
+      cleanText(usageLayerMemorySnapshot?.next_best_action || ""),
+      cleanText(usageLayerMemorySnapshot?.last_selected_skill || ""),
+    ],
+    plannerEnvelope,
+    userResponse,
+  });
+  const usageLayerDiagnostics = extractUsageLayerDiagnostics(usageLayerPass);
+  mergedMemoryObservability.usage_layer = usageLayerDiagnostics;
+  mergedMemoryObservability.usage_layer_summary = cleanText(usageLayerPass?.summary || "") || null;
+  userResponse = applyUsageLayerContinuityCopy({
+    userResponse,
+    diagnostics: usageLayerDiagnostics,
+    observability: mergedMemoryObservability,
+  });
   const taskTrace = buildPlannerTaskTraceDiagnostics({
     memoryStage: "answer_boundary_write_back",
     memorySnapshot: mergedMemoryObservability.memory_snapshot || null,
@@ -3036,6 +3104,12 @@ export async function runPlannerUserInputEdge({
     rollback_disabled_actions: Array.isArray(mergedMemoryObservability.rollback_disabled_actions)
       ? mergedMemoryObservability.rollback_disabled_actions
       : [],
+    usage_layer: mergedMemoryObservability.usage_layer
+      && typeof mergedMemoryObservability.usage_layer === "object"
+      && !Array.isArray(mergedMemoryObservability.usage_layer)
+      ? mergedMemoryObservability.usage_layer
+      : null,
+    usage_layer_summary: cleanText(mergedMemoryObservability.usage_layer_summary || "") || null,
     resumed_from_waiting_user: mergedMemoryObservability.resumed_from_waiting_user === true,
     resumed_from_retry: mergedMemoryObservability.resumed_from_retry === true,
     task_abandoned: mergedMemoryObservability.task_abandoned || null,

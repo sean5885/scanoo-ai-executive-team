@@ -435,6 +435,49 @@ test("task trace includes readiness gate diagnostics in diff and summary text", 
   assert.equal(trace.event_alignment.recommended_action, true);
 });
 
+test("task trace exposes usage-layer diagnostics and continuity summary", () => {
+  const trace = buildPlannerTaskTraceDiagnostics({
+    memoryStage: "answer_boundary_write_back",
+    memorySnapshot: {
+      task_id: "task-usage-trace",
+      task_type: "document_lookup",
+      task_phase: "executing",
+      task_status: "running",
+      current_owner_agent: "runtime_agent",
+      execution_plan: {
+        plan_id: "plan-usage-trace",
+        plan_status: "active",
+        current_step_id: "step-2",
+        steps: [
+          {
+            step_id: "step-2",
+            status: "running",
+          },
+        ],
+      },
+    },
+    observability: {
+      usage_layer: {
+        interpreted_as_continuation: true,
+        interpreted_as_new_task: false,
+        redundant_question_detected: false,
+        owner_selection_feels_consistent: true,
+        response_continuity_score: "high",
+        usage_issue_codes: [],
+      },
+      usage_layer_summary: "continuation=true new_task=false redundant_ask=false owner_consistent=true response_continuity=high issues=none",
+    },
+  });
+
+  assert.equal(trace.snapshot.usage_layer.interpreted_as_continuation, true);
+  assert.equal(trace.snapshot.usage_layer.response_continuity_score, "high");
+  assert.equal(trace.diff.includes("usage_layer.interpreted_as_continuation: true"), true);
+  assert.equal(trace.diff.includes("usage_layer.response_continuity_score: high"), true);
+  assert.match(trace.text, /usage_layer: continuation=true/);
+  assert.equal(trace.event_alignment.usage_layer, true);
+  assert.equal(trace.event_alignment.usage_layer_summary, true);
+});
+
 test("planner logs task trace at memory pre-read and router decision", async () => {
   const sessionKey = "wm-trace-hook-router";
   resetPlannerRuntimeContext({ sessionKey });
