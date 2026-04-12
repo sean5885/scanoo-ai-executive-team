@@ -62,6 +62,7 @@ This file explains which directories are part of the current runtime, which are 
 - current groups:
   - monitoring and trace tools
   - planner and routing diagnostics
+  - local autonomous-workflow demo runners
   - retrieval, workflow, and runtime eval runners
   - release/self-check helpers
   - local meeting transcription helper
@@ -140,6 +141,7 @@ This file explains which directories are part of the current runtime, which are 
 - `/Users/seanhan/Documents/Playground/src/planner/tool-loop-with-feedback.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner/render-execution-result.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner/skill-bridge.mjs`
+- `/Users/seanhan/Documents/Playground/src/planner-autonomous-workflow.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-visible-skill-observability.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-spec.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-visible-live-telemetry-adapter.mjs`
@@ -148,6 +150,7 @@ This file explains which directories are part of the current runtime, which are 
   - planner-visible coexistence watch is implemented as a checked-in fixture pack
   - live telemetry schema/metrics/rollback definitions are checked in and enforced by a dedicated runtime helper
   - planner-visible runtime now emits minimal spec-constrained events through an injected telemetry adapter
+  - `planner-autonomous-workflow.mjs` is a local deterministic workflow helper for bounded tool-chain experiments and demo runs; it is not a public ingress route
   - the default adapter remains in-memory and the mock structured-log adapter is local-only
   - no production telemetry pipeline is wired from this subtree yet
 

@@ -305,6 +305,7 @@ Current truth:
 - the checked-in skill-backed actions stay behind `planner/skill-bridge.mjs` and the answer pipeline
 - `planner/action-loop.mjs`, `planner/tool-loop.mjs`, `planner/tool-loop-with-feedback.mjs`, `planner/render-execution-result.mjs`, `actions/send-message-action.mjs`, and `actions/update-doc-action.mjs` are currently adjacent helpers:
   - `runActionLoop(...)` supports minimal `send_message`, `update_doc`, and `create_task` execution with a standalone envelope
+  - `runActionLoop(...)` and `runToolLoop(...)` now hard-block read-only skill contexts from executing write actions (`send_message`, `update_doc`, `create_task`, `write_memory`, `update_record`) and return `error = read_only_skill_cannot_execute_write_action` with `blocked = true`
   - `runToolLoop(...)` wraps `runActionLoop(...)` into an ordered `tool_loop` envelope with bounded step records (`{ step, action, result }`) and follows `next_action` chaining up to `max_steps`
   - `runToolLoopWithFeedback(...)` reruns `llm(...)` with step history context (`previous_steps` + `last_result`) up to `max_steps`, returns early on normalized `answer`, and otherwise keeps bounded step records
   - `runExecutionPipeline(...)` (`/Users/seanhan/Documents/Playground/src/planner/execution-pipeline.mjs`) runs `llm(input) -> normalizePlan(raw)` and:
@@ -314,7 +315,7 @@ Current truth:
     - otherwise uses `renderExecutionResult(...)` to produce a readable fallback `answer` and returns `{ ok: true, type: "answer", answer, steps }`
   - `sendMessageAction(...)` issues `POST /open-apis/im/v1/messages?receive_id_type=chat_id` and fails fast on missing or non-ASCII `token/chat_id` placeholders
   - `updateDocAction(...)` now enters the controlled write path through `/Users/seanhan/Documents/Playground/src/execute-lark-write.mjs` `executeLarkWrite(...)` and then reuses `/Users/seanhan/Documents/Playground/src/lark-content.mjs` `updateDocument(...)` (docx block descendant write path), accepts optional `token_type/mode`, and infers tenant token mode from `t-` token prefix when `token_type` is absent
-  - `planner/skill-bridge.mjs` contains a guarded tool-loop entry: when `payload.plan` has `action` and `payload.context` exists, it executes `runToolLoop({ plan, context, max_steps: 3 })`; otherwise it stays on normal planner skill routing
+  - `planner/skill-bridge.mjs` contains a guarded tool-loop entry: when `payload.plan` has `action` and `payload.context` exists, it first enforces read-only-skill/write-action hard block and then executes `runToolLoop({ plan, context, max_steps: 3 })`; otherwise it stays on normal planner skill routing
 - failed skill-bridge executions may now emit one process-local `skill_bridge_failure` reflection payload through `/Users/seanhan/Documents/Playground/src/reflection/skill-reflection.mjs` when the host installs `globalThis.appendReflectionLog`
 - that hook is additive observability only; it does not create a closed-loop executive task, does not enter the executive reflection archive, and does not change the public `answer / sources / limitations` boundary
 - `document_summarize` is planner-visible on its single-document summary boundary

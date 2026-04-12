@@ -2,8 +2,58 @@ import { createTaskAction } from '../actions/create-task-action.mjs';
 import { updateDocAction } from '../actions/update-doc-action.mjs';
 import { sendMessageAction } from '../actions/send-message-action.mjs';
 
+const WRITE_ACTIONS = Object.freeze([
+  'send_message',
+  'update_doc',
+  'create_task',
+  'write_memory',
+  'update_record',
+]);
+
+const READ_ONLY_SKILLS = Object.freeze([
+  'search_and_summarize',
+  'document_summarize',
+  'search_company_brain_docs',
+  'official_read_document',
+]);
+
+function normalizeText(value = '') {
+  return String(value || '').trim();
+}
+
+function isWriteAction(action = '') {
+  return WRITE_ACTIONS.includes(normalizeText(action));
+}
+
+function isReadOnlySkill(skillName = '') {
+  return READ_ONLY_SKILLS.includes(normalizeText(skillName));
+}
+
+function resolveSelectedSkill(plan = {}, context = {}) {
+  return normalizeText(
+    context?.selected_skill
+      || context?.skill_name
+      || plan?.skill_name
+      || plan?.selected_skill
+      || ''
+  );
+}
+
 export async function runActionLoop(plan, context) {
   const { action, params } = plan || {};
+  const selectedSkill = resolveSelectedSkill(plan, context);
+  const normalizedAction = normalizeText(action);
+
+  if (isReadOnlySkill(selectedSkill) && isWriteAction(normalizedAction)) {
+    return {
+      ok: false,
+      type: 'blocked_action',
+      error: 'read_only_skill_cannot_execute_write_action',
+      blocked: true,
+      skill: selectedSkill,
+      action: normalizedAction,
+    };
+  }
 
   if (!action) {
     return { ok: true, type: 'no_action', message: plan?.answer || '' };

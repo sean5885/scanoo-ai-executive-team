@@ -205,6 +205,7 @@ Current checked-in effect:
 
 - raw skill fields such as `bridge`, `side_effects`, selector metadata, and internal trace state are not rendered directly to users
 - user-facing replies must come from canonical `execution_result.data.answer / sources / limitations`
+- read-only skill contexts are hard-blocked from planner write actions (`send_message`, `update_doc`, `create_task`, `write_memory`, `update_record`) by checked guards in `planner/skill-bridge.mjs`, `planner/tool-loop.mjs`, and `planner/action-loop.mjs`, returning `error = read_only_skill_cannot_execute_write_action` with `blocked = true`
 
 ## Isolation Rules
 
