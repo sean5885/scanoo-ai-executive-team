@@ -69,7 +69,7 @@ test("usage eval runner aggregates deterministic metrics correctly", () => {
   assert.equal(run.aggregated_metrics.slot_resume_quality.slot_fill_resume_attempts, 1);
   assert.equal(run.aggregated_metrics.slot_resume_quality.slot_fill_resume_successes, 1);
   assert.equal(run.aggregated_metrics.slot_resume_quality.slot_fill_resume_success_rate, 1);
-  assert.equal(run.aggregated_metrics.decision_engine.promotion_applied_count_by_action.ask_user, 1);
+  assert.equal(run.aggregated_metrics.decision_engine.promotion_applied_count_by_action.ask_user, 0);
   assert.equal(run.aggregated_metrics.decision_engine.promotion_applied_count_by_action.retry, 1);
   assert.equal(run.aggregated_metrics.decision_engine.promotion_applied_count_by_action.reroute, 1);
   assert.equal(run.aggregated_metrics.reroute_quality.reroute_applied_count, 1);

@@ -1,4 +1,8 @@
 import { cleanText } from "./message-intent-utils.mjs";
+import {
+  hasAnyTrulyMissingRequiredSlot,
+  isSlotActuallyMissing,
+} from "./truly-missing-slot.mjs";
 
 const CONTINUATION_REASON_PATTERNS = [
   /^working_memory_/i,
@@ -43,30 +47,6 @@ function collectSimilarityTokens(input = "") {
   return Array.from(new Set(normalized.split(" ").map((token) => cleanText(token)).filter((token) => token.length >= 2)));
 }
 
-function isSlotTtlValid(ttl = "") {
-  const normalized = cleanText(ttl || "");
-  if (!normalized) {
-    return true;
-  }
-  const expiresAt = Date.parse(normalized);
-  return Number.isFinite(expiresAt) && expiresAt > Date.now();
-}
-
-function hasSlotInvalidMarker(slot = null) {
-  if (!slot || typeof slot !== "object" || Array.isArray(slot)) {
-    return false;
-  }
-  if (slot.invalid === true || slot.is_invalid === true || slot.invalidated === true || slot.is_invalidated === true) {
-    return true;
-  }
-  const status = cleanText(slot.status || "");
-  if (status === "invalid") {
-    return true;
-  }
-  const validityStatus = cleanText(slot.validity_status || slot.validity || "");
-  return validityStatus === "invalid" || validityStatus === "invalidated";
-}
-
 function normalizeSlotStateEntries(slotState = []) {
   if (!Array.isArray(slotState)) {
     return [];
@@ -75,8 +55,7 @@ function normalizeSlotStateEntries(slotState = []) {
     .map((slot) => ({
       slot_key: cleanText(slot?.slot_key || ""),
       status: cleanText(slot?.status || ""),
-      ttl_valid: isSlotTtlValid(slot?.ttl || ""),
-      invalid_marked: hasSlotInvalidMarker(slot),
+      actually_missing: isSlotActuallyMissing(slot),
     }))
     .filter((slot) => slot.slot_key && slot.status);
 }
@@ -84,24 +63,18 @@ function normalizeSlotStateEntries(slotState = []) {
 function deriveSlotCoverage(slotState = [], unresolvedSlots = []) {
   const normalizedSlots = normalizeSlotStateEntries(slotState);
   const unresolved = normalizeList(unresolvedSlots);
-  const filledSlotKeys = new Set(normalizedSlots
-    .filter((slot) => slot.status === "filled" && slot.ttl_valid && !slot.invalid_marked)
-    .map((slot) => slot.slot_key));
-  const unresolvedSlotsCovered = unresolved.length > 0
-    && unresolved.every((slotKey) => filledSlotKeys.has(slotKey));
-  const hasStateMissing = normalizedSlots.some((slot) => {
-    if (filledSlotKeys.has(slot.slot_key)) {
-      return false;
-    }
-    if (slot.invalid_marked) {
-      return true;
-    }
-    if (!slot.ttl_valid) {
-      return true;
-    }
-    return slot.status === "missing" || slot.status === "invalid";
+  const trulyMissingCheck = hasAnyTrulyMissingRequiredSlot({
+    required_slots: unresolved,
+    unresolved_slots: unresolved,
+    slot_state: slotState,
   });
-  const hasUnresolvedGap = unresolved.some((slotKey) => !filledSlotKeys.has(slotKey));
+  const reusableFilledSlotKeys = normalizedSlots
+    .filter((slot) => slot.actually_missing !== true)
+    .map((slot) => slot.slot_key);
+  const filledSlotKeys = new Set(reusableFilledSlotKeys);
+  const unresolvedSlotsCovered = trulyMissingCheck.all_required_slots_filled === true;
+  const hasStateMissing = normalizedSlots.some((slot) => slot.actually_missing === true);
+  const hasUnresolvedGap = trulyMissingCheck.has_any_truly_missing_required_slot === true;
   return {
     has_missing_slots: hasStateMissing || hasUnresolvedGap,
     has_reusable_filled_slot: filledSlotKeys.size > 0,

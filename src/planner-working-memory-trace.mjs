@@ -533,6 +533,14 @@ function normalizeDecisionPromotionObservability(observability = null) {
       ? promotionObject.reroute_target_verified
       : null,
     promotion_version: cleanText(promotionObject.promotion_version || "") || null,
+    ask_user_gate: promotionObject.ask_user_gate
+      && typeof promotionObject.ask_user_gate === "object"
+      && !Array.isArray(promotionObject.ask_user_gate)
+      ? promotionObject.ask_user_gate
+      : null,
+    ask_user_blocked_reason: cleanText(promotionObject.ask_user_blocked_reason || "") || null,
+    ask_user_recalibrated: promotionObject.ask_user_recalibrated === true,
+    ask_user_recalibration_summary: cleanText(promotionObject.ask_user_recalibration_summary || "") || null,
   };
   const summary = cleanText(normalizedObservability.decision_promotion_summary || "");
   const present = hasPromotionObject || Boolean(summary);
@@ -542,6 +550,64 @@ function normalizeDecisionPromotionObservability(observability = null) {
     summary: present
       ? (summary || formatDecisionPromotionSummary(normalizedPromotion))
       : null,
+  };
+}
+
+function normalizeAskUserGateObservability(observability = null) {
+  const normalizedObservability = observability && typeof observability === "object" && !Array.isArray(observability)
+    ? observability
+    : {};
+  const promotionObject = normalizedObservability.decision_promotion
+    && typeof normalizedObservability.decision_promotion === "object"
+    && !Array.isArray(normalizedObservability.decision_promotion)
+    ? normalizedObservability.decision_promotion
+    : {};
+  const askUserGateObject = normalizedObservability.ask_user_gate
+    && typeof normalizedObservability.ask_user_gate === "object"
+    && !Array.isArray(normalizedObservability.ask_user_gate)
+    ? normalizedObservability.ask_user_gate
+    : promotionObject.ask_user_gate
+      && typeof promotionObject.ask_user_gate === "object"
+      && !Array.isArray(promotionObject.ask_user_gate)
+      ? promotionObject.ask_user_gate
+      : {};
+  const trulyMissingSlots = Array.isArray(askUserGateObject.truly_missing_slots)
+    ? askUserGateObject.truly_missing_slots.map((item) => cleanText(item)).filter(Boolean)
+    : [];
+  const blockedReasonCodes = Array.isArray(askUserGateObject.blocked_reason_codes)
+    ? askUserGateObject.blocked_reason_codes.map((item) => cleanText(item)).filter(Boolean)
+    : [];
+  const promotionAllowed = askUserGateObject.promotion_allowed === true;
+  const resumeInsteadOfAsk = askUserGateObject.resume_instead_of_ask === true;
+  const blockedReason = cleanText(
+    normalizedObservability.ask_user_blocked_reason
+    || promotionObject.ask_user_blocked_reason
+    || blockedReasonCodes[0]
+    || "",
+  ) || null;
+  const recalibrated = normalizedObservability.ask_user_recalibrated === true
+    || promotionObject.ask_user_recalibrated === true;
+  const recalibrationSummary = cleanText(
+    normalizedObservability.ask_user_recalibration_summary
+    || promotionObject.ask_user_recalibration_summary
+    || "",
+  ) || null;
+  const present = trulyMissingSlots.length > 0
+    || blockedReasonCodes.length > 0
+    || typeof askUserGateObject.promotion_allowed === "boolean"
+    || typeof askUserGateObject.resume_instead_of_ask === "boolean"
+    || Boolean(blockedReason)
+    || recalibrated
+    || Boolean(recalibrationSummary);
+  return {
+    present,
+    truly_missing_slots: trulyMissingSlots,
+    blocked_reason_codes: blockedReasonCodes,
+    promotion_allowed: promotionAllowed,
+    resume_instead_of_ask: resumeInsteadOfAsk,
+    blocked_reason: blockedReason,
+    recalibrated,
+    recalibration_summary: recalibrationSummary,
   };
 }
 
@@ -810,6 +876,7 @@ function buildDiffLines({
   const outcomeObservability = normalizeOutcomeObservability(normalizedObservability, next);
   const advisorObservability = normalizeAdvisorObservability(normalizedObservability);
   const promotionObservability = normalizeDecisionPromotionObservability(normalizedObservability);
+  const askUserGateObservability = normalizeAskUserGateObservability(normalizedObservability);
   const promotionPolicyObservability = normalizePromotionPolicyObservability(normalizedObservability);
   const promotionAuditObservability = normalizePromotionAuditObservability(normalizedObservability);
   const decisionScoreboardObservability = normalizeDecisionScoreboardObservability(normalizedObservability);
@@ -1116,6 +1183,29 @@ function buildDiffLines({
       addDiffLine(`decision_promotion_summary: ${promotionObservability.summary}`);
     }
   }
+  if (askUserGateObservability.present) {
+    if (!hasDiffPrefix("ask_user_gate.truly_missing_slots:")) {
+      addDiffLine(`ask_user_gate.truly_missing_slots: ${formatValue(askUserGateObservability.truly_missing_slots)}`);
+    }
+    if (!hasDiffPrefix("ask_user_gate.blocked_reason_codes:")) {
+      addDiffLine(`ask_user_gate.blocked_reason_codes: ${formatValue(askUserGateObservability.blocked_reason_codes)}`);
+    }
+    if (!hasDiffPrefix("ask_user_gate.promotion_allowed:")) {
+      addDiffLine(`ask_user_gate.promotion_allowed: ${askUserGateObservability.promotion_allowed ? "true" : "false"}`);
+    }
+    if (!hasDiffPrefix("ask_user_gate.resume_instead_of_ask:")) {
+      addDiffLine(`ask_user_gate.resume_instead_of_ask: ${askUserGateObservability.resume_instead_of_ask ? "true" : "false"}`);
+    }
+    if (askUserGateObservability.blocked_reason && !hasDiffPrefix("ask_user_blocked_reason:")) {
+      addDiffLine(`ask_user_blocked_reason: ${askUserGateObservability.blocked_reason}`);
+    }
+    if (!hasDiffPrefix("ask_user_recalibrated:")) {
+      addDiffLine(`ask_user_recalibrated: ${askUserGateObservability.recalibrated ? "true" : "false"}`);
+    }
+    if (askUserGateObservability.recalibration_summary && !hasDiffPrefix("ask_user_recalibration_summary:")) {
+      addDiffLine(`ask_user_recalibration_summary: ${askUserGateObservability.recalibration_summary}`);
+    }
+  }
   if (promotionPolicyObservability.present) {
     if (Array.isArray(promotionPolicyObservability.allowed_actions)
       && !hasDiffPrefix("promotion_policy.allowed_actions:")) {
@@ -1193,6 +1283,7 @@ function buildTaskTraceText({
   const outcome = normalizeOutcomeObservability(readinessObservability, next);
   const advisor = normalizeAdvisorObservability(readinessObservability);
   const promotion = normalizeDecisionPromotionObservability(readinessObservability);
+  const askUserGate = normalizeAskUserGateObservability(readinessObservability);
   const promotionPolicy = normalizePromotionPolicyObservability(readinessObservability);
   const promotionAudit = normalizePromotionAuditObservability(readinessObservability);
   const decisionScoreboard = normalizeDecisionScoreboardObservability(readinessObservability);
@@ -1213,6 +1304,7 @@ function buildTaskTraceText({
     `outcome: status=${formatValue(outcome?.outcome_status || null)} | confidence=${formatValue(outcome?.outcome_confidence ?? null)} | evidence=${formatOutcomeEvidence(outcome?.outcome_evidence || null)} | artifact_quality=${formatValue(outcome?.artifact_quality || null)} | retry_worthiness=${formatValue(typeof outcome?.retry_worthiness === "boolean" ? outcome.retry_worthiness : null)} | user_visible=${formatValue(outcome?.user_visible_completeness || null)}`,
     `advisor: action=${formatValue(advisor.recommended_next_action)} | reasons=${formatAdvisorReasons(advisor.decision_reason_codes)} | confidence=${formatValue(advisor.decision_confidence)} | based_on=${formatValue(advisor.based_on_summary)} | alignment=${formatAdvisorAlignment(advisor.alignment)} | alignment_summary=${formatValue(advisor.alignment_summary)}`,
     `decision_promotion: promoted_action=${formatValue(promotion.promoted_action)} | promotion_applied=${formatValue(promotion.promotion_applied)} | reason_codes=${formatValue(promotion.promotion_reason_codes)} | safety_gate_passed=${formatValue(promotion.safety_gate_passed)} | previous_owner_agent=${formatValue(promotion.previous_owner_agent)} | current_owner_agent=${formatValue(promotion.current_owner_agent)} | reroute_target=${formatValue(promotion.reroute_target)} | reroute_reason=${formatValue(promotion.reroute_reason)} | reroute_source=${formatValue(promotion.reroute_source)} | summary=${formatValue(promotion.summary)}`,
+    `ask_user_gate: truly_missing_slots=${formatValue(askUserGate.truly_missing_slots)} | blocked_reason_codes=${formatValue(askUserGate.blocked_reason_codes)} | promotion_allowed=${formatValue(askUserGate.promotion_allowed)} | resume_instead_of_ask=${formatValue(askUserGate.resume_instead_of_ask)} | blocked_reason=${formatValue(askUserGate.blocked_reason)} | recalibrated=${formatValue(askUserGate.recalibrated)} | summary=${formatValue(askUserGate.recalibration_summary)}`,
     `promotion_policy: version=${formatValue(promotionPolicy.promotion_policy_version)} | allowed_actions=${formatValue(promotionPolicy.allowed_actions)} | rollback_disabled_actions=${formatValue(promotionPolicy.rollback_disabled_actions)} | ineffective_threshold=${formatValue(promotionPolicy.ineffective_threshold)} | summary=${formatValue(promotionPolicy.summary)}`,
     `promotion_audit: promoted_action=${formatValue(promotionAudit.promoted_action)} | promotion_effectiveness=${formatValue(promotionAudit.promotion_effectiveness)} | rollback_flag=${formatValue(promotionAudit.rollback_flag)} | summary=${formatValue(promotionAudit.summary)}`,
     `decision_scoreboard: highest_maturity_actions=${formatValue(decisionScoreboard.highest_maturity_actions)} | rollback_disabled_actions=${formatValue(decisionScoreboard.rollback_disabled_actions)} | summary=${formatValue(decisionScoreboard.summary)}`,
@@ -1244,6 +1336,7 @@ export function buildPlannerTaskTraceDiagnostics({
   const outcomeObservability = normalizeOutcomeObservability(observability, snapshot);
   const advisorObservability = normalizeAdvisorObservability(observability);
   const promotionObservability = normalizeDecisionPromotionObservability(observability);
+  const askUserGateObservability = normalizeAskUserGateObservability(observability);
   const promotionPolicyObservability = normalizePromotionPolicyObservability(observability);
   const promotionAuditObservability = normalizePromotionAuditObservability(observability);
   const decisionScoreboardObservability = normalizeDecisionScoreboardObservability(observability);
@@ -1255,7 +1348,7 @@ export function buildPlannerTaskTraceDiagnostics({
     nextSnapshot: memorySnapshot,
     observability,
   });
-  const summary = `task=${formatValue(snapshot.task_id)} phase=${snapshot.task_phase} status=${snapshot.task_status} owner=${formatValue(snapshot.current_owner_agent)} plan=${formatValue(snapshot.execution_plan.plan_status)}:${formatValue(snapshot.execution_plan.current_step)} recovery=${formatValue(snapshot.execution_plan.current_step_recovery_action)} readiness=${formatValue(readinessObservability.is_ready)}:${formatValue(readinessObservability.recommended_action)} outcome=${formatValue(outcomeObservability?.outcome_status || null)}:${formatValue(outcomeObservability?.retry_worthiness)} advisor=${formatValue(advisorObservability.recommended_next_action)}:${formatValue(advisorObservability.decision_confidence)} advisor_alignment=${formatAdvisorAlignment(advisorObservability.alignment)} decision_promotion=${formatValue(promotionObservability.promoted_action)}:${formatValue(promotionObservability.promotion_applied)}:${formatValue(promotionObservability.safety_gate_passed)}:${formatValue(promotionObservability.reroute_target)}:${formatValue(promotionObservability.reroute_reason)} promotion_policy=${formatValue(promotionPolicyObservability.allowed_actions)}:${formatValue(promotionPolicyObservability.rollback_disabled_actions)}:${formatValue(promotionPolicyObservability.ineffective_threshold)} promotion_audit=${formatValue(promotionAuditObservability.promoted_action)}:${formatValue(promotionAuditObservability.promotion_effectiveness)}:${formatValue(promotionAuditObservability.rollback_flag)} decision_scoreboard=${formatValue(decisionScoreboardObservability.highest_maturity_actions)}:${formatValue(decisionScoreboardObservability.rollback_disabled_actions)} usage_layer=${formatValue(usageLayerObservability.interpreted_as_continuation)}:${formatValue(usageLayerObservability.interpreted_as_new_task)}:${formatValue(usageLayerObservability.redundant_question_detected)}:${formatValue(usageLayerObservability.owner_selection_feels_consistent)}:${formatValue(usageLayerObservability.slot_suppressed_ask)}:${formatValue(usageLayerObservability.retry_context_applied)}:${formatValue(usageLayerObservability.response_continuity_score)}:${formatValue(usageLayerObservability.usage_issue_codes)} artifact=${formatValue(snapshot.execution_plan.artifact_id)}:${formatValue(snapshot.execution_plan.validity_status)} next=${formatValue(snapshot.next_best_action)}`;
+  const summary = `task=${formatValue(snapshot.task_id)} phase=${snapshot.task_phase} status=${snapshot.task_status} owner=${formatValue(snapshot.current_owner_agent)} plan=${formatValue(snapshot.execution_plan.plan_status)}:${formatValue(snapshot.execution_plan.current_step)} recovery=${formatValue(snapshot.execution_plan.current_step_recovery_action)} readiness=${formatValue(readinessObservability.is_ready)}:${formatValue(readinessObservability.recommended_action)} outcome=${formatValue(outcomeObservability?.outcome_status || null)}:${formatValue(outcomeObservability?.retry_worthiness)} advisor=${formatValue(advisorObservability.recommended_next_action)}:${formatValue(advisorObservability.decision_confidence)} advisor_alignment=${formatAdvisorAlignment(advisorObservability.alignment)} decision_promotion=${formatValue(promotionObservability.promoted_action)}:${formatValue(promotionObservability.promotion_applied)}:${formatValue(promotionObservability.safety_gate_passed)}:${formatValue(promotionObservability.reroute_target)}:${formatValue(promotionObservability.reroute_reason)} ask_user_gate=${formatValue(askUserGateObservability.truly_missing_slots)}:${formatValue(askUserGateObservability.blocked_reason_codes)}:${formatValue(askUserGateObservability.promotion_allowed)}:${formatValue(askUserGateObservability.resume_instead_of_ask)}:${formatValue(askUserGateObservability.blocked_reason)}:${formatValue(askUserGateObservability.recalibrated)} promotion_policy=${formatValue(promotionPolicyObservability.allowed_actions)}:${formatValue(promotionPolicyObservability.rollback_disabled_actions)}:${formatValue(promotionPolicyObservability.ineffective_threshold)} promotion_audit=${formatValue(promotionAuditObservability.promoted_action)}:${formatValue(promotionAuditObservability.promotion_effectiveness)}:${formatValue(promotionAuditObservability.rollback_flag)} decision_scoreboard=${formatValue(decisionScoreboardObservability.highest_maturity_actions)}:${formatValue(decisionScoreboardObservability.rollback_disabled_actions)} usage_layer=${formatValue(usageLayerObservability.interpreted_as_continuation)}:${formatValue(usageLayerObservability.interpreted_as_new_task)}:${formatValue(usageLayerObservability.redundant_question_detected)}:${formatValue(usageLayerObservability.owner_selection_feels_consistent)}:${formatValue(usageLayerObservability.slot_suppressed_ask)}:${formatValue(usageLayerObservability.retry_context_applied)}:${formatValue(usageLayerObservability.response_continuity_score)}:${formatValue(usageLayerObservability.usage_issue_codes)} artifact=${formatValue(snapshot.execution_plan.artifact_id)}:${formatValue(snapshot.execution_plan.validity_status)} next=${formatValue(snapshot.next_best_action)}`;
   return {
     summary,
     snapshot: {
@@ -1318,6 +1411,15 @@ export function buildPlannerTaskTraceDiagnostics({
         promotion_version: promotionObservability.promotion_version,
       },
       decision_promotion_summary: promotionObservability.summary,
+      ask_user_gate: {
+        truly_missing_slots: askUserGateObservability.truly_missing_slots,
+        blocked_reason_codes: askUserGateObservability.blocked_reason_codes,
+        promotion_allowed: askUserGateObservability.promotion_allowed,
+        resume_instead_of_ask: askUserGateObservability.resume_instead_of_ask,
+      },
+      ask_user_blocked_reason: askUserGateObservability.blocked_reason,
+      ask_user_recalibrated: askUserGateObservability.recalibrated,
+      ask_user_recalibration_summary: askUserGateObservability.recalibration_summary,
       promotion_policy: {
         promotion_policy_version: promotionPolicyObservability.promotion_policy_version,
         allowed_actions: promotionPolicyObservability.allowed_actions,
@@ -1425,6 +1527,14 @@ export function buildPlannerTaskTraceDiagnostics({
       decision_promotion_reroute_source: Boolean(cleanText(observability?.decision_promotion?.reroute_source || "")),
       decision_promotion_reroute_target_verified: typeof observability?.decision_promotion?.reroute_target_verified === "boolean",
       decision_promotion_summary: Boolean(cleanText(observability?.decision_promotion_summary || "")),
+      ask_user_gate: askUserGateObservability.present,
+      ask_user_gate_truly_missing_slots: Array.isArray(askUserGateObservability.truly_missing_slots),
+      ask_user_gate_blocked_reason_codes: Array.isArray(askUserGateObservability.blocked_reason_codes),
+      ask_user_gate_promotion_allowed: typeof askUserGateObservability.promotion_allowed === "boolean",
+      ask_user_gate_resume_instead_of_ask: typeof askUserGateObservability.resume_instead_of_ask === "boolean",
+      ask_user_blocked_reason: Boolean(cleanText(askUserGateObservability.blocked_reason || "")),
+      ask_user_recalibrated: typeof askUserGateObservability.recalibrated === "boolean",
+      ask_user_recalibration_summary: Boolean(cleanText(askUserGateObservability.recalibration_summary || "")),
       promotion_policy: Boolean(observability?.promotion_policy && typeof observability.promotion_policy === "object"),
       promotion_policy_allowed_actions: Array.isArray(observability?.promotion_policy?.allowed_actions),
       promotion_policy_rollback_disabled_actions: Array.isArray(observability?.promotion_policy?.rollback_disabled_actions),
