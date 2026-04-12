@@ -151,7 +151,7 @@ Current public `/answer` path:
      - promotion policy truth is read from centralized control surface (`/Users/seanhan/Documents/Playground/src/promotion-control-surface.mjs`)
      - v1 control surface policy: `allowed_actions=ask_user|retry|reroute|fail`, `denied_actions=proceed|rollback|skip`, `ineffective_threshold=3`
      - if the action is currently flagged in `rollback_disabled_actions`, promotion stays blocked even when it appears in the allow-list
-     - promoted `retry` also requires deterministic retry-only gate pass (`retry_worthiness=true`, `outcome_status!=failed`, `readiness.is_ready=true`, no invalid artifact / blocked dependency, and retry budget available)
+     - promoted `retry` also requires deterministic retry-only gate pass (`retry_worthiness=true`, `outcome_status!=failed`, `readiness.is_ready=true`, no invalid artifact / blocked dependency, retry budget available, and retry context not degraded by `retry-context-pack`)
      - promoted `reroute` is bounded and fail-closed:
        - `advisor.recommended_next_action=reroute`
        - `advisor_alignment.promotion_candidate=true` and `alignment_type=exact_match`
@@ -165,6 +165,7 @@ Current public `/answer` path:
      - override is applied only when all promotion prerequisites pass; otherwise the planner keeps existing routing/recovery authority and emits blocked diagnostics
    - deterministic usage-layer tightening is now applied on top of the same working-memory continuation boundary:
      - short/high-related follow-ups can stay on continuation path without opening a new task
+     - candidate-selection short follow-ups (for example `第一份` / `第2個` / `這個`) can still be treated as continuation even when selected/current/next action hints are temporarily missing, as long as active task context remains
      - `waiting_user` turns with already-filled slots resume the current plan step (`working_memory_waiting_user_resume_plan_step`) instead of redundant ask
 5. planner reads and tool results remain internal runtime state
 6. `user-response-normalizer.mjs` converts the planner envelope into the public response shape:

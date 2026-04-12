@@ -123,6 +123,7 @@ Current-truth docs for onboarding are:
   - active-plan continuation now runs one deterministic session-level pre-execution readiness gate before dispatching the current step action
   - planner working-memory continuation now also has one deterministic usage-layer tightening pass:
     - short/high-related follow-ups prefer same-task continuation over accidental new-task reset
+    - candidate-selection short follow-ups (for example `第一份` / `第2個` / `這個`) can continue the same task even when selected/current/next action hints are temporarily missing, as long as active task context still exists
     - `waiting_user` with already-filled slots resumes the current plan step instead of re-asking user by default
     - slot missingness now uses one shared helper (`/Users/seanhan/Documents/Playground/src/truly-missing-slot.mjs`) across readiness gate / usage layer / decision-promotion ask-user gate
     - in `waiting_user`, if required slots are all actually filled (not invalid and not ttl-expired), unresolved slots are treated as empty and runtime prefers resuming current-step/next-best action over reopening the same ask
