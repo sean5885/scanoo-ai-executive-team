@@ -145,8 +145,12 @@ Current public `/answer` path:
    - before active current-step continuation, planner runs one deterministic execution-readiness gate from the same session working-memory execution plan state
    - readiness is fail-closed and checks slot/artifact/dependency/owner/recovery/plan validity on current step, returning `is_ready`, blocking diagnostics, and `recommended_action`
    - when `is_ready=false`, planner does not dispatch intended step action directly; it follows existing controlled paths (`ask_user` / `retry` / `reroute` / `rollback` / `skip` / fail-closed stop)
-   - planner/router observability now also emits a deterministic advisory-only `step decision advisor` result for that same step (`recommended_next_action`, reason codes, confidence, based-on summary), derived only from existing readiness/outcome/recovery/artifact/task-plan state
-   - the same state also feeds a deterministic advisory-only `advisor alignment evaluator` v1 (`advisor_action`, `actual_action`, `is_aligned`, `alignment_type`, `divergence_reason_codes`, `promotion_candidate`, `evaluator_version`) plus `advisor_alignment_summary`; malformed/missing inputs fail closed as `alignment_type=unknown`
+   - planner/router observability now also emits a deterministic `step decision advisor` result for that same step (`recommended_next_action`, reason codes, confidence, based-on summary), derived only from existing readiness/outcome/recovery/artifact/task-plan state
+   - the same state also feeds a deterministic `advisor alignment evaluator` v1 (`advisor_action`, `actual_action`, `is_aligned`, `alignment_type`, `divergence_reason_codes`, `promotion_candidate`, `evaluator_version`) plus `advisor_alignment_summary`; malformed/missing inputs fail closed as `alignment_type=unknown`
+   - the same advisor/alignment evidence then feeds `decision-engine-promotion` v1 gate:
+     - v1 allow-list: `ask_user` and `fail` only
+     - `proceed|retry|reroute|rollback|skip` remain advisory-only
+     - override is applied only when all promotion prerequisites pass; otherwise the planner keeps existing routing/recovery authority and emits blocked diagnostics
 5. planner reads and tool results remain internal runtime state
 6. `user-response-normalizer.mjs` converts the planner envelope into the public response shape:
    - `answer`
@@ -170,7 +174,7 @@ Current truth:
 - the same answer-boundary patch path now also writes deterministic per-step `outcome` structures (`outcome_status`, `outcome_confidence`, `outcome_evidence`, `artifact_quality`, `retry_worthiness`, `user_visible_completeness`) via patch-merge semantics without overwriting the existing `step.status`
 - answer-boundary working-memory observability write-back now also carries readiness diagnostics when present (`readiness`, `blocking_reason_codes`, `missing_slots`, `invalid_artifacts`, `blocked_dependencies`, `owner_ready`, `recovery_ready`, `recommended_action`) so read/write observability stays aligned with pre-execution gating decisions
 - answer-boundary and routing observability now also carry deterministic outcome diagnostics (`outcome_status`, `outcome_confidence`, `outcome_evidence`, `artifact_quality`, `retry_worthiness`, `user_visible_completeness`) so recovery/trace paths can answer "success level" and "worth retrying" from one rule-based source
-- answer-boundary observability now also carries the same advisory-only `step decision advisor` fields (`advisor.recommended_next_action`, `advisor.decision_reason_codes`, `advisor.decision_confidence`, `advisor_based_on_summary`) and deterministic advisor-alignment diagnostics (`advisor_alignment`, `advisor_alignment_summary`; compatibility mirror `advisor_vs_actual`) without introducing a second authority state or overwriting `step.status/outcome/recovery`
+- answer-boundary observability now also carries the same `step decision advisor` fields (`advisor.recommended_next_action`, `advisor.decision_reason_codes`, `advisor.decision_confidence`, `advisor_based_on_summary`) and deterministic advisor-alignment diagnostics (`advisor_alignment`, `advisor_alignment_summary`; compatibility mirror `advisor_vs_actual`) together with promotion-gate diagnostics (`decision_promotion`, `decision_promotion_summary`) without overwriting `step.status/outcome/recovery`
 - planner JSON requests now attempt to prepend one optional file-backed action system prompt (`/Users/seanhan/Documents/Playground/src/prompts/action-system-prompt.txt`) before the existing planner system prompt; when the file is missing/unreadable this step fail-soft skips and keeps the prior prompt path
 
 ### Secondary Retrieval-Answer Helper

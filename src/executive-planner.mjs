@@ -115,6 +115,10 @@ import {
   resolveStepDecisionAdvisorActualAction,
 } from "./step-decision-advisor.mjs";
 import { formatAdvisorAlignmentSummary } from "./advisor-alignment-evaluator.mjs";
+import {
+  evaluateDecisionEnginePromotion,
+  formatDecisionPromotionSummary,
+} from "./decision-engine-promotion.mjs";
 import { getStoredAccountContext } from "./lark-user-auth.mjs";
 import { getDbPath } from "./db.mjs";
 
@@ -4643,6 +4647,8 @@ function applyStepDecisionAdvisorObservability({
     observability.advisor_vs_actual = null;
     observability.advisor_alignment = null;
     observability.advisor_alignment_summary = null;
+    observability.decision_promotion = null;
+    observability.decision_promotion_summary = null;
     return;
   }
   const blockedDependencies = Array.isArray(observability.blocked_dependencies)
@@ -4701,6 +4707,8 @@ function applyStepDecisionAdvisorObservability({
   observability.advisor_vs_actual = null;
   observability.advisor_alignment = null;
   observability.advisor_alignment_summary = null;
+  observability.decision_promotion = null;
+  observability.decision_promotion_summary = null;
 }
 
 function applyStepDecisionAdvisorComparisonObservability({
@@ -4712,10 +4720,10 @@ function applyStepDecisionAdvisorComparisonObservability({
   taskStatus = "",
 } = {}) {
   if (!observability || typeof observability !== "object" || Array.isArray(observability)) {
-    return;
+    return null;
   }
   if (!observability.advisor || typeof observability.advisor !== "object" || Array.isArray(observability.advisor)) {
-    return;
+    return null;
   }
   const actualNextAction = resolveStepDecisionAdvisorActualAction({
     selected_action: selectedAction,
@@ -4758,6 +4766,25 @@ function applyStepDecisionAdvisorComparisonObservability({
   observability.advisor_vs_actual = advisorAlignment;
   observability.advisor_alignment = advisorAlignment;
   observability.advisor_alignment_summary = formatAdvisorAlignmentSummary(advisorAlignment);
+  const advisorBasedOn = observability.advisor.based_on && typeof observability.advisor.based_on === "object"
+    && !Array.isArray(observability.advisor.based_on)
+    ? observability.advisor.based_on
+    : {};
+  const promotionDecision = evaluateDecisionEnginePromotion({
+    advisor: observability.advisor,
+    advisor_alignment: advisorAlignment,
+    readiness: advisorBasedOn.readiness_summary || null,
+    outcome: advisorBasedOn.outcome_summary || null,
+    recovery: advisorBasedOn.recovery_summary || null,
+    artifact: advisorBasedOn.artifact_summary || null,
+    task_plan: advisorBasedOn.task_plan_summary || null,
+  });
+  observability.decision_promotion = promotionDecision;
+  observability.decision_promotion_summary = formatDecisionPromotionSummary(promotionDecision);
+  return {
+    actual_next_action: actualNextAction,
+    promotion_decision: promotionDecision,
+  };
 }
 
 function resolveTaskTransitionTarget(transition = "", fallback = "") {
@@ -4989,6 +5016,8 @@ function resolvePlannerWorkingMemoryContinuation({
     advisor_vs_actual: null,
     advisor_alignment: null,
     advisor_alignment_summary: null,
+    decision_promotion: null,
+    decision_promotion_summary: null,
   };
   logPlannerWorkingMemoryTrace({
     logger,
@@ -5079,6 +5108,8 @@ function resolvePlannerWorkingMemoryContinuation({
   observability.advisor_vs_actual = null;
   observability.advisor_alignment = null;
   observability.advisor_alignment_summary = null;
+  observability.decision_promotion = null;
+  observability.decision_promotion_summary = null;
   observability.plan_invalidated = topicSwitch && currentPlanStep?.plan
     ? {
         plan_id: currentPlanStep.plan.plan_id,
@@ -5609,7 +5640,7 @@ function resolvePlannerWorkingMemoryContinuation({
     currentPlanStep,
     taskId,
   });
-  applyStepDecisionAdvisorComparisonObservability({
+  const advisorComparison = applyStepDecisionAdvisorComparisonObservability({
     observability,
     selectedAction,
     routingLocked,
@@ -5617,6 +5648,43 @@ function resolvePlannerWorkingMemoryContinuation({
     taskPhase: resolveTaskTransitionTarget(observability.task_phase_transition, taskPhase),
     taskStatus: resolveTaskTransitionTarget(observability.task_status_transition, taskStatus),
   });
+  const promotionDecision = advisorComparison?.promotion_decision
+    && typeof advisorComparison.promotion_decision === "object"
+    && !Array.isArray(advisorComparison.promotion_decision)
+    ? advisorComparison.promotion_decision
+    : null;
+  const promotedAction = cleanText(promotionDecision?.promoted_action || "");
+  if (promotionDecision?.promotion_applied === true && (promotedAction === "ask_user" || promotedAction === "fail")) {
+    routingLocked = true;
+    selectedAction = "";
+    if (promotedAction === "ask_user") {
+      reason = "decision_engine_promotion_ask_user";
+      routingReason = reason;
+      observability.task_phase_transition = `${taskPhase}->waiting_user`;
+      observability.task_status_transition = `${taskStatus}->blocked`;
+      observability.recovery_policy = "ask_user";
+      observability.recovery_action = "ask_user";
+      observability.slot_update = {
+        mode: "ask_user",
+        pending_slots: Array.isArray(executionReadiness?.missing_slots)
+          ? executionReadiness.missing_slots
+          : unresolvedSlots,
+      };
+      if (!cleanText(stopError || "")) {
+        stopError = resolvePlannerExecutionReadinessPrimaryReason(executionReadiness) || "missing_slot";
+      }
+    } else if (promotedAction === "fail") {
+      reason = "decision_engine_promotion_fail";
+      routingReason = reason;
+      observability.task_phase_transition = `${taskPhase}->failed`;
+      observability.task_status_transition = `${taskStatus}->failed`;
+      observability.recovery_policy = cleanText(observability.recovery_policy || "") || "ask_user";
+      observability.recovery_action = "failed";
+      if (!cleanText(stopError || "")) {
+        stopError = resolvePlannerExecutionReadinessPrimaryReason(executionReadiness) || "business_error";
+      }
+    }
+  }
   observability.memory_used_in_routing = Boolean(selectedAction) || routingLocked;
   return {
     selected_action: selectedAction || null,

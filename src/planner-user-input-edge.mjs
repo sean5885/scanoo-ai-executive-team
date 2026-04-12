@@ -25,6 +25,10 @@ import {
   resolveStepDecisionAdvisorActualAction,
 } from "./step-decision-advisor.mjs";
 import { formatAdvisorAlignmentSummary } from "./advisor-alignment-evaluator.mjs";
+import {
+  evaluateDecisionEnginePromotion,
+  formatDecisionPromotionSummary,
+} from "./decision-engine-promotion.mjs";
 
 const REMINDER_REQUEST_PATTERNS = [
   /提醒/u,
@@ -1509,6 +1513,8 @@ function applyStepDecisionAdvisorToObservability({
     observability.advisor_vs_actual = null;
     observability.advisor_alignment = null;
     observability.advisor_alignment_summary = null;
+    observability.decision_promotion = null;
+    observability.decision_promotion_summary = null;
     return;
   }
   const invalidArtifacts = Array.isArray(observability.invalid_artifacts)
@@ -1602,6 +1608,17 @@ function applyStepDecisionAdvisorToObservability({
   observability.advisor_vs_actual = advisorAlignment;
   observability.advisor_alignment = advisorAlignment;
   observability.advisor_alignment_summary = formatAdvisorAlignmentSummary(advisorAlignment);
+  const promotionDecision = evaluateDecisionEnginePromotion({
+    advisor: advisorDecision,
+    advisor_alignment: advisorAlignment,
+    readiness: advisorDecision.based_on?.readiness_summary || null,
+    outcome: advisorDecision.based_on?.outcome_summary || null,
+    recovery: advisorDecision.based_on?.recovery_summary || null,
+    artifact: advisorDecision.based_on?.artifact_summary || null,
+    task_plan: advisorDecision.based_on?.task_plan_summary || null,
+  });
+  observability.decision_promotion = promotionDecision;
+  observability.decision_promotion_summary = formatDecisionPromotionSummary(promotionDecision);
 }
 
 function resolveExecutionReadinessFromPlannerOutputs({
@@ -2693,6 +2710,8 @@ function buildWorkingMemoryPatch({
     advisor_vs_actual: null,
     advisor_alignment: null,
     advisor_alignment_summary: null,
+    decision_promotion: null,
+    decision_promotion_summary: null,
     task_abandoned: topicSwitch && previousTaskId
       ? {
           task_id: previousTaskId,
@@ -2829,6 +2848,8 @@ export async function runPlannerUserInputEdge({
     advisor_vs_actual: null,
     advisor_alignment: null,
     advisor_alignment_summary: null,
+    decision_promotion: null,
+    decision_promotion_summary: null,
     task_abandoned: null,
   };
   let previousWorkingMemory = null;
@@ -2956,6 +2977,12 @@ export async function runPlannerUserInputEdge({
       ? mergedMemoryObservability.advisor_alignment
       : null,
     advisor_alignment_summary: cleanText(mergedMemoryObservability.advisor_alignment_summary || "") || null,
+    decision_promotion: mergedMemoryObservability.decision_promotion
+      && typeof mergedMemoryObservability.decision_promotion === "object"
+      && !Array.isArray(mergedMemoryObservability.decision_promotion)
+      ? mergedMemoryObservability.decision_promotion
+      : null,
+    decision_promotion_summary: cleanText(mergedMemoryObservability.decision_promotion_summary || "") || null,
     resumed_from_waiting_user: mergedMemoryObservability.resumed_from_waiting_user === true,
     resumed_from_retry: mergedMemoryObservability.resumed_from_retry === true,
     task_abandoned: mergedMemoryObservability.task_abandoned || null,
