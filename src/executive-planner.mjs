@@ -2877,6 +2877,35 @@ function normalizePlannerPayload(payload = {}) {
   return payload && typeof payload === "object" && !Array.isArray(payload) ? { ...payload } : {};
 }
 
+function maybeBackfillPlannerAccountId({
+  action = "",
+  payload = {},
+  authContext = null,
+} = {}) {
+  const normalizedPayload = normalizePlannerPayload(payload);
+  const contract = getPlannerActionContract(action);
+  const requiredFields = Array.isArray(contract?.input_schema?.required)
+    ? contract.input_schema.required
+    : [];
+  if (!requiredFields.includes("account_id")) {
+    return normalizedPayload;
+  }
+  const accountId = cleanText(
+    normalizedPayload.account_id
+    || normalizedPayload.accountId
+    || authContext?.account_id
+    || authContext?.accountId
+    || "",
+  );
+  if (!accountId) {
+    return normalizedPayload;
+  }
+  return {
+    ...normalizedPayload,
+    account_id: accountId,
+  };
+}
+
 function normalizePlannerExecutionContext(context = null) {
   return context && typeof context === "object" && !Array.isArray(context)
     ? { ...context }
@@ -3331,6 +3360,7 @@ function shapePlannerSkillDispatchPayload({
   action = "",
   userIntent = "",
   payload = {},
+  authContext = null,
 } = {}) {
   const skillAction = getPlannerSkillAction(action);
   const normalizedPayload = normalizePlannerPayload(payload);
@@ -3338,10 +3368,15 @@ function shapePlannerSkillDispatchPayload({
     return normalizedPayload;
   }
 
-  return {
+  const shapedPayload = {
     ...normalizedPayload,
     q: cleanText(normalizedPayload.q || normalizedPayload.query || userIntent) || "",
   };
+  return maybeBackfillPlannerAccountId({
+    action: skillAction.action,
+    payload: shapedPayload,
+    authContext,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -7036,6 +7071,11 @@ export async function dispatchPlannerTool({
   const tool = getPlannerTool(runtimeInput.action);
   const skillAction = getPlannerSkillAction(runtimeInput.action);
   const normalizedAuthContext = normalizePlannerAuthContext(authContext);
+  const runtimePayload = maybeBackfillPlannerAccountId({
+    action: runtimeInput.action,
+    payload: runtimeInput.payload,
+    authContext: normalizedAuthContext,
+  });
   const preAbortResult = buildPlannerAbortResult({
     action: runtimeInput.action,
     signal,
@@ -7045,7 +7085,7 @@ export async function dispatchPlannerTool({
       logger,
       requestId,
       action: runtimeInput.action,
-      params: runtimeInput.payload,
+      params: runtimePayload,
       success: false,
       data: buildPlannerToolExecutionData(preAbortResult),
       error: preAbortResult.error,
@@ -7055,7 +7095,7 @@ export async function dispatchPlannerTool({
   }
   if (runtimeInput.action === FETCH_DOCUMENT_ACTION) {
     const fetchDocumentResult = await dispatchPlannerFetchDocument({
-      payload: runtimeInput.payload,
+      payload: runtimePayload,
       requestText,
       authContext: normalizedAuthContext,
       documentFetcher,
@@ -7065,7 +7105,7 @@ export async function dispatchPlannerTool({
       logger,
       requestId,
       action: runtimeInput.action,
-      params: runtimeInput.payload,
+      params: runtimePayload,
       success: fetchDocumentResult?.ok === true,
       data: buildPlannerToolExecutionData(fetchDocumentResult),
       error: fetchDocumentResult?.ok === false ? fetchDocumentResult?.error || "business_error" : null,
@@ -7086,7 +7126,7 @@ export async function dispatchPlannerTool({
       logger,
       requestId,
       action: runtimeInput.action,
-      params: runtimeInput.payload,
+      params: runtimePayload,
       success: false,
       data: buildPlannerToolExecutionData(stoppedResult),
       error: stoppedResult.error,
@@ -7098,7 +7138,7 @@ export async function dispatchPlannerTool({
   const dispatchTargetAction = tool?.action || skillAction?.action || runtimeInput.action;
   const resolvedInput = resolveDispatchInput({
     action: dispatchTargetAction,
-    payload: runtimeInput.payload,
+    payload: runtimePayload,
     logger,
   });
   if (!resolvedInput.ok) {
@@ -7136,7 +7176,7 @@ export async function dispatchPlannerTool({
       logger,
       requestId,
       action: dispatchTargetAction,
-      params: runtimeInput.payload,
+      params: runtimePayload,
       success: false,
       data: buildPlannerToolExecutionData(stoppedResult),
       error: stoppedResult.error,
@@ -7882,6 +7922,7 @@ export async function runPlannerToolFlow({
           action: selection.selected_action,
           userIntent: agentInput.user_intent,
           payload: dispatchPayload,
+          authContext,
         }),
         logger,
         authContext,

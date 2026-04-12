@@ -418,6 +418,7 @@ Current v1 rules:
 - each planner execution may use at most one skill-backed action
 - skill chaining is not allowed
 - planner-visible skills must have unique deterministic selector keys
+- when a planner action input schema requires `account_id`, dispatch may backfill it from explicit auth context; if both payload and auth context are missing it, execution fail-closes with `contract_violation`
 - planner-visible promotion must pass through `internal_only -> readiness_check -> planner_visible`
 - direct jump from `internal_only` to `planner_visible` is rejected fail-closed
 - selector conflicts fail closed instead of choosing heuristically
