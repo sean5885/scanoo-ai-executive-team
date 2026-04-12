@@ -553,7 +553,7 @@ export async function dispatchRegisteredAgentCommand({ accountId, event, scope }
       text: buildRegisteredAgentUserFacingErrorText({
         answer: "這個 slash 指令目前沒有命中任何已註冊的 registered agent。",
         limitations: [
-          "請改用已存在的 `/generalist`、`/ceo`、`/product`、`/prd`、`/cmo`、`/consult`、`/cdo`、`/delivery`、`/ops`、`/tech`，或既有 `/knowledge *` 子指令。",
+          "請改用已存在的 `/generalist`、`/planner`、`/company-brain`。`/knowledge *` 目前是 fail-closed，不提供註冊 agent 路由。",
         ],
       }),
       error: noMatchEnvelope.error,

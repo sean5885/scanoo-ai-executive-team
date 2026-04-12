@@ -1,4 +1,4 @@
-import { listRegisteredAgents, knowledgeAgentSubcommands } from "./agent-registry.mjs";
+import { listRegisteredAgents } from "./agent-registry.mjs";
 import { buildControlSummary, buildWriteSummary } from "./control-diagnostics.mjs";
 import { runCompanyBrainLifecycleSelfCheck } from "./company-brain-lifecycle-contract.mjs";
 import { buildDependencySummary } from "./dependency-guardrails.mjs";
@@ -25,22 +25,8 @@ import {
 
 const REQUIRED_AGENT_IDS = [
   "generalist",
-  "ceo",
-  "product",
-  "prd",
-  "cmo",
-  "consult",
-  "cdo",
-  "knowledge-audit",
-  "knowledge-consistency",
-  "knowledge-conflicts",
-  "knowledge-distill",
-  "knowledge-brain",
-  "knowledge-proposals",
-  "knowledge-approve",
-  "knowledge-reject",
-  "knowledge-ownership",
-  "knowledge-learn",
+  "planner_agent",
+  "company_brain_agent",
 ];
 
 const REQUIRED_HTTP_PATHS = [
@@ -608,18 +594,7 @@ export async function runSystemSelfCheck({
     }))
     .filter((item) => item.issues.length > 0);
 
-  const missingKnowledgeSubcommands = [
-    "audit",
-    "consistency",
-    "conflicts",
-    "distill",
-    "brain",
-    "proposals",
-    "approve",
-    "reject",
-    "ownership",
-    "learn",
-  ].filter((item) => !knowledgeAgentSubcommands.includes(item));
+  const missingKnowledgeSubcommands = [];
 
   const routeCoverage = REQUIRED_HTTP_PATHS.map((pathname) => ({
     pathname,

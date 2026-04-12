@@ -18,28 +18,12 @@ This matrix is the maintainable source for:
 | Agent | Command | Input | Output | Allowed Tools | Downstream | Status | Test |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | generalist | `/generalist` | text, scope, optional image context | `text`, `agentId` | knowledge_search, image_understanding, text_generation | Lark reply | ready | `tests/chain-smoke.test.mjs` |
-| ceo | `/ceo` | text, scope, optional image context | `text`, `agentId` | knowledge_search, image_understanding, text_generation | Lark reply | ready | `tests/chain-smoke.test.mjs` |
-| product | `/product` | text, scope, optional image context | `text`, `agentId` | knowledge_search, image_understanding, text_generation | Lark reply | ready | `tests/chain-smoke.test.mjs` |
-| prd | `/prd` | text, scope, optional image context | `text`, `agentId` | knowledge_search, image_understanding, text_generation | Lark reply | ready | `tests/chain-smoke.test.mjs` |
-| cmo | `/cmo` | text, scope, optional image context | `text`, `agentId` | knowledge_search, image_understanding, text_generation | Lark reply | ready | `tests/chain-smoke.test.mjs` |
-| consult | `/consult` | text, scope, optional image context | `text`, `agentId` | knowledge_search, image_understanding, text_generation | Lark reply | ready | `tests/chain-smoke.test.mjs` |
-| cdo | `/cdo` | text, scope, optional image context | `text`, `agentId` | knowledge_search, image_understanding, text_generation | Lark reply | ready | `tests/chain-smoke.test.mjs` |
-| delivery | `/delivery` | text, scope | `text`, `agentId` | knowledge_search, text_generation | Lark reply | ready | `tests/agent-registry.test.mjs` |
-| ops | `/ops` | text, scope | `text`, `agentId` | knowledge_search, text_generation | Lark reply | ready | `tests/agent-registry.test.mjs` |
-| tech | `/tech` | text, scope | `text`, `agentId` | knowledge_search, text_generation | Lark reply | ready | `tests/agent-registry.test.mjs` |
-| knowledge-audit | `/knowledge audit` | text, scope | `text`, `agentId` | knowledge_search, semantic_classifier, image_understanding, text_generation | Lark reply | ready | `tests/chain-smoke.test.mjs` |
-| knowledge-consistency | `/knowledge consistency` | text, scope | `text`, `agentId` | knowledge_search, semantic_classifier, text_generation | Lark reply | ready | `tests/system-self-check.test.mjs` |
-| knowledge-conflicts | `/knowledge conflicts` | text, scope | `text`, `agentId` | knowledge_search, semantic_classifier, text_generation | Lark reply | ready | `tests/chain-integration.test.mjs` |
-| knowledge-distill | `/knowledge distill` | text, scope | `text`, `agentId` | knowledge_search, text_generation | Lark reply | ready | `tests/system-self-check.test.mjs` |
-| knowledge-brain | `/knowledge brain` | text, scope | `text`, `agentId` | knowledge_search, text_generation | Lark reply | ready | `tests/agent-registry.test.mjs` |
-| knowledge-proposals | `/knowledge proposals` | text, scope | `text`, `agentId` | knowledge_search, semantic_classifier, text_generation | Lark reply | ready | `tests/system-self-check.test.mjs` |
-| knowledge-approve | `/knowledge approve` | text, scope | `text`, `agentId` | knowledge_search, text_generation | Lark reply | ready | `tests/system-self-check.test.mjs` |
-| knowledge-reject | `/knowledge reject` | text, scope | `text`, `agentId` | knowledge_search, text_generation | Lark reply | ready | `tests/system-self-check.test.mjs` |
-| knowledge-ownership | `/knowledge ownership` | text, scope | `text`, `agentId` | knowledge_search, semantic_classifier, text_generation | Lark reply | ready | `tests/system-self-check.test.mjs` |
-| knowledge-learn | `/knowledge learn` | text, scope | `text`, `agentId` | knowledge_search, semantic_classifier, text_generation | Lark reply | ready | `tests/system-self-check.test.mjs` |
+| planner_agent | `/planner` | text, scope, optional route context | `text`, `agentId` | planner_tool_dispatch, runtime_info_read | Lark reply | ready | `tests/agent-registry.test.mjs` |
+| company_brain_agent | `/company-brain` | text, scope, optional doc query context | `text`, `agentId` | company_brain_list, company_brain_search, company_brain_detail | Lark reply | ready | `tests/agent-registry.test.mjs` |
 
 ## Notes
 
 - Meeting flow remains command/workflow-based rather than a slash persona agent.
+- `/knowledge *` is no longer a registered agent command surface; it is fail-closed as `ROUTING_NO_MATCH`.
 - Image tasks use the Nano Banana-oriented Gemini path first, then only pass compact structured fields into downstream text processing.
 - Capability contract truth lives in `/Users/seanhan/Documents/Playground/src/agent-registry.mjs`; this file mirrors it for human review.

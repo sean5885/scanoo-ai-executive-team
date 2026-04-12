@@ -1,33 +1,26 @@
 import {
   formatDocResult,
-  formatMeetingResult,
   formatMixedResult,
   formatRuntimeResult,
 } from "./result-formatters.mjs";
 import { executeAgent } from "./agent-executor.mjs";
 
 const AGENT_RUNTIME_RESULTS = Object.freeze({
-  meeting_agent: Object.freeze({
-    meeting_summary: Object.freeze({
-      summary: "meeting workflow placeholder result",
-      status: "ok",
-    }),
-  }),
-  doc_agent: Object.freeze({
-    doc_answer: Object.freeze({
-      answer: "doc workflow placeholder result",
-      status: "ok",
-    }),
-  }),
   runtime_agent: Object.freeze({
     runtime_check: Object.freeze({
       runtime_status: "healthy",
       status: "ok",
     }),
   }),
-  mixed_agent: Object.freeze({
-    mixed_lane: Object.freeze({
-      message: "mixed workflow placeholder result",
+  planner_agent: Object.freeze({
+    planner_route: Object.freeze({
+      message: "planner route placeholder result",
+      status: "ok",
+    }),
+  }),
+  company_brain_agent: Object.freeze({
+    company_brain_read: Object.freeze({
+      answer: "company brain read placeholder result",
       status: "ok",
     }),
   }),
@@ -45,7 +38,12 @@ function normalizeAgentExecution(exec = {}) {
     };
   }
 
-  const derived = executeAgent({ lane: exec?.lane });
+  const derived = executeAgent({
+    selected_action: exec?.selected_action,
+    action: exec?.action,
+    task_type: exec?.task_type,
+    taskType: exec?.taskType,
+  });
   return {
     ...exec,
     agent: normalizedAgent || derived.agent,
@@ -63,13 +61,11 @@ export function runAgentExecution(exec, ctx = {}) {
   if (rawResult) {
     let result = rawResult;
 
-    if (agent === "meeting_agent" && action === "meeting_summary") {
-      result = formatMeetingResult(rawResult);
-    } else if (agent === "doc_agent" && action === "doc_answer") {
-      result = formatDocResult(rawResult);
-    } else if (agent === "runtime_agent" && action === "runtime_check") {
+    if (agent === "runtime_agent" && action === "runtime_check") {
       result = formatRuntimeResult(rawResult);
-    } else if (agent === "mixed_agent" && action === "mixed_lane") {
+    } else if (agent === "company_brain_agent" && action === "company_brain_read") {
+      result = formatDocResult(rawResult);
+    } else if (agent === "planner_agent" && action === "planner_route") {
       result = formatMixedResult(rawResult);
     }
 
@@ -82,7 +78,7 @@ export function runAgentExecution(exec, ctx = {}) {
   return {
     ...normalizedExec,
     result: {
-      status: "fallback",
+      status: "unknown",
     },
   };
 }

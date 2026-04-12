@@ -101,7 +101,7 @@ Already in scope today:
 - `validatePresetOutput(...)`
 - minimal error taxonomy normalize
 - minimal retry/self-heal/stop boundary
-- bounded lane-to-agent selection helper via `executeAgent(...)`
+- bounded action-to-owner selection helper via `executeAgent(...)`
 
 ## Out of Scope
 
@@ -119,53 +119,56 @@ Still out of scope for current runtime:
 - preset step-level validation
 - externalized policy/config system
 
-## Bounded Lane-to-Agent Helper
+## Bounded Action-to-Owner Helper
 
-`/Users/seanhan/Documents/Playground/src/planner/agent-executor.mjs` now provides a very small planner-side helper:
+`/Users/seanhan/Documents/Playground/src/planner/agent-executor.mjs` now provides a deterministic planner-side ownership helper:
 
 - input:
-  - `{ "lane": "meeting|doc|runtime|mixed|..." }`
+  - `{ "selected_action": "string" }`
+  - optional `{ "task_type": "string" }` fallback
 - output:
-  - `{ "agent": "string", "action": "string", "status": "ok|fallback" }`
+  - `{ "agent": "string", "action": "string", "status": "ok", "source": "selected_action|task_type|default" }`
 
 Current checked-in behavior:
 
-- `meeting -> meeting_agent / meeting_summary`
-- `doc -> doc_agent / doc_answer`
-- `runtime -> runtime_agent / runtime_check`
-- `mixed -> mixed_agent / mixed_lane`
-- unknown lane -> `fallback_agent / unknown / fallback`
+- read-side company-brain actions (`list/search/detail/search_and_detail/search_and_summarize/document_summarize/update_learning_state/ingest_learning_doc`) map to:
+  - `company_brain_agent / company_brain_read`
+- runtime-info actions map to:
+  - `runtime_agent / runtime_check`
+- planner orchestration actions (`create_doc`, presets, task-lifecycle updates) map to:
+  - `planner_agent / planner_route`
+- unknown actions no longer produce `fallback_agent`; they collapse to:
+  - `planner_agent / planner_route` with `source = "default"`
 
 Boundary:
 
 - this helper is deterministic mapping only
 - it does not perform tool calls
 - it does not transfer workflow ownership
-- it does not claim a generic multi-agent runtime or full handoff engine
+- it does not claim a generic lane-agent runtime
 
 ## Placeholder Agent Runtime
 
-`/Users/seanhan/Documents/Playground/src/planner/agent-runtime.mjs` now provides a matching placeholder execution wrapper for the same checked-in agent/action pairs:
+`/Users/seanhan/Documents/Playground/src/planner/agent-runtime.mjs` now provides a matching placeholder wrapper for those owner/action pairs:
 
 - input:
   - `{ "agent": "string", "action": "string" }`
-  - or `{ "lane": "meeting|doc|runtime|mixed|..." }`, which is normalized through `agent-executor.mjs`
+  - or `{ "selected_action": "...", "task_type": "..." }` (normalized through `agent-executor.mjs`)
 - output:
   - `{ "agent": "string", "action": "string", "result": "object" }`
 
 Current checked-in behavior:
 
-- `meeting_agent / meeting_summary -> { "kind": "meeting", "status": "ok", "summary": "meeting workflow placeholder result", "actionable_items": [], "confidence": 0.85, "data": { ... } }`
-- `doc_agent / doc_answer -> { "kind": "doc", "status": "ok", "summary": "doc workflow placeholder result", "actionable_items": [], "confidence": 0.8, "data": { ... } }`
-- `runtime_agent / runtime_check -> { "kind": "runtime", "status": "ok", "summary": "runtime status: healthy", "actionable_items": [], "confidence": 0.9, "data": { ... } }`
-- `mixed_agent / mixed_lane -> { "kind": "mixed", "status": "ok", "summary": "mixed workflow placeholder result", "actionable_items": [], "confidence": 0.75, "data": { ... } }`
-- unknown input -> `{ "status": "fallback" }`
+- `planner_agent / planner_route -> kind=mixed, status=ok`
+- `company_brain_agent / company_brain_read -> kind=doc, status=ok`
+- `runtime_agent / runtime_check -> kind=runtime, status=ok`
+- unknown input -> `{ "status": "unknown" }`
 
 Boundary:
 
-- this wrapper is still deterministic and local-only
+- this wrapper is deterministic and local-only
 - it does not invoke live tools, agents, or workflow ownership transfer
-- it exists as a thin checked-in placeholder runtime, not a generic specialist-agent executor
+- it remains a thin placeholder runtime
 
 `/Users/seanhan/Documents/Playground/src/planner/result-schema.mjs` and `/Users/seanhan/Documents/Playground/src/planner/result-formatters.mjs` now also exist as small planner-side normalization helpers for those same placeholder result families:
 
@@ -179,14 +182,13 @@ Boundary:
 - these helpers are local-only normalization utilities
 - they do not change `planner_contract.json` or the public planner response contract
 
-`/Users/seanhan/Documents/Playground/src/executive-planner.mjs` now consumes that helper in a bounded way:
+`/Users/seanhan/Documents/Playground/src/executive-planner.mjs` consumes that helper in a bounded way:
 
 - `runPlannerToolFlow(...)` returns:
   - `{ "selected_action": "string|null", "execution_result": "object|null", "formatted_output": "object|null", "synthetic_agent_hint": "object", "trace_id": "string|null" }`
-- `synthetic_agent_hint` prefers explicit `payload.lane` or `taskType`
-- otherwise it only infers a small checked-in mapping from known planner actions/presets
-- the derived execution is then wrapped through `runAgentExecution(...)`, so current planner output can also carry deterministic placeholder `result` payloads for the checked-in lane/agent pairs
-- when no bounded mapping exists, output falls back to `fallback_agent` with `result.status = "fallback"`
+- `synthetic_agent_hint` is now action-first (`selected_action -> owner/action`) and no longer lane-first
+- derived execution is wrapped through `runAgentExecution(...)`, so planner output can carry deterministic placeholder `result` payloads for the checked-in owner/action pairs
+- unknown mapping now collapses to `planner_agent` default instead of `fallback_agent`
 - this field is metadata only and must not be promoted into verifier/evidence as if a real tool or specialist execution had happened
 
 ## Input Shape
@@ -252,7 +254,7 @@ This path is bounded by the checked-in planner contract:
 - unmatched routing still fails closed internally as `ROUTING_NO_MATCH` instead of silently falling through selector/default-reply paths; the public `runPlannerToolFlow(...)` fallback surface normalizes that no-match case to `business_error` while preserving the internal routing reason in structured detail
 - `semantic_mismatch` on strict user-input planning now attempts one bounded reroute through `runPlannerToolFlow(...)` before surfacing a user-facing fallback
 - no heuristic or free-text fallback is used on this strict user-input planning path
-- bounded `synthetic_agent_hint` lane inference now also keeps company-brain learning actions (`ingest_learning_doc`, `update_learning_state`) on the checked-in `doc` lane instead of falling through `fallback_agent`
+- bounded `synthetic_agent_hint` action-first inference now keeps company-brain learning actions (`ingest_learning_doc`, `update_learning_state`) on `company_brain_agent/company_brain_read` and no longer emits `fallback_agent`
 - planner skill integration is explicit and bounded:
   - checked-in planner actions:
     - `search_and_summarize`
@@ -1080,6 +1082,8 @@ Working-memory v2 diagnostics now also includes one human-readable `task_trace` 
 Working-memory continuation now also runs one bounded retry-context pack in `/Users/seanhan/Documents/Playground/src/retry-context-pack.mjs` from current `task_phase / slot_state / required_slots / recovery_state / last_action` signals. The pack remains local-only and currently feeds planner continuation payload hints (`__retry_mode`, optional `__resumable_step`, optional `__retry_degraded_reason`, optional `__retry_user_visible_message`) plus `ask_user` gate continuity context; it does not change the public planner response envelope or planner contract schema.
 
 The executive planner decision prompt now also reads a bounded task-state summary from that same local `task lifecycle v1` store: before agent selection, `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` asks `/Users/seanhan/Documents/Playground/src/planner-task-lifecycle-v1.mjs` for the latest relevant snapshot summary and injects `unfinished_hint`, `blocked_hint`, and `in_progress_hint` into prompt assembly, so decisions can preferentially reference unfinished tasks, surface blocked-task risk, and reuse in-progress execution summaries without changing the public planner JSON shape.
+
+When that same task context is `focused_task`-bound, runtime enrichment now prefers task-driving reason text over generic deterministic role-rewrite text: if a generic role-only reason does not mention the focused task title, `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` rewrites reason to the focused task-driving variant so follow-up decisions stay task-anchored instead of drifting to role boilerplate.
 
 The normalized executive decision shape in that same module now also carries deterministic explainability metadata:
 

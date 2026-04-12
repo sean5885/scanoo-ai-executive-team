@@ -8,18 +8,18 @@ import {
   resolveRegisteredAgentFamilyRequest,
 } from "../src/agent-registry.mjs";
 
-test("parseRegisteredAgentCommand resolves persona slash commands", () => {
-  const parsed = parseRegisteredAgentCommand("/ceo 幫我做這個決策整理");
+test("parseRegisteredAgentCommand resolves core slash commands", () => {
+  const parsed = parseRegisteredAgentCommand("/planner 幫我做這個決策整理");
 
-  assert.equal(parsed?.agent?.id, "ceo");
+  assert.equal(parsed?.agent?.id, "planner_agent");
   assert.equal(parsed?.body, "幫我做這個決策整理");
 });
 
 test("parseRegisteredAgentCommand resolves knowledge subcommands", () => {
   const parsed = parseRegisteredAgentCommand("/knowledge conflicts 幫我找衝突");
 
-  assert.equal(parsed?.agent?.id, "knowledge-conflicts");
-  assert.equal(parsed?.body, "幫我找衝突");
+  assert.equal(parsed?.error, "ROUTING_NO_MATCH");
+  assert.equal(parsed?.body, "conflicts 幫我找衝突");
 });
 
 test("parseRegisteredAgentCommand fail-closes knowledge without subcommand", () => {
@@ -29,37 +29,32 @@ test("parseRegisteredAgentCommand fail-closes knowledge without subcommand", () 
   assert.equal(parsed?.body, "請整理這批知識");
 });
 
-test("resolveRegisteredAgentFamilyRequest matches embedded slash and persona-style requests", () => {
-  const embeddedSlash = resolveRegisteredAgentFamilyRequest("把這輪改交給 /cmo", {
-    includeKnowledgeCommands: false,
-  });
-  const personaStyle = resolveRegisteredAgentFamilyRequest("請 consult agent 做方案比較", {
-    includeKnowledgeCommands: false,
-  });
+test("resolveRegisteredAgentFamilyRequest matches embedded slash and rejects old persona-style mentions", () => {
+  const embeddedSlash = resolveRegisteredAgentFamilyRequest("把這輪改交給 /planner");
+  const personaStyle = resolveRegisteredAgentFamilyRequest("請 consult agent 做方案比較");
 
-  assert.equal(embeddedSlash?.agent?.id, "cmo");
-  assert.equal(embeddedSlash?.surface, "persona_style");
-  assert.equal(personaStyle?.agent?.id, "consult");
-  assert.equal(personaStyle?.surface, "persona_style");
+  assert.equal(embeddedSlash?.agent?.id, "planner_agent");
+  assert.equal(embeddedSlash?.surface, "slash_command");
+  assert.equal(personaStyle, null);
 });
 
 test("registered future agents are also available", () => {
-  assert.equal(getRegisteredAgent("delivery")?.slash, "/delivery");
-  assert.equal(getRegisteredAgent("ops")?.slash, "/ops");
-  assert.equal(getRegisteredAgent("tech")?.slash, "/tech");
+  assert.equal(getRegisteredAgent("generalist")?.slash, "/generalist");
+  assert.equal(getRegisteredAgent("planner_agent")?.slash, "/planner");
+  assert.equal(getRegisteredAgent("company_brain_agent")?.slash, "/company-brain");
 });
 
 test("registered agents expose minimum capability contract", () => {
   const matrix = listAgentCapabilityMatrix();
-  const ceo = matrix.find((item) => item.agent_name === "ceo");
-  const knowledge = matrix.find((item) => item.agent_name === "knowledge-conflicts");
+  const planner = matrix.find((item) => item.agent_name === "planner_agent");
+  const companyBrain = matrix.find((item) => item.agent_name === "company_brain_agent");
 
-  assert.equal(ceo?.command, "/ceo");
-  assert.ok(Array.isArray(ceo?.allowed_tools));
-  assert.equal(ceo?.downstream_consumer, "lark_reply");
-  assert.equal(ceo?.status, "ready");
+  assert.equal(planner?.command, "/planner");
+  assert.ok(Array.isArray(planner?.allowed_tools));
+  assert.equal(planner?.downstream_consumer, "lark_reply");
+  assert.equal(planner?.status, "ready");
 
-  assert.equal(knowledge?.command, "/knowledge conflicts");
-  assert.ok(Array.isArray(knowledge?.allowed_tools));
-  assert.equal(knowledge?.fallback_behavior, "fail_closed");
+  assert.equal(companyBrain?.command, "/company-brain");
+  assert.ok(Array.isArray(companyBrain?.allowed_tools));
+  assert.equal(companyBrain?.fallback_behavior, "fail_closed");
 });

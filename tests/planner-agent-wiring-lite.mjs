@@ -1,22 +1,22 @@
 import { resolvePlannerAgentExecution } from "../src/executive-planner.mjs";
 
-function plannerProxy(lane) {
-  const agentExecution = resolvePlannerAgentExecution({ taskType: lane });
-  return { lane, agent_execution: agentExecution };
+function plannerProxy(selectedAction) {
+  const agentExecution = resolvePlannerAgentExecution({ selectedAction });
+  return { selectedAction, agent_execution: agentExecution };
 }
 
 const cases = [
-  ["meeting", "meeting_agent"],
-  ["doc", "doc_agent"],
-  ["runtime", "runtime_agent"],
-  ["mixed", "mixed_agent"],
+  ["search_company_brain_docs", "company_brain_agent"],
+  ["get_runtime_info", "runtime_agent"],
+  ["create_doc", "planner_agent"],
+  ["unknown_action", "planner_agent"],
 ];
 
 let ok = 0;
-for (const [lane, agent] of cases) {
-  const out = plannerProxy(lane);
+for (const [selectedAction, agent] of cases) {
+  const out = plannerProxy(selectedAction);
   const pass = out.agent_execution.agent === agent;
   if (pass) ok += 1;
-  console.log(lane, "=>", out.agent_execution.agent, pass ? "PASS" : "FAIL");
+  console.log(selectedAction, "=>", out.agent_execution.agent, pass ? "PASS" : "FAIL");
 }
 console.log("PLANNER AGENT WIRING:", ok + "/" + cases.length);

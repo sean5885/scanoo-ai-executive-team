@@ -1339,7 +1339,7 @@ export async function buildControlSummary() {
   const scenarios = [
     (() => {
       const actual = decideIntent({
-        text: "/cmo 規劃本季主題",
+        text: "/planner 規劃本季主題",
         lane: "personal-assistant",
         activeTask: {
           id: "task-exec-command",

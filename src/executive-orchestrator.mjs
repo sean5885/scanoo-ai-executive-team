@@ -1715,7 +1715,7 @@ async function executeExecutiveTurnUnlocked({
         "這個 slash 指令沒有命中任何已註冊的 registered agent。",
         "",
         "重點",
-        "請改用已存在的 `/generalist`、`/ceo`、`/product`、`/prd`、`/cmo`、`/consult`、`/cdo`、`/delivery`、`/ops`、`/tech` 或既有 `/knowledge *` 子指令。",
+        "請改用已存在的 `/generalist`、`/planner`、`/company-brain`。`/knowledge *` 目前是 fail-closed，不提供註冊 agent 路由。",
       ].join("\n"),
     };
   }

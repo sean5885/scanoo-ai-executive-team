@@ -41,6 +41,7 @@ control diagnostics 目前直接重用 checked-in code truth：
 它會用固定 deterministic scenario 驗證：
 
 - explicit executive intent 是否優先奪回 control
+  - 目前以 checked-in core slash 指令（例如 `/planner`）驗證，不再依賴舊 persona slash 指令
 - doc rewrite follow-up 是否維持 `doc-editor`
 - cloud-doc follow-up 是否要求 same scope
 - scope mismatch 是否回到 lane default

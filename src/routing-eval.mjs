@@ -468,8 +468,6 @@ function resolveExecutiveFallback(text = "", activeTask = null) {
   ]);
   const explicitAgentRequest = resolveRegisteredAgentFamilyRequest(text, {
     includeSlashCommand: true,
-    includePersonaMentions: true,
-    includeKnowledgeCommands: false,
   });
   const explicitAgentId = cleanText(explicitAgentRequest?.agent?.id || "");
 

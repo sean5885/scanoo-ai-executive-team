@@ -20,7 +20,6 @@ import {
 import {
   getRegisteredAgent,
   listRegisteredAgents,
-  listRegisteredPersonaAgents,
   parseRegisteredAgentCommand,
   resolveRegisteredAgentFamilyRequest,
 } from "./agent-registry.mjs";
@@ -240,20 +239,44 @@ const PLANNER_WORKING_MEMORY_UNRESOLVED_SLOT_ACTIONS = Object.freeze({
   needs_doc_candidates: "search_company_brain_docs",
   requires_runtime_context: "get_runtime_info",
 });
-const PLANNER_WORKING_MEMORY_AGENT_ACTION_HINTS = Object.freeze({
-  doc_agent: "search_and_detail_doc",
-  runtime_agent: "get_runtime_info",
-  meeting_agent: "search_company_brain_docs",
-  mixed_agent: "search_company_brain_docs",
+const PLANNER_WORKING_MEMORY_OWNER_ACTION_INDEX = Object.freeze({
+  doc_agent: Object.freeze([
+    "search_and_detail_doc",
+    "search_company_brain_docs",
+    "get_company_brain_doc_detail",
+    "search_and_summarize",
+    "document_summarize",
+  ]),
+  runtime_agent: Object.freeze([
+    "get_runtime_info",
+  ]),
+  planner_agent: Object.freeze([
+    "create_doc",
+    "create_and_list_doc",
+    "runtime_and_list_docs",
+    "create_search_detail_list_doc",
+    "read_task_lifecycle_v1",
+    "update_task_lifecycle_v1",
+    "mark_resolved",
+  ]),
 });
-const PLANNER_WORKING_MEMORY_ACTION_OWNER_HINTS = Object.freeze({
-  search_company_brain_docs: "doc_agent",
-  search_and_detail_doc: "doc_agent",
-  get_company_brain_doc_detail: "doc_agent",
-  search_and_summarize: "doc_agent",
-  document_summarize: "doc_agent",
-  get_runtime_info: "runtime_agent",
-});
+const PLANNER_WORKING_MEMORY_AGENT_ACTION_HINTS = Object.freeze(
+  Object.fromEntries(
+    Object.entries(PLANNER_WORKING_MEMORY_OWNER_ACTION_INDEX)
+      .map(([ownerAgent, actions]) => [ownerAgent, cleanText(actions?.[0] || "")])
+      .filter(([, action]) => Boolean(action)),
+  ),
+);
+const PLANNER_WORKING_MEMORY_ACTION_OWNER_HINTS = Object.freeze(
+  Object.fromEntries(
+    Object.entries(PLANNER_WORKING_MEMORY_OWNER_ACTION_INDEX)
+      .flatMap(([ownerAgent, actions]) =>
+        (Array.isArray(actions) ? actions : [])
+          .map((action) => [cleanText(action), ownerAgent]),
+      )
+      .filter(([action]) => Boolean(action)),
+  ),
+);
 const PLANNER_WORKING_MEMORY_PLAN_STATUSES = new Set([
   "active",
   "paused",
@@ -304,80 +327,6 @@ const PLANNER_WORKING_MEMORY_NON_CRITICAL_STEP_TYPES = new Set([
 ]);
 const DEFAULT_PLANNER_PROMOTION_AUDIT_SESSION_KEY = "__default__";
 const plannerPromotionAuditStates = new Map();
-
-const executiveCollaborationSignals = [
-  "各個 agent",
-  "各个 agent",
-  "多 agent",
-  "多個 agent",
-  "多个 agent",
-  "multi-agent",
-  "協作",
-  "协作",
-  "一起看",
-  "一起評估",
-  "一起评估",
-  "一起拆解",
-  "分別看",
-  "分别看",
-  "統一收斂",
-  "统一收敛",
-];
-
-const executiveCompoundSignals = [
-  "同時",
-  "同时",
-  "以及",
-  "並且",
-  "并且",
-  "還有",
-  "还有",
-  "最後",
-  "最后",
-];
-
-const executiveDeterministicRoleSignals = [
-  {
-    agentId: "consult",
-    keywords: ["拆解", "比較", "比较", "診斷", "诊断", "方案"],
-  },
-  {
-    agentId: "product",
-    keywords: ["產品", "产品", "需求", "使用者", "用户", "功能", "價值", "价值"],
-  },
-  {
-    agentId: "tech",
-    keywords: ["技術", "技术", "工程", "架構", "架构", "系統設計", "系统设计", "程式", "代码", "api"],
-  },
-  {
-    agentId: "cmo",
-    keywords: ["市場", "市场", "定位", "訊息", "信息", "行銷", "营销", "growth", "gtm"],
-  },
-  {
-    agentId: "ops",
-    keywords: ["營運", "运营", "流程", "落地", "執行", "执行", "sop"],
-  },
-  {
-    agentId: "cdo",
-    keywords: ["數據", "数据", "治理", "指標", "指标", "分配", "分類", "分类"],
-  },
-  {
-    agentId: "delivery",
-    keywords: ["交付", "驗收", "验收", "導入", "导入", "里程碑"],
-  },
-  {
-    agentId: "prd",
-    keywords: ["prd", "規格", "规格", "spec"],
-  },
-  {
-    agentId: "ceo",
-    keywords: ["決策", "决策", "拍板", "取捨", "取舍", "資源", "资源"],
-  },
-];
-
-const executiveSelectableAgentIds = Object.freeze(
-  listRegisteredPersonaAgents().map((agent) => cleanText(agent?.id)).filter(Boolean),
-);
 
 function emitPlannerFailedAlert({ text = "", reason = "", source = "planner" } = {}) {
   const textHint = cleanText(text);
@@ -539,64 +488,6 @@ function uniqueRegisteredAgentIds(agentIds = [], maxItems = EXECUTIVE_MAX_ROLES)
   return result;
 }
 
-function findFirstKeywordIndex(text = "", keywords = []) {
-  let matchIndex = Number.POSITIVE_INFINITY;
-  for (const keyword of Array.isArray(keywords) ? keywords : []) {
-    const index = text.indexOf(keyword);
-    if (index >= 0 && index < matchIndex) {
-      matchIndex = index;
-    }
-  }
-  return Number.isFinite(matchIndex) ? matchIndex : -1;
-}
-
-function findExplicitAgentMentionIndex(text = "", agentId = "") {
-  const normalizedAgentId = cleanText(agentId);
-  if (!text || !normalizedAgentId) {
-    return -1;
-  }
-  const slashIndex = text.indexOf(`/${normalizedAgentId}`);
-  if (slashIndex >= 0) {
-    return slashIndex;
-  }
-  if (/^[a-z_]+$/.test(normalizedAgentId)) {
-    const pattern = new RegExp(`(^|[^a-z0-9_])${normalizedAgentId}(?=$|[^a-z0-9_])`, "i");
-    const match = pattern.exec(text);
-    return match ? Number(match.index || 0) + match[1].length : -1;
-  }
-  return text.indexOf(normalizedAgentId);
-}
-
-function collectExplicitExecutiveAgentIds(text = "") {
-  const matches = executiveSelectableAgentIds
-    .map((agentId, order) => ({
-      agentId,
-      order,
-      index: findExplicitAgentMentionIndex(text, agentId),
-    }))
-    .filter((item) => item.index >= 0)
-    .sort((left, right) => left.index - right.index || left.order - right.order)
-    .map((item) => item.agentId);
-  return uniqueRegisteredAgentIds(matches, EXECUTIVE_MAX_ROLES);
-}
-
-function detectDeterministicSpecialistAgentIds(text = "") {
-  const matches = executiveDeterministicRoleSignals
-    .map((rule, order) => ({
-      agentId: rule.agentId,
-      order,
-      index: findFirstKeywordIndex(text, rule.keywords),
-    }))
-    .filter((item) => item.index >= 0)
-    .sort((left, right) => left.index - right.index || left.order - right.order)
-    .map((item) => item.agentId);
-  return uniqueRegisteredAgentIds(matches, EXECUTIVE_MAX_ROLES);
-}
-
-function hasExecutiveCompoundIntent(text = "") {
-  return hasAny(text, executiveCollaborationSignals) || hasAny(text, executiveCompoundSignals);
-}
-
 function limitExecutiveWorkItems(workItems = [], {
   allowedAgentIds = [],
   maxItems = EXECUTIVE_MAX_ROLES,
@@ -729,75 +620,57 @@ function didExecutiveSelectionChange(originalDecision = {}, nextDecision = {}) {
   );
 }
 
+function hasUnknownAgentReference(text = "") {
+  const normalized = cleanText(text);
+  if (!normalized) {
+    return false;
+  }
+  const matches = normalized.match(/\/([a-z0-9_-]+)/gi) || [];
+  return matches.some((token) => {
+    const agentId = cleanText(token.replace(/^\//, ""));
+    return agentId && !getRegisteredAgent(agentId);
+  });
+}
+
 function resolveExecutiveSelectionReason({
   originalDecision = {},
   nextDecision = {},
   deterministicReason = "",
 } = {}) {
   const normalizedDeterministicReason = cleanText(deterministicReason);
-  if (didExecutiveSelectionChange(originalDecision, nextDecision)) {
+  const normalizedOriginalReason = cleanText(originalDecision.reason);
+  if (
+    didExecutiveSelectionChange(originalDecision, nextDecision)
+    || !normalizedOriginalReason
+    || hasUnknownAgentReference(normalizedOriginalReason)
+  ) {
     return normalizedDeterministicReason;
   }
-  return cleanText(originalDecision.reason);
+  return normalizedOriginalReason;
 }
 function applyDeterministicExecutiveAgentSelection(decision = {}, fallbackText = "", activeTask = null) {
   const normalizedText = cleanText(String(fallbackText || "").toLowerCase());
   const normalizedDecision = trimExecutiveDecisionRoleCounts(decision);
-  if (!normalizedText) {
-    return normalizedDecision;
-  }
-
-  const explicitAgentIds = collectExplicitExecutiveAgentIds(normalizedText)
-    .filter((agentId) => agentId !== "generalist");
-  const hasSelectionOverride = explicitAgentIds.length > 0 || hasExecutiveCompoundIntent(normalizedText);
+  const explicitAgentRequest = normalizedText
+    ? resolveRegisteredAgentFamilyRequest(normalizedText, {
+        includeSlashCommand: true,
+      })
+    : null;
+  const explicitAgentId = cleanText(explicitAgentRequest?.agent?.id || "");
+  const hasSelectionOverride = Boolean(explicitAgentId && explicitAgentId !== "generalist");
 
   if (activeTask?.id && !hasSelectionOverride) {
     return normalizedDecision;
   }
 
-  const detectedAgentIds = uniqueRegisteredAgentIds([
-    ...explicitAgentIds,
-    ...detectDeterministicSpecialistAgentIds(normalizedText),
-  ], EXECUTIVE_MAX_ROLES);
   const objective = cleanText(normalizedDecision.objective || fallbackText);
   const shouldSeedSingleRoleWorkItems = normalizedDecision.work_items.length > 0
     || normalizedDecision.action === "start"
     || normalizedDecision.action === "handoff";
   const singleRoleFallbackReason = normalizedDecision.action === "start" || normalizedDecision.action === "handoff";
 
-  if (hasExecutiveCompoundIntent(normalizedText) && detectedAgentIds.length >= 2) {
-    const primaryAgentId = explicitAgentIds[0] || "generalist";
-    const supportingAgentIds = uniqueRegisteredAgentIds(
-      detectedAgentIds.filter((agentId) => agentId !== primaryAgentId),
-      EXECUTIVE_MAX_SUPPORTING_ROLES,
-    );
-    const nextDecision = trimExecutiveDecisionRoleCounts({
-      ...normalizedDecision,
-      primary_agent_id: primaryAgentId,
-      next_agent_id: primaryAgentId,
-      supporting_agent_ids: supportingAgentIds,
-      work_items: buildCollaborativeWorkItems({
-        primaryAgentId,
-        supportingAgentIds,
-        objective,
-      }),
-    });
-    return {
-      ...nextDecision,
-      reason: resolveExecutiveSelectionReason({
-        originalDecision: normalizedDecision,
-        nextDecision,
-        deterministicReason: buildDeterministicExecutiveSelectionReason({
-          mode: "compound",
-          primaryAgentId,
-          supportingAgentIds,
-        }),
-      }),
-    };
-  }
-
-  if (explicitAgentIds.length > 0) {
-    const primaryAgentId = explicitAgentIds[0];
+  if (hasSelectionOverride) {
+    const primaryAgentId = explicitAgentId;
     const nextDecision = trimExecutiveDecisionRoleCounts({
       ...normalizedDecision,
       primary_agent_id: primaryAgentId,
@@ -858,7 +731,12 @@ function buildCollaborativeWorkItems({ primaryAgentId = "", supportingAgentIds =
   function push(agentId, task, role = "") {
     const normalizedAgentId = cleanText(agentId);
     const normalizedTask = cleanText(task);
-    if (!normalizedAgentId || !normalizedTask || seen.has(normalizedAgentId)) {
+    if (
+      !normalizedAgentId
+      || !normalizedTask
+      || seen.has(normalizedAgentId)
+      || !getRegisteredAgent(normalizedAgentId)
+    ) {
       return;
     }
     if (result.length >= EXECUTIVE_MAX_ROLES) {
@@ -876,21 +754,7 @@ function buildCollaborativeWorkItems({ primaryAgentId = "", supportingAgentIds =
   push(primaryAgentId, `主責收斂這個任務：${objectiveText}`, "primary");
 
   for (const agentId of supportingAgentIds.slice(0, EXECUTIVE_MAX_SUPPORTING_ROLES)) {
-    if (agentId === "consult") {
-      push(agentId, `從問題拆解與方案比較角度補充：${objectiveText}`, "supporting");
-    } else if (agentId === "product") {
-      push(agentId, `從產品需求與使用者價值角度補充：${objectiveText}`, "supporting");
-    } else if (agentId === "tech") {
-      push(agentId, `從技術與工程風險角度補充：${objectiveText}`, "supporting");
-    } else if (agentId === "ops") {
-      push(agentId, `從營運流程與落地執行角度補充：${objectiveText}`, "supporting");
-    } else if (agentId === "cdo") {
-      push(agentId, `從資料與治理角度補充：${objectiveText}`, "supporting");
-    } else if (agentId === "cmo") {
-      push(agentId, `從市場與訊息策略角度補充：${objectiveText}`, "supporting");
-    } else {
-      push(agentId, `從 /${agentId} 的專責角度補充：${objectiveText}`, "supporting");
-    }
+    push(agentId, `從 /${agentId} 的專責角度補充：${objectiveText}`, "supporting");
   }
 
   return result;
@@ -2266,94 +2130,19 @@ function buildPlannerPresetRuntimeInput({
   };
 }
 
-function normalizePlannerAgentLane(value = "") {
-  const normalized = cleanText(String(value || "").toLowerCase()).replace(/[\s-]+/g, "_");
-  if (!normalized) {
-    return null;
-  }
-  if (["meeting", "meeting_processing"].includes(normalized)) {
-    return "meeting";
-  }
-  if (["runtime", "runtime_info"].includes(normalized)) {
-    return "runtime";
-  }
-  if (["mixed", "multi_step", "cross_lane"].includes(normalized)) {
-    return "mixed";
-  }
-  if ([
-    "doc",
-    "doc_query",
-    "doc_write",
-    "doc_rewrite",
-    "cloud_doc",
-    "search",
-    "detail",
-    "knowledge",
-    "list_docs",
-  ].includes(normalized)) {
-    return "doc";
-  }
-  return null;
-}
-
-function derivePlannerAgentLane({
-  taskType = "",
-  payload = {},
-  selectedAction = "",
-} = {}) {
-  const payloadLane = normalizePlannerAgentLane(
-    payload?.lane || payload?.agent_lane || payload?.capability_lane || "",
-  );
-  if (payloadLane) {
-    return payloadLane;
-  }
-
-  const taskLane = normalizePlannerAgentLane(taskType);
-  if (taskLane) {
-    return taskLane;
-  }
-
-  const action = cleanText(selectedAction || "");
-  if (action === "get_runtime_info") {
-    return "runtime";
-  }
-  if (action === "runtime_and_list_docs") {
-    return "mixed";
-  }
-  if ([
-    "create_doc",
-    "list_company_brain_docs",
-    "search_company_brain_docs",
-    "search_and_summarize",
-    "document_summarize",
-    "get_company_brain_doc_detail",
-    "search_and_detail_doc",
-    "create_and_list_doc",
-    "create_search_detail_list_doc",
-    "update_learning_state",
-    "ingest_learning_doc",
-    "read_task_lifecycle_v1",
-    "update_task_lifecycle_v1",
-    "mark_resolved",
-  ].includes(action)) {
-    return "doc";
-  }
-
-  return null;
-}
-
 export function resolvePlannerAgentExecution({
   taskType = "",
   payload = {},
   selectedAction = "",
 } = {}) {
-  const lane = derivePlannerAgentLane({
-    taskType,
-    payload,
-    selectedAction,
-  });
-
-  return runAgentExecution(executeAgent({ lane }));
+  const normalizedPayload = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? payload
+    : {};
+  return runAgentExecution(executeAgent({
+    selected_action: selectedAction || normalizedPayload.selected_action || normalizedPayload.action || "",
+    action: normalizedPayload.action || "",
+    task_type: taskType || normalizedPayload.task_type || normalizedPayload.taskType || "",
+  }));
 }
 
 function buildPlannerAgentOutput({
@@ -5406,9 +5195,8 @@ function resolvePlannerWorkingMemoryFailedStepRecovery({
 
 function collectRoutingHints(ctx = {}) {
   return {
-    persona: cleanText(ctx?.persona_hint || ctx?.selected_persona || "") || null,
-    lane: cleanText(ctx?.lane_hint || ctx?.selected_lane || "") || null,
-    knowledge: cleanText(ctx?.knowledge_hint || ctx?.selected_knowledge_agent || "") || null,
+    owner: cleanText(ctx?.current_owner_agent || "") || null,
+    next_action: cleanText(ctx?.next_best_action || ctx?.selected_action || ctx?.action || "") || null,
   };
 }
 
@@ -8725,7 +8513,7 @@ export function looksLikeExecutiveStart(text = "") {
   if (!normalized) {
     return false;
   }
-  if (normalized.startsWith("/exec") || normalized.startsWith("/generalist") || normalized.startsWith("/ceo")) {
+  if (normalized.startsWith("/exec") || normalized.startsWith("/generalist")) {
     return true;
   }
   if (parseRegisteredAgentCommand(normalized)) {
@@ -8749,8 +8537,6 @@ function heuristicPlanExecutiveTurn(text = "", activeTask = null) {
   ]);
   const explicitAgentRequest = resolveRegisteredAgentFamilyRequest(text, {
     includeSlashCommand: true,
-    includePersonaMentions: true,
-    includeKnowledgeCommands: false,
   });
   const explicitAgentId = cleanText(explicitAgentRequest?.agent?.id || "");
 
@@ -8769,18 +8555,18 @@ function heuristicPlanExecutiveTurn(text = "", activeTask = null) {
   }
 
   if (normalized.includes("分配") || normalized.includes("分類")) {
-    const supporting = activeTask?.supporting_agent_ids || ["consult", "ops"];
+    const supporting = activeTask?.supporting_agent_ids || [];
     return {
       action: activeTask ? "continue" : "start",
       objective: activeTask?.objective || text,
-      primary_agent_id: activeTask?.primary_agent_id || "cdo",
-      next_agent_id: activeTask?.current_agent_id || "cdo",
+      primary_agent_id: activeTask?.primary_agent_id || "generalist",
+      next_agent_id: activeTask?.current_agent_id || "generalist",
       supporting_agent_ids: supporting,
-      reason: "這更像治理與分配任務",
+      reason: "這更像需要結構化分配與收斂的任務",
       pending_questions: [],
       work_items: wantsCollaboration
         ? buildCollaborativeWorkItems({
-            primaryAgentId: activeTask?.primary_agent_id || "cdo",
+            primaryAgentId: activeTask?.primary_agent_id || "generalist",
             supportingAgentIds: supporting,
             objective: activeTask?.objective || text,
           })
@@ -8789,18 +8575,18 @@ function heuristicPlanExecutiveTurn(text = "", activeTask = null) {
   }
 
   if (normalized.includes("決策") || normalized.includes("拍板")) {
-    const supporting = activeTask?.supporting_agent_ids || ["consult", "product", "tech"];
+    const supporting = activeTask?.supporting_agent_ids || [];
     return {
       action: activeTask ? "handoff" : "start",
       objective: activeTask?.objective || text,
-      primary_agent_id: activeTask?.primary_agent_id || "ceo",
-      next_agent_id: "ceo",
+      primary_agent_id: activeTask?.primary_agent_id || "generalist",
+      next_agent_id: "generalist",
       supporting_agent_ids: supporting,
-      reason: "這更像高層決策整合任務",
+      reason: "這更像需要單一 owner 做決策收斂的任務",
       pending_questions: [],
       work_items: wantsCollaboration
         ? buildCollaborativeWorkItems({
-            primaryAgentId: activeTask?.primary_agent_id || "ceo",
+            primaryAgentId: activeTask?.primary_agent_id || "generalist",
             supportingAgentIds: supporting,
             objective: activeTask?.objective || text,
           })
@@ -8812,7 +8598,7 @@ function heuristicPlanExecutiveTurn(text = "", activeTask = null) {
     const primary = activeTask?.primary_agent_id || "generalist";
     const supporting = activeTask?.supporting_agent_ids?.length
       ? activeTask.supporting_agent_ids
-      : ["consult", "product"];
+      : [];
     return {
       action: activeTask ? "continue" : "start",
       objective: activeTask?.objective || text,
@@ -11501,7 +11287,31 @@ function enrichPlannerDecisionWithTaskDriving(decision = {}, {
     normalizedDecision.pending_questions = [cleanText(taskDriving.suggested_question)];
   }
 
-  if (!cleanText(normalizedDecision.reason) && cleanText(taskDriving?.suggested_next_step)) {
+  const normalizedReason = cleanText(normalizedDecision.reason || "");
+  const focusedTaskTitle = cleanText(taskDecisionContext?.focused_task?.title || "");
+  const drivingTaskTitle = cleanText(taskDriving?.task?.title || focusedTaskTitle);
+  const scopeBinding = cleanText(taskDecisionContext?.scope_binding || "");
+  const focusHint = cleanText(taskDecisionContext?.focus_hint || "");
+  const hasFocusedBinding = scopeBinding === "focused_task" || focusHint.includes("沿用當前 task");
+  const looksLikeDeterministicSelectionReason = (
+    normalizedReason.startsWith("簡單單一意圖請求，維持由 /")
+    || normalizedReason.startsWith("使用者明確指定 /")
+    || normalizedReason.startsWith("複合請求命中 distinct specialist 需求")
+  );
+  const shouldRewriteReasonWithTaskDriving = (
+    cleanText(taskDriving?.suggested_next_step)
+    && (
+      !normalizedReason
+      || (
+        hasFocusedBinding
+        && drivingTaskTitle
+        && !normalizedReason.includes(drivingTaskTitle)
+        && looksLikeDeterministicSelectionReason
+      )
+    )
+  );
+
+  if (shouldRewriteReasonWithTaskDriving) {
     normalizedDecision.reason = taskDriving.mode === "unblock"
       ? `延續既有 task，優先解除阻塞：${cleanText(taskDriving?.task?.title) || "未命名 task"}`
       : taskDriving.mode === "continue"

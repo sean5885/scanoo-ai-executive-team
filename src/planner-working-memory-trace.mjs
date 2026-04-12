@@ -304,9 +304,8 @@ function toSnapshot(memorySnapshot = null) {
       ? {
           primary: cleanText(routingDecisionRaw.primary || "") || null,
           hints: {
-            persona: cleanText(routingHintsRaw?.persona || "") || null,
-            lane: cleanText(routingHintsRaw?.lane || "") || null,
-            knowledge: cleanText(routingHintsRaw?.knowledge || "") || null,
+            owner: cleanText(routingHintsRaw?.owner || "") || null,
+            next_action: cleanText(routingHintsRaw?.next_action || "") || null,
           },
         }
       : null,

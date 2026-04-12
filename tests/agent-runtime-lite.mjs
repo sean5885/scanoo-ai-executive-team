@@ -1,10 +1,10 @@
 import { runAgentExecution } from "../src/planner/agent-runtime.mjs";
 
 const cases = [
-  [{ agent: "meeting_agent", action: "meeting_summary" }, "ok"],
-  [{ agent: "doc_agent", action: "doc_answer" }, "ok"],
+  [{ agent: "planner_agent", action: "planner_route" }, "ok"],
+  [{ agent: "company_brain_agent", action: "company_brain_read" }, "ok"],
   [{ agent: "runtime_agent", action: "runtime_check" }, "ok"],
-  [{ agent: "mixed_agent", action: "mixed_lane" }, "ok"],
+  [{ agent: "unknown_agent", action: "unknown_action" }, "unknown"],
 ];
 
 let ok = 0;

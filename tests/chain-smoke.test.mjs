@@ -17,12 +17,8 @@ test.after(() => {
 
 const PERSONA_CASES = [
   ["/generalist", "generalist"],
-  ["/ceo", "ceo"],
-  ["/product", "product"],
-  ["/prd", "prd"],
-  ["/cmo", "cmo"],
-  ["/consult", "consult"],
-  ["/cdo", "cdo"],
+  ["/planner", "planner_agent"],
+  ["/company-brain", "company_brain_agent"],
 ];
 
 test("major slash commands route to the expected agents", () => {
@@ -30,13 +26,13 @@ test("major slash commands route to the expected agents", () => {
     const parsed = parseRegisteredAgentCommand(`${slash} 測試任務`);
     assert.equal(parsed?.agent?.id, id);
   }
-  assert.equal(parseRegisteredAgentCommand("/knowledge audit 盤點一下")?.agent?.id, "knowledge-audit");
+  assert.equal(parseRegisteredAgentCommand("/knowledge audit 盤點一下")?.error, "ROUTING_NO_MATCH");
 });
 
 test("registered agent smoke path returns stable schema", async () => {
   const result = await executeRegisteredAgent({
     accountId: "acct-1",
-    agent: getRegisteredAgent("ceo"),
+    agent: getRegisteredAgent("generalist"),
     requestText: "幫我整理決策重點",
     scope: { session_key: "smoke-session" },
     searchFn() {
@@ -55,6 +51,6 @@ test("registered agent smoke path returns stable schema", async () => {
     },
   });
 
-  assert.equal(result.agentId, "ceo");
+  assert.equal(result.agentId, "generalist");
   assert.match(result.text, /beta/);
 });

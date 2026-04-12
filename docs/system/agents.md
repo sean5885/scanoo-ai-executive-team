@@ -11,7 +11,7 @@ What exists:
 - OpenClaw plugin tools
 - binding-based capability lanes
 - closed-loop executive planner plus shared task-state orchestration
-- persona-based slash-agent registry and dispatcher
+- core slash-agent registry and dispatcher
 - input modality routing for text / image / multimodal requests
 - lane-specific execution strategies
 - command-style `/meeting` workflow built on top of the lane executor
@@ -32,9 +32,9 @@ What now exists in current code:
 - closed-loop executive planner that can start, continue, or hand off between registered agents
 - shared executive task state for multi-turn continuation and agent-to-agent handoff
 - lifecycle state transitions that require evidence plus verifier pass before completion
-- checked-in slash-agent registry for `/generalist`, `/ceo`, `/product`, `/prd`, `/cmo`, `/consult`, `/cdo`, `/delivery`, `/ops`, `/tech`
-- checked-in `/knowledge audit|consistency|conflicts|distill|brain|proposals|approve|reject|ownership|learn`
-- persona-configured shared dispatcher that reuses retrieval grounding plus compact role prompts
+- checked-in slash-agent registry for `/generalist`, `/planner`, `/company-brain`
+- `/knowledge *` is now an explicit fail-closed command family (`ROUTING_NO_MATCH`) and is no longer a registered agent inventory
+- core-configured shared dispatcher that reuses retrieval grounding plus compact role prompts
 - image-bearing slash requests that first use the Nano Banana-oriented adapter, then pass compact structured image context into the text model only when needed
 - explicit capability contracts for registered agents
 - self-check script plus maintainable capability/checklist documents for chain governance
@@ -178,21 +178,23 @@ What now exists in current code:
   - `/Users/seanhan/Documents/Playground/src/agent-registry.mjs`
   - `/Users/seanhan/Documents/Playground/src/agent-dispatcher.mjs`
 - Role:
-  - define checked-in agent IDs, slash commands, knowledge subcommands, role prompts, and output contracts
-  - keep one checked-in registered-agent family resolver for slash command and persona-style owner mentions, so `/cmo` / `consult agent` / `把這輪改交給 /cmo` 類 phrasing reuse the same agent truth instead of each caller keeping a local hard-coded map
+  - define checked-in core agent IDs, slash commands, role prompts, and output contracts
+  - keep one checked-in registered-agent family resolver for slash command and embedded slash mentions (for example `把這輪改交給 /planner`) so caller modules do not maintain local maps
+  - resolver no longer includes persona-style mention matching; checked-in matching surface is slash-first only (direct slash + embedded slash)
   - expose minimum capability contracts for governance and self-check
-  - dispatch `/ceo`, `/product`, `/prd`, `/cmo`, `/consult`, `/cdo`, `/delivery`, `/ops`, `/tech`, `/generalist`, and `/knowledge *` before generic lane fallback
-  - reuse retrieval grounding and compact workflow checkpoints for persona answers
+  - dispatch `/generalist`, `/planner`, and `/company-brain` before generic lane fallback
+  - reject `/knowledge *` as unsupported slash family with fail-closed `ROUTING_NO_MATCH`
+  - reuse retrieval grounding and compact workflow checkpoints for core-agent answers
   - when direct text-model credentials are absent, call the dedicated `lobster-backend` OpenClaw MiniMax text path before dropping to extractive retrieval-only output
   - keep chat-facing slash-agent fallback/no-match replies on the shared natural-language reply boundary instead of exposing raw error envelopes
   - reject JSON-like success payloads at the registered-agent output boundary and summarize them into visible natural language while keeping machine-readable fields in runtime data
-  - when eval/runtime is already on the executive surface but the request carries one explicit persona owner, checked-in recovery/eval helpers now stay owner-aware and reuse the same registered-agent answer surface rather than falling back to a generic executive brief
+  - when eval/runtime is already on the executive surface but the request carries one explicit core owner slash, checked-in recovery/eval helpers stay owner-aware and reuse the same registered-agent answer surface rather than falling back to a generic executive brief
 - Input:
   - slash command text
   - retrieved snippets
   - optional compact structured image context
 - Output:
-  - persona-scoped answer with concise sources footer
+  - core-agent answer with concise sources footer
 - Dependencies:
   - `answer-service.mjs`
   - `agent-token-governance.mjs`
@@ -218,9 +220,9 @@ What now exists in current code:
   - let registered slash agents continue across multiple turns
   - allow planner-selected handoff between registered agents
   - let the planner attach a bounded work plan with at most three roles total (`1 primary + up to 2 supporting`)
-  - default simple single-intent requests to `/generalist`; only expand to multi-agent when one compound request needs distinct specialist roles
-  - run supporting-agent passes sequentially, then feed their compact outputs back into the primary agent for synthesis
-  - if any specialist pass fails, keep the turn fail-soft by falling back to `/generalist` for final synthesis
+  - default simple single-intent requests to `/generalist`
+  - unknown or unregistered specialist IDs are collapsed to `/generalist` by role-count trimming before execution
+  - when supporting roles are absent after trimming, planner stays on single-owner synthesis
   - support explicit exit from executive mode
   - derive task rules, success criteria, and lifecycle state on task initialization
   - collect evidence from execution, run verifier checks, and append reflection/improvement records

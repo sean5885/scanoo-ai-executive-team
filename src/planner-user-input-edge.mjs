@@ -218,15 +218,13 @@ function buildExecutiveBriefRecoveryResult(text = "") {
   const normalized = cleanText(text);
   const explicitAgentRequest = resolveRegisteredAgentFamilyRequest(text, {
     includeSlashCommand: true,
-    includePersonaMentions: true,
-    includeKnowledgeCommands: false,
   });
   const explicitAgentId = cleanText(explicitAgentRequest?.agent?.id || "");
   const signals = [];
   if (/各個 agent|各个 agent|一起看|協作|协作|統一|统一/u.test(normalized)) {
     signals.push("已辨識到多 agent 協作 / 收斂需求。");
   }
-  if (/\/ceo|高層|高层|決策|决策|拍板/u.test(normalized)) {
+  if (/\/planner|高層|高层|決策|决策|拍板/u.test(normalized)) {
     signals.push("這輪帶有明確的決策或高層協作訊號。");
   }
   if (explicitAgentId && explicitAgentId !== "generalist") {

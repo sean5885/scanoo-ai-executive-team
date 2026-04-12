@@ -82,7 +82,7 @@ function adaptEnvelopeForCurrentNormalizer(envelope = {}, executionData = {}) {
 }
 
 test("looksLikeExecutiveStart recognizes slash and executive-team requests", () => {
-  assert.equal(looksLikeExecutiveStart("/ceo 幫我整理決策"), true);
+  assert.equal(looksLikeExecutiveStart("/generalist 幫我整理決策"), true);
   assert.equal(looksLikeExecutiveStart("先請各個 agent 一起拆解這個任務"), true);
   assert.equal(looksLikeExecutiveStart("幫我看今天日程"), false);
 });
@@ -122,7 +122,7 @@ test("planExecutiveTurn defaults simple single-intent requests to generalist", a
   assert.deepEqual(decision.work_items, [
     {
       agent_id: "generalist",
-      task: "主責收斂這個任務：整理需求重點",
+      task: "整理需求",
       role: "primary",
       status: "pending",
     },
@@ -150,9 +150,9 @@ test("planExecutiveTurn uses minimal multi-agent roles for compound distinct-spe
 
   assert.equal(decision.primary_agent_id, "generalist");
   assert.equal(decision.next_agent_id, "generalist");
-  assert.deepEqual(decision.supporting_agent_ids, ["cmo", "tech"]);
-  assert.deepEqual(decision.work_items.map((item) => item.agent_id), ["generalist", "cmo", "tech"]);
-  assert.equal(decision.work_items.length, 3);
+  assert.deepEqual(decision.supporting_agent_ids, []);
+  assert.deepEqual(decision.work_items.map((item) => item.agent_id), ["generalist"]);
+  assert.equal(decision.work_items.length, 1);
 });
 
 test("planExecutiveTurn keeps the same role set for repeated identical compound requests", async () => {
@@ -201,8 +201,8 @@ test("planExecutiveTurn keeps the same role set for repeated identical compound 
     },
   });
 
-  assert.deepEqual(first.supporting_agent_ids, ["cmo", "tech"]);
-  assert.deepEqual(second.supporting_agent_ids, ["cmo", "tech"]);
+  assert.deepEqual(first.supporting_agent_ids, []);
+  assert.deepEqual(second.supporting_agent_ids, []);
   assert.deepEqual(
     first.work_items.map((item) => item.agent_id),
     second.work_items.map((item) => item.agent_id),
@@ -233,14 +233,10 @@ test("planExecutiveTurn refreshes why when hardening overrides stale role explan
   });
 
   assert.equal(decision.primary_agent_id, "generalist");
-  assert.deepEqual(decision.supporting_agent_ids, ["cmo", "tech"]);
+  assert.deepEqual(decision.supporting_agent_ids, []);
   assert.match(decision.reason || "", /\/generalist/);
-  assert.match(decision.reason || "", /\/cmo/);
-  assert.match(decision.reason || "", /\/tech/);
   assert.doesNotMatch(decision.reason || "", /\/consult|\/product|\/ops/);
   assert.match(decision.why || "", /\/generalist/);
-  assert.match(decision.why || "", /\/cmo/);
-  assert.match(decision.why || "", /\/tech/);
   assert.doesNotMatch(decision.why || "", /\/consult|\/product|\/ops/);
 });
 
@@ -758,31 +754,31 @@ test("planUserInputAction hardens runtime-and-list preset back to single-step ru
 test("planExecutiveTurn accepts injected planner requester", async () => {
   resetPlannerRuntimeContext();
   const decision = await planExecutiveTurn({
-    text: "把這輪改交給 /cmo",
+    text: "把這輪改交給 /generalist",
     activeTask: null,
     async requester() {
       return JSON.stringify({
         action: "start",
-        objective: "改由 /cmo 處理",
-        primary_agent_id: "cmo",
-        next_agent_id: "cmo",
+        objective: "改由 /generalist 處理",
+        primary_agent_id: "generalist",
+        next_agent_id: "generalist",
         supporting_agent_ids: ["consult"],
         reason: "測試注入 planner",
         pending_questions: [],
         work_items: [
-          { agent_id: "cmo", task: "主責整理", role: "primary" },
+          { agent_id: "generalist", task: "主責整理", role: "primary" },
           { agent_id: "consult", task: "補充比較", role: "supporting" },
         ],
       });
     },
   });
 
-  assert.equal(decision.primary_agent_id, "cmo");
-  assert.equal(decision.next_agent_id, "cmo");
+  assert.equal(decision.primary_agent_id, "generalist");
+  assert.equal(decision.next_agent_id, "generalist");
   assert.deepEqual(decision.supporting_agent_ids, []);
   assert.equal(decision.work_items.length, 1);
-  assert.equal(decision.work_items[0].agent_id, "cmo");
-  assert.match(decision.why || "", /\/cmo/);
+  assert.equal(decision.work_items[0].agent_id, "generalist");
+  assert.match(decision.why || "", /\/generalist/);
   assert.equal(typeof decision.alternative?.summary, "string");
 });
 
@@ -5779,8 +5775,8 @@ test("runPlannerToolFlow keeps learning actions on doc lane instead of fallback 
 
   assert.equal(result.selected_action, "update_learning_state");
   assert.equal(result.synthetic_agent_hint?.status, "ok");
-  assert.equal(result.synthetic_agent_hint?.agent, "doc_agent");
-  assert.equal(result.synthetic_agent_hint?.action, "doc_answer");
+  assert.equal(result.synthetic_agent_hint?.agent, "company_brain_agent");
+  assert.equal(result.synthetic_agent_hint?.action, "company_brain_read");
 });
 
 test("runPlannerMultiStep dispatches steps in order and returns last trace id", async () => {

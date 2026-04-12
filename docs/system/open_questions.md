@@ -56,6 +56,10 @@ Thread C is now closed in checked-in code:
   - Evidence:
     - `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`
     - `/Users/seanhan/Documents/Playground/src/http-idempotency-store.mjs`
+- legacy docs still reference pre-refactor persona/knowledge slash inventory even though runtime registry is now core-only (`/generalist`, `/planner`, `/company-brain`).
+  - Evidence:
+    - `/Users/seanhan/Documents/Playground/docs/system/Lobster AI Executive System Audit Report v1.md`
+    - `/Users/seanhan/Documents/Playground/docs/system/usage_layer_eval_schema.md`
 
 ## Minimal Closure Order
 
