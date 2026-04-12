@@ -121,6 +121,7 @@ This file explains which directories are part of the current runtime, which are 
 - `/Users/seanhan/Documents/Playground/src/lark-plugin-dispatch-adapter.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs`
 - `/Users/seanhan/Documents/Playground/src/executive-planner.mjs`
+- `/Users/seanhan/Documents/Playground/src/retry-context-pack.mjs`
 - `/Users/seanhan/Documents/Playground/src/planner-ingress-contract.mjs`
 - `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
 - `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`
@@ -131,6 +132,7 @@ This file explains which directories are part of the current runtime, which are 
 - Current truth:
   - the checked-in official plugin ingress first lands on `/Users/seanhan/Documents/Playground/src/lark-plugin-dispatch-adapter.mjs`
   - `/answer` still exists as a direct ingress surface, but `LARK_DIRECT_INGRESS_PRIMARY_ENABLED=false` keeps it marked as non-primary
+  - planner working-memory continuation now also uses `retry-context-pack.mjs` as a bounded internal helper for retry/resume context tagging; the helper does not expose a new public route or response contract
 
 ### Skill Runtime And Telemetry Spec
 

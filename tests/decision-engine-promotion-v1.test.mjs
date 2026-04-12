@@ -522,6 +522,38 @@ test("advisor=retry with full retry gate conditions applies promotion", () => {
   assert.equal(decision.promotion_reason_codes.includes("retry_gate_passed"), true);
 });
 
+test("degraded retry context blocks retry promotion", () => {
+  const decision = evaluateDecisionEnginePromotion(buildRetryPromotionInput({
+    readiness: {
+      is_ready: true,
+      blocking_reason_codes: [],
+      missing_slots: [],
+      required_slots: ["doc_id"],
+      unresolved_slots: ["doc_id"],
+      slot_state: [],
+      invalid_artifacts: [],
+      blocked_dependencies: [],
+      owner_ready: true,
+      recovery_ready: true,
+      recommended_action: "retry",
+    },
+    task_plan: {
+      task_id: "task-1",
+      plan_id: "plan-1",
+      plan_status: "active",
+      current_step_id: "step-1",
+      task_phase: "executing",
+      malformed_input: false,
+    },
+  }));
+
+  assert.equal(decision.promotion_applied, false);
+  assert.equal(decision.promoted_action, null);
+  assert.equal(decision.retry_blocked, true);
+  assert.equal(decision.retry_blocked_reason?.includes("no_context"), true);
+  assert.equal(decision.promotion_reason_codes.includes("retry_context_degraded"), true);
+});
+
 test("advisor=reroute with explicit owner mismatch and healthy baseline applies promotion", () => {
   const decision = evaluateDecisionEnginePromotion(buildReroutePromotionInput());
 

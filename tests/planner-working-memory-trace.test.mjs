@@ -109,6 +109,25 @@ test("task trace shows retry diff when retry count increments", () => {
   assert.equal(trace.diff.includes("retry_count: 1 -> 2"), true);
 });
 
+test("task trace exposes retry context hints from ctx payload markers", () => {
+  const trace = buildPlannerTaskTraceDiagnostics({
+    memoryStage: "runPlannerToolFlow_router_decision",
+    memorySnapshot: {
+      task_id: "task-retry-context-001",
+      __retry_mode: "degraded",
+      __retry_degraded_reason: ["no_context"],
+      __resumable_step: "search_company_brain_docs",
+    },
+  });
+
+  assert.equal(trace.retry_context?.mode, "degraded");
+  assert.deepEqual(trace.retry_context?.degraded_reason, ["no_context"]);
+  assert.equal(trace.retry_context?.resumable_step, "search_company_brain_docs");
+  assert.equal(trace.snapshot?.retry_context?.mode, "degraded");
+  assert.equal(trace.diff.includes("retry_context.mode: degraded"), true);
+  assert.match(trace.text || "", /retry_context: mode=degraded/);
+});
+
 test("task trace exposes agent handoff changes", () => {
   const trace = buildPlannerTaskTraceDiagnostics({
     memoryStage: "runPlannerToolFlow_router_decision",

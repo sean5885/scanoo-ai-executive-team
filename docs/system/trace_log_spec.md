@@ -219,6 +219,8 @@ All minimum trace/log events should align around these fields:
       - `decision_promotion.reroute_target`
       - `decision_promotion.reroute_reason`
       - `decision_promotion.reroute_source`
+      - `decision_promotion.retry_blocked`
+      - `decision_promotion.retry_blocked_reason`
       - `decision_promotion_summary`
       - `promotion_policy.allowed_actions`
       - `promotion_policy.rollback_disabled_actions`
@@ -232,6 +234,9 @@ All minimum trace/log events should align around these fields:
       - `decision_scoreboard_summary`
       - `highest_maturity_actions`
       - `rollback_disabled_actions`
+      - `retry_context.mode`
+      - `retry_context.degraded_reason`
+      - `retry_context.resumable_step`
       - `ask_user_gate.truly_missing_slots`
       - `ask_user_gate.blocked_reason_codes`
       - `ask_user_gate.promotion_allowed`
@@ -246,6 +251,7 @@ All minimum trace/log events should align around these fields:
       - `usage_layer.owner_selection_feels_consistent`
       - `usage_layer.slot_suppressed_ask`
       - `usage_layer.retry_context_applied`
+      - `usage_layer.retry_context_quality`
       - `usage_layer.response_continuity_score`
       - `usage_layer.usage_issue_codes`
       - `usage_layer_summary`
@@ -255,7 +261,7 @@ All minimum trace/log events should align around these fields:
         - `ineffective_threshold=3`
       - scoreboard aggregation source is existing decision promotion observability only (advisor alignment + decision promotion + promotion audit + rollback safety + control surface); it is not a second state source
       - scoreboard maturity output is deterministic `high|medium|low` with fixed thresholds; no probabilistic/statistical layer
-      - promoted `retry` traces additionally expose deterministic gate outcomes through reason codes (`retry_not_worthy`, `retry_readiness_not_ready`, `retry_invalid_artifact`, `retry_blocked_dependency`, `retry_budget_exhausted`, etc.)
+      - promoted `retry` traces additionally expose deterministic gate outcomes through reason codes (`retry_not_worthy`, `retry_readiness_not_ready`, `retry_invalid_artifact`, `retry_blocked_dependency`, `retry_budget_exhausted`, `retry_context_degraded`, etc.)
       - promoted `reroute` traces additionally expose deterministic gate outcomes through reason codes (`reroute_signals_missing`, `reroute_missing_slot_priority`, `reroute_invalid_artifact`, `reroute_blocked_dependency`, `reroute_recovery_conflict`, `reroute_health_signal_missing|not_ready`, `reroute_target_unverified`, etc.)
       - promoted `ask_user` traces now expose recalibration gate outcomes through reason codes (`ask_user_no_truly_missing_slot`, `ask_user_resume_action_available`, `ask_user_slot_suppressed`, `ask_user_waiting_user_slots_filled`, `ask_user_continuation_ready`, `ask_user_slot_input_malformed`, `ask_user_rollback_disabled`)
       - rollback safety v1 is deterministic and fail-closed:
@@ -268,7 +274,7 @@ All minimum trace/log events should align around these fields:
         - else the last step with a valid `outcome`
         - else the last step in plan order
   - alignment contract:
-    - trace output is derived from existing `memory_snapshot`, `task_phase_transition`, `agent_handoff`, `retry_attempt`, and execution-plan observability (`plan_id`, `plan_status`, `current_step`, `step_transition`, `plan_invalidated`, `failure_class`, `recovery_policy`, `recovery_action`, `recovery_attempt_count`, `rollback_target_step_id`, `skipped_step_ids`, `artifact_id`, `artifact_type`, `validity_status`, `produced_by_step_id`, `affected_downstream_steps`, `dependency_type`, `artifact_superseded`, `dependency_blocked_step`, `readiness`, `blocking_reason_codes`, `missing_slots`, `invalid_artifacts`, `blocked_dependencies`, `owner_ready`, `recovery_ready`, `recommended_action`, `outcome_status`, `outcome_confidence`, `outcome_evidence`, `artifact_quality`, `retry_worthiness`, `user_visible_completeness`, `advisor`, `advisor_based_on_summary`, `advisor_alignment`, `advisor_alignment_summary`, `advisor_vs_actual`, `decision_promotion`, `decision_promotion_summary`, `ask_user_gate`, `ask_user_blocked_reason`, `ask_user_recalibrated`, `ask_user_recalibration_summary`, `promotion_policy`, `promotion_policy_summary`, `promotion_audit`, `promotion_audit_summary`, `decision_scoreboard`, `decision_scoreboard_summary`, `highest_maturity_actions`, `rollback_disabled_actions`, `usage_layer`, `usage_layer_summary`, `resumed_from_waiting_user`, `resumed_from_retry`)
+    - trace output is derived from existing `memory_snapshot`, `task_phase_transition`, `agent_handoff`, `retry_attempt`, and execution-plan observability (`plan_id`, `plan_status`, `current_step`, `step_transition`, `plan_invalidated`, `failure_class`, `recovery_policy`, `recovery_action`, `recovery_attempt_count`, `rollback_target_step_id`, `skipped_step_ids`, `artifact_id`, `artifact_type`, `validity_status`, `produced_by_step_id`, `affected_downstream_steps`, `dependency_type`, `artifact_superseded`, `dependency_blocked_step`, `readiness`, `blocking_reason_codes`, `missing_slots`, `invalid_artifacts`, `blocked_dependencies`, `owner_ready`, `recovery_ready`, `recommended_action`, `outcome_status`, `outcome_confidence`, `outcome_evidence`, `artifact_quality`, `retry_worthiness`, `user_visible_completeness`, `advisor`, `advisor_based_on_summary`, `advisor_alignment`, `advisor_alignment_summary`, `advisor_vs_actual`, `decision_promotion`, `decision_promotion_summary`, `retry_context`, `ask_user_gate`, `ask_user_blocked_reason`, `ask_user_recalibrated`, `ask_user_recalibration_summary`, `promotion_policy`, `promotion_policy_summary`, `promotion_audit`, `promotion_audit_summary`, `decision_scoreboard`, `decision_scoreboard_summary`, `highest_maturity_actions`, `rollback_disabled_actions`, `usage_layer`, `usage_layer_summary`, `resumed_from_waiting_user`, `resumed_from_retry`)
     - it is a diagnostics formatter layer, not an independent state source
 - skill-backed `tool_execution` logs now also expose:
   - `skill_bridge`
