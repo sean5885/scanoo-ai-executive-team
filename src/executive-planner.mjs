@@ -5513,6 +5513,9 @@ function resolvePlannerWorkingMemoryContinuation({
     && waitingUserSlotCoverage.required_slots.length > 0
     && waitingUserSlotCoverage.malformed_input !== true
     && waitingUserSlotCoverage.has_any_truly_missing_required_slot !== true;
+  if (waitingUserRequiredSlotsFilled) {
+    ctx.__force_resume_after_slot_fill = true;
+  }
   const effectiveUnresolvedSlots = waitingUserRequiredSlotsFilled
     ? []
     : unresolvedSlots;
@@ -6142,6 +6145,7 @@ function resolvePlannerWorkingMemoryContinuation({
         pending_slots: [],
       };
       observability.resumed_from_waiting_user = true;
+      ctx.__slot_fill_resumed = true;
       observability.plan_id = waitingResumePlanAction?.plan_id || observability.plan_id;
       observability.plan_status = waitingResumePlanAction?.plan_status || observability.plan_status;
       observability.current_step = waitingResumePlanAction?.current_step_id || observability.current_step;
@@ -6258,6 +6262,9 @@ function resolvePlannerWorkingMemoryContinuation({
         pending_slots: [],
       };
       observability.resumed_from_waiting_user = taskPhase === "waiting_user";
+      if (taskPhase === "waiting_user") {
+        ctx.__slot_fill_resumed = true;
+      }
       if (waitingResumePlanAction?.action && suppressionAction === waitingResumePlanAction.action) {
         observability.plan_id = waitingResumePlanAction.plan_id || observability.plan_id;
         observability.plan_status = waitingResumePlanAction.plan_status || observability.plan_status;
@@ -11420,30 +11427,4 @@ export async function planExecutiveTurn({
     sessionKey,
   });
   return blockedDecision;
-}
-// --- continuation fail-closed ---
-const isLikelyContinuation =
-  !!ctx?.last_intent &&
-  (
-    ctx?.user_input_delta ||
-    ctx?.waiting_user ||
-    ctx?.__retry_mode === 'resume'
-  );
-
-if (isLikelyContinuation && plannerDecision === 'new_task') {
-  plannerDecision = 'resume_previous_task';
-  ctx.__forced_continuation = true;
-}
-// --- slot fill must resume (fail-closed) ---
-if (
-  ctx?.waiting_user &&
-  Array.isArray(ctx?.required_slots) &&
-  ctx.required_slots.every(k => ctx?.slots?.[k] != null)
-) {
-  ctx.__force_resume_after_slot_fill = true;
-}
-
-if (ctx?.__force_resume_after_slot_fill) {
-  plannerDecision = 'resume_previous_task';
-  ctx.__slot_fill_resumed = true;
 }
