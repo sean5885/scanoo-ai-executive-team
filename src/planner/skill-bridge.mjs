@@ -25,6 +25,29 @@ const VALID_SKILL_PROMOTION_STAGES = Object.freeze([
   SKILL_PROMOTION_STAGE_PLANNER_VISIBLE,
 ]);
 
+const WRITE_ACTIONS = Object.freeze([
+  "send_message",
+  "update_doc",
+  "create_task",
+  "write_memory",
+  "update_record",
+]);
+
+const READ_ONLY_SKILLS = Object.freeze([
+  "search_and_summarize",
+  "document_summarize",
+  "search_company_brain_docs",
+  "official_read_document",
+]);
+
+function isWriteAction(action = "") {
+  return WRITE_ACTIONS.includes(cleanText(action));
+}
+
+function isReadOnlySkill(skillName = "") {
+  return READ_ONLY_SKILLS.includes(cleanText(skillName));
+}
+
 function normalizeStringList(items = []) {
   if (!Array.isArray(items)) {
     return [];
@@ -775,6 +798,31 @@ export async function runPlannerSkillBridge({
   // === tool loop 注入（V1）===
   try {
     if (plan && plan.action && context) {
+      const selectedSkill = cleanText(
+        context?.selected_skill
+        || context?.skill_name
+        || plan?.skill_name
+        || plan?.selected_skill
+        || ""
+      );
+      const plannedAction = cleanText(
+        plan?.action
+        || plan?.tool_action
+        || context?.action
+        || context?.tool_action
+        || ""
+      );
+
+      if (isReadOnlySkill(selectedSkill) && isWriteAction(plannedAction)) {
+        return {
+          ok: false,
+          error: "read_only_skill_cannot_execute_write_action",
+          blocked: true,
+          skill: selectedSkill,
+          action: plannedAction,
+        };
+      }
+
       return await runToolLoop({ plan, context, max_steps: 3 });
     }
   } catch (e) {}
