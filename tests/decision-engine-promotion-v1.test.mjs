@@ -103,6 +103,9 @@ function buildPromotionInput(overrides = {}) {
       recovery_policy: "ask_user",
       recovery_action: "ask_user",
       recovery_attempt_count: 0,
+      retry_budget_max: 2,
+      retry_budget_remaining: 2,
+      retry_budget_exhausted: false,
     },
     artifact: {
       artifact_id: "artifact-1",
@@ -118,6 +121,55 @@ function buildPromotionInput(overrides = {}) {
     evidence_complete: true,
     ...(overrides || {}),
   };
+}
+
+function buildRetryPromotionInput(overrides = {}) {
+  return buildPromotionInput({
+    advisor: {
+      recommended_next_action: "retry",
+      decision_reason_codes: ["retry_worthy", "outcome_partial"],
+      decision_confidence: "high",
+    },
+    advisor_alignment: {
+      advisor_action: "retry",
+      actual_action: "retry",
+      is_aligned: true,
+      alignment_type: "exact_match",
+      divergence_reason_codes: [],
+      promotion_candidate: true,
+      evaluator_version: "advisor_alignment_evaluator_v1",
+    },
+    readiness: {
+      is_ready: true,
+      blocking_reason_codes: [],
+      missing_slots: [],
+      invalid_artifacts: [],
+      blocked_dependencies: [],
+      owner_ready: true,
+      recovery_ready: true,
+      recommended_action: "retry",
+    },
+    outcome: {
+      outcome_status: "partial",
+      retry_worthiness: true,
+    },
+    recovery: {
+      recovery_policy: "retry_same_step",
+      recovery_action: "retry_same_step",
+      recovery_attempt_count: 1,
+      retry_allowed: true,
+      retry_budget_max: 3,
+      retry_budget_remaining: 2,
+      retry_budget_exhausted: false,
+    },
+    artifact: {
+      artifact_id: "artifact-1",
+      validity_status: "valid",
+      invalid_artifact_count: 0,
+      blocked_dependency_count: 0,
+    },
+    ...(overrides || {}),
+  });
 }
 
 function buildPromotionAuditRecordInput(overrides = {}) {
@@ -199,45 +251,16 @@ test("advisor=fail with full gate conditions applies promotion", () => {
   assert.equal(decision.safety_gate_passed, true);
 });
 
-test("advisor=retry never promotes even with exact alignment", () => {
-  const decision = evaluateDecisionEnginePromotion(buildPromotionInput({
-    advisor: {
-      recommended_next_action: "retry",
-      decision_reason_codes: ["retry_worthy"],
-    },
-    advisor_alignment: {
-      advisor_action: "retry",
-      actual_action: "retry",
-      is_aligned: true,
-      alignment_type: "exact_match",
-      divergence_reason_codes: [],
-      promotion_candidate: true,
-      evaluator_version: "advisor_alignment_evaluator_v1",
-    },
-    readiness: {
-      is_ready: true,
-      blocking_reason_codes: [],
-      missing_slots: [],
-      recommended_action: "retry",
-    },
-    outcome: {
-      outcome_status: "partial",
-      retry_worthiness: true,
-    },
-    recovery: {
-      recovery_policy: "retry_same_step",
-      recovery_action: "retry_same_step",
-      recovery_attempt_count: 1,
-    },
-  }));
+test("advisor=retry with full retry gate conditions applies promotion", () => {
+  const decision = evaluateDecisionEnginePromotion(buildRetryPromotionInput());
 
-  assert.equal(decision.promotion_applied, false);
-  assert.equal(decision.promoted_action, null);
-  assert.equal(decision.promotion_reason_codes.includes("unsupported_advisor_action"), true);
+  assert.equal(decision.promotion_applied, true);
+  assert.equal(decision.promoted_action, "retry");
+  assert.equal(decision.promotion_reason_codes.includes("retry_gate_passed"), true);
 });
 
-test("retry/reroute/rollback/skip stay advisory-only in v1 policy", () => {
-  const deniedActions = ["retry", "reroute", "rollback", "skip"];
+test("reroute/rollback/skip stay advisory-only in v1 policy", () => {
+  const deniedActions = ["reroute", "rollback", "skip"];
   for (const deniedAction of deniedActions) {
     const decision = evaluateDecisionEnginePromotion(buildPromotionInput({
       advisor: {
@@ -281,6 +304,19 @@ test("rollback-disabled action is blocked even when allow-list would allow it", 
     rollback_disabled_actions: ["ask_user"],
   });
   const decision = evaluateDecisionEnginePromotion(buildPromotionInput({
+    promotion_policy: policy,
+  }));
+
+  assert.equal(decision.promotion_applied, false);
+  assert.equal(decision.promoted_action, null);
+  assert.equal(decision.promotion_reason_codes.includes("promotion_disabled_by_rollback_flag"), true);
+});
+
+test("rollback flag blocks retry promotion", () => {
+  const policy = resolvePromotionControlSurface({
+    rollback_disabled_actions: ["retry"],
+  });
+  const decision = evaluateDecisionEnginePromotion(buildRetryPromotionInput({
     promotion_policy: policy,
   }));
 
@@ -338,6 +374,9 @@ test("promotion control surface v1 exposes required policy fields", () => {
   assert.equal(typeof policy.action_policy_map.ask_user?.rollback_disabled, "boolean");
   assert.equal(typeof policy.action_policy_map.ask_user?.requires_exact_match, "boolean");
   assert.equal(typeof policy.action_policy_map.ask_user?.requires_complete_evidence, "boolean");
+  assert.equal(typeof policy.action_policy_map.retry?.promotion_allowed, "boolean");
+  assert.equal(policy.action_policy_map.retry?.requires_retry_worthiness, true);
+  assert.equal(policy.action_policy_map.retry?.requires_no_blocking_readiness, true);
   assert.equal(typeof formatPromotionControlSurfaceSummary(policy), "string");
 });
 
@@ -425,6 +464,114 @@ test("conflicting readiness/outcome/recovery signals block promotion", () => {
 
   assert.equal(decision.promotion_applied, false);
   assert.equal(decision.promotion_reason_codes.includes("conflicting_signals"), true);
+});
+
+test("retry_worthiness=false blocks retry promotion", () => {
+  const decision = evaluateDecisionEnginePromotion(buildRetryPromotionInput({
+    outcome: {
+      outcome_status: "partial",
+      retry_worthiness: false,
+    },
+  }));
+
+  assert.equal(decision.promotion_applied, false);
+  assert.equal(decision.promoted_action, null);
+  assert.equal(decision.promotion_reason_codes.includes("retry_not_worthy"), true);
+});
+
+test("readiness blocked blocks retry promotion", () => {
+  const decision = evaluateDecisionEnginePromotion(buildRetryPromotionInput({
+    readiness: {
+      is_ready: false,
+      blocking_reason_codes: ["recovery_in_progress"],
+      missing_slots: [],
+      invalid_artifacts: [],
+      blocked_dependencies: [],
+      owner_ready: true,
+      recovery_ready: false,
+      recommended_action: "retry",
+    },
+  }));
+
+  assert.equal(decision.promotion_applied, false);
+  assert.equal(decision.promoted_action, null);
+  assert.equal(decision.promotion_reason_codes.includes("retry_readiness_not_ready"), true);
+});
+
+test("invalid artifact blocks retry promotion", () => {
+  const decision = evaluateDecisionEnginePromotion(buildRetryPromotionInput({
+    readiness: {
+      is_ready: true,
+      blocking_reason_codes: ["invalid_artifact"],
+      missing_slots: [],
+      invalid_artifacts: [{
+        artifact_id: "artifact-bad",
+        validity_status: "invalid",
+        blocked_step_id: "step-2",
+      }],
+      blocked_dependencies: [],
+      owner_ready: true,
+      recovery_ready: true,
+      recommended_action: "retry",
+    },
+    artifact: {
+      artifact_id: "artifact-bad",
+      validity_status: "invalid",
+      invalid_artifact_count: 1,
+      blocked_dependency_count: 0,
+    },
+  }));
+
+  assert.equal(decision.promotion_applied, false);
+  assert.equal(decision.promoted_action, null);
+  assert.equal(decision.promotion_reason_codes.includes("retry_invalid_artifact"), true);
+});
+
+test("blocked dependency blocks retry promotion", () => {
+  const decision = evaluateDecisionEnginePromotion(buildRetryPromotionInput({
+    readiness: {
+      is_ready: true,
+      blocking_reason_codes: ["blocked_dependency"],
+      missing_slots: [],
+      invalid_artifacts: [],
+      blocked_dependencies: [{
+        step_id: "step-0",
+        status: "failed",
+      }],
+      owner_ready: true,
+      recovery_ready: true,
+      recommended_action: "retry",
+    },
+    artifact: {
+      artifact_id: "artifact-1",
+      validity_status: "valid",
+      invalid_artifact_count: 0,
+      blocked_dependency_count: 1,
+      dependency_blocked_step: "step-0",
+    },
+  }));
+
+  assert.equal(decision.promotion_applied, false);
+  assert.equal(decision.promoted_action, null);
+  assert.equal(decision.promotion_reason_codes.includes("retry_blocked_dependency"), true);
+});
+
+test("retry budget exhausted blocks retry promotion", () => {
+  const decision = evaluateDecisionEnginePromotion(buildRetryPromotionInput({
+    recovery: {
+      recovery_policy: "retry_same_step",
+      recovery_action: "retry_same_step",
+      recovery_attempt_count: 3,
+      retry_allowed: true,
+      retry_budget_max: 3,
+      retry_budget_remaining: 0,
+      retry_budget_exhausted: true,
+    },
+  }));
+
+  assert.equal(decision.promotion_applied, false);
+  assert.equal(decision.promoted_action, null);
+  assert.equal(decision.promotion_reason_codes.includes("retry_budget_exhausted"), true);
 });
 
 test("promotion audit marks ask_user slot recovery as effective", () => {
@@ -569,6 +716,72 @@ test("promotion audit marks fail that blocks recoverable flow as ineffective", (
   assert.equal(auditRecord.promotion_effectiveness, "ineffective");
 });
 
+test("promotion audit marks retry that improves to success as effective", () => {
+  const retrySeed = buildRetryPromotionInput({
+    outcome: {
+      outcome_status: "failed",
+      retry_worthiness: true,
+    },
+  });
+  const auditRecord = buildDecisionPromotionAuditRecord({
+    promoted_action: "retry",
+    promotion_decision: {
+      promoted_action: "retry",
+      promotion_applied: true,
+      promotion_reason_codes: ["retry_gate_passed", "safety_gate_passed", "promotion_applied"],
+      promotion_confidence: "high",
+      safety_gate_passed: true,
+      promotion_version: DECISION_ENGINE_PROMOTION_VERSION,
+    },
+    advisor: retrySeed.advisor,
+    advisor_alignment: retrySeed.advisor_alignment,
+    readiness: retrySeed.readiness,
+    outcome: retrySeed.outcome,
+    recovery: retrySeed.recovery,
+    artifact: retrySeed.artifact,
+    task_plan: retrySeed.task_plan,
+    final_step_status: "completed",
+    outcome_status: "success",
+    user_visible_completeness: "complete",
+  });
+
+  assert.equal(auditRecord.promoted_action, "retry");
+  assert.equal(auditRecord.promotion_effectiveness, "effective");
+});
+
+test("promotion audit marks retry with no improvement as ineffective", () => {
+  const retrySeed = buildRetryPromotionInput({
+    outcome: {
+      outcome_status: "partial",
+      retry_worthiness: true,
+    },
+  });
+  const auditRecord = buildDecisionPromotionAuditRecord({
+    promoted_action: "retry",
+    promotion_decision: {
+      promoted_action: "retry",
+      promotion_applied: true,
+      promotion_reason_codes: ["retry_gate_passed", "safety_gate_passed", "promotion_applied"],
+      promotion_confidence: "medium",
+      safety_gate_passed: true,
+      promotion_version: DECISION_ENGINE_PROMOTION_VERSION,
+    },
+    advisor: retrySeed.advisor,
+    advisor_alignment: retrySeed.advisor_alignment,
+    readiness: retrySeed.readiness,
+    outcome: retrySeed.outcome,
+    recovery: retrySeed.recovery,
+    artifact: retrySeed.artifact,
+    task_plan: retrySeed.task_plan,
+    final_step_status: "running",
+    outcome_status: "partial",
+    user_visible_completeness: "partial",
+  });
+
+  assert.equal(auditRecord.promoted_action, "retry");
+  assert.equal(auditRecord.promotion_effectiveness, "ineffective");
+});
+
 test("consecutive ineffective promotions trigger rollback flag and future gate-off", () => {
   let promotionState = createDecisionPromotionAuditState();
   let lastSafetyResult = null;
@@ -594,6 +807,54 @@ test("consecutive ineffective promotions trigger rollback flag and future gate-o
   const rollbackGate = resolveDecisionPromotionRollbackGate({
     state: promotionState,
     promoted_action: "ask_user",
+    threshold: DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD,
+  });
+  assert.equal(rollbackGate.promotion_allowed, false);
+  assert.equal(rollbackGate.rollback_flag, true);
+});
+
+test("consecutive ineffective retry promotions trigger rollback flag deterministically", () => {
+  let promotionState = createDecisionPromotionAuditState();
+  let lastSafetyResult = null;
+  for (let index = 0; index < DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD; index += 1) {
+    const retrySeed = buildRetryPromotionInput();
+    const auditRecord = buildDecisionPromotionAuditRecord({
+      audit_id: `audit-retry-${index + 1}`,
+      promoted_action: "retry",
+      promotion_decision: {
+        promoted_action: "retry",
+        promotion_applied: true,
+        promotion_reason_codes: ["retry_gate_passed", "safety_gate_passed", "promotion_applied"],
+        promotion_confidence: "medium",
+        safety_gate_passed: true,
+        promotion_version: DECISION_ENGINE_PROMOTION_VERSION,
+      },
+      advisor: retrySeed.advisor,
+      advisor_alignment: retrySeed.advisor_alignment,
+      readiness: retrySeed.readiness,
+      outcome: retrySeed.outcome,
+      recovery: retrySeed.recovery,
+      artifact: retrySeed.artifact,
+      task_plan: retrySeed.task_plan,
+      final_step_status: "running",
+      outcome_status: "partial",
+      user_visible_completeness: "partial",
+    });
+    lastSafetyResult = applyDecisionPromotionAuditSafety({
+      state: promotionState,
+      audit_record: auditRecord,
+      threshold: DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD,
+    });
+    promotionState = lastSafetyResult.next_state;
+  }
+
+  assert.ok(lastSafetyResult);
+  assert.equal(lastSafetyResult.audit_record.rollback_flag, true);
+  assert.equal(lastSafetyResult.next_state.actions.retry.promotion_disabled, true);
+  assert.equal(lastSafetyResult.next_state.actions.retry.consecutive_ineffective, DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD);
+  const rollbackGate = resolveDecisionPromotionRollbackGate({
+    state: promotionState,
+    promoted_action: "retry",
     threshold: DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD,
   });
   assert.equal(rollbackGate.promotion_allowed, false);
@@ -732,7 +993,7 @@ test("trace diagnostics expose promotion applied and blocked outcomes", () => {
   assert.equal(appliedTrace.diff.some((line) => line.startsWith("promotion_policy.ineffective_threshold:")), true);
   assert.equal(appliedTrace.diff.some((line) => line.startsWith("promotion_policy_summary:")), true);
   assert.equal(appliedTrace.snapshot.decision_promotion?.promotion_applied, true);
-  assert.deepEqual(appliedTrace.snapshot.promotion_policy?.allowed_actions, ["ask_user", "fail"]);
+  assert.deepEqual(appliedTrace.snapshot.promotion_policy?.allowed_actions, ["ask_user", "retry", "fail"]);
   assert.equal(appliedTrace.snapshot.promotion_audit?.promotion_effectiveness, "effective");
   assert.equal(appliedTrace.event_alignment.decision_promotion, true);
   assert.equal(appliedTrace.event_alignment.promotion_policy, true);
@@ -747,6 +1008,91 @@ test("trace diagnostics expose promotion applied and blocked outcomes", () => {
   assert.equal(blockedTrace.diff.includes("promotion_audit.rollback_flag: true"), true);
   assert.equal(blockedTrace.event_alignment.decision_promotion_reason_codes, true);
   assert.equal(blockedTrace.event_alignment.promotion_audit_rollback_flag, true);
+});
+
+test("trace diagnostics expose retry promotion decisions and gate block reasons", () => {
+  const promotionPolicy = resolvePromotionControlSurface();
+  const retryAppliedTrace = buildPlannerTaskTraceDiagnostics({
+    memoryStage: "runPlannerToolFlow_router_decision",
+    memorySnapshot: {
+      task_id: "task-retry-promotion-applied",
+      task_phase: "retrying",
+      task_status: "failed",
+      current_owner_agent: "doc_agent",
+    },
+    observability: {
+      decision_promotion: {
+        promoted_action: "retry",
+        promotion_applied: true,
+        promotion_reason_codes: ["retry_gate_passed", "safety_gate_passed", "promotion_applied"],
+        promotion_confidence: "high",
+        safety_gate_passed: true,
+        promotion_version: DECISION_ENGINE_PROMOTION_VERSION,
+      },
+      decision_promotion_summary: "promotion_applied=true action=retry safety_gate_passed=true confidence=high reasons=[retry_gate_passed, safety_gate_passed, promotion_applied] version=decision_engine_promotion_v1",
+      promotion_policy: promotionPolicy,
+      promotion_policy_summary: formatPromotionControlSurfaceSummary(promotionPolicy),
+      promotion_audit: {
+        promotion_audit_id: "audit-retry-applied-1",
+        promoted_action: "retry",
+        promotion_applied: true,
+        promotion_effectiveness: "effective",
+        rollback_flag: false,
+        audit_version: "decision_engine_promotion_audit_v1",
+        promotion_outcome: {
+          final_step_status: "completed",
+          outcome_status: "success",
+          user_visible_completeness: "complete",
+        },
+      },
+      promotion_audit_summary: "id=audit-retry-applied-1 action=retry applied=true effectiveness=effective rollback_flag=false final_step_status=completed outcome_status=success user_visible_completeness=complete reasons=[] version=decision_engine_promotion_audit_v1",
+    },
+  });
+  const retryBlockedTrace = buildPlannerTaskTraceDiagnostics({
+    memoryStage: "runPlannerToolFlow_router_decision",
+    memorySnapshot: {
+      task_id: "task-retry-promotion-blocked",
+      task_phase: "executing",
+      task_status: "running",
+      current_owner_agent: "doc_agent",
+    },
+    observability: {
+      decision_promotion: {
+        promoted_action: null,
+        promotion_applied: false,
+        promotion_reason_codes: ["retry_budget_exhausted"],
+        promotion_confidence: "low",
+        safety_gate_passed: false,
+        promotion_version: DECISION_ENGINE_PROMOTION_VERSION,
+      },
+      decision_promotion_summary: "promotion_applied=false action=none safety_gate_passed=false confidence=low reasons=[retry_budget_exhausted] version=decision_engine_promotion_v1",
+      promotion_policy: promotionPolicy,
+      promotion_policy_summary: formatPromotionControlSurfaceSummary(promotionPolicy),
+      promotion_audit: {
+        promotion_audit_id: "audit-retry-blocked-1",
+        promoted_action: "retry",
+        promotion_applied: true,
+        promotion_effectiveness: "ineffective",
+        rollback_flag: false,
+        audit_version: "decision_engine_promotion_audit_v1",
+        promotion_outcome: {
+          final_step_status: "failed",
+          outcome_status: "failed",
+          user_visible_completeness: "none",
+        },
+      },
+      promotion_audit_summary: "id=audit-retry-blocked-1 action=retry applied=true effectiveness=ineffective rollback_flag=false final_step_status=failed outcome_status=failed user_visible_completeness=none reasons=[] version=decision_engine_promotion_audit_v1",
+    },
+  });
+
+  assert.equal(retryAppliedTrace.diff.includes("decision_promotion.promoted_action: retry"), true);
+  assert.equal(retryAppliedTrace.diff.includes("decision_promotion.promotion_applied: true"), true);
+  assert.equal(retryAppliedTrace.diff.includes("promotion_audit.promotion_effectiveness: effective"), true);
+  assert.equal(retryAppliedTrace.snapshot.promotion_audit?.promoted_action, "retry");
+  assert.equal(retryBlockedTrace.diff.includes("decision_promotion.promotion_applied: false"), true);
+  assert.equal(retryBlockedTrace.diff.some((line) => line.startsWith("decision_promotion.promotion_reason_codes:")), true);
+  assert.equal(retryBlockedTrace.snapshot.decision_promotion?.promotion_reason_codes?.includes("retry_budget_exhausted"), true);
+  assert.equal(retryBlockedTrace.event_alignment.decision_promotion_reason_codes, true);
 });
 
 test("promotion diagnostics do not break existing fail-closed boundary", async () => {

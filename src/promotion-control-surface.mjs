@@ -13,6 +13,7 @@ export const PROMOTION_CONTROL_SURFACE_ALL_ACTIONS = Object.freeze([
 ]);
 export const PROMOTION_CONTROL_SURFACE_ALLOWED_ACTIONS = Object.freeze([
   "ask_user",
+  "retry",
   "fail",
 ]);
 export const PROMOTION_CONTROL_SURFACE_DENIED_ACTIONS = Object.freeze(
@@ -25,17 +26,40 @@ export const PROMOTION_CONTROL_SURFACE_POLICY_REASON_CODES = Object.freeze([
   "policy_rollback_disabled",
   "policy_requires_exact_match",
   "policy_requires_complete_evidence",
+  "policy_requires_retry_worthiness",
+  "policy_requires_no_blocking_readiness",
   "policy_malformed_fail_closed",
 ]);
 
 const ACTION_NOTES = Object.freeze({
   proceed: "advisory_only_v1",
   ask_user: "allowed_v1_low_risk_fail_soft",
-  retry: "advisory_only_v1",
+  retry: "allowed_v1_conditional_retry",
   reroute: "advisory_only_v1",
   rollback: "advisory_only_v1",
   skip: "advisory_only_v1",
   fail: "allowed_v1_fail_closed_boundary",
+});
+
+const ACTION_POLICY_REQUIREMENTS = Object.freeze({
+  ask_user: Object.freeze({
+    requires_exact_match: true,
+    requires_complete_evidence: true,
+    requires_retry_worthiness: false,
+    requires_no_blocking_readiness: false,
+  }),
+  retry: Object.freeze({
+    requires_exact_match: true,
+    requires_complete_evidence: true,
+    requires_retry_worthiness: true,
+    requires_no_blocking_readiness: true,
+  }),
+  fail: Object.freeze({
+    requires_exact_match: true,
+    requires_complete_evidence: true,
+    requires_retry_worthiness: false,
+    requires_no_blocking_readiness: false,
+  }),
 });
 
 function toObject(value = null) {
@@ -190,6 +214,9 @@ function resolveActionPolicyEntry({
   const promotionAllowed = actionName
     ? allowedByList && !rollbackDisabled && !policyFailClosed
     : false;
+  const requirementTemplate = actionName
+    ? (ACTION_POLICY_REQUIREMENTS[actionName] || null)
+    : null;
   const reason = policyFailClosed
     ? "policy_malformed_fail_closed"
     : rollbackDisabled
@@ -201,8 +228,10 @@ function resolveActionPolicyEntry({
     action_name: actionName,
     promotion_allowed: promotionAllowed,
     rollback_disabled: rollbackDisabled,
-    requires_exact_match: allowedByList,
-    requires_complete_evidence: allowedByList,
+    requires_exact_match: allowedByList && requirementTemplate?.requires_exact_match === true,
+    requires_complete_evidence: allowedByList && requirementTemplate?.requires_complete_evidence === true,
+    requires_retry_worthiness: allowedByList && requirementTemplate?.requires_retry_worthiness === true,
+    requires_no_blocking_readiness: allowedByList && requirementTemplate?.requires_no_blocking_readiness === true,
     reason,
     notes: ACTION_NOTES[actionName] || "advisory_only_v1",
   };

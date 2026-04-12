@@ -224,9 +224,10 @@ All minimum trace/log events should align around these fields:
       - `promotion_audit.rollback_flag`
       - `promotion_audit_summary`
       - v1 allow/deny/threshold truth comes from centralized promotion control surface:
-        - `allowed_actions=ask_user|fail`
-        - `denied_actions=proceed|retry|reroute|rollback|skip`
+        - `allowed_actions=ask_user|retry|fail`
+        - `denied_actions=proceed|reroute|rollback|skip`
         - `ineffective_threshold=3`
+      - promoted `retry` traces additionally expose deterministic gate outcomes through reason codes (`retry_not_worthy`, `retry_readiness_not_ready`, `retry_invalid_artifact`, `retry_blocked_dependency`, `retry_budget_exhausted`, etc.)
       - rollback safety v1 is deterministic and fail-closed:
         - threshold is read from `promotion_policy.ineffective_threshold` (`N=3` in v1)
         - triggered action is demoted to advisory-only for future promotion attempts

@@ -4687,6 +4687,8 @@ function applyStepDecisionAdvisorObservability({
   observability = null,
   currentPlanStep = null,
   taskId = null,
+  retryPolicy = null,
+  retryCount = 0,
 } = {}) {
   if (!observability || typeof observability !== "object" || Array.isArray(observability)) {
     return;
@@ -4723,6 +4725,15 @@ function applyStepDecisionAdvisorObservability({
   const invalidArtifacts = Array.isArray(observability.invalid_artifacts)
     ? observability.invalid_artifacts
     : [];
+  const normalizedRetryCount = Number.isFinite(Number(retryCount))
+    ? Math.max(0, Number(retryCount))
+    : 0;
+  const retryBudgetMax = Number.isFinite(Number(retryPolicy?.max_retries))
+    ? Math.max(0, Number(retryPolicy.max_retries))
+    : null;
+  const retryBudgetRemaining = retryBudgetMax !== null
+    ? Math.max(0, retryBudgetMax - normalizedRetryCount)
+    : null;
   const advisorDecision = adviseStepNextAction({
     readiness: normalizedReadiness,
     outcome: {
@@ -4741,6 +4752,11 @@ function applyStepDecisionAdvisorObservability({
         : 0,
       rollback_target_step_id: cleanText(observability.rollback_target_step_id || "") || null,
       retry_allowed: normalizedStep?.retryable !== false,
+      retry_budget_max: retryBudgetMax,
+      retry_budget_remaining: retryBudgetRemaining,
+      retry_budget_exhausted: retryBudgetRemaining !== null
+        ? retryBudgetRemaining <= 0
+        : false,
       skip_allowed: cleanText(observability.recovery_action || "") === "skip_step"
         || cleanText(observability.recovery_policy || "") === "skip_step"
         || isNonCriticalExecutionPlanStep(normalizedStep),
@@ -5719,6 +5735,8 @@ function resolvePlannerWorkingMemoryContinuation({
     observability,
     currentPlanStep,
     taskId,
+    retryPolicy,
+    retryCount,
   });
   const promotionAuditState = getPlannerPromotionAuditState({ sessionKey });
   const rollbackDisabledActions = listDecisionPromotionRollbackDisabledActions({
@@ -5756,7 +5774,7 @@ function resolvePlannerWorkingMemoryContinuation({
   });
   if (
     promotionDecision?.promotion_applied === true
-    && (promotionCandidateAction === "ask_user" || promotionCandidateAction === "fail")
+    && (promotionCandidateAction === "ask_user" || promotionCandidateAction === "retry" || promotionCandidateAction === "fail")
     && promotionRollbackGate.promotion_allowed !== true
   ) {
     const gatedPromotionDecision = {
@@ -5775,7 +5793,7 @@ function resolvePlannerWorkingMemoryContinuation({
     promotionDecision = gatedPromotionDecision;
   }
   const promotedAction = cleanText(promotionDecision?.promoted_action || "");
-  if (promotionDecision?.promotion_applied === true && (promotedAction === "ask_user" || promotedAction === "fail")) {
+  if (promotionDecision?.promotion_applied === true && (promotedAction === "ask_user" || promotedAction === "retry" || promotedAction === "fail")) {
     routingLocked = true;
     selectedAction = "";
     if (promotedAction === "ask_user") {
@@ -5793,6 +5811,36 @@ function resolvePlannerWorkingMemoryContinuation({
       };
       if (!cleanText(stopError || "")) {
         stopError = resolvePlannerExecutionReadinessPrimaryReason(executionReadiness) || "missing_slot";
+      }
+    } else if (promotedAction === "retry") {
+      const retryAction = cleanText(currentPlanStep?.step?.intended_action || "");
+      observability.recovery_policy = "retry_same_step";
+      observability.recovery_action = "retry_same_step";
+      observability.recovery_attempt_count = retryCount + 1;
+      if (retryAction && canUseWorkingMemoryAction(retryAction, { text: userIntent, semantics })) {
+        selectedAction = retryAction;
+        reason = "decision_engine_promotion_retry";
+        routingReason = reason;
+        observability.task_phase_transition = `${taskPhase}->retrying`;
+        observability.task_status_transition = `${taskStatus}->failed`;
+        observability.retry_attempt = {
+          task_id: taskId,
+          from: retryCount,
+          retry_count: retryCount + 1,
+          max_retries: retryPolicy.max_retries,
+          strategy: retryPolicy.strategy,
+          mode: "same_step",
+        };
+        observability.resumed_from_retry = true;
+      } else {
+        reason = "decision_engine_promotion_retry_fail_closed";
+        routingReason = reason;
+        observability.recovery_action = "failed";
+        observability.task_phase_transition = `${taskPhase}->failed`;
+        observability.task_status_transition = `${taskStatus}->failed`;
+        if (!cleanText(stopError || "")) {
+          stopError = resolvePlannerExecutionReadinessPrimaryReason(executionReadiness) || "business_error";
+        }
       }
     } else if (promotedAction === "fail") {
       reason = "decision_engine_promotion_fail";
