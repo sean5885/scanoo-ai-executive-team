@@ -149,9 +149,19 @@ Current public `/answer` path:
    - the same state also feeds a deterministic `advisor alignment evaluator` v1 (`advisor_action`, `actual_action`, `is_aligned`, `alignment_type`, `divergence_reason_codes`, `promotion_candidate`, `evaluator_version`) plus `advisor_alignment_summary`; malformed/missing inputs fail closed as `alignment_type=unknown`
    - the same advisor/alignment evidence then feeds `decision-engine-promotion` v1 gate:
      - promotion policy truth is read from centralized control surface (`/Users/seanhan/Documents/Playground/src/promotion-control-surface.mjs`)
-     - v1 control surface policy: `allowed_actions=ask_user|retry|fail`, `denied_actions=proceed|reroute|rollback|skip`, `ineffective_threshold=3`
+     - v1 control surface policy: `allowed_actions=ask_user|retry|reroute|fail`, `denied_actions=proceed|rollback|skip`, `ineffective_threshold=3`
      - if the action is currently flagged in `rollback_disabled_actions`, promotion stays blocked even when it appears in the allow-list
      - promoted `retry` also requires deterministic retry-only gate pass (`retry_worthiness=true`, `outcome_status!=failed`, `readiness.is_ready=true`, no invalid artifact / blocked dependency, and retry budget available)
+     - promoted `reroute` is bounded and fail-closed:
+       - `advisor.recommended_next_action=reroute`
+       - `advisor_alignment.promotion_candidate=true` and `alignment_type=exact_match`
+       - evidence complete
+       - explicit `owner_mismatch` or `capability_gap` signal
+       - no `missing_slot` ask-user-priority signal
+       - no `invalid_artifact` / `blocked_dependency` conflict
+       - no recovery conflict (`rollback_to_step` / `failed` / hard-fail / exhausted retry budget)
+       - reroute health baseline must exist and be non-low for `ask_user|retry|fail`; otherwise fail-closed
+       - planner apply stage must verify one deterministic reroute target; unverifiable/ambiguous target fails closed
      - override is applied only when all promotion prerequisites pass; otherwise the planner keeps existing routing/recovery authority and emits blocked diagnostics
 5. planner reads and tool results remain internal runtime state
 6. `user-response-normalizer.mjs` converts the planner envelope into the public response shape:

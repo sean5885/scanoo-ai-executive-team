@@ -172,6 +172,91 @@ function buildRetryPromotionInput(overrides = {}) {
   });
 }
 
+function buildHealthyRerouteScoreboard(overrides = {}) {
+  const actions = {
+    ask_user: { maturity_signal: "medium" },
+    retry: { maturity_signal: "medium" },
+    fail: { maturity_signal: "medium" },
+    reroute: { maturity_signal: "low" },
+    ...(overrides?.actions || {}),
+  };
+  return {
+    actions: Object.entries(actions).map(([actionName, config]) => ({
+      action_name: actionName,
+      maturity_signal: config?.maturity_signal || "low",
+    })),
+  };
+}
+
+function buildReroutePromotionInput(overrides = {}) {
+  const decisionScoreboard = buildHealthyRerouteScoreboard();
+  return buildPromotionInput({
+    advisor: {
+      recommended_next_action: "reroute",
+      decision_reason_codes: ["owner_mismatch", "capability_gap", "outcome_partial"],
+      decision_confidence: "high",
+    },
+    advisor_alignment: {
+      advisor_action: "reroute",
+      actual_action: "reroute",
+      is_aligned: true,
+      alignment_type: "exact_match",
+      divergence_reason_codes: [],
+      promotion_candidate: true,
+      evaluator_version: "advisor_alignment_evaluator_v1",
+    },
+    readiness: {
+      is_ready: false,
+      blocking_reason_codes: ["owner_mismatch"],
+      missing_slots: [],
+      invalid_artifacts: [],
+      blocked_dependencies: [],
+      owner_ready: false,
+      recovery_ready: true,
+      recommended_action: "reroute",
+    },
+    outcome: {
+      outcome_status: "partial",
+      retry_worthiness: false,
+    },
+    recovery: {
+      recovery_policy: "reroute_owner",
+      recovery_action: "reroute_owner",
+      recovery_attempt_count: 1,
+      retry_allowed: true,
+      retry_budget_max: 3,
+      retry_budget_remaining: 2,
+      retry_budget_exhausted: false,
+    },
+    artifact: {
+      artifact_id: "artifact-1",
+      validity_status: "valid",
+      invalid_artifact_count: 0,
+      blocked_dependency_count: 0,
+    },
+    task_plan: {
+      task_id: "task-1",
+      plan_id: "plan-1",
+      plan_status: "active",
+      current_step_id: "step-1",
+      current_step_status: "running",
+      failure_class: "capability_gap",
+      step_retryable: true,
+      malformed_input: false,
+    },
+    decision_scoreboard: decisionScoreboard,
+    reroute_context: {
+      previous_owner_agent: "doc_agent",
+      current_owner_agent: "runtime_agent",
+      reroute_target: "runtime_agent",
+      reroute_reason: "owner_mismatch",
+      reroute_source: "promoted_decision_engine_v1",
+      reroute_target_verified: true,
+    },
+    ...(overrides || {}),
+  });
+}
+
 function buildPromotionAuditRecordInput(overrides = {}) {
   const promotionSeed = buildPromotionInput();
   return {
@@ -259,8 +344,69 @@ test("advisor=retry with full retry gate conditions applies promotion", () => {
   assert.equal(decision.promotion_reason_codes.includes("retry_gate_passed"), true);
 });
 
-test("reroute/rollback/skip stay advisory-only in v1 policy", () => {
-  const deniedActions = ["reroute", "rollback", "skip"];
+test("advisor=reroute with explicit owner mismatch and healthy baseline applies promotion", () => {
+  const decision = evaluateDecisionEnginePromotion(buildReroutePromotionInput());
+
+  assert.equal(decision.promotion_applied, true);
+  assert.equal(decision.promoted_action, "reroute");
+  assert.equal(decision.safety_gate_passed, true);
+  assert.equal(decision.reroute_target, "runtime_agent");
+  assert.equal(decision.reroute_reason, "owner_mismatch");
+  assert.equal(decision.reroute_source, "promoted_decision_engine_v1");
+  assert.equal(decision.current_owner_agent, "runtime_agent");
+});
+
+test("advisor=reroute with explicit capability gap and unique target applies promotion", () => {
+  const decision = evaluateDecisionEnginePromotion(buildReroutePromotionInput({
+    readiness: {
+      is_ready: false,
+      blocking_reason_codes: [],
+      missing_slots: [],
+      invalid_artifacts: [],
+      blocked_dependencies: [],
+      owner_ready: true,
+      recovery_ready: true,
+      recommended_action: "reroute",
+    },
+    advisor: {
+      recommended_next_action: "reroute",
+      decision_reason_codes: ["capability_gap", "outcome_partial"],
+      decision_confidence: "high",
+    },
+    reroute_context: {
+      previous_owner_agent: "doc_agent",
+      current_owner_agent: "runtime_agent",
+      reroute_target: "runtime_agent",
+      reroute_reason: "capability_gap",
+      reroute_source: "promoted_decision_engine_v1",
+      reroute_target_verified: true,
+    },
+  }));
+
+  assert.equal(decision.promotion_applied, true);
+  assert.equal(decision.promoted_action, "reroute");
+  assert.equal(decision.reroute_reason, "capability_gap");
+});
+
+test("advisor=reroute blocks when target is ambiguous or unverifiable", () => {
+  const decision = evaluateDecisionEnginePromotion(buildReroutePromotionInput({
+    reroute_context: {
+      previous_owner_agent: "doc_agent",
+      current_owner_agent: null,
+      reroute_target: null,
+      reroute_reason: "capability_gap",
+      reroute_source: "promoted_decision_engine_v1",
+      reroute_target_verified: false,
+    },
+  }));
+
+  assert.equal(decision.promotion_applied, false);
+  assert.equal(decision.promoted_action, null);
+  assert.equal(decision.promotion_reason_codes.includes("reroute_target_unverified"), true);
+});
+
+test("rollback/skip stay advisory-only in promotion policy", () => {
+  const deniedActions = ["rollback", "skip"];
   for (const deniedAction of deniedActions) {
     const decision = evaluateDecisionEnginePromotion(buildPromotionInput({
       advisor: {
@@ -325,6 +471,43 @@ test("rollback flag blocks retry promotion", () => {
   assert.equal(decision.promotion_reason_codes.includes("promotion_disabled_by_rollback_flag"), true);
 });
 
+test("rollback flag blocks reroute promotion", () => {
+  const policy = resolvePromotionControlSurface({
+    rollback_disabled_actions: ["reroute"],
+  });
+  const decision = evaluateDecisionEnginePromotion(buildReroutePromotionInput({
+    promotion_policy: policy,
+  }));
+
+  assert.equal(decision.promotion_applied, false);
+  assert.equal(decision.promoted_action, null);
+  assert.equal(decision.promotion_reason_codes.includes("promotion_disabled_by_rollback_flag"), true);
+});
+
+test("missing reroute health signal fails closed", () => {
+  const decision = evaluateDecisionEnginePromotion(buildReroutePromotionInput({
+    decision_scoreboard: null,
+  }));
+
+  assert.equal(decision.promotion_applied, false);
+  assert.equal(decision.promoted_action, null);
+  assert.equal(decision.promotion_reason_codes.includes("reroute_health_signal_missing"), true);
+});
+
+test("low-maturity baseline blocks reroute promotion", () => {
+  const decision = evaluateDecisionEnginePromotion(buildReroutePromotionInput({
+    decision_scoreboard: buildHealthyRerouteScoreboard({
+      actions: {
+        retry: { maturity_signal: "low" },
+      },
+    }),
+  }));
+
+  assert.equal(decision.promotion_applied, false);
+  assert.equal(decision.promoted_action, null);
+  assert.equal(decision.promotion_reason_codes.includes("reroute_health_signal_not_ready"), true);
+});
+
 test("promotion gate reads control surface policy instead of hardcoded allow-list", () => {
   const policy = resolveDecisionPromotionPolicy({
     promotion_policy: {
@@ -377,6 +560,13 @@ test("promotion control surface v1 exposes required policy fields", () => {
   assert.equal(typeof policy.action_policy_map.retry?.promotion_allowed, "boolean");
   assert.equal(policy.action_policy_map.retry?.requires_retry_worthiness, true);
   assert.equal(policy.action_policy_map.retry?.requires_no_blocking_readiness, true);
+  assert.equal(policy.action_policy_map.reroute?.promotion_allowed, true);
+  assert.equal(policy.action_policy_map.reroute?.requires_exact_match, true);
+  assert.equal(policy.action_policy_map.reroute?.requires_complete_evidence, true);
+  assert.equal(policy.action_policy_map.reroute?.requires_owner_mismatch_or_capability_gap, true);
+  assert.equal(policy.action_policy_map.reroute?.requires_no_blocking_dependency, true);
+  assert.equal(policy.action_policy_map.reroute?.requires_no_invalid_artifact, true);
+  assert.equal(policy.action_policy_map.reroute?.requires_recovery_safe, true);
   assert.equal(typeof formatPromotionControlSurfaceSummary(policy), "string");
 });
 
@@ -464,6 +654,95 @@ test("conflicting readiness/outcome/recovery signals block promotion", () => {
 
   assert.equal(decision.promotion_applied, false);
   assert.equal(decision.promotion_reason_codes.includes("conflicting_signals"), true);
+});
+
+test("missing_slot priority blocks reroute promotion", () => {
+  const decision = evaluateDecisionEnginePromotion(buildReroutePromotionInput({
+    readiness: {
+      is_ready: false,
+      blocking_reason_codes: ["owner_mismatch", "missing_slot"],
+      missing_slots: ["doc_id"],
+      invalid_artifacts: [],
+      blocked_dependencies: [],
+      owner_ready: false,
+      recovery_ready: true,
+      recommended_action: "reroute",
+    },
+  }));
+
+  assert.equal(decision.promotion_applied, false);
+  assert.equal(decision.promotion_reason_codes.includes("reroute_missing_slot_priority"), true);
+});
+
+test("invalid_artifact blocks reroute promotion", () => {
+  const decision = evaluateDecisionEnginePromotion(buildReroutePromotionInput({
+    readiness: {
+      is_ready: false,
+      blocking_reason_codes: ["owner_mismatch", "invalid_artifact"],
+      missing_slots: [],
+      invalid_artifacts: [{
+        artifact_id: "artifact-bad",
+        validity_status: "invalid",
+        blocked_step_id: "step-2",
+      }],
+      blocked_dependencies: [],
+      owner_ready: false,
+      recovery_ready: true,
+      recommended_action: "reroute",
+    },
+    artifact: {
+      artifact_id: "artifact-bad",
+      validity_status: "invalid",
+      invalid_artifact_count: 1,
+      blocked_dependency_count: 0,
+    },
+  }));
+
+  assert.equal(decision.promotion_applied, false);
+  assert.equal(decision.promotion_reason_codes.includes("reroute_invalid_artifact"), true);
+});
+
+test("blocked_dependency blocks reroute promotion", () => {
+  const decision = evaluateDecisionEnginePromotion(buildReroutePromotionInput({
+    readiness: {
+      is_ready: false,
+      blocking_reason_codes: ["owner_mismatch", "blocked_dependency"],
+      missing_slots: [],
+      invalid_artifacts: [],
+      blocked_dependencies: [{
+        step_id: "step-0",
+        status: "failed",
+      }],
+      owner_ready: false,
+      recovery_ready: true,
+      recommended_action: "reroute",
+    },
+    artifact: {
+      artifact_id: "artifact-1",
+      validity_status: "valid",
+      invalid_artifact_count: 0,
+      blocked_dependency_count: 1,
+      dependency_blocked_step: "step-0",
+    },
+  }));
+
+  assert.equal(decision.promotion_applied, false);
+  assert.equal(decision.promotion_reason_codes.includes("reroute_blocked_dependency"), true);
+});
+
+test("malformed reroute input fails closed", () => {
+  const decision = evaluateDecisionEnginePromotion(buildReroutePromotionInput({
+    readiness: "malformed_readiness_payload",
+    reroute_context: "malformed_reroute_context",
+  }));
+
+  assert.equal(decision.promotion_applied, false);
+  assert.equal(decision.promoted_action, null);
+  assert.equal(
+    decision.promotion_reason_codes.includes("malformed_or_unknown_signals")
+      || decision.promotion_reason_codes.includes("reroute_signals_missing"),
+    true,
+  );
 });
 
 test("retry_worthiness=false blocks retry promotion", () => {
@@ -782,6 +1061,81 @@ test("promotion audit marks retry with no improvement as ineffective", () => {
   assert.equal(auditRecord.promotion_effectiveness, "ineffective");
 });
 
+test("promotion audit marks reroute as effective when outcome improves", () => {
+  const rerouteSeed = buildReroutePromotionInput();
+  const auditRecord = buildDecisionPromotionAuditRecord({
+    promoted_action: "reroute",
+    promotion_decision: {
+      promoted_action: "reroute",
+      promotion_applied: true,
+      promotion_reason_codes: ["reroute_gate_passed", "safety_gate_passed", "promotion_applied"],
+      promotion_confidence: "high",
+      safety_gate_passed: true,
+      reroute_target: "runtime_agent",
+      reroute_reason: "capability_gap",
+      reroute_source: "promoted_decision_engine_v1",
+      previous_owner_agent: "doc_agent",
+      current_owner_agent: "runtime_agent",
+      reroute_target_verified: true,
+      promotion_version: DECISION_ENGINE_PROMOTION_VERSION,
+    },
+    advisor: rerouteSeed.advisor,
+    advisor_alignment: rerouteSeed.advisor_alignment,
+    readiness: rerouteSeed.readiness,
+    outcome: {
+      outcome_status: "failed",
+      retry_worthiness: false,
+    },
+    recovery: rerouteSeed.recovery,
+    artifact: rerouteSeed.artifact,
+    task_plan: rerouteSeed.task_plan,
+    final_step_status: "completed",
+    outcome_status: "success",
+    user_visible_completeness: "complete",
+  });
+
+  assert.equal(auditRecord.promoted_action, "reroute");
+  assert.equal(auditRecord.promotion_effectiveness, "effective");
+});
+
+test("promotion audit marks reroute as ineffective when target is incorrect", () => {
+  const rerouteSeed = buildReroutePromotionInput();
+  const auditRecord = buildDecisionPromotionAuditRecord({
+    promoted_action: "reroute",
+    promotion_decision: {
+      promoted_action: "reroute",
+      promotion_applied: true,
+      promotion_reason_codes: ["reroute_gate_passed", "safety_gate_passed", "promotion_applied"],
+      promotion_confidence: "high",
+      safety_gate_passed: true,
+      reroute_target: "runtime_agent",
+      reroute_reason: "capability_gap",
+      reroute_source: "promoted_decision_engine_v1",
+      previous_owner_agent: "doc_agent",
+      current_owner_agent: "runtime_agent",
+      reroute_target_verified: false,
+      promotion_version: DECISION_ENGINE_PROMOTION_VERSION,
+    },
+    advisor: rerouteSeed.advisor,
+    advisor_alignment: rerouteSeed.advisor_alignment,
+    readiness: rerouteSeed.readiness,
+    outcome: {
+      outcome_status: "failed",
+      retry_worthiness: false,
+    },
+    recovery: rerouteSeed.recovery,
+    artifact: rerouteSeed.artifact,
+    task_plan: rerouteSeed.task_plan,
+    final_step_status: "failed",
+    outcome_status: "failed",
+    user_visible_completeness: "none",
+  });
+
+  assert.equal(auditRecord.promoted_action, "reroute");
+  assert.equal(auditRecord.promotion_effectiveness, "ineffective");
+  assert.equal(auditRecord.audit_reason_codes?.includes("reroute_target_incorrect"), true);
+});
+
 test("consecutive ineffective promotions trigger rollback flag and future gate-off", () => {
   let promotionState = createDecisionPromotionAuditState();
   let lastSafetyResult = null;
@@ -855,6 +1209,63 @@ test("consecutive ineffective retry promotions trigger rollback flag determinist
   const rollbackGate = resolveDecisionPromotionRollbackGate({
     state: promotionState,
     promoted_action: "retry",
+    threshold: DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD,
+  });
+  assert.equal(rollbackGate.promotion_allowed, false);
+  assert.equal(rollbackGate.rollback_flag, true);
+});
+
+test("consecutive ineffective reroute promotions trigger rollback flag deterministically", () => {
+  let promotionState = createDecisionPromotionAuditState();
+  let lastSafetyResult = null;
+  for (let index = 0; index < DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD; index += 1) {
+    const rerouteSeed = buildReroutePromotionInput();
+    const auditRecord = buildDecisionPromotionAuditRecord({
+      audit_id: `audit-reroute-${index + 1}`,
+      promoted_action: "reroute",
+      promotion_decision: {
+        promoted_action: "reroute",
+        promotion_applied: true,
+        promotion_reason_codes: ["reroute_gate_passed", "safety_gate_passed", "promotion_applied"],
+        promotion_confidence: "medium",
+        safety_gate_passed: true,
+        reroute_target: "runtime_agent",
+        reroute_reason: "capability_gap",
+        reroute_source: "promoted_decision_engine_v1",
+        previous_owner_agent: "doc_agent",
+        current_owner_agent: "runtime_agent",
+        reroute_target_verified: true,
+        promotion_version: DECISION_ENGINE_PROMOTION_VERSION,
+      },
+      advisor: rerouteSeed.advisor,
+      advisor_alignment: rerouteSeed.advisor_alignment,
+      readiness: rerouteSeed.readiness,
+      outcome: {
+        outcome_status: "failed",
+        retry_worthiness: false,
+      },
+      recovery: rerouteSeed.recovery,
+      artifact: rerouteSeed.artifact,
+      task_plan: rerouteSeed.task_plan,
+      final_step_status: "failed",
+      outcome_status: "failed",
+      user_visible_completeness: "none",
+    });
+    lastSafetyResult = applyDecisionPromotionAuditSafety({
+      state: promotionState,
+      audit_record: auditRecord,
+      threshold: DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD,
+    });
+    promotionState = lastSafetyResult.next_state;
+  }
+
+  assert.ok(lastSafetyResult);
+  assert.equal(lastSafetyResult.audit_record.rollback_flag, true);
+  assert.equal(lastSafetyResult.next_state.actions.reroute.promotion_disabled, true);
+  assert.equal(lastSafetyResult.next_state.actions.reroute.consecutive_ineffective, DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD);
+  const rollbackGate = resolveDecisionPromotionRollbackGate({
+    state: promotionState,
+    promoted_action: "reroute",
     threshold: DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD,
   });
   assert.equal(rollbackGate.promotion_allowed, false);
@@ -993,7 +1404,7 @@ test("trace diagnostics expose promotion applied and blocked outcomes", () => {
   assert.equal(appliedTrace.diff.some((line) => line.startsWith("promotion_policy.ineffective_threshold:")), true);
   assert.equal(appliedTrace.diff.some((line) => line.startsWith("promotion_policy_summary:")), true);
   assert.equal(appliedTrace.snapshot.decision_promotion?.promotion_applied, true);
-  assert.deepEqual(appliedTrace.snapshot.promotion_policy?.allowed_actions, ["ask_user", "retry", "fail"]);
+  assert.deepEqual(appliedTrace.snapshot.promotion_policy?.allowed_actions, ["ask_user", "retry", "reroute", "fail"]);
   assert.equal(appliedTrace.snapshot.promotion_audit?.promotion_effectiveness, "effective");
   assert.equal(appliedTrace.event_alignment.decision_promotion, true);
   assert.equal(appliedTrace.event_alignment.promotion_policy, true);
@@ -1093,6 +1504,63 @@ test("trace diagnostics expose retry promotion decisions and gate block reasons"
   assert.equal(retryBlockedTrace.diff.some((line) => line.startsWith("decision_promotion.promotion_reason_codes:")), true);
   assert.equal(retryBlockedTrace.snapshot.decision_promotion?.promotion_reason_codes?.includes("retry_budget_exhausted"), true);
   assert.equal(retryBlockedTrace.event_alignment.decision_promotion_reason_codes, true);
+});
+
+test("trace diagnostics expose reroute reason, target, and effectiveness", () => {
+  const promotionPolicy = resolvePromotionControlSurface();
+  const rerouteTrace = buildPlannerTaskTraceDiagnostics({
+    memoryStage: "runPlannerToolFlow_router_decision",
+    memorySnapshot: {
+      task_id: "task-reroute-promotion-applied",
+      task_phase: "retrying",
+      task_status: "failed",
+      current_owner_agent: "runtime_agent",
+      previous_owner_agent: "doc_agent",
+      handoff_reason: "capability_gap",
+    },
+    observability: {
+      decision_promotion: {
+        promoted_action: "reroute",
+        promotion_applied: true,
+        promotion_reason_codes: ["reroute_gate_passed", "safety_gate_passed", "promotion_applied"],
+        promotion_confidence: "high",
+        safety_gate_passed: true,
+        previous_owner_agent: "doc_agent",
+        current_owner_agent: "runtime_agent",
+        reroute_target: "runtime_agent",
+        reroute_reason: "capability_gap",
+        reroute_source: "promoted_decision_engine_v1",
+        reroute_target_verified: true,
+        promotion_version: DECISION_ENGINE_PROMOTION_VERSION,
+      },
+      decision_promotion_summary: "promotion_applied=true action=reroute previous_owner_agent=doc_agent current_owner_agent=runtime_agent reroute_target=runtime_agent reroute_reason=capability_gap reroute_source=promoted_decision_engine_v1 safety_gate_passed=true confidence=high reasons=[reroute_gate_passed, safety_gate_passed, promotion_applied] version=decision_engine_promotion_v1",
+      promotion_policy: promotionPolicy,
+      promotion_policy_summary: formatPromotionControlSurfaceSummary(promotionPolicy),
+      promotion_audit: {
+        promotion_audit_id: "audit-reroute-applied-1",
+        promoted_action: "reroute",
+        promotion_applied: true,
+        promotion_effectiveness: "effective",
+        rollback_flag: false,
+        audit_version: "decision_engine_promotion_audit_v1",
+        promotion_outcome: {
+          final_step_status: "completed",
+          outcome_status: "success",
+          user_visible_completeness: "complete",
+        },
+      },
+      promotion_audit_summary: "id=audit-reroute-applied-1 action=reroute applied=true previous_owner_agent=doc_agent current_owner_agent=runtime_agent reroute_target=runtime_agent reroute_reason=capability_gap reroute_source=promoted_decision_engine_v1 effectiveness=effective rollback_flag=false final_step_status=completed outcome_status=success user_visible_completeness=complete reasons=[] version=decision_engine_promotion_audit_v1",
+    },
+  });
+
+  assert.equal(rerouteTrace.diff.includes("decision_promotion.reroute_target: runtime_agent"), true);
+  assert.equal(rerouteTrace.diff.includes("decision_promotion.reroute_reason: capability_gap"), true);
+  assert.equal(rerouteTrace.snapshot.decision_promotion?.reroute_target, "runtime_agent");
+  assert.equal(rerouteTrace.snapshot.decision_promotion?.reroute_reason, "capability_gap");
+  assert.equal(rerouteTrace.snapshot.promotion_audit?.promotion_effectiveness, "effective");
+  assert.equal(rerouteTrace.event_alignment.decision_promotion_reroute_target, true);
+  assert.equal(rerouteTrace.event_alignment.decision_promotion_reroute_reason, true);
+  assert.equal(rerouteTrace.event_alignment.decision_promotion_reroute_source, true);
 });
 
 test("promotion diagnostics do not break existing fail-closed boundary", async () => {

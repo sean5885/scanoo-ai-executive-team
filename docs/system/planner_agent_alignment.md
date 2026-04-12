@@ -979,8 +979,8 @@ Observed routing/write signals now include:
 `decision-engine-promotion` now also writes a deterministic promotion audit / rollback safety v1 record into the same observability payload:
 
 - promotion policy authority is centralized in `/Users/seanhan/Documents/Playground/src/promotion-control-surface.mjs`:
-  - `allowed_actions=ask_user|retry|fail`
-  - `denied_actions=proceed|reroute|rollback|skip`
+  - `allowed_actions=ask_user|retry|reroute|fail`
+  - `denied_actions=proceed|rollback|skip`
   - `ineffective_threshold=3`
   - `rollback_disabled_actions` always has priority over allow-list (disabled wins)
 - promoted `retry` remains conditional-only and requires all of the following in gate evaluation:
@@ -989,6 +989,13 @@ Observed routing/write signals now include:
   - `readiness.is_ready=true` with no invalid artifact / blocked dependency blockers
   - retry budget is not exhausted
   - `retry` is not disabled by rollback safety (`rollback_disabled_actions`)
+- promoted `reroute` is also conditional-only and bounded:
+  - advisor recommends `reroute` and alignment is `promotion_candidate=true` with `alignment_type=exact_match`
+  - evidence complete
+  - explicit `owner_mismatch` or `capability_gap`
+  - no `missing_slot` ask-user-priority, no invalid artifact/dependency blockers, no hard-fail/recovery conflict
+  - reroute health baseline requires `ask_user|retry|fail` maturity to be non-low; missing/low signal fail-closes
+  - planner apply stage must verify one legal reroute target; ambiguous/unverified target fail-closes
 - per-step observability now includes:
   - `promotion_policy.allowed_actions`
   - `promotion_policy.rollback_disabled_actions`
@@ -1007,6 +1014,7 @@ Observed routing/write signals now include:
 - effectiveness scoring stays deterministic and fail-closed:
   - promoted `ask_user`: successful slot recovery path -> `effective`; stuck/no-response path -> `ineffective|unknown`
   - promoted `retry`: pre-retry failed/partial -> post-retry success => `effective`; no improvement or degraded outcome => `ineffective`
+  - promoted `reroute`: outcome improved / blocked-or-failed avoided / follow-up completed => `effective`; wrong target / no improvement / still blocked-or-failed => `ineffective`
   - promoted `fail`: unsafe path correctly blocked -> `effective`; recoverable path incorrectly blocked -> `ineffective`
   - malformed/conflicting audit payloads stay fail-closed and are excluded from ineffective streak counting
 - rollback safety gate reads centralized threshold v1 (`promotion_policy.ineffective_threshold`, currently `N=3`):

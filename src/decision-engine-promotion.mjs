@@ -41,6 +41,15 @@ export const DECISION_ENGINE_PROMOTION_REASON_CODES = Object.freeze([
   "retry_budget_exhausted",
   "retry_budget_unknown",
   "retry_gate_passed",
+  "reroute_signals_missing",
+  "reroute_missing_slot_priority",
+  "reroute_invalid_artifact",
+  "reroute_blocked_dependency",
+  "reroute_recovery_conflict",
+  "reroute_health_signal_missing",
+  "reroute_health_signal_not_ready",
+  "reroute_target_unverified",
+  "reroute_gate_passed",
   "safety_gate_passed",
   "promotion_applied",
 ]);
@@ -65,6 +74,17 @@ const RETRY_BLOCKING_REASONS = new Set([
   "owner_mismatch",
   "plan_invalidated",
   "malformed_plan_state",
+]);
+
+const REROUTE_CONFLICT_RECOVERY_ACTIONS = new Set([
+  "failed",
+  "rollback_to_step",
+]);
+
+const REROUTE_HEALTH_BASE_ACTIONS = Object.freeze([
+  "ask_user",
+  "retry",
+  "fail",
 ]);
 
 const PROMOTION_OUTCOME_STATUSES = new Set([
@@ -100,54 +120,37 @@ const PROMOTION_RECOVERABLE_ACTIONS = new Set([
   "skip",
 ]);
 
+function buildDefaultPromotionActionMetrics() {
+  return {
+    promotion_applied_count: 0,
+    exact_match_count: 0,
+    acceptable_divergence_count: 0,
+    hard_divergence_count: 0,
+    effective_count: 0,
+    ineffective_count: 0,
+    rollback_flag_count: 0,
+  };
+}
+
+function buildDefaultPromotionActionState() {
+  return {
+    consecutive_ineffective: 0,
+    promotion_disabled: false,
+    last_effectiveness: null,
+    last_audit_id: null,
+    metrics: buildDefaultPromotionActionMetrics(),
+  };
+}
+
 const DEFAULT_PROMOTION_AUDIT_STATE = Object.freeze({
-  actions: {
-    ask_user: {
-      consecutive_ineffective: 0,
-      promotion_disabled: false,
-      last_effectiveness: null,
-      last_audit_id: null,
-      metrics: {
-        promotion_applied_count: 0,
-        exact_match_count: 0,
-        acceptable_divergence_count: 0,
-        hard_divergence_count: 0,
-        effective_count: 0,
-        ineffective_count: 0,
-        rollback_flag_count: 0,
-      },
-    },
-    fail: {
-      consecutive_ineffective: 0,
-      promotion_disabled: false,
-      last_effectiveness: null,
-      last_audit_id: null,
-      metrics: {
-        promotion_applied_count: 0,
-        exact_match_count: 0,
-        acceptable_divergence_count: 0,
-        hard_divergence_count: 0,
-        effective_count: 0,
-        ineffective_count: 0,
-        rollback_flag_count: 0,
-      },
-    },
-    retry: {
-      consecutive_ineffective: 0,
-      promotion_disabled: false,
-      last_effectiveness: null,
-      last_audit_id: null,
-      metrics: {
-        promotion_applied_count: 0,
-        exact_match_count: 0,
-        acceptable_divergence_count: 0,
-        hard_divergence_count: 0,
-        effective_count: 0,
-        ineffective_count: 0,
-        rollback_flag_count: 0,
-      },
-    },
-  },
+  actions: Object.freeze(
+    Object.fromEntries(
+      DECISION_ENGINE_PROMOTABLE_ACTIONS.map((action) => [
+        action,
+        Object.freeze(buildDefaultPromotionActionState()),
+      ]),
+    ),
+  ),
 });
 
 let promotionAuditSequence = 0;
@@ -501,6 +504,128 @@ function evaluateRetrySafety({
   };
 }
 
+function evaluateRerouteHealthSignal({
+  decision_scoreboard = null,
+} = {}) {
+  const scoreboard = toObject(decision_scoreboard);
+  if (!scoreboard) {
+    return {
+      gatePassed: false,
+      reasonCode: "reroute_health_signal_missing",
+      maturity: {},
+    };
+  }
+  const entries = toArray(scoreboard.actions).filter((entry) => toObject(entry));
+  if (entries.length === 0) {
+    return {
+      gatePassed: false,
+      reasonCode: "reroute_health_signal_missing",
+      maturity: {},
+    };
+  }
+  const maturity = {};
+  for (const actionName of REROUTE_HEALTH_BASE_ACTIONS) {
+    const entry = entries.find((candidate) => cleanText(candidate?.action_name || "") === actionName) || null;
+    const maturitySignal = cleanText(entry?.maturity_signal || "");
+    maturity[actionName] = maturitySignal || "unknown";
+    if (!entry || !maturitySignal || maturitySignal === "low") {
+      return {
+        gatePassed: false,
+        reasonCode: "reroute_health_signal_not_ready",
+        maturity,
+      };
+    }
+  }
+  return {
+    gatePassed: true,
+    reasonCode: null,
+    maturity,
+  };
+}
+
+function evaluateRerouteSafety({
+  readiness = null,
+  recovery = null,
+  artifact = null,
+  task_plan = null,
+  advisor_reason_codes = [],
+  decision_scoreboard = null,
+} = {}) {
+  const readinessObject = toObject(readiness) || {};
+  const recoveryObject = toObject(recovery) || {};
+  const artifactObject = toObject(artifact) || {};
+  const taskPlanObject = toObject(task_plan) || {};
+  const blockingReasonCodes = uniqueStrings(readinessObject.blocking_reason_codes);
+  const missingSlots = uniqueStrings(readinessObject.missing_slots);
+  const advisorReasonCodes = uniqueStrings(advisor_reason_codes);
+  const invalidArtifacts = toArray(readinessObject.invalid_artifacts).filter((item) => toObject(item));
+  const blockedDependencies = toArray(readinessObject.blocked_dependencies).filter((item) => toObject(item));
+  const recoveryAction = cleanText(recoveryObject.recovery_action || recoveryObject.recovery_policy || "");
+  const taskFailureClass = cleanText(taskPlanObject.failure_class || "");
+
+  const hasOwnerMismatchSignal = blockingReasonCodes.includes("owner_mismatch")
+    || readinessObject.owner_ready === false
+    || advisorReasonCodes.includes("owner_mismatch");
+  const hasCapabilityGapSignal = taskFailureClass === "capability_gap"
+    || advisorReasonCodes.includes("capability_gap")
+    || recoveryAction === "reroute_owner";
+  const hasRerouteSignal = hasOwnerMismatchSignal || hasCapabilityGapSignal;
+
+  const hasMissingSlotPriority = missingSlots.length > 0
+    || blockingReasonCodes.includes("missing_slot");
+  const hasInvalidArtifact = invalidArtifacts.length > 0
+    || blockingReasonCodes.includes("invalid_artifact")
+    || cleanText(artifactObject.validity_status || "") === "invalid"
+    || Number(artifactObject.invalid_artifact_count || 0) > 0;
+  const hasBlockedDependency = blockedDependencies.length > 0
+    || blockingReasonCodes.includes("blocked_dependency")
+    || Number(artifactObject.blocked_dependency_count || 0) > 0
+    || Boolean(cleanText(artifactObject.dependency_blocked_step || ""));
+  const retryBudgetState = resolveRetryBudgetState(recoveryObject);
+  const hasRecoveryConflict = resolveHardFailClosedSignal({
+    readiness,
+    recovery,
+    task_plan: taskPlanObject,
+  })
+    || REROUTE_CONFLICT_RECOVERY_ACTIONS.has(recoveryAction)
+    || retryBudgetState.retry_budget_exhausted === true;
+  const healthSignal = evaluateRerouteHealthSignal({
+    decision_scoreboard,
+  });
+
+  const conflictingSignals = [];
+  if (!hasRerouteSignal) {
+    conflictingSignals.push("reroute_signals_missing");
+  }
+  if (hasMissingSlotPriority) {
+    conflictingSignals.push("reroute_missing_slot_priority");
+  }
+  if (hasInvalidArtifact) {
+    conflictingSignals.push("reroute_invalid_artifact");
+  }
+  if (hasBlockedDependency) {
+    conflictingSignals.push("reroute_blocked_dependency");
+  }
+  if (hasRecoveryConflict) {
+    conflictingSignals.push("reroute_recovery_conflict");
+  }
+  if (!healthSignal.gatePassed) {
+    conflictingSignals.push(healthSignal.reasonCode || "reroute_health_signal_missing");
+  }
+
+  return {
+    gatePassed: conflictingSignals.length === 0,
+    reasonCodes: uniqueStrings(conflictingSignals),
+    confidence: conflictingSignals.length === 0 ? "high" : "low",
+    rerouteReason: hasOwnerMismatchSignal
+      ? "owner_mismatch"
+      : hasCapabilityGapSignal
+        ? "capability_gap"
+        : null,
+    health_signal: healthSignal,
+  };
+}
+
 function evaluateAskUserSafety({
   readiness = null,
   outcome = null,
@@ -632,9 +757,12 @@ export function evaluateDecisionEnginePromotion({
   task_plan = null,
   evidence_complete = null,
   promotion_policy = null,
+  decision_scoreboard = null,
+  reroute_context = null,
 } = {}) {
   const advisorObject = toObject(advisor) || {};
   const alignment = toObject(advisor_alignment) || {};
+  const rerouteContext = toObject(reroute_context) || {};
   const advisorAction = normalizeAction(advisorObject.recommended_next_action);
   const promotionPolicy = resolveDecisionPromotionPolicy({
     promotion_policy,
@@ -728,6 +856,18 @@ export function evaluateDecisionEnginePromotion({
       recovery,
       artifact,
     });
+  } else if (advisorAction === "reroute" && actionPolicy?.promotion_allowed === true) {
+    actionSafety = evaluateRerouteSafety({
+      readiness,
+      recovery,
+      artifact,
+      task_plan,
+      advisor_reason_codes: advisorReasonCodes,
+      decision_scoreboard,
+    });
+  }
+  if (advisorAction === "reroute" && rerouteContext.reroute_target_verified === false) {
+    pushReason("reroute_target_unverified");
   }
   for (const reasonCode of actionSafety.reasonCodes) {
     pushReason(reasonCode);
@@ -738,9 +878,30 @@ export function evaluateDecisionEnginePromotion({
     if (advisorAction === "retry") {
       pushReason("retry_gate_passed");
     }
+    if (advisorAction === "reroute") {
+      pushReason("reroute_gate_passed");
+    }
     pushReason("safety_gate_passed");
     pushReason("promotion_applied");
   }
+
+  const rerouteTarget = cleanText(
+    rerouteContext.reroute_target
+    || rerouteContext.target_owner_agent
+    || "",
+  ) || null;
+  const previousOwnerAgent = cleanText(rerouteContext.previous_owner_agent || "") || null;
+  const currentOwnerAgent = cleanText(
+    rerouteContext.current_owner_agent
+    || rerouteTarget
+    || "",
+  ) || null;
+  const rerouteReason = cleanText(
+    rerouteContext.reroute_reason
+    || actionSafety.rerouteReason
+    || "",
+  ) || null;
+  const rerouteSource = cleanText(rerouteContext.reroute_source || "") || null;
 
   return {
     promoted_action: safetyGatePassed ? advisorAction : null,
@@ -750,6 +911,24 @@ export function evaluateDecisionEnginePromotion({
       ? actionSafety.confidence
       : "low",
     safety_gate_passed: safetyGatePassed,
+    reroute_target: safetyGatePassed && advisorAction === "reroute"
+      ? rerouteTarget
+      : null,
+    reroute_reason: safetyGatePassed && advisorAction === "reroute"
+      ? rerouteReason
+      : null,
+    reroute_source: safetyGatePassed && advisorAction === "reroute"
+      ? (rerouteSource || "promoted_decision_engine_v1")
+      : null,
+    reroute_target_verified: advisorAction === "reroute"
+      ? (rerouteContext.reroute_target_verified === true)
+      : null,
+    previous_owner_agent: safetyGatePassed && advisorAction === "reroute"
+      ? previousOwnerAgent
+      : null,
+    current_owner_agent: safetyGatePassed && advisorAction === "reroute"
+      ? currentOwnerAgent
+      : null,
     promotion_version: DECISION_ENGINE_PROMOTION_VERSION,
     promotion_policy_version: cleanText(promotionPolicy.promotion_policy_version || "") || null,
   };
@@ -762,11 +941,17 @@ export function formatDecisionPromotionSummary(promotionDecision = null) {
   const safetyGatePassed = normalized.safety_gate_passed === true;
   const confidence = cleanText(normalized.promotion_confidence || "") || "low";
   const reasonCodes = uniqueStrings(normalized.promotion_reason_codes);
+  const rerouteTarget = cleanText(normalized.reroute_target || "") || "none";
+  const rerouteReason = cleanText(normalized.reroute_reason || "") || "none";
+  const rerouteSource = cleanText(normalized.reroute_source || "") || "none";
+  const previousOwnerAgent = cleanText(normalized.previous_owner_agent || "") || "none";
+  const currentOwnerAgent = cleanText(normalized.current_owner_agent || "") || "none";
   const version = cleanText(normalized.promotion_version || "") || DECISION_ENGINE_PROMOTION_VERSION;
-  return `promotion_applied=${promotionApplied ? "true" : "false"} action=${promotedAction} safety_gate_passed=${safetyGatePassed ? "true" : "false"} confidence=${confidence} reasons=${reasonCodes.length > 0 ? `[${reasonCodes.join(", ")}]` : "[]"} version=${version}`;
+  return `promotion_applied=${promotionApplied ? "true" : "false"} action=${promotedAction} previous_owner_agent=${previousOwnerAgent} current_owner_agent=${currentOwnerAgent} reroute_target=${rerouteTarget} reroute_reason=${rerouteReason} reroute_source=${rerouteSource} safety_gate_passed=${safetyGatePassed ? "true" : "false"} confidence=${confidence} reasons=${reasonCodes.length > 0 ? `[${reasonCodes.join(", ")}]` : "[]"} version=${version}`;
 }
 
 function normalizeDecisionPromotionAuditContext({
+  promotion_decision = null,
   advisor = null,
   advisor_alignment = null,
   readiness = null,
@@ -775,6 +960,7 @@ function normalizeDecisionPromotionAuditContext({
   artifact = null,
   task_plan = null,
 } = {}) {
+  const promotionDecision = toObject(promotion_decision) || {};
   const advisorObject = toObject(advisor) || {};
   const alignmentObject = toObject(advisor_alignment) || {};
   const readinessSummary = toObject(readiness);
@@ -787,6 +973,14 @@ function normalizeDecisionPromotionAuditContext({
   const alignmentType = cleanText(alignmentObject.alignment_type || "") || null;
   const retryCase = advisorAction === "retry";
   const advisorAlignmentSummary = `advisor_action=${advisorAction || "none"} alignment_type=${alignmentType || "unknown"} promotion_candidate=${promotionCandidate ? "true" : "false"} retry_case=${retryCase ? "true" : "false"}`;
+  const rerouteTarget = cleanText(promotionDecision.reroute_target || "") || null;
+  const rerouteReason = cleanText(promotionDecision.reroute_reason || "") || null;
+  const rerouteSource = cleanText(promotionDecision.reroute_source || "") || null;
+  const previousOwnerAgent = cleanText(promotionDecision.previous_owner_agent || "") || null;
+  const currentOwnerAgent = cleanText(promotionDecision.current_owner_agent || "") || null;
+  const rerouteTargetVerified = typeof promotionDecision.reroute_target_verified === "boolean"
+    ? promotionDecision.reroute_target_verified
+    : null;
   return {
     advisor_action: advisorAction,
     alignment_type: alignmentType,
@@ -806,6 +1000,12 @@ function normalizeDecisionPromotionAuditContext({
     recovery_summary: recoverySummary || null,
     artifact_summary: artifactSummary || null,
     task_plan_summary: taskPlanSummary || null,
+    reroute_target: rerouteTarget,
+    reroute_reason: rerouteReason,
+    reroute_source: rerouteSource,
+    previous_owner_agent: previousOwnerAgent,
+    current_owner_agent: currentOwnerAgent,
+    reroute_target_verified: rerouteTargetVerified,
   };
 }
 
@@ -1005,6 +1205,65 @@ function resolveDecisionPromotionEffectiveness({
     };
   }
 
+  if (promotedAction === "reroute") {
+    const rerouteTargetVerified = context.reroute_target_verified;
+    if (rerouteTargetVerified === false) {
+      return {
+        promotion_effectiveness: "ineffective",
+        audit_fail_closed: false,
+        audit_reason_codes: ["reroute_target_incorrect"],
+        countable: true,
+      };
+    }
+    if (outcomeStatus === "success" || finalStepStatus === "completed") {
+      return {
+        promotion_effectiveness: "effective",
+        audit_fail_closed: false,
+        audit_reason_codes: ["reroute_outcome_success"],
+        countable: true,
+      };
+    }
+    if (previousRank !== null && nextRank !== null && nextRank > previousRank) {
+      return {
+        promotion_effectiveness: "effective",
+        audit_fail_closed: false,
+        audit_reason_codes: ["reroute_outcome_improved"],
+        countable: true,
+      };
+    }
+    if ((previousOutcomeStatus === "blocked" || previousOutcomeStatus === "failed")
+      && (outcomeStatus === "partial" || outcomeStatus === "success")) {
+      return {
+        promotion_effectiveness: "effective",
+        audit_fail_closed: false,
+        audit_reason_codes: ["reroute_avoided_blocked_or_failed"],
+        countable: true,
+      };
+    }
+    if (outcomeStatus === "blocked" || outcomeStatus === "failed" || finalStepStatus === "blocked" || finalStepStatus === "failed") {
+      return {
+        promotion_effectiveness: "ineffective",
+        audit_fail_closed: false,
+        audit_reason_codes: ["reroute_still_blocked_or_failed"],
+        countable: true,
+      };
+    }
+    if (previousRank !== null && nextRank !== null && nextRank <= previousRank) {
+      return {
+        promotion_effectiveness: "ineffective",
+        audit_fail_closed: false,
+        audit_reason_codes: ["reroute_no_improvement"],
+        countable: true,
+      };
+    }
+    return {
+      promotion_effectiveness: "ineffective",
+      audit_fail_closed: false,
+      audit_reason_codes: ["reroute_effectiveness_unknown"],
+      countable: true,
+    };
+  }
+
   if (promotedAction === "retry") {
     if (outcomeStatus === "success") {
       if (previousOutcomeStatus === "success") {
@@ -1160,12 +1419,16 @@ function applyPromotionAuditMetrics({
 export function createDecisionPromotionAuditState(state = null) {
   const normalizedState = toObject(state) || {};
   const actions = toObject(normalizedState.actions) || {};
+  const normalizedActions = {};
+  for (const actionName of DECISION_ENGINE_PROMOTABLE_ACTIONS) {
+    normalizedActions[actionName] = normalizePromotionActionState(
+      actions[actionName]
+      || DEFAULT_PROMOTION_AUDIT_STATE.actions[actionName]
+      || buildDefaultPromotionActionState(),
+    );
+  }
   return {
-    actions: {
-      ask_user: normalizePromotionActionState(actions.ask_user || DEFAULT_PROMOTION_AUDIT_STATE.actions.ask_user),
-      retry: normalizePromotionActionState(actions.retry || DEFAULT_PROMOTION_AUDIT_STATE.actions.retry),
-      fail: normalizePromotionActionState(actions.fail || DEFAULT_PROMOTION_AUDIT_STATE.actions.fail),
-    },
+    actions: normalizedActions,
   };
 }
 
@@ -1245,6 +1508,7 @@ export function buildDecisionPromotionAuditRecord({
   const promotionApplied = normalizedDecision.promotion_applied === true
     && Boolean(promotedAction);
   const context = normalizeDecisionPromotionAuditContext({
+    promotion_decision: normalizedDecision,
     advisor,
     advisor_alignment,
     readiness,
@@ -1364,11 +1628,17 @@ export function formatDecisionPromotionAuditSummary(promotionAudit = null) {
     ? cleanText(normalized.promotion_effectiveness || "")
     : "unknown";
   const rollbackFlag = normalized.rollback_flag === true;
+  const context = toObject(normalized.promotion_context) || {};
+  const rerouteTarget = cleanText(context.reroute_target || "") || "none";
+  const rerouteReason = cleanText(context.reroute_reason || "") || "none";
+  const rerouteSource = cleanText(context.reroute_source || "") || "none";
+  const previousOwnerAgent = cleanText(context.previous_owner_agent || "") || "none";
+  const currentOwnerAgent = cleanText(context.current_owner_agent || "") || "none";
   const outcome = toObject(normalized.promotion_outcome) || {};
   const finalStepStatus = normalizeFinalStepStatus(outcome.final_step_status || "") || "none";
   const outcomeStatus = normalizeOutcomeStatus(outcome.outcome_status || "") || "none";
   const userVisibleCompleteness = normalizeUserVisibleCompleteness(outcome.user_visible_completeness || "") || "none";
   const reasonCodes = uniqueStrings(normalized.audit_reason_codes);
   const version = cleanText(normalized.audit_version || "") || DECISION_ENGINE_PROMOTION_AUDIT_VERSION;
-  return `id=${auditId} action=${promotedAction} applied=${promotionApplied ? "true" : "false"} effectiveness=${promotionEffectiveness} rollback_flag=${rollbackFlag ? "true" : "false"} final_step_status=${finalStepStatus} outcome_status=${outcomeStatus} user_visible_completeness=${userVisibleCompleteness} reasons=${reasonCodes.length > 0 ? `[${reasonCodes.join(", ")}]` : "[]"} version=${version}`;
+  return `id=${auditId} action=${promotedAction} applied=${promotionApplied ? "true" : "false"} previous_owner_agent=${previousOwnerAgent} current_owner_agent=${currentOwnerAgent} reroute_target=${rerouteTarget} reroute_reason=${rerouteReason} reroute_source=${rerouteSource} effectiveness=${promotionEffectiveness} rollback_flag=${rollbackFlag ? "true" : "false"} final_step_status=${finalStepStatus} outcome_status=${outcomeStatus} user_visible_completeness=${userVisibleCompleteness} reasons=${reasonCodes.length > 0 ? `[${reasonCodes.join(", ")}]` : "[]"} version=${version}`;
 }

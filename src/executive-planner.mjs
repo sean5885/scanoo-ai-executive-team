@@ -4018,6 +4018,198 @@ function resolvePlannerWorkingMemoryRerouteAction({
   })) || "";
 }
 
+function listPlannerWorkingMemoryKnownOwnerAgents({
+  workingMemory = null,
+  currentPlanStep = null,
+} = {}) {
+  const owners = new Set();
+  const addOwner = (value = "") => {
+    const normalized = cleanText(value || "");
+    if (normalized) {
+      owners.add(normalized);
+    }
+  };
+  addOwner(workingMemory?.current_owner_agent);
+  addOwner(workingMemory?.last_selected_agent);
+  addOwner(currentPlanStep?.step?.owner_agent);
+  const planSteps = Array.isArray(currentPlanStep?.plan?.steps)
+    ? currentPlanStep.plan.steps
+    : Array.isArray(workingMemory?.execution_plan?.steps)
+      ? workingMemory.execution_plan.steps
+      : [];
+  for (const step of planSteps) {
+    addOwner(step?.owner_agent);
+  }
+  for (const ownerAgent of Object.keys(PLANNER_WORKING_MEMORY_AGENT_ACTION_HINTS)) {
+    addOwner(ownerAgent);
+  }
+  for (const ownerAgent of Object.values(PLANNER_WORKING_MEMORY_ACTION_OWNER_HINTS)) {
+    addOwner(ownerAgent);
+  }
+  return Array.from(owners);
+}
+
+function buildPromotedRerouteDecisionContext({
+  workingMemory = null,
+  currentPlanStep = null,
+  observability = null,
+  text = "",
+  semantics = null,
+} = {}) {
+  const currentOwnerAgent = cleanText(workingMemory?.current_owner_agent || "") || null;
+  const expectedOwnerAgent = cleanText(currentPlanStep?.step?.owner_agent || "") || null;
+  const ownerMismatch = Boolean(currentOwnerAgent && expectedOwnerAgent && currentOwnerAgent !== expectedOwnerAgent);
+  const capabilityGap = cleanText(observability?.failure_class || "") === "capability_gap";
+  const rerouteAction = resolvePlannerWorkingMemoryRerouteAction({
+    workingMemory,
+    text,
+    semantics,
+  });
+  const rerouteTarget = ownerMismatch
+    ? expectedOwnerAgent
+    : cleanText(PLANNER_WORKING_MEMORY_ACTION_OWNER_HINTS[rerouteAction] || "") || null;
+  const knownOwners = listPlannerWorkingMemoryKnownOwnerAgents({
+    workingMemory,
+    currentPlanStep,
+  });
+  const rerouteTargetVerified = Boolean(
+    rerouteTarget
+    && rerouteTarget !== currentOwnerAgent
+    && knownOwners.includes(rerouteTarget),
+  );
+  return {
+    previous_owner_agent: currentOwnerAgent,
+    current_owner_agent: rerouteTarget,
+    expected_owner_agent: expectedOwnerAgent,
+    reroute_action: rerouteAction || null,
+    reroute_target: rerouteTarget,
+    reroute_reason: ownerMismatch
+      ? "owner_mismatch"
+      : capabilityGap
+        ? "capability_gap"
+        : null,
+    reroute_source: "promoted_decision_engine_v1",
+    reroute_target_verified: rerouteTargetVerified,
+  };
+}
+
+function resolvePromotedRerouteExecution({
+  workingMemory = null,
+  currentPlanStep = null,
+  observability = null,
+  text = "",
+  semantics = null,
+  canUseAction = null,
+} = {}) {
+  const canUse = typeof canUseAction === "function"
+    ? canUseAction
+    : () => false;
+  const currentOwnerAgent = cleanText(workingMemory?.current_owner_agent || "") || null;
+  const expectedOwnerAgent = cleanText(currentPlanStep?.step?.owner_agent || "") || null;
+  const expectedAction = cleanText(currentPlanStep?.step?.intended_action || "");
+  const knownOwners = listPlannerWorkingMemoryKnownOwnerAgents({
+    workingMemory,
+    currentPlanStep,
+  });
+  const ownerMismatch = Boolean(
+    currentOwnerAgent
+    && expectedOwnerAgent
+    && currentOwnerAgent !== expectedOwnerAgent,
+  );
+  if (ownerMismatch) {
+    if (!knownOwners.includes(expectedOwnerAgent)) {
+      return {
+        ok: false,
+        reason_code: "reroute_target_unverified",
+        reroute_reason: "owner_mismatch",
+      };
+    }
+    if (!expectedAction || !canUse(expectedAction)) {
+      return {
+        ok: false,
+        reason_code: "reroute_target_unverified",
+        reroute_reason: "owner_mismatch",
+      };
+    }
+    return {
+      ok: true,
+      reroute_action: expectedAction,
+      previous_owner_agent: currentOwnerAgent,
+      current_owner_agent: expectedOwnerAgent,
+      reroute_target: expectedOwnerAgent,
+      reroute_reason: "owner_mismatch",
+      reroute_source: "promoted_decision_engine_v1",
+      reroute_target_verified: true,
+    };
+  }
+
+  const capabilityGap = cleanText(observability?.failure_class || "") === "capability_gap"
+    || cleanText(observability?.recovery_action || "") === "reroute_owner";
+  if (!capabilityGap) {
+    return {
+      ok: false,
+      reason_code: "reroute_signals_missing",
+      reroute_reason: null,
+    };
+  }
+  const rerouteAction = resolvePlannerWorkingMemoryRerouteAction({
+    workingMemory,
+    text,
+    semantics,
+  });
+  const capabilityCandidates = [];
+  const addCandidate = (ownerAgent = "") => {
+    const normalized = cleanText(ownerAgent || "");
+    if (!normalized || normalized === currentOwnerAgent || capabilityCandidates.includes(normalized)) {
+      return;
+    }
+    capabilityCandidates.push(normalized);
+  };
+  const actionOwner = cleanText(PLANNER_WORKING_MEMORY_ACTION_OWNER_HINTS[rerouteAction] || "");
+  addCandidate(actionOwner);
+  addCandidate(expectedOwnerAgent);
+  const matchingPlanStep = Array.isArray(currentPlanStep?.plan?.steps)
+    ? currentPlanStep.plan.steps.find((step) =>
+      cleanText(step?.intended_action || "") === rerouteAction
+      && cleanText(step?.owner_agent || "")
+      && cleanText(step?.owner_agent || "") !== currentOwnerAgent)
+    : null;
+  addCandidate(cleanText(matchingPlanStep?.owner_agent || ""));
+  if (capabilityCandidates.length !== 1) {
+    return {
+      ok: false,
+      reason_code: "reroute_target_unverified",
+      reroute_reason: "capability_gap",
+    };
+  }
+  const targetOwner = capabilityCandidates[0];
+  if (!knownOwners.includes(targetOwner)) {
+    return {
+      ok: false,
+      reason_code: "reroute_target_unverified",
+      reroute_reason: "capability_gap",
+    };
+  }
+  const candidateAction = rerouteAction || expectedAction;
+  if (!candidateAction || !canUse(candidateAction)) {
+    return {
+      ok: false,
+      reason_code: "reroute_target_unverified",
+      reroute_reason: "capability_gap",
+    };
+  }
+  return {
+    ok: true,
+    reroute_action: candidateAction,
+    previous_owner_agent: currentOwnerAgent,
+    current_owner_agent: targetOwner,
+    reroute_target: targetOwner,
+    reroute_reason: "capability_gap",
+    reroute_source: "promoted_decision_engine_v1",
+    reroute_target_verified: true,
+  };
+}
+
 function derivePlannerWorkingMemoryRetryMode({
   retryPolicy = null,
   retryCount = 0,
@@ -4725,6 +4917,10 @@ function applyStepDecisionAdvisorObservability({
     observability.decision_scoreboard_summary = null;
     observability.highest_maturity_actions = null;
     observability.rollback_disabled_actions = null;
+    observability.reroute_target = null;
+    observability.reroute_reason = null;
+    observability.reroute_source = null;
+    observability.reroute_target_verified = null;
     return;
   }
   const blockedDependencies = Array.isArray(observability.blocked_dependencies)
@@ -4807,6 +5003,10 @@ function applyStepDecisionAdvisorObservability({
   observability.decision_scoreboard_summary = null;
   observability.highest_maturity_actions = null;
   observability.rollback_disabled_actions = null;
+  observability.reroute_target = null;
+  observability.reroute_reason = null;
+  observability.reroute_source = null;
+  observability.reroute_target_verified = null;
 }
 
 function applyStepDecisionAdvisorComparisonObservability({
@@ -4817,6 +5017,8 @@ function applyStepDecisionAdvisorComparisonObservability({
   taskPhase = "",
   taskStatus = "",
   promotionPolicy = null,
+  decisionScoreboard = null,
+  rerouteContext = null,
 } = {}) {
   if (!observability || typeof observability !== "object" || Array.isArray(observability)) {
     return null;
@@ -4878,6 +5080,8 @@ function applyStepDecisionAdvisorComparisonObservability({
     artifact: advisorBasedOn.artifact_summary || null,
     task_plan: advisorBasedOn.task_plan_summary || null,
     promotion_policy: promotionPolicy,
+    decision_scoreboard: decisionScoreboard,
+    reroute_context: rerouteContext,
   });
   observability.decision_promotion = promotionDecision;
   observability.decision_promotion_summary = formatDecisionPromotionSummary(promotionDecision);
@@ -5126,6 +5330,10 @@ function resolvePlannerWorkingMemoryContinuation({
     decision_scoreboard_summary: null,
     highest_maturity_actions: null,
     rollback_disabled_actions: null,
+    reroute_target: null,
+    reroute_reason: null,
+    reroute_source: null,
+    reroute_target_verified: null,
   };
   logPlannerWorkingMemoryTrace({
     logger,
@@ -5226,6 +5434,10 @@ function resolvePlannerWorkingMemoryContinuation({
   observability.decision_scoreboard_summary = null;
   observability.highest_maturity_actions = null;
   observability.rollback_disabled_actions = null;
+  observability.reroute_target = null;
+  observability.reroute_reason = null;
+  observability.reroute_source = null;
+  observability.reroute_target_verified = null;
   observability.plan_invalidated = topicSwitch && currentPlanStep?.plan
     ? {
         plan_id: currentPlanStep.plan.plan_id,
@@ -5768,6 +5980,18 @@ function resolvePlannerWorkingMemoryContinuation({
   });
   observability.promotion_policy = promotionPolicy;
   observability.promotion_policy_summary = formatPromotionControlSurfaceSummary(promotionPolicy);
+  const prePromotionScoreboard = buildDecisionMetricsScoreboard({
+    promotion_audit_state: promotionAuditState,
+    promotion_policy: promotionPolicy,
+    observability,
+  });
+  const rerouteDecisionContext = buildPromotedRerouteDecisionContext({
+    workingMemory,
+    currentPlanStep,
+    observability,
+    text: userIntent,
+    semantics,
+  });
   const advisorComparison = applyStepDecisionAdvisorComparisonObservability({
     observability,
     selectedAction,
@@ -5776,6 +6000,8 @@ function resolvePlannerWorkingMemoryContinuation({
     taskPhase: resolveTaskTransitionTarget(observability.task_phase_transition, taskPhase),
     taskStatus: resolveTaskTransitionTarget(observability.task_status_transition, taskStatus),
     promotionPolicy,
+    decisionScoreboard: prePromotionScoreboard,
+    rerouteContext: rerouteDecisionContext,
   });
   let promotionDecision = advisorComparison?.promotion_decision
     && typeof advisorComparison.promotion_decision === "object"
@@ -5794,7 +6020,7 @@ function resolvePlannerWorkingMemoryContinuation({
   });
   if (
     promotionDecision?.promotion_applied === true
-    && (promotionCandidateAction === "ask_user" || promotionCandidateAction === "retry" || promotionCandidateAction === "fail")
+    && promotionCandidateAction
     && promotionRollbackGate.promotion_allowed !== true
   ) {
     const gatedPromotionDecision = {
@@ -5813,7 +6039,7 @@ function resolvePlannerWorkingMemoryContinuation({
     promotionDecision = gatedPromotionDecision;
   }
   const promotedAction = cleanText(promotionDecision?.promoted_action || "");
-  if (promotionDecision?.promotion_applied === true && (promotedAction === "ask_user" || promotedAction === "retry" || promotedAction === "fail")) {
+  if (promotionDecision?.promotion_applied === true && (promotedAction === "ask_user" || promotedAction === "retry" || promotedAction === "reroute" || promotedAction === "fail")) {
     routingLocked = true;
     selectedAction = "";
     if (promotedAction === "ask_user") {
@@ -5858,6 +6084,88 @@ function resolvePlannerWorkingMemoryContinuation({
         observability.recovery_action = "failed";
         observability.task_phase_transition = `${taskPhase}->failed`;
         observability.task_status_transition = `${taskStatus}->failed`;
+        if (!cleanText(stopError || "")) {
+          stopError = resolvePlannerExecutionReadinessPrimaryReason(executionReadiness) || "business_error";
+        }
+      }
+    } else if (promotedAction === "reroute") {
+      const rerouteDecision = resolvePromotedRerouteExecution({
+        workingMemory,
+        currentPlanStep,
+        observability,
+        text: userIntent,
+        semantics,
+        canUseAction: (action) => canUseWorkingMemoryAction(action, { text: userIntent, semantics }),
+      });
+      if (rerouteDecision.ok === true) {
+        selectedAction = rerouteDecision.reroute_action;
+        reason = "decision_engine_promotion_reroute";
+        routingReason = reason;
+        observability.task_phase_transition = `${taskPhase}->retrying`;
+        observability.task_status_transition = `${taskStatus}->failed`;
+        observability.recovery_policy = "reroute_owner";
+        observability.recovery_action = "reroute_owner";
+        observability.recovery_attempt_count = retryCount + 1;
+        observability.retry_attempt = {
+          task_id: taskId,
+          from: retryCount,
+          retry_count: retryCount + 1,
+          max_retries: retryPolicy.max_retries,
+          strategy: retryPolicy.strategy,
+          mode: "reroute",
+        };
+        observability.agent_handoff = {
+          from: rerouteDecision.previous_owner_agent || null,
+          to: rerouteDecision.current_owner_agent || null,
+          reason: rerouteDecision.reroute_reason || "capability_gap",
+        };
+        observability.reroute_target = rerouteDecision.reroute_target || rerouteDecision.current_owner_agent || null;
+        observability.reroute_reason = rerouteDecision.reroute_reason || null;
+        observability.reroute_source = rerouteDecision.reroute_source || "promoted_decision_engine_v1";
+        observability.reroute_target_verified = rerouteDecision.reroute_target_verified === true;
+        observability.resumed_from_retry = true;
+        promotionDecision = {
+          ...promotionDecision,
+          previous_owner_agent: rerouteDecision.previous_owner_agent || null,
+          current_owner_agent: rerouteDecision.current_owner_agent || null,
+          reroute_target: observability.reroute_target,
+          reroute_reason: observability.reroute_reason,
+          reroute_source: observability.reroute_source,
+          reroute_target_verified: true,
+        };
+        observability.decision_promotion = promotionDecision;
+        observability.decision_promotion_summary = formatDecisionPromotionSummary(promotionDecision);
+      } else {
+        reason = "decision_engine_promotion_reroute_fail_closed";
+        routingReason = reason;
+        observability.recovery_policy = cleanText(observability.recovery_policy || "") || "ask_user";
+        observability.recovery_action = "failed";
+        observability.task_phase_transition = `${taskPhase}->failed`;
+        observability.task_status_transition = `${taskStatus}->failed`;
+        observability.reroute_target = null;
+        observability.reroute_reason = rerouteDecision.reroute_reason || null;
+        observability.reroute_source = "promoted_decision_engine_v1";
+        observability.reroute_target_verified = false;
+        const failClosedPromotionDecision = {
+          ...promotionDecision,
+          promoted_action: null,
+          promotion_applied: false,
+          safety_gate_passed: false,
+          promotion_confidence: "low",
+          previous_owner_agent: cleanText(workingMemory?.current_owner_agent || "") || null,
+          current_owner_agent: null,
+          reroute_target: null,
+          reroute_reason: observability.reroute_reason,
+          reroute_source: observability.reroute_source,
+          reroute_target_verified: false,
+          promotion_reason_codes: appendUniqueReasonCode(
+            promotionDecision?.promotion_reason_codes,
+            rerouteDecision.reason_code || "reroute_target_unverified",
+          ),
+        };
+        promotionDecision = failClosedPromotionDecision;
+        observability.decision_promotion = failClosedPromotionDecision;
+        observability.decision_promotion_summary = formatDecisionPromotionSummary(failClosedPromotionDecision);
         if (!cleanText(stopError || "")) {
           stopError = resolvePlannerExecutionReadinessPrimaryReason(executionReadiness) || "business_error";
         }
