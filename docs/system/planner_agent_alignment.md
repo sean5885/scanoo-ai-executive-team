@@ -1047,6 +1047,8 @@ Working-memory v2 diagnostics now also includes one human-readable `task_trace` 
   - answer-boundary write-back (after working-memory patch write returns)
 - each trace payload carries:
   - normalized snapshot (`task_id/task_type/task_phase/task_status/owner/retry/next_best_action/slot_state/abandoned_task_ids`)
+  - boundary hardening snapshot (`__boundary_violation.skill/action/reason`) when read-only skill to write-action attempts are blocked
+  - continuation state snapshot (`__continuation_state.state/resume`) from the unified safe-tool continuation state machine
   - deterministic diff lines (for example `task_phase: executing -> waiting_user`, `retry_count: 1 -> 2`, `slot.email: missing -> filled`)
   - one multi-line `task_trace_text` summary intended for human debugging
   - outcome projection uses one deterministic `focus step` selection so `current_step=null` plans still expose stable outcome diagnostics:
@@ -1070,6 +1072,8 @@ Working-memory v2 diagnostics now also includes one human-readable `task_trace` 
   - `promotion_audit.promoted_action/promotion_audit.promotion_effectiveness/promotion_audit.rollback_flag/promotion_audit_summary`
   - `decision_scoreboard.actions/decision_scoreboard_summary/highest_maturity_actions/rollback_disabled_actions`
   - `retry_context.mode/retry_context.degraded_reason/retry_context.resumable_step`
+  - `boundary.skill/boundary.action/boundary.reason`
+  - `continuation.state/continuation.resume`
   - `usage_layer.interpreted_as_continuation/usage_layer.interpreted_as_new_task/usage_layer.redundant_question_detected/usage_layer.owner_selection_feels_consistent/usage_layer.slot_suppressed_ask/usage_layer.retry_context_applied/usage_layer.retry_context_quality/usage_layer.response_continuity_score/usage_layer.usage_issue_codes/usage_layer_summary`
   - trace output must be derived from these existing signals instead of introducing an independent trace truth
 

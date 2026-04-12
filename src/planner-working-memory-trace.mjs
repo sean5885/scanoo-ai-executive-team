@@ -1350,6 +1350,8 @@ function buildTaskTraceText({
     snapshot,
     observability: readinessObservability,
   });
+  const boundary = snapshot?.__boundary_violation || null;
+  const continuationState = snapshot?.__continuation_state || null;
   const readinessInvalidArtifacts = summarizeReadinessArtifacts(readiness.invalid_artifacts);
   const readinessBlockedDependencies = summarizeBlockedDependencies(readiness.blocked_dependencies);
   const abandonedSummary = next.abandoned_task_hidden_count > 0
@@ -1361,6 +1363,8 @@ function buildTaskTraceText({
     `owner: current=${formatValue(next.current_owner_agent)} | previous=${formatValue(next.previous_owner_agent)} | handoff=${formatValue(next.handoff_reason)}`,
     `retry: count=${next.retry_count} | policy=${next.retry_policy.strategy} (max=${next.retry_policy.max_retries})`,
     `retry_context: mode=${formatValue(retryContext.mode)} | degraded_reason=${formatValue(retryContext.degraded_reason)} | resumable_step=${formatValue(retryContext.resumable_step)}`,
+    `boundary: skill=${formatValue(boundary?.skill || null)} | action=${formatValue(boundary?.action || null)} | reason=${formatValue(boundary?.reason || null)}`,
+    `continuation: state=${formatValue(continuationState?.state || null)} | resume=${formatValue(continuationState?.resume ?? null)}`,
     `next_best_action: ${formatValue(next.next_best_action)}`,
     `plan: id=${formatValue(next.execution_plan.plan_id)} | status=${formatValue(next.execution_plan.plan_status)} | current_step=${formatValue(next.execution_plan.current_step)}`,
     `recovery: class=${formatValue(next.execution_plan.current_step_failure_class)} | policy=${formatValue(next.execution_plan.current_step_recovery_policy)} | action=${formatValue(next.execution_plan.current_step_recovery_action)} | attempts=${formatValue(next.execution_plan.current_step_recovery_attempt_count)} | rollback_target=${formatValue(next.execution_plan.current_step_rollback_target_step_id)}`,

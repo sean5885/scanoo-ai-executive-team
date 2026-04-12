@@ -7471,6 +7471,43 @@ export async function dispatchPlannerTool({
   return finalResult;
 }
 
+function isWriteAction(action = "") {
+  return [
+    "send_message",
+    "update_doc",
+    "create_task",
+    "write_memory",
+    "update_record",
+  ].includes(cleanText(action || ""));
+}
+
+function isReadOnlySkill(skillName = "") {
+  return [
+    "search_and_summarize",
+    "document_summarize",
+    "search_company_brain_docs",
+    "official_read_document",
+  ].includes(cleanText(skillName || ""));
+}
+
+function resolveContinuationState(ctx = {}) {
+  if (ctx.__tool_execution_failed) {
+    if ((ctx.retry_count || 0) < (ctx.retry_policy?.max_retries || 0)) {
+      return { state: "retry", resume: true };
+    }
+    if (ctx.waiting_user) {
+      return { state: "ask_user", resume: false };
+    }
+    return { state: "fallback", resume: false };
+  }
+
+  if (ctx.__tool_execution?.ok) {
+    return { state: "continue", resume: true };
+  }
+
+  return { state: "idle", resume: false };
+}
+
 async function runSafeToolExecution(action = "", actionArgs = {}, ctx = {}) {
   const normalizedAction = cleanText(action || "");
   if (!normalizedAction || !ctx || typeof ctx !== "object" || Array.isArray(ctx)) {
@@ -7490,6 +7527,23 @@ async function runSafeToolExecution(action = "", actionArgs = {}, ctx = {}) {
     invalid_reason: toolCheck.ok ? null : toolCheck.reason,
     missing_args: Array.isArray(toolCheck.missing) ? toolCheck.missing : [],
   };
+
+  const selectedSkill = cleanText(ctx?.selected_skill || "");
+  const selectedAction = cleanText(ctx?.tool_action || normalizedAction);
+  if (isReadOnlySkill(selectedSkill) && isWriteAction(selectedAction)) {
+    ctx.__boundary_violation = {
+      skill: selectedSkill || null,
+      action: selectedAction || null,
+      reason: "read_only_skill_cannot_execute_write_action",
+    };
+    ctx.__continuation_state = { state: "fallback", resume: false };
+    ctx.__tool_fallback_triggered = true;
+    return {
+      next_action: "fallback",
+      reason: "read_only_skill_cannot_execute_write_action",
+      resume: false,
+    };
+  }
 
   if (!toolCheck.ok) {
     ctx.__tool_layer_blocked = true;
@@ -7512,17 +7566,42 @@ async function runSafeToolExecution(action = "", actionArgs = {}, ctx = {}) {
 
   if (ctx.__tool_execution) {
     const continuation = resolveToolResultContinuation(ctx.__tool_execution, ctx);
-    ctx.__tool_result_continuation = continuation;
-    if (continuation?.next_action === "retry") {
-      ctx.__resumed_from_tool_failure = true;
-    }
-    if (continuation?.next_action === "continue_planner") {
-      ctx.__resumed_from_tool_success = true;
-    }
-    if (continuation?.next_action === "fallback") {
+    const continuationState = resolveContinuationState(ctx);
+    ctx.__continuation_state = continuationState;
+
+    let hardenedContinuation = continuation;
+    if (continuationState.state === "retry") {
+      hardenedContinuation = {
+        ...continuation,
+        next_action: "retry",
+        resume: true,
+      };
+    } else if (continuationState.state === "ask_user") {
+      hardenedContinuation = {
+        ...continuation,
+        next_action: "ask_user",
+        resume: false,
+      };
+    } else if (continuationState.state === "fallback") {
+      hardenedContinuation = {
+        ...continuation,
+        next_action: "fallback",
+        resume: false,
+      };
       ctx.__tool_fallback_triggered = true;
     }
-    return continuation;
+
+    ctx.__tool_result_continuation = hardenedContinuation;
+    if (hardenedContinuation?.next_action === "retry") {
+      ctx.__resumed_from_tool_failure = true;
+    }
+    if (hardenedContinuation?.next_action === "continue_planner") {
+      ctx.__resumed_from_tool_success = true;
+    }
+    if (hardenedContinuation?.next_action === "fallback") {
+      ctx.__tool_fallback_triggered = true;
+    }
+    return hardenedContinuation;
   }
 
   return null;
@@ -7909,25 +7988,41 @@ export async function runPlannerToolFlow({
         logger,
         sessionKey,
       });
-      await runSafeToolExecution(selection.selected_action, dispatchPayload, {
+      const safeToolContext = {
         retry_count: Number.isFinite(Number(workingMemorySnapshot?.retry_count))
           ? Number(workingMemorySnapshot.retry_count)
           : 0,
         retry_policy: workingMemorySnapshot?.retry_policy || null,
         waiting_user: workingMemorySnapshot?.task_phase === "waiting_user",
-      });
-      executionResult = await dispatcher({
-        action: selection.selected_action,
-        payload: shapePlannerSkillDispatchPayload({
+        selected_skill: cleanText(selection.selected_action || "") || null,
+        tool_action: cleanText(selection.selected_action || "") || null,
+      };
+      await runSafeToolExecution(selection.selected_action, dispatchPayload, safeToolContext);
+
+      if (safeToolContext.__boundary_violation) {
+        executionResult = buildPlannerStoppedResult({
           action: selection.selected_action,
-          userIntent: agentInput.user_intent,
-          payload: dispatchPayload,
+          error: "business_error",
+          data: {
+            reason: "read_only_skill_cannot_execute_write_action",
+            boundary_violation: safeToolContext.__boundary_violation,
+          },
+          traceId: null,
+        });
+      } else {
+        executionResult = await dispatcher({
+          action: selection.selected_action,
+          payload: shapePlannerSkillDispatchPayload({
+            action: selection.selected_action,
+            userIntent: agentInput.user_intent,
+            payload: dispatchPayload,
+            authContext,
+          }),
+          logger,
           authContext,
-        }),
-        logger,
-        authContext,
-        signal,
-      });
+          signal,
+        });
+      }
       traceId = executionResult?.trace_id || null;
     }
   }
