@@ -965,11 +965,24 @@ Observed routing/write signals now include:
 - `advisor_alignment_summary`
 - `decision_promotion`
 - `decision_promotion_summary`
+- `promotion_policy`
+- `promotion_policy_summary`
 - `promotion_audit`
 - `promotion_audit_summary`
 - compatibility `advisor_vs_actual` mirror
 
 `decision-engine-promotion` now also writes a deterministic promotion audit / rollback safety v1 record into the same observability payload:
+
+- promotion policy authority is centralized in `/Users/seanhan/Documents/Playground/src/promotion-control-surface.mjs`:
+  - `allowed_actions=ask_user|fail`
+  - `denied_actions=proceed|retry|reroute|rollback|skip`
+  - `ineffective_threshold=3`
+  - `rollback_disabled_actions` always has priority over allow-list (disabled wins)
+- per-step observability now includes:
+  - `promotion_policy.allowed_actions`
+  - `promotion_policy.rollback_disabled_actions`
+  - `promotion_policy.ineffective_threshold`
+  - `promotion_policy_summary`
 
 - `promotion_audit` minimum shape:
   - `promotion_audit_id`
@@ -984,7 +997,7 @@ Observed routing/write signals now include:
   - promoted `ask_user`: successful slot recovery path -> `effective`; stuck/no-response path -> `ineffective|unknown`
   - promoted `fail`: unsafe path correctly blocked -> `effective`; recoverable path incorrectly blocked -> `ineffective`
   - malformed/conflicting audit payloads stay fail-closed and are excluded from ineffective streak counting
-- rollback safety gate is currently fixed-threshold v1 (`N=3`):
+- rollback safety gate reads centralized threshold v1 (`promotion_policy.ineffective_threshold`, currently `N=3`):
   - when the same promoted action accumulates consecutive `ineffective` audits, `rollback_flag=true` and future promotion for that action is disabled (advisory-only)
   - gate only affects future promotion eligibility and does not retroactively mutate already-executed behavior
 
@@ -1016,6 +1029,7 @@ Working-memory v2 diagnostics now also includes one human-readable `task_trace` 
   - `advisor.recommended_next_action/advisor.decision_reason_codes/advisor.decision_confidence/advisor_based_on_summary`
   - `advisor_alignment.is_aligned/advisor_alignment.alignment_type/advisor_alignment.divergence_reason_codes/advisor_alignment.promotion_candidate/advisor_alignment_summary`
   - `decision_promotion.promoted_action/decision_promotion.promotion_applied/decision_promotion.promotion_reason_codes/decision_promotion.safety_gate_passed/decision_promotion_summary`
+  - `promotion_policy.allowed_actions/promotion_policy.rollback_disabled_actions/promotion_policy.ineffective_threshold/promotion_policy_summary`
   - `promotion_audit.promoted_action/promotion_audit.promotion_effectiveness/promotion_audit.rollback_flag/promotion_audit_summary`
   - trace output must be derived from these existing signals instead of introducing an independent trace truth
 

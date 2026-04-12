@@ -1,8 +1,15 @@
 import { cleanText } from "./message-intent-utils.mjs";
+import {
+  PROMOTION_CONTROL_SURFACE_ALLOWED_ACTIONS,
+  PROMOTION_CONTROL_SURFACE_ALL_ACTIONS,
+  PROMOTION_CONTROL_SURFACE_INEFFECTIVE_THRESHOLD,
+  resolvePromotionActionPolicy,
+  resolvePromotionControlSurface,
+} from "./promotion-control-surface.mjs";
 
 export const DECISION_ENGINE_PROMOTION_VERSION = "decision_engine_promotion_v1";
 export const DECISION_ENGINE_PROMOTION_AUDIT_VERSION = "decision_engine_promotion_audit_v1";
-export const DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD = 3;
+export const DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD = PROMOTION_CONTROL_SURFACE_INEFFECTIVE_THRESHOLD;
 export const DECISION_ENGINE_PROMOTION_ROLLBACK_REASON_CODE = "promotion_rollback_gate_active";
 export const DECISION_ENGINE_PROMOTION_EFFECTIVENESS = Object.freeze([
   "effective",
@@ -10,14 +17,14 @@ export const DECISION_ENGINE_PROMOTION_EFFECTIVENESS = Object.freeze([
   "unknown",
 ]);
 
-export const DECISION_ENGINE_PROMOTABLE_ACTIONS = Object.freeze([
-  "ask_user",
-  "fail",
-]);
+export const DECISION_ENGINE_PROMOTABLE_ACTIONS = PROMOTION_CONTROL_SURFACE_ALLOWED_ACTIONS;
 
 export const DECISION_ENGINE_PROMOTION_REASON_CODES = Object.freeze([
   "missing_advisor_action",
   "unsupported_advisor_action",
+  "promotion_denied_by_policy",
+  "promotion_disabled_by_rollback_flag",
+  "promotion_policy_fail_closed",
   "alignment_not_exact_match",
   "alignment_not_promotion_candidate",
   "evidence_incomplete",
@@ -29,15 +36,7 @@ export const DECISION_ENGINE_PROMOTION_REASON_CODES = Object.freeze([
   "promotion_applied",
 ]);
 
-const DECISION_ENGINE_ALL_ACTIONS = Object.freeze([
-  "proceed",
-  "ask_user",
-  "retry",
-  "reroute",
-  "rollback",
-  "skip",
-  "fail",
-]);
+const DECISION_ENGINE_ALL_ACTIONS = PROMOTION_CONTROL_SURFACE_ALL_ACTIONS;
 
 const ASK_USER_FRIENDLY_BLOCKING_REASONS = new Set([
   "missing_slot",
@@ -133,6 +132,62 @@ function normalizePromotableAction(value = "") {
   return normalized && DECISION_ENGINE_PROMOTABLE_ACTIONS.includes(normalized)
     ? normalized
     : null;
+}
+
+function resolveDecisionPromotionThreshold({
+  promotion_policy = null,
+  threshold = null,
+} = {}) {
+  if (threshold !== null && threshold !== undefined && threshold !== "" && Number.isFinite(Number(threshold))) {
+    return Math.max(1, Number(threshold));
+  }
+  const normalizedPolicy = resolvePromotionControlSurface({
+    promotion_policy,
+  });
+  if (Number.isFinite(Number(normalizedPolicy.ineffective_threshold))) {
+    return Math.max(1, Number(normalizedPolicy.ineffective_threshold));
+  }
+  return DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD;
+}
+
+export function listDecisionPromotionRollbackDisabledActions({
+  state = null,
+  threshold = null,
+  promotion_policy = null,
+} = {}) {
+  const normalizedState = createDecisionPromotionAuditState(state);
+  const normalizedThreshold = resolveDecisionPromotionThreshold({
+    promotion_policy,
+    threshold,
+  });
+  const disabledActions = [];
+  for (const action of DECISION_ENGINE_PROMOTABLE_ACTIONS) {
+    const actionState = normalizePromotionActionState(normalizedState.actions[action]);
+    if (actionState.promotion_disabled === true || actionState.consecutive_ineffective >= normalizedThreshold) {
+      disabledActions.push(action);
+    }
+  }
+  return disabledActions;
+}
+
+export function resolveDecisionPromotionPolicy({
+  promotion_policy = null,
+  rollback_disabled_actions = [],
+  state = null,
+  threshold = null,
+} = {}) {
+  const disabledActionsFromState = listDecisionPromotionRollbackDisabledActions({
+    state,
+    threshold,
+    promotion_policy,
+  });
+  return resolvePromotionControlSurface({
+    promotion_policy,
+    rollback_disabled_actions: [
+      ...disabledActionsFromState,
+      ...toArray(rollback_disabled_actions),
+    ],
+  });
 }
 
 function normalizeOutcomeStatus(value = "") {
@@ -405,10 +460,20 @@ export function evaluateDecisionEnginePromotion({
   artifact = null,
   task_plan = null,
   evidence_complete = null,
+  promotion_policy = null,
 } = {}) {
   const advisorObject = toObject(advisor) || {};
   const alignment = toObject(advisor_alignment) || {};
   const advisorAction = normalizeAction(advisorObject.recommended_next_action);
+  const promotionPolicy = resolveDecisionPromotionPolicy({
+    promotion_policy,
+  });
+  const actionPolicy = advisorAction
+    ? resolvePromotionActionPolicy({
+      policy: promotionPolicy,
+      action: advisorAction,
+    })
+    : null;
   const alignmentType = cleanText(alignment.alignment_type || "");
   const promotionCandidate = alignment.promotion_candidate === true;
   const advisorReasonCodes = uniqueStrings(advisorObject.decision_reason_codes);
@@ -430,8 +495,16 @@ export function evaluateDecisionEnginePromotion({
 
   if (!advisorAction) {
     pushReason("missing_advisor_action");
-  } else if (!DECISION_ENGINE_PROMOTABLE_ACTIONS.includes(advisorAction)) {
+  } else if (actionPolicy?.promotion_allowed !== true) {
     pushReason("unsupported_advisor_action");
+    if (actionPolicy?.rollback_disabled === true) {
+      pushReason("promotion_disabled_by_rollback_flag");
+    } else {
+      pushReason("promotion_denied_by_policy");
+    }
+  }
+  if (promotionPolicy.policy_fail_closed === true) {
+    pushReason("promotion_policy_fail_closed");
   }
 
   if (alignmentType !== "exact_match") {
@@ -458,10 +531,10 @@ export function evaluateDecisionEnginePromotion({
 
   let actionSafety = {
     gatePassed: false,
-    reasonCodes: ["conflicting_signals"],
+    reasonCodes: [],
     confidence: "low",
   };
-  if (advisorAction === "ask_user") {
+  if (advisorAction === "ask_user" && actionPolicy?.promotion_allowed === true) {
     actionSafety = evaluateAskUserSafety({
       readiness,
       outcome,
@@ -469,7 +542,7 @@ export function evaluateDecisionEnginePromotion({
       task_plan,
       advisor_reason_codes: advisorReasonCodes,
     });
-  } else if (advisorAction === "fail") {
+  } else if (advisorAction === "fail" && actionPolicy?.promotion_allowed === true) {
     actionSafety = evaluateFailSafety({
       readiness,
       outcome,
@@ -497,6 +570,7 @@ export function evaluateDecisionEnginePromotion({
       : "low",
     safety_gate_passed: safetyGatePassed,
     promotion_version: DECISION_ENGINE_PROMOTION_VERSION,
+    promotion_policy_version: cleanText(promotionPolicy.promotion_policy_version || "") || null,
   };
 }
 
@@ -767,23 +841,36 @@ export function createDecisionPromotionAuditState(state = null) {
 export function resolveDecisionPromotionRollbackGate({
   state = null,
   promoted_action = null,
-  threshold = DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD,
+  threshold = null,
+  promotion_policy = null,
 } = {}) {
   const normalizedState = createDecisionPromotionAuditState(state);
-  const promotedAction = normalizePromotableAction(promoted_action || "");
+  const promotedAction = normalizeAction(promoted_action || "");
   const actionState = promotedAction
     ? normalizedState.actions[promotedAction]
     : null;
-  const normalizedThreshold = Number.isFinite(Number(threshold))
-    ? Math.max(1, Number(threshold))
-    : DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD;
+  const normalizedThreshold = resolveDecisionPromotionThreshold({
+    promotion_policy,
+    threshold,
+  });
+  const promotionPolicy = resolveDecisionPromotionPolicy({
+    promotion_policy,
+    state: normalizedState,
+    threshold: normalizedThreshold,
+  });
+  const actionPolicy = promotedAction
+    ? resolvePromotionActionPolicy({
+      policy: promotionPolicy,
+      action: promotedAction,
+    })
+    : null;
   return {
     promoted_action: promotedAction || null,
     promotion_allowed: promotedAction
-      ? actionState?.promotion_disabled !== true
+      ? actionPolicy?.promotion_allowed === true
       : true,
     rollback_flag: promotedAction
-      ? actionState?.promotion_disabled === true
+      ? actionPolicy?.rollback_disabled === true
       : false,
     consecutive_ineffective: promotedAction
       ? Number(actionState?.consecutive_ineffective || 0)
@@ -872,14 +959,16 @@ export function buildDecisionPromotionAuditRecord({
 export function applyDecisionPromotionAuditSafety({
   state = null,
   audit_record = null,
-  threshold = DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD,
+  threshold = null,
+  promotion_policy = null,
 } = {}) {
   const normalizedState = createDecisionPromotionAuditState(state);
   const normalizedAudit = toObject(audit_record) || {};
   const promotedAction = normalizePromotableAction(normalizedAudit.promoted_action || "");
-  const normalizedThreshold = Number.isFinite(Number(threshold))
-    ? Math.max(1, Number(threshold))
-    : DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD;
+  const normalizedThreshold = resolveDecisionPromotionThreshold({
+    promotion_policy,
+    threshold,
+  });
   if (!promotedAction) {
     return {
       next_state: normalizedState,

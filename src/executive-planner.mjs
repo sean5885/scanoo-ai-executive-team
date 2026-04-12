@@ -120,12 +120,14 @@ import {
   buildDecisionPromotionAuditRecord,
   applyDecisionPromotionAuditSafety,
   createDecisionPromotionAuditState,
+  listDecisionPromotionRollbackDisabledActions,
+  resolveDecisionPromotionPolicy,
   resolveDecisionPromotionRollbackGate,
   formatDecisionPromotionAuditSummary,
   formatDecisionPromotionSummary,
   DECISION_ENGINE_PROMOTION_ROLLBACK_REASON_CODE,
-  DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD,
 } from "./decision-engine-promotion.mjs";
+import { formatPromotionControlSurfaceSummary } from "./promotion-control-surface.mjs";
 import { getStoredAccountContext } from "./lark-user-auth.mjs";
 import { getDbPath } from "./db.mjs";
 
@@ -4709,6 +4711,8 @@ function applyStepDecisionAdvisorObservability({
     observability.advisor_alignment_summary = null;
     observability.decision_promotion = null;
     observability.decision_promotion_summary = null;
+    observability.promotion_policy = null;
+    observability.promotion_policy_summary = null;
     observability.promotion_audit = null;
     observability.promotion_audit_summary = null;
     return;
@@ -4771,6 +4775,8 @@ function applyStepDecisionAdvisorObservability({
   observability.advisor_alignment_summary = null;
   observability.decision_promotion = null;
   observability.decision_promotion_summary = null;
+  observability.promotion_policy = null;
+  observability.promotion_policy_summary = null;
   observability.promotion_audit = null;
   observability.promotion_audit_summary = null;
 }
@@ -4782,6 +4788,7 @@ function applyStepDecisionAdvisorComparisonObservability({
   stopError = "",
   taskPhase = "",
   taskStatus = "",
+  promotionPolicy = null,
 } = {}) {
   if (!observability || typeof observability !== "object" || Array.isArray(observability)) {
     return null;
@@ -4842,6 +4849,7 @@ function applyStepDecisionAdvisorComparisonObservability({
     recovery: advisorBasedOn.recovery_summary || null,
     artifact: advisorBasedOn.artifact_summary || null,
     task_plan: advisorBasedOn.task_plan_summary || null,
+    promotion_policy: promotionPolicy,
   });
   observability.decision_promotion = promotionDecision;
   observability.decision_promotion_summary = formatDecisionPromotionSummary(promotionDecision);
@@ -5082,6 +5090,8 @@ function resolvePlannerWorkingMemoryContinuation({
     advisor_alignment_summary: null,
     decision_promotion: null,
     decision_promotion_summary: null,
+    promotion_policy: null,
+    promotion_policy_summary: null,
     promotion_audit: null,
     promotion_audit_summary: null,
   };
@@ -5176,6 +5186,8 @@ function resolvePlannerWorkingMemoryContinuation({
   observability.advisor_alignment_summary = null;
   observability.decision_promotion = null;
   observability.decision_promotion_summary = null;
+  observability.promotion_policy = null;
+  observability.promotion_policy_summary = null;
   observability.promotion_audit = null;
   observability.promotion_audit_summary = null;
   observability.plan_invalidated = topicSwitch && currentPlanStep?.plan
@@ -5708,6 +5720,16 @@ function resolvePlannerWorkingMemoryContinuation({
     currentPlanStep,
     taskId,
   });
+  const promotionAuditState = getPlannerPromotionAuditState({ sessionKey });
+  const rollbackDisabledActions = listDecisionPromotionRollbackDisabledActions({
+    state: promotionAuditState,
+  });
+  const promotionPolicy = resolveDecisionPromotionPolicy({
+    state: promotionAuditState,
+    rollback_disabled_actions: rollbackDisabledActions,
+  });
+  observability.promotion_policy = promotionPolicy;
+  observability.promotion_policy_summary = formatPromotionControlSurfaceSummary(promotionPolicy);
   const advisorComparison = applyStepDecisionAdvisorComparisonObservability({
     observability,
     selectedAction,
@@ -5715,18 +5737,22 @@ function resolvePlannerWorkingMemoryContinuation({
     stopError,
     taskPhase: resolveTaskTransitionTarget(observability.task_phase_transition, taskPhase),
     taskStatus: resolveTaskTransitionTarget(observability.task_status_transition, taskStatus),
+    promotionPolicy,
   });
-  const promotionAuditState = getPlannerPromotionAuditState({ sessionKey });
   let promotionDecision = advisorComparison?.promotion_decision
     && typeof advisorComparison.promotion_decision === "object"
     && !Array.isArray(advisorComparison.promotion_decision)
     ? advisorComparison.promotion_decision
     : null;
-  const promotionCandidateAction = cleanText(promotionDecision?.promoted_action || "");
+  const promotionCandidateAction = cleanText(
+    promotionDecision?.promoted_action
+    || observability.advisor?.recommended_next_action
+    || "",
+  );
   const promotionRollbackGate = resolveDecisionPromotionRollbackGate({
     state: promotionAuditState,
     promoted_action: promotionCandidateAction,
-    threshold: DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD,
+    promotion_policy: promotionPolicy,
   });
   if (
     promotionDecision?.promotion_applied === true
@@ -5829,7 +5855,7 @@ function resolvePlannerWorkingMemoryContinuation({
   const promotionSafetyResult = applyDecisionPromotionAuditSafety({
     state: promotionAuditState,
     audit_record: promotionAuditRecord,
-    threshold: DECISION_ENGINE_PROMOTION_ROLLBACK_THRESHOLD,
+    promotion_policy: promotionPolicy,
   });
   setPlannerPromotionAuditState({
     sessionKey,

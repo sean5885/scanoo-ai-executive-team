@@ -5,6 +5,7 @@ import {
   formatDecisionPromotionSummary,
   formatDecisionPromotionAuditSummary,
 } from "./decision-engine-promotion.mjs";
+import { formatPromotionControlSurfaceSummary } from "./promotion-control-surface.mjs";
 
 const ABANDONED_TASK_PREVIEW_LIMIT = 3;
 
@@ -531,6 +532,55 @@ function normalizeDecisionPromotionObservability(observability = null) {
   };
 }
 
+function normalizePromotionPolicyObservability(observability = null) {
+  const normalizedObservability = observability && typeof observability === "object" && !Array.isArray(observability)
+    ? observability
+    : {};
+  const hasPolicyObject = Boolean(
+    normalizedObservability.promotion_policy
+    && typeof normalizedObservability.promotion_policy === "object"
+    && !Array.isArray(normalizedObservability.promotion_policy),
+  );
+  const policyObject = hasPolicyObject
+    && typeof normalizedObservability.promotion_policy === "object"
+    && !Array.isArray(normalizedObservability.promotion_policy)
+    ? normalizedObservability.promotion_policy
+    : {};
+  const allowedActions = Array.isArray(policyObject.allowed_actions)
+    ? policyObject.allowed_actions.map((item) => cleanText(item)).filter(Boolean)
+    : [];
+  const deniedActions = Array.isArray(policyObject.denied_actions)
+    ? policyObject.denied_actions.map((item) => cleanText(item)).filter(Boolean)
+    : [];
+  const rollbackDisabledActions = Array.isArray(policyObject.rollback_disabled_actions)
+    ? policyObject.rollback_disabled_actions.map((item) => cleanText(item)).filter(Boolean)
+    : [];
+  const policyReasonCodes = Array.isArray(policyObject.policy_reason_codes)
+    ? policyObject.policy_reason_codes.map((item) => cleanText(item)).filter(Boolean)
+    : [];
+  const ineffectiveThreshold = Number.isFinite(Number(policyObject.ineffective_threshold))
+    ? Math.max(1, Number(policyObject.ineffective_threshold))
+    : null;
+  const normalizedPolicy = {
+    promotion_policy_version: cleanText(policyObject.promotion_policy_version || "") || null,
+    allowed_actions: allowedActions,
+    denied_actions: deniedActions,
+    rollback_disabled_actions: rollbackDisabledActions,
+    ineffective_threshold: ineffectiveThreshold,
+    policy_reason_codes: policyReasonCodes,
+    policy_fail_closed: policyObject.policy_fail_closed === true,
+  };
+  const summary = cleanText(normalizedObservability.promotion_policy_summary || "");
+  const present = hasPolicyObject || Boolean(summary);
+  return {
+    present,
+    ...normalizedPolicy,
+    summary: present
+      ? (summary || formatPromotionControlSurfaceSummary(normalizedPolicy))
+      : null,
+  };
+}
+
 function normalizePromotionAuditObservability(observability = null) {
   const normalizedObservability = observability && typeof observability === "object" && !Array.isArray(observability)
     ? observability
@@ -663,6 +713,7 @@ function buildDiffLines({
   const outcomeObservability = normalizeOutcomeObservability(normalizedObservability, next);
   const advisorObservability = normalizeAdvisorObservability(normalizedObservability);
   const promotionObservability = normalizeDecisionPromotionObservability(normalizedObservability);
+  const promotionPolicyObservability = normalizePromotionPolicyObservability(normalizedObservability);
   const promotionAuditObservability = normalizePromotionAuditObservability(normalizedObservability);
   const diffLines = [];
   const seen = new Set();
@@ -957,6 +1008,23 @@ function buildDiffLines({
       addDiffLine(`decision_promotion_summary: ${promotionObservability.summary}`);
     }
   }
+  if (promotionPolicyObservability.present) {
+    if (Array.isArray(promotionPolicyObservability.allowed_actions)
+      && !hasDiffPrefix("promotion_policy.allowed_actions:")) {
+      addDiffLine(`promotion_policy.allowed_actions: ${formatValue(promotionPolicyObservability.allowed_actions)}`);
+    }
+    if (Array.isArray(promotionPolicyObservability.rollback_disabled_actions)
+      && !hasDiffPrefix("promotion_policy.rollback_disabled_actions:")) {
+      addDiffLine(`promotion_policy.rollback_disabled_actions: ${formatValue(promotionPolicyObservability.rollback_disabled_actions)}`);
+    }
+    if (Number.isFinite(Number(promotionPolicyObservability.ineffective_threshold))
+      && !hasDiffPrefix("promotion_policy.ineffective_threshold:")) {
+      addDiffLine(`promotion_policy.ineffective_threshold: ${Number(promotionPolicyObservability.ineffective_threshold)}`);
+    }
+    if (promotionPolicyObservability.summary && !hasDiffPrefix("promotion_policy_summary:")) {
+      addDiffLine(`promotion_policy_summary: ${promotionPolicyObservability.summary}`);
+    }
+  }
   if (promotionAuditObservability.present) {
     if (promotionAuditObservability.promoted_action && !hasDiffPrefix("promotion_audit.promoted_action:")) {
       addDiffLine(`promotion_audit.promoted_action: ${promotionAuditObservability.promoted_action}`);
@@ -993,6 +1061,7 @@ function buildTaskTraceText({
   const outcome = normalizeOutcomeObservability(readinessObservability, next);
   const advisor = normalizeAdvisorObservability(readinessObservability);
   const promotion = normalizeDecisionPromotionObservability(readinessObservability);
+  const promotionPolicy = normalizePromotionPolicyObservability(readinessObservability);
   const promotionAudit = normalizePromotionAuditObservability(readinessObservability);
   const readinessInvalidArtifacts = summarizeReadinessArtifacts(readiness.invalid_artifacts);
   const readinessBlockedDependencies = summarizeBlockedDependencies(readiness.blocked_dependencies);
@@ -1010,6 +1079,7 @@ function buildTaskTraceText({
     `outcome: status=${formatValue(outcome?.outcome_status || null)} | confidence=${formatValue(outcome?.outcome_confidence ?? null)} | evidence=${formatOutcomeEvidence(outcome?.outcome_evidence || null)} | artifact_quality=${formatValue(outcome?.artifact_quality || null)} | retry_worthiness=${formatValue(typeof outcome?.retry_worthiness === "boolean" ? outcome.retry_worthiness : null)} | user_visible=${formatValue(outcome?.user_visible_completeness || null)}`,
     `advisor: action=${formatValue(advisor.recommended_next_action)} | reasons=${formatAdvisorReasons(advisor.decision_reason_codes)} | confidence=${formatValue(advisor.decision_confidence)} | based_on=${formatValue(advisor.based_on_summary)} | alignment=${formatAdvisorAlignment(advisor.alignment)} | alignment_summary=${formatValue(advisor.alignment_summary)}`,
     `decision_promotion: promoted_action=${formatValue(promotion.promoted_action)} | promotion_applied=${formatValue(promotion.promotion_applied)} | reason_codes=${formatValue(promotion.promotion_reason_codes)} | safety_gate_passed=${formatValue(promotion.safety_gate_passed)} | summary=${formatValue(promotion.summary)}`,
+    `promotion_policy: version=${formatValue(promotionPolicy.promotion_policy_version)} | allowed_actions=${formatValue(promotionPolicy.allowed_actions)} | rollback_disabled_actions=${formatValue(promotionPolicy.rollback_disabled_actions)} | ineffective_threshold=${formatValue(promotionPolicy.ineffective_threshold)} | summary=${formatValue(promotionPolicy.summary)}`,
     `promotion_audit: promoted_action=${formatValue(promotionAudit.promoted_action)} | promotion_effectiveness=${formatValue(promotionAudit.promotion_effectiveness)} | rollback_flag=${formatValue(promotionAudit.rollback_flag)} | summary=${formatValue(promotionAudit.summary)}`,
     `artifact: id=${formatValue(next.execution_plan.artifact_id)} | type=${formatValue(next.execution_plan.artifact_type)} | validity=${formatValue(next.execution_plan.validity_status)} | produced_by=${formatValue(next.execution_plan.produced_by_step_id)} | downstream=${formatValue(next.execution_plan.affected_downstream_steps)} | dependency=${formatValue(next.execution_plan.dependency_type)} | blocked_step=${formatValue(next.execution_plan.dependency_blocked_step)} | superseded=${formatValue(next.execution_plan.artifact_superseded)}`,
     `readiness: is_ready=${formatValue(readiness.is_ready)} | reasons=${formatValue(readiness.blocking_reason_codes)} | missing_slots=${formatValue(readiness.missing_slots)} | invalid_artifacts=${formatValue(readinessInvalidArtifacts)} | blocked_dependencies=${formatValue(readinessBlockedDependencies)} | owner_ready=${formatValue(readiness.owner_ready)} | recovery_ready=${formatValue(readiness.recovery_ready)} | recommended_action=${formatValue(readiness.recommended_action)}`,
@@ -1038,6 +1108,7 @@ export function buildPlannerTaskTraceDiagnostics({
   const outcomeObservability = normalizeOutcomeObservability(observability, snapshot);
   const advisorObservability = normalizeAdvisorObservability(observability);
   const promotionObservability = normalizeDecisionPromotionObservability(observability);
+  const promotionPolicyObservability = normalizePromotionPolicyObservability(observability);
   const promotionAuditObservability = normalizePromotionAuditObservability(observability);
   const readinessInvalidArtifacts = summarizeReadinessArtifacts(readinessObservability.invalid_artifacts);
   const readinessBlockedDependencies = summarizeBlockedDependencies(readinessObservability.blocked_dependencies);
@@ -1046,7 +1117,7 @@ export function buildPlannerTaskTraceDiagnostics({
     nextSnapshot: memorySnapshot,
     observability,
   });
-  const summary = `task=${formatValue(snapshot.task_id)} phase=${snapshot.task_phase} status=${snapshot.task_status} owner=${formatValue(snapshot.current_owner_agent)} plan=${formatValue(snapshot.execution_plan.plan_status)}:${formatValue(snapshot.execution_plan.current_step)} recovery=${formatValue(snapshot.execution_plan.current_step_recovery_action)} readiness=${formatValue(readinessObservability.is_ready)}:${formatValue(readinessObservability.recommended_action)} outcome=${formatValue(outcomeObservability?.outcome_status || null)}:${formatValue(outcomeObservability?.retry_worthiness)} advisor=${formatValue(advisorObservability.recommended_next_action)}:${formatValue(advisorObservability.decision_confidence)} advisor_alignment=${formatAdvisorAlignment(advisorObservability.alignment)} decision_promotion=${formatValue(promotionObservability.promoted_action)}:${formatValue(promotionObservability.promotion_applied)}:${formatValue(promotionObservability.safety_gate_passed)} promotion_audit=${formatValue(promotionAuditObservability.promoted_action)}:${formatValue(promotionAuditObservability.promotion_effectiveness)}:${formatValue(promotionAuditObservability.rollback_flag)} artifact=${formatValue(snapshot.execution_plan.artifact_id)}:${formatValue(snapshot.execution_plan.validity_status)} next=${formatValue(snapshot.next_best_action)}`;
+  const summary = `task=${formatValue(snapshot.task_id)} phase=${snapshot.task_phase} status=${snapshot.task_status} owner=${formatValue(snapshot.current_owner_agent)} plan=${formatValue(snapshot.execution_plan.plan_status)}:${formatValue(snapshot.execution_plan.current_step)} recovery=${formatValue(snapshot.execution_plan.current_step_recovery_action)} readiness=${formatValue(readinessObservability.is_ready)}:${formatValue(readinessObservability.recommended_action)} outcome=${formatValue(outcomeObservability?.outcome_status || null)}:${formatValue(outcomeObservability?.retry_worthiness)} advisor=${formatValue(advisorObservability.recommended_next_action)}:${formatValue(advisorObservability.decision_confidence)} advisor_alignment=${formatAdvisorAlignment(advisorObservability.alignment)} decision_promotion=${formatValue(promotionObservability.promoted_action)}:${formatValue(promotionObservability.promotion_applied)}:${formatValue(promotionObservability.safety_gate_passed)} promotion_policy=${formatValue(promotionPolicyObservability.allowed_actions)}:${formatValue(promotionPolicyObservability.rollback_disabled_actions)}:${formatValue(promotionPolicyObservability.ineffective_threshold)} promotion_audit=${formatValue(promotionAuditObservability.promoted_action)}:${formatValue(promotionAuditObservability.promotion_effectiveness)}:${formatValue(promotionAuditObservability.rollback_flag)} artifact=${formatValue(snapshot.execution_plan.artifact_id)}:${formatValue(snapshot.execution_plan.validity_status)} next=${formatValue(snapshot.next_best_action)}`;
   return {
     summary,
     snapshot: {
@@ -1103,6 +1174,16 @@ export function buildPlannerTaskTraceDiagnostics({
         promotion_version: promotionObservability.promotion_version,
       },
       decision_promotion_summary: promotionObservability.summary,
+      promotion_policy: {
+        promotion_policy_version: promotionPolicyObservability.promotion_policy_version,
+        allowed_actions: promotionPolicyObservability.allowed_actions,
+        denied_actions: promotionPolicyObservability.denied_actions,
+        rollback_disabled_actions: promotionPolicyObservability.rollback_disabled_actions,
+        ineffective_threshold: promotionPolicyObservability.ineffective_threshold,
+        policy_reason_codes: promotionPolicyObservability.policy_reason_codes,
+        policy_fail_closed: promotionPolicyObservability.policy_fail_closed,
+      },
+      promotion_policy_summary: promotionPolicyObservability.summary,
       promotion_audit: {
         promotion_audit_id: promotionAuditObservability.promotion_audit_id,
         promoted_action: promotionAuditObservability.promoted_action,
@@ -1181,6 +1262,11 @@ export function buildPlannerTaskTraceDiagnostics({
         && observability.decision_promotion.promotion_reason_codes.length > 0,
       decision_promotion_safety_gate_passed: typeof observability?.decision_promotion?.safety_gate_passed === "boolean",
       decision_promotion_summary: Boolean(cleanText(observability?.decision_promotion_summary || "")),
+      promotion_policy: Boolean(observability?.promotion_policy && typeof observability.promotion_policy === "object"),
+      promotion_policy_allowed_actions: Array.isArray(observability?.promotion_policy?.allowed_actions),
+      promotion_policy_rollback_disabled_actions: Array.isArray(observability?.promotion_policy?.rollback_disabled_actions),
+      promotion_policy_ineffective_threshold: Number.isFinite(Number(observability?.promotion_policy?.ineffective_threshold)),
+      promotion_policy_summary: Boolean(cleanText(observability?.promotion_policy_summary || "")),
       promotion_audit: Boolean(observability?.promotion_audit && typeof observability.promotion_audit === "object"),
       promotion_audit_promoted_action: Boolean(cleanText(observability?.promotion_audit?.promoted_action || "")),
       promotion_audit_effectiveness: Boolean(cleanText(observability?.promotion_audit?.promotion_effectiveness || "")),
