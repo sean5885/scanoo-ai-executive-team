@@ -127,6 +127,7 @@ Current-truth docs for onboarding are:
     - `waiting_user` with already-filled slots resumes the current plan step instead of re-asking user by default
     - slot missingness now uses one shared helper (`/Users/seanhan/Documents/Playground/src/truly-missing-slot.mjs`) across readiness gate / usage layer / decision-promotion ask-user gate
     - in `waiting_user`, if required slots are all actually filled (not invalid and not ttl-expired), unresolved slots are treated as empty and runtime prefers resuming current-step/next-best action over reopening the same ask
+    - same `waiting_user + required slots already filled` path now writes a bounded continuation signal into planner payload (`__force_resume_after_slot_fill`, `__slot_fill_resumed`) and usage-layer pass can expose `slot_fill_resumed=true` from runtime observability (`resumed_from_waiting_user`) for eval/diagnostic alignment
     - when planner/advisor surface suggests `ask_user` but slot-state already has valid reusable `filled` slots, runtime now suppresses redundant ask promotion and resumes current-step/next-best continuation instead (`slot_suppressed_ask`)
     - non-promotion owner continuity now has a guard: selector output keeps `current_owner_agent` unless reroute/owner-mismatch/capability-gap/explicit step-owner switch is present
     - retry continuation is now forced by state (`task_phase=retrying` or `recovery_action=retry_same_step`) and no longer treated as a fresh task by default

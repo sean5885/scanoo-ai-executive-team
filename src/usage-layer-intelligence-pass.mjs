@@ -497,6 +497,10 @@ export function evaluateUsageLayerIntelligencePass(input = {}) {
   const retryInProgress = continuationSignal.retryContextForced;
   const waitingResumeExpected = cleanText(workingMemory?.task_phase || "") === "waiting_user"
     && !slotCoverage.has_missing_slots;
+  const slotFillResumed = normalizedInput?.slot_fill_resumed === true
+    || normalizedInput?.slotFillResumed === true
+    || observability?.slot_fill_resumed === true
+    || (observability?.resumed_from_waiting_user === true && waitingResumeExpected);
 
   if (canJudgeResponseContext && rerouteInProgress && !hasContextualContinuity) {
     issueCodes.push("reroute_without_user_visible_context");
@@ -574,6 +578,7 @@ export function evaluateUsageLayerIntelligencePass(input = {}) {
   return {
     ok: true,
     fail_closed: false,
+    slot_fill_resumed: slotFillResumed,
     diagnostics,
     summary: buildUsageLayerSummary(diagnostics),
     behavior: {
