@@ -14,6 +14,7 @@ export const PROMOTION_CONTROL_SURFACE_ALL_ACTIONS = Object.freeze([
 export const PROMOTION_CONTROL_SURFACE_ALLOWED_ACTIONS = Object.freeze([
   "ask_user",
   "retry",
+  "reroute",
   "fail",
 ]);
 export const PROMOTION_CONTROL_SURFACE_DENIED_ACTIONS = Object.freeze(
@@ -28,6 +29,10 @@ export const PROMOTION_CONTROL_SURFACE_POLICY_REASON_CODES = Object.freeze([
   "policy_requires_complete_evidence",
   "policy_requires_retry_worthiness",
   "policy_requires_no_blocking_readiness",
+  "policy_requires_owner_mismatch_or_capability_gap",
+  "policy_requires_no_blocking_dependency",
+  "policy_requires_no_invalid_artifact",
+  "policy_requires_recovery_safe",
   "policy_malformed_fail_closed",
 ]);
 
@@ -35,7 +40,7 @@ const ACTION_NOTES = Object.freeze({
   proceed: "advisory_only_v1",
   ask_user: "allowed_v1_low_risk_fail_soft",
   retry: "allowed_v1_conditional_retry",
-  reroute: "advisory_only_v1",
+  reroute: "allowed_v2_conditional_reroute_bounded",
   rollback: "advisory_only_v1",
   skip: "advisory_only_v1",
   fail: "allowed_v1_fail_closed_boundary",
@@ -47,18 +52,40 @@ const ACTION_POLICY_REQUIREMENTS = Object.freeze({
     requires_complete_evidence: true,
     requires_retry_worthiness: false,
     requires_no_blocking_readiness: false,
+    requires_owner_mismatch_or_capability_gap: false,
+    requires_no_blocking_dependency: false,
+    requires_no_invalid_artifact: false,
+    requires_recovery_safe: false,
   }),
   retry: Object.freeze({
     requires_exact_match: true,
     requires_complete_evidence: true,
     requires_retry_worthiness: true,
     requires_no_blocking_readiness: true,
+    requires_owner_mismatch_or_capability_gap: false,
+    requires_no_blocking_dependency: false,
+    requires_no_invalid_artifact: false,
+    requires_recovery_safe: false,
+  }),
+  reroute: Object.freeze({
+    requires_exact_match: true,
+    requires_complete_evidence: true,
+    requires_retry_worthiness: false,
+    requires_no_blocking_readiness: false,
+    requires_owner_mismatch_or_capability_gap: true,
+    requires_no_blocking_dependency: true,
+    requires_no_invalid_artifact: true,
+    requires_recovery_safe: true,
   }),
   fail: Object.freeze({
     requires_exact_match: true,
     requires_complete_evidence: true,
     requires_retry_worthiness: false,
     requires_no_blocking_readiness: false,
+    requires_owner_mismatch_or_capability_gap: false,
+    requires_no_blocking_dependency: false,
+    requires_no_invalid_artifact: false,
+    requires_recovery_safe: false,
   }),
 });
 
@@ -232,6 +259,10 @@ function resolveActionPolicyEntry({
     requires_complete_evidence: allowedByList && requirementTemplate?.requires_complete_evidence === true,
     requires_retry_worthiness: allowedByList && requirementTemplate?.requires_retry_worthiness === true,
     requires_no_blocking_readiness: allowedByList && requirementTemplate?.requires_no_blocking_readiness === true,
+    requires_owner_mismatch_or_capability_gap: allowedByList && requirementTemplate?.requires_owner_mismatch_or_capability_gap === true,
+    requires_no_blocking_dependency: allowedByList && requirementTemplate?.requires_no_blocking_dependency === true,
+    requires_no_invalid_artifact: allowedByList && requirementTemplate?.requires_no_invalid_artifact === true,
+    requires_recovery_safe: allowedByList && requirementTemplate?.requires_recovery_safe === true,
     reason,
     notes: ACTION_NOTES[actionName] || "advisory_only_v1",
   };

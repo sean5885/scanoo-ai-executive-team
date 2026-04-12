@@ -214,6 +214,11 @@ All minimum trace/log events should align around these fields:
       - `decision_promotion.promotion_applied`
       - `decision_promotion.promotion_reason_codes`
       - `decision_promotion.safety_gate_passed`
+      - `decision_promotion.previous_owner_agent`
+      - `decision_promotion.current_owner_agent`
+      - `decision_promotion.reroute_target`
+      - `decision_promotion.reroute_reason`
+      - `decision_promotion.reroute_source`
       - `decision_promotion_summary`
       - `promotion_policy.allowed_actions`
       - `promotion_policy.rollback_disabled_actions`
@@ -228,12 +233,13 @@ All minimum trace/log events should align around these fields:
       - `highest_maturity_actions`
       - `rollback_disabled_actions`
       - v1 allow/deny/threshold truth comes from centralized promotion control surface:
-        - `allowed_actions=ask_user|retry|fail`
-        - `denied_actions=proceed|reroute|rollback|skip`
+        - `allowed_actions=ask_user|retry|reroute|fail`
+        - `denied_actions=proceed|rollback|skip`
         - `ineffective_threshold=3`
       - scoreboard aggregation source is existing decision promotion observability only (advisor alignment + decision promotion + promotion audit + rollback safety + control surface); it is not a second state source
       - scoreboard maturity output is deterministic `high|medium|low` with fixed thresholds; no probabilistic/statistical layer
       - promoted `retry` traces additionally expose deterministic gate outcomes through reason codes (`retry_not_worthy`, `retry_readiness_not_ready`, `retry_invalid_artifact`, `retry_blocked_dependency`, `retry_budget_exhausted`, etc.)
+      - promoted `reroute` traces additionally expose deterministic gate outcomes through reason codes (`reroute_signals_missing`, `reroute_missing_slot_priority`, `reroute_invalid_artifact`, `reroute_blocked_dependency`, `reroute_recovery_conflict`, `reroute_health_signal_missing|not_ready`, `reroute_target_unverified`, etc.)
       - rollback safety v1 is deterministic and fail-closed:
         - threshold is read from `promotion_policy.ineffective_threshold` (`N=3` in v1)
         - triggered action is demoted to advisory-only for future promotion attempts

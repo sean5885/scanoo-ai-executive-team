@@ -156,6 +156,30 @@ test("scoreboard reflects rollback-disabled action from control surface", () => 
   assert.equal(scoreboard.rollback_disabled_actions.includes("retry"), true);
 });
 
+test("scoreboard includes reroute entry and metrics fields", () => {
+  let state = createDecisionPromotionAuditState();
+  state = applyAudit(state, buildAuditRecord({
+    auditId: "reroute-effective-1",
+    action: "reroute",
+    promotionApplied: true,
+    effectiveness: "effective",
+    alignmentType: "exact_match",
+  }));
+  const scoreboard = buildDecisionMetricsScoreboard({
+    promotion_audit_state: state,
+    promotion_policy: resolvePromotionControlSurface(),
+  });
+  const reroute = getEntry(scoreboard, "reroute");
+  assert.ok(reroute);
+  assert.equal(typeof reroute.promotion_enabled, "boolean");
+  assert.equal(typeof reroute.promotion_applied_count, "number");
+  assert.equal(typeof reroute.exact_match_count, "number");
+  assert.equal(typeof reroute.effective_count, "number");
+  assert.equal(typeof reroute.ineffective_count, "number");
+  assert.equal(typeof reroute.current_rollback_disabled, "boolean");
+  assert.equal(typeof reroute.maturity_signal, "string");
+});
+
 test("scoreboard fails closed on malformed metrics input", () => {
   const scoreboard = buildDecisionMetricsScoreboard({
     promotion_audit_state: "bad_state_payload",

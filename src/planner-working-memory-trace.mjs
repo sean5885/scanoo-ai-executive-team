@@ -523,6 +523,14 @@ function normalizeDecisionPromotionObservability(observability = null) {
     promotion_reason_codes: reasonCodes,
     promotion_confidence: cleanText(promotionObject.promotion_confidence || "") || null,
     safety_gate_passed: promotionObject.safety_gate_passed === true,
+    previous_owner_agent: cleanText(promotionObject.previous_owner_agent || "") || null,
+    current_owner_agent: cleanText(promotionObject.current_owner_agent || "") || null,
+    reroute_target: cleanText(promotionObject.reroute_target || "") || null,
+    reroute_reason: cleanText(promotionObject.reroute_reason || "") || null,
+    reroute_source: cleanText(promotionObject.reroute_source || "") || null,
+    reroute_target_verified: typeof promotionObject.reroute_target_verified === "boolean"
+      ? promotionObject.reroute_target_verified
+      : null,
     promotion_version: cleanText(promotionObject.promotion_version || "") || null,
   };
   const summary = cleanText(normalizedObservability.decision_promotion_summary || "");
@@ -1052,6 +1060,15 @@ function buildDiffLines({
     if (!hasDiffPrefix("decision_promotion.safety_gate_passed:")) {
       addDiffLine(`decision_promotion.safety_gate_passed: ${promotionObservability.safety_gate_passed ? "true" : "false"}`);
     }
+    if (promotionObservability.reroute_target && !hasDiffPrefix("decision_promotion.reroute_target:")) {
+      addDiffLine(`decision_promotion.reroute_target: ${promotionObservability.reroute_target}`);
+    }
+    if (promotionObservability.reroute_reason && !hasDiffPrefix("decision_promotion.reroute_reason:")) {
+      addDiffLine(`decision_promotion.reroute_reason: ${promotionObservability.reroute_reason}`);
+    }
+    if (promotionObservability.reroute_source && !hasDiffPrefix("decision_promotion.reroute_source:")) {
+      addDiffLine(`decision_promotion.reroute_source: ${promotionObservability.reroute_source}`);
+    }
     if (promotionObservability.summary && !hasDiffPrefix("decision_promotion_summary:")) {
       addDiffLine(`decision_promotion_summary: ${promotionObservability.summary}`);
     }
@@ -1138,7 +1155,7 @@ function buildTaskTraceText({
     `recovery: class=${formatValue(next.execution_plan.current_step_failure_class)} | policy=${formatValue(next.execution_plan.current_step_recovery_policy)} | action=${formatValue(next.execution_plan.current_step_recovery_action)} | attempts=${formatValue(next.execution_plan.current_step_recovery_attempt_count)} | rollback_target=${formatValue(next.execution_plan.current_step_rollback_target_step_id)}`,
     `outcome: status=${formatValue(outcome?.outcome_status || null)} | confidence=${formatValue(outcome?.outcome_confidence ?? null)} | evidence=${formatOutcomeEvidence(outcome?.outcome_evidence || null)} | artifact_quality=${formatValue(outcome?.artifact_quality || null)} | retry_worthiness=${formatValue(typeof outcome?.retry_worthiness === "boolean" ? outcome.retry_worthiness : null)} | user_visible=${formatValue(outcome?.user_visible_completeness || null)}`,
     `advisor: action=${formatValue(advisor.recommended_next_action)} | reasons=${formatAdvisorReasons(advisor.decision_reason_codes)} | confidence=${formatValue(advisor.decision_confidence)} | based_on=${formatValue(advisor.based_on_summary)} | alignment=${formatAdvisorAlignment(advisor.alignment)} | alignment_summary=${formatValue(advisor.alignment_summary)}`,
-    `decision_promotion: promoted_action=${formatValue(promotion.promoted_action)} | promotion_applied=${formatValue(promotion.promotion_applied)} | reason_codes=${formatValue(promotion.promotion_reason_codes)} | safety_gate_passed=${formatValue(promotion.safety_gate_passed)} | summary=${formatValue(promotion.summary)}`,
+    `decision_promotion: promoted_action=${formatValue(promotion.promoted_action)} | promotion_applied=${formatValue(promotion.promotion_applied)} | reason_codes=${formatValue(promotion.promotion_reason_codes)} | safety_gate_passed=${formatValue(promotion.safety_gate_passed)} | previous_owner_agent=${formatValue(promotion.previous_owner_agent)} | current_owner_agent=${formatValue(promotion.current_owner_agent)} | reroute_target=${formatValue(promotion.reroute_target)} | reroute_reason=${formatValue(promotion.reroute_reason)} | reroute_source=${formatValue(promotion.reroute_source)} | summary=${formatValue(promotion.summary)}`,
     `promotion_policy: version=${formatValue(promotionPolicy.promotion_policy_version)} | allowed_actions=${formatValue(promotionPolicy.allowed_actions)} | rollback_disabled_actions=${formatValue(promotionPolicy.rollback_disabled_actions)} | ineffective_threshold=${formatValue(promotionPolicy.ineffective_threshold)} | summary=${formatValue(promotionPolicy.summary)}`,
     `promotion_audit: promoted_action=${formatValue(promotionAudit.promoted_action)} | promotion_effectiveness=${formatValue(promotionAudit.promotion_effectiveness)} | rollback_flag=${formatValue(promotionAudit.rollback_flag)} | summary=${formatValue(promotionAudit.summary)}`,
     `decision_scoreboard: highest_maturity_actions=${formatValue(decisionScoreboard.highest_maturity_actions)} | rollback_disabled_actions=${formatValue(decisionScoreboard.rollback_disabled_actions)} | summary=${formatValue(decisionScoreboard.summary)}`,
@@ -1179,7 +1196,7 @@ export function buildPlannerTaskTraceDiagnostics({
     nextSnapshot: memorySnapshot,
     observability,
   });
-  const summary = `task=${formatValue(snapshot.task_id)} phase=${snapshot.task_phase} status=${snapshot.task_status} owner=${formatValue(snapshot.current_owner_agent)} plan=${formatValue(snapshot.execution_plan.plan_status)}:${formatValue(snapshot.execution_plan.current_step)} recovery=${formatValue(snapshot.execution_plan.current_step_recovery_action)} readiness=${formatValue(readinessObservability.is_ready)}:${formatValue(readinessObservability.recommended_action)} outcome=${formatValue(outcomeObservability?.outcome_status || null)}:${formatValue(outcomeObservability?.retry_worthiness)} advisor=${formatValue(advisorObservability.recommended_next_action)}:${formatValue(advisorObservability.decision_confidence)} advisor_alignment=${formatAdvisorAlignment(advisorObservability.alignment)} decision_promotion=${formatValue(promotionObservability.promoted_action)}:${formatValue(promotionObservability.promotion_applied)}:${formatValue(promotionObservability.safety_gate_passed)} promotion_policy=${formatValue(promotionPolicyObservability.allowed_actions)}:${formatValue(promotionPolicyObservability.rollback_disabled_actions)}:${formatValue(promotionPolicyObservability.ineffective_threshold)} promotion_audit=${formatValue(promotionAuditObservability.promoted_action)}:${formatValue(promotionAuditObservability.promotion_effectiveness)}:${formatValue(promotionAuditObservability.rollback_flag)} decision_scoreboard=${formatValue(decisionScoreboardObservability.highest_maturity_actions)}:${formatValue(decisionScoreboardObservability.rollback_disabled_actions)} artifact=${formatValue(snapshot.execution_plan.artifact_id)}:${formatValue(snapshot.execution_plan.validity_status)} next=${formatValue(snapshot.next_best_action)}`;
+  const summary = `task=${formatValue(snapshot.task_id)} phase=${snapshot.task_phase} status=${snapshot.task_status} owner=${formatValue(snapshot.current_owner_agent)} plan=${formatValue(snapshot.execution_plan.plan_status)}:${formatValue(snapshot.execution_plan.current_step)} recovery=${formatValue(snapshot.execution_plan.current_step_recovery_action)} readiness=${formatValue(readinessObservability.is_ready)}:${formatValue(readinessObservability.recommended_action)} outcome=${formatValue(outcomeObservability?.outcome_status || null)}:${formatValue(outcomeObservability?.retry_worthiness)} advisor=${formatValue(advisorObservability.recommended_next_action)}:${formatValue(advisorObservability.decision_confidence)} advisor_alignment=${formatAdvisorAlignment(advisorObservability.alignment)} decision_promotion=${formatValue(promotionObservability.promoted_action)}:${formatValue(promotionObservability.promotion_applied)}:${formatValue(promotionObservability.safety_gate_passed)}:${formatValue(promotionObservability.reroute_target)}:${formatValue(promotionObservability.reroute_reason)} promotion_policy=${formatValue(promotionPolicyObservability.allowed_actions)}:${formatValue(promotionPolicyObservability.rollback_disabled_actions)}:${formatValue(promotionPolicyObservability.ineffective_threshold)} promotion_audit=${formatValue(promotionAuditObservability.promoted_action)}:${formatValue(promotionAuditObservability.promotion_effectiveness)}:${formatValue(promotionAuditObservability.rollback_flag)} decision_scoreboard=${formatValue(decisionScoreboardObservability.highest_maturity_actions)}:${formatValue(decisionScoreboardObservability.rollback_disabled_actions)} artifact=${formatValue(snapshot.execution_plan.artifact_id)}:${formatValue(snapshot.execution_plan.validity_status)} next=${formatValue(snapshot.next_best_action)}`;
   return {
     summary,
     snapshot: {
@@ -1233,6 +1250,12 @@ export function buildPlannerTaskTraceDiagnostics({
         promotion_reason_codes: promotionObservability.promotion_reason_codes,
         promotion_confidence: promotionObservability.promotion_confidence,
         safety_gate_passed: promotionObservability.safety_gate_passed,
+        previous_owner_agent: promotionObservability.previous_owner_agent,
+        current_owner_agent: promotionObservability.current_owner_agent,
+        reroute_target: promotionObservability.reroute_target,
+        reroute_reason: promotionObservability.reroute_reason,
+        reroute_source: promotionObservability.reroute_source,
+        reroute_target_verified: promotionObservability.reroute_target_verified,
         promotion_version: promotionObservability.promotion_version,
       },
       decision_promotion_summary: promotionObservability.summary,
@@ -1327,6 +1350,10 @@ export function buildPlannerTaskTraceDiagnostics({
       decision_promotion_reason_codes: Array.isArray(observability?.decision_promotion?.promotion_reason_codes)
         && observability.decision_promotion.promotion_reason_codes.length > 0,
       decision_promotion_safety_gate_passed: typeof observability?.decision_promotion?.safety_gate_passed === "boolean",
+      decision_promotion_reroute_target: Boolean(cleanText(observability?.decision_promotion?.reroute_target || "")),
+      decision_promotion_reroute_reason: Boolean(cleanText(observability?.decision_promotion?.reroute_reason || "")),
+      decision_promotion_reroute_source: Boolean(cleanText(observability?.decision_promotion?.reroute_source || "")),
+      decision_promotion_reroute_target_verified: typeof observability?.decision_promotion?.reroute_target_verified === "boolean",
       decision_promotion_summary: Boolean(cleanText(observability?.decision_promotion_summary || "")),
       promotion_policy: Boolean(observability?.promotion_policy && typeof observability.promotion_policy === "object"),
       promotion_policy_allowed_actions: Array.isArray(observability?.promotion_policy?.allowed_actions),

@@ -131,18 +131,26 @@ Current-truth docs for onboarding are:
   - `decision-engine-promotion` v1 now adds one gated override layer over advisor diagnostics:
     - promotion allow/deny/threshold truth is centralized in `/Users/seanhan/Documents/Playground/src/promotion-control-surface.mjs` (single authority)
     - v1 control surface policy:
-      - `allowed_actions = ask_user|retry|fail`
-      - `denied_actions = proceed|reroute|rollback|skip`
+      - `allowed_actions = ask_user|retry|reroute|fail`
+      - `denied_actions = proceed|rollback|skip`
       - `ineffective_threshold = 3`
       - if an action appears in `rollback_disabled_actions`, promotion is blocked even if it is in `allowed_actions`
     - promotion prerequisites are all required: action policy says `promotion_allowed=true`, `advisor_alignment.promotion_candidate=true`, `alignment_type=exact_match`, evidence complete, no malformed/unknown/conflicting signals, and no readiness/outcome/recovery/artifact conflict against the promoted action
     - promoted `retry` is additionally gated by deterministic retry-only checks: `outcome.retry_worthiness=true`, `outcome_status!=failed`, `readiness.is_ready=true`, no `invalid_artifact`/`blocked_dependency`, retry budget not exhausted, and no rollback flag for `retry`
+    - promoted `reroute` is additionally gated as bounded fail-closed:
+      - explicit `owner_mismatch` or `capability_gap` signal
+      - no `missing_slot` ask-user-priority signal
+      - no `invalid_artifact`/`blocked_dependency`/hard-fail/recovery-conflict
+      - reroute health baseline must exist and be non-low for `ask_user|retry|fail`; otherwise fail-closed
+      - planner apply stage must verify exactly one legal reroute target; ambiguous/unverified target is fail-closed
+      - promoted reroute observability now carries `previous_owner_agent`, `current_owner_agent`, `reroute_target`, `reroute_reason`, `reroute_source`
     - when the gate passes, planner/router can apply deterministic override on the same low-risk fail-soft/fail-closed boundary; when blocked, behavior stays on existing routing/recovery authority and only emits diagnostics (`decision_promotion`, `decision_promotion_summary`)
     - the same diagnostics payload now also carries `promotion_policy` / `promotion_policy_summary` so trace can answer current allow-list, rollback-disabled actions, and threshold in one place
     - the same boundary now also emits `promotion_audit` / `promotion_audit_summary` per step:
       - required audit fields include `promotion_audit_id`, `promoted_action`, `promotion_applied`, `promotion_context`, `promotion_outcome`, `promotion_effectiveness`, `rollback_flag`, `audit_version`
-      - deterministic effectiveness rules cover promoted `ask_user`, `retry`, and `fail` outcomes; malformed/conflicting audits are fail-closed and excluded from ineffective streak counting
+      - deterministic effectiveness rules cover promoted `ask_user`, `retry`, `reroute`, and `fail` outcomes; malformed/conflicting audits are fail-closed and excluded from ineffective streak counting
       - promoted `retry` audit marks `effective` when pre-retry failed/partial outcome is improved to `success`, otherwise `ineffective`
+      - promoted `reroute` audit marks `effective` when reroute improves outcome / avoids blocked-or-failed / reaches completed follow-up; wrong-target/no-improvement paths are `ineffective`
       - rollback safety threshold source is the same centralized control surface (`ineffective_threshold=3` in v1) and disables future promotion for that action without retroactively changing already-executed actions
     - the same promotion-audit state now also keeps deterministic per-action metrics counters (`promotion_applied_count`, alignment split, effectiveness split, rollback flag count) so scoreboard aggregation does not create a second truth source
     - `/Users/seanhan/Documents/Playground/src/decision-metrics-scoreboard.mjs` builds one per-session/per-memory snapshot from existing observability + promotion control surface:
