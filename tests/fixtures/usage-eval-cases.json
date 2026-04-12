@@ -2170,5 +2170,2609 @@
         "expected_behavior_hint": "continuation runtime with_context"
       }
     ]
+  },
+  {
+    "case_id": "scale-001",
+    "description": "scale synthetic multi_intent #001",
+    "turns": [
+      {
+        "user_input": "幫我先看這份文件，順便整理重點，還有幫我想下一步",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-002",
+    "description": "scale synthetic typo #002",
+    "turns": [
+      {
+        "user_input": "我想找之前那個專案ㄉ簡報，你幫我看一下",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-003",
+    "description": "scale synthetic short_followup #003",
+    "turns": [
+      {
+        "user_input": "第一個",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-004",
+    "description": "scale synthetic emotional #004",
+    "turns": [
+      {
+        "user_input": "這個真的很亂，你直接幫我收斂成可執行版本",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-005",
+    "description": "scale synthetic half_sentence #005",
+    "turns": [
+      {
+        "user_input": "那如果是上次那個客戶的話",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-006",
+    "description": "scale synthetic ambiguous #006",
+    "turns": [
+      {
+        "user_input": "先用之前那套，但不要完全一樣",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-007",
+    "description": "scale synthetic slot_fill #007",
+    "turns": [
+      {
+        "user_input": "可以，時間是明天下午三點，地點台北",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-008",
+    "description": "scale synthetic multi_intent #008",
+    "turns": [
+      {
+        "user_input": "幫我先看這份文件，順便整理重點，還有幫我想下一步",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-009",
+    "description": "scale synthetic typo #009",
+    "turns": [
+      {
+        "user_input": "我想找之前那個專案ㄉ簡報，你幫我看一下",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-010",
+    "description": "scale synthetic short_followup #010",
+    "turns": [
+      {
+        "user_input": "第一個",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-011",
+    "description": "scale synthetic emotional #011",
+    "turns": [
+      {
+        "user_input": "這個真的很亂，你直接幫我收斂成可執行版本",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-012",
+    "description": "scale synthetic half_sentence #012",
+    "turns": [
+      {
+        "user_input": "那如果是上次那個客戶的話",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-013",
+    "description": "scale synthetic ambiguous #013",
+    "turns": [
+      {
+        "user_input": "先用之前那套，但不要完全一樣",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-014",
+    "description": "scale synthetic slot_fill #014",
+    "turns": [
+      {
+        "user_input": "可以，時間是明天下午三點，地點台北",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-015",
+    "description": "scale synthetic multi_intent #015",
+    "turns": [
+      {
+        "user_input": "幫我先看這份文件，順便整理重點，還有幫我想下一步",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-016",
+    "description": "scale synthetic typo #016",
+    "turns": [
+      {
+        "user_input": "我想找之前那個專案ㄉ簡報，你幫我看一下",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-017",
+    "description": "scale synthetic short_followup #017",
+    "turns": [
+      {
+        "user_input": "第一個",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-018",
+    "description": "scale synthetic emotional #018",
+    "turns": [
+      {
+        "user_input": "這個真的很亂，你直接幫我收斂成可執行版本",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-019",
+    "description": "scale synthetic half_sentence #019",
+    "turns": [
+      {
+        "user_input": "那如果是上次那個客戶的話",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-020",
+    "description": "scale synthetic ambiguous #020",
+    "turns": [
+      {
+        "user_input": "先用之前那套，但不要完全一樣",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-021",
+    "description": "scale synthetic slot_fill #021",
+    "turns": [
+      {
+        "user_input": "可以，時間是明天下午三點，地點台北",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-022",
+    "description": "scale synthetic multi_intent #022",
+    "turns": [
+      {
+        "user_input": "幫我先看這份文件，順便整理重點，還有幫我想下一步",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-023",
+    "description": "scale synthetic typo #023",
+    "turns": [
+      {
+        "user_input": "我想找之前那個專案ㄉ簡報，你幫我看一下",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-024",
+    "description": "scale synthetic short_followup #024",
+    "turns": [
+      {
+        "user_input": "第一個",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-025",
+    "description": "scale synthetic emotional #025",
+    "turns": [
+      {
+        "user_input": "這個真的很亂，你直接幫我收斂成可執行版本",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-026",
+    "description": "scale synthetic half_sentence #026",
+    "turns": [
+      {
+        "user_input": "那如果是上次那個客戶的話",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-027",
+    "description": "scale synthetic ambiguous #027",
+    "turns": [
+      {
+        "user_input": "先用之前那套，但不要完全一樣",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-028",
+    "description": "scale synthetic slot_fill #028",
+    "turns": [
+      {
+        "user_input": "可以，時間是明天下午三點，地點台北",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-029",
+    "description": "scale synthetic multi_intent #029",
+    "turns": [
+      {
+        "user_input": "幫我先看這份文件，順便整理重點，還有幫我想下一步",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-030",
+    "description": "scale synthetic typo #030",
+    "turns": [
+      {
+        "user_input": "我想找之前那個專案ㄉ簡報，你幫我看一下",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-031",
+    "description": "scale synthetic short_followup #031",
+    "turns": [
+      {
+        "user_input": "第一個",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-032",
+    "description": "scale synthetic emotional #032",
+    "turns": [
+      {
+        "user_input": "這個真的很亂，你直接幫我收斂成可執行版本",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-033",
+    "description": "scale synthetic half_sentence #033",
+    "turns": [
+      {
+        "user_input": "那如果是上次那個客戶的話",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-034",
+    "description": "scale synthetic ambiguous #034",
+    "turns": [
+      {
+        "user_input": "先用之前那套，但不要完全一樣",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-035",
+    "description": "scale synthetic slot_fill #035",
+    "turns": [
+      {
+        "user_input": "可以，時間是明天下午三點，地點台北",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-036",
+    "description": "scale synthetic multi_intent #036",
+    "turns": [
+      {
+        "user_input": "幫我先看這份文件，順便整理重點，還有幫我想下一步",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-037",
+    "description": "scale synthetic typo #037",
+    "turns": [
+      {
+        "user_input": "我想找之前那個專案ㄉ簡報，你幫我看一下",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-038",
+    "description": "scale synthetic short_followup #038",
+    "turns": [
+      {
+        "user_input": "第一個",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-039",
+    "description": "scale synthetic emotional #039",
+    "turns": [
+      {
+        "user_input": "這個真的很亂，你直接幫我收斂成可執行版本",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-040",
+    "description": "scale synthetic half_sentence #040",
+    "turns": [
+      {
+        "user_input": "那如果是上次那個客戶的話",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-041",
+    "description": "scale synthetic ambiguous #041",
+    "turns": [
+      {
+        "user_input": "先用之前那套，但不要完全一樣",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-042",
+    "description": "scale synthetic slot_fill #042",
+    "turns": [
+      {
+        "user_input": "可以，時間是明天下午三點，地點台北",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-043",
+    "description": "scale synthetic multi_intent #043",
+    "turns": [
+      {
+        "user_input": "幫我先看這份文件，順便整理重點，還有幫我想下一步",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-044",
+    "description": "scale synthetic typo #044",
+    "turns": [
+      {
+        "user_input": "我想找之前那個專案ㄉ簡報，你幫我看一下",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-045",
+    "description": "scale synthetic short_followup #045",
+    "turns": [
+      {
+        "user_input": "第一個",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-046",
+    "description": "scale synthetic emotional #046",
+    "turns": [
+      {
+        "user_input": "這個真的很亂，你直接幫我收斂成可執行版本",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-047",
+    "description": "scale synthetic half_sentence #047",
+    "turns": [
+      {
+        "user_input": "那如果是上次那個客戶的話",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-048",
+    "description": "scale synthetic ambiguous #048",
+    "turns": [
+      {
+        "user_input": "先用之前那套，但不要完全一樣",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-049",
+    "description": "scale synthetic slot_fill #049",
+    "turns": [
+      {
+        "user_input": "可以，時間是明天下午三點，地點台北",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-050",
+    "description": "scale synthetic multi_intent #050",
+    "turns": [
+      {
+        "user_input": "幫我先看這份文件，順便整理重點，還有幫我想下一步",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-051",
+    "description": "scale synthetic typo #051",
+    "turns": [
+      {
+        "user_input": "我想找之前那個專案ㄉ簡報，你幫我看一下",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-052",
+    "description": "scale synthetic short_followup #052",
+    "turns": [
+      {
+        "user_input": "第一個",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-053",
+    "description": "scale synthetic emotional #053",
+    "turns": [
+      {
+        "user_input": "這個真的很亂，你直接幫我收斂成可執行版本",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-054",
+    "description": "scale synthetic half_sentence #054",
+    "turns": [
+      {
+        "user_input": "那如果是上次那個客戶的話",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-055",
+    "description": "scale synthetic ambiguous #055",
+    "turns": [
+      {
+        "user_input": "先用之前那套，但不要完全一樣",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-056",
+    "description": "scale synthetic slot_fill #056",
+    "turns": [
+      {
+        "user_input": "可以，時間是明天下午三點，地點台北",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-057",
+    "description": "scale synthetic multi_intent #057",
+    "turns": [
+      {
+        "user_input": "幫我先看這份文件，順便整理重點，還有幫我想下一步",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-058",
+    "description": "scale synthetic typo #058",
+    "turns": [
+      {
+        "user_input": "我想找之前那個專案ㄉ簡報，你幫我看一下",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-059",
+    "description": "scale synthetic short_followup #059",
+    "turns": [
+      {
+        "user_input": "第一個",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-060",
+    "description": "scale synthetic emotional #060",
+    "turns": [
+      {
+        "user_input": "這個真的很亂，你直接幫我收斂成可執行版本",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-061",
+    "description": "scale synthetic half_sentence #061",
+    "turns": [
+      {
+        "user_input": "那如果是上次那個客戶的話",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-062",
+    "description": "scale synthetic ambiguous #062",
+    "turns": [
+      {
+        "user_input": "先用之前那套，但不要完全一樣",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-063",
+    "description": "scale synthetic slot_fill #063",
+    "turns": [
+      {
+        "user_input": "可以，時間是明天下午三點，地點台北",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-064",
+    "description": "scale synthetic multi_intent #064",
+    "turns": [
+      {
+        "user_input": "幫我先看這份文件，順便整理重點，還有幫我想下一步",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-065",
+    "description": "scale synthetic typo #065",
+    "turns": [
+      {
+        "user_input": "我想找之前那個專案ㄉ簡報，你幫我看一下",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-066",
+    "description": "scale synthetic short_followup #066",
+    "turns": [
+      {
+        "user_input": "第一個",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-067",
+    "description": "scale synthetic emotional #067",
+    "turns": [
+      {
+        "user_input": "這個真的很亂，你直接幫我收斂成可執行版本",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-068",
+    "description": "scale synthetic half_sentence #068",
+    "turns": [
+      {
+        "user_input": "那如果是上次那個客戶的話",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-069",
+    "description": "scale synthetic ambiguous #069",
+    "turns": [
+      {
+        "user_input": "先用之前那套，但不要完全一樣",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-070",
+    "description": "scale synthetic slot_fill #070",
+    "turns": [
+      {
+        "user_input": "可以，時間是明天下午三點，地點台北",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-071",
+    "description": "scale synthetic multi_intent #071",
+    "turns": [
+      {
+        "user_input": "幫我先看這份文件，順便整理重點，還有幫我想下一步",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-072",
+    "description": "scale synthetic typo #072",
+    "turns": [
+      {
+        "user_input": "我想找之前那個專案ㄉ簡報，你幫我看一下",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-073",
+    "description": "scale synthetic short_followup #073",
+    "turns": [
+      {
+        "user_input": "第一個",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-074",
+    "description": "scale synthetic emotional #074",
+    "turns": [
+      {
+        "user_input": "這個真的很亂，你直接幫我收斂成可執行版本",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-075",
+    "description": "scale synthetic half_sentence #075",
+    "turns": [
+      {
+        "user_input": "那如果是上次那個客戶的話",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-076",
+    "description": "scale synthetic ambiguous #076",
+    "turns": [
+      {
+        "user_input": "先用之前那套，但不要完全一樣",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-077",
+    "description": "scale synthetic slot_fill #077",
+    "turns": [
+      {
+        "user_input": "可以，時間是明天下午三點，地點台北",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-078",
+    "description": "scale synthetic multi_intent #078",
+    "turns": [
+      {
+        "user_input": "幫我先看這份文件，順便整理重點，還有幫我想下一步",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-079",
+    "description": "scale synthetic typo #079",
+    "turns": [
+      {
+        "user_input": "我想找之前那個專案ㄉ簡報，你幫我看一下",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-080",
+    "description": "scale synthetic short_followup #080",
+    "turns": [
+      {
+        "user_input": "第一個",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-081",
+    "description": "scale synthetic emotional #081",
+    "turns": [
+      {
+        "user_input": "這個真的很亂，你直接幫我收斂成可執行版本",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-082",
+    "description": "scale synthetic half_sentence #082",
+    "turns": [
+      {
+        "user_input": "那如果是上次那個客戶的話",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-083",
+    "description": "scale synthetic ambiguous #083",
+    "turns": [
+      {
+        "user_input": "先用之前那套，但不要完全一樣",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-084",
+    "description": "scale synthetic slot_fill #084",
+    "turns": [
+      {
+        "user_input": "可以，時間是明天下午三點，地點台北",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-085",
+    "description": "scale synthetic multi_intent #085",
+    "turns": [
+      {
+        "user_input": "幫我先看這份文件，順便整理重點，還有幫我想下一步",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-086",
+    "description": "scale synthetic typo #086",
+    "turns": [
+      {
+        "user_input": "我想找之前那個專案ㄉ簡報，你幫我看一下",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-087",
+    "description": "scale synthetic short_followup #087",
+    "turns": [
+      {
+        "user_input": "第一個",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-088",
+    "description": "scale synthetic emotional #088",
+    "turns": [
+      {
+        "user_input": "這個真的很亂，你直接幫我收斂成可執行版本",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-089",
+    "description": "scale synthetic half_sentence #089",
+    "turns": [
+      {
+        "user_input": "那如果是上次那個客戶的話",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-090",
+    "description": "scale synthetic ambiguous #090",
+    "turns": [
+      {
+        "user_input": "先用之前那套，但不要完全一樣",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-091",
+    "description": "scale synthetic slot_fill #091",
+    "turns": [
+      {
+        "user_input": "可以，時間是明天下午三點，地點台北",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-092",
+    "description": "scale synthetic multi_intent #092",
+    "turns": [
+      {
+        "user_input": "幫我先看這份文件，順便整理重點，還有幫我想下一步",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-093",
+    "description": "scale synthetic typo #093",
+    "turns": [
+      {
+        "user_input": "我想找之前那個專案ㄉ簡報，你幫我看一下",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-094",
+    "description": "scale synthetic short_followup #094",
+    "turns": [
+      {
+        "user_input": "第一個",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-095",
+    "description": "scale synthetic emotional #095",
+    "turns": [
+      {
+        "user_input": "這個真的很亂，你直接幫我收斂成可執行版本",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-096",
+    "description": "scale synthetic half_sentence #096",
+    "turns": [
+      {
+        "user_input": "那如果是上次那個客戶的話",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-097",
+    "description": "scale synthetic ambiguous #097",
+    "turns": [
+      {
+        "user_input": "先用之前那套，但不要完全一樣",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-098",
+    "description": "scale synthetic slot_fill #098",
+    "turns": [
+      {
+        "user_input": "可以，時間是明天下午三點，地點台北",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-099",
+    "description": "scale synthetic multi_intent #099",
+    "turns": [
+      {
+        "user_input": "幫我先看這份文件，順便整理重點，還有幫我想下一步",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-100",
+    "description": "scale synthetic typo #100",
+    "turns": [
+      {
+        "user_input": "我想找之前那個專案ㄉ簡報，你幫我看一下",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-101",
+    "description": "scale synthetic short_followup #101",
+    "turns": [
+      {
+        "user_input": "第一個",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-102",
+    "description": "scale synthetic emotional #102",
+    "turns": [
+      {
+        "user_input": "這個真的很亂，你直接幫我收斂成可執行版本",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-103",
+    "description": "scale synthetic half_sentence #103",
+    "turns": [
+      {
+        "user_input": "那如果是上次那個客戶的話",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-104",
+    "description": "scale synthetic ambiguous #104",
+    "turns": [
+      {
+        "user_input": "先用之前那套，但不要完全一樣",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-105",
+    "description": "scale synthetic slot_fill #105",
+    "turns": [
+      {
+        "user_input": "可以，時間是明天下午三點，地點台北",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-106",
+    "description": "scale synthetic multi_intent #106",
+    "turns": [
+      {
+        "user_input": "幫我先看這份文件，順便整理重點，還有幫我想下一步",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-107",
+    "description": "scale synthetic typo #107",
+    "turns": [
+      {
+        "user_input": "我想找之前那個專案ㄉ簡報，你幫我看一下",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-108",
+    "description": "scale synthetic short_followup #108",
+    "turns": [
+      {
+        "user_input": "第一個",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-109",
+    "description": "scale synthetic emotional #109",
+    "turns": [
+      {
+        "user_input": "這個真的很亂，你直接幫我收斂成可執行版本",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-110",
+    "description": "scale synthetic half_sentence #110",
+    "turns": [
+      {
+        "user_input": "那如果是上次那個客戶的話",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-111",
+    "description": "scale synthetic ambiguous #111",
+    "turns": [
+      {
+        "user_input": "先用之前那套，但不要完全一樣",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-112",
+    "description": "scale synthetic slot_fill #112",
+    "turns": [
+      {
+        "user_input": "可以，時間是明天下午三點，地點台北",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-113",
+    "description": "scale synthetic multi_intent #113",
+    "turns": [
+      {
+        "user_input": "幫我先看這份文件，順便整理重點，還有幫我想下一步",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-114",
+    "description": "scale synthetic typo #114",
+    "turns": [
+      {
+        "user_input": "我想找之前那個專案ㄉ簡報，你幫我看一下",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-115",
+    "description": "scale synthetic short_followup #115",
+    "turns": [
+      {
+        "user_input": "第一個",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-116",
+    "description": "scale synthetic emotional #116",
+    "turns": [
+      {
+        "user_input": "這個真的很亂，你直接幫我收斂成可執行版本",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-117",
+    "description": "scale synthetic half_sentence #117",
+    "turns": [
+      {
+        "user_input": "那如果是上次那個客戶的話",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-118",
+    "description": "scale synthetic ambiguous #118",
+    "turns": [
+      {
+        "user_input": "先用之前那套，但不要完全一樣",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-119",
+    "description": "scale synthetic slot_fill #119",
+    "turns": [
+      {
+        "user_input": "可以，時間是明天下午三點，地點台北",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-120",
+    "description": "scale synthetic multi_intent #120",
+    "turns": [
+      {
+        "user_input": "幫我先看這份文件，順便整理重點，還有幫我想下一步",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-121",
+    "description": "scale synthetic typo #121",
+    "turns": [
+      {
+        "user_input": "我想找之前那個專案ㄉ簡報，你幫我看一下",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-122",
+    "description": "scale synthetic short_followup #122",
+    "turns": [
+      {
+        "user_input": "第一個",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-123",
+    "description": "scale synthetic emotional #123",
+    "turns": [
+      {
+        "user_input": "這個真的很亂，你直接幫我收斂成可執行版本",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-124",
+    "description": "scale synthetic half_sentence #124",
+    "turns": [
+      {
+        "user_input": "那如果是上次那個客戶的話",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-125",
+    "description": "scale synthetic ambiguous #125",
+    "turns": [
+      {
+        "user_input": "先用之前那套，但不要完全一樣",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-126",
+    "description": "scale synthetic slot_fill #126",
+    "turns": [
+      {
+        "user_input": "可以，時間是明天下午三點，地點台北",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-127",
+    "description": "scale synthetic multi_intent #127",
+    "turns": [
+      {
+        "user_input": "幫我先看這份文件，順便整理重點，還有幫我想下一步",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-128",
+    "description": "scale synthetic typo #128",
+    "turns": [
+      {
+        "user_input": "我想找之前那個專案ㄉ簡報，你幫我看一下",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-129",
+    "description": "scale synthetic short_followup #129",
+    "turns": [
+      {
+        "user_input": "第一個",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-130",
+    "description": "scale synthetic emotional #130",
+    "turns": [
+      {
+        "user_input": "這個真的很亂，你直接幫我收斂成可執行版本",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-131",
+    "description": "scale synthetic half_sentence #131",
+    "turns": [
+      {
+        "user_input": "那如果是上次那個客戶的話",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-132",
+    "description": "scale synthetic ambiguous #132",
+    "turns": [
+      {
+        "user_input": "先用之前那套，但不要完全一樣",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-133",
+    "description": "scale synthetic slot_fill #133",
+    "turns": [
+      {
+        "user_input": "可以，時間是明天下午三點，地點台北",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-134",
+    "description": "scale synthetic multi_intent #134",
+    "turns": [
+      {
+        "user_input": "幫我先看這份文件，順便整理重點，還有幫我想下一步",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-135",
+    "description": "scale synthetic typo #135",
+    "turns": [
+      {
+        "user_input": "我想找之前那個專案ㄉ簡報，你幫我看一下",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-136",
+    "description": "scale synthetic short_followup #136",
+    "turns": [
+      {
+        "user_input": "第一個",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-137",
+    "description": "scale synthetic emotional #137",
+    "turns": [
+      {
+        "user_input": "這個真的很亂，你直接幫我收斂成可執行版本",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-138",
+    "description": "scale synthetic half_sentence #138",
+    "turns": [
+      {
+        "user_input": "那如果是上次那個客戶的話",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-139",
+    "description": "scale synthetic ambiguous #139",
+    "turns": [
+      {
+        "user_input": "先用之前那套，但不要完全一樣",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-140",
+    "description": "scale synthetic slot_fill #140",
+    "turns": [
+      {
+        "user_input": "可以，時間是明天下午三點，地點台北",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-141",
+    "description": "scale synthetic multi_intent #141",
+    "turns": [
+      {
+        "user_input": "幫我先看這份文件，順便整理重點，還有幫我想下一步",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-142",
+    "description": "scale synthetic typo #142",
+    "turns": [
+      {
+        "user_input": "我想找之前那個專案ㄉ簡報，你幫我看一下",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-143",
+    "description": "scale synthetic short_followup #143",
+    "turns": [
+      {
+        "user_input": "第一個",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-144",
+    "description": "scale synthetic emotional #144",
+    "turns": [
+      {
+        "user_input": "這個真的很亂，你直接幫我收斂成可執行版本",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-145",
+    "description": "scale synthetic half_sentence #145",
+    "turns": [
+      {
+        "user_input": "那如果是上次那個客戶的話",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-146",
+    "description": "scale synthetic ambiguous #146",
+    "turns": [
+      {
+        "user_input": "先用之前那套，但不要完全一樣",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-147",
+    "description": "scale synthetic slot_fill #147",
+    "turns": [
+      {
+        "user_input": "可以，時間是明天下午三點，地點台北",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-148",
+    "description": "scale synthetic multi_intent #148",
+    "turns": [
+      {
+        "user_input": "幫我先看這份文件，順便整理重點，還有幫我想下一步",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-149",
+    "description": "scale synthetic typo #149",
+    "turns": [
+      {
+        "user_input": "我想找之前那個專案ㄉ簡報，你幫我看一下",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-150",
+    "description": "scale synthetic short_followup #150",
+    "turns": [
+      {
+        "user_input": "第一個",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-151",
+    "description": "scale synthetic emotional #151",
+    "turns": [
+      {
+        "user_input": "這個真的很亂，你直接幫我收斂成可執行版本",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-152",
+    "description": "scale synthetic half_sentence #152",
+    "turns": [
+      {
+        "user_input": "那如果是上次那個客戶的話",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-153",
+    "description": "scale synthetic ambiguous #153",
+    "turns": [
+      {
+        "user_input": "先用之前那套，但不要完全一樣",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-154",
+    "description": "scale synthetic slot_fill #154",
+    "turns": [
+      {
+        "user_input": "可以，時間是明天下午三點，地點台北",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-155",
+    "description": "scale synthetic multi_intent #155",
+    "turns": [
+      {
+        "user_input": "幫我先看這份文件，順便整理重點，還有幫我想下一步",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-156",
+    "description": "scale synthetic typo #156",
+    "turns": [
+      {
+        "user_input": "我想找之前那個專案ㄉ簡報，你幫我看一下",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-157",
+    "description": "scale synthetic short_followup #157",
+    "turns": [
+      {
+        "user_input": "第一個",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-158",
+    "description": "scale synthetic emotional #158",
+    "turns": [
+      {
+        "user_input": "這個真的很亂，你直接幫我收斂成可執行版本",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-159",
+    "description": "scale synthetic half_sentence #159",
+    "turns": [
+      {
+        "user_input": "那如果是上次那個客戶的話",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-160",
+    "description": "scale synthetic ambiguous #160",
+    "turns": [
+      {
+        "user_input": "先用之前那套，但不要完全一樣",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-161",
+    "description": "scale synthetic slot_fill #161",
+    "turns": [
+      {
+        "user_input": "可以，時間是明天下午三點，地點台北",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-162",
+    "description": "scale synthetic multi_intent #162",
+    "turns": [
+      {
+        "user_input": "幫我先看這份文件，順便整理重點，還有幫我想下一步",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-163",
+    "description": "scale synthetic typo #163",
+    "turns": [
+      {
+        "user_input": "我想找之前那個專案ㄉ簡報，你幫我看一下",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-164",
+    "description": "scale synthetic short_followup #164",
+    "turns": [
+      {
+        "user_input": "第一個",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-165",
+    "description": "scale synthetic emotional #165",
+    "turns": [
+      {
+        "user_input": "這個真的很亂，你直接幫我收斂成可執行版本",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-166",
+    "description": "scale synthetic half_sentence #166",
+    "turns": [
+      {
+        "user_input": "那如果是上次那個客戶的話",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-167",
+    "description": "scale synthetic ambiguous #167",
+    "turns": [
+      {
+        "user_input": "先用之前那套，但不要完全一樣",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-168",
+    "description": "scale synthetic slot_fill #168",
+    "turns": [
+      {
+        "user_input": "可以，時間是明天下午三點，地點台北",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-169",
+    "description": "scale synthetic multi_intent #169",
+    "turns": [
+      {
+        "user_input": "幫我先看這份文件，順便整理重點，還有幫我想下一步",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-170",
+    "description": "scale synthetic typo #170",
+    "turns": [
+      {
+        "user_input": "我想找之前那個專案ㄉ簡報，你幫我看一下",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-171",
+    "description": "scale synthetic short_followup #171",
+    "turns": [
+      {
+        "user_input": "第一個",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-172",
+    "description": "scale synthetic emotional #172",
+    "turns": [
+      {
+        "user_input": "這個真的很亂，你直接幫我收斂成可執行版本",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-173",
+    "description": "scale synthetic half_sentence #173",
+    "turns": [
+      {
+        "user_input": "那如果是上次那個客戶的話",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-174",
+    "description": "scale synthetic ambiguous #174",
+    "turns": [
+      {
+        "user_input": "先用之前那套，但不要完全一樣",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-175",
+    "description": "scale synthetic slot_fill #175",
+    "turns": [
+      {
+        "user_input": "可以，時間是明天下午三點，地點台北",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-176",
+    "description": "scale synthetic multi_intent #176",
+    "turns": [
+      {
+        "user_input": "幫我先看這份文件，順便整理重點，還有幫我想下一步",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-177",
+    "description": "scale synthetic typo #177",
+    "turns": [
+      {
+        "user_input": "我想找之前那個專案ㄉ簡報，你幫我看一下",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-178",
+    "description": "scale synthetic short_followup #178",
+    "turns": [
+      {
+        "user_input": "第一個",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-179",
+    "description": "scale synthetic emotional #179",
+    "turns": [
+      {
+        "user_input": "這個真的很亂，你直接幫我收斂成可執行版本",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-180",
+    "description": "scale synthetic half_sentence #180",
+    "turns": [
+      {
+        "user_input": "那如果是上次那個客戶的話",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-181",
+    "description": "scale synthetic ambiguous #181",
+    "turns": [
+      {
+        "user_input": "先用之前那套，但不要完全一樣",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-182",
+    "description": "scale synthetic slot_fill #182",
+    "turns": [
+      {
+        "user_input": "可以，時間是明天下午三點，地點台北",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-183",
+    "description": "scale synthetic multi_intent #183",
+    "turns": [
+      {
+        "user_input": "幫我先看這份文件，順便整理重點，還有幫我想下一步",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-184",
+    "description": "scale synthetic typo #184",
+    "turns": [
+      {
+        "user_input": "我想找之前那個專案ㄉ簡報，你幫我看一下",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-185",
+    "description": "scale synthetic short_followup #185",
+    "turns": [
+      {
+        "user_input": "第一個",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
+  },
+  {
+    "case_id": "scale-186",
+    "description": "scale synthetic emotional #186",
+    "turns": [
+      {
+        "user_input": "這個真的很亂，你直接幫我收斂成可執行版本",
+        "expected_behavior_hint": "start_task"
+      },
+      {
+        "user_input": "繼續",
+        "expected_behavior_hint": "continuation with_context"
+      }
+    ]
   }
 ]
