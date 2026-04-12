@@ -6,6 +6,7 @@ import {
   resolvePromotionActionPolicy,
   resolvePromotionControlSurface,
 } from "./promotion-control-surface.mjs";
+import { buildRetryContextPack } from "./retry-context-pack.mjs";
 import { hasAnyTrulyMissingRequiredSlot } from "./truly-missing-slot.mjs";
 
 export const DECISION_ENGINE_PROMOTION_VERSION = "decision_engine_promotion_v1";
@@ -48,6 +49,7 @@ export const DECISION_ENGINE_PROMOTION_REASON_CODES = Object.freeze([
   "retry_blocked_dependency",
   "retry_budget_exhausted",
   "retry_budget_unknown",
+  "retry_context_degraded",
   "retry_gate_passed",
   "reroute_signals_missing",
   "reroute_missing_slot_priority",
@@ -450,10 +452,13 @@ function evaluateRetrySafety({
   outcome = null,
   recovery = null,
   artifact = null,
+  task_plan = null,
 } = {}) {
   const readinessObject = toObject(readiness) || {};
   const outcomeObject = toObject(outcome) || {};
   const artifactObject = toObject(artifact) || {};
+  const recoveryObject = toObject(recovery) || {};
+  const taskPlanObject = toObject(task_plan) || {};
   const blockingReasonCodes = uniqueStrings(readinessObject.blocking_reason_codes);
   const missingSlots = uniqueStrings(readinessObject.missing_slots);
   const readinessRecommendedAction = normalizeAction(readinessObject.recommended_action);
@@ -479,6 +484,55 @@ function evaluateRetrySafety({
     || readinessObject.recovery_ready === false
     || (readinessRecommendedAction && readinessRecommendedAction !== "retry");
   const retryBudgetState = resolveRetryBudgetState(recovery);
+  const retryContextRequiredSlots = uniqueStrings([
+    ...toArray(readinessObject.required_slots),
+    ...toArray(readinessObject.unresolved_slots),
+    ...missingSlots,
+  ]);
+  const retryContextSlots = {};
+  for (const slotEntry of toArray(readinessObject.slot_state).filter((entry) => toObject(entry))) {
+    const slotKey = cleanText(slotEntry?.slot_key || slotEntry?.key || "");
+    if (!slotKey) {
+      continue;
+    }
+    const slotFilled = cleanText(slotEntry?.status || "") === "filled"
+      && slotEntry?.valid !== false
+      && slotEntry?.expired !== true;
+    retryContextSlots[slotKey] = slotFilled ? true : null;
+  }
+  const retryContextPack = buildRetryContextPack({
+    intent: cleanText(
+      recoveryObject.intent
+      || taskPlanObject.task_type
+      || readinessObject.task_type
+      || "retry",
+    ) || "retry",
+    slots: retryContextSlots,
+    required_slots: retryContextRequiredSlots,
+    waiting_user: cleanText(
+      taskPlanObject.task_phase
+      || recoveryObject.task_phase
+      || readinessObject.task_phase
+      || "",
+    ) === "waiting_user",
+    last_failure: {
+      class: cleanText(
+        recoveryObject.failure_class
+        || taskPlanObject.failure_class
+        || "",
+      ) || null,
+    },
+    last_action: cleanText(
+      taskPlanObject.current_step_action
+      || recoveryObject.last_action
+      || readinessObject.current_step_action
+      || "",
+    ),
+    user_input_delta: cleanText(recoveryObject.user_input_delta || "") || null,
+  });
+  const retryContextDegraded = retryContextRequiredSlots.length > 0
+    && retryContextPack.degraded_retry === true;
+  const retryContextBlockedReasons = uniqueStrings(retryContextPack.degraded_reason_codes);
 
   const conflictingSignals = [];
   if (!retryWorthiness) {
@@ -504,11 +558,16 @@ function evaluateRetrySafety({
   } else if (!retryBudgetState.has_budget_signal) {
     conflictingSignals.push("retry_budget_unknown");
   }
+  if (retryContextDegraded) {
+    conflictingSignals.push("retry_context_degraded");
+  }
 
   return {
     gatePassed: conflictingSignals.length === 0,
     reasonCodes: uniqueStrings(conflictingSignals),
     confidence: conflictingSignals.length === 0 ? "high" : "low",
+    retryBlocked: retryContextDegraded,
+    retryBlockedReason: retryContextDegraded ? retryContextBlockedReasons : [],
   };
 }
 
@@ -955,6 +1014,7 @@ export function evaluateDecisionEnginePromotion({
       outcome,
       recovery,
       artifact,
+      task_plan,
     });
   } else if (advisorAction === "reroute" && actionPolicy?.promotion_allowed === true) {
     actionSafety = evaluateRerouteSafety({
@@ -1018,6 +1078,12 @@ export function evaluateDecisionEnginePromotion({
   const askUserRecalibrationSummary = advisorAction === "ask_user"
     ? `promotion_allowed=${askUserGate.promotion_allowed ? "true" : "false"} resume_instead_of_ask=${askUserGate.resume_instead_of_ask ? "true" : "false"} truly_missing_slots=${askUserGate.truly_missing_slots.length > 0 ? `[${askUserGate.truly_missing_slots.join(", ")}]` : "[]"} blocked_reasons=${askUserGate.blocked_reason_codes.length > 0 ? `[${askUserGate.blocked_reason_codes.join(", ")}]` : "[]"}`
     : null;
+  const retryBlocked = advisorAction === "retry"
+    ? actionSafety.retryBlocked === true
+    : null;
+  const retryBlockedReason = advisorAction === "retry"
+    ? uniqueStrings(actionSafety.retryBlockedReason)
+    : null;
 
   return {
     promoted_action: safetyGatePassed ? advisorAction : null,
@@ -1051,6 +1117,8 @@ export function evaluateDecisionEnginePromotion({
     ask_user_blocked_reason: askUserBlockedReason,
     ask_user_recalibrated: askUserRecalibrated,
     ask_user_recalibration_summary: askUserRecalibrationSummary,
+    retry_blocked: retryBlocked,
+    retry_blocked_reason: retryBlockedReason,
     promotion_version: DECISION_ENGINE_PROMOTION_VERSION,
     promotion_policy_version: cleanText(promotionPolicy.promotion_policy_version || "") || null,
   };

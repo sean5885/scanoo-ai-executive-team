@@ -3,6 +3,7 @@ import {
   hasAnyTrulyMissingRequiredSlot,
   isSlotActuallyMissing,
 } from "./truly-missing-slot.mjs";
+import { buildRetryContextPack } from "./retry-context-pack.mjs";
 
 const CONTINUATION_REASON_PATTERNS = [
   /^working_memory_/i,
@@ -392,6 +393,7 @@ export function evaluateUsageLayerIntelligencePass(input = {}) {
       owner_selection_feels_consistent: true,
       slot_suppressed_ask: false,
       retry_context_applied: false,
+      retry_context_quality: null,
       response_continuity_score: "low",
       usage_issue_codes: [],
     };
@@ -510,6 +512,39 @@ export function evaluateUsageLayerIntelligencePass(input = {}) {
     dedupedIssues.push("over_reset_response");
   }
 
+  const retrySlots = {};
+  for (const slotEntry of Array.isArray(workingMemory?.slot_state) ? workingMemory.slot_state : []) {
+    const slotKey = cleanText(slotEntry?.slot_key || slotEntry?.key || "");
+    if (!slotKey) {
+      continue;
+    }
+    const slotFilled = isSlotActuallyMissing(slotEntry) !== true;
+    retrySlots[slotKey] = slotFilled ? true : null;
+  }
+  const retryPack = buildRetryContextPack({
+    intent: cleanText(workingMemory?.task_type || normalizedInput.taskType || "") || null,
+    slots: retrySlots,
+    required_slots: unresolvedSlots,
+    waiting_user: cleanText(workingMemory?.task_phase || "") === "waiting_user",
+    last_failure: {
+      class: cleanText(observability?.failure_class || "") || null,
+    },
+    last_action: cleanText(
+      normalizedInput.selectedAction
+      || normalizedInput?.plannerEnvelope?.action
+      || currentPlanStep?.intended_action
+      || workingMemory?.next_best_action
+      || "",
+    ),
+    user_input_delta: requestText,
+  });
+  let retryContextQuality = null;
+  if (retryPack.degraded_retry) {
+    retryContextQuality = "low";
+  } else if (retryPack.resume_instead_of_retry) {
+    retryContextQuality = "high";
+  }
+
   const diagnostics = {
     interpreted_as_continuation: continuationSignal.interpretedAsContinuation,
     interpreted_as_new_task: continuationSignal.interpretedAsNewTask,
@@ -517,6 +552,7 @@ export function evaluateUsageLayerIntelligencePass(input = {}) {
     owner_selection_feels_consistent: ownerConsistency.feelsConsistent,
     slot_suppressed_ask: slotSuppressedAsk,
     retry_context_applied: retryContextApplied,
+    retry_context_quality: retryContextQuality,
     response_continuity_score: responseContinuityScore,
     usage_issue_codes: dedupeIssueCodes(dedupedIssues),
   };
@@ -609,6 +645,7 @@ export function extractUsageLayerDiagnostics(passResult = null) {
       owner_selection_feels_consistent: true,
       slot_suppressed_ask: false,
       retry_context_applied: false,
+      retry_context_quality: null,
       response_continuity_score: "low",
       usage_issue_codes: [],
     };
@@ -622,6 +659,7 @@ export function extractUsageLayerDiagnostics(passResult = null) {
         owner_selection_feels_consistent: true,
         slot_suppressed_ask: false,
         retry_context_applied: false,
+        retry_context_quality: null,
         response_continuity_score: "low",
         usage_issue_codes: [],
       };
