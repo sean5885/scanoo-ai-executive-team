@@ -320,6 +320,23 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - runner 現在也會輸出 `governance_family`、`governance_breakdown`、`governance_cases`，把 timeout/slow family 與一般 `failure_class` 分開看
 - 若 runner 看到 timeout 但無法分進明確 family，summary 會把它記到 `unclassified_timeout`
 - CLI 會印出 case start/done/timeout 與 stuck warning，方便直接定位是哪一條 case 長時間沒有結束
+- usage eval runner v2（`/Users/seanhan/Documents/Playground/src/usage-eval-runner.mjs`）在同一條 evaluation-only path 內新增 issue visibility 分層，不改 planner/decision/runtime：
+  - 每個 turn 會同時輸出：
+    - `issue_detected_codes[]`（raw detected）
+    - `issue_exposed_codes[]`（user-visible）
+    - `suppression_flags.slot` / `suppression_flags.retry`
+  - `redundant_slot_ask` 若符合 suppression 條件（`slot_suppressed_ask=true` + slot reusable valid + 未實際 promotion ask_user），會在 detected 層改標 `redundant_slot_ask_suppressed`，且不計入 exposed 層
+  - `retry_without_contextual_response` 若符合 retry continuity suppression 條件（`retry_context_applied=true` + 無 long reset + 有 continuity tone），保留 detected，但不計入 exposed
+  - aggregation 現在固定分開輸出：
+    - `issue_detected_count_by_code` / `raw_issue_distribution`
+    - `issue_exposed_count_by_code` / `user_visible_issue_distribution`
+  - summary v2 現在固定輸出：
+    - `top_detected_issues`
+    - `top_user_visible_issues`
+    - `suppression_effectiveness`（`suppressed_count` / `detected_count` / `suppressed_ratio`）
+    - `retry_context_success_rate`
+    - `slot_ask_suppression_success_rate`
+  - `overall_intelligence_signal` 仍維持 deterministic 規則，但在 user-visible issue 相對 detected issue 明顯下降時可提升一級
 - `RDR` 目前先保留 TODO，只做 case log，不宣稱已收斂成穩定自動 judge
 - 由於目前 repo 本地沒有 stored explicit user auth / account context，checked-in pack 會把 auth-required company-brain read 與 account-required cloud-doc workflow case 標成 `fail_closed`；這是當前 code truth，不是宣稱能力不存在
 
