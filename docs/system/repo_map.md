@@ -157,11 +157,13 @@ This file explains which directories are part of the current runtime, which are 
   - `runAgentE2E(...)` now enforces a request-level latency budget guard (`AGENT_E2E_BUDGET_MS`, default `5000ms`) and computes `request_deadline_at = Date.now() + request_budget_ms`, then propagates both values into runtime context for each step/tool call
   - each loop now checks deadline before planner execution, dynamically clamps usable step count from remaining budget, and exits as `terminal_reason=agent_e2e_budget_exhausted` / `latency_budget_step_cap` when time pressure is too high
   - tool execution timeout now uses `min(step_timeout, remaining_budget)` (`AGENT_E2E_STEP_TIMEOUT_MS` / `AGENT_E2E_HARD_TIMEOUT_MS` compatible), and when remaining budget drops below fast-fail threshold (`AGENT_E2E_FAST_FAIL_MS`, default `200ms`) tool calls are skipped fail-soft
+  - rollout admission now supports explicit force (`agent_e2e=force` query flag or `x-agent-e2e-force: true` header); when sub-100% rollout has no stable user/account identity, selection uses per-request random sampling instead of a fixed seed bucket
   - emits debug traces for chosen skills, routing decisions, and continuation state
   - diagnostics logs now include ingress enter, before planner decision, before tool execution, after tool execution, before continuation decision, and terminal exit
   - it is now optionally used by direct HTTP `/answer` behind `AGENT_E2E_ENABLED=true` plus `AGENT_E2E_RATIO>0` rollout gating as the single active agent runtime authority
   - direct `/answer` agent mode now injects a real planner dispatch-backed tool executor into `runAgentE2E(...)`, so normal ingress does not hit `tool_executor_missing`
   - if canary execution does not produce a stable final answer, direct `/answer` now returns a bounded single-runtime fail-soft response by default; fallback to legacy planner answer-edge is only enabled explicitly with `AGENT_E2E_LEGACY_FALLBACK_ENABLED=true`
+  - direct `/answer` now applies one bounded early-abort budget window (default `5000ms`, configurable via `ANSWER_LATENCY_BUDGET_MS` or `AGENT_E2E_BUDGET_MS`) for both canary and non-canary planner execution, so requests do not wait for the full outer HTTP timeout
   - it is still not exposed as a separate public ingress route and not the primary plugin dispatch path
   - the default adapter remains in-memory and the mock structured-log adapter is local-only
   - no production telemetry pipeline is wired from this subtree yet

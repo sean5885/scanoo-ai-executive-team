@@ -156,3 +156,87 @@ test('/answer returns bounded fallback under stalled agent tool dispatch', { tim
     true,
   );
 });
+
+test('/answer legacy planner path is also bounded by latency budget when canary is not selected', { timeout: 12000 }, async (t) => {
+  withEnv(t, {
+    AGENT_E2E_ENABLED: 'true',
+    AGENT_E2E_RATIO: '0',
+    AGENT_E2E_BUDGET_MS: '5000',
+    AGENT_E2E_HARD_TIMEOUT_MS: '40000',
+  });
+  const server = await startTestServer(t, {
+    async executePlannedUserInput() {
+      return new Promise(() => {});
+    },
+  });
+  const { port } = server.address();
+
+  const startedAt = Date.now();
+  const response = await fetch(
+    `http://127.0.0.1:${port}/answer?q=${encodeURIComponent('幫我查 Scanoo 是什麼，整理給我')}`,
+    {
+      headers: {
+        'x-user-id': 'user-legacy-timeout',
+        'x-account-id': 'acct-1',
+      },
+    },
+  );
+  const payload = await response.json();
+  const elapsedMs = Date.now() - startedAt;
+
+  assert.equal(elapsedMs < 6_000, true);
+  assert.equal(elapsedMs < 40_000, true);
+  assert.equal(response.status, 504);
+  assert.equal(payload.ok, false);
+  assert.match(String(payload.answer || ''), /逾時/);
+});
+
+test('/answer can force agent canary by query flag even when rollout ratio is zero', async (t) => {
+  withEnv(t, {
+    AGENT_E2E_ENABLED: 'true',
+    AGENT_E2E_RATIO: '0',
+    AGENT_E2E_LEGACY_FALLBACK_ENABLED: 'false',
+    AGENT_E2E_BUDGET_MS: '5000',
+  });
+  const plannerCalls = [];
+  const server = await startTestServer(t, {
+    async runAgentE2E() {
+      return {
+        ok: true,
+        final: {
+          ok: true,
+          action: 'answer_user_directly',
+          result: {
+            answer: 'forced canary answer',
+          },
+        },
+        terminal_reason: 'answer_user_directly',
+        plan: ['answer_user_directly'],
+      };
+    },
+    async executePlannedUserInput(args) {
+      plannerCalls.push(args);
+      return {
+        ok: true,
+        action: 'search_company_brain_docs',
+        execution_result: {
+          ok: true,
+          data: {
+            answer: 'legacy planner should not run',
+            sources: [],
+            limitations: [],
+          },
+        },
+      };
+    },
+  });
+  const { port } = server.address();
+  const response = await fetch(
+    `http://127.0.0.1:${port}/answer?q=${encodeURIComponent('幫我查 Scanoo 是什麼，整理給我')}&agent_e2e=force`,
+  );
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.answer, 'forced canary answer');
+  assert.equal(plannerCalls.length, 0);
+});

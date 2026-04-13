@@ -250,9 +250,37 @@ function normalizeHeaderValue(value) {
   return normalizeText(value || "");
 }
 
+function isTruthyFlag(value = "") {
+  const normalized = normalizeText(value).toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "on" || normalized === "force" || normalized === "yes";
+}
+
+function resolveAnswerBudgetMs(requestTimeoutMs = null) {
+  const normalizedRequestTimeoutMs = Number.isFinite(Number(requestTimeoutMs)) && Number(requestTimeoutMs) > 0
+    ? Math.floor(Number(requestTimeoutMs))
+    : null;
+  const configuredBudgetRaw = Number(
+    process.env.ANSWER_LATENCY_BUDGET_MS
+    || process.env.AGENT_E2E_BUDGET_MS
+    || "5000",
+  );
+  const configuredBudgetMs = Number.isFinite(configuredBudgetRaw) && configuredBudgetRaw > 0
+    ? Math.floor(configuredBudgetRaw)
+    : 5_000;
+  if (normalizedRequestTimeoutMs == null) {
+    return configuredBudgetMs;
+  }
+  return Math.min(configuredBudgetMs, Math.max(25, normalizedRequestTimeoutMs));
+}
+
 function shouldUseAgentE2E({ req = null, requestUrl = null, body = null } = {}) {
   if (process.env.AGENT_E2E_ENABLED !== "true") {
     return false;
+  }
+  const forceHeader = normalizeHeaderValue(req?.headers?.["x-agent-e2e-force"]);
+  const forceQuery = normalizeText(requestUrl?.searchParams?.get("agent_e2e") || body?.agent_e2e || "");
+  if (isTruthyFlag(forceHeader) || isTruthyFlag(forceQuery)) {
+    return true;
   }
   const configuredRatio = Number.parseFloat(process.env.AGENT_E2E_RATIO || "0");
   if (!Number.isFinite(configuredRatio) || configuredRatio <= 0) {
@@ -262,12 +290,12 @@ function shouldUseAgentE2E({ req = null, requestUrl = null, body = null } = {}) 
   if (ratio >= 1) {
     return true;
   }
-  const seed = normalizeHeaderValue(req?.headers?.["x-user-id"])
-    || normalizeHeaderValue(req?.headers?.["x-account-id"])
-    || getAccountId(requestUrl, body)
-    || normalizeText(req?.socket?.remoteAddress || req?.ip || "")
-    || normalizeText(requestUrl?.searchParams?.get("q") || body?.q || "")
-    || "agent_e2e_rollout_seed";
+  const userIdSeed = normalizeHeaderValue(req?.headers?.["x-user-id"]);
+  const accountIdSeed = normalizeHeaderValue(req?.headers?.["x-account-id"]) || getAccountId(requestUrl, body);
+  if (!userIdSeed && !accountIdSeed) {
+    return Math.random() < ratio;
+  }
+  const seed = userIdSeed || accountIdSeed || "agent_e2e_rollout_seed";
   let hash = 0;
   for (let index = 0; index < seed.length; index += 1) {
     hash = (hash << 5) - hash + seed.charCodeAt(index);
@@ -2531,6 +2559,29 @@ function resolveRequestAbortInfo({ signal = null, error = null } = {}) {
         ? Number(error.timeout_ms)
         : null,
   };
+}
+
+async function awaitWithAbortSignal(promise, signal) {
+  if (!signal) {
+    return promise;
+  }
+  if (signal.aborted) {
+    throw signal.reason || buildRequestAbortReason({ code: "request_cancelled" });
+  }
+  let abortListener = null;
+  const abortPromise = new Promise((_, reject) => {
+    abortListener = () => {
+      reject(signal.reason || buildRequestAbortReason({ code: "request_cancelled" }));
+    };
+    signal.addEventListener("abort", abortListener, { once: true });
+  });
+  try {
+    return await Promise.race([promise, abortPromise]);
+  } finally {
+    if (abortListener && signal?.removeEventListener) {
+      signal.removeEventListener("abort", abortListener);
+    }
+  }
 }
 
 function resolveBoundedFallbackLeadTimeMs(timeoutMs = null) {
@@ -8220,6 +8271,7 @@ async function handleSearch(res, requestUrl, body, logger = noopHttpLogger) {
 
 async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger, req = null) {
   const q = requestUrl.searchParams.get("q") || body.q || "";
+  const answerBudgetMs = resolveAnswerBudgetMs(res?.__request_timeout_ms || null);
 
   if (!q.trim()) {
     logger.warn("knowledge_answer_missing_query");
@@ -8229,7 +8281,7 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger, req 
 
   const earlyFallback = createEarlyFallbackSignal({
     signal: logger?.__abort_signal || res?.__abort_signal || null,
-    timeoutMs: res?.__request_timeout_ms || null,
+    timeoutMs: answerBudgetMs,
     pathname: requestUrl?.pathname || "/answer",
   });
 
@@ -8239,7 +8291,7 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger, req 
       const accountId = normalizeHeaderValue(req?.headers?.["x-account-id"]) || getAccountId(requestUrl, body);
       const userId = normalizeHeaderValue(req?.headers?.["x-user-id"]) || "anon";
       const allowLegacyFallback = shouldAllowAgentE2ELegacyFallback();
-      const requestTimeoutMs = Number.isFinite(Number(res?.__request_timeout_ms)) ? Number(res.__request_timeout_ms) : null;
+      const requestTimeoutMs = Number.isFinite(Number(answerBudgetMs)) ? Number(answerBudgetMs) : null;
       const configuredAgentBudgetRaw = Number(process.env.AGENT_E2E_BUDGET_MS);
       const configuredAgentBudgetMs = Number.isFinite(configuredAgentBudgetRaw) && configuredAgentBudgetRaw > 0
         ? Math.floor(configuredAgentBudgetRaw)
@@ -8382,10 +8434,12 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger, req 
     logger.info("knowledge_answer_started", {
       account_id: getAccountId(requestUrl, body) || null,
       q_len: q.trim().length,
+      answer_budget_ms: Number.isFinite(Number(answerBudgetMs)) ? Number(answerBudgetMs) : null,
       ingress_primary: directIngressState.is_primary_entry === true,
       ingress_note: directIngressState.fallback_reason || null,
     });
-    const { plannerResult: result, plannerEnvelope: envelope, userResponse } = await runPlannerUserInputEdge({
+    const { plannerResult: result, plannerEnvelope: envelope, userResponse } = await awaitWithAbortSignal(
+      runPlannerUserInputEdge({
       text: q,
       logger,
       baseUrl: oauthBaseUrl,
@@ -8395,7 +8449,9 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger, req 
       traceId: res?.__trace_id || null,
       handlerName: "handleAnswer",
       plannerExecutor: getHttpService("executePlannedUserInput", executePlannedUserInput),
-    });
+      }),
+      earlyFallback.signal,
+    );
     logger.info("knowledge_answer_completed", {
       selected_action: envelope.action || null,
       ok: envelope.ok,
