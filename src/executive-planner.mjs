@@ -142,6 +142,10 @@ import {
   isSlotActuallyMissing,
 } from "./truly-missing-slot.mjs";
 import { buildRetryContextPack } from "./retry-context-pack.mjs";
+import {
+  getSkillMetadata,
+  normalizeSkillArgs,
+} from "./skill-registry.mjs";
 import { resolveToolContract, validateToolInvocation } from "./tool-layer-contract.mjs";
 import { executeTool } from "./tool-execution-runtime.mjs";
 import { resolveToolResultContinuation } from "./tool-result-continuation.mjs";
@@ -932,6 +936,9 @@ function buildPlannerUserFacingAnswer({
   }
   if (normalizedError === "semantic_mismatch") {
     return "我先沒有直接執行原本那個內部動作，因為它和你這輪的需求不一致。";
+  }
+  if (normalizedError === "missing_required_account_id") {
+    return "我先不執行這個技能，因為這輪請求缺少可驗證的 account_id。";
   }
   if (failureClass === "routing_no_match") {
     return "這題我先沒走到合適的處理方式，所以先用一般助理的方式接住你。";
@@ -1891,6 +1898,11 @@ const plannerExecutionPolicy = {
     retry: 0,
     stop_reason: "contract_violation",
   },
+  missing_required_account_id: {
+    self_heal: 0,
+    retry: 0,
+    stop_reason: "missing_required_account_id",
+  },
   tool_error: {
     self_heal: 0,
     retry: 1,
@@ -2670,6 +2682,7 @@ function maybeBackfillPlannerAccountId({
   action = "",
   payload = {},
   authContext = null,
+  context = null,
 } = {}) {
   const normalizedPayload = normalizePlannerPayload(payload);
   const contract = getPlannerActionContract(action);
@@ -2684,6 +2697,10 @@ function maybeBackfillPlannerAccountId({
     || normalizedPayload.accountId
     || authContext?.account_id
     || authContext?.accountId
+    || context?.account_id
+    || context?.accountId
+    || context?.authContext?.account_id
+    || context?.authContext?.accountId
     || "",
   );
   if (!accountId) {
@@ -2692,6 +2709,145 @@ function maybeBackfillPlannerAccountId({
   return {
     ...normalizedPayload,
     account_id: accountId,
+  };
+}
+
+function resolvePlannerDispatchContext({
+  context = null,
+  ctx = null,
+} = {}) {
+  if (context && typeof context === "object" && !Array.isArray(context)) {
+    return context;
+  }
+  if (ctx && typeof ctx === "object" && !Array.isArray(ctx)) {
+    return ctx;
+  }
+  return null;
+}
+
+function resolvePlannerDispatchAccountId({
+  payload = {},
+  authContext = null,
+  context = null,
+} = {}) {
+  const normalizedPayload = normalizePlannerPayload(payload);
+  const candidates = [
+    {
+      source: "payload.account_id",
+      value: cleanText(normalizedPayload.account_id || normalizedPayload.accountId || ""),
+    },
+    {
+      source: "authContext.account_id",
+      value: cleanText(authContext?.account_id || authContext?.accountId || ""),
+    },
+    {
+      source: "ctx.account_id",
+      value: cleanText(context?.account_id || context?.accountId || ""),
+    },
+    {
+      source: "ctx.authContext.account_id",
+      value: cleanText(context?.authContext?.account_id || context?.authContext?.accountId || ""),
+    },
+  ];
+  const resolved = candidates.find((candidate) => Boolean(candidate.value));
+  return resolved
+    ? { accountId: resolved.value, source: resolved.source }
+    : { accountId: "", source: null };
+}
+
+function skillRequiresPlannerAccountIdGuarantee({
+  skillAction = null,
+  skillMetadata = null,
+} = {}) {
+  if (!skillAction || typeof skillAction !== "object") {
+    return false;
+  }
+  if (cleanText(skillAction.surface_layer || "") !== "planner_visible") {
+    return false;
+  }
+  const accountRequirement = skillMetadata?.auth_requirements?.account_id;
+  if (accountRequirement && typeof accountRequirement === "object") {
+    return accountRequirement.required === true;
+  }
+  return Array.isArray(skillMetadata?.required_args)
+    ? skillMetadata.required_args.includes("account_id")
+    : false;
+}
+
+function writePlannerAccountIdGuaranteeMarker(context = null, marker = null) {
+  if (!context || typeof context !== "object" || Array.isArray(context)) {
+    return;
+  }
+  context.__account_id_guarantee = marker && typeof marker === "object" && !Array.isArray(marker)
+    ? marker
+    : null;
+}
+
+function ensurePlannerVisibleSkillAccountIdGuarantee({
+  action = "",
+  payload = {},
+  authContext = null,
+  context = null,
+} = {}) {
+  const skillAction = getPlannerSkillAction(action);
+  const skillMetadata = skillAction?.skill_name
+    ? getSkillMetadata(skillAction.skill_name)
+    : null;
+  const requiresGuarantee = skillRequiresPlannerAccountIdGuarantee({
+    skillAction,
+    skillMetadata,
+  });
+  const normalizedPayload = normalizePlannerPayload(payload);
+  const resolution = resolvePlannerDispatchAccountId({
+    payload: normalizedPayload,
+    authContext,
+    context,
+  });
+  const marker = {
+    action: cleanText(action) || null,
+    skill_name: cleanText(skillAction?.skill_name || "") || null,
+    requires_account_id: requiresGuarantee,
+    guaranteed: false,
+    source: resolution.source,
+    account_id: resolution.accountId || null,
+    blocked: false,
+    reason: null,
+    safe_path: "dispatch",
+  };
+
+  if (!requiresGuarantee) {
+    marker.guaranteed = true;
+    writePlannerAccountIdGuaranteeMarker(context, marker);
+    return {
+      ok: true,
+      payload: normalizedPayload,
+      marker,
+    };
+  }
+
+  if (!resolution.accountId) {
+    marker.guaranteed = false;
+    marker.blocked = true;
+    marker.reason = "missing_required_account_id";
+    marker.safe_path = "non_execution";
+    writePlannerAccountIdGuaranteeMarker(context, marker);
+    return {
+      ok: false,
+      payload: normalizedPayload,
+      marker,
+    };
+  }
+
+  marker.guaranteed = true;
+  const guaranteedPayload = {
+    ...normalizedPayload,
+    account_id: resolution.accountId,
+  };
+  writePlannerAccountIdGuaranteeMarker(context, marker);
+  return {
+    ok: true,
+    payload: guaranteedPayload,
+    marker,
   };
 }
 
@@ -3150,6 +3306,7 @@ function shapePlannerSkillDispatchPayload({
   userIntent = "",
   payload = {},
   authContext = null,
+  context = null,
 } = {}) {
   const skillAction = getPlannerSkillAction(action);
   const normalizedPayload = normalizePlannerPayload(payload);
@@ -3157,14 +3314,25 @@ function shapePlannerSkillDispatchPayload({
     return normalizedPayload;
   }
 
-  const shapedPayload = {
-    ...normalizedPayload,
-    q: cleanText(normalizedPayload.q || normalizedPayload.query || userIntent) || "",
-  };
+  const skillMetadata = getSkillMetadata(skillAction.skill_name);
+  const skillNormalizedPayload = normalizeSkillArgs(skillAction.skill_name, normalizedPayload);
+  const supportsQueryAlias = Array.isArray(skillMetadata?.required_args)
+    && skillMetadata.required_args.includes("query");
+  const searchQuery = supportsQueryAlias
+    ? cleanText(skillNormalizedPayload.query || userIntent)
+    : "";
+  const shapedPayload = searchQuery
+    ? normalizeSkillArgs(skillAction.skill_name, {
+        ...skillNormalizedPayload,
+        query: searchQuery,
+      })
+    : skillNormalizedPayload;
+
   return maybeBackfillPlannerAccountId({
     action: skillAction.action,
     payload: shapedPayload,
     authContext,
+    context,
   });
 }
 
@@ -6870,6 +7038,8 @@ export async function dispatchPlannerTool({
   baseUrl = oauthBaseUrl,
   maxRetry = 1,
   authContext = null,
+  context = null,
+  ctx = null,
   signal = null,
 } = {}) {
   const runtimeInput = buildPlannerActionRuntimeInput({
@@ -6882,12 +7052,15 @@ export async function dispatchPlannerTool({
   const hooks = createPlannerRuntimeHooks();
   const tool = getPlannerTool(runtimeInput.action);
   const skillAction = getPlannerSkillAction(runtimeInput.action);
-  const normalizedAuthContext = normalizePlannerAuthContext(authContext);
-  const runtimePayload = maybeBackfillPlannerAccountId({
-    action: runtimeInput.action,
-    payload: runtimeInput.payload,
-    authContext: normalizedAuthContext,
+  const runtimeDispatchContext = resolvePlannerDispatchContext({
+    context,
+    ctx,
   });
+  const normalizedAuthContext = normalizePlannerAuthContext(authContext);
+  let runtimePayload = normalizePlannerPayload(runtimeInput.payload);
+  if (skillAction?.skill_name) {
+    runtimePayload = normalizeSkillArgs(skillAction.skill_name, runtimePayload);
+  }
   const preAbortResult = buildPlannerAbortResult({
     action: runtimeInput.action,
     signal,
@@ -6943,6 +7116,57 @@ export async function dispatchPlannerTool({
       data: buildPlannerToolExecutionData(stoppedResult),
       error: stoppedResult.error,
       traceId: stoppedResult.trace_id || null,
+    });
+    return stoppedResult;
+  }
+
+  const accountIdGuarantee = ensurePlannerVisibleSkillAccountIdGuarantee({
+    action: runtimeInput.action,
+    payload: runtimePayload,
+    authContext: normalizedAuthContext,
+    context: runtimeDispatchContext,
+  });
+  runtimePayload = maybeBackfillPlannerAccountId({
+    action: runtimeInput.action,
+    payload: accountIdGuarantee.payload,
+    authContext: normalizedAuthContext,
+    context: runtimeDispatchContext,
+  });
+  if (!accountIdGuarantee.ok) {
+    const stoppedResult = buildPlannerStoppedResult({
+      action: runtimeInput.action,
+      error: "missing_required_account_id",
+      data: {
+        reason: "missing_required_account_id",
+        safe_path: "non_execution",
+        account_id_guarantee: accountIdGuarantee.marker,
+      },
+      traceId: null,
+      stopReason: "missing_required_account_id",
+    });
+    emitPlannerRuntimeTrace(logger, buildPlannerTraceEvent({
+      eventType: "stopped",
+      action: runtimeInput.action,
+      ok: false,
+      error: "missing_required_account_id",
+      retryCount: 0,
+      healed: false,
+      stopped: true,
+      stopReason: "missing_required_account_id",
+      traceId: null,
+    }));
+    emitToolExecutionLog({
+      logger,
+      requestId,
+      action: runtimeInput.action,
+      params: runtimePayload,
+      success: false,
+      data: buildPlannerToolExecutionData(stoppedResult),
+      error: stoppedResult.error,
+      traceId: stoppedResult.trace_id || null,
+      extra: {
+        account_id_guarantee: accountIdGuarantee.marker,
+      },
     });
     return stoppedResult;
   }
@@ -7829,9 +8053,11 @@ export async function runPlannerToolFlow({
             userIntent: agentInput.user_intent,
             payload: dispatchPayload,
             authContext,
+            context: safeToolContext,
           }),
           logger,
           authContext,
+          context: safeToolContext,
           signal,
         });
       }

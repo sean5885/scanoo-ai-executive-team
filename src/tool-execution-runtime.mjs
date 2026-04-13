@@ -1,26 +1,27 @@
-import { resolveToolContract } from './tool-layer-contract.mjs';
+import { normalizeToolInvocationArgs, resolveToolContract } from './tool-layer-contract.mjs';
 
 export async function executeTool(action, args = {}, ctx = {}) {
   const contract = resolveToolContract(action);
   if (!contract) {
     return { ok: false, error: 'unknown_tool_action' };
   }
+  const normalizedArgs = normalizeToolInvocationArgs(action, args);
 
   try {
     // --- mock execution layer (可替換為真實 API / DB / service) ---
     let result = null;
 
     if (action === 'search_company_brain_docs') {
-      const query = args?.q ?? args?.query ?? '';
+      const query = normalizedArgs?.q ?? '';
       result = { docs: [`result for ${query}`] };
     }
 
     if (action === 'official_read_document') {
-      result = { content: `document: ${args.document_ref}` };
+      result = { content: `document: ${normalizedArgs.document_ref}` };
     }
 
     if (action === 'answer_user_directly') {
-      result = { answer: args.answer };
+      result = { answer: normalizedArgs.answer };
     }
 
     return {

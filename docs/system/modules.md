@@ -257,6 +257,8 @@ Current-truth docs for onboarding are:
   - the runtime validates input, output, and side effects
   - the runtime rejects non-serializable input/output and nested skill execution
   - the checked-in skill set is currently `search_and_summarize`, `document_summarize`, and `image_generate`
+  - `skill-registry.mjs` now stores each registered skill with explicit metadata (`capability`, `required_args`, `arg_aliases`, `auth_requirements`, `health`, `fallback`, `read_only`) instead of a thin name-to-implementation map
+  - `skill-registry.mjs` now exports `getSkillRegistryEntry(...)`, `getSkillMetadata(...)`, and `normalizeSkillArgs(...)`; `query <-> q` compatibility for search skill payloads is normalized there through metadata aliases
   - `search_and_summarize` and `document_summarize` are read-only and go through `read-runtime`
   - `image_generate` is a checked-in internal-only read-only skill that returns a deterministic placeholder image URL without external side effects
   - `send-message-action.mjs` is a bounded Lark IM write helper for text messages (`/open-apis/im/v1/messages?receive_id_type=chat_id`) and now fails fast on missing fields or non-ASCII `token/chat_id` placeholders before network send
@@ -276,6 +278,7 @@ Current-truth docs for onboarding are:
   - `requestPlannerJson(...)` in `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` now prepends an optional file-backed system message from `/Users/seanhan/Documents/Playground/src/prompts/action-system-prompt.txt` when the file exists
   - `src/skills/document-fetch.mjs` is a secondary read-only helper under the same module group; it resolves `document_id` from direct input or raw Lark-style card payload and returns bounded `missing_access_token | not_found | permission_denied` failures without registering a new planner-visible skill
   - planner can consume a skill result through a bridge envelope
+  - planner-visible skill dispatch now enforces a deterministic pre-dispatch `account_id` guarantee (`payload -> authContext -> ctx -> ctx.authContext`) when skill metadata requires it; missing account id fail-closes as `missing_required_account_id` and does not execute skill runtime
   - planner-visible skill selection is deterministic-only and conflict-fail-closed
   - planner-visible skill rollout now has a checked-in observability/rollback watch over selector, tool execution, and answer-boundary evidence
   - planner-visible live telemetry now emits minimal spec-constrained runtime events through an injected telemetry adapter at planner decision/selection, fail-closed admission, fallback, and answer boundary

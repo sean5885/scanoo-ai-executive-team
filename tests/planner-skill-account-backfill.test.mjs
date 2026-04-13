@@ -14,5 +14,5 @@ test("dispatchPlannerTool backfills account_id from auth context for planner-vis
     action: "search_and_summarize",
     payload: { q: "healthcheck" },
   });
-  assert.equal(withoutAuth?.error, "contract_violation");
+  assert.equal(withoutAuth?.error, "missing_required_account_id");
 });

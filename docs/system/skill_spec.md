@@ -174,6 +174,25 @@ Current contract shape:
 }
 ```
 
+Current checked-in skill registry (`/Users/seanhan/Documents/Playground/src/skill-registry.mjs`) is no longer a thin `name -> implementation` map only.
+Each registered skill now carries explicit runtime metadata:
+
+- `capability`
+- `required_args`
+- `arg_aliases`
+- `auth_requirements`
+- `health`
+- `fallback`
+- `read_only`
+
+Current checked-in registry helpers:
+
+- `getSkillRegistryEntry(name)`
+- `getSkillMetadata(name)`
+- `normalizeSkillArgs(name, args)`
+
+`normalizeSkillArgs(...)` is now the canonical skill-level alias normalization layer. For search skill paths, `query <-> q` compatibility is declared by registry metadata and normalized before dispatch instead of being scattered ad hoc.
+
 Checked-in module metadata:
 
 - the three checked-in modules under `/Users/seanhan/Documents/Playground/src/skills/` also export a lightweight `SKILL_CONTRACT` object with:
@@ -418,7 +437,10 @@ Current v1 rules:
 - each planner execution may use at most one skill-backed action
 - skill chaining is not allowed
 - planner-visible skills must have unique deterministic selector keys
-- when a planner action input schema requires `account_id`, dispatch may backfill it from explicit auth context; if both payload and auth context are missing it, execution fail-closes with `contract_violation`
+- planner-visible skills that require `account_id` now enforce a hard pre-dispatch guarantee in `/Users/seanhan/Documents/Playground/src/executive-planner.mjs`
+- deterministic account resolution order is: `payload.account_id -> authContext.account_id -> ctx.account_id -> ctx.authContext.account_id`
+- if guarantee fails, dispatch does not execute the skill bridge and fail-closes with `missing_required_account_id` on a safe non-execution path
+- if account id is resolved from auth/context, dispatch payload is backfilled with canonical `account_id` before skill execution
 - planner-visible promotion must pass through `internal_only -> readiness_check -> planner_visible`
 - direct jump from `internal_only` to `planner_visible` is rejected fail-closed
 - selector conflicts fail closed instead of choosing heuristically
