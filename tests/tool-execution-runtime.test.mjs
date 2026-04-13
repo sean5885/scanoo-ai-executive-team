@@ -4,21 +4,44 @@ import { executeTool } from '../src/tool-execution-runtime.mjs';
 import { normalizeToolInvocationArgs, validateToolInvocation } from '../src/tool-layer-contract.mjs';
 
 test('search_company_brain_docs executes successfully with canonical q', async () => {
-  const res = await executeTool('search_company_brain_docs', { q: 'scanoo' }, {});
+  const res = await executeTool('search_company_brain_docs', { q: 'scanoo' }, {
+    tool_executor: async ({ args }) => ({
+      ok: true,
+      data: {
+        q: args?.q,
+        total: 1,
+        docs: [{ document_ref: 'doc-test-1', title: 'Doc 1', snippet: 'snippet' }],
+      },
+    }),
+  });
   assert.equal(res.ok, true);
   assert.equal(res.action, 'search_company_brain_docs');
   assert.equal(res.next, 'continue_planner');
 });
 
 test('search_company_brain_docs executes successfully with legacy query alias', async () => {
-  const res = await executeTool('search_company_brain_docs', { query: 'scanoo' }, {});
+  const res = await executeTool('search_company_brain_docs', { query: 'scanoo' }, {
+    tool_executor: async ({ args }) => ({
+      ok: true,
+      data: {
+        q: args?.q,
+        total: 1,
+        docs: [{ document_ref: 'doc-test-1', title: 'Doc 1', snippet: 'snippet' }],
+      },
+    }),
+  });
   assert.equal(res.ok, true);
   assert.equal(res.action, 'search_company_brain_docs');
   assert.equal(res.next, 'continue_planner');
 });
 
 test('official_read_document executes successfully', async () => {
-  const res = await executeTool('official_read_document', { document_ref: 'doc-1' }, {});
+  const res = await executeTool('official_read_document', { document_ref: 'doc-1' }, {
+    tool_executor: async ({ args }) => ({
+      ok: true,
+      data: { content: `document: ${args?.document_ref}` },
+    }),
+  });
   assert.equal(res.ok, true);
   assert.equal(res.next, 'continue_planner');
 });
@@ -27,6 +50,14 @@ test('unknown tool returns failure', async () => {
   const res = await executeTool('unknown_tool', {}, {});
   assert.equal(res.ok, false);
   assert.equal(res.error, 'unknown_tool_action');
+});
+
+test('executeTool fails soft when injected executor is missing', async () => {
+  const res = await executeTool('search_company_brain_docs', { q: 'scanoo' }, {});
+  assert.equal(res.ok, false);
+  assert.equal(res.action, 'search_company_brain_docs');
+  assert.equal(res.error, 'tool_executor_missing');
+  assert.equal(res.next, 'retry_or_fallback');
 });
 
 test('executeTool delegates to injected tool executor when available', async () => {

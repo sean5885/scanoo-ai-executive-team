@@ -26,7 +26,8 @@ test('tool loop with feedback runs multiple steps via llm decisions', async () =
 
   const context = {
     token: 'ascii_token_for_test',
-    chat_id: 'oc_test_chat'
+    chat_id: 'oc_test_chat',
+    allow_write_actions: true
   };
 
   const originalFetch = global.fetch;

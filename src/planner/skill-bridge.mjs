@@ -1,7 +1,7 @@
 import { runToolLoop } from './tool-loop.mjs';
 import { cleanText } from "../message-intent-utils.mjs";
 import { emitSkillReflection } from "../reflection/skill-reflection.mjs";
-import { defaultSkillRegistry } from "../skill-registry.mjs";
+import { defaultSkillRegistry, getSkillMetadata, normalizeSkillArgs } from "../skill-registry.mjs";
 import { runSkill } from "../skill-runtime.mjs";
 import {
   SKILL_CLASS_READ_ONLY,
@@ -50,11 +50,163 @@ function isWriteAction(action = "") {
 }
 
 function isReadOnlySkill(skillName = "") {
-  return READ_ONLY_SKILLS.includes(cleanText(skillName));
+  const normalizedSkillName = cleanText(skillName);
+  if (!normalizedSkillName) {
+    return false;
+  }
+  if (READ_ONLY_SKILLS.includes(normalizedSkillName)) {
+    return true;
+  }
+  return getSkillMetadata(normalizedSkillName)?.read_only === true;
 }
 
 function isToolLoopBridgeAction(action = "") {
   return TOOL_LOOP_BRIDGE_ACTIONS.includes(cleanText(action));
+}
+
+function isWriteActionExplicitlyAllowed(context = {}) {
+  return context?.allow_write_actions === true || context?.allowWriteActions === true;
+}
+
+function normalizeObject(input = null) {
+  return input && typeof input === "object" && !Array.isArray(input)
+    ? { ...input }
+    : {};
+}
+
+function resolveBridgeSkillAccountId({
+  payload = {},
+  authContext = null,
+  context = null,
+  ctx = null,
+} = {}) {
+  const normalizedPayload = normalizeObject(payload);
+  const normalizedPayloadAuthContext = normalizeObject(normalizedPayload.authContext);
+  const normalizedContext = normalizeObject(context);
+  const normalizedCtx = normalizeObject(ctx);
+  const normalizedAuthContext = normalizeObject(authContext);
+  const normalizedContextAuth = normalizeObject(normalizedContext.authContext);
+  const normalizedCtxAuth = normalizeObject(normalizedCtx.authContext);
+
+  const candidates = [
+    {
+      source: "payload.account_id",
+      value: cleanText(normalizedPayload.account_id || normalizedPayload.accountId || ""),
+    },
+    {
+      source: "payload.authContext.account_id",
+      value: cleanText(normalizedPayloadAuthContext.account_id || normalizedPayloadAuthContext.accountId || ""),
+    },
+    {
+      source: "authContext.account_id",
+      value: cleanText(normalizedAuthContext.account_id || normalizedAuthContext.accountId || ""),
+    },
+    {
+      source: "context.account_id",
+      value: cleanText(normalizedContext.account_id || normalizedContext.accountId || ""),
+    },
+    {
+      source: "context.authContext.account_id",
+      value: cleanText(normalizedContextAuth.account_id || normalizedContextAuth.accountId || ""),
+    },
+    {
+      source: "ctx.account_id",
+      value: cleanText(normalizedCtx.account_id || normalizedCtx.accountId || ""),
+    },
+    {
+      source: "ctx.authContext.account_id",
+      value: cleanText(normalizedCtxAuth.account_id || normalizedCtxAuth.accountId || ""),
+    },
+  ];
+
+  const resolved = candidates.find((entry) => Boolean(entry.value));
+  return {
+    accountId: cleanText(resolved?.value || ""),
+    source: cleanText(resolved?.source || "") || null,
+  };
+}
+
+function plannerVisibleSkillRequiresAccountId(skillAction = {}, registry = defaultSkillRegistry) {
+  if (cleanText(skillAction?.surface_layer || "") !== SKILL_SURFACE_PLANNER_VISIBLE) {
+    return false;
+  }
+  const metadataFromRegistry = registry instanceof Map
+    ? registry.get(cleanText(skillAction?.skill_name || ""))
+    : null;
+  const fallbackMetadata = getSkillMetadata(cleanText(skillAction?.skill_name || ""));
+  const accountRequirement = metadataFromRegistry?.auth_requirements?.account_id
+    || fallbackMetadata?.auth_requirements?.account_id
+    || null;
+
+  if (accountRequirement && typeof accountRequirement === "object") {
+    return accountRequirement.required === true;
+  }
+
+  const requiredArgs = Array.isArray(metadataFromRegistry?.required_args)
+    ? metadataFromRegistry.required_args
+    : Array.isArray(fallbackMetadata?.required_args)
+      ? fallbackMetadata.required_args
+      : [];
+  return requiredArgs.includes("account_id");
+}
+
+function ensurePlannerVisibleSkillAccountId({
+  skillAction = null,
+  payload = {},
+  authContext = null,
+  context = null,
+  ctx = null,
+  registry = defaultSkillRegistry,
+} = {}) {
+  const normalizedPayload = normalizeObject(payload);
+  const requiresAccountId = plannerVisibleSkillRequiresAccountId(skillAction, registry);
+  const resolution = resolveBridgeSkillAccountId({
+    payload: normalizedPayload,
+    authContext,
+    context,
+    ctx,
+  });
+  const marker = {
+    action: cleanText(skillAction?.action || "") || null,
+    skill_name: cleanText(skillAction?.skill_name || "") || null,
+    requires_account_id: requiresAccountId,
+    guaranteed: false,
+    blocked: false,
+    source: resolution.source,
+    account_id: resolution.accountId || null,
+    reason: null,
+    safe_path: "skill_bridge",
+  };
+
+  if (!requiresAccountId) {
+    marker.guaranteed = true;
+    return {
+      ok: true,
+      marker,
+      payload: normalizedPayload,
+    };
+  }
+
+  if (!resolution.accountId) {
+    marker.blocked = true;
+    marker.reason = "missing_required_account_id";
+    marker.safe_path = "non_execution";
+    return {
+      ok: false,
+      marker,
+      payload: normalizedPayload,
+    };
+  }
+
+  marker.guaranteed = true;
+  return {
+    ok: true,
+    marker,
+    payload: {
+      ...normalizedPayload,
+      account_id: resolution.accountId,
+    },
+  };
 }
 
 function normalizeStringList(items = []) {
@@ -799,20 +951,25 @@ export function selectPlannerSkillActionForTaskType({
 export async function runPlannerSkillBridge({
   action = "",
   payload = {},
+  authContext = null,
+  context = null,
+  ctx = null,
   logger = null,
   signal = null,
   registry = defaultSkillRegistry,
 } = {}) {
   const normalizedAction = cleanText(action);
   const skillAction = getPlannerSkillAction(normalizedAction);
-  const { plan, context } = payload || {};
+  const normalizedPayload = normalizeObject(payload);
+  const { plan } = normalizedPayload;
+  const legacyContext = normalizeObject(normalizedPayload.context);
   // Legacy bridge path: only explicit bridge actions may run tool-loop payloads.
   if (!skillAction && isToolLoopBridgeAction(normalizedAction)) {
     try {
-      if (plan && plan.action && context) {
+      if (plan && plan.action) {
         const selectedSkill = cleanText(
-          context?.selected_skill
-          || context?.skill_name
+          legacyContext?.selected_skill
+          || legacyContext?.skill_name
           || plan?.skill_name
           || plan?.selected_skill
           || ""
@@ -820,10 +977,11 @@ export async function runPlannerSkillBridge({
         const plannedAction = cleanText(
           plan?.action
           || plan?.tool_action
-          || context?.action
-          || context?.tool_action
+          || legacyContext?.action
+          || legacyContext?.tool_action
           || ""
         );
+        const writeAllowed = isWriteActionExplicitlyAllowed(legacyContext);
 
         if (isReadOnlySkill(selectedSkill) && isWriteAction(plannedAction)) {
           return {
@@ -834,8 +992,17 @@ export async function runPlannerSkillBridge({
             action: plannedAction,
           };
         }
+        if (isWriteAction(plannedAction) && !writeAllowed) {
+          return {
+            ok: false,
+            error: "write_action_not_allowed",
+            blocked: true,
+            action: plannedAction,
+            requires_explicit_write_access: true,
+          };
+        }
 
-        return await runToolLoop({ plan, context, max_steps: 3 });
+        return await runToolLoop({ plan, context: legacyContext, max_steps: 3 });
       }
     } catch (error) {
       return {
@@ -867,10 +1034,39 @@ export async function runPlannerSkillBridge({
     };
   }
 
+  const accountIdGuarantee = ensurePlannerVisibleSkillAccountId({
+    skillAction,
+    payload: normalizedPayload,
+    authContext,
+    context,
+    ctx,
+    registry,
+  });
+  if (!accountIdGuarantee.ok) {
+    return {
+      ok: false,
+      action: skillAction.action,
+      error: "missing_required_account_id",
+      data: {
+        bridge: "skill_bridge",
+        message: "missing_required_account_id",
+        reason: "missing_required_account_id",
+        safe_path: "non_execution",
+        account_id_guarantee: accountIdGuarantee.marker,
+        stopped: true,
+        stop_reason: "missing_required_account_id",
+      },
+      trace_id: null,
+    };
+  }
+
   const skillExecution = await runSkill({
     registry,
     skillName: skillAction.skill_name,
-    input: skillAction.buildSkillInput(payload),
+    input: normalizeSkillArgs(
+      skillAction.skill_name,
+      skillAction.buildSkillInput(accountIdGuarantee.payload),
+    ),
     logger,
     signal,
   });

@@ -264,8 +264,8 @@ Current-truth docs for onboarding are:
   - `image_generate` is a checked-in internal-only read-only skill that returns a deterministic placeholder image URL without external side effects
   - `send-message-action.mjs` is a bounded Lark IM write helper for text messages (`/open-apis/im/v1/messages?receive_id_type=chat_id`) and now fails fast on missing fields or non-ASCII `token/chat_id` placeholders before network send
   - `update-doc-action.mjs` is a bounded Lark Docx write helper that enters `/Users/seanhan/Documents/Playground/src/execute-lark-write.mjs` `executeLarkWrite(...)` and then reuses `/Users/seanhan/Documents/Playground/src/lark-content.mjs` `updateDocument(...)`; it supports optional `token_type/mode` and infers tenant token mode from `t-` token prefix when `token_type` is absent
-  - `planner/action-loop.mjs` currently provides a minimal standalone action executor (`send_message`, `update_doc`, `create_task`) and returns a bounded `no_action | action_executed | unsupported_action` shape; it now also hard-blocks read-only skill contexts from executing write actions and returns `error = read_only_skill_cannot_execute_write_action` with `blocked = true`
-  - `planner/tool-loop.mjs` wraps `runActionLoop(...)`; it keeps the loop envelope (`type = "tool_loop"`, ordered `steps`) and follows bounded `next_action` chaining up to `max_steps`; it now also enforces the same read-only-skill/write-action hard block both before the first step and while stepping chained actions
+  - `planner/action-loop.mjs` currently provides a minimal standalone action executor (`send_message`, `update_doc`, `create_task`) and returns a bounded `no_action | action_executed | unsupported_action` shape; write actions now require explicit `allow_write_actions=true` (or `allowWriteActions=true`) in context (`error = write_action_not_allowed`), and read-only skill contexts remain hard-blocked from write actions (`error = read_only_skill_cannot_execute_write_action`, `blocked = true`)
+  - `planner/tool-loop.mjs` wraps `runActionLoop(...)`; it keeps the loop envelope (`type = "tool_loop"`, ordered `steps`) and follows bounded `next_action` chaining up to `max_steps`; it now enforces both guards before step 1 and across chained steps (explicit-write gate + read-only-skill/write-action hard block), and carries the selected skill into chained step context so later `next_action` steps cannot bypass the read-only boundary
   - `planner/tool-loop-with-feedback.mjs` is a local feedback-loop helper that reruns `llm(...)` each step with the previous step history (`previous_steps` + `last_result`), returns early on normalized `answer`, and otherwise executes through the same bounded action loop
   - `planner/plan-normalizer.mjs` is a local helper that normalizes model output into a plan-like object but is not currently wired as a required planner contract step
   - `planner/execution-pipeline.mjs` is a local orchestration helper that runs `llm(input) -> normalizePlan(raw)` and then:
@@ -277,7 +277,7 @@ Current-truth docs for onboarding are:
     - each loop turn runs `selectPlannerTool(...)` for planner decision
     - resolves a bounded skill hint through `skill-registry.mjs` metadata (`getSkillMetadata`, `normalizeSkillArgs`)
     - executes only through the checked-in tool-layer contract/runtime (`tool-layer-contract.mjs`, `tool-execution-runtime.mjs`)
-    - `tool-execution-runtime.mjs` now supports injected executors: when a host provides a dispatch adapter it uses real runtime dispatch and keeps contract-normalized continuation semantics; when no executor is injected it falls back to bounded local mock execution
+    - `tool-execution-runtime.mjs` now supports injected executors only: when a host provides a dispatch adapter it uses real runtime dispatch and keeps contract-normalized continuation semantics; when no executor is injected it fail-soft returns `error = tool_executor_missing` on the tool contract failure continuation path (no local mock-success fallback)
     - applies `resolveToolResultContinuation(...)` before deciding the next loop turn
     - exits on `answer_user_directly` success or bounded fail-safe stop
   - that helper returns one bounded envelope `{ ok, done, terminal_reason, plan, steps, state, final, debug }`, where `debug` includes chosen skills, routing decisions, and continuation state per step
@@ -287,7 +287,10 @@ Current-truth docs for onboarding are:
   - `requestPlannerJson(...)` in `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` now prepends an optional file-backed system message from `/Users/seanhan/Documents/Playground/src/prompts/action-system-prompt.txt` when the file exists
   - `src/skills/document-fetch.mjs` is a secondary read-only helper under the same module group; it resolves `document_id` from direct input or raw Lark-style card payload and returns bounded `missing_access_token | not_found | permission_denied` failures without registering a new planner-visible skill
   - planner can consume a skill result through a bridge envelope
-  - planner-visible skill dispatch now enforces a deterministic pre-dispatch `account_id` guarantee (`payload -> authContext -> ctx -> ctx.authContext`) when skill metadata requires it; missing account id fail-closes as `missing_required_account_id` and does not execute skill runtime
+  - planner-visible skill dispatch now enforces a deterministic pre-dispatch `account_id` guarantee when skill metadata requires it:
+    - dispatcher path resolution order: `payload -> authContext -> ctx -> ctx.authContext`
+    - skill-bridge path resolution order: `payload -> payload.authContext -> authContext -> context -> context.authContext -> ctx -> ctx.authContext`
+    - missing account id fail-closes as `missing_required_account_id` and does not execute skill runtime
   - planner-visible skill selection is deterministic-only and conflict-fail-closed
   - planner-visible skill rollout now has a checked-in observability/rollback watch over selector, tool execution, and answer-boundary evidence
   - planner-visible live telemetry now emits minimal spec-constrained runtime events through an injected telemetry adapter at planner decision/selection, fail-closed admission, fallback, and answer boundary

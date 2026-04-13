@@ -21,7 +21,8 @@ test('planner bridge runs multi-step tool loop', async () => {
 
   const context = {
     token: 'ascii_token_for_test',
-    chat_id: 'oc_test_chat'
+    chat_id: 'oc_test_chat',
+    allow_write_actions: true,
   };
 
   const originalFetch = global.fetch;
@@ -91,4 +92,80 @@ test('planner skill action does not bypass into tool loop even when plan/context
   assert.equal(res.action, 'search_and_summarize');
   assert.equal(res.data?.bridge, 'skill_bridge');
   assert.equal(res.type, undefined);
+});
+
+test('planner-visible skill bridge fails closed as missing_required_account_id when account_id is absent', async () => {
+  const res = await runPlannerBridge({
+    action: 'search_and_summarize',
+    payload: {
+      q: 'launch checklist',
+      reader_overrides: {
+        index: {
+          search_knowledge_base: {
+            success: true,
+            data: { items: [] },
+            error: null,
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(res.ok, false);
+  assert.equal(res.error, 'missing_required_account_id');
+  assert.equal(res.data?.reason, 'missing_required_account_id');
+  assert.equal(res.data?.safe_path, 'non_execution');
+});
+
+test('planner-visible skill bridge backfills account_id from payload authContext', async () => {
+  const res = await runPlannerBridge({
+    action: 'search_and_summarize',
+    payload: {
+      q: 'launch checklist',
+      authContext: {
+        account_id: 'acct_from_payload_auth_context',
+      },
+      reader_overrides: {
+        index: {
+          search_knowledge_base: {
+            success: true,
+            data: {
+              items: [
+                {
+                  id: 'doc_payload_auth:0',
+                  snippet: 'launch checklist owner timeline',
+                  metadata: {
+                    title: 'Launch Guard',
+                    url: 'https://example.com/doc_payload_auth',
+                  },
+                },
+              ],
+            },
+            error: null,
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(res.ok, true);
+  assert.equal(res.action, 'search_and_summarize');
+  assert.equal(res.data?.skill, 'search_and_summarize');
+});
+
+test('planner bridge fail-closes write loop without explicit write access', async () => {
+  const res = await runPlannerBridge({
+    action: 'planner_bridge',
+    payload: {
+      plan: {
+        action: 'send_message',
+        params: { content: 'blocked without explicit write access' },
+      },
+      context: {},
+    },
+  });
+
+  assert.equal(res.ok, false);
+  assert.equal(res.blocked, true);
+  assert.equal(res.error, 'write_action_not_allowed');
 });

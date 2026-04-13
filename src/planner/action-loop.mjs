@@ -1,6 +1,7 @@
 import { createTaskAction } from '../actions/create-task-action.mjs';
 import { updateDocAction } from '../actions/update-doc-action.mjs';
 import { sendMessageAction } from '../actions/send-message-action.mjs';
+import { getSkillMetadata } from '../skill-registry.mjs';
 
 const WRITE_ACTIONS = Object.freeze([
   'send_message',
@@ -26,7 +27,14 @@ function isWriteAction(action = '') {
 }
 
 function isReadOnlySkill(skillName = '') {
-  return READ_ONLY_SKILLS.includes(normalizeText(skillName));
+  const normalizedSkillName = normalizeText(skillName);
+  if (!normalizedSkillName) {
+    return false;
+  }
+  if (READ_ONLY_SKILLS.includes(normalizedSkillName)) {
+    return true;
+  }
+  return getSkillMetadata(normalizedSkillName)?.read_only === true;
 }
 
 function resolveSelectedSkill(plan = {}, context = {}) {
@@ -39,10 +47,15 @@ function resolveSelectedSkill(plan = {}, context = {}) {
   );
 }
 
+function isWriteActionExplicitlyAllowed(context = {}) {
+  return context?.allow_write_actions === true || context?.allowWriteActions === true;
+}
+
 export async function runActionLoop(plan, context) {
   const { action, params } = plan || {};
   const selectedSkill = resolveSelectedSkill(plan, context);
   const normalizedAction = normalizeText(action);
+  const writeActionAllowed = isWriteActionExplicitlyAllowed(context);
 
   if (isReadOnlySkill(selectedSkill) && isWriteAction(normalizedAction)) {
     return {
@@ -55,11 +68,22 @@ export async function runActionLoop(plan, context) {
     };
   }
 
+  if (isWriteAction(normalizedAction) && !writeActionAllowed) {
+    return {
+      ok: false,
+      type: 'blocked_action',
+      error: 'write_action_not_allowed',
+      blocked: true,
+      action: normalizedAction,
+      requires_explicit_write_access: true,
+    };
+  }
+
   if (!action) {
     return { ok: true, type: 'no_action', message: plan?.answer || '' };
   }
 
-  if (action === 'send_message') {
+  if (normalizedAction === 'send_message') {
     const result = await sendMessageAction({
       token: context.token,
       chat_id: context.chat_id,
@@ -74,7 +98,7 @@ export async function runActionLoop(plan, context) {
     };
   }
 
-  if (action === 'update_doc') {
+  if (normalizedAction === 'update_doc') {
     const result = await updateDocAction({
       token: context.token,
       token_type: params?.token_type || context?.token_type,
@@ -84,7 +108,7 @@ export async function runActionLoop(plan, context) {
     });
     return { ok: true, type: 'action_executed', action: 'update_doc', result };
   }
-  if (action === "create_task") {
+  if (normalizedAction === "create_task") {
     const result = await createTaskAction({
       token: context.token,
       title: params?.title,

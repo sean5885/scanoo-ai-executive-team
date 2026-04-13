@@ -25,7 +25,8 @@ test('execution pipeline runs multi-step plan with feedback loop', async () => {
 
   const context = {
     token: 'ascii_token_for_test',
-    chat_id: 'oc_test_chat'
+    chat_id: 'oc_test_chat',
+    allow_write_actions: true
   };
 
   const originalFetch = global.fetch;
