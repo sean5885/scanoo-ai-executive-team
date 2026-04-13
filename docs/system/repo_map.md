@@ -150,7 +150,11 @@ This file explains which directories are part of the current runtime, which are 
   - planner-visible coexistence watch is implemented as a checked-in fixture pack
   - live telemetry schema/metrics/rollback definitions are checked in and enforced by a dedicated runtime helper
   - planner-visible runtime now emits minimal spec-constrained events through an injected telemetry adapter
-  - `planner-autonomous-workflow.mjs` is a local deterministic workflow helper for bounded tool-chain experiments and demo runs; it is not a public ingress route
+- `planner-autonomous-workflow.mjs` is a local planner-driven loop helper for bounded agent e2e validation and demo runs:
+  - exposes `runAgentE2E(userInput, ctx)` and compatibility wrapper `runAutonomousWorkflow(...)`
+  - each turn uses planner decision (`selectPlannerTool`) -> skill hint resolution (`skill-registry`) -> tool-layer execution -> continuation decision (`resolveToolResultContinuation`)
+  - emits debug traces for chosen skills, routing decisions, and continuation state
+  - it is not a public ingress route
   - the default adapter remains in-memory and the mock structured-log adapter is local-only
   - no production telemetry pipeline is wired from this subtree yet
 

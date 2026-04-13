@@ -272,8 +272,13 @@ Current-truth docs for onboarding are:
     - otherwise enters `runToolLoopWithFeedback({ llm, input, context, max_steps: 3 })` through a replay wrapper that reuses that first `raw` output as feedback-loop step 1 (so the initial action decision is not dropped)
     - when feedback loop returns `type = "final_answer"`, it maps to `{ ok: true, type: "answer", answer, steps }`
     - otherwise it uses `planner/render-execution-result.mjs` to convert feedback-loop steps into a readable fallback `answer` and still returns `{ ok: true, type: "answer", answer, steps }`
-  - `planner-autonomous-workflow.mjs` is a local deterministic workflow helper that maps bounded user-input patterns (currently Scanoo intro-style asks) into a fixed tool sequence (`search_company_brain_docs -> official_read_document -> answer_user_directly`) through `tool-execution-runtime.mjs`
-  - that helper currently returns one bounded execution envelope `{ ok, plan, state, final }` and fail-soft exits early on first failed action (`{ ok:false, failed_action, state }`)
+  - `planner-autonomous-workflow.mjs` now exposes `runAgentE2E(userInput, ctx)` as a planner-driven local loop helper:
+    - each loop turn runs `selectPlannerTool(...)` for planner decision
+    - resolves a bounded skill hint through `skill-registry.mjs` metadata (`getSkillMetadata`, `normalizeSkillArgs`)
+    - executes only through the checked-in tool-layer contract/runtime (`tool-layer-contract.mjs`, `tool-execution-runtime.mjs`)
+    - applies `resolveToolResultContinuation(...)` before deciding the next loop turn
+    - exits on `answer_user_directly` success or bounded fail-safe stop
+  - that helper returns one bounded envelope `{ ok, done, terminal_reason, plan, steps, state, final, debug }`, where `debug` includes chosen skills, routing decisions, and continuation state per step
   - this autonomous helper is currently local/demo-only and not wired as the primary `/answer` or plugin dispatch control path
   - `requestPlannerJson(...)` in `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` now prepends an optional file-backed system message from `/Users/seanhan/Documents/Playground/src/prompts/action-system-prompt.txt` when the file exists
   - `src/skills/document-fetch.mjs` is a secondary read-only helper under the same module group; it resolves `document_id` from direct input or raw Lark-style card payload and returns bounded `missing_access_token | not_found | permission_denied` failures without registering a new planner-visible skill
@@ -292,6 +297,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/tests/execution-pipeline-feedback.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/tool-loop-feedback.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/planner-autonomous-workflow.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/agent-e2e.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/planner-visible-skill-observability.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/planner-visible-live-telemetry-adapter.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/planner-visible-live-telemetry-spec.test.mjs`

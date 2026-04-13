@@ -13,7 +13,17 @@ export async function executeTool(action, args = {}, ctx = {}) {
 
     if (action === 'search_company_brain_docs') {
       const query = normalizedArgs?.q ?? '';
-      result = { docs: [`result for ${query}`] };
+      result = {
+        q: query,
+        total: query ? 1 : 0,
+        docs: query
+          ? [{
+              document_ref: 'doc-1',
+              title: `Top match for ${query}`,
+              snippet: `result for ${query}`,
+            }]
+          : [],
+      };
     }
 
     if (action === 'official_read_document') {
