@@ -1,11 +1,13 @@
 import { selectPlannerTool } from './executive-planner.mjs';
 import { getSkillMetadata, normalizeSkillArgs } from './skill-registry.mjs';
-import { executeTool } from './tool-execution-runtime.mjs';
+import { executeTool, resolveToolExecutor } from './tool-execution-runtime.mjs';
 import { normalizeToolInvocationArgs, resolveToolContract, validateToolInvocation } from './tool-layer-contract.mjs';
 import { resolveToolResultContinuation } from './tool-result-continuation.mjs';
 
 const DEFAULT_MAX_STEPS = 6;
 const DEFAULT_RETRY_POLICY = Object.freeze({ max_retries: 2 });
+const DEFAULT_AGENT_E2E_HARD_TIMEOUT_MS = 12_000;
+const MIN_AGENT_E2E_HARD_TIMEOUT_MS = 25;
 const READ_CHAIN_HINTS = Object.freeze({
   search_company_brain_docs: 'official_read_document',
   official_read_document: 'answer_user_directly',
@@ -23,6 +25,140 @@ const NULL_LOGGER = Object.freeze({
 
 function normalizeText(value = '') {
   return String(value || '').trim();
+}
+
+function toFinitePositiveNumber(value) {
+  const normalized = Number(value);
+  if (!Number.isFinite(normalized) || normalized <= 0) {
+    return null;
+  }
+  return normalized;
+}
+
+function resolveAgentE2EHardTimeoutMs(context = {}) {
+  const configuredHardTimeoutMs = toFinitePositiveNumber(context.agent_e2e_hard_timeout_ms)
+    || toFinitePositiveNumber(context.agent_e2e_timeout_ms)
+    || toFinitePositiveNumber(context.hard_timeout_ms)
+    || toFinitePositiveNumber(process.env.AGENT_E2E_HARD_TIMEOUT_MS)
+    || DEFAULT_AGENT_E2E_HARD_TIMEOUT_MS;
+  const requestTimeoutMs = toFinitePositiveNumber(context.request_timeout_ms);
+  const boundedByRequestTimeout = requestTimeoutMs == null
+    ? configuredHardTimeoutMs
+    : Math.min(
+        configuredHardTimeoutMs,
+        Math.max(MIN_AGENT_E2E_HARD_TIMEOUT_MS, Math.floor(requestTimeoutMs - MIN_AGENT_E2E_HARD_TIMEOUT_MS)),
+      );
+  return Math.max(MIN_AGENT_E2E_HARD_TIMEOUT_MS, Math.floor(boundedByRequestTimeout));
+}
+
+function buildAgentE2ETimeoutExecution({
+  action = '',
+  timeoutMs = null,
+  elapsedMs = null,
+  reason = 'agent_e2e_tool_execution_timeout',
+} = {}) {
+  return {
+    ok: false,
+    action: normalizeText(action || '') || null,
+    error: 'request_timeout',
+    next: 'fallback',
+    trace_id: null,
+    dispatch_result: null,
+    result: {
+      reason,
+      timeout_ms: toFinitePositiveNumber(timeoutMs),
+      elapsed_ms: toFinitePositiveNumber(elapsedMs),
+    },
+  };
+}
+
+function isAgentE2ETimeoutExecution(execution = {}) {
+  if (!execution || typeof execution !== 'object') {
+    return false;
+  }
+  if (normalizeText(execution.error) !== 'request_timeout') {
+    return false;
+  }
+  return normalizeText(execution?.result?.reason || '').startsWith('agent_e2e_');
+}
+
+async function executeToolWithHardTimeout({
+  action = '',
+  args = {},
+  context = {},
+  timeoutMs = null,
+  elapsedMs = null,
+} = {}) {
+  const normalizedTimeoutMs = toFinitePositiveNumber(timeoutMs);
+  if (!normalizedTimeoutMs) {
+    return executeTool(action, args, context);
+  }
+
+  const stepContext = context && typeof context === 'object' && !Array.isArray(context)
+    ? { ...context }
+    : {};
+  const parentSignal = stepContext.signal && typeof stepContext.signal === 'object'
+    ? stepContext.signal
+    : null;
+  const stepController = typeof AbortController === 'function' ? new AbortController() : null;
+  const propagateAbort = () => {
+    if (!stepController || stepController.signal.aborted) {
+      return;
+    }
+    stepController.abort(parentSignal?.reason || {
+      name: 'AbortError',
+      code: 'request_cancelled',
+      message: 'Agent E2E step cancelled by parent signal.',
+    });
+  };
+  if (stepController) {
+    if (parentSignal?.aborted) {
+      propagateAbort();
+    } else if (parentSignal?.addEventListener) {
+      parentSignal.addEventListener('abort', propagateAbort, { once: true });
+    }
+    stepContext.signal = stepController.signal;
+  }
+
+  const executionPromise = Promise.resolve(executeTool(action, args, stepContext));
+  let timeoutTriggered = false;
+  let timeoutHandle = null;
+  const timeoutPromise = new Promise((resolve) => {
+    timeoutHandle = setTimeout(() => {
+      timeoutTriggered = true;
+      if (stepController && !stepController.signal.aborted) {
+        stepController.abort({
+          name: 'AbortError',
+          code: 'request_timeout',
+          message: `Agent E2E tool step timed out after ${Math.floor(normalizedTimeoutMs)}ms.`,
+          timeout_ms: Math.floor(normalizedTimeoutMs),
+        });
+      }
+      resolve(buildAgentE2ETimeoutExecution({
+        action,
+        timeoutMs: normalizedTimeoutMs,
+        elapsedMs,
+      }));
+    }, Math.floor(normalizedTimeoutMs));
+  });
+
+  let result = null;
+  try {
+    result = await Promise.race([executionPromise, timeoutPromise]);
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+    if (parentSignal?.removeEventListener) {
+      parentSignal.removeEventListener('abort', propagateAbort);
+    }
+  }
+
+  if (timeoutTriggered) {
+    executionPromise.catch(() => {});
+  }
+
+  return result;
 }
 
 function normalizeContext(ctx = {}) {
@@ -275,6 +411,9 @@ export async function runAgentE2E(userInput = '', ctx = {}) {
   const normalizedUserInput = normalizeText(userInput);
   const context = normalizeContext(ctx);
   const logger = context.logger && typeof context.logger === 'object' ? context.logger : NULL_LOGGER;
+  const startedAt = Date.now();
+  const hardTimeoutMs = resolveAgentE2EHardTimeoutMs(context);
+  const deadlineAt = startedAt + hardTimeoutMs;
   const maxSteps = Math.max(
     1,
     Number.isFinite(Number(context.max_steps)) ? Number(context.max_steps) : DEFAULT_MAX_STEPS,
@@ -288,12 +427,72 @@ export async function runAgentE2E(userInput = '', ctx = {}) {
     final_answer: '',
     fail_safe_mode: false,
   };
+  const toolExecutor = resolveToolExecutor(context);
+  if (!toolExecutor) {
+    logger?.warn?.('agent_e2e_terminal_exit', {
+      ok: false,
+      done: false,
+      terminal_reason: 'tool_executor_missing',
+      duration_ms: Date.now() - startedAt,
+      hard_timeout_ms: hardTimeoutMs,
+      steps: 0,
+    });
+    return {
+      ok: false,
+      done: false,
+      terminal_reason: 'tool_executor_missing',
+      plan: [],
+      steps: [],
+      state: {
+        search_company_brain_docs: state.search_execution,
+        official_read_document: state.read_execution,
+        answer_user_directly: null,
+        fail_safe_mode: state.fail_safe_mode,
+        last_document_ref: state.last_document_ref || null,
+      },
+      final: {
+        ok: false,
+        action: null,
+        error: 'tool_executor_missing',
+        next: 'fallback',
+        result: {
+          reason: 'tool_executor_missing',
+          stage: 'agent_e2e_preflight',
+        },
+      },
+      debug: {
+        chosen_skills: [],
+        routing_decisions: [],
+        continuation_state: [],
+      },
+    };
+  }
+  context.tool_executor = toolExecutor;
+  logger?.info?.('agent_e2e_ingress_enter', {
+    input_length: normalizedUserInput.length,
+    max_steps: maxSteps,
+    retry_max: Number(context?.retry_policy?.max_retries || 0),
+    hard_timeout_ms: hardTimeoutMs,
+  });
   const steps = [];
   let plannerInput = normalizedUserInput;
   let done = false;
   let terminalReason = 'max_steps_reached';
 
   for (let index = 0; index < maxSteps; index += 1) {
+    const elapsedMs = Date.now() - startedAt;
+    const remainingMs = deadlineAt - Date.now();
+    logger?.info?.('agent_e2e_before_planner_decision', {
+      step: index + 1,
+      elapsed_ms: elapsedMs,
+      remaining_ms: Math.max(0, Math.floor(remainingMs)),
+      planner_input_length: normalizeText(plannerInput || normalizedUserInput).length,
+    });
+    if (remainingMs <= 0) {
+      terminalReason = 'agent_e2e_timeout';
+      break;
+    }
+
     const plannerDecision = selectPlannerTool({
       userIntent: plannerInput || normalizedUserInput,
       taskType: normalizeText(context.taskType || context.task_type || ''),
@@ -330,7 +529,26 @@ export async function runAgentE2E(userInput = '', ctx = {}) {
 
     let toolExecution = null;
     if (validation.ok === true) {
-      toolExecution = await executeTool(selectedAction, validation.args, context);
+      logger?.info?.('agent_e2e_before_tool_execution', {
+        step: index + 1,
+        action: selectedAction,
+        elapsed_ms: Date.now() - startedAt,
+        remaining_ms: Math.max(0, Math.floor(deadlineAt - Date.now())),
+      });
+      toolExecution = await executeToolWithHardTimeout({
+        action: selectedAction,
+        args: validation.args,
+        context,
+        timeoutMs: deadlineAt - Date.now(),
+        elapsedMs: Date.now() - startedAt,
+      });
+      logger?.info?.('agent_e2e_after_tool_execution', {
+        step: index + 1,
+        action: selectedAction,
+        ok: toolExecution?.ok === true,
+        error: normalizeText(toolExecution?.error || '') || null,
+        elapsed_ms: Date.now() - startedAt,
+      });
     } else {
       toolExecution = {
         ok: false,
@@ -344,6 +562,13 @@ export async function runAgentE2E(userInput = '', ctx = {}) {
       };
     }
 
+    logger?.info?.('agent_e2e_before_continuation_decision', {
+      step: index + 1,
+      action: selectedAction,
+      tool_ok: toolExecution?.ok === true,
+      tool_error: normalizeText(toolExecution?.error || '') || null,
+      tool_next: normalizeText(toolExecution?.next || '') || null,
+    });
     const continuation = resolveToolResultContinuation(toolExecution, context);
     const stepRecord = {
       step: index + 1,
@@ -377,6 +602,10 @@ export async function runAgentE2E(userInput = '', ctx = {}) {
       context.retry_count = 0;
     } else {
       context.retry_count += 1;
+    }
+    if (isAgentE2ETimeoutExecution(toolExecution)) {
+      terminalReason = 'agent_e2e_timeout';
+      break;
     }
 
     if (selectedAction === 'answer_user_directly') {
@@ -419,7 +648,26 @@ export async function runAgentE2E(userInput = '', ctx = {}) {
     break;
   }
 
-  const final = steps.length > 0 ? steps[steps.length - 1].tool_execution : null;
+  const final = steps.length > 0
+    ? steps[steps.length - 1].tool_execution
+    : terminalReason === 'agent_e2e_timeout'
+      ? buildAgentE2ETimeoutExecution({
+          action: '',
+          timeoutMs: hardTimeoutMs,
+          elapsedMs: Date.now() - startedAt,
+          reason: 'agent_e2e_hard_timeout',
+        })
+      : null;
+  logger?.info?.('agent_e2e_terminal_exit', {
+    ok: done,
+    done,
+    terminal_reason: terminalReason,
+    steps: steps.length,
+    duration_ms: Date.now() - startedAt,
+    hard_timeout_ms: hardTimeoutMs,
+    final_action: normalizeText(final?.action || '') || null,
+    final_error: normalizeText(final?.error || '') || null,
+  });
   return {
     ok: done,
     done,

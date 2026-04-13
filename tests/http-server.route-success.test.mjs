@@ -1242,10 +1242,112 @@ test("/answer canary ingress uses runAgentE2E when rollout gate is enabled", asy
   assert.equal(agentCalls[0]?.ctx?.authContext?.account_id, "acct-1");
 });
 
-test("/answer canary ingress fail-soft falls back to planner edge when agent run has no stable final answer", async (t) => {
+test("/answer canary ingress fails fast when agent tool dispatch stalls", { timeout: 8000 }, async (t) => {
   withEnv(t, {
     AGENT_E2E_ENABLED: "true",
     AGENT_E2E_RATIO: "1",
+    AGENT_E2E_LEGACY_FALLBACK_ENABLED: null,
+    AGENT_E2E_HARD_TIMEOUT_MS: "80",
+  });
+  const dispatchCalls = [];
+  const { server, calls } = await startTestServer(t, {
+    async dispatchPlannerTool(input) {
+      dispatchCalls.push(input);
+      return new Promise(() => {});
+    },
+  });
+  const { port } = server.address();
+  const controller = new AbortController();
+  const forceAbortHandle = setTimeout(() => {
+    controller.abort(new Error("client-side safety timeout"));
+  }, 3000);
+  t.after(() => {
+    clearTimeout(forceAbortHandle);
+  });
+
+  const startedAt = Date.now();
+  const response = await fetch(`http://127.0.0.1:${port}/answer?q=${encodeURIComponent("幫我查 Scanoo 是什麼，整理給我")}`, {
+    headers: {
+      "x-user-id": "user-e2e-timeout",
+      "x-account-id": "acct-1",
+    },
+    signal: controller.signal,
+  });
+  clearTimeout(forceAbortHandle);
+  const payload = await response.json();
+  const elapsedMs = Date.now() - startedAt;
+
+  assert.equal(response.status, 503);
+  assert.equal(payload.ok, false);
+  assert.equal(Array.isArray(payload.limitations), true);
+  assert.equal(
+    payload.limitations.some((item) => /agent_terminal_reason=agent_e2e_timeout/.test(String(item || ""))),
+    true,
+  );
+  assert.equal(dispatchCalls.length > 0, true);
+  assert.equal(elapsedMs < 2500, true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "agent_e2e_before_tool_execution"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "agent_e2e_terminal_exit"), true);
+});
+
+test("/answer canary ingress keeps single runtime authority by default when agent has no stable final answer", async (t) => {
+  withEnv(t, {
+    AGENT_E2E_ENABLED: "true",
+    AGENT_E2E_RATIO: "1",
+    AGENT_E2E_LEGACY_FALLBACK_ENABLED: null,
+  });
+  const agentCalls = [];
+  const plannerCalls = [];
+  const { server, calls } = await startTestServer(t, {
+    async runAgentE2E(userInput, ctx) {
+      agentCalls.push({ userInput, ctx });
+      return {
+        ok: false,
+        final: null,
+        terminal_reason: "max_steps_reached",
+        plan: ["search_company_brain_docs"],
+      };
+    },
+    async executePlannedUserInput(args) {
+      plannerCalls.push(args);
+      return {
+        ok: true,
+        action: "search_company_brain_docs",
+        execution_result: {
+          ok: true,
+          data: {
+            answer: "planner fallback answer",
+            sources: ["來源 A"],
+            limitations: [],
+          },
+        },
+      };
+    },
+  });
+  const { port } = server.address();
+
+  const response = await fetch(`http://127.0.0.1:${port}/answer?q=${encodeURIComponent("我要 SOP")}`, {
+    headers: {
+      "x-user-id": "user-e2e-fallback",
+      "x-account-id": "acct-1",
+    },
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 503);
+  assert.equal(payload.ok, false);
+  assert.match(payload.answer, /單一路徑/);
+  assert.equal(agentCalls.length, 1);
+  assert.equal(plannerCalls.length, 0);
+  assert.equal(calls.some((entry) => entry[1]?.event === "knowledge_answer_agent_e2e_stopped"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "knowledge_answer_agent_e2e_fallback"), false);
+});
+
+test("/answer canary ingress uses explicit legacy fallback only when enabled", async (t) => {
+  withEnv(t, {
+    AGENT_E2E_ENABLED: "true",
+    AGENT_E2E_RATIO: "1",
+    AGENT_E2E_LEGACY_FALLBACK_ENABLED: "true",
   });
   const agentCalls = [];
   const plannerCalls = [];
