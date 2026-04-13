@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { executeTool } from '../src/tool-execution-runtime.mjs';
-import { validateToolInvocation } from '../src/tool-layer-contract.mjs';
+import { normalizeToolInvocationArgs, validateToolInvocation } from '../src/tool-layer-contract.mjs';
 
 test('search_company_brain_docs executes successfully with canonical q', async () => {
   const res = await executeTool('search_company_brain_docs', { q: 'scanoo' }, {});
@@ -37,6 +37,7 @@ test('validateToolInvocation accepts canonical q for search_company_brain_docs',
 test('validateToolInvocation accepts legacy query alias for search_company_brain_docs', () => {
   const check = validateToolInvocation('search_company_brain_docs', { query: 'lobster' });
   assert.equal(check.ok, true);
+  assert.equal(check.args?.q, 'lobster');
 });
 
 test('validateToolInvocation rejects missing search query payload', () => {
@@ -44,4 +45,10 @@ test('validateToolInvocation rejects missing search query payload', () => {
   assert.equal(check.ok, false);
   assert.equal(check.reason, 'missing_required_args');
   assert.deepEqual(check.missing, ['q']);
+});
+
+test('normalizeToolInvocationArgs canonicalizes legacy query alias into q', () => {
+  const normalized = normalizeToolInvocationArgs('search_company_brain_docs', { query: 'okr' });
+  assert.equal(normalized.q, 'okr');
+  assert.equal(normalized.query, 'okr');
 });

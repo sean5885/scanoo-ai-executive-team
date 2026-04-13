@@ -21,9 +21,10 @@
   - checked-in enum for planner/public/runtime-visible error codes
   - includes planner-input failures (`planner_failed`, `invalid_action`, `semantic_mismatch`)
   - includes planner-runtime failures (`contract_violation`, `tool_error`, `runtime_exception`, `business_error`, abort errors)
+  - includes deterministic pre-dispatch auth boundary `missing_required_account_id` for planner-visible skills that require account id
   - includes bridge action errors already exposed by agent routes (`missing_user_access_token`, `invalid_query`, `internal_error`)
   - current company-brain document read routes treat `missing_user_access_token` as an explicit fail-closed auth boundary: planner/doc search must carry request-scoped user auth and cannot silently fall back to stored OAuth
-  - planner runtime keeps `q` as the canonical search input key; internal tool-layer compatibility may normalize legacy `query` payloads into the same required slot for `search_company_brain_docs`
+  - planner runtime keeps `q` as the canonical search input key; internal tool-layer compatibility now normalizes legacy `query` through registry/contract alias metadata into canonical `q` before required-field validation for `search_company_brain_docs`
 - `routing_reason`
   - checked-in enum for stable route-selection reason codes
   - replaces public reliance on free-text reason strings for router / doc-query / planner surfaces
@@ -51,6 +52,7 @@
 - public `selected_target` must resolve to `actions` or `presets` according to `target_kind`
 - planner action governance for controlled writes must stay aligned across `planner_contract.json`, planner tool registry, and checked-in route contracts
 - planner skill-backed actions must stay aligned across `planner_contract.json`, planner skill registry/bridge, and selector-emitted `routing_reason`
+- planner-visible skill dispatch must satisfy the checked-in account-id guarantee boundary before bridge execution when the skill metadata declares `auth_requirements.account_id.required = true`
 - internal-only skill-backed actions must remain hidden from strict planner `target_catalog`
 - if runtime behavior changes intentionally, update code and this contract in the same change
 - if docs disagree with code, code is the current fact and the conflict must be tracked in `open_questions.md`

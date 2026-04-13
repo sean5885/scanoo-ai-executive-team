@@ -18,6 +18,10 @@
       "category": "planner_runtime",
       "public": true
     },
+    "missing_required_account_id": {
+      "category": "planner_runtime",
+      "public": true
+    },
     "semantic_mismatch": {
       "category": "planner_input",
       "public": true
@@ -514,6 +518,7 @@
         }
       },
       "error_codes": [
+        "missing_required_account_id",
         "contract_violation",
         "runtime_exception",
         "not_found"
@@ -812,6 +817,7 @@
         }
       },
       "error_codes": [
+        "missing_required_account_id",
         "contract_violation",
         "runtime_exception",
         "not_found"
