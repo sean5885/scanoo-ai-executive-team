@@ -48,3 +48,47 @@ test('planner bridge runs multi-step tool loop', async () => {
 
   global.fetch = originalFetch;
 });
+
+test('planner skill action does not bypass into tool loop even when plan/context payload exists', async () => {
+  const res = await runPlannerBridge({
+    action: 'search_and_summarize',
+    payload: {
+      account_id: 'acct_bridge_guard',
+      q: 'launch checklist',
+      plan: {
+        action: 'send_message',
+        params: { content: 'should not execute as tool loop' },
+      },
+      context: {
+        selected_skill: 'search_and_summarize',
+        token: 'ascii_token_for_test',
+        chat_id: 'oc_test_chat',
+      },
+      reader_overrides: {
+        index: {
+          search_knowledge_base: {
+            success: true,
+            data: {
+              items: [
+                {
+                  id: 'doc_bridge_guard:0',
+                  snippet: 'launch checklist owner timeline',
+                  metadata: {
+                    title: 'Launch Guard',
+                    url: 'https://example.com/doc_bridge_guard',
+                  },
+                },
+              ],
+            },
+            error: null,
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(res.ok, true);
+  assert.equal(res.action, 'search_and_summarize');
+  assert.equal(res.data?.bridge, 'skill_bridge');
+  assert.equal(res.type, undefined);
+});

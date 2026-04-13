@@ -561,6 +561,54 @@ test("runPlannerToolFlow includes reasoning in planner_end_to_end trace", async 
   assert.equal(typeof traceEvent?.reasoning?.alternative?.summary, "string");
 });
 
+test("runPlannerToolFlow binds tool-layer continuation state to the real dispatch result", async () => {
+  let dispatchCalls = 0;
+  const result = await runPlannerToolFlow({
+    userIntent: "查 launch checklist",
+    payload: {
+      q: "launch checklist",
+    },
+    disableAutoRouting: true,
+    logger: {
+      info() {},
+      debug() {},
+      warn() {},
+      error() {},
+    },
+    selector() {
+      return {
+        selected_action: "search_company_brain_docs",
+        reason: "固定測試 tool-layer contract action",
+      };
+    },
+    async dispatcher({ action, payload }) {
+      dispatchCalls += 1;
+      return {
+        ok: true,
+        action,
+        trace_id: "trace_tool_layer_integration",
+        data: {
+          q: payload?.q || "",
+          total: 1,
+          items: [
+            {
+              doc_id: "doc_tool_layer_1",
+              title: "Launch Checklist",
+            },
+          ],
+        },
+      };
+    },
+  });
+
+  assert.equal(dispatchCalls, 1);
+  assert.equal(result.execution_result?.ok, true);
+  assert.equal(result.execution_result?.trace_id, "trace_tool_layer_integration");
+  assert.equal(result.execution_result?.data?.tool_layer?.contract?.action, "search_company_brain_docs");
+  assert.equal(result.execution_result?.data?.tool_layer?.continuation?.next_action, "continue_planner");
+  assert.equal(result.execution_result?.data?.tool_layer?.continuation_state?.state, "continue");
+});
+
 test("different planner inputs do not collapse into the same fixed envelope", async () => {
   resetPlannerRuntimeContext();
 

@@ -7544,6 +7544,65 @@ function resolveContinuationState(ctx = {}) {
   return { state: "idle", resume: false };
 }
 
+function buildSafeToolStateSnapshot(ctx = {}) {
+  if (!ctx || typeof ctx !== "object" || Array.isArray(ctx)) {
+    return null;
+  }
+  const hasToolState = Boolean(
+    ctx.__tool_layer_contract
+    || ctx.__tool_result_continuation
+    || ctx.__continuation_state
+    || ctx.__tool_execution
+    || ctx.__tool_layer_blocked
+    || ctx.__boundary_violation
+  );
+  if (!hasToolState) {
+    return null;
+  }
+
+  const execution = ctx.__tool_execution && typeof ctx.__tool_execution === "object" && !Array.isArray(ctx.__tool_execution)
+    ? {
+        ok: ctx.__tool_execution.ok === true,
+        action: cleanText(ctx.__tool_execution.action || "") || null,
+        error: cleanText(ctx.__tool_execution.error || "") || null,
+        next: cleanText(ctx.__tool_execution.next || "") || null,
+        trace_id: cleanText(ctx.__tool_execution.trace_id || "") || null,
+      }
+    : null;
+
+  return {
+    contract: ctx.__tool_layer_contract || null,
+    blocked: ctx.__tool_layer_blocked === true,
+    boundary_violation: ctx.__boundary_violation || null,
+    continuation: ctx.__tool_result_continuation || null,
+    continuation_state: ctx.__continuation_state || null,
+    fallback_triggered: ctx.__tool_fallback_triggered === true,
+    resumed_from_tool_failure: ctx.__resumed_from_tool_failure === true,
+    resumed_from_tool_success: ctx.__resumed_from_tool_success === true,
+    execution,
+  };
+}
+
+function attachSafeToolStateToExecutionResult(executionResult = null, ctx = {}) {
+  if (!executionResult || typeof executionResult !== "object" || Array.isArray(executionResult)) {
+    return executionResult;
+  }
+  const safeToolSnapshot = buildSafeToolStateSnapshot(ctx);
+  if (!safeToolSnapshot) {
+    return executionResult;
+  }
+  const data = executionResult?.data && typeof executionResult.data === "object" && !Array.isArray(executionResult.data)
+    ? executionResult.data
+    : {};
+  return {
+    ...executionResult,
+    data: {
+      ...data,
+      tool_layer: safeToolSnapshot,
+    },
+  };
+}
+
 async function runSafeToolExecution(action = "", actionArgs = {}, ctx = {}) {
   const normalizedAction = cleanText(action || "");
   if (!normalizedAction || !ctx || typeof ctx !== "object" || Array.isArray(ctx)) {
@@ -7575,17 +7634,34 @@ async function runSafeToolExecution(action = "", actionArgs = {}, ctx = {}) {
     ctx.__continuation_state = { state: "fallback", resume: false };
     ctx.__tool_fallback_triggered = true;
     return {
+      executed: false,
       next_action: "fallback",
       reason: "read_only_skill_cannot_execute_write_action",
       resume: false,
+      dispatch_result: null,
     };
   }
 
   if (!toolCheck.ok) {
     ctx.__tool_layer_blocked = true;
     return {
+      executed: false,
       next_action: "resume_previous_task",
       reason: "tool_layer_blocked",
+      resume: true,
+      dispatch_result: null,
+    };
+  }
+
+  const toolExecutor = typeof ctx.tool_executor === "function"
+    ? ctx.tool_executor
+    : null;
+  if (!toolExecutor) {
+    return {
+      executed: false,
+      dispatch_result: null,
+      next_action: "resume_previous_task",
+      reason: "tool_layer_executor_missing",
       resume: true,
     };
   }
@@ -7593,8 +7669,10 @@ async function runSafeToolExecution(action = "", actionArgs = {}, ctx = {}) {
   try {
     const toolRes = await executeTool(normalizedAction, actionArgs || {}, ctx);
     ctx.__tool_execution = toolRes;
-    if (!toolRes?.ok) {
-      ctx.__tool_execution_failed = true;
+    ctx.__tool_execution_failed = toolRes?.ok !== true;
+    const retryCountCandidate = Number(toolRes?.dispatch_result?.data?.retry_count);
+    if (Number.isFinite(retryCountCandidate)) {
+      ctx.retry_count = retryCountCandidate;
     }
   } catch (_) {
     ctx.__tool_execution_failed = true;
@@ -7637,10 +7715,20 @@ async function runSafeToolExecution(action = "", actionArgs = {}, ctx = {}) {
     if (hardenedContinuation?.next_action === "fallback") {
       ctx.__tool_fallback_triggered = true;
     }
-    return hardenedContinuation;
+    return {
+      ...hardenedContinuation,
+      executed: true,
+      dispatch_result: ctx.__tool_execution?.dispatch_result || null,
+    };
   }
 
-  return null;
+  return {
+    executed: false,
+    dispatch_result: null,
+    next_action: "fallback",
+    reason: "tool_execution_missing",
+    resume: false,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -8032,8 +8120,26 @@ export async function runPlannerToolFlow({
         waiting_user: workingMemorySnapshot?.task_phase === "waiting_user",
         selected_skill: cleanText(selection.selected_action || "") || null,
         tool_action: cleanText(selection.selected_action || "") || null,
+        tool_executor: async ({ action: toolAction = "", args = {} } = {}) => dispatcher({
+          action: cleanText(toolAction || "") || cleanText(selection.selected_action || "") || null,
+          payload: shapePlannerSkillDispatchPayload({
+            action: cleanText(toolAction || "") || cleanText(selection.selected_action || "") || null,
+            userIntent: agentInput.user_intent,
+            payload: args,
+            authContext,
+            context: safeToolContext,
+          }),
+          logger,
+          authContext,
+          context: safeToolContext,
+          signal,
+        }),
       };
-      await runSafeToolExecution(selection.selected_action, dispatchPayload, safeToolContext);
+      const safeToolExecution = await runSafeToolExecution(
+        selection.selected_action,
+        dispatchPayload,
+        safeToolContext,
+      );
 
       if (safeToolContext.__boundary_violation) {
         executionResult = buildPlannerStoppedResult({
@@ -8045,6 +8151,8 @@ export async function runPlannerToolFlow({
           },
           traceId: null,
         });
+      } else if (safeToolExecution?.dispatch_result) {
+        executionResult = safeToolExecution.dispatch_result;
       } else {
         executionResult = await dispatcher({
           action: selection.selected_action,
@@ -8061,6 +8169,7 @@ export async function runPlannerToolFlow({
           signal,
         });
       }
+      executionResult = attachSafeToolStateToExecutionResult(executionResult, safeToolContext);
       traceId = executionResult?.trace_id || null;
     }
   }
