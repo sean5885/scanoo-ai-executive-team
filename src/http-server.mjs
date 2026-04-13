@@ -223,6 +223,7 @@ import {
   resolveDirectIngressSourceState,
 } from "./lark-plugin-dispatch-adapter.mjs";
 import { executeCapabilityLane } from "./lane-executor.mjs";
+import { runAgentE2E } from "./planner-autonomous-workflow.mjs";
 import db from "./db.mjs";
 import { buildExecutionEnvelope } from "./execution-envelope.mjs";
 import { withLarkWriteExecutionContext } from "./execute-lark-write.mjs";
@@ -240,6 +241,40 @@ const serviceStartTime = nowIso();
 const inFlightIdempotentRequests = new Map();
 const REQUEST_CANCELLED_STATUS_CODE = 499;
 const SYNTHETIC_REQUEST_USER_AGENT_PATTERN = /\b(node(?:\.js)?|undici|jest|vitest|mocha|tap|ava|playwright|cypress|postman|insomnia|curl|wget)\b/i;
+
+function normalizeHeaderValue(value) {
+  if (Array.isArray(value)) {
+    return normalizeText(value[0] || "");
+  }
+  return normalizeText(value || "");
+}
+
+function shouldUseAgentE2E({ req = null, requestUrl = null, body = null } = {}) {
+  if (process.env.AGENT_E2E_ENABLED !== "true") {
+    return false;
+  }
+  const configuredRatio = Number.parseFloat(process.env.AGENT_E2E_RATIO || "0");
+  if (!Number.isFinite(configuredRatio) || configuredRatio <= 0) {
+    return false;
+  }
+  const ratio = Math.min(1, Math.max(0, configuredRatio));
+  if (ratio >= 1) {
+    return true;
+  }
+  const seed = normalizeHeaderValue(req?.headers?.["x-user-id"])
+    || normalizeHeaderValue(req?.headers?.["x-account-id"])
+    || getAccountId(requestUrl, body)
+    || normalizeText(req?.socket?.remoteAddress || req?.ip || "")
+    || normalizeText(requestUrl?.searchParams?.get("q") || body?.q || "")
+    || "agent_e2e_rollout_seed";
+  let hash = 0;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = (hash << 5) - hash + seed.charCodeAt(index);
+    hash |= 0;
+  }
+  const normalized = Math.abs(hash % 1000) / 1000;
+  return normalized < ratio;
+}
 
 function emitOauthReauthAlert({ accountId = null, scope = "http", pathname = null, reason = null } = {}) {
   emitRateLimitedAlert({
@@ -8128,7 +8163,7 @@ async function handleSearch(res, requestUrl, body, logger = noopHttpLogger) {
   }
 }
 
-async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger) {
+async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger, req = null) {
   const q = requestUrl.searchParams.get("q") || body.q || "";
 
   if (!q.trim()) {
@@ -8144,6 +8179,61 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger) {
   });
 
   try {
+    if (shouldUseAgentE2E({ req, requestUrl, body })) {
+      const agentStartedAt = Date.now();
+      const accountId = normalizeHeaderValue(req?.headers?.["x-account-id"]) || getAccountId(requestUrl, body);
+      const userId = normalizeHeaderValue(req?.headers?.["x-user-id"]) || "anon";
+      const agentContext = {
+        user_id: userId,
+        authContext: {
+          account_id: accountId || null,
+        },
+        retry_count: 0,
+        retry_policy: { max_retries: 2 },
+        logger,
+      };
+      try {
+        const agentResult = await getHttpService("runAgentE2E", runAgentE2E)(q, agentContext);
+        const agentAnswer = normalizeText(agentResult?.final?.result?.answer || "");
+        logger.info("knowledge_answer_agent_e2e_completed", {
+          account_id: accountId || null,
+          ok: agentResult?.ok === true,
+          terminal_reason: agentResult?.terminal_reason || null,
+          plan_steps: Array.isArray(agentResult?.plan) ? agentResult.plan.length : 0,
+          duration_ms: Date.now() - agentStartedAt,
+        });
+        if (agentResult?.ok === true && agentAnswer) {
+          const userResponse = normalizeUserResponse({
+            payload: {
+              ok: true,
+              answer: agentAnswer,
+              sources: [],
+              limitations: [],
+            },
+            requestText: q,
+            logger,
+            traceId: res?.__trace_id || null,
+            handlerName: "handleAnswer.agent_e2e",
+          });
+          jsonResponse(res, userResponse.ok === true ? 200 : 500, {
+            ...userResponse,
+            __hide_trace_id: true,
+          });
+          return;
+        }
+        logger.warn("knowledge_answer_agent_e2e_fallback", {
+          account_id: accountId || null,
+          reason: "agent_e2e_no_final_answer",
+          terminal_reason: agentResult?.terminal_reason || null,
+        });
+      } catch (error) {
+        logger.warn("knowledge_answer_agent_e2e_failed", {
+          account_id: accountId || null,
+          error: logger.compactError(error),
+        });
+      }
+    }
+
     const directIngressState = resolveDirectIngressSourceState({
       source: "direct_http_answer",
       directIngressPrimaryEnabled: larkDirectIngressPrimaryEnabled,
@@ -9581,7 +9671,7 @@ export function startHttpServer({
 
       if (requestUrl.pathname === "/answer" && req.method === "GET") {
         await runHttpRoute(requestLogger, "knowledge_answer", (routeLogger) =>
-          handleAnswer(res, requestUrl, body, routeLogger)
+          handleAnswer(res, requestUrl, body, routeLogger, req)
         );
         return;
       }

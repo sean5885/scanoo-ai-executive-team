@@ -139,9 +139,10 @@ Current truth:
 Current public `/answer` path:
 
 1. request enters `GET /answer`
-2. `http-server.mjs` calls `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs`
-3. `planner-user-input-edge.mjs` calls `executePlannedUserInput(...)`
-4. `executive-planner.mjs` resolves planner action or controlled failure
+2. `http-server.mjs` may first run a gated canary `runAgentE2E(...)` (`AGENT_E2E_ENABLED=true` and `AGENT_E2E_RATIO>0`) for direct ingress requests
+3. if canary execution does not return a stable final answer, `http-server.mjs` fail-soft falls back to `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs`
+4. `planner-user-input-edge.mjs` calls `executePlannedUserInput(...)`
+5. `executive-planner.mjs` resolves planner action or controlled failure
    - before active current-step continuation, planner runs one deterministic execution-readiness gate from the same session working-memory execution plan state
    - readiness is fail-closed and checks slot/artifact/dependency/owner/recovery/plan validity on current step, returning `is_ready`, blocking diagnostics, and `recommended_action`
    - when `is_ready=false`, planner does not dispatch intended step action directly; it follows existing controlled paths (`ask_user` / `retry` / `reroute` / `rollback` / `skip` / fail-closed stop)
@@ -167,19 +168,20 @@ Current public `/answer` path:
      - short/high-related follow-ups can stay on continuation path without opening a new task
      - candidate-selection short follow-ups (for example `第一份` / `第2個` / `這個`) can still be treated as continuation even when selected/current/next action hints are temporarily missing, as long as active task context remains
      - `waiting_user` turns with already-filled slots resume the current plan step (`working_memory_waiting_user_resume_plan_step`) instead of redundant ask
-5. planner reads and tool results remain internal runtime state
-6. `user-response-normalizer.mjs` converts the planner envelope into the public response shape:
+6. planner reads and tool results remain internal runtime state
+7. `user-response-normalizer.mjs` converts the planner envelope into the public response shape:
    - `answer`
    - `sources`
    - `limitations`
-7. `answer-source-mapper.mjs` converts canonical source objects into bounded public `sources[]` lines
-8. `planner-user-input-edge.mjs` performs session-scoped working-memory v2 patch write-back only after a stable final boundary response is available
+8. `answer-source-mapper.mjs` converts canonical source objects into bounded public `sources[]` lines
+9. `planner-user-input-edge.mjs` performs session-scoped working-memory v2 patch write-back only after a stable final boundary response is available
 
 Current truth:
 
 - this path is implemented
 - `/answer` is planner-first, not answer-service-first
 - direct `/answer` remains available, but when `LARK_DIRECT_INGRESS_PRIMARY_ENABLED=false` the runtime marks it as a non-primary ingress rather than the formal plugin entry
+- direct `/answer` canary-gates `runAgentE2E(...)` only when `AGENT_E2E_ENABLED=true` and `AGENT_E2E_RATIO>0`; canary miss/error/no-final-answer always falls back to the shared planner answer-edge path
 - `/answer` and the `knowledge-assistant` lane now share the same planner answer-edge helper instead of re-assembling `execute -> envelope -> normalize` separately
 - that shared edge helper also absorbs current legacy planner result shapes into canonical `answer / sources / limitations` before the public boundary
 - for delivery/onboarding knowledge lookups, a single-hit company-brain search now turns into an answer-first reply that names the matched SOP/checklist document and surfaces bounded location/checklist/start-step hints from the indexed snippet, while preserving the same public `answer / sources / limitations` shape

@@ -1184,6 +1184,114 @@ test("/search returns index retrieval hits through the unified read runtime", as
   assert.equal(payload.items[0].title, "Index Runtime Search Guide");
 });
 
+test("/answer canary ingress uses runAgentE2E when rollout gate is enabled", async (t) => {
+  withEnv(t, {
+    AGENT_E2E_ENABLED: "true",
+    AGENT_E2E_RATIO: "1",
+  });
+  const agentCalls = [];
+  const plannerCalls = [];
+  const { server } = await startTestServer(t, {
+    async runAgentE2E(userInput, ctx) {
+      agentCalls.push({ userInput, ctx });
+      return {
+        ok: true,
+        final: {
+          ok: true,
+          action: "answer_user_directly",
+          result: {
+            answer: "agent e2e canary answer",
+          },
+        },
+        terminal_reason: "answer_user_directly",
+        plan: ["answer_user_directly"],
+      };
+    },
+    async executePlannedUserInput(args) {
+      plannerCalls.push(args);
+      return {
+        ok: true,
+        action: "search_company_brain_docs",
+        execution_result: {
+          ok: true,
+          data: {
+            answer: "planner fallback should stay unused",
+            sources: [],
+            limitations: [],
+          },
+        },
+      };
+    },
+  });
+  const { port } = server.address();
+
+  const response = await fetch(`http://127.0.0.1:${port}/answer?q=${encodeURIComponent("公司 SOP 在哪裡？")}`, {
+    headers: {
+      "x-user-id": "user-e2e-canary",
+      "x-account-id": "acct-1",
+    },
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.answer, "agent e2e canary answer");
+  assert.equal(Array.isArray(payload.sources), true);
+  assert.equal(Array.isArray(payload.limitations), true);
+  assert.equal(agentCalls.length, 1);
+  assert.equal(plannerCalls.length, 0);
+  assert.equal(agentCalls[0]?.ctx?.authContext?.account_id, "acct-1");
+});
+
+test("/answer canary ingress fail-soft falls back to planner edge when agent run has no stable final answer", async (t) => {
+  withEnv(t, {
+    AGENT_E2E_ENABLED: "true",
+    AGENT_E2E_RATIO: "1",
+  });
+  const agentCalls = [];
+  const plannerCalls = [];
+  const { server, calls } = await startTestServer(t, {
+    async runAgentE2E(userInput, ctx) {
+      agentCalls.push({ userInput, ctx });
+      return {
+        ok: false,
+        final: null,
+        terminal_reason: "max_steps_reached",
+        plan: ["search_company_brain_docs"],
+      };
+    },
+    async executePlannedUserInput(args) {
+      plannerCalls.push(args);
+      return {
+        ok: true,
+        action: "search_company_brain_docs",
+        execution_result: {
+          ok: true,
+          data: {
+            answer: "planner fallback answer",
+            sources: ["來源 A"],
+            limitations: [],
+          },
+        },
+      };
+    },
+  });
+  const { port } = server.address();
+
+  const response = await fetch(`http://127.0.0.1:${port}/answer?q=${encodeURIComponent("我要 SOP")}`, {
+    headers: {
+      "x-user-id": "user-e2e-fallback",
+      "x-account-id": "acct-1",
+    },
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.answer, "planner fallback answer");
+  assert.equal(agentCalls.length, 1);
+  assert.equal(plannerCalls.length, 1);
+  assert.equal(calls.some((entry) => entry[1]?.event === "knowledge_answer_agent_e2e_fallback"), true);
+});
+
 test("agent company-brain search and detail routes return structured summaries for planner use", async (t) => {
   const docId = `doc-agent-company-brain-${Date.now()}`;
   insertCompanyBrainFixture({

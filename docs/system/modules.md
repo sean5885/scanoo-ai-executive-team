@@ -279,7 +279,9 @@ Current-truth docs for onboarding are:
     - applies `resolveToolResultContinuation(...)` before deciding the next loop turn
     - exits on `answer_user_directly` success or bounded fail-safe stop
   - that helper returns one bounded envelope `{ ok, done, terminal_reason, plan, steps, state, final, debug }`, where `debug` includes chosen skills, routing decisions, and continuation state per step
-  - this autonomous helper is currently local/demo-only and not wired as the primary `/answer` or plugin dispatch control path
+  - this autonomous helper can now be ingress-gated for direct HTTP `/answer` when `AGENT_E2E_ENABLED=true` and `AGENT_E2E_RATIO>0`
+  - when that gated path is active, `http-server.mjs` first tries `runAgentE2E(...)`; if it does not return a stable final answer, the runtime fail-soft falls back to the existing planner answer-edge path
+  - plugin dispatch control path is unchanged; this helper is still not the primary plugin dispatch controller
   - `requestPlannerJson(...)` in `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` now prepends an optional file-backed system message from `/Users/seanhan/Documents/Playground/src/prompts/action-system-prompt.txt` when the file exists
   - `src/skills/document-fetch.mjs` is a secondary read-only helper under the same module group; it resolves `document_id` from direct input or raw Lark-style card payload and returns bounded `missing_access_token | not_found | permission_denied` failures without registering a new planner-visible skill
   - planner can consume a skill result through a bridge envelope
