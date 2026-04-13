@@ -114,3 +114,35 @@ test('runAgentE2E avoids contract_violation and undefined crash on normal query'
   }
   assert.doesNotMatch(result.final?.result?.answer || '', /undefined/i);
 });
+
+test('runAgentE2E fails early when tool executor is missing', async () => {
+  const result = await runAgentE2E('幫我查 Scanoo 是什麼，整理給我', {
+    authContext: { account_id: 'acc-no-executor' },
+    logger: quietLogger,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.done, false);
+  assert.equal(result.terminal_reason, 'tool_executor_missing');
+  assert.equal(Array.isArray(result.steps), true);
+  assert.equal(result.steps.length, 0);
+  assert.equal(result.final?.error, 'tool_executor_missing');
+});
+
+test('runAgentE2E hard-timeout guard fails fast when executor stalls', { timeout: 4000 }, async () => {
+  const startedAt = Date.now();
+  const result = await runAgentE2E('幫我查 Scanoo 是什麼，整理給我', {
+    authContext: { account_id: 'acc-hang' },
+    logger: quietLogger,
+    agent_e2e_hard_timeout_ms: 60,
+    tool_executor: async () => new Promise(() => {}),
+  });
+  const elapsedMs = Date.now() - startedAt;
+
+  assert.equal(result.ok, false);
+  assert.equal(result.done, false);
+  assert.equal(result.terminal_reason, 'agent_e2e_timeout');
+  assert.equal(result.final?.error, 'request_timeout');
+  assert.equal(result.final?.result?.reason, 'agent_e2e_tool_execution_timeout');
+  assert.equal(elapsedMs < 1500, true);
+});

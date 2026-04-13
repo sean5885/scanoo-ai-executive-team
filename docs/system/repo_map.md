@@ -153,10 +153,13 @@ This file explains which directories are part of the current runtime, which are 
 - `planner-autonomous-workflow.mjs` is a planner-driven loop helper for bounded agent e2e validation and controlled ingress canary:
   - exposes `runAgentE2E(userInput, ctx)` and compatibility wrapper `runAutonomousWorkflow(...)`
   - each turn uses planner decision (`selectPlannerTool`) -> skill hint resolution (`skill-registry`) -> tool-layer execution -> continuation decision (`resolveToolResultContinuation`)
-  - tool-layer execution keeps one contract shape and requires an injected executor adapter for real dispatch coupling; when missing, runtime fail-soft returns `tool_executor_missing` on the contract failure continuation path (no bounded local mock-success fallback)
+  - tool-layer execution keeps one contract shape and requires an injected executor adapter for real dispatch coupling; `runAgentE2E(...)` now preflights this dependency and fail-soft stops early with `terminal_reason=tool_executor_missing` before any partial step execution
+  - `runAgentE2E(...)` now enforces a hard timeout guard (`AGENT_E2E_HARD_TIMEOUT_MS`, bounded by request timeout when present) so stalled tool awaits terminate as `terminal_reason=agent_e2e_timeout` instead of waiting indefinitely
   - emits debug traces for chosen skills, routing decisions, and continuation state
-  - it is now optionally used by direct HTTP `/answer` behind `AGENT_E2E_ENABLED=true` plus `AGENT_E2E_RATIO>0` rollout gating
-  - if canary execution does not produce a stable final answer, `http-server.mjs` falls back to the existing planner answer-edge path
+  - diagnostics logs now include ingress enter, before planner decision, before tool execution, after tool execution, before continuation decision, and terminal exit
+  - it is now optionally used by direct HTTP `/answer` behind `AGENT_E2E_ENABLED=true` plus `AGENT_E2E_RATIO>0` rollout gating as the single active agent runtime authority
+  - direct `/answer` agent mode now injects a real planner dispatch-backed tool executor into `runAgentE2E(...)`, so normal ingress does not hit `tool_executor_missing`
+  - if canary execution does not produce a stable final answer, direct `/answer` now returns a bounded single-runtime fail-soft response by default; fallback to legacy planner answer-edge is only enabled explicitly with `AGENT_E2E_LEGACY_FALLBACK_ENABLED=true`
   - it is still not exposed as a separate public ingress route and not the primary plugin dispatch path
   - the default adapter remains in-memory and the mock structured-log adapter is local-only
   - no production telemetry pipeline is wired from this subtree yet

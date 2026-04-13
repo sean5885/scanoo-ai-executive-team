@@ -139,9 +139,9 @@ Current truth:
 Current public `/answer` path:
 
 1. request enters `GET /answer`
-2. `http-server.mjs` may first run a gated canary `runAgentE2E(...)` (`AGENT_E2E_ENABLED=true` and `AGENT_E2E_RATIO>0`) for direct ingress requests
-3. if canary execution does not return a stable final answer, `http-server.mjs` fail-soft falls back to `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs`
-4. `planner-user-input-edge.mjs` calls `executePlannedUserInput(...)`
+2. `http-server.mjs` may first run a gated canary `runAgentE2E(...)` (`AGENT_E2E_ENABLED=true` and `AGENT_E2E_RATIO>0`) for direct ingress requests, injecting a real dispatch-backed tool executor
+3. when canary execution does not return a stable final answer, default behavior is a bounded single-runtime fail-soft stop; legacy planner fallback is opt-in only (`AGENT_E2E_LEGACY_FALLBACK_ENABLED=true`)
+4. when canary gate is off (or explicit legacy fallback is enabled and triggered), `planner-user-input-edge.mjs` calls `executePlannedUserInput(...)`
 5. `executive-planner.mjs` resolves planner action or controlled failure
    - before active current-step continuation, planner runs one deterministic execution-readiness gate from the same session working-memory execution plan state
    - readiness is fail-closed and checks slot/artifact/dependency/owner/recovery/plan validity on current step, returning `is_ready`, blocking diagnostics, and `recommended_action`
@@ -181,7 +181,11 @@ Current truth:
 - this path is implemented
 - `/answer` is planner-first, not answer-service-first
 - direct `/answer` remains available, but when `LARK_DIRECT_INGRESS_PRIMARY_ENABLED=false` the runtime marks it as a non-primary ingress rather than the formal plugin entry
-- direct `/answer` canary-gates `runAgentE2E(...)` only when `AGENT_E2E_ENABLED=true` and `AGENT_E2E_RATIO>0`; canary miss/error/no-final-answer always falls back to the shared planner answer-edge path
+- direct `/answer` canary-gates `runAgentE2E(...)` only when `AGENT_E2E_ENABLED=true` and `AGENT_E2E_RATIO>0`; when active, it is the single runtime authority for that request
+- direct `/answer` canary path now injects a real planner dispatch-backed `tool_executor`, so normal agent ingress does not hit `tool_executor_missing`
+- canary miss/error/no-final-answer no longer auto-falls back to planner by default; legacy planner fallback is explicit opt-in (`AGENT_E2E_LEGACY_FALLBACK_ENABLED=true`)
+- `runAgentE2E(...)` now has a hard timeout guard (`AGENT_E2E_HARD_TIMEOUT_MS`, bounded by request timeout when present) so stalled tool-dispatch awaits fail fast with `terminal_reason=agent_e2e_timeout` instead of waiting indefinitely
+- direct `/answer` agent canary now records deterministic diagnostics at ingress, planner-decision boundary, tool execution before/after, continuation boundary, and terminal exit
 - `/answer` and the `knowledge-assistant` lane now share the same planner answer-edge helper instead of re-assembling `execute -> envelope -> normalize` separately
 - that shared edge helper also absorbs current legacy planner result shapes into canonical `answer / sources / limitations` before the public boundary
 - for delivery/onboarding knowledge lookups, a single-hit company-brain search now turns into an answer-first reply that names the matched SOP/checklist document and surfaces bounded location/checklist/start-step hints from the indexed snippet, while preserving the same public `answer / sources / limitations` shape

@@ -110,6 +110,7 @@ import {
   rollbackRewrittenDocument,
 } from "./doc-comment-rewrite.mjs";
 import {
+  dispatchPlannerTool,
   executePlannedUserInput,
 } from "./executive-planner.mjs";
 import {
@@ -274,6 +275,60 @@ function shouldUseAgentE2E({ req = null, requestUrl = null, body = null } = {}) 
   }
   const normalized = Math.abs(hash % 1000) / 1000;
   return normalized < ratio;
+}
+
+function shouldAllowAgentE2ELegacyFallback() {
+  return process.env.AGENT_E2E_LEGACY_FALLBACK_ENABLED === "true";
+}
+
+function normalizeObjectPayload(payload = {}) {
+  return payload && typeof payload === "object" && !Array.isArray(payload) ? { ...payload } : {};
+}
+
+function buildHttpAgentToolExecutor({
+  logger = noopHttpLogger,
+  authContext = null,
+  signal = null,
+  requestText = "",
+} = {}) {
+  const plannerDispatcher = getHttpService("dispatchPlannerTool", dispatchPlannerTool);
+  return async ({
+    action = "",
+    args = {},
+    ctx = null,
+  } = {}) => {
+    const normalizedAction = normalizeText(action || "");
+    const normalizedArgs = normalizeObjectPayload(args);
+    if (!normalizedAction) {
+      return {
+        ok: false,
+        error: "contract_violation",
+        data: {
+          reason: "missing_tool_action",
+        },
+      };
+    }
+    if (normalizedAction === "answer_user_directly") {
+      return {
+        ok: true,
+        data: {
+          answer: normalizeText(normalizedArgs.answer || ""),
+        },
+      };
+    }
+    const runtimeSignal = ctx && typeof ctx === "object" && !Array.isArray(ctx) && ctx.signal
+      ? ctx.signal
+      : signal;
+    return plannerDispatcher({
+      action: normalizedAction,
+      payload: normalizedArgs,
+      requestText: normalizeText(requestText || ""),
+      logger,
+      authContext,
+      context: ctx && typeof ctx === "object" && !Array.isArray(ctx) ? ctx : null,
+      signal: runtimeSignal,
+    });
+  };
 }
 
 function emitOauthReauthAlert({ accountId = null, scope = "http", pathname = null, reason = null } = {}) {
@@ -8183,14 +8238,34 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger, req 
       const agentStartedAt = Date.now();
       const accountId = normalizeHeaderValue(req?.headers?.["x-account-id"]) || getAccountId(requestUrl, body);
       const userId = normalizeHeaderValue(req?.headers?.["x-user-id"]) || "anon";
+      const allowLegacyFallback = shouldAllowAgentE2ELegacyFallback();
+      logger.info("knowledge_answer_agent_e2e_ingress_enter", {
+        account_id: accountId || null,
+        user_id: userId || null,
+        q_len: q.trim().length,
+        request_timeout_ms: Number.isFinite(Number(res?.__request_timeout_ms)) ? Number(res.__request_timeout_ms) : null,
+        hard_timeout_ms: Number.isFinite(Number(process.env.AGENT_E2E_HARD_TIMEOUT_MS))
+          ? Number(process.env.AGENT_E2E_HARD_TIMEOUT_MS)
+          : null,
+        legacy_fallback_enabled: allowLegacyFallback,
+      });
+      const agentAuthContext = {
+        account_id: accountId || null,
+      };
       const agentContext = {
         user_id: userId,
-        authContext: {
-          account_id: accountId || null,
-        },
+        authContext: agentAuthContext,
         retry_count: 0,
         retry_policy: { max_retries: 2 },
         logger,
+        signal: earlyFallback.signal,
+        request_timeout_ms: Number.isFinite(Number(res?.__request_timeout_ms)) ? Number(res.__request_timeout_ms) : null,
+        tool_executor: buildHttpAgentToolExecutor({
+          logger,
+          authContext: agentAuthContext,
+          signal: earlyFallback.signal,
+          requestText: q,
+        }),
       };
       try {
         const agentResult = await getHttpService("runAgentE2E", runAgentE2E)(q, agentContext);
@@ -8221,6 +8296,34 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger, req 
           });
           return;
         }
+        logger.warn("knowledge_answer_agent_e2e_stopped", {
+          account_id: accountId || null,
+          reason: "agent_e2e_no_final_answer",
+          terminal_reason: agentResult?.terminal_reason || null,
+          legacy_fallback_enabled: allowLegacyFallback,
+        });
+        if (!allowLegacyFallback) {
+          const userResponse = normalizeUserResponse({
+            payload: {
+              ok: false,
+              answer: "目前 agent runtime 無法安全完成這輪任務，所以先停止在單一路徑，不切換到 legacy runtime。",
+              sources: [],
+              limitations: [
+                `agent_terminal_reason=${normalizeText(agentResult?.terminal_reason || "") || "unknown"}`,
+                "若需啟用 legacy planner fallback，請設定 AGENT_E2E_LEGACY_FALLBACK_ENABLED=true。",
+              ],
+            },
+            requestText: q,
+            logger,
+            traceId: res?.__trace_id || null,
+            handlerName: "handleAnswer.agent_e2e_stop",
+          });
+          jsonResponse(res, userResponse.ok === true ? 200 : 503, {
+            ...userResponse,
+            __hide_trace_id: true,
+          });
+          return;
+        }
         logger.warn("knowledge_answer_agent_e2e_fallback", {
           account_id: accountId || null,
           reason: "agent_e2e_no_final_answer",
@@ -8230,7 +8333,30 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger, req 
         logger.warn("knowledge_answer_agent_e2e_failed", {
           account_id: accountId || null,
           error: logger.compactError(error),
+          legacy_fallback_enabled: allowLegacyFallback,
         });
+        if (!allowLegacyFallback) {
+          const userResponse = normalizeUserResponse({
+            payload: {
+              ok: false,
+              answer: "agent runtime 在這輪發生受控錯誤，已停止於單一路徑避免雙 runtime 競爭。",
+              sources: [],
+              limitations: [
+                "詳細 internal error 與 trace 已保留在 runtime/log，不直接暴露給使用者。",
+                "若需啟用 legacy planner fallback，請設定 AGENT_E2E_LEGACY_FALLBACK_ENABLED=true。",
+              ],
+            },
+            requestText: q,
+            logger,
+            traceId: res?.__trace_id || null,
+            handlerName: "handleAnswer.agent_e2e_error",
+          });
+          jsonResponse(res, userResponse.ok === true ? 200 : 503, {
+            ...userResponse,
+            __hide_trace_id: true,
+          });
+          return;
+        }
       }
     }
 

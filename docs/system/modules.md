@@ -277,12 +277,15 @@ Current-truth docs for onboarding are:
     - each loop turn runs `selectPlannerTool(...)` for planner decision
     - resolves a bounded skill hint through `skill-registry.mjs` metadata (`getSkillMetadata`, `normalizeSkillArgs`)
     - executes only through the checked-in tool-layer contract/runtime (`tool-layer-contract.mjs`, `tool-execution-runtime.mjs`)
-    - `tool-execution-runtime.mjs` now supports injected executors only: when a host provides a dispatch adapter it uses real runtime dispatch and keeps contract-normalized continuation semantics; when no executor is injected it fail-soft returns `error = tool_executor_missing` on the tool contract failure continuation path (no local mock-success fallback)
+    - `tool-execution-runtime.mjs` now supports injected executors only: when a host provides a dispatch adapter it uses real runtime dispatch and keeps contract-normalized continuation semantics; `runAgentE2E(...)` now preflights executor availability and fail-soft stops early with `terminal_reason = tool_executor_missing` before any step is executed
+    - `runAgentE2E(...)` now also has a hard timeout guard (`AGENT_E2E_HARD_TIMEOUT_MS`, request-timeout-aware clamping) so stalled tool dispatch cannot block the loop indefinitely and terminates with `terminal_reason = agent_e2e_timeout`
+    - tool-layer continuation vocabulary is now canonicalized to one state machine (`continue_planner | complete_task | retry | ask_user | fallback`); legacy tokens (`retry_or_fallback`, `ask_or_fallback`) are normalized at continuation resolution time
     - applies `resolveToolResultContinuation(...)` before deciding the next loop turn
+    - diagnostics are now explicitly logged at ingress enter, before planner decision, before tool execution, after tool execution, before continuation decision, and terminal exit
     - exits on `answer_user_directly` success or bounded fail-safe stop
   - that helper returns one bounded envelope `{ ok, done, terminal_reason, plan, steps, state, final, debug }`, where `debug` includes chosen skills, routing decisions, and continuation state per step
-  - this autonomous helper can now be ingress-gated for direct HTTP `/answer` when `AGENT_E2E_ENABLED=true` and `AGENT_E2E_RATIO>0`
-  - when that gated path is active, `http-server.mjs` first tries `runAgentE2E(...)`; if it does not return a stable final answer, the runtime fail-soft falls back to the existing planner answer-edge path
+  - this autonomous helper can now be ingress-gated for direct HTTP `/answer` when `AGENT_E2E_ENABLED=true` and `AGENT_E2E_RATIO>0` as the single active agent runtime authority
+  - when that gated path is active, `http-server.mjs` injects a real planner-dispatch-backed tool executor into `runAgentE2E(...)`; by default it does not co-run legacy planner runtime on the same request, and only uses legacy planner fallback when explicitly enabled (`AGENT_E2E_LEGACY_FALLBACK_ENABLED=true`)
   - plugin dispatch control path is unchanged; this helper is still not the primary plugin dispatch controller
   - `requestPlannerJson(...)` in `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` now prepends an optional file-backed system message from `/Users/seanhan/Documents/Playground/src/prompts/action-system-prompt.txt` when the file exists
   - `src/skills/document-fetch.mjs` is a secondary read-only helper under the same module group; it resolves `document_id` from direct input or raw Lark-style card payload and returns bounded `missing_access_token | not_found | permission_denied` failures without registering a new planner-visible skill
