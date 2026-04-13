@@ -154,7 +154,9 @@ This file explains which directories are part of the current runtime, which are 
   - exposes `runAgentE2E(userInput, ctx)` and compatibility wrapper `runAutonomousWorkflow(...)`
   - each turn uses planner decision (`selectPlannerTool`) -> skill hint resolution (`skill-registry`) -> tool-layer execution -> continuation decision (`resolveToolResultContinuation`)
   - tool-layer execution keeps one contract shape and requires an injected executor adapter for real dispatch coupling; `runAgentE2E(...)` now preflights this dependency and fail-soft stops early with `terminal_reason=tool_executor_missing` before any partial step execution
-  - `runAgentE2E(...)` now enforces a hard timeout guard (`AGENT_E2E_HARD_TIMEOUT_MS`, bounded by request timeout when present) so stalled tool awaits terminate as `terminal_reason=agent_e2e_timeout` instead of waiting indefinitely
+  - `runAgentE2E(...)` now enforces a request-level latency budget guard (`AGENT_E2E_BUDGET_MS`, default `5000ms`) and computes `request_deadline_at = Date.now() + request_budget_ms`, then propagates both values into runtime context for each step/tool call
+  - each loop now checks deadline before planner execution, dynamically clamps usable step count from remaining budget, and exits as `terminal_reason=agent_e2e_budget_exhausted` / `latency_budget_step_cap` when time pressure is too high
+  - tool execution timeout now uses `min(step_timeout, remaining_budget)` (`AGENT_E2E_STEP_TIMEOUT_MS` / `AGENT_E2E_HARD_TIMEOUT_MS` compatible), and when remaining budget drops below fast-fail threshold (`AGENT_E2E_FAST_FAIL_MS`, default `200ms`) tool calls are skipped fail-soft
   - emits debug traces for chosen skills, routing decisions, and continuation state
   - diagnostics logs now include ingress enter, before planner decision, before tool execution, after tool execution, before continuation decision, and terminal exit
   - it is now optionally used by direct HTTP `/answer` behind `AGENT_E2E_ENABLED=true` plus `AGENT_E2E_RATIO>0` rollout gating as the single active agent runtime authority

@@ -6,8 +6,14 @@ import { resolveToolResultContinuation } from './tool-result-continuation.mjs';
 
 const DEFAULT_MAX_STEPS = 6;
 const DEFAULT_RETRY_POLICY = Object.freeze({ max_retries: 2 });
+const DEFAULT_AGENT_E2E_REQUEST_BUDGET_MS = 5_000;
+const MIN_AGENT_E2E_REQUEST_BUDGET_MS = 25;
 const DEFAULT_AGENT_E2E_HARD_TIMEOUT_MS = 12_000;
 const MIN_AGENT_E2E_HARD_TIMEOUT_MS = 25;
+const DEFAULT_AGENT_E2E_FAST_FAIL_MS = 200;
+const MIN_AGENT_E2E_FAST_FAIL_MS = 25;
+const DEFAULT_AGENT_E2E_STEP_FLOOR_MS = 700;
+const MIN_AGENT_E2E_STEP_FLOOR_MS = 100;
 const READ_CHAIN_HINTS = Object.freeze({
   search_company_brain_docs: 'official_read_document',
   official_read_document: 'answer_user_directly',
@@ -35,20 +41,67 @@ function toFinitePositiveNumber(value) {
   return normalized;
 }
 
-function resolveAgentE2EHardTimeoutMs(context = {}) {
-  const configuredHardTimeoutMs = toFinitePositiveNumber(context.agent_e2e_hard_timeout_ms)
-    || toFinitePositiveNumber(context.agent_e2e_timeout_ms)
-    || toFinitePositiveNumber(context.hard_timeout_ms)
-    || toFinitePositiveNumber(process.env.AGENT_E2E_HARD_TIMEOUT_MS)
-    || DEFAULT_AGENT_E2E_HARD_TIMEOUT_MS;
+function resolveAgentE2ERequestBudgetMs(context = {}) {
+  const configuredBudgetMs = toFinitePositiveNumber(context.agent_e2e_budget_ms)
+    || toFinitePositiveNumber(context.request_budget_ms)
+    || toFinitePositiveNumber(context.budget_ms)
+    || toFinitePositiveNumber(process.env.AGENT_E2E_BUDGET_MS)
+    || DEFAULT_AGENT_E2E_REQUEST_BUDGET_MS;
   const requestTimeoutMs = toFinitePositiveNumber(context.request_timeout_ms);
   const boundedByRequestTimeout = requestTimeoutMs == null
+    ? configuredBudgetMs
+    : Math.min(
+        configuredBudgetMs,
+        Math.max(MIN_AGENT_E2E_REQUEST_BUDGET_MS, Math.floor(requestTimeoutMs)),
+      );
+  return Math.max(MIN_AGENT_E2E_REQUEST_BUDGET_MS, Math.floor(boundedByRequestTimeout));
+}
+
+function resolveAgentE2EHardTimeoutMs(context = {}, requestBudgetMs = null) {
+  const configuredHardTimeoutMs = toFinitePositiveNumber(context.agent_e2e_step_timeout_ms)
+    || toFinitePositiveNumber(context.agent_e2e_hard_timeout_ms)
+    || toFinitePositiveNumber(context.agent_e2e_timeout_ms)
+    || toFinitePositiveNumber(context.hard_timeout_ms)
+    || toFinitePositiveNumber(process.env.AGENT_E2E_STEP_TIMEOUT_MS)
+    || toFinitePositiveNumber(process.env.AGENT_E2E_HARD_TIMEOUT_MS)
+    || DEFAULT_AGENT_E2E_HARD_TIMEOUT_MS;
+  const normalizedRequestBudgetMs = toFinitePositiveNumber(requestBudgetMs);
+  const boundedByRequestBudget = normalizedRequestBudgetMs == null
     ? configuredHardTimeoutMs
     : Math.min(
         configuredHardTimeoutMs,
-        Math.max(MIN_AGENT_E2E_HARD_TIMEOUT_MS, Math.floor(requestTimeoutMs - MIN_AGENT_E2E_HARD_TIMEOUT_MS)),
+        Math.max(MIN_AGENT_E2E_HARD_TIMEOUT_MS, Math.floor(normalizedRequestBudgetMs)),
       );
-  return Math.max(MIN_AGENT_E2E_HARD_TIMEOUT_MS, Math.floor(boundedByRequestTimeout));
+  return Math.max(MIN_AGENT_E2E_HARD_TIMEOUT_MS, Math.floor(boundedByRequestBudget));
+}
+
+function resolveAgentE2EFastFailThresholdMs(context = {}, requestBudgetMs = null) {
+  const configuredFastFailMs = toFinitePositiveNumber(context.agent_e2e_fast_fail_ms)
+    || toFinitePositiveNumber(process.env.AGENT_E2E_FAST_FAIL_MS)
+    || DEFAULT_AGENT_E2E_FAST_FAIL_MS;
+  const normalizedRequestBudgetMs = toFinitePositiveNumber(requestBudgetMs);
+  const boundedByRequestBudget = normalizedRequestBudgetMs == null
+    ? configuredFastFailMs
+    : Math.min(
+        configuredFastFailMs,
+        Math.max(MIN_AGENT_E2E_FAST_FAIL_MS, Math.floor(normalizedRequestBudgetMs)),
+      );
+  return Math.max(MIN_AGENT_E2E_FAST_FAIL_MS, Math.floor(boundedByRequestBudget));
+}
+
+function resolveDynamicMaxSteps({ baseMaxSteps = DEFAULT_MAX_STEPS, remainingMs = 0, context = {} } = {}) {
+  const normalizedBaseMaxSteps = Math.max(
+    1,
+    Number.isFinite(Number(baseMaxSteps)) ? Math.floor(Number(baseMaxSteps)) : DEFAULT_MAX_STEPS,
+  );
+  const stepFloorMs = toFinitePositiveNumber(context.agent_e2e_step_floor_ms)
+    || toFinitePositiveNumber(context.agent_e2e_min_step_budget_ms)
+    || toFinitePositiveNumber(process.env.AGENT_E2E_STEP_FLOOR_MS)
+    || DEFAULT_AGENT_E2E_STEP_FLOOR_MS;
+  const normalizedStepFloorMs = Math.max(MIN_AGENT_E2E_STEP_FLOOR_MS, Math.floor(stepFloorMs));
+  const normalizedRemainingMs = Math.max(0, Math.floor(Number(remainingMs) || 0));
+  const affordableSteps = Math.max(1, Math.floor(normalizedRemainingMs / normalizedStepFloorMs));
+  return Math.max(1, Math.min(normalizedBaseMaxSteps, affordableSteps));
 }
 
 function buildAgentE2ETimeoutExecution({
@@ -80,6 +133,36 @@ function isAgentE2ETimeoutExecution(execution = {}) {
     return false;
   }
   return normalizeText(execution?.result?.reason || '').startsWith('agent_e2e_');
+}
+
+function buildAgentE2ELatencyBudgetExecution({
+  action = '',
+  timeoutMs = null,
+  elapsedMs = null,
+  remainingMs = null,
+  budgetMs = null,
+  reason = 'agent_e2e_budget_exhausted',
+  state = {},
+  userInput = '',
+} = {}) {
+  const timeoutExecution = buildAgentE2ETimeoutExecution({
+    action,
+    timeoutMs: toFinitePositiveNumber(timeoutMs) || toFinitePositiveNumber(budgetMs),
+    elapsedMs,
+    reason,
+  });
+  const partialAnswer = normalizeText(buildAnswerFromState({ userInput, state }));
+  return {
+    ...timeoutExecution,
+    result: {
+      ...timeoutExecution.result,
+      budget_ms: toFinitePositiveNumber(budgetMs),
+      remaining_ms: Number.isFinite(Number(remainingMs))
+        ? Math.max(0, Math.floor(Number(remainingMs)))
+        : null,
+      partial_answer: partialAnswer || null,
+    },
+  };
 }
 
 async function executeToolWithHardTimeout({
@@ -412,12 +495,24 @@ export async function runAgentE2E(userInput = '', ctx = {}) {
   const context = normalizeContext(ctx);
   const logger = context.logger && typeof context.logger === 'object' ? context.logger : NULL_LOGGER;
   const startedAt = Date.now();
-  const hardTimeoutMs = resolveAgentE2EHardTimeoutMs(context);
-  const deadlineAt = startedAt + hardTimeoutMs;
+  const requestBudgetMs = resolveAgentE2ERequestBudgetMs(context);
+  const configuredDeadlineAt = toFinitePositiveNumber(context.request_deadline_at)
+    || toFinitePositiveNumber(context.agent_e2e_deadline_at)
+    || toFinitePositiveNumber(context.deadline_at);
+  const requestDeadlineAt = configuredDeadlineAt == null
+    ? startedAt + requestBudgetMs
+    : Math.min(Math.floor(configuredDeadlineAt), startedAt + requestBudgetMs);
+  const hardTimeoutMs = resolveAgentE2EHardTimeoutMs(context, requestBudgetMs);
+  const fastFailThresholdMs = resolveAgentE2EFastFailThresholdMs(context, requestBudgetMs);
   const maxSteps = Math.max(
     1,
     Number.isFinite(Number(context.max_steps)) ? Number(context.max_steps) : DEFAULT_MAX_STEPS,
   );
+  context.request_budget_ms = requestBudgetMs;
+  context.request_deadline_at = requestDeadlineAt;
+  context.agent_e2e_deadline_at = requestDeadlineAt;
+  context.agent_e2e_step_timeout_ms = hardTimeoutMs;
+  context.agent_e2e_fast_fail_ms = fastFailThresholdMs;
 
   const state = {
     current_query: normalizedUserInput,
@@ -472,7 +567,10 @@ export async function runAgentE2E(userInput = '', ctx = {}) {
     input_length: normalizedUserInput.length,
     max_steps: maxSteps,
     retry_max: Number(context?.retry_policy?.max_retries || 0),
+    request_budget_ms: requestBudgetMs,
+    request_deadline_at: requestDeadlineAt,
     hard_timeout_ms: hardTimeoutMs,
+    fast_fail_threshold_ms: fastFailThresholdMs,
   });
   const steps = [];
   let plannerInput = normalizedUserInput;
@@ -480,16 +578,33 @@ export async function runAgentE2E(userInput = '', ctx = {}) {
   let terminalReason = 'max_steps_reached';
 
   for (let index = 0; index < maxSteps; index += 1) {
-    const elapsedMs = Date.now() - startedAt;
-    const remainingMs = deadlineAt - Date.now();
+    const loopStartedAt = Date.now();
+    const elapsedMs = loopStartedAt - startedAt;
+    const remainingMs = requestDeadlineAt - loopStartedAt;
+    const dynamicMaxSteps = resolveDynamicMaxSteps({
+      baseMaxSteps: maxSteps,
+      remainingMs,
+      context,
+    });
     logger?.info?.('agent_e2e_before_planner_decision', {
       step: index + 1,
       elapsed_ms: elapsedMs,
       remaining_ms: Math.max(0, Math.floor(remainingMs)),
+      dynamic_max_steps: dynamicMaxSteps,
       planner_input_length: normalizeText(plannerInput || normalizedUserInput).length,
     });
-    if (remainingMs <= 0) {
+    if (loopStartedAt > requestDeadlineAt || remainingMs <= 0) {
       terminalReason = 'agent_e2e_timeout';
+      break;
+    }
+    if (index >= dynamicMaxSteps) {
+      terminalReason = 'latency_budget_step_cap';
+      state.fail_safe_mode = true;
+      break;
+    }
+    if (remainingMs < fastFailThresholdMs) {
+      terminalReason = 'agent_e2e_budget_exhausted';
+      state.fail_safe_mode = true;
       break;
     }
 
@@ -528,20 +643,42 @@ export async function runAgentE2E(userInput = '', ctx = {}) {
     });
 
     let toolExecution = null;
+    let forceBudgetExit = false;
     if (validation.ok === true) {
+      const remainingBeforeToolMs = requestDeadlineAt - Date.now();
+      context.agent_e2e_remaining_ms = Math.max(0, Math.floor(remainingBeforeToolMs));
       logger?.info?.('agent_e2e_before_tool_execution', {
         step: index + 1,
         action: selectedAction,
         elapsed_ms: Date.now() - startedAt,
-        remaining_ms: Math.max(0, Math.floor(deadlineAt - Date.now())),
+        remaining_ms: Math.max(0, Math.floor(remainingBeforeToolMs)),
       });
-      toolExecution = await executeToolWithHardTimeout({
-        action: selectedAction,
-        args: validation.args,
-        context,
-        timeoutMs: deadlineAt - Date.now(),
-        elapsedMs: Date.now() - startedAt,
-      });
+      if (remainingBeforeToolMs < fastFailThresholdMs) {
+        forceBudgetExit = true;
+        state.fail_safe_mode = true;
+        toolExecution = buildAgentE2ELatencyBudgetExecution({
+          action: selectedAction,
+          timeoutMs: requestBudgetMs,
+          elapsedMs: Date.now() - startedAt,
+          remainingMs: remainingBeforeToolMs,
+          budgetMs: requestBudgetMs,
+          reason: 'agent_e2e_budget_fast_fail',
+          state,
+          userInput: normalizedUserInput,
+        });
+      } else {
+        const stepTimeoutMs = Math.max(
+          MIN_AGENT_E2E_HARD_TIMEOUT_MS,
+          Math.floor(Math.min(hardTimeoutMs, Math.max(0, remainingBeforeToolMs))),
+        );
+        toolExecution = await executeToolWithHardTimeout({
+          action: selectedAction,
+          args: validation.args,
+          context,
+          timeoutMs: stepTimeoutMs,
+          elapsedMs: Date.now() - startedAt,
+        });
+      }
       logger?.info?.('agent_e2e_after_tool_execution', {
         step: index + 1,
         action: selectedAction,
@@ -569,7 +706,13 @@ export async function runAgentE2E(userInput = '', ctx = {}) {
       tool_error: normalizeText(toolExecution?.error || '') || null,
       tool_next: normalizeText(toolExecution?.next || '') || null,
     });
-    const continuation = resolveToolResultContinuation(toolExecution, context);
+    const continuation = forceBudgetExit
+      ? {
+          next_action: 'fallback',
+          reason: 'agent_e2e_budget_fast_fail',
+          resume: false,
+        }
+      : resolveToolResultContinuation(toolExecution, context);
     const stepRecord = {
       step: index + 1,
       planner_input: plannerInput || normalizedUserInput,
@@ -603,8 +746,15 @@ export async function runAgentE2E(userInput = '', ctx = {}) {
     } else {
       context.retry_count += 1;
     }
+    if (forceBudgetExit) {
+      terminalReason = 'agent_e2e_budget_exhausted';
+      break;
+    }
     if (isAgentE2ETimeoutExecution(toolExecution)) {
-      terminalReason = 'agent_e2e_timeout';
+      const timeoutReason = normalizeText(toolExecution?.result?.reason || '');
+      terminalReason = timeoutReason.includes('budget')
+        ? 'agent_e2e_budget_exhausted'
+        : 'agent_e2e_timeout';
       break;
     }
 
@@ -653,10 +803,23 @@ export async function runAgentE2E(userInput = '', ctx = {}) {
     : terminalReason === 'agent_e2e_timeout'
       ? buildAgentE2ETimeoutExecution({
           action: '',
-          timeoutMs: hardTimeoutMs,
+          timeoutMs: requestBudgetMs,
           elapsedMs: Date.now() - startedAt,
           reason: 'agent_e2e_hard_timeout',
         })
+      : terminalReason === 'agent_e2e_budget_exhausted' || terminalReason === 'latency_budget_step_cap'
+        ? buildAgentE2ELatencyBudgetExecution({
+            action: '',
+            timeoutMs: requestBudgetMs,
+            elapsedMs: Date.now() - startedAt,
+            remainingMs: requestDeadlineAt - Date.now(),
+            budgetMs: requestBudgetMs,
+            reason: terminalReason === 'latency_budget_step_cap'
+              ? 'agent_e2e_step_cap_by_budget'
+              : 'agent_e2e_budget_exhausted',
+            state,
+            userInput: normalizedUserInput,
+          })
       : null;
   logger?.info?.('agent_e2e_terminal_exit', {
     ok: done,
@@ -664,7 +827,10 @@ export async function runAgentE2E(userInput = '', ctx = {}) {
     terminal_reason: terminalReason,
     steps: steps.length,
     duration_ms: Date.now() - startedAt,
+    request_budget_ms: requestBudgetMs,
+    request_deadline_at: requestDeadlineAt,
     hard_timeout_ms: hardTimeoutMs,
+    fast_fail_threshold_ms: fastFailThresholdMs,
     final_action: normalizeText(final?.action || '') || null,
     final_error: normalizeText(final?.error || '') || null,
   });

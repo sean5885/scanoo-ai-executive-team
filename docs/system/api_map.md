@@ -47,7 +47,9 @@ This is the grouped HTTP surface mirror for the current repo.
 - direct HTTP `/answer` still exists, but with `LARK_DIRECT_INGRESS_PRIMARY_ENABLED=false` the checked-in runtime marks it as a non-primary direct ingress path rather than the formal plugin entry
 - direct HTTP `/answer` can optionally run `runAgentE2E(...)` first when `AGENT_E2E_ENABLED=true` and `AGENT_E2E_RATIO>0`; that path injects a real planner-dispatch-backed tool executor and serves as the single active authority for the request
 - when canary execution fails or has no stable final answer, default behavior is single-runtime fail-soft stop; legacy planner fallback is opt-in only via `AGENT_E2E_LEGACY_FALLBACK_ENABLED=true`
-- agent canary path now includes a bounded `runAgentE2E(...)` hard-timeout guard (`AGENT_E2E_HARD_TIMEOUT_MS`, with request-timeout-aware clamping) so stalled tool dispatch cannot hold `/answer` indefinitely
+- agent canary path now includes a strict request-level latency budget guard in `runAgentE2E(...)`: default `AGENT_E2E_BUDGET_MS=5000`, computes `request_deadline_at = Date.now() + request_budget_ms`, and propagates these values through agent context
+- each agent step now checks the global deadline first, dynamically clamps effective max steps by remaining budget, and fast-fails when remaining budget is too small (`agent_e2e_budget_exhausted` / `latency_budget_step_cap`)
+- tool execution timeout is now clamped by remaining budget (`min(step_timeout, remaining_budget)` via `AGENT_E2E_STEP_TIMEOUT_MS` / `AGENT_E2E_HARD_TIMEOUT_MS`), with `<200ms`-class remaining budget defaulting to skip-tool fail-soft behavior
 - direct `/answer` agent canary now emits explicit diagnostics around ingress, planner decision, tool execution before/after, continuation decision, and terminal exit
 - the public `/answer` payload still does not expose raw planner errors, but the in-process normalized object now carries a non-enumerable `failure_class` for usage-layer eval / telemetry classification
 - public `sources[]` lines are derived from canonical source objects through `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`
