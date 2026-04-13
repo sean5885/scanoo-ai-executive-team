@@ -35,7 +35,7 @@ This is the grouped HTTP surface mirror for the current repo.
 | Route | Method | Current role | Status |
 | --- | --- | --- | --- |
 | `/search` | `GET` | retrieval search over index authority | implemented |
-| `/answer` | `GET` | planner-first answer surface; final response normalized to `answer -> sources -> limitations`, with minimal partial-success decomposition when a mixed request contains at least one answer-boundary-doable subtask | implemented |
+| `/answer` | `GET` | planner-first answer surface with optional ingress-gated `runAgentE2E(...)` canary (`AGENT_E2E_ENABLED` + `AGENT_E2E_RATIO`); final response normalized to `answer -> sources -> limitations`, with minimal partial-success decomposition when a mixed request contains at least one answer-boundary-doable subtask | implemented |
 | `/sync/full` | `POST` | full sync | implemented |
 | `/sync/incremental` | `POST` | incremental sync | implemented |
 
@@ -45,6 +45,7 @@ This is the grouped HTTP surface mirror for the current repo.
 - the public body is shaped by `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
 - public `answer / sources / limitations` now only read from canonical `execution_result.data`
 - direct HTTP `/answer` still exists, but with `LARK_DIRECT_INGRESS_PRIMARY_ENABLED=false` the checked-in runtime marks it as a non-primary direct ingress path rather than the formal plugin entry
+- direct HTTP `/answer` can optionally run `runAgentE2E(...)` first when `AGENT_E2E_ENABLED=true` and `AGENT_E2E_RATIO>0`; when canary execution fails or has no stable final answer, it fail-soft falls back to the existing planner answer-edge path
 - the public `/answer` payload still does not expose raw planner errors, but the in-process normalized object now carries a non-enumerable `failure_class` for usage-layer eval / telemetry classification
 - public `sources[]` lines are derived from canonical source objects through `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`
 - `/answer` and plugin-backed planner/lane entrypoints now arm one earlier bounded-fallback abort signal before the outer HTTP timeout, so bounded fail-soft replies can return before the final generic timeout guard
