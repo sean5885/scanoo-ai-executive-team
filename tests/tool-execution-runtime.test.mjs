@@ -29,6 +29,60 @@ test('unknown tool returns failure', async () => {
   assert.equal(res.error, 'unknown_tool_action');
 });
 
+test('executeTool delegates to injected tool executor when available', async () => {
+  let calls = 0;
+  const res = await executeTool('search_company_brain_docs', { q: 'scanoo' }, {
+    tool_executor: async ({ action, args }) => {
+      calls += 1;
+      assert.equal(action, 'search_company_brain_docs');
+      assert.equal(args?.q, 'scanoo');
+      return {
+        ok: true,
+        action,
+        trace_id: 'trace_tool_exec_injected',
+        data: {
+          q: args?.q,
+          total: 1,
+          docs: [
+            {
+              document_ref: 'doc-injected-1',
+              title: 'Injected doc',
+              snippet: 'from injected runtime',
+            },
+          ],
+        },
+      };
+    },
+  });
+
+  assert.equal(calls, 1);
+  assert.equal(res.ok, true);
+  assert.equal(res.action, 'search_company_brain_docs');
+  assert.equal(res.next, 'continue_planner');
+  assert.equal(res.trace_id, 'trace_tool_exec_injected');
+  assert.equal(res.dispatch_result?.ok, true);
+  assert.equal(res.result?.docs?.[0]?.document_ref, 'doc-injected-1');
+});
+
+test('executeTool keeps failure continuation contract when injected executor fails', async () => {
+  const res = await executeTool('official_read_document', { document_ref: 'doc-1' }, {
+    tool_executor: async () => ({
+      ok: false,
+      error: 'tool_error',
+      trace_id: 'trace_tool_exec_fail',
+      data: {
+        reason: 'upstream_failed',
+      },
+    }),
+  });
+
+  assert.equal(res.ok, false);
+  assert.equal(res.action, 'official_read_document');
+  assert.equal(res.error, 'tool_error');
+  assert.equal(res.next, 'ask_or_fallback');
+  assert.equal(res.trace_id, 'trace_tool_exec_fail');
+});
+
 test('validateToolInvocation accepts canonical q for search_company_brain_docs', () => {
   const check = validateToolInvocation('search_company_brain_docs', { q: 'lobster' });
   assert.equal(check.ok, true);

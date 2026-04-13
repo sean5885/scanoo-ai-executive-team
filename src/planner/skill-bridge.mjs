@@ -40,12 +40,21 @@ const READ_ONLY_SKILLS = Object.freeze([
   "official_read_document",
 ]);
 
+const TOOL_LOOP_BRIDGE_ACTIONS = Object.freeze([
+  "planner_bridge",
+  "tool_loop_bridge",
+]);
+
 function isWriteAction(action = "") {
   return WRITE_ACTIONS.includes(cleanText(action));
 }
 
 function isReadOnlySkill(skillName = "") {
   return READ_ONLY_SKILLS.includes(cleanText(skillName));
+}
+
+function isToolLoopBridgeAction(action = "") {
+  return TOOL_LOOP_BRIDGE_ACTIONS.includes(cleanText(action));
 }
 
 function normalizeStringList(items = []) {
@@ -794,43 +803,59 @@ export async function runPlannerSkillBridge({
   signal = null,
   registry = defaultSkillRegistry,
 } = {}) {
+  const normalizedAction = cleanText(action);
+  const skillAction = getPlannerSkillAction(normalizedAction);
   const { plan, context } = payload || {};
-  // === tool loop 注入（V1）===
-  try {
-    if (plan && plan.action && context) {
-      const selectedSkill = cleanText(
-        context?.selected_skill
-        || context?.skill_name
-        || plan?.skill_name
-        || plan?.selected_skill
-        || ""
-      );
-      const plannedAction = cleanText(
-        plan?.action
-        || plan?.tool_action
-        || context?.action
-        || context?.tool_action
-        || ""
-      );
+  // Legacy bridge path: only explicit bridge actions may run tool-loop payloads.
+  if (!skillAction && isToolLoopBridgeAction(normalizedAction)) {
+    try {
+      if (plan && plan.action && context) {
+        const selectedSkill = cleanText(
+          context?.selected_skill
+          || context?.skill_name
+          || plan?.skill_name
+          || plan?.selected_skill
+          || ""
+        );
+        const plannedAction = cleanText(
+          plan?.action
+          || plan?.tool_action
+          || context?.action
+          || context?.tool_action
+          || ""
+        );
 
-      if (isReadOnlySkill(selectedSkill) && isWriteAction(plannedAction)) {
-        return {
-          ok: false,
-          error: "read_only_skill_cannot_execute_write_action",
-          blocked: true,
-          skill: selectedSkill,
-          action: plannedAction,
-        };
+        if (isReadOnlySkill(selectedSkill) && isWriteAction(plannedAction)) {
+          return {
+            ok: false,
+            error: "read_only_skill_cannot_execute_write_action",
+            blocked: true,
+            skill: selectedSkill,
+            action: plannedAction,
+          };
+        }
+
+        return await runToolLoop({ plan, context, max_steps: 3 });
       }
-
-      return await runToolLoop({ plan, context, max_steps: 3 });
+    } catch (error) {
+      return {
+        ok: false,
+        action: normalizedAction || null,
+        error: "runtime_exception",
+        data: {
+          bridge: "skill_bridge",
+          message: cleanText(error instanceof Error ? error.message : String(error)) || "tool_loop_bridge_runtime_exception",
+          stopped: true,
+          stop_reason: "runtime_exception",
+        },
+        trace_id: null,
+      };
     }
-  } catch (e) {}
-  const skillAction = getPlannerSkillAction(action);
+  }
   if (!skillAction) {
     return {
       ok: false,
-      action: cleanText(action) || null,
+      action: normalizedAction || null,
       error: "invalid_action",
       data: {
         bridge: "skill_bridge",

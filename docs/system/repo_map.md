@@ -153,6 +153,7 @@ This file explains which directories are part of the current runtime, which are 
 - `planner-autonomous-workflow.mjs` is a planner-driven loop helper for bounded agent e2e validation and controlled ingress canary:
   - exposes `runAgentE2E(userInput, ctx)` and compatibility wrapper `runAutonomousWorkflow(...)`
   - each turn uses planner decision (`selectPlannerTool`) -> skill hint resolution (`skill-registry`) -> tool-layer execution -> continuation decision (`resolveToolResultContinuation`)
+  - tool-layer execution keeps one contract shape and can now use an injected executor adapter (for real dispatch coupling) or bounded local mock fallback when no adapter is provided
   - emits debug traces for chosen skills, routing decisions, and continuation state
   - it is now optionally used by direct HTTP `/answer` behind `AGENT_E2E_ENABLED=true` plus `AGENT_E2E_RATIO>0` rollout gating
   - if canary execution does not produce a stable final answer, `http-server.mjs` falls back to the existing planner answer-edge path

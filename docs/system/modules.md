@@ -133,6 +133,7 @@ Current-truth docs for onboarding are:
     - retry continuation is now forced by state (`task_phase=retrying` or `recovery_action=retry_same_step`) and no longer treated as a fresh task by default
     - safe-tool execution now hard-checks read-only skill boundary (`search_and_summarize` / `document_summarize` / `search_company_brain_docs` / `official_read_document`) so those skills cannot continue through write-class actions (`send_message` / `update_doc` / `create_task` / `write_memory` / `update_record`); violations are recorded as `__boundary_violation` and fail-soft to fallback
     - safe-tool continuation now also writes one unified internal state marker `__continuation_state={state,resume}` (`idle|continue|retry|ask_user|fallback`) so retry/ask/fallback telemetry uses one deterministic source
+    - for tool-layer contract actions, safe-tool continuation is now derived from the same real dispatch result (through injected tool executor) and copied into `execution_result.data.tool_layer`, instead of staying only inside temporary ctx fields
   - that gate is fail-closed and state-derived (slot/artifact/dependency/owner/recovery/plan integrity checks), and does not introduce a second planner/workflow truth source
   - when readiness is blocked, planner routing is lockable for the turn and reuses existing controlled paths (`ask_user` / `retry` / `reroute` / `rollback` / `skip` / fail-closed stop) instead of executing the intended action directly
   - the same step/recovery/readiness signals now feed a deterministic outcome scorer v1 (`success|partial|blocked|failed`) plus `outcome_confidence`, `outcome_evidence`, `artifact_quality`, `retry_worthiness`, and `user_visible_completeness`, and malformed outcome payloads are rejected fail-closed
@@ -276,6 +277,7 @@ Current-truth docs for onboarding are:
     - each loop turn runs `selectPlannerTool(...)` for planner decision
     - resolves a bounded skill hint through `skill-registry.mjs` metadata (`getSkillMetadata`, `normalizeSkillArgs`)
     - executes only through the checked-in tool-layer contract/runtime (`tool-layer-contract.mjs`, `tool-execution-runtime.mjs`)
+    - `tool-execution-runtime.mjs` now supports injected executors: when a host provides a dispatch adapter it uses real runtime dispatch and keeps contract-normalized continuation semantics; when no executor is injected it falls back to bounded local mock execution
     - applies `resolveToolResultContinuation(...)` before deciding the next loop turn
     - exits on `answer_user_directly` success or bounded fail-safe stop
   - that helper returns one bounded envelope `{ ok, done, terminal_reason, plan, steps, state, final, debug }`, where `debug` includes chosen skills, routing decisions, and continuation state per step
