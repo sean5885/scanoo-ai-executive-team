@@ -8239,11 +8239,22 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger, req 
       const accountId = normalizeHeaderValue(req?.headers?.["x-account-id"]) || getAccountId(requestUrl, body);
       const userId = normalizeHeaderValue(req?.headers?.["x-user-id"]) || "anon";
       const allowLegacyFallback = shouldAllowAgentE2ELegacyFallback();
+      const requestTimeoutMs = Number.isFinite(Number(res?.__request_timeout_ms)) ? Number(res.__request_timeout_ms) : null;
+      const configuredAgentBudgetRaw = Number(process.env.AGENT_E2E_BUDGET_MS);
+      const configuredAgentBudgetMs = Number.isFinite(configuredAgentBudgetRaw) && configuredAgentBudgetRaw > 0
+        ? Math.floor(configuredAgentBudgetRaw)
+        : 5_000;
+      const requestBudgetMs = requestTimeoutMs == null
+        ? configuredAgentBudgetMs
+        : Math.min(configuredAgentBudgetMs, Math.max(25, Math.floor(requestTimeoutMs)));
+      const requestDeadlineAt = Date.now() + requestBudgetMs;
       logger.info("knowledge_answer_agent_e2e_ingress_enter", {
         account_id: accountId || null,
         user_id: userId || null,
         q_len: q.trim().length,
-        request_timeout_ms: Number.isFinite(Number(res?.__request_timeout_ms)) ? Number(res.__request_timeout_ms) : null,
+        request_timeout_ms: requestTimeoutMs,
+        request_budget_ms: requestBudgetMs,
+        request_deadline_at: requestDeadlineAt,
         hard_timeout_ms: Number.isFinite(Number(process.env.AGENT_E2E_HARD_TIMEOUT_MS))
           ? Number(process.env.AGENT_E2E_HARD_TIMEOUT_MS)
           : null,
@@ -8259,7 +8270,11 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger, req 
         retry_policy: { max_retries: 2 },
         logger,
         signal: earlyFallback.signal,
-        request_timeout_ms: Number.isFinite(Number(res?.__request_timeout_ms)) ? Number(res.__request_timeout_ms) : null,
+        request_timeout_ms: requestTimeoutMs,
+        request_budget_ms: requestBudgetMs,
+        request_deadline_at: requestDeadlineAt,
+        agent_e2e_budget_ms: requestBudgetMs,
+        agent_e2e_deadline_at: requestDeadlineAt,
         tool_executor: buildHttpAgentToolExecutor({
           logger,
           authContext: agentAuthContext,
