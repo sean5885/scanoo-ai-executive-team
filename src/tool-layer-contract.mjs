@@ -6,14 +6,14 @@ export const TOOL_LAYER_REGISTRY = {
       q: ["query"],
     },
     on_success_next: "continue_planner",
-    on_failure_next: "retry_or_fallback",
+    on_failure_next: "retry",
   },
   official_read_document: {
     capability: "document_read",
     required_args: ["document_ref"],
     arg_aliases: {},
     on_success_next: "continue_planner",
-    on_failure_next: "ask_or_fallback",
+    on_failure_next: "ask_user",
   },
   answer_user_directly: {
     capability: "direct_answer",

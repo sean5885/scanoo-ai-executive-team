@@ -4,7 +4,7 @@ function normalizeText(value = '') {
   return String(value || '').trim();
 }
 
-function resolveInjectedToolExecutor(ctx = {}) {
+export function resolveToolExecutor(ctx = {}) {
   if (!ctx || typeof ctx !== 'object' || Array.isArray(ctx)) {
     return null;
   }
@@ -66,7 +66,7 @@ export async function executeTool(action, args = {}, ctx = {}) {
   const normalizedArgs = normalizeToolInvocationArgs(action, args);
 
   try {
-    const injectedExecutor = resolveInjectedToolExecutor(ctx);
+    const injectedExecutor = resolveToolExecutor(ctx);
     if (!injectedExecutor) {
       return {
         ok: false,

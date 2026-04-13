@@ -57,7 +57,7 @@ test('executeTool fails soft when injected executor is missing', async () => {
   assert.equal(res.ok, false);
   assert.equal(res.action, 'search_company_brain_docs');
   assert.equal(res.error, 'tool_executor_missing');
-  assert.equal(res.next, 'retry_or_fallback');
+  assert.equal(res.next, 'retry');
 });
 
 test('executeTool delegates to injected tool executor when available', async () => {
@@ -110,7 +110,7 @@ test('executeTool keeps failure continuation contract when injected executor fai
   assert.equal(res.ok, false);
   assert.equal(res.action, 'official_read_document');
   assert.equal(res.error, 'tool_error');
-  assert.equal(res.next, 'ask_or_fallback');
+  assert.equal(res.next, 'ask_user');
   assert.equal(res.trace_id, 'trace_tool_exec_fail');
 });
 
