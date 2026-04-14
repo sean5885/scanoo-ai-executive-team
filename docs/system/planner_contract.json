@@ -614,6 +614,7 @@
         }
       },
       "error_codes": [
+        "business_error",
         "contract_violation",
         "runtime_exception",
         "not_found"

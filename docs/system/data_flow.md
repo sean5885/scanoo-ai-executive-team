@@ -302,7 +302,7 @@ Current truth:
 - implemented as a minimal baseline
 - current checked-in skill implementations are `search_and_summarize`, `document_summarize`, and `image_generate`
 - `search_and_summarize` and `document_summarize` are read-only and use `read-runtime`
-- `image_generate` is read-only and currently returns a deterministic placeholder URL without external runtime side effects
+- `image_generate` is read-only and now fail-closes as `business_error` with `failure_class=capability_gap` when an image backend is unavailable; it no longer returns placeholder URL success output
 - `search_and_summarize` uses `search_knowledge_base`
 - `document_summarize` uses `get_company_brain_doc_detail`
 - this does not register a new public route or planner routing target
@@ -338,7 +338,7 @@ Current path:
 4. `/Users/seanhan/Documents/Playground/src/task-layer/task-skill-map.mjs` resolves each tag to a string skill identifier
 5. `/Users/seanhan/Documents/Playground/src/task-layer/orchestrator.mjs` invokes the caller-provided `runSkill(skill, { input, task })`
 6. `/Users/seanhan/Documents/Playground/src/task-layer/task-to-answer.mjs` now normalizes that task-layer result and derives the canonical user-facing `{ answer, sources, limitations }` fields for multi-task planner replies
-7. the helper returns a unified object `{ ok, partial, tasks, results, summary, data, errors }`; each result row keeps `status` (`done|failed`) with `result/error`, while aggregate output stays summary-first instead of dumping raw error lists into the answer body
+7. the helper returns a unified object `{ ok, partial, tasks, results, summary, data, errors }`; each result row keeps `status` (`done|failed|blocked`) with `result/error`, while aggregate output stays summary-first instead of dumping raw error lists into the answer body
 
 Current truth:
 
@@ -351,9 +351,10 @@ Current truth:
 - `executePlannedUserInput(...)` may call this helper before normal planning only when the caller explicitly supplies `runSkill`
 - when that optional pre-pass detects more than one task, planner execution returns a bounded `multi_task` result through the same canonical `answer / sources / limitations` boundary, and those user-facing fields are now derived by `task-to-answer.mjs` instead of being inlined inside `executive-planner.mjs`
 - on the current checked-in path, `task-to-answer.mjs` prefers exposing bounded per-task natural-language payloads for successful `copywriting`, `image`, and `publish` tasks inside `answer`; if no such payload can be rendered, it falls back to the prior execution-summary wording while still preserving fail-soft `limitations`
+- image-task guarding now blocks placeholder-like image URLs (`dummyimage`, `placeholder`) so they cannot be rendered as successful image generation in either task summary or answer text
 - if the helper detects zero or one task, or if the optional pre-pass fails, execution falls back to the original planner path
 - the checked-in public `/answer` edge does not currently supply `runSkill`, so the default public route behavior is unchanged
-- `document_summarize` is backed by the checked-in skill runtime, `message_send` is backed by the checked-in write runtime, and `image_generate` is now backed by a checked-in internal-only skill runtime that still returns a placeholder URL on this helper path
+- `document_summarize` is backed by the checked-in skill runtime, `message_send` is backed by the checked-in write runtime, and `image_generate` is backed by a checked-in internal-only skill runtime that fail-closes until a real image backend is wired
 
 ### 4B. Comment Rewrite
 

@@ -239,7 +239,7 @@ test("search_and_summarize runs through read-runtime and returns planner-usable 
   });
 });
 
-test("image_generate returns a stable placeholder image result through the checked-in skill runtime", async () => {
+test("image_generate fail-closes through the checked-in skill runtime when backend is unavailable", async () => {
   const result = await runSkill({
     registry: defaultSkillRegistry,
     skillName: "image_generate",
@@ -248,26 +248,40 @@ test("image_generate returns a stable placeholder image result through the check
     },
   });
 
-  assert.equal(result.ok, true);
-  assert.equal(result.skill, "image_generate");
-  assert.equal(result.failure_mode, "fail_closed");
-  assert.deepEqual(result.side_effects, []);
-  assert.deepEqual(result.output, {
-    prompt: "cat astronaut",
-    url: "https://dummyimage.com/512x512/000/fff.png&text=cat%20astronaut",
+  assert.deepEqual(result, {
+    ok: false,
+    skill: "image_generate",
+    failure_mode: "fail_closed",
+    error: "business_error",
+    output: null,
+    side_effects: [],
+    trace_id: null,
+    details: {
+      phase: "execution",
+      failure_class: "capability_gap",
+      reason: "image_backend_unavailable",
+      message: "image_generation_backend_unavailable",
+      prompt: "cat astronaut",
+      intent_unfulfilled: true,
+      criteria_failed: [
+        "image_backend_ready",
+        "image_asset_generated",
+      ],
+    },
   });
 
   const plannerEnvelope = buildPlannerSkillEnvelope(result);
-  assert.deepEqual(plannerEnvelope.data, {
-    skill: "image_generate",
-    prompt: "cat astronaut",
-    url: "https://dummyimage.com/512x512/000/fff.png&text=cat%20astronaut",
-    summary: null,
-    hits: 1,
-    found: true,
-    sources: [],
-    limitations: [],
-    side_effects: [],
+  assert.deepEqual(plannerEnvelope, {
+    ok: false,
+    action: "skill:image_generate",
+    error: "business_error",
+    data: {
+      skill: "image_generate",
+      stop_reason: "fail_closed",
+      phase: "execution",
+      side_effects: [],
+    },
+    trace_id: null,
   });
 });
 
@@ -1377,20 +1391,16 @@ test("image_generate bridge action executes through the checked-in planner skill
   });
 
   assert.deepEqual(bridgeResult, {
-    ok: true,
+    ok: false,
     action: "image_generate",
+    error: "business_error",
     data: {
       skill: "image_generate",
+      stop_reason: "fail_closed",
+      phase: "execution",
       bridge: "skill_bridge",
       max_skills_per_run: 1,
       allow_skill_chain: false,
-      prompt: "launch poster",
-      url: "https://dummyimage.com/512x512/000/fff.png&text=launch%20poster",
-      summary: null,
-      hits: 1,
-      found: true,
-      sources: [],
-      limitations: [],
       side_effects: [],
     },
     trace_id: null,

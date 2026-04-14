@@ -110,7 +110,7 @@ Boundary:
   - surface layer: `internal_only`
   - planner visibility: `deterministic_only`
   - selector path: none; current checked-in usage is direct bridge invocation by internal callers
-  - current executor returns a deterministic placeholder image URL and does not yet call an external image backend
+  - current executor fail-closes with `business_error` (`failure_class=capability_gap`) when the image backend is unavailable and does not emit placeholder success URLs
 
 ### Read / Write Runtime Boundary
 
@@ -142,7 +142,7 @@ Current checked-in examples:
   - declared `runtime_access=["read_runtime"]`
 - `image_generate`
   - read-only
-  - currently returns a deterministic placeholder image URL without external runtime side effects
+  - currently fail-closes on backend-unavailable conditions and does not return placeholder image URLs as success output
   - allowed effects are empty
   - declared `skill_class=read_only`
   - declared `runtime_access=["read_runtime"]`
