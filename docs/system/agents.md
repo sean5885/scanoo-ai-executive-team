@@ -32,8 +32,8 @@ What now exists in current code:
 - closed-loop executive planner that can start, continue, or hand off between registered agents
 - shared executive task state for multi-turn continuation and agent-to-agent handoff
 - lifecycle state transitions that require evidence plus verifier pass before completion
-- checked-in slash-agent registry for `/generalist`, `/planner`, `/company-brain`
-- `/knowledge *` is now an explicit fail-closed command family (`ROUTING_NO_MATCH`) and is no longer a registered agent inventory
+- checked-in slash-agent registry now includes core + persona surfaces: `/generalist`, `/planner`, `/company-brain`, `/ceo`, `/product`, `/prd`, `/cmo`, `/consult`, `/cdo`, `/delivery`, `/ops`, `/tech`
+- checked-in knowledge subcommand inventory exists for `/knowledge audit|conflicts|distill`; parser default remains fail-closed (`ROUTING_NO_MATCH`) unless caller explicitly enables knowledge-subcommand parsing
 - core-configured shared dispatcher that reuses retrieval grounding plus compact role prompts
 - image-bearing slash requests that first use the Nano Banana-oriented adapter, then pass compact structured image context into the text model only when needed
 - explicit capability contracts for registered agents
@@ -178,17 +178,17 @@ What now exists in current code:
   - `/Users/seanhan/Documents/Playground/src/agent-registry.mjs`
   - `/Users/seanhan/Documents/Playground/src/agent-dispatcher.mjs`
 - Role:
-  - define checked-in core agent IDs, slash commands, role prompts, and output contracts
-  - keep one checked-in registered-agent family resolver for slash command and embedded slash mentions (for example `把這輪改交給 /planner`) so caller modules do not maintain local maps
-  - resolver no longer includes persona-style mention matching; checked-in matching surface is slash-first only (direct slash + embedded slash)
-  - expose minimum capability contracts for governance and self-check
-  - dispatch `/generalist`, `/planner`, and `/company-brain` before generic lane fallback
-  - reject `/knowledge *` as unsupported slash family with fail-closed `ROUTING_NO_MATCH`
+- define checked-in core/persona/knowledge agent IDs, slash commands, role prompts, and output contracts
+- keep one checked-in registered-agent family resolver for slash command and embedded slash mentions (for example `把這輪改交給 /planner`) so caller modules do not maintain local maps
+- resolver keeps slash-first matching as default (direct slash + embedded slash), and only enables persona-style mention parsing when caller explicitly opts in
+- expose minimum capability contracts for governance and self-check
+- dispatch registered core/persona slash commands before generic lane fallback
+- keep `/knowledge *` fail-closed by default at generic slash parsing boundaries, while allowing opt-in subcommand parsing in selected eval/recovery helpers
   - reuse retrieval grounding and compact workflow checkpoints for core-agent answers
   - when direct text-model credentials are absent, call the dedicated `lobster-backend` OpenClaw MiniMax text path before dropping to extractive retrieval-only output
   - keep chat-facing slash-agent fallback/no-match replies on the shared natural-language reply boundary instead of exposing raw error envelopes
   - reject JSON-like success payloads at the registered-agent output boundary and summarize them into visible natural language while keeping machine-readable fields in runtime data
-  - when eval/runtime is already on the executive surface but the request carries one explicit core owner slash, checked-in recovery/eval helpers stay owner-aware and reuse the same registered-agent answer surface rather than falling back to a generic executive brief
+- when eval/runtime is already on the executive surface but the request carries one explicit owner signal (slash command or opted-in persona-style mention), checked-in recovery/eval helpers stay owner-aware and reuse the same registered-agent answer surface rather than falling back to a generic executive brief
 - Input:
   - slash command text
   - retrieved snippets

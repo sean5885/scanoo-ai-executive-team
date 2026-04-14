@@ -64,8 +64,8 @@ Lobster AI Executive Team 目前是一個本地運行的 Lark 國際版知識、
 - Drive / Wiki / Doc / Message / Calendar / Task / Bitable / Sheets / Reaction 讀寫
 - SQLite + FTS + local semantic sidecar hybrid retrieval
 - `/answer` 與 retrieval-grounded slash agents
-- checked-in slash agents：`/generalist`、`/ceo`、`/product`、`/prd`、`/cmo`、`/consult`、`/cdo`、`/delivery`、`/ops`、`/tech`
-- checked-in knowledge subcommands：`/knowledge audit|consistency|conflicts|distill|brain|proposals|approve|reject|ownership|learn`
+- checked-in slash agents：`/generalist`、`/planner`、`/company-brain`、`/ceo`、`/product`、`/prd`、`/cmo`、`/consult`、`/cdo`、`/delivery`、`/ops`、`/tech`
+- checked-in knowledge subcommands inventory：`/knowledge audit|conflicts|distill`（generic parser default fail-closed，需由 caller 明確啟用 subcommand parsing）
 - meeting workflow：啟動、錄音、轉譯、總結、確認、寫文檔、knowledge writeback
 - executive closed loop：task lifecycle、evidence、verifier、reflection、improvement proposal、improvement approval/apply workflow
 - 圖文模態分流：圖片先走 Gemini `generateContent` 型 image understanding adapter，再決定是否交文本模型整合
@@ -272,36 +272,23 @@ Lobster AI Executive Team 目前是一個本地運行的 Lark 國際版知識、
 
 ### 2.11 Knowledge 系列 agents
 
-以下 agents 都在 `/Users/seanhan/Documents/Playground/src/agent-registry.mjs` 有真實 checked-in 註冊，觸發方式為 `/knowledge <subcommand>`：
+以下 agents 都在 `/Users/seanhan/Documents/Playground/src/agent-registry.mjs` 有真實 checked-in 註冊，知識子命令 inventory 目前為：
 
 - `audit`
-- `consistency`
 - `conflicts`
 - `distill`
-- `brain`
-- `proposals`
-- `approve`
-- `reject`
-- `ownership`
-- `learn`
 
 共同特徵：
 
-- 職責：以檢索到的文件片段為基礎，做知識盤點、衝突、提案、owner 建議或學習整理
+- 職責：以檢索到的文件片段為基礎，做知識盤點、衝突比對與蒸餾整理
 - 能做什麼：
   - audit：盤點覆蓋、缺口、重複
-  - consistency：比對版本/口徑一致性
   - conflicts：找出衝突並提出建議確認版
   - distill：蒸餾最小知識卡
-  - brain：整體理解拼裝
-  - proposals：知識治理提案
-  - approve / reject：針對提案做批准/拒絕觀點
-  - ownership：合理 owner 建議
-  - learn：把新材料整理為可學習內容
 - 不能做什麼：
   - 不能無 evidence 直接宣稱已更新 long-term knowledge
   - 不能保證全庫一致性，只能基於檢索與比較結果
-- 觸發條件：`/knowledge <subcommand>`
+- 觸發條件：`/knowledge <subcommand>`（僅在 caller 明確啟用 knowledge-subcommand parsing 的路徑）
 - 輸入：同 slash agent 標準 schema
 - 輸出：依 subcommand 決定，但均為結構化段落式結果
 - 依賴知識：Lark 檢索結果、semantic classifier、局部 image understanding
@@ -314,7 +301,6 @@ Lobster AI Executive Team 目前是一個本地運行的 Lark 國際版知識、
 - 目前已知問題：
   - 更像治理工具集合，不是完整 knowledge OS
   - 仍偏 retrieval + synthesis，非真正圖譜推理
-  - `/knowledge brain` 是拼裝理解，不是 concrete `company_brain`
 
 ### 2.12 `meeting_agent`
 

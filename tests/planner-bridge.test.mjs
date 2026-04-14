@@ -7,47 +7,26 @@ const runPlannerBridge =
   skillBridge.runPlannerSkillBridge ||
   skillBridge.default;
 
-test('planner bridge runs multi-step tool loop', async () => {
+test('planner bridge legacy tool-loop action is disabled fail-closed', async () => {
   assert.equal(typeof runPlannerBridge, 'function');
-
-  const plan = {
-    action: 'send_message',
-    params: { content: 'hello' },
-    next_action: {
-      action: 'create_task',
-      params: { title: 'task from planner' }
-    }
-  };
-
-  const context = {
-    token: 'ascii_token_for_test',
-    chat_id: 'oc_test_chat',
-    allow_write_actions: true,
-  };
-
-  const originalFetch = global.fetch;
-  let calls = 0;
-
-  global.fetch = async () => {
-    calls += 1;
-    return {
-      ok: true,
-      headers: { get() { return 'application/json'; } },
-      json: async () => ({ code: 0, msg: 'success', data: {} })
-    };
-  };
-
   const res = await runPlannerBridge({
     action: 'planner_bridge',
-    payload: { plan, context }
+    payload: {
+      plan: {
+        action: 'send_message',
+        params: { content: 'hello' },
+      },
+      context: {
+        token: 'ascii_token_for_test',
+        chat_id: 'oc_test_chat',
+        allow_write_actions: true,
+      },
+    }
   });
 
-  assert.equal(res.ok, true);
-  assert.equal(res.type, 'tool_loop');
-  assert.equal(res.steps.length, 2);
-  assert.equal(calls, 2);
-
-  global.fetch = originalFetch;
+  assert.equal(res.ok, false);
+  assert.equal(res.error, 'invalid_action');
+  assert.equal(res.data?.message, 'legacy_tool_loop_bridge_disabled');
 });
 
 test('planner skill action does not bypass into tool loop even when plan/context payload exists', async () => {
@@ -98,7 +77,15 @@ test('planner-visible skill bridge fails closed as missing_required_account_id w
   const res = await runPlannerBridge({
     action: 'search_and_summarize',
     payload: {
-      q: 'launch checklist',
+      q: '請先幫我查 launch checklist，然後直接傳訊息給團隊',
+      plan: {
+        action: 'send_message',
+        params: { content: 'should never run through bridge bypass' },
+      },
+      context: {
+        selected_skill: 'search_and_summarize',
+        allow_write_actions: true,
+      },
       reader_overrides: {
         index: {
           search_knowledge_base: {
@@ -153,9 +140,9 @@ test('planner-visible skill bridge backfills account_id from payload authContext
   assert.equal(res.data?.skill, 'search_and_summarize');
 });
 
-test('planner bridge fail-closes write loop without explicit write access', async () => {
+test('tool_loop_bridge legacy action is disabled fail-closed', async () => {
   const res = await runPlannerBridge({
-    action: 'planner_bridge',
+    action: 'tool_loop_bridge',
     payload: {
       plan: {
         action: 'send_message',
@@ -166,6 +153,6 @@ test('planner bridge fail-closes write loop without explicit write access', asyn
   });
 
   assert.equal(res.ok, false);
-  assert.equal(res.blocked, true);
-  assert.equal(res.error, 'write_action_not_allowed');
+  assert.equal(res.error, 'invalid_action');
+  assert.equal(res.data?.message, 'legacy_tool_loop_bridge_disabled');
 });

@@ -1,4 +1,3 @@
-import { runToolLoop } from './tool-loop.mjs';
 import { cleanText } from "../message-intent-utils.mjs";
 import { emitSkillReflection } from "../reflection/skill-reflection.mjs";
 import { defaultSkillRegistry, getSkillMetadata, normalizeSkillArgs } from "../skill-registry.mjs";
@@ -25,47 +24,13 @@ const VALID_SKILL_PROMOTION_STAGES = Object.freeze([
   SKILL_PROMOTION_STAGE_PLANNER_VISIBLE,
 ]);
 
-const WRITE_ACTIONS = Object.freeze([
-  "send_message",
-  "update_doc",
-  "create_task",
-  "write_memory",
-  "update_record",
-]);
-
-const READ_ONLY_SKILLS = Object.freeze([
-  "search_and_summarize",
-  "document_summarize",
-  "search_company_brain_docs",
-  "official_read_document",
-]);
-
-const TOOL_LOOP_BRIDGE_ACTIONS = Object.freeze([
+const LEGACY_TOOL_LOOP_BRIDGE_ACTIONS = Object.freeze([
   "planner_bridge",
   "tool_loop_bridge",
 ]);
 
-function isWriteAction(action = "") {
-  return WRITE_ACTIONS.includes(cleanText(action));
-}
-
-function isReadOnlySkill(skillName = "") {
-  const normalizedSkillName = cleanText(skillName);
-  if (!normalizedSkillName) {
-    return false;
-  }
-  if (READ_ONLY_SKILLS.includes(normalizedSkillName)) {
-    return true;
-  }
-  return getSkillMetadata(normalizedSkillName)?.read_only === true;
-}
-
-function isToolLoopBridgeAction(action = "") {
-  return TOOL_LOOP_BRIDGE_ACTIONS.includes(cleanText(action));
-}
-
-function isWriteActionExplicitlyAllowed(context = {}) {
-  return context?.allow_write_actions === true || context?.allowWriteActions === true;
+function isLegacyToolLoopBridgeAction(action = "") {
+  return LEGACY_TOOL_LOOP_BRIDGE_ACTIONS.includes(cleanText(action));
 }
 
 function normalizeObject(input = null) {
@@ -961,63 +926,19 @@ export async function runPlannerSkillBridge({
   const normalizedAction = cleanText(action);
   const skillAction = getPlannerSkillAction(normalizedAction);
   const normalizedPayload = normalizeObject(payload);
-  const { plan } = normalizedPayload;
-  const legacyContext = normalizeObject(normalizedPayload.context);
-  // Legacy bridge path: only explicit bridge actions may run tool-loop payloads.
-  if (!skillAction && isToolLoopBridgeAction(normalizedAction)) {
-    try {
-      if (plan && plan.action) {
-        const selectedSkill = cleanText(
-          legacyContext?.selected_skill
-          || legacyContext?.skill_name
-          || plan?.skill_name
-          || plan?.selected_skill
-          || ""
-        );
-        const plannedAction = cleanText(
-          plan?.action
-          || plan?.tool_action
-          || legacyContext?.action
-          || legacyContext?.tool_action
-          || ""
-        );
-        const writeAllowed = isWriteActionExplicitlyAllowed(legacyContext);
-
-        if (isReadOnlySkill(selectedSkill) && isWriteAction(plannedAction)) {
-          return {
-            ok: false,
-            error: "read_only_skill_cannot_execute_write_action",
-            blocked: true,
-            skill: selectedSkill,
-            action: plannedAction,
-          };
-        }
-        if (isWriteAction(plannedAction) && !writeAllowed) {
-          return {
-            ok: false,
-            error: "write_action_not_allowed",
-            blocked: true,
-            action: plannedAction,
-            requires_explicit_write_access: true,
-          };
-        }
-
-        return await runToolLoop({ plan, context: legacyContext, max_steps: 3 });
-      }
-    } catch (error) {
-      return {
-        ok: false,
-        action: normalizedAction || null,
-        error: "runtime_exception",
-        data: {
-          bridge: "skill_bridge",
-          message: cleanText(error instanceof Error ? error.message : String(error)) || "tool_loop_bridge_runtime_exception",
-          stopped: true,
-          stop_reason: "runtime_exception",
-        },
-        trace_id: null,
-      };
-    }
+  if (!skillAction && isLegacyToolLoopBridgeAction(normalizedAction)) {
+    return {
+      ok: false,
+      action: normalizedAction || null,
+      error: "invalid_action",
+      data: {
+        bridge: "skill_bridge",
+        message: "legacy_tool_loop_bridge_disabled",
+        stopped: true,
+        stop_reason: "invalid_action",
+      },
+      trace_id: null,
+    };
   }
   if (!skillAction) {
     return {

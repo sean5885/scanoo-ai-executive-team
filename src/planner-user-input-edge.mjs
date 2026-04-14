@@ -218,6 +218,7 @@ function buildExecutiveBriefRecoveryResult(text = "") {
   const normalized = cleanText(text);
   const explicitAgentRequest = resolveRegisteredAgentFamilyRequest(text, {
     includeSlashCommand: true,
+    includePersonaStyleMention: true,
   });
   const explicitAgentId = cleanText(explicitAgentRequest?.agent?.id || "");
   const signals = [];
