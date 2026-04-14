@@ -139,10 +139,9 @@ Current truth:
 Current public `/answer` path:
 
 1. request enters `GET /answer`
-2. `http-server.mjs` may first run a gated canary `runAgentE2E(...)` (`AGENT_E2E_ENABLED=true` and `AGENT_E2E_RATIO>0`) for direct ingress requests, injecting a real dispatch-backed tool executor
-3. when canary execution does not return a stable final answer, default behavior is a bounded single-runtime fail-soft stop; legacy planner fallback is opt-in only (`AGENT_E2E_LEGACY_FALLBACK_ENABLED=true`)
-4. when canary gate is off (or explicit legacy fallback is enabled and triggered), `planner-user-input-edge.mjs` calls `executePlannedUserInput(...)`
-5. `executive-planner.mjs` resolves planner action or controlled failure
+2. `http-server.mjs` calls `planner-user-input-edge.mjs` `runPlannerUserInputEdge(...)`
+3. `runPlannerUserInputEdge(...)` calls `executePlannedUserInput(...)`
+4. `executive-planner.mjs` resolves planner action or controlled failure
    - before active current-step continuation, planner runs one deterministic execution-readiness gate from the same session working-memory execution plan state
    - readiness is fail-closed and checks slot/artifact/dependency/owner/recovery/plan validity on current step, returning `is_ready`, blocking diagnostics, and `recommended_action`
    - when `is_ready=false`, planner does not dispatch intended step action directly; it follows existing controlled paths (`ask_user` / `retry` / `reroute` / `rollback` / `skip` / fail-closed stop)
@@ -168,24 +167,21 @@ Current public `/answer` path:
      - short/high-related follow-ups can stay on continuation path without opening a new task
      - candidate-selection short follow-ups (for example `第一份` / `第2個` / `這個`) can still be treated as continuation even when selected/current/next action hints are temporarily missing, as long as active task context remains
      - `waiting_user` turns with already-filled slots resume the current plan step (`working_memory_waiting_user_resume_plan_step`) instead of redundant ask
-6. planner reads and tool results remain internal runtime state
-7. `user-response-normalizer.mjs` converts the planner envelope into the public response shape:
+5. planner reads and tool results remain internal runtime state
+6. `user-response-normalizer.mjs` converts the planner envelope into the public response shape:
    - `answer`
    - `sources`
    - `limitations`
-8. `answer-source-mapper.mjs` converts canonical source objects into bounded public `sources[]` lines
-9. `planner-user-input-edge.mjs` performs session-scoped working-memory v2 patch write-back only after a stable final boundary response is available
+7. `answer-source-mapper.mjs` converts canonical source objects into bounded public `sources[]` lines
+8. `planner-user-input-edge.mjs` performs session-scoped working-memory v2 patch write-back only after a stable final boundary response is available
 
 Current truth:
 
 - this path is implemented
 - `/answer` is planner-first, not answer-service-first
 - direct `/answer` remains available, but when `LARK_DIRECT_INGRESS_PRIMARY_ENABLED=false` the runtime marks it as a non-primary ingress rather than the formal plugin entry
-- direct `/answer` canary-gates `runAgentE2E(...)` only when `AGENT_E2E_ENABLED=true` and `AGENT_E2E_RATIO>0`; when active, it is the single runtime authority for that request
-- direct `/answer` canary path now injects a real planner dispatch-backed `tool_executor`, so normal agent ingress does not hit `tool_executor_missing`
-- canary miss/error/no-final-answer no longer auto-falls back to planner by default; legacy planner fallback is explicit opt-in (`AGENT_E2E_LEGACY_FALLBACK_ENABLED=true`)
-- `runAgentE2E(...)` now has a hard timeout guard (`AGENT_E2E_HARD_TIMEOUT_MS`, bounded by request timeout when present) so stalled tool-dispatch awaits fail fast with `terminal_reason=agent_e2e_timeout` instead of waiting indefinitely
-- direct `/answer` agent canary now records deterministic diagnostics at ingress, planner-decision boundary, tool execution before/after, continuation boundary, and terminal exit
+- direct `/answer` is now locked to one planner runtime entry and does not route through `runAgentE2E(...)` from HTTP ingress
+- `runAgentE2E(...)` remains in the codebase as an internal helper, not a parallel `/answer` runtime authority
 - `/answer` and the `knowledge-assistant` lane now share the same planner answer-edge helper instead of re-assembling `execute -> envelope -> normalize` separately
 - that shared edge helper also absorbs current legacy planner result shapes into canonical `answer / sources / limitations` before the public boundary
 - for delivery/onboarding knowledge lookups, a single-hit company-brain search now turns into an answer-first reply that names the matched SOP/checklist document and surfaces bounded location/checklist/start-step hints from the indexed snippet, while preserving the same public `answer / sources / limitations` shape
@@ -324,7 +320,7 @@ Current truth:
     - otherwise uses `renderExecutionResult(...)` to produce a readable fallback `answer` and returns `{ ok: true, type: "answer", answer, steps }`
   - `sendMessageAction(...)` issues `POST /open-apis/im/v1/messages?receive_id_type=chat_id` and fails fast on missing or non-ASCII `token/chat_id` placeholders
   - `updateDocAction(...)` now enters the controlled write path through `/Users/seanhan/Documents/Playground/src/execute-lark-write.mjs` `executeLarkWrite(...)` and then reuses `/Users/seanhan/Documents/Playground/src/lark-content.mjs` `updateDocument(...)` (docx block descendant write path), accepts optional `token_type/mode`, and infers tenant token mode from `t-` token prefix when `token_type` is absent
-  - `planner/skill-bridge.mjs` contains a guarded tool-loop entry only for explicit legacy bridge actions (`planner_bridge` / `tool_loop_bridge`): when those actions carry `payload.plan.action` plus `payload.context`, it enforces both the explicit-write gate and the read-only-skill/write-action hard block before `runToolLoop({ plan, context, max_steps: 3 })`; normal planner skill actions no longer enter this `plan/context` path
+  - `planner/skill-bridge.mjs` no longer allows direct legacy bridge actions (`planner_bridge` / `tool_loop_bridge`) to enter `runToolLoop(...)`; those actions now fail closed as `invalid_action` with `message = legacy_tool_loop_bridge_disabled`
   - planner-visible skill actions inside `planner/skill-bridge.mjs` now also run a local pre-dispatch `account_id` guarantee; resolution order is `payload -> payload.authContext -> authContext -> context -> context.authContext -> ctx -> ctx.authContext`, and missing account id fail-closes as `missing_required_account_id` before skill runtime
 - failed skill-bridge executions may now emit one process-local `skill_bridge_failure` reflection payload through `/Users/seanhan/Documents/Playground/src/reflection/skill-reflection.mjs` when the host installs `globalThis.appendReflectionLog`
 - that hook is additive observability only; it does not create a closed-loop executive task, does not enter the executive reflection archive, and does not change the public `answer / sources / limitations` boundary

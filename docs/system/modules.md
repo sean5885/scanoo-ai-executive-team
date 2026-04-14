@@ -284,12 +284,13 @@ Current-truth docs for onboarding are:
     - diagnostics are now explicitly logged at ingress enter, before planner decision, before tool execution, after tool execution, before continuation decision, and terminal exit
     - exits on `answer_user_directly` success or bounded fail-safe stop
   - that helper returns one bounded envelope `{ ok, done, terminal_reason, plan, steps, state, final, debug }`, where `debug` includes chosen skills, routing decisions, and continuation state per step
-  - this autonomous helper can now be ingress-gated for direct HTTP `/answer` when `AGENT_E2E_ENABLED=true` and `AGENT_E2E_RATIO>0` as the single active agent runtime authority
-  - when that gated path is active, `http-server.mjs` injects a real planner-dispatch-backed tool executor into `runAgentE2E(...)`; by default it does not co-run legacy planner runtime on the same request, and only uses legacy planner fallback when explicitly enabled (`AGENT_E2E_LEGACY_FALLBACK_ENABLED=true`)
+  - this autonomous helper is now internal-only for bounded runtime validation and does not act as a parallel HTTP `/answer` ingress authority
+  - `http-server.mjs` `/answer` now stays on the planner answer-edge runtime (`runPlannerUserInputEdge -> executePlannedUserInput`) without `runAgentE2E(...)` ingress canary branching
   - plugin dispatch control path is unchanged; this helper is still not the primary plugin dispatch controller
   - `requestPlannerJson(...)` in `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` now prepends an optional file-backed system message from `/Users/seanhan/Documents/Playground/src/prompts/action-system-prompt.txt` when the file exists
   - `src/skills/document-fetch.mjs` is a secondary read-only helper under the same module group; it resolves `document_id` from direct input or raw Lark-style card payload and returns bounded `missing_access_token | not_found | permission_denied` failures without registering a new planner-visible skill
   - planner can consume a skill result through a bridge envelope
+  - legacy bridge actions (`planner_bridge` / `tool_loop_bridge`) are disabled fail-closed in `planner/skill-bridge.mjs` and can no longer call `runToolLoop(...)` from bridge payloads
   - planner-visible skill dispatch now enforces a deterministic pre-dispatch `account_id` guarantee when skill metadata requires it:
     - dispatcher path resolution order: `payload -> authContext -> ctx -> ctx.authContext`
     - skill-bridge path resolution order: `payload -> payload.authContext -> authContext -> context -> context.authContext -> ctx -> ctx.authContext`
