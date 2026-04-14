@@ -26,6 +26,7 @@ export function normalizeTaskLayerResult(taskLayerResult = null) {
         if (status === "done") {
           return {
             task: taskName,
+            status: "done",
             ok: true,
             result: taskLayerResult?.data?.[taskName],
           };
@@ -35,37 +36,45 @@ export function normalizeTaskLayerResult(taskLayerResult = null) {
           : null;
         return {
           task: taskName,
+          status: "failed",
           ok: false,
           error: cleanText(error) || "runtime_exception",
         };
       });
+  const normalizedResults = results.map((item) => ({
+    ...item,
+    status: cleanText(item?.status || "") || (item?.ok === true ? "done" : "failed"),
+    ok: item?.ok === true,
+  }));
   const summary = tasks.reduce((output, task) => {
-    output[task] = results.find((item) => cleanText(item?.task) === task)?.ok === true
+    output[task] = normalizedResults.find((item) => cleanText(item?.task) === task)?.status === "done"
       ? "done"
       : "failed";
     return output;
   }, {});
-  const data = results.reduce((output, item) => {
+  const data = normalizedResults.reduce((output, item) => {
     const task = cleanText(item?.task);
-    if (task && item?.ok === true) {
+    if (task && item?.status === "done") {
       output[task] = item.result;
     }
     return output;
   }, {});
-  const errors = results
-    .filter((item) => item?.ok !== true)
+  const errors = normalizedResults
+    .filter((item) => item?.status !== "done")
     .map((item) => ({
       task: cleanText(item?.task) || null,
       error: cleanText(item?.error || "") || "runtime_exception",
     }))
     .filter((item) => item.task);
-  const succeeded = results.filter((item) => item?.ok === true);
-  const failed = results.filter((item) => item?.ok !== true);
+  const succeeded = normalizedResults.filter((item) => item?.status === "done");
+  const failed = normalizedResults.filter((item) => item?.status !== "done");
+  const partial = succeeded.length > 0 && failed.length > 0;
 
   return {
     ok: succeeded.length > 0 || failed.length === 0,
+    partial,
     tasks,
-    results,
+    results: normalizedResults,
     summary,
     data,
     errors,
@@ -133,6 +142,17 @@ function renderPublishAnswer(data = {}) {
     : "發布：已完成";
 }
 
+function explainTaskFailure(error = "") {
+  const normalized = cleanText(error);
+  if (!normalized || normalized === "runtime_exception") {
+    return "執行路徑目前沒有穩定完成。";
+  }
+  if (normalized === "no_skill_mapped") {
+    return "目前沒有可用執行能力可直接完成這一步。";
+  }
+  return `這一步目前未完成（${normalized}）。`;
+}
+
 export function toUserFacing(taskLayerResult = null) {
   const normalized = normalizeTaskLayerResult(taskLayerResult);
   const {
@@ -162,15 +182,18 @@ export function toUserFacing(taskLayerResult = null) {
     }),
   ].filter(Boolean);
   const limitations = failed.length > 0
-    ? failed.map((item) => {
-        const task = formatTaskLayerTaskLabel(item?.task || "");
-        const error = cleanText(item?.error || "") || "runtime_exception";
-        return `${task} 目前未完成：${error}。`;
-      })
-    : ["如果你要，我可以再把每個子任務展開成更完整的最終稿或後續步驟。"];
+    ? [
+        ...failed.map((item) => {
+          const task = formatTaskLayerTaskLabel(item?.task || "");
+          return `${task} ${explainTaskFailure(item?.error || "")}`;
+        }),
+        "下一步：你可以讓我直接重試失敗項目，或指定要優先完成的子任務。",
+      ]
+    : ["下一步：如果你要，我可以把每個子任務展開成更完整的最終稿或後續步驟。"];
 
   return {
     ok: normalized.ok,
+    partial: normalized.partial,
     answer,
     sources,
     limitations,

@@ -47,8 +47,9 @@ test("executePlannedUserInput short-circuits to multi-task result when task-laye
     "發布 已完成執行。",
   ]);
   assert.deepEqual(result.execution_result?.data?.limitations, [
-    "如果你要，我可以再把每個子任務展開成更完整的最終稿或後續步驟。",
+    "下一步：如果你要，我可以把每個子任務展開成更完整的最終稿或後續步驟。",
   ]);
+  assert.equal(result.execution_result?.data?.partial, false);
 });
 
 test("executePlannedUserInput falls back to the original planner flow when task-layer finds at most one task", async () => {

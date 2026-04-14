@@ -53,7 +53,8 @@ This is the grouped HTTP surface mirror for the current repo.
 - tool execution timeout is now clamped by remaining budget (`min(step_timeout, remaining_budget)` via `AGENT_E2E_STEP_TIMEOUT_MS` / `AGENT_E2E_HARD_TIMEOUT_MS`), with `<200ms`-class remaining budget defaulting to skip-tool fail-soft behavior
 - direct `/answer` now applies one bounded early-abort latency budget window (default `5000ms`, configurable via `ANSWER_LATENCY_BUDGET_MS` or `AGENT_E2E_BUDGET_MS`) to both canary and non-canary planner execution paths, so replies fail-soft before the outer ~60s HTTP timeout
 - direct `/answer` agent canary now emits explicit diagnostics around ingress, planner decision, tool execution before/after, continuation decision, and terminal exit
-- the public `/answer` payload still does not expose raw planner errors, but the in-process normalized object now carries a non-enumerable `failure_class` for usage-layer eval / telemetry classification
+- the public `/answer` payload still does not expose raw planner errors, but the in-process normalized object now carries non-enumerable `failure_class` (legacy-compatible) plus `failure_class_v2` (`timeout` / `upstream_error` / `partial_data` / `user_input_missing`) for usage-layer eval / telemetry classification
+- fail-soft replies (`ok=false`) are normalized into a usable structure before public rendering: `answer` as summary, `sources` as what-we-got, and the last `limitations` item as executable CTA
 - public `sources[]` lines are derived from canonical source objects through `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`
 - `/answer` and plugin-backed planner/lane entrypoints now arm one earlier bounded-fallback abort signal before the outer HTTP timeout, so bounded fail-soft replies can return before the final generic timeout guard
 - `answer-service.mjs` still exists as a secondary retrieval-answer helper, but it is not the primary HTTP answer surface

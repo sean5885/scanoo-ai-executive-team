@@ -100,8 +100,14 @@ test("payload.message no longer falls back into answer", () => {
 
   assert.equal(userResponse.ok, false);
   assert.equal(userResponse.answer, "這次我先沒有整理出足夠內容，但不會亂補。");
-  assert.deepEqual(userResponse.sources, []);
-  assert.match(userResponse.limitations.join(" "), /換個說法|上下文|目標資料/);
+  assert.deepEqual(userResponse.sources, [
+    "目前已確認：這輪有初步結論，但還沒有足夠可驗證內容能完整交付。",
+  ]);
+  assert.match(userResponse.limitations.join(" "), /換個說法|補一點上下文|重試|查詢詞/);
+  assert.equal(userResponse.failure_class_v2, "partial_data");
+  assert.equal(userResponse.summary, userResponse.answer);
+  assert.equal(userResponse.what_we_got.length, 1);
+  assert.match(userResponse.next_step || "", /換個說法|補一點上下文|重試|查詢詞/);
   assert.doesNotMatch(userResponse.answer, /legacy payload message/);
 });
 
@@ -409,7 +415,32 @@ test("auth-required failures are classified as permission_denied", () => {
   });
 
   assert.equal(userResponse.failure_class, "permission_denied");
+  assert.equal(userResponse.failure_class_v2, "user_input_missing");
   assert.match(userResponse.answer || "", /授權/);
+});
+
+test("timeout failures keep fail-soft shape and map v2 failure class", () => {
+  const userResponse = normalizeUserResponse({
+    requestText: "幫我查 runtime",
+    plannerEnvelope: buildPlannerEnvelope({
+      ok: false,
+      executionOk: false,
+      error: "request_timeout",
+      data: {
+        answer: "request_timeout",
+        sources: [],
+        limitations: ["請重試"],
+      },
+      trace: {
+        fallback_reason: "request_timeout",
+      },
+    }),
+  });
+
+  assert.equal(userResponse.ok, false);
+  assert.equal(userResponse.failure_class_v2, "timeout");
+  assert.match(userResponse.answer || "", /逾時|時限|可確認/);
+  assert.match(userResponse.next_step || "", /重試|再試/);
 });
 
 test("multi-intent fallback works for another mixed capability request", () => {
@@ -497,6 +528,9 @@ test("fallback stays fail-soft when no subtask is actually completable", () => {
 
   assert.equal(userResponse.ok, false);
   assert.equal(userResponse.answer, "這次我先沒有整理出足夠內容，但不會亂補。");
-  assert.deepEqual(userResponse.sources, []);
-  assert.match(userResponse.limitations.join(" "), /換個說法|上下文|目標資料/);
+  assert.deepEqual(userResponse.sources, [
+    "目前已確認：這輪有初步結論，但還沒有足夠可驗證內容能完整交付。",
+  ]);
+  assert.match(userResponse.limitations.join(" "), /換個說法|補一點上下文|重試|查詢詞/);
+  assert.equal(userResponse.failure_class_v2, "partial_data");
 });
