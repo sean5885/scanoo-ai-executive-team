@@ -540,6 +540,21 @@ function buildSingleAgentWorkItems({
     return keptItems;
   }
 
+  const firstExistingTask = cleanText(
+    (Array.isArray(existingWorkItems) ? existingWorkItems : [])
+      .map((item) => cleanText(item?.task || ""))
+      .find(Boolean) || "",
+  );
+
+  if (firstExistingTask) {
+    return [{
+      agent_id: normalizedPrimaryAgentId,
+      task: firstExistingTask,
+      role: "primary",
+      status: "pending",
+    }];
+  }
+
   const task = normalizedPrimaryAgentId === "generalist"
     ? `主責收斂這個任務：${cleanText(objective)}`
     : `從 /${normalizedPrimaryAgentId} 的專責角度處理：${cleanText(objective)}`;
@@ -11018,13 +11033,15 @@ export async function executePlannedUserInput({
       });
     }
   }
+  const normalizedSessionKey = cleanText(sessionKey);
   const memorySeedDecision = plannedDecision
+    || !normalizedSessionKey
     ? { decision: null, observability: null }
     : resolveWorkingMemorySeedDecision({
         text,
         taskType: "",
         payload: {},
-        sessionKey,
+        sessionKey: normalizedSessionKey,
         logger,
       });
   const prePlannedDecision = plannedDecision || memorySeedDecision.decision;

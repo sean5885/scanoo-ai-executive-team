@@ -468,6 +468,7 @@ function resolveExecutiveFallback(text = "", activeTask = null) {
   ]);
   const explicitAgentRequest = resolveRegisteredAgentFamilyRequest(text, {
     includeSlashCommand: true,
+    includePersonaStyleMention: true,
   });
   const explicitAgentId = cleanText(explicitAgentRequest?.agent?.id || "");
 
@@ -711,7 +712,9 @@ export function resolveRoutingEvalCase(testCase = {}) {
     };
   }
 
-  const registeredAgent = parseRegisteredAgentCommand(text);
+  const registeredAgent = parseRegisteredAgentCommand(text, {
+    includeKnowledgeSubcommands: true,
+  });
   if (registeredAgent?.error === ROUTING_NO_MATCH) {
     return {
       lane: "registered_agent",
