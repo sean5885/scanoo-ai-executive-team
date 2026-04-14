@@ -53,7 +53,7 @@ const SKILL_METADATA_INDEX = Object.freeze({
     read_only: true,
   }),
   image_generate: Object.freeze({
-    capability: "image_placeholder_generate",
+    capability: "image_generate_internal",
     required_args: Object.freeze(["prompt"]),
     arg_aliases: Object.freeze({
       prompt: Object.freeze(["input", "query"]),

@@ -52,3 +52,30 @@ test("toUserFacing renders canonical answer, sources, and limitations for mixed 
     "下一步：你可以讓我直接重試失敗項目，或指定要優先完成的子任務。",
   ]);
 });
+
+test("toUserFacing does not render placeholder image URL as a successful image result", () => {
+  const reply = toUserFacing({
+    ok: true,
+    summary: {
+      image: "done",
+    },
+    data: {
+      image: {
+        url: "https://dummyimage.com/512x512/000/fff.png&text=cat",
+      },
+    },
+    errors: [],
+    tasks: ["image"],
+  });
+
+  assert.equal(reply.ok, false);
+  assert.equal(reply.partial, false);
+  assert.equal(reply.answer, "這輪先依多任務路徑拆出 1 個子任務：圖片，但目前都還沒有成功完成。");
+  assert.deepEqual(reply.sources, [
+    "任務拆解：圖片。",
+  ]);
+  assert.deepEqual(reply.limitations, [
+    "圖片 輸出被安全規則攔截（placeholder URL 不視為有效圖片結果）。",
+    "下一步：你可以讓我直接重試失敗項目，或指定要優先完成的子任務。",
+  ]);
+});

@@ -22,7 +22,10 @@ export function normalizeTaskLayerResult(taskLayerResult = null) {
     ? taskLayerResult.results
     : tasks.map((task) => {
         const taskName = cleanText(task);
-        const status = cleanText(taskLayerResult?.summary?.[taskName]);
+        const status = cleanText(taskLayerResult?.summary?.[taskName]).toLowerCase();
+        const errorEntry = Array.isArray(taskLayerResult?.errors)
+          ? taskLayerResult.errors.find((item) => cleanText(item?.task) === taskName)
+          : null;
         if (status === "done") {
           return {
             task: taskName,
@@ -31,50 +34,91 @@ export function normalizeTaskLayerResult(taskLayerResult = null) {
             result: taskLayerResult?.data?.[taskName],
           };
         }
-        const error = Array.isArray(taskLayerResult?.errors)
-          ? taskLayerResult.errors.find((item) => cleanText(item?.task) === taskName)?.error
-          : null;
         return {
           task: taskName,
-          status: "failed",
+          status: status === "blocked" ? "blocked" : "failed",
           ok: false,
-          error: cleanText(error) || "runtime_exception",
+          blocked: status === "blocked",
+          failure_class: cleanText(errorEntry?.failure_class || "") || null,
+          error: cleanText(errorEntry?.error || "") || "runtime_exception",
         };
       });
-  const normalizedResults = results.map((item) => ({
-    ...item,
-    status: cleanText(item?.status || "") || (item?.ok === true ? "done" : "failed"),
-    ok: item?.ok === true,
-  }));
-  const summary = tasks.reduce((output, task) => {
-    output[task] = normalizedResults.find((item) => cleanText(item?.task) === task)?.status === "done"
+  const normalizedResults = results.map((item) => {
+    const status = cleanText(item?.status || "").toLowerCase();
+    const normalizedStatus = status === "done"
       ? "done"
-      : "failed";
+      : status === "blocked"
+        ? "blocked"
+        : item?.ok === true
+          ? "done"
+          : "failed";
+    return {
+      ...item,
+      status: normalizedStatus,
+      ok: normalizedStatus === "done" && item?.ok === true,
+      blocked: item?.blocked === true || normalizedStatus === "blocked",
+      failure_class: cleanText(item?.failure_class || item?.details?.failure_class || "") || null,
+      error: normalizedStatus === "done"
+        ? null
+        : cleanText(item?.error || item?.details?.reason || item?.details?.message || "") || "runtime_exception",
+    };
+  });
+  const guardedResults = normalizedResults.map((item) => {
+    if (cleanText(item?.task) !== "image" || item?.status !== "done") {
+      return item;
+    }
+    const imageAsset = extractImageAsset(item?.result);
+    if (!isPlaceholderImageAsset(imageAsset)) {
+      return item;
+    }
+    return {
+      ...item,
+      status: "blocked",
+      ok: false,
+      blocked: true,
+      failure_class: "capability_gap",
+      error: "placeholder_output_blocked",
+      result: null,
+    };
+  });
+  const summary = tasks.reduce((output, task) => {
+    const status = guardedResults.find((item) => cleanText(item?.task) === task)?.status;
+    output[task] = status === "done" ? "done" : status === "blocked" ? "blocked" : "failed";
     return output;
   }, {});
-  const data = normalizedResults.reduce((output, item) => {
+  const data = guardedResults.reduce((output, item) => {
     const task = cleanText(item?.task);
     if (task && item?.status === "done") {
       output[task] = item.result;
     }
     return output;
   }, {});
-  const errors = normalizedResults
+  const errors = guardedResults
     .filter((item) => item?.status !== "done")
-    .map((item) => ({
-      task: cleanText(item?.task) || null,
-      error: cleanText(item?.error || "") || "runtime_exception",
-    }))
+    .map((item) => {
+      const failure = {
+        task: cleanText(item?.task) || null,
+        error: cleanText(item?.error || "") || "runtime_exception",
+      };
+      if (item?.status === "blocked") {
+        failure.status = "blocked";
+        failure.blocked = true;
+      }
+      if (cleanText(item?.failure_class || "")) {
+        failure.failure_class = cleanText(item.failure_class);
+      }
+      return failure;
+    })
     .filter((item) => item.task);
-  const succeeded = normalizedResults.filter((item) => item?.status === "done");
-  const failed = normalizedResults.filter((item) => item?.status !== "done");
+  const succeeded = guardedResults.filter((item) => item?.status === "done");
+  const failed = guardedResults.filter((item) => item?.status !== "done");
   const partial = succeeded.length > 0 && failed.length > 0;
 
   return {
     ok: succeeded.length > 0 || failed.length === 0,
     partial,
     tasks,
-    results: normalizedResults,
+    results: guardedResults,
     summary,
     data,
     errors,
@@ -103,22 +147,67 @@ function pickFirstText(value, keys = []) {
   return "";
 }
 
+function extractImageAsset(raw = null) {
+  if (typeof raw === "string") {
+    return extractTextCandidate(raw);
+  }
+
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return "";
+  }
+
+  const direct = pickFirstText(raw, ["url", "image", "path", "file", "asset"]);
+  if (direct) {
+    return direct;
+  }
+
+  const nestedOutput = raw.output && typeof raw.output === "object" && !Array.isArray(raw.output)
+    ? pickFirstText(raw.output, ["url", "image", "path", "file", "asset"])
+    : "";
+  if (nestedOutput) {
+    return nestedOutput;
+  }
+
+  const nestedData = raw.data && typeof raw.data === "object" && !Array.isArray(raw.data)
+    ? pickFirstText(raw.data, ["url", "image", "path", "file", "asset"])
+    : "";
+  return nestedData;
+}
+
+function isPlaceholderImageAsset(asset = "") {
+  const normalized = extractTextCandidate(asset).toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return (
+    normalized.includes("dummyimage.com")
+    || normalized.includes("via.placeholder.com")
+    || normalized.includes("placehold.co")
+    || normalized.includes("placeholder")
+  );
+}
+
 function renderCopywritingAnswer(data = {}) {
   const raw = data.copywriting;
-  const content = typeof raw === "string"
+  const directContent = typeof raw === "string"
     ? extractTextCandidate(raw)
     : pickFirstText(raw, ["copywriting", "answer", "content", "text", "draft", "caption", "body"]);
+  const nestedOutputContent = !directContent && raw && typeof raw === "object" && !Array.isArray(raw)
+    ? pickFirstText(raw.output, ["copywriting", "answer", "content", "text", "draft", "caption", "body", "summary"])
+    : "";
+  const content = directContent || nestedOutputContent;
 
   return content ? `文案：${content}` : "";
 }
 
 function renderImageAnswer(data = {}) {
   const raw = data.image;
-  const asset = typeof raw === "string"
-    ? extractTextCandidate(raw)
-    : pickFirstText(raw, ["url", "image", "path", "file", "asset"]);
+  const asset = extractImageAsset(raw);
 
   if (!raw) {
+    return "";
+  }
+  if (isPlaceholderImageAsset(asset)) {
     return "";
   }
 
@@ -136,14 +225,32 @@ function renderPublishAnswer(data = {}) {
   const destination = typeof raw === "string"
     ? extractTextCandidate(raw)
     : pickFirstText(raw, ["channel", "platform", "destination", "target"]);
+  const nestedOutputDestination = !destination && raw && typeof raw === "object" && !Array.isArray(raw)
+    ? pickFirstText(raw.output, ["channel", "platform", "destination", "target"])
+    : "";
+  const normalizedDestination = destination || nestedOutputDestination;
 
-  return destination
-    ? `發布：已完成（${destination}）`
+  return normalizedDestination
+    ? `發布：已完成（${normalizedDestination}）`
     : "發布：已完成";
 }
 
-function explainTaskFailure(error = "") {
-  const normalized = cleanText(error);
+function explainTaskFailure(item = {}) {
+  const normalized = cleanText(item?.error || "");
+  const status = cleanText(item?.status || "").toLowerCase();
+  const failureClass = cleanText(item?.failure_class || "").toLowerCase();
+  if (normalized === "placeholder_output_blocked") {
+    return "輸出被安全規則攔截（placeholder URL 不視為有效圖片結果）。";
+  }
+  if (
+    normalized === "business_error"
+    && failureClass === "capability_gap"
+  ) {
+    return "目前缺少可用 image backend，系統已 fail-closed 並阻擋偽成功輸出。";
+  }
+  if (status === "blocked") {
+    return "這一步目前被阻擋，尚未滿足執行條件。";
+  }
   if (!normalized || normalized === "runtime_exception") {
     return "執行路徑目前沒有穩定完成。";
   }
@@ -185,7 +292,7 @@ export function toUserFacing(taskLayerResult = null) {
     ? [
         ...failed.map((item) => {
           const task = formatTaskLayerTaskLabel(item?.task || "");
-          return `${task} ${explainTaskFailure(item?.error || "")}`;
+          return `${task} ${explainTaskFailure(item)}`;
         }),
         "下一步：你可以讓我直接重試失敗項目，或指定要優先完成的子任務。",
       ]

@@ -713,7 +713,7 @@ const plannerSkillActionRegistry = createPlannerSkillActionRegistry([
     selector_key: "skill.image_generate.internal",
     selector_task_types: [],
     routing_reason: "selector_image_generate_skill",
-    selection_reason: "內部 image skill bridge 會回傳受控 placeholder image 結果。",
+    selection_reason: "內部 image skill bridge 在 backend 未就緒時會 fail-closed，不輸出 placeholder 偽成功結果。",
     allowed_side_effects: {
       read: [],
       write: [],

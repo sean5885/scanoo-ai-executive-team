@@ -88,3 +88,46 @@ test("executePlannedUserInput falls back to the original planner flow when task-
   assert.equal(result.execution_result?.data?.answer, "runtime info ready");
   assert.equal(result.trace_id, "trace_task_layer_fallback");
 });
+
+test("executePlannedUserInput keeps image task fail-closed when backend is unavailable", async () => {
+  const result = await executePlannedUserInput({
+    text: "做文案、配圖、最後發布",
+    async requester() {
+      return JSON.stringify({ action: "get_runtime_info", params: {} });
+    },
+    async runSkill(name, payload) {
+      if (payload.task === "copywriting") {
+        return { answer: "新品開跑，限時搶先看。" };
+      }
+      if (payload.task === "image") {
+        return {
+          ok: false,
+          error: "business_error",
+          details: {
+            failure_class: "capability_gap",
+            reason: "image_backend_unavailable",
+          },
+        };
+      }
+      if (payload.task === "publish") {
+        return true;
+      }
+      return { name, task: payload.task };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.action, "multi_task");
+  assert.deepEqual(result.execution_result?.data?.summary, {
+    copywriting: "done",
+    image: "blocked",
+    publish: "done",
+  });
+  assert.equal(result.execution_result?.data?.partial, true);
+  assert.match(result.execution_result?.data?.answer, /文案：新品開跑，限時搶先看。/);
+  assert.doesNotMatch(result.execution_result?.data?.answer, /圖片：已生成/);
+  assert.deepEqual(result.execution_result?.data?.limitations, [
+    "圖片 目前缺少可用 image backend，系統已 fail-closed 並阻擋偽成功輸出。",
+    "下一步：你可以讓我直接重試失敗項目，或指定要優先完成的子任務。",
+  ]);
+});

@@ -90,6 +90,9 @@ test("runTaskLayer maps tasks to skills and records per-task failures", async ()
     {
       task: "publish",
       ok: false,
+      status: "failed",
+      blocked: false,
+      failure_class: null,
       error: "publish blocked",
     },
   ]);
@@ -128,4 +131,67 @@ test("runTaskLayer records a fail-soft error when a task has no mapped skill", a
   } finally {
     TASK_SKILL_MAP.image = originalImageSkill;
   }
+});
+
+test("runTaskLayer marks image task blocked when skill fail-closes on missing backend", async () => {
+  const result = await runTaskLayer("請幫我做配圖", async (skill, payload) => {
+    assert.equal(skill, "image_generate");
+    assert.equal(payload.task, "image");
+    return {
+      ok: false,
+      error: "business_error",
+      details: {
+        failure_class: "capability_gap",
+        reason: "image_backend_unavailable",
+      },
+    };
+  });
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.summary, {
+    image: "blocked",
+  });
+  assert.deepEqual(result.errors, [
+    {
+      task: "image",
+      error: "business_error",
+      status: "blocked",
+      blocked: true,
+      failure_class: "capability_gap",
+    },
+  ]);
+  assert.deepEqual(result.results, [
+    {
+      task: "image",
+      ok: false,
+      status: "blocked",
+      blocked: true,
+      failure_class: "capability_gap",
+      error: "business_error",
+    },
+  ]);
+});
+
+test("runTaskLayer blocks image placeholder output so it cannot be treated as success", async () => {
+  const result = await runTaskLayer("請幫我做配圖", async () => ({
+    ok: true,
+    output: {
+      prompt: "cat",
+      url: "https://dummyimage.com/512x512/000/fff.png&text=cat",
+    },
+  }));
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.summary, {
+    image: "blocked",
+  });
+  assert.deepEqual(result.errors, [
+    {
+      task: "image",
+      error: "placeholder_output_blocked",
+      status: "blocked",
+      blocked: true,
+      failure_class: "capability_gap",
+    },
+  ]);
 });

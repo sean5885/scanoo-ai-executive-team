@@ -3,10 +3,13 @@ import assert from "node:assert/strict";
 
 import { image_generate } from "../src/skills/image-generate-skill.mjs";
 
-test("image generate returns url", async () => {
+test("image generate fail-closes when backend is unavailable", async () => {
   const result = await image_generate({ input: "cat" });
 
-  assert.equal(result.ok, true);
-  assert.equal(result.output.prompt, "cat");
-  assert.equal(result.output.url, "https://dummyimage.com/512x512/000/fff.png&text=cat");
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "business_error");
+  assert.equal(result.details?.phase, "execution");
+  assert.equal(result.details?.failure_class, "capability_gap");
+  assert.equal(result.details?.reason, "image_backend_unavailable");
+  assert.equal(result.details?.prompt, "cat");
 });

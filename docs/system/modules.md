@@ -261,7 +261,7 @@ Current-truth docs for onboarding are:
   - `skill-registry.mjs` now stores each registered skill with explicit metadata (`capability`, `required_args`, `arg_aliases`, `auth_requirements`, `health`, `fallback`, `read_only`) instead of a thin name-to-implementation map
   - `skill-registry.mjs` now exports `getSkillRegistryEntry(...)`, `getSkillMetadata(...)`, and `normalizeSkillArgs(...)`; `query <-> q` compatibility for search skill payloads is normalized there through metadata aliases
   - `search_and_summarize` and `document_summarize` are read-only and go through `read-runtime`
-  - `image_generate` is a checked-in internal-only read-only skill that returns a deterministic placeholder image URL without external side effects
+  - `image_generate` is a checked-in internal-only read-only skill that fail-closes as `business_error`/`capability_gap` when no image backend is available; it no longer returns placeholder success URLs
   - `send-message-action.mjs` is a bounded Lark IM write helper for text messages (`/open-apis/im/v1/messages?receive_id_type=chat_id`) and now fails fast on missing fields or non-ASCII `token/chat_id` placeholders before network send
   - `update-doc-action.mjs` is a bounded Lark Docx write helper that enters `/Users/seanhan/Documents/Playground/src/execute-lark-write.mjs` `executeLarkWrite(...)` and then reuses `/Users/seanhan/Documents/Playground/src/lark-content.mjs` `updateDocument(...)`; it supports optional `token_type/mode` and infers tenant token mode from `t-` token prefix when `token_type` is absent
   - `planner/action-loop.mjs` currently provides a minimal standalone action executor (`send_message`, `update_doc`, `create_task`) and returns a bounded `no_action | action_executed | unsupported_action` shape; write actions now require explicit `allow_write_actions=true` (or `allowWriteActions=true`) in context (`error = write_action_not_allowed`), and read-only skill contexts remain hard-blocked from write actions (`error = read_only_skill_cannot_execute_write_action`, `blocked = true`)
@@ -329,6 +329,7 @@ Current-truth docs for onboarding are:
   - it maps those task tags to routed capability identifiers `document_summarize`, `image_generate`, and `message_send`
   - `/Users/seanhan/Documents/Playground/src/task-layer/task-aggregator.mjs` folds per-task records into a unified `{ ok, tasks, results, summary, data, errors }` envelope
   - `/Users/seanhan/Documents/Playground/src/task-layer/task-to-answer.mjs` converts that bounded task-layer envelope into canonical `answer / sources / limitations` fields for planner-facing multi-task replies, and now prefers surfacing bounded per-task natural-language content (for example copy text or generated-image location) before falling back to generic execution summary text
+  - the task-layer image path now fail-closes on explicit skill failure/blocked responses and also blocks placeholder-like image URLs so they are not treated as completed output
   - `runTaskLayer(...)` sorts detected tasks through that dependency helper, executes the provided `runSkill` callback sequentially, and returns that aggregated envelope with both raw per-task records and summarized status
   - if a task is classified but no routed capability identifier is mapped, the helper records `no_skill_mapped` fail-soft and still keeps the same bounded result shape
   - a task failure is recorded fail-soft and does not stop later tasks from running in the same bounded pass
@@ -336,7 +337,7 @@ Current-truth docs for onboarding are:
   - if that optional pre-pass detects more than one task, planner execution short-circuits into a bounded `multi_task` result that still stays inside the canonical `answer / sources / limitations` boundary
   - if no `runSkill` callback is provided, the pre-pass errors, or at most one task is detected, the original planner flow continues unchanged
   - the checked-in public `/answer` edge does not currently provide `runSkill`, so this does not change the default public route behavior
-  - `document_summarize` is a checked-in skill-backed action, `message_send` is a checked-in write action, and `image_generate` is now a checked-in internal-only skill-backed action that still returns a placeholder URL rather than calling a real image backend
+  - `document_summarize` is a checked-in skill-backed action, `message_send` is a checked-in write action, and `image_generate` is now a checked-in internal-only skill-backed action that fail-closes until a real image backend is available
 - Evidence:
   - `/Users/seanhan/Documents/Playground/tests/task-dependency.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/task-layer.test.mjs`
