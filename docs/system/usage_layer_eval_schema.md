@@ -308,7 +308,8 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 - `lane / planner_action / agent_or_tool` 仍沿用既有 routing resolver
 - answer edge 仍維持 public `answer / sources / limitations` contract，但 `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs` 現在會在 runtime object 上附加非 public、non-enumerable 的 `failure_class`
-- 目前 checked-in `failure_class` 最少可區分：`routing_no_match`、`tool_omission`、`planner_failed`、`permission_denied`、`partial_success`、`generic_fallback`
+- fail-soft 邊界現在另外附加 non-enumerable `failure_class_v2`，目前最少可區分：`timeout`、`upstream_error`、`partial_data`、`user_input_missing`
+- 既有 `failure_class` compatibility 仍保留：`routing_no_match`、`tool_omission`、`planner_failed`、`permission_denied`、`partial_success`、`generic_fallback`
 - runner 會優先讀這層 classification，再退回 `generic` / `clarify` / `partial_success` heuristic
 - summary 會輸出 `failure_breakdown` 與 top failure categories，避免所有 fail-soft case 都被誤壓成同一種 generic clarify
 - 若 case 有提供 `expected_owner_surface`，runner 也會把 owner surface 納入 fail reason，避免 `/cmo` 這類 explicit owner family 只剩 route 命中、但回答邊界退成 generic executive brief

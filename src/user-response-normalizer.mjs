@@ -16,6 +16,8 @@ import { normalizeText } from "./text-utils.mjs";
 
 const MAX_USER_FACING_SOURCES = 3;
 const MAX_USER_FACING_NEXT_STEPS = 3;
+const FAIL_SOFT_TECHNICAL_TEXT_PATTERN = /(?:internal\s+error|runtime\/log|stack|trace|terminal_reason|agent_e2e|planner_failed|error\s*code|request_timeout|fallback_enabled)/i;
+const FAIL_SOFT_ACTIONABLE_PATTERN = /(?:重試|retry|補|提供|換|改|縮小|重新|登入|授權|貼上|指定|選|同步|查|搜尋|search)/i;
 const RAW_PLANNER_VISIBLE_PAYLOAD_PATTERN = /skill_bridge|document_summarize|search_and_summarize|side_effects|get_company_brain_doc_detail|search_knowledge_base|read-runtime|authority/i;
 const TASK_DECOMPOSITION_CAPABILITY_ORDER = ["draft_copy", "information_answer", "image_asset", "outbound_delivery"];
 const TASK_DECOMPOSITION_CAPABILITIES = Object.freeze({
@@ -413,6 +415,66 @@ function deriveFailureClassFromEnvelope({
   });
 }
 
+function deriveFailureClassV2({
+  envelope = null,
+  requestText = "",
+  response = null,
+  legacyFailureClass = "",
+} = {}) {
+  if (isPartialSuccessResponse(response)) {
+    return "partial_data";
+  }
+
+  const normalizedLegacy = normalizeText(legacyFailureClass || "");
+  if (normalizedLegacy === "permission_denied") {
+    return "user_input_missing";
+  }
+
+  const execution = envelope?.execution_result && typeof envelope.execution_result === "object"
+    ? envelope.execution_result
+    : {};
+  const executionData = resolvePlannerExecutionData(execution);
+  const error = normalizeText(
+    execution?.error
+    || envelope?.error
+    || executionData?.error
+    || "",
+  );
+  const fallbackReason = normalizeText(
+    envelope?.trace?.fallback_reason
+    || executionData?.stop_reason
+    || executionData?.reason
+    || executionData?.routing_reason
+    || "",
+  );
+  const summaryText = normalizeText([
+    requestText,
+    response?.answer,
+    ...(Array.isArray(response?.limitations) ? response.limitations : []),
+  ].join(" "));
+  const mergedSignals = normalizeText([error, fallbackReason, summaryText].join(" "));
+
+  if (/(?:timeout|request_timeout|budget_exhausted|latency_budget|agent_e2e_timeout)/i.test(mergedSignals)) {
+    return "timeout";
+  }
+  if (/(?:missing_query|missing_keyword|missing_|請提供查詢關鍵字|補上|缺少|資訊不足|信息不足)/i.test(mergedSignals)) {
+    return "user_input_missing";
+  }
+  if (response?.ok === false && (
+    normalizeText(response?.answer || "")
+    || (Array.isArray(response?.sources) && response.sources.length > 0)
+  )) {
+    return "partial_data";
+  }
+  if (/(?:upstream|runtime_exception|tool_error|planner_failed|business_error|unauthorized|error)/i.test(mergedSignals)) {
+    return "upstream_error";
+  }
+  if (response?.ok === false) {
+    return "upstream_error";
+  }
+  return null;
+}
+
 function maybeApplyTaskDecompositionResponse({
   response = null,
   requestText = "",
@@ -460,8 +522,121 @@ function maybeApplyTaskDecompositionResponse({
     limitations: buildTaskDecompositionLimitations(decomposition.blocked),
   }, {
     failure_class: "partial_success",
+    failure_class_v2: "partial_data",
     reply_mode: "partial_success",
+    partial: true,
   });
+}
+
+function sanitizeFailSoftText(text = "") {
+  const normalized = normalizeText(text || "");
+  if (!normalized) {
+    return "";
+  }
+  return FAIL_SOFT_TECHNICAL_TEXT_PATTERN.test(normalized)
+    ? ""
+    : normalized;
+}
+
+function buildFailSoftSummary({
+  answer = "",
+  failureClassV2 = "",
+} = {}) {
+  const normalizedAnswer = sanitizeFailSoftText(answer);
+  if (normalizedAnswer && !/^[a-z0-9_:-]+$/i.test(normalizedAnswer)) {
+    return normalizedAnswer;
+  }
+  if (failureClassV2 === "timeout") {
+    return "這次在時限內還沒拿到完整結果，我先把目前可確認的部分交付給你。";
+  }
+  if (failureClassV2 === "user_input_missing") {
+    return "我已先處理可判斷的部分，但目前資訊不足，先不亂補。";
+  }
+  if (failureClassV2 === "partial_data") {
+    return "我先把目前能確認的部分整理給你，剩下要補資料後才能完成。";
+  }
+  if (failureClassV2 === "upstream_error") {
+    return "我已先完成可做的部分，但上游服務這輪沒有穩定回應。";
+  }
+  return "我先把目前能確認的部分整理給你。";
+}
+
+function buildFailSoftWhatWeGot({
+  sources = [],
+  summary = "",
+} = {}) {
+  const normalizedSources = normalizeUserResponseList(
+    (Array.isArray(sources) ? sources : []).map((item) => sanitizeFailSoftText(item)),
+  );
+  if (normalizedSources.length > 0) {
+    return normalizedSources;
+  }
+  return [
+    summary
+      ? "目前已確認：這輪有初步結論，但還沒有足夠可驗證內容能完整交付。"
+      : "目前已確認：這輪還沒有可驗證內容能直接交付。",
+  ];
+}
+
+function buildDefaultFailSoftNextStep({
+  failureClassV2 = "",
+} = {}) {
+  if (failureClassV2 === "timeout") {
+    return "請先重試同一個查詢；若仍逾時，改成更短的關鍵詞再試一次。";
+  }
+  if (failureClassV2 === "user_input_missing") {
+    return "請補上必要參數（例如文件名、doc_id 或目標對象）後再送出，我會直接接續。";
+  }
+  if (failureClassV2 === "partial_data") {
+    return "請補一個更精準的文件名、doc_id 或角色範圍，我會沿同一路徑補齊。";
+  }
+  if (failureClassV2 === "upstream_error") {
+    return "請稍後重試同一個查詢；若你願意，也可以換一個等價關鍵詞再試。";
+  }
+  return "請直接重試，或改用更精準的查詢詞再試一次。";
+}
+
+function buildFailSoftNextSteps({
+  limitations = [],
+  failureClassV2 = "",
+} = {}) {
+  const normalizedLimitations = normalizeUserResponseList(
+    (Array.isArray(limitations) ? limitations : [])
+      .map((item) => sanitizeFailSoftText(item)),
+  );
+  const actionable = normalizedLimitations.filter((item) => FAIL_SOFT_ACTIONABLE_PATTERN.test(item));
+  const fallbackAction = buildDefaultFailSoftNextStep({ failureClassV2 });
+  const cta = actionable[actionable.length - 1] || fallbackAction;
+  return normalizeUserResponseList([
+    ...normalizedLimitations.filter((item) => item !== cta),
+    cta,
+  ]).slice(0, MAX_USER_FACING_NEXT_STEPS);
+}
+
+function ensureFailSoftUsableShape({
+  response = null,
+  failureClassV2 = "",
+} = {}) {
+  if (!response || typeof response !== "object" || Array.isArray(response) || response.ok === true) {
+    return response;
+  }
+  const summary = buildFailSoftSummary({
+    answer: response.answer,
+    failureClassV2,
+  });
+  return {
+    ...response,
+    ok: false,
+    answer: summary,
+    sources: buildFailSoftWhatWeGot({
+      sources: response.sources,
+      summary,
+    }),
+    limitations: buildFailSoftNextSteps({
+      limitations: response.limitations,
+      failureClassV2,
+    }),
+  };
 }
 
 function emitBoundaryLog({
@@ -1208,7 +1383,7 @@ export function normalizeUserResponse({
           limitations: normalizeUserResponseList(failureReply.limitations),
         }
       : buildPlannerSuccessUserResponse(envelope);
-    const normalizedResponse = maybeApplyTaskDecompositionResponse({
+    const decompositionAwareResponse = maybeApplyTaskDecompositionResponse({
       response: baseResponse,
       requestText,
       plannerEnvelope: envelope,
@@ -1216,15 +1391,30 @@ export function normalizeUserResponse({
     const failureClass = deriveFailureClassFromEnvelope({
       envelope,
       requestText,
-      response: normalizedResponse,
+      response: decompositionAwareResponse,
+    });
+    const failureClassV2 = deriveFailureClassV2({
+      envelope,
+      requestText,
+      response: decompositionAwareResponse,
+      legacyFailureClass: failureClass,
+    });
+    const normalizedResponse = ensureFailSoftUsableShape({
+      response: decompositionAwareResponse,
+      failureClassV2,
     });
     attachHiddenUserResponseMetadata(normalizedResponse, {
       failure_class: failureClass,
+      failure_class_v2: failureClassV2,
       reply_mode: failureClass === "partial_success"
         ? "partial_success"
         : normalizedResponse.ok === true
           ? "success"
           : "fail_soft",
+      partial: normalizedResponse.ok === true && isPartialSuccessResponse(normalizedResponse),
+      summary: normalizedResponse.ok === false ? normalizedResponse.answer : null,
+      what_we_got: normalizedResponse.ok === false ? [...normalizedResponse.sources] : null,
+      next_step: normalizedResponse.ok === false ? normalizedResponse.limitations[normalizedResponse.limitations.length - 1] || "" : null,
     });
     maybeEmitPlannerVisibleAnswerTelemetry({
       envelope,
@@ -1243,26 +1433,39 @@ export function normalizeUserResponse({
 
   const objectPayload = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
   if (isCanonicalUserFacingResponse(objectPayload) || typeof objectPayload.answer === "string") {
+    const canonicalResponse = ensureFailSoftUsableShape({
+      response: {
+        ok: objectPayload.ok !== false,
+        answer: normalizeText(objectPayload.answer || ""),
+        sources: normalizeUserFacingAnswerSources(objectPayload.sources, {
+          maxSources: MAX_USER_FACING_SOURCES,
+        }),
+        limitations: normalizeUserResponseList(objectPayload.limitations),
+      },
+      failureClassV2: objectPayload.ok === false ? "upstream_error" : null,
+    });
+    attachHiddenUserResponseMetadata(canonicalResponse, {
+      failure_class: objectPayload.ok === false ? "generic_fallback" : null,
+      failure_class_v2: objectPayload.ok === false ? "upstream_error" : null,
+      reply_mode: canonicalResponse.ok === true ? "success" : "fail_soft",
+      partial: canonicalResponse.ok === true && isPartialSuccessResponse(canonicalResponse),
+      summary: canonicalResponse.ok === false ? canonicalResponse.answer : null,
+      what_we_got: canonicalResponse.ok === false ? [...canonicalResponse.sources] : null,
+      next_step: canonicalResponse.ok === false ? canonicalResponse.limitations[canonicalResponse.limitations.length - 1] || "" : null,
+    });
     emitBoundaryLog({
       logger,
       traceId,
       handlerName,
-      ok: objectPayload.ok !== false,
+      ok: canonicalResponse.ok,
     });
-    return {
-      ok: objectPayload.ok !== false,
-      answer: normalizeText(objectPayload.answer || ""),
-      sources: normalizeUserFacingAnswerSources(objectPayload.sources, {
-        maxSources: MAX_USER_FACING_SOURCES,
-      }),
-      limitations: normalizeUserResponseList(objectPayload.limitations),
-    };
+    return canonicalResponse;
   }
   const execution = objectPayload?.execution_result && typeof objectPayload.execution_result === "object"
     ? objectPayload.execution_result
     : {};
   const executionData = resolvePlannerExecutionData(execution);
-  const normalizedPayload = maybeApplyTaskDecompositionResponse({
+  const decompositionAwarePayload = maybeApplyTaskDecompositionResponse({
     response: buildExecutionDataUserResponse({
       executionData,
       ok: objectPayload.ok !== false && execution?.ok !== false,
@@ -1272,17 +1475,33 @@ export function normalizeUserResponse({
     requestText,
     plannerEnvelope: objectPayload,
   });
+  const failureClass = deriveFailureClassFromEnvelope({
+    envelope: objectPayload,
+    requestText,
+    response: decompositionAwarePayload,
+  });
+  const failureClassV2 = deriveFailureClassV2({
+    envelope: objectPayload,
+    requestText,
+    response: decompositionAwarePayload,
+    legacyFailureClass: failureClass,
+  });
+  const normalizedPayload = ensureFailSoftUsableShape({
+    response: decompositionAwarePayload,
+    failureClassV2,
+  });
   attachHiddenUserResponseMetadata(normalizedPayload, {
-    failure_class: deriveFailureClassFromEnvelope({
-      envelope: objectPayload,
-      requestText,
-      response: normalizedPayload,
-    }),
+    failure_class: failureClass,
+    failure_class_v2: failureClassV2,
     reply_mode: isPartialSuccessResponse(normalizedPayload)
       ? "partial_success"
       : normalizedPayload.ok === true
         ? "success"
         : "fail_soft",
+    partial: normalizedPayload.ok === true && isPartialSuccessResponse(normalizedPayload),
+    summary: normalizedPayload.ok === false ? normalizedPayload.answer : null,
+    what_we_got: normalizedPayload.ok === false ? [...normalizedPayload.sources] : null,
+    next_step: normalizedPayload.ok === false ? normalizedPayload.limitations[normalizedPayload.limitations.length - 1] || "" : null,
   });
 
   emitBoundaryLog({

@@ -190,6 +190,8 @@ Current truth:
 - that shared edge helper also absorbs current legacy planner result shapes into canonical `answer / sources / limitations` before the public boundary
 - for delivery/onboarding knowledge lookups, a single-hit company-brain search now turns into an answer-first reply that names the matched SOP/checklist document and surfaces bounded location/checklist/start-step hints from the indexed snippet, while preserving the same public `answer / sources / limitations` shape
 - before the public boundary returns a generic failure, the checked-in normalizer now does a minimal mixed-request decomposition for copy/image/send-style asks and returns partial success when at least one text-draft subtask is still doable
+- fail-soft (`ok=false`) responses are now normalized into one usable structure before public rendering: `answer` is treated as summary, `sources` carries what-we-got lines (never empty), and the last `limitations` line is an executable CTA (`retry` / `refine query` / `provide missing params`) instead of internal diagnostics
+- answer-boundary runtime objects now keep non-enumerable fail-soft metadata (`summary`, `what_we_got`, `next_step`) plus non-enumerable `failure_class_v2` (`timeout` / `upstream_error` / `partial_data` / `user_input_missing`) while preserving existing `failure_class` compatibility
 - answer evidence is surfaced through canonical source mapping before public rendering
 - the checked-in normalizer now reads only canonical `execution_result.data.answer / sources / limitations`
 - session working-memory v2 write-back is centralized at this answer boundary (not mid-planner): only stable final outputs write patch updates; patch writes now include task/phase/status/owner/retry/slot updates, plus execution-plan persistence v1 updates (`plan_status`, `current_step_id`, `step.status`, `artifact_refs`, `slot_requirements`), plan-aware recovery policy v1 step fields (`failure_class`, `recovery_policy`, `recovery_state.last_failure_class`, `recovery_state.recovery_attempt_count`, `recovery_state.last_recovery_action`, `recovery_state.rollback_target_step_id`), and artifact/dependency graph v1 updates (`artifacts[]`, `dependency_edges[]`, `validity_status`, `supersedes_artifact_id`, `consumed_by_step_ids[]`) via patch-merge semantics together with v1-compatible fields; malformed/missing memory reads or malformed artifact graph snapshots fail closed and are treated as miss during pre-routing reuse
@@ -340,7 +342,7 @@ Current path:
 4. `/Users/seanhan/Documents/Playground/src/task-layer/task-skill-map.mjs` resolves each tag to a string skill identifier
 5. `/Users/seanhan/Documents/Playground/src/task-layer/orchestrator.mjs` invokes the caller-provided `runSkill(skill, { input, task })`
 6. `/Users/seanhan/Documents/Playground/src/task-layer/task-to-answer.mjs` now normalizes that task-layer result and derives the canonical user-facing `{ answer, sources, limitations }` fields for multi-task planner replies
-7. the helper returns a unified object `{ ok, tasks, results, summary, data, errors }`, preserving per-task success/failure records while also surfacing summarized status and fail-soft errors
+7. the helper returns a unified object `{ ok, partial, tasks, results, summary, data, errors }`; each result row keeps `status` (`done|failed`) with `result/error`, while aggregate output stays summary-first instead of dumping raw error lists into the answer body
 
 Current truth:
 
