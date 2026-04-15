@@ -516,7 +516,7 @@ test("successful runtime answer plus delivery request is upgraded to partial suc
   assert.match(userResponse.limitations.join("\n"), /不能直接替你送出|手動貼上/);
 });
 
-test("fallback stays fail-soft when no subtask is actually completable", () => {
+test("fallback marks pure unsupported intents as explicit capability boundary fail-soft", () => {
   const userResponse = normalizeUserResponse({
     requestText: "幫我做一張圖片並直接發送給客戶",
     plannerEnvelope: buildPlannerEnvelope({
@@ -527,10 +527,7 @@ test("fallback stays fail-soft when no subtask is actually completable", () => {
   });
 
   assert.equal(userResponse.ok, false);
-  assert.equal(userResponse.answer, "這次我先沒有整理出足夠內容，但不會亂補。");
-  assert.deepEqual(userResponse.sources, [
-    "目前已確認：這輪有初步結論，但還沒有足夠可驗證內容能完整交付。",
-  ]);
-  assert.match(userResponse.limitations.join(" "), /換個說法|補一點上下文|重試|查詢詞/);
-  assert.equal(userResponse.failure_class_v2, "partial_data");
+  assert.match(userResponse.answer || "", /blocked|capability_gap/i);
+  assert.match(userResponse.sources.join(" "), /能力邊界|fail-soft/i);
+  assert.match(userResponse.limitations.join(" "), /blocked|capability_gap/i);
 });

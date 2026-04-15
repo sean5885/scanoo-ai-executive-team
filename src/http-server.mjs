@@ -8172,7 +8172,11 @@ async function handleSearch(res, requestUrl, body, logger = noopHttpLogger) {
 }
 
 async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger, req = null) {
-  const q = requestUrl.searchParams.get("q") || body.q || "";
+  const q = requestUrl.searchParams.get("q")
+    || requestUrl.searchParams.get("query")
+    || body.q
+    || body.query
+    || "";
   const answerBudgetMs = resolveAnswerBudgetMs(res?.__request_timeout_ms || null);
 
   if (!q.trim()) {

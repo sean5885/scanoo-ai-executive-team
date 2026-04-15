@@ -35,7 +35,7 @@ This is the grouped HTTP surface mirror for the current repo.
 | Route | Method | Current role | Status |
 | --- | --- | --- | --- |
 | `/search` | `GET` | retrieval search over index authority | implemented |
-| `/answer` | `GET` | planner-first answer surface with a single runtime entry (`runPlannerUserInputEdge -> executePlannedUserInput -> runPlannerToolFlow`); final response normalized to `answer -> sources -> limitations`, with minimal partial-success decomposition when a mixed request contains at least one answer-boundary-doable subtask | implemented |
+| `/answer` | `GET` | planner-first answer surface with a single runtime entry (`runPlannerUserInputEdge -> executePlannedUserInput -> runPlannerToolFlow`); accepts `q` and `query` as input aliases; final response normalized to `answer -> sources -> limitations`, with bounded partial-success decomposition and explicit capability-boundary fail-soft copy for unsupported image/publish intents | implemented |
 | `/sync/full` | `POST` | full sync | implemented |
 | `/sync/incremental` | `POST` | incremental sync | implemented |
 
@@ -48,8 +48,10 @@ This is the grouped HTTP surface mirror for the current repo.
 - direct HTTP `/answer` is now locked to the planner answer edge and no longer rolls into `runAgentE2E(...)` canary routing from ingress
 - `runAgentE2E(...)` remains an internal runtime helper module and is not a parallel HTTP authority for `/answer`
 - direct `/answer` applies one bounded early-abort latency budget window (default `5000ms`, configurable via `ANSWER_LATENCY_BUDGET_MS` or `AGENT_E2E_BUDGET_MS`) before the outer HTTP timeout
+- `/answer` now accepts both `q` and `query` query params for the same user intent text
 - the public `/answer` payload still does not expose raw planner errors, but the in-process normalized object now carries non-enumerable `failure_class` (legacy-compatible) plus `failure_class_v2` (`timeout` / `upstream_error` / `partial_data` / `user_input_missing`) for usage-layer eval / telemetry classification
 - fail-soft replies (`ok=false`) are normalized into a usable structure before public rendering: `answer` as summary, `sources` as what-we-got, and the last `limitations` item as executable CTA
+- user-facing multi-intent fail-soft now marks unsupported image/publish steps explicitly as `blocked（capability_gap）`, and public payload includes enumerable `partial` for partial-success replies
 - public `sources[]` lines are derived from canonical source objects through `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`
 - `/answer` and plugin-backed planner/lane entrypoints now arm one earlier bounded-fallback abort signal before the outer HTTP timeout, so bounded fail-soft replies can return before the final generic timeout guard
 - `answer-service.mjs` still exists as a secondary retrieval-answer helper, but it is not the primary HTTP answer surface
