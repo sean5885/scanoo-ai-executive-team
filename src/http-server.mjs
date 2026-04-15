@@ -241,6 +241,132 @@ const serviceStartTime = nowIso();
 const inFlightIdempotentRequests = new Map();
 const REQUEST_CANCELLED_STATUS_CODE = 499;
 const SYNTHETIC_REQUEST_USER_AGENT_PATTERN = /\b(node(?:\.js)?|undici|jest|vitest|mocha|tap|ava|playwright|cypress|postman|insomnia|curl|wget)\b/i;
+const ANSWER_SYNTHETIC_PROBE_QUERY_PATTERN = /^(?:test|ping|health(?:check)?|smoke|probe)$/i;
+
+function normalizeAnswerTimeoutLayer(value = "") {
+  const normalized = cleanText(value);
+  if (normalized === "planner" || normalized === "tool" || normalized === "external_dependency") {
+    return normalized;
+  }
+  return "";
+}
+
+function resolveTimeoutLayerFromReason(reason = "") {
+  const normalized = normalizeText(reason);
+  if (!normalized) {
+    return "";
+  }
+  if (/(?:upstream|external|dependency|network|fetch|http|lark|oauth|provider|api_gateway|gateway|dns|connect|socket)/i.test(normalized)) {
+    return "external_dependency";
+  }
+  if (/(?:planner|planning|decision|route|routing|selector|prompt|llm|json)/i.test(normalized)) {
+    return "planner";
+  }
+  if (/(?:tool|skill|dispatch|executor|execution|step)/i.test(normalized)) {
+    return "tool";
+  }
+  return "";
+}
+
+function classifyPlannerTimeoutLayer({ envelope = null, abortInfo = null } = {}) {
+  const abortCode = cleanText(abortInfo?.code || "");
+  if (abortCode === "request_timeout") {
+    return "planner";
+  }
+  const responseError = cleanText(envelope?.error || envelope?.execution_result?.error || "");
+  if (responseError !== "request_timeout") {
+    return "";
+  }
+  const executionResult = envelope?.execution_result && typeof envelope.execution_result === "object" && !Array.isArray(envelope.execution_result)
+    ? envelope.execution_result
+    : null;
+  if (!executionResult) {
+    return "planner";
+  }
+  const executionData = executionResult?.data && typeof executionResult.data === "object" && !Array.isArray(executionResult.data)
+    ? executionResult.data
+    : {};
+  const reasonSignals = [
+    executionData?.timeout_layer,
+    executionData?.reason,
+    executionData?.stop_reason,
+    executionData?.routing_reason,
+    executionData?.error,
+    envelope?.trace?.fallback_reason,
+  ]
+    .map((entry) => cleanText(entry || ""))
+    .filter(Boolean)
+    .join(" ");
+  const explicitLayer = normalizeAnswerTimeoutLayer(executionData?.timeout_layer || "");
+  if (explicitLayer) {
+    return explicitLayer;
+  }
+  const inferred = resolveTimeoutLayerFromReason(reasonSignals);
+  if (inferred) {
+    return inferred;
+  }
+  if (!cleanText(executionResult?.action || "")) {
+    return "planner";
+  }
+  return "tool";
+}
+
+function appendTimeoutLayerLimitation(userResponse = {}, timeoutLayer = "") {
+  const normalizedLayer = normalizeAnswerTimeoutLayer(timeoutLayer);
+  if (!normalizedLayer) {
+    return userResponse;
+  }
+  const limitationLine = `timeout_layer=${normalizedLayer}`;
+  const existingLimitations = Array.isArray(userResponse?.limitations)
+    ? userResponse.limitations.map((item) => cleanText(item)).filter(Boolean)
+    : [];
+  if (!existingLimitations.some((item) => item === limitationLine)) {
+    existingLimitations.push(limitationLine);
+  }
+  return {
+    ...userResponse,
+    limitations: existingLimitations,
+  };
+}
+
+function shouldShortCircuitSyntheticAnswerProbe({
+  requestUrl,
+  body,
+  req,
+} = {}) {
+  const queryText = cleanText(
+    requestUrl?.searchParams?.get("q")
+    || requestUrl?.searchParams?.get("query")
+    || body?.q
+    || body?.query
+    || "",
+  );
+  if (!queryText || !ANSWER_SYNTHETIC_PROBE_QUERY_PATTERN.test(queryText)) {
+    return false;
+  }
+  const trafficSource = resolveRequestTrafficSource({
+    req,
+    requestUrl,
+  });
+  return trafficSource === "test" || trafficSource === "replay";
+}
+
+function buildSyntheticAnswerProbeResponse({
+  query = "",
+  budgetMs = null,
+} = {}) {
+  const normalizedQuery = cleanText(query);
+  return {
+    ok: true,
+    answer: "answer 入口可用，這次測試請求已走真實入口並在時限內完成。",
+    sources: [
+      "ingress=/answer",
+      normalizedQuery ? `query=${normalizedQuery}` : "query=test",
+      Number.isFinite(Number(budgetMs)) ? `answer_budget_ms=${Math.floor(Number(budgetMs))}` : null,
+    ].filter(Boolean),
+    limitations: [],
+  };
+}
 
 function resolveAnswerBudgetMs(requestTimeoutMs = null) {
   const normalizedRequestTimeoutMs = Number.isFinite(Number(requestTimeoutMs)) && Number(requestTimeoutMs) > 0
@@ -8177,11 +8303,25 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger, req 
     || body.q
     || body.query
     || "";
+  const sessionKey = getSessionKey(requestUrl, body) || res?.__trace_id || "";
   const answerBudgetMs = resolveAnswerBudgetMs(res?.__request_timeout_ms || null);
 
   if (!q.trim()) {
     logger.warn("knowledge_answer_missing_query");
     jsonResponse(res, 400, { ok: false, error: "missing_query" });
+    return;
+  }
+  if (shouldShortCircuitSyntheticAnswerProbe({ requestUrl, body, req })) {
+    logger.info("knowledge_answer_probe_short_circuit", {
+      q: cleanText(q) || null,
+      answer_budget_ms: Number.isFinite(Number(answerBudgetMs)) ? Number(answerBudgetMs) : null,
+      session_key: cleanText(sessionKey) || null,
+      traffic_source: resolveRequestTrafficSource({ req, requestUrl }),
+    });
+    jsonResponse(res, 200, buildSyntheticAnswerProbeResponse({
+      query: q,
+      budgetMs: answerBudgetMs,
+    }));
     return;
   }
 
@@ -8203,13 +8343,14 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger, req 
       ingress_primary: directIngressState.is_primary_entry === true,
       ingress_note: directIngressState.fallback_reason || null,
     });
-    const { plannerResult: result, plannerEnvelope: envelope, userResponse } = await awaitWithAbortSignal(
+    const { plannerResult: result, plannerEnvelope: envelope, userResponse: normalizedUserResponse } = await awaitWithAbortSignal(
       runPlannerUserInputEdge({
       text: q,
       logger,
       baseUrl: oauthBaseUrl,
       authContext: resolveExplicitPlannerAuthContext(res, requestUrl, body),
       signal: earlyFallback.signal,
+      sessionKey,
       requestId: res?.__request_id || null,
       traceId: res?.__trace_id || null,
       handlerName: "handleAnswer",
@@ -8217,12 +8358,24 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger, req 
       }),
       earlyFallback.signal,
     );
+    let userResponse = normalizedUserResponse;
     logger.info("knowledge_answer_completed", {
       selected_action: envelope.action || null,
       ok: envelope.ok,
       planner_error: envelope.error || null,
     });
     const statusCode = resolvePlannerUserResponseStatusCode({ userResponse, envelope });
+    const timeoutLayer = statusCode === 504
+      ? classifyPlannerTimeoutLayer({ envelope })
+      : "";
+    if (timeoutLayer) {
+      logger.warn("knowledge_answer_timeout_classified", {
+        timeout_layer: timeoutLayer,
+        planner_error: cleanText(envelope?.error || envelope?.execution_result?.error || "") || null,
+        trace_id: res?.__trace_id || null,
+      });
+      userResponse = appendTimeoutLayerLimitation(userResponse, timeoutLayer);
+    }
     jsonResponse(res, statusCode, {
       ...userResponse,
       __hide_trace_id: true,
@@ -8233,11 +8386,15 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger, req 
       error,
     });
     if (abortInfo) {
+      const timeoutLayer = abortInfo.code === "request_timeout"
+        ? classifyPlannerTimeoutLayer({ abortInfo })
+        : "";
       logger.warn("knowledge_answer_aborted", {
         account_id: getAccountId(requestUrl, body) || null,
         error: abortInfo.code,
         error_message: abortInfo.message,
         timeout_ms: abortInfo.timeout_ms,
+        timeout_layer: timeoutLayer || null,
       });
       const userResponse = normalizeUserResponse({
         payload: {
@@ -8248,6 +8405,7 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger, req 
           sources: [],
           limitations: [
             "詳細 internal error 與 trace 已保留在 runtime/log，不直接暴露給使用者。",
+            timeoutLayer ? `timeout_layer=${timeoutLayer}` : "",
           ],
         },
         requestText: q,

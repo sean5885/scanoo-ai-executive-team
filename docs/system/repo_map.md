@@ -133,6 +133,9 @@ This file explains which directories are part of the current runtime, which are 
 - Current truth:
   - the checked-in official plugin ingress first lands on `/Users/seanhan/Documents/Playground/src/lark-plugin-dispatch-adapter.mjs`
   - `/answer` still exists as a direct ingress surface, but `LARK_DIRECT_INGRESS_PRIMARY_ENABLED=false` keeps it marked as non-primary
+  - `executePlannedUserInput(...)` now contains a bounded runtime-info deterministic fast path (`get_runtime_info`) that runs before LLM planning when the default strict planner requester is active
+  - direct `/answer` now contains a synthetic probe fast path for test/replay traffic + bounded probe queries (`test|ping|health|healthcheck|smoke|probe`) so ingress health checks do not spend planner budget
+  - timeout replies on `/answer` now carry one explicit `limitations[]` marker `timeout_layer=planner|tool|external_dependency` for stage-level timeout attribution
   - planner working-memory continuation now also uses `retry-context-pack.mjs` as a bounded internal helper for retry/resume context tagging; the helper does not expose a new public route or response contract
 
 ### Skill Runtime And Telemetry Spec

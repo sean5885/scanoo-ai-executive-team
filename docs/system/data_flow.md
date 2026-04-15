@@ -187,6 +187,8 @@ Current truth:
 - `/answer` is planner-first, not answer-service-first
 - direct `/answer` remains available, but when `LARK_DIRECT_INGRESS_PRIMARY_ENABLED=false` the runtime marks it as a non-primary ingress rather than the formal plugin entry
 - direct `/answer` is now locked to one planner runtime entry and does not route through `runAgentE2E(...)` from HTTP ingress
+- inside `executePlannedUserInput(...)`, when caller is on the default strict planner requester path, deterministic runtime-info routing now has one fast path to `get_runtime_info` before LLM planning
+- direct `/answer` now includes one synthetic probe short-circuit: when request traffic is classified as `test|replay` and query is a bounded probe token (`test|ping|health|healthcheck|smoke|probe`), runtime returns a fast ingress-ready `ok=true` answer without entering planner execution
 - `runAgentE2E(...)` remains in the codebase as an internal helper, not a parallel `/answer` runtime authority
 - `runAgentE2E(...)` continuation semantics are aligned with planner runtime boundaries:
   - `retry` / `continue_planner` continue the loop
@@ -198,6 +200,7 @@ Current truth:
 - for delivery/onboarding knowledge lookups, a single-hit company-brain search now turns into an answer-first reply that names the matched SOP/checklist document and surfaces bounded location/checklist/start-step hints from the indexed snippet, while preserving the same public `answer / sources / limitations` shape
 - before the public boundary returns a generic failure, the checked-in normalizer now does a minimal mixed-request decomposition for copy/image/send-style asks and returns partial success when at least one text-draft subtask is still doable
 - fail-soft (`ok=false`) responses are now normalized into one usable structure before public rendering: `answer` is treated as summary, `sources` carries what-we-got lines (never empty), and the last `limitations` line is an executable CTA (`retry` / `refine query` / `provide missing params`) instead of internal diagnostics
+- timeout fail-soft replies now include one explicit `limitations[]` marker `timeout_layer=planner|tool|external_dependency` so timeout evidence can be attributed to the planner stage, tool dispatch stage, or upstream dependency stage
 - answer-boundary runtime objects now keep non-enumerable fail-soft metadata (`summary`, `what_we_got`, `next_step`) plus non-enumerable `failure_class_v2` (`timeout` / `upstream_error` / `partial_data` / `user_input_missing`) while preserving existing `failure_class` compatibility
 - answer evidence is surfaced through canonical source mapping before public rendering
 - the checked-in normalizer now reads only canonical `execution_result.data.answer / sources / limitations`

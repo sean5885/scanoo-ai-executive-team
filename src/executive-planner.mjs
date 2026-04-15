@@ -11066,6 +11066,25 @@ function resolveDeterministicPlannerFallbackSelection({
   };
 }
 
+function resolveRuntimeInfoFastPathDecision({
+  text = "",
+  logger = console,
+  sessionKey = "",
+} = {}) {
+  const deterministic = resolveDeterministicPlannerFallbackSelection({
+    text,
+    logger,
+    sessionKey,
+  });
+  if (cleanText(deterministic?.selection?.selected_action || "") !== "get_runtime_info") {
+    return null;
+  }
+  return {
+    action: "get_runtime_info",
+    params: deterministic.payload || {},
+  };
+}
+
 function resolveWorkingMemorySeedDecision({
   text = "",
   taskType = "",
@@ -11166,10 +11185,26 @@ export async function executePlannedUserInput({
         sessionKey: normalizedSessionKey,
         logger,
       });
+  const runtimeInfoFastPathDecision = plannedDecision
+    || memorySeedDecision.decision
+    || requester !== requestPlannerJson
+    ? null
+    : resolveRuntimeInfoFastPathDecision({
+        text,
+        logger,
+        sessionKey: normalizedSessionKey,
+      });
+  if (runtimeInfoFastPathDecision) {
+    logger?.info?.("planner_runtime_info_fast_path", {
+      action: runtimeInfoFastPathDecision.action,
+      reason: "deterministic_runtime_info_without_llm_plan",
+    });
+  }
   const prePlannedDecision = plannedDecision || memorySeedDecision.decision;
-  const decision = prePlannedDecision
+  const effectivePrePlannedDecision = prePlannedDecision || runtimeInfoFastPathDecision;
+  const decision = effectivePrePlannedDecision
     ? (() => {
-        const validatedDecision = validatePlannerUserInputDecision(prePlannedDecision, { text });
+        const validatedDecision = validatePlannerUserInputDecision(effectivePrePlannedDecision, { text });
         if (validatedDecision?.ok !== true) {
           return withUserInputDecisionExplanation(validatedDecision, { text });
         }
