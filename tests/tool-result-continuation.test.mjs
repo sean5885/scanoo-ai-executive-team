@@ -53,3 +53,14 @@ test('retry continuation degrades to fallback when retry budget is exhausted', (
   );
   assert.equal(res.next_action, 'fallback');
 });
+
+test('unknown continuation token fail-closes instead of being silently normalized', () => {
+  const res = resolveToolResultContinuation(
+    { ok: true, next: 'unknown_next_token' },
+    {}
+  );
+  assert.equal(res.next_action, 'fallback');
+  assert.equal(res.fail_closed, true);
+  assert.equal(res.reason, 'invalid_continuation_token');
+  assert.equal(res.invalid_next_action, 'unknown_next_token');
+});

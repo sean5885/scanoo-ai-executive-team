@@ -41,6 +41,11 @@ function normalizeExternalExecutionResult({
   }
 
   const ok = externalResult.ok === true;
+  const externalNextAction = normalizeText(
+    externalResult.next
+    || externalResult.next_action
+    || '',
+  );
   return {
     ok,
     action,
@@ -50,9 +55,9 @@ function normalizeExternalExecutionResult({
       : {
           error: normalizeText(externalResult.error) || 'tool_execution_failed',
         }),
-    next: ok
+    next: externalNextAction || (ok
       ? (contract?.on_success_next || 'continue_planner')
-      : (contract?.on_failure_next || 'fallback'),
+      : (contract?.on_failure_next || 'fallback')),
     trace_id: normalizeText(externalResult.trace_id || '') || null,
     dispatch_result: externalResult,
   };

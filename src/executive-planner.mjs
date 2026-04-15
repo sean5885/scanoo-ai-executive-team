@@ -7541,7 +7541,28 @@ function isReadOnlySkill(skillName = "") {
   ].includes(cleanText(skillName || ""));
 }
 
-function resolveContinuationState(ctx = {}) {
+function resolveContinuationState(ctx = {}, continuationAction = "") {
+  const normalizedContinuationAction = cleanText(
+    continuationAction
+    || ctx.__tool_result_continuation?.next_action
+    || "",
+  );
+  if (normalizedContinuationAction === "retry") {
+    return { state: "retry", resume: true };
+  }
+  if (normalizedContinuationAction === "ask_user") {
+    return { state: "ask_user", resume: false };
+  }
+  if (normalizedContinuationAction === "fallback") {
+    return { state: "fallback", resume: false };
+  }
+  if (normalizedContinuationAction === "continue_planner") {
+    return { state: "continue", resume: true };
+  }
+  if (normalizedContinuationAction === "complete_task") {
+    return { state: "continue", resume: false };
+  }
+
   if (ctx.__tool_execution_failed) {
     if ((ctx.retry_count || 0) < (ctx.retry_policy?.max_retries || 0)) {
       return { state: "retry", resume: true };
@@ -7695,7 +7716,7 @@ async function runSafeToolExecution(action = "", actionArgs = {}, ctx = {}) {
 
   if (ctx.__tool_execution) {
     const continuation = resolveToolResultContinuation(ctx.__tool_execution, ctx);
-    const continuationState = resolveContinuationState(ctx);
+    const continuationState = resolveContinuationState(ctx, continuation?.next_action);
     ctx.__continuation_state = continuationState;
 
     let hardenedContinuation = continuation;
@@ -8127,11 +8148,20 @@ export async function runPlannerToolFlow({
         logger,
         sessionKey,
       });
+      const retryPolicySource = [
+        workingMemorySnapshot?.retry_policy,
+        agentInput?.payload?.retry_policy,
+      ].find((candidate) => candidate && typeof candidate === "object" && !Array.isArray(candidate));
       const safeToolContext = {
         retry_count: Number.isFinite(Number(workingMemorySnapshot?.retry_count))
           ? Number(workingMemorySnapshot.retry_count)
           : 0,
-        retry_policy: workingMemorySnapshot?.retry_policy || null,
+        retry_policy: retryPolicySource
+          ? normalizePlannerWorkingMemoryRetryPolicy(retryPolicySource)
+          : {
+              max_retries: 0,
+              strategy: "same_agent",
+            },
         waiting_user: workingMemorySnapshot?.task_phase === "waiting_user",
         selected_skill: cleanText(selection.selected_action || "") || null,
         tool_action: cleanText(selection.selected_action || "") || null,
@@ -8150,11 +8180,33 @@ export async function runPlannerToolFlow({
           signal,
         }),
       };
-      const safeToolExecution = await runSafeToolExecution(
+      let safeToolExecution = await runSafeToolExecution(
         selection.selected_action,
         dispatchPayload,
         safeToolContext,
       );
+      const retryLimit = Math.max(
+        0,
+        Number.isFinite(Number(safeToolContext?.retry_policy?.max_retries))
+          ? Number(safeToolContext.retry_policy.max_retries)
+          : 0,
+      );
+      let retryAttempts = 0;
+      while (safeToolExecution?.next_action === "retry" && retryAttempts < retryLimit) {
+        retryAttempts += 1;
+        const currentRetryCount = Number.isFinite(Number(safeToolContext.retry_count))
+          ? Number(safeToolContext.retry_count)
+          : 0;
+        safeToolContext.retry_count = currentRetryCount + 1;
+        throwIfPlannerSignalAborted(signal);
+        safeToolExecution = await runSafeToolExecution(
+          selection.selected_action,
+          dispatchPayload,
+          safeToolContext,
+        );
+      }
+      const continuationAction = cleanText(safeToolExecution?.next_action || "");
+      const hasContinuationAction = Boolean(continuationAction);
 
       if (safeToolContext.__boundary_violation) {
         executionResult = buildPlannerStoppedResult({
@@ -8166,6 +8218,76 @@ export async function runPlannerToolFlow({
           },
           traceId: null,
         });
+      } else if (safeToolExecution?.fail_closed === true) {
+        executionResult = buildPlannerStoppedResult({
+          action: selection.selected_action,
+          error: "fail_closed",
+          data: {
+            reason: cleanText(safeToolExecution.reason || "") || "invalid_continuation_token",
+            invalid_next_action: cleanText(safeToolExecution.invalid_next_action || "") || null,
+          },
+          traceId: null,
+        });
+      } else if (hasContinuationAction) {
+        if (continuationAction === "retry") {
+          executionResult = buildPlannerStoppedResult({
+            action: selection.selected_action,
+            error: "fail_closed",
+            data: {
+              reason: "retry_continuation_not_consumed",
+              retry_attempts: retryAttempts,
+              retry_limit: retryLimit,
+            },
+            traceId: null,
+          });
+        } else if (continuationAction === "ask_user") {
+          executionResult = safeToolExecution?.dispatch_result
+            ? safeToolExecution.dispatch_result
+            : buildPlannerStoppedResult({
+                action: selection.selected_action,
+                error: "business_error",
+                data: {
+                  reason: "ask_user",
+                  continuation_next_action: continuationAction,
+                  message: "等待使用者補充必要資訊後再繼續。",
+                },
+                traceId: null,
+              });
+        } else if (continuationAction === "fallback") {
+          executionResult = safeToolExecution?.dispatch_result
+            ? safeToolExecution.dispatch_result
+            : buildPlannerStoppedResult({
+                action: selection.selected_action,
+                error: "business_error",
+                data: {
+                  reason: "tool_layer_fallback",
+                  continuation_next_action: continuationAction,
+                },
+                traceId: null,
+              });
+        } else if (continuationAction === "complete_task" || continuationAction === "continue_planner") {
+          executionResult = safeToolExecution?.dispatch_result
+            ? safeToolExecution.dispatch_result
+            : buildPlannerStoppedResult({
+                action: selection.selected_action,
+                error: "fail_closed",
+                data: {
+                  reason: "missing_dispatch_result_for_continuation",
+                  continuation_next_action: continuationAction,
+                },
+                traceId: null,
+              });
+        } else {
+          executionResult = buildPlannerStoppedResult({
+            action: selection.selected_action,
+            error: "fail_closed",
+            data: {
+              reason: "unknown_continuation_token",
+              continuation_next_action: continuationAction,
+            },
+            traceId: null,
+          });
+        }
       } else if (safeToolExecution?.dispatch_result) {
         executionResult = safeToolExecution.dispatch_result;
       } else {

@@ -766,35 +766,43 @@ export async function runAgentE2E(userInput = '', ctx = {}) {
       break;
     }
 
-    if (continuation?.next_action === 'complete_task') {
+    const continuationAction = normalizeText(continuation?.next_action || '');
+    if (continuation?.fail_closed === true) {
+      state.fail_safe_mode = true;
+      terminalReason = normalizeText(continuation?.reason || '') || 'invalid_continuation_token';
+      break;
+    }
+    if (continuationAction === 'complete_task') {
       done = true;
       terminalReason = 'complete_task';
       break;
     }
-    if (continuation?.next_action === 'retry') {
+    if (continuationAction === 'retry') {
       plannerInput = buildPlannerInputForNextTurn({
         userInput: normalizedUserInput,
         lastStep: stepRecord,
       });
       continue;
     }
-    if (continuation?.next_action === 'continue_planner') {
+    if (continuationAction === 'continue_planner') {
       plannerInput = buildPlannerInputForNextTurn({
         userInput: normalizedUserInput,
         lastStep: stepRecord,
       });
       continue;
     }
-    if (continuation?.next_action === 'ask_user' || continuation?.next_action === 'fallback') {
+    if (continuationAction === 'ask_user') {
       state.fail_safe_mode = true;
-      plannerInput = buildPlannerInputForNextTurn({
-        userInput: normalizedUserInput,
-        lastStep: stepRecord,
-      });
-      continue;
+      terminalReason = 'ask_user';
+      break;
+    }
+    if (continuationAction === 'fallback') {
+      state.fail_safe_mode = true;
+      terminalReason = 'fallback';
+      break;
     }
 
-    terminalReason = normalizeText(continuation?.next_action || '') || 'unknown_continuation_state';
+    terminalReason = continuationAction || 'unknown_continuation_state';
     break;
   }
 

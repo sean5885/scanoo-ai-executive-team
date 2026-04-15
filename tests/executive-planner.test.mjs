@@ -609,6 +609,248 @@ test("runPlannerToolFlow binds tool-layer continuation state to the real dispatc
   assert.equal(result.execution_result?.data?.tool_layer?.continuation_state?.state, "continue");
 });
 
+test("runPlannerToolFlow consumes retry continuation token and retries within policy limit", async () => {
+  let dispatchCalls = 0;
+  const result = await runPlannerToolFlow({
+    userIntent: "查 launch checklist",
+    payload: {
+      q: "launch checklist",
+      retry_policy: {
+        max_retries: 1,
+        strategy: "same_agent",
+      },
+    },
+    disableAutoRouting: true,
+    logger: {
+      info() {},
+      debug() {},
+      warn() {},
+      error() {},
+    },
+    selector() {
+      return {
+        selected_action: "search_company_brain_docs",
+        reason: "測試 retry continuation",
+      };
+    },
+    async dispatcher({ action, payload }) {
+      dispatchCalls += 1;
+      if (dispatchCalls === 1) {
+        return {
+          ok: false,
+          action,
+          error: "tool_error",
+          next: "retry",
+          trace_id: "trace_retry_round_1",
+          data: {
+            q: payload?.q || "",
+            total: 0,
+            items: [],
+          },
+        };
+      }
+      return {
+        ok: true,
+        action,
+        next: "continue_planner",
+        trace_id: "trace_retry_round_2",
+        data: {
+          q: payload?.q || "",
+          total: 1,
+          items: [
+            {
+              doc_id: "doc_retry_success_1",
+              title: "Retry Success",
+            },
+          ],
+        },
+      };
+    },
+  });
+
+  assert.equal(dispatchCalls, 2);
+  assert.equal(result.execution_result?.ok, true);
+  assert.equal(result.execution_result?.trace_id, "trace_retry_round_2");
+  assert.equal(result.execution_result?.data?.tool_layer?.continuation?.next_action, "continue_planner");
+});
+
+test("runPlannerToolFlow consumes ask_user continuation token and returns ask boundary", async () => {
+  let dispatchCalls = 0;
+  const result = await runPlannerToolFlow({
+    userIntent: "幫我查 launch checklist",
+    payload: {
+      q: "launch checklist",
+    },
+    disableAutoRouting: true,
+    logger: {
+      info() {},
+      debug() {},
+      warn() {},
+      error() {},
+    },
+    selector() {
+      return {
+        selected_action: "search_company_brain_docs",
+        reason: "測試 ask_user continuation",
+      };
+    },
+    async dispatcher({ action, payload }) {
+      dispatchCalls += 1;
+      return {
+        ok: false,
+        action,
+        error: "business_error",
+        next: "ask_user",
+        trace_id: "trace_ask_user_token",
+        data: {
+          q: payload?.q || "",
+          reason: "need_user_confirmation",
+        },
+      };
+    },
+  });
+
+  assert.equal(dispatchCalls, 1);
+  assert.equal(result.execution_result?.ok, false);
+  assert.equal(result.execution_result?.error, "business_error");
+  assert.equal(result.execution_result?.data?.reason, "need_user_confirmation");
+  assert.equal(result.execution_result?.data?.tool_layer?.continuation?.next_action, "ask_user");
+});
+
+test("runPlannerToolFlow consumes fallback continuation token and switches to fallback boundary", async () => {
+  let dispatchCalls = 0;
+  const result = await runPlannerToolFlow({
+    userIntent: "幫我查 launch checklist",
+    payload: {
+      q: "launch checklist",
+    },
+    disableAutoRouting: true,
+    logger: {
+      info() {},
+      debug() {},
+      warn() {},
+      error() {},
+    },
+    selector() {
+      return {
+        selected_action: "search_company_brain_docs",
+        reason: "測試 fallback continuation",
+      };
+    },
+    async dispatcher({ action, payload }) {
+      dispatchCalls += 1;
+      return {
+        ok: false,
+        action,
+        error: "business_error",
+        next: "fallback",
+        trace_id: "trace_fallback_token",
+        data: {
+          q: payload?.q || "",
+          reason: "fallback_requested",
+        },
+      };
+    },
+  });
+
+  assert.equal(dispatchCalls, 1);
+  assert.equal(result.execution_result?.ok, false);
+  assert.equal(result.execution_result?.error, "business_error");
+  assert.equal(result.execution_result?.data?.reason, "fallback_requested");
+  assert.equal(result.execution_result?.data?.tool_layer?.continuation?.next_action, "fallback");
+});
+
+test("runPlannerToolFlow consumes complete_task continuation token and terminates normally", async () => {
+  let dispatchCalls = 0;
+  const result = await runPlannerToolFlow({
+    userIntent: "查 launch checklist",
+    payload: {
+      q: "launch checklist",
+    },
+    disableAutoRouting: true,
+    logger: {
+      info() {},
+      debug() {},
+      warn() {},
+      error() {},
+    },
+    selector() {
+      return {
+        selected_action: "search_company_brain_docs",
+        reason: "測試 complete_task continuation",
+      };
+    },
+    async dispatcher({ action, payload }) {
+      dispatchCalls += 1;
+      return {
+        ok: true,
+        action,
+        next: "complete_task",
+        trace_id: "trace_complete_task_token",
+        data: {
+          q: payload?.q || "",
+          total: 1,
+          items: [
+            {
+              doc_id: "doc_complete_1",
+              title: "Complete Task",
+            },
+          ],
+        },
+      };
+    },
+  });
+
+  assert.equal(dispatchCalls, 1);
+  assert.equal(result.execution_result?.ok, true);
+  assert.equal(result.execution_result?.trace_id, "trace_complete_task_token");
+  assert.equal(result.execution_result?.data?.tool_layer?.continuation?.next_action, "complete_task");
+});
+
+test("runPlannerToolFlow fail-closes unknown continuation token instead of swallowing it", async () => {
+  let dispatchCalls = 0;
+  const result = await runPlannerToolFlow({
+    userIntent: "查 launch checklist",
+    payload: {
+      q: "launch checklist",
+    },
+    disableAutoRouting: true,
+    logger: {
+      info() {},
+      debug() {},
+      warn() {},
+      error() {},
+    },
+    selector() {
+      return {
+        selected_action: "search_company_brain_docs",
+        reason: "測試 unknown continuation fail-closed",
+      };
+    },
+    async dispatcher({ action, payload }) {
+      dispatchCalls += 1;
+      return {
+        ok: true,
+        action,
+        next: "mystery_next_token",
+        trace_id: "trace_unknown_token",
+        data: {
+          q: payload?.q || "",
+          total: 0,
+          items: [],
+        },
+      };
+    },
+  });
+
+  assert.equal(dispatchCalls, 1);
+  assert.equal(result.execution_result?.ok, false);
+  assert.equal(result.execution_result?.error, "fail_closed");
+  assert.equal(result.execution_result?.data?.reason, "invalid_continuation_token");
+  assert.equal(result.execution_result?.data?.invalid_next_action, "mystery_next_token");
+  assert.equal(result.execution_result?.data?.tool_layer?.continuation?.fail_closed, true);
+});
+
 test("different planner inputs do not collapse into the same fixed envelope", async () => {
   resetPlannerRuntimeContext();
 
