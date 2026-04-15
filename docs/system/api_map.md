@@ -48,9 +48,12 @@ This is the grouped HTTP surface mirror for the current repo.
 - direct HTTP `/answer` is now locked to the planner answer edge and no longer rolls into `runAgentE2E(...)` canary routing from ingress
 - `runAgentE2E(...)` remains an internal runtime helper module and is not a parallel HTTP authority for `/answer`
 - direct `/answer` applies one bounded early-abort latency budget window (default `5000ms`, configurable via `ANSWER_LATENCY_BUDGET_MS` or `AGENT_E2E_BUDGET_MS`) before the outer HTTP timeout
+- when `executePlannedUserInput(...)` is using the default strict planner requester, deterministic runtime-info queries now use a bounded fast path (`get_runtime_info`) before LLM planning, so clearly-routed runtime checks do not spend planner timeout budget
+- direct `/answer` now short-circuits synthetic probe traffic (`traffic_source=test|replay`) for bounded probe queries (`test|ping|health|healthcheck|smoke|probe`) and returns a fast `ok=true` ingress-ready reply without entering planner execution
 - `/answer` now accepts both `q` and `query` query params for the same user intent text
 - the public `/answer` payload still does not expose raw planner errors, but the in-process normalized object now carries non-enumerable `failure_class` (legacy-compatible) plus `failure_class_v2` (`timeout` / `upstream_error` / `partial_data` / `user_input_missing`) for usage-layer eval / telemetry classification
 - fail-soft replies (`ok=false`) are normalized into a usable structure before public rendering: `answer` as summary, `sources` as what-we-got, and the last `limitations` item as executable CTA
+- timeout fail-soft replies now append `limitations[]` marker `timeout_layer=planner|tool|external_dependency` so runtime/test paths can distinguish where latency was consumed
 - user-facing multi-intent fail-soft now marks unsupported image/publish steps explicitly as `blocked（capability_gap）`, and public payload includes enumerable `partial` for partial-success replies
 - public `sources[]` lines are derived from canonical source objects through `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`
 - `/answer` and plugin-backed planner/lane entrypoints now arm one earlier bounded-fallback abort signal before the outer HTTP timeout, so bounded fail-soft replies can return before the final generic timeout guard
