@@ -27,7 +27,7 @@ const TASK_DECOMPOSITION_CAPABILITIES = Object.freeze({
     patterns: [
       /(?:fb|facebook|臉書|脸书)\s*(?:貼文|帖文|post)/i,
       /(?:寫|撰寫|起草|草擬|草拟).{0,12}(?:文案|貼文|帖文|email|郵件|邮件|信件|回覆|回复|內容|内容)/i,
-      /(?:文案|貼文|帖文|caption|copywriting|copy)/i,
+      /(?:文案|貼文|帖文|caption|copywriting|copy|draft|drafting|write)/i,
       /(?:email|郵件|邮件|信件).{0,8}(?:草稿|內容|内容|文案)/i,
       /(?:回覆|回复).{0,8}(?:草稿|內容|内容)/i,
     ],
@@ -36,7 +36,7 @@ const TASK_DECOMPOSITION_CAPABILITIES = Object.freeze({
     label: "查詢或內容整理",
     supported: true,
     patterns: [
-      /(?:查|搜尋|搜索|找|看看|看一下|讀|读|打開|打开|整理|總結|总结|摘要|重點|重点|解釋|解释|說明|说明|風險|风险|進度|狀態|状态|下一步|為什麼|为什么|誰負責|谁负责|何時到期|何时到期|owner|deadline)/i,
+      /(?:查|搜尋|搜索|找|看看|看一下|讀|读|打開|打开|整理|總結|总结|摘要|重點|重点|解釋|解释|說明|说明|風險|风险|進度|狀態|状态|下一步|為什麼|为什么|誰負責|谁负责|何時到期|何时到期|owner|deadline|summarize|summary|explain|search|lookup|find|query)/i,
     ],
   }),
   image_asset: Object.freeze({
@@ -53,10 +53,11 @@ const TASK_DECOMPOSITION_CAPABILITIES = Object.freeze({
     label: "發送或發布",
     supported: false,
     patterns: [
-      /(?:發送|发送|寄出|寄給|寄给|發給|发给|發佈|发布|代發|代发|發布出去|发布出去)/i,
+      /(?:發送|发送|寄出|寄給|寄给|發給|发给|發佈|发布|代發|代发|發布出去|发布出去|publish|post|send|deliver|share)/i,
     ],
     negatedPatterns: [
-      /(?:先不要|不要|不用|先別|先别|暫時不要|暂时不要|不必).{0,8}(?:發送|发送|寄出|寄給|寄给|發給|发给|發佈|发布|代發|代发)/i,
+      /(?:先不要|不要|不用|先別|先别|暫時不要|暂时不要|不必).{0,8}(?:發送|发送|寄出|寄給|寄给|發給|发给|發佈|发布|代發|代发|publish|post|send|deliver|share)/i,
+      /(?:don't|do not|without|skip).{0,8}(?:publish|post|send|deliver|share)/i,
     ],
   }),
 });
@@ -121,6 +122,35 @@ function detectTaskDecomposition(requestText = "") {
 function hasUsableTaskDecompositionFallback(response = {}) {
   return response?.ok !== true
     && (!Array.isArray(response?.sources) || response.sources.length === 0);
+}
+
+function buildCapabilityBoundaryFailSoftResponse(decomposition = {}) {
+  const blockedLabels = (Array.isArray(decomposition?.blocked) ? decomposition.blocked : [])
+    .map((item) => item?.label)
+    .filter(Boolean);
+  const capabilitySummary = blockedLabels.join("、");
+  return attachHiddenUserResponseMetadata({
+    ok: false,
+    answer: capabilitySummary
+      ? `這個需求目前卡在能力邊界：${capabilitySummary} 仍是 blocked（capability_gap），我不會假裝已完成。`
+      : "這個需求目前卡在能力邊界，還不能安全完成。",
+    sources: normalizeUserResponseList([
+      capabilitySummary
+        ? `已辨識需求：${capabilitySummary}。`
+        : "已辨識需求：目前請求涉及能力邊界限制。",
+      "目前回覆保持 fail-soft，不把 blocked 任務包裝成成功。",
+    ]),
+    limitations: normalizeUserResponseList([
+      ...buildTaskDecompositionLimitations(Array.isArray(decomposition?.blocked) ? decomposition.blocked : []),
+      capabilitySummary
+        ? `能力狀態：${capabilitySummary} = blocked（capability_gap）。`
+        : "能力狀態：目前為 blocked（capability_gap）。",
+      "下一步：如果你要，我可以先給你可手動執行的最短操作步驟。",
+    ]),
+  }, {
+    failure_class: "capability_gap",
+    reply_mode: "fail_soft",
+  });
 }
 
 function resolveDraftCopyChannel(requestText = "") {
@@ -252,12 +282,12 @@ function buildDraftCopyContent(requestText = "") {
 function buildTaskDecompositionLimitations(blocked = []) {
   const entries = blocked.map((item) => {
     if (item.key === "image_asset") {
-      return "圖片這部分我目前不能直接在這裡產出成品；如果你要，我可以下一步先補圖片 prompt、構圖方向和文案搭配建議。";
+      return "圖片這部分目前是 blocked（capability_gap），我不能直接在這裡產出成品；如果你要，我可以下一步先補圖片 prompt、構圖方向和文案搭配建議。";
     }
     if (item.key === "outbound_delivery") {
-      return "發送或發布這部分我目前不能直接替你送出；你可以先手動貼上上面的內容，或我幫你再整理成最終發布版。";
+      return "發送或發布這部分目前是 blocked（capability_gap），我不能直接替你送出；你可以先手動貼上上面的內容，或我幫你再整理成最終發布版。";
     }
-    return `${item.label} 這部分我目前還不能直接代做；如果你要，我可以先把替代做法列給你。`;
+    return `${item.label} 這部分目前是 blocked（capability_gap），我還不能直接代做；如果你要，我可以先把替代做法列給你。`;
   });
   return normalizeUserResponseList(entries);
 }
@@ -362,6 +392,19 @@ function attachHiddenUserResponseMetadata(response = {}, metadata = {}) {
       writable: true,
     });
   }
+  return response;
+}
+
+function attachPublicUserResponseField(response = {}, key = "", value = null) {
+  if (!response || typeof response !== "object" || Array.isArray(response) || !normalizeText(key)) {
+    return response;
+  }
+  Object.defineProperty(response, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
   return response;
 }
 
@@ -491,11 +534,19 @@ function maybeApplyTaskDecompositionResponse({
   if (partialOverlayResponse !== response) {
     return partialOverlayResponse;
   }
+
+  const decomposition = detectTaskDecomposition(requestText);
+  if (
+    hasUsableTaskDecompositionFallback(response)
+    && decomposition.blocked.length > 0
+    && decomposition.completable.length === 0
+  ) {
+    return buildCapabilityBoundaryFailSoftResponse(decomposition);
+  }
+
   if (!hasUsableTaskDecompositionFallback(response)) {
     return response;
   }
-
-  const decomposition = detectTaskDecomposition(requestText);
   if (!decomposition.isMultiIntent || decomposition.completable.length === 0 || decomposition.blocked.length === 0) {
     return response;
   }
@@ -606,7 +657,9 @@ function buildFailSoftNextSteps({
   );
   const actionable = normalizedLimitations.filter((item) => FAIL_SOFT_ACTIONABLE_PATTERN.test(item));
   const fallbackAction = buildDefaultFailSoftNextStep({ failureClassV2 });
-  const cta = actionable[actionable.length - 1] || fallbackAction;
+  const cta = failureClassV2 === "user_input_missing"
+    ? fallbackAction
+    : actionable[actionable.length - 1] || fallbackAction;
   return normalizeUserResponseList([
     ...normalizedLimitations.filter((item) => item !== cta),
     cta,
@@ -1403,6 +1456,7 @@ export function normalizeUserResponse({
       response: decompositionAwareResponse,
       failureClassV2,
     });
+    const normalizedPartial = normalizedResponse.ok === true && isPartialSuccessResponse(normalizedResponse);
     attachHiddenUserResponseMetadata(normalizedResponse, {
       failure_class: failureClass,
       failure_class_v2: failureClassV2,
@@ -1411,11 +1465,12 @@ export function normalizeUserResponse({
         : normalizedResponse.ok === true
           ? "success"
           : "fail_soft",
-      partial: normalizedResponse.ok === true && isPartialSuccessResponse(normalizedResponse),
+      partial: normalizedPartial,
       summary: normalizedResponse.ok === false ? normalizedResponse.answer : null,
       what_we_got: normalizedResponse.ok === false ? [...normalizedResponse.sources] : null,
       next_step: normalizedResponse.ok === false ? normalizedResponse.limitations[normalizedResponse.limitations.length - 1] || "" : null,
     });
+    attachPublicUserResponseField(normalizedResponse, "partial", normalizedPartial);
     maybeEmitPlannerVisibleAnswerTelemetry({
       envelope,
       normalizedResponse,
@@ -1444,15 +1499,17 @@ export function normalizeUserResponse({
       },
       failureClassV2: objectPayload.ok === false ? "upstream_error" : null,
     });
+    const canonicalPartial = canonicalResponse.ok === true && isPartialSuccessResponse(canonicalResponse);
     attachHiddenUserResponseMetadata(canonicalResponse, {
       failure_class: objectPayload.ok === false ? "generic_fallback" : null,
       failure_class_v2: objectPayload.ok === false ? "upstream_error" : null,
       reply_mode: canonicalResponse.ok === true ? "success" : "fail_soft",
-      partial: canonicalResponse.ok === true && isPartialSuccessResponse(canonicalResponse),
+      partial: canonicalPartial,
       summary: canonicalResponse.ok === false ? canonicalResponse.answer : null,
       what_we_got: canonicalResponse.ok === false ? [...canonicalResponse.sources] : null,
       next_step: canonicalResponse.ok === false ? canonicalResponse.limitations[canonicalResponse.limitations.length - 1] || "" : null,
     });
+    attachPublicUserResponseField(canonicalResponse, "partial", canonicalPartial);
     emitBoundaryLog({
       logger,
       traceId,
@@ -1490,6 +1547,7 @@ export function normalizeUserResponse({
     response: decompositionAwarePayload,
     failureClassV2,
   });
+  const normalizedPayloadPartial = normalizedPayload.ok === true && isPartialSuccessResponse(normalizedPayload);
   attachHiddenUserResponseMetadata(normalizedPayload, {
     failure_class: failureClass,
     failure_class_v2: failureClassV2,
@@ -1498,11 +1556,12 @@ export function normalizeUserResponse({
       : normalizedPayload.ok === true
         ? "success"
         : "fail_soft",
-    partial: normalizedPayload.ok === true && isPartialSuccessResponse(normalizedPayload),
+    partial: normalizedPayloadPartial,
     summary: normalizedPayload.ok === false ? normalizedPayload.answer : null,
     what_we_got: normalizedPayload.ok === false ? [...normalizedPayload.sources] : null,
     next_step: normalizedPayload.ok === false ? normalizedPayload.limitations[normalizedPayload.limitations.length - 1] || "" : null,
   });
+  attachPublicUserResponseField(normalizedPayload, "partial", normalizedPayloadPartial);
 
   emitBoundaryLog({
     logger,
