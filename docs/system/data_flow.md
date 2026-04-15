@@ -145,6 +145,12 @@ Current public `/answer` path:
    - before active current-step continuation, planner runs one deterministic execution-readiness gate from the same session working-memory execution plan state
    - readiness is fail-closed and checks slot/artifact/dependency/owner/recovery/plan validity on current step, returning `is_ready`, blocking diagnostics, and `recommended_action`
    - when `is_ready=false`, planner does not dispatch intended step action directly; it follows existing controlled paths (`ask_user` / `retry` / `reroute` / `rollback` / `skip` / fail-closed stop)
+   - for tool-layer contract actions, planner now consumes continuation tokens as dispatch control flow (not metadata-only):
+     - `retry`: bounded re-dispatch under retry policy
+     - `ask_user`: stop at ask-user boundary without implicit fallthrough
+     - `fallback`: stop at fallback boundary without implicit fallthrough
+     - `complete_task`: accept current dispatch result as terminal
+     - unknown token: fail-closed (`invalid_continuation_token`)
    - planner/router observability now also emits a deterministic `step decision advisor` result for that same step (`recommended_next_action`, reason codes, confidence, based-on summary), derived only from existing readiness/outcome/recovery/artifact/task-plan state
    - the same state also feeds a deterministic `advisor alignment evaluator` v1 (`advisor_action`, `actual_action`, `is_aligned`, `alignment_type`, `divergence_reason_codes`, `promotion_candidate`, `evaluator_version`) plus `advisor_alignment_summary`; malformed/missing inputs fail closed as `alignment_type=unknown`
    - the same advisor/alignment evidence then feeds `decision-engine-promotion` v1 gate:
@@ -182,6 +188,11 @@ Current truth:
 - direct `/answer` remains available, but when `LARK_DIRECT_INGRESS_PRIMARY_ENABLED=false` the runtime marks it as a non-primary ingress rather than the formal plugin entry
 - direct `/answer` is now locked to one planner runtime entry and does not route through `runAgentE2E(...)` from HTTP ingress
 - `runAgentE2E(...)` remains in the codebase as an internal helper, not a parallel `/answer` runtime authority
+- `runAgentE2E(...)` continuation semantics are aligned with planner runtime boundaries:
+  - `retry` / `continue_planner` continue the loop
+  - `complete_task` terminates success
+  - `ask_user` / `fallback` terminate fail-soft (no implicit continue)
+  - unknown token terminates fail-closed
 - `/answer` and the `knowledge-assistant` lane now share the same planner answer-edge helper instead of re-assembling `execute -> envelope -> normalize` separately
 - that shared edge helper also absorbs current legacy planner result shapes into canonical `answer / sources / limitations` before the public boundary
 - for delivery/onboarding knowledge lookups, a single-hit company-brain search now turns into an answer-first reply that names the matched SOP/checklist document and surfaces bounded location/checklist/start-step hints from the indexed snippet, while preserving the same public `answer / sources / limitations` shape

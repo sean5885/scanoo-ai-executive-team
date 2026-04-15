@@ -15,6 +15,17 @@ function normalizeText(value = '') {
   return String(value || '').trim();
 }
 
+function isKnownContinuationAction(action = '') {
+  const normalizedAction = normalizeText(action);
+  if (!normalizedAction) {
+    return false;
+  }
+  if (CANONICAL_CONTINUATION_ACTIONS.has(normalizedAction)) {
+    return true;
+  }
+  return CANONICAL_CONTINUATION_ACTIONS.has(LEGACY_CONTINUATION_ACTION_ALIASES[normalizedAction]);
+}
+
 export function normalizeContinuationAction(action = '', fallback = 'fallback') {
   const normalizedAction = normalizeText(action);
   if (CANONICAL_CONTINUATION_ACTIONS.has(normalizedAction)) {
@@ -35,9 +46,19 @@ export function resolveToolResultContinuation(toolExecution = {}, ctx = {}) {
   if (!toolExecution || typeof toolExecution !== 'object') {
     return { next_action: 'fallback', reason: 'missing_tool_execution' };
   }
+  const rawNextAction = normalizeText(toolExecution.next || toolExecution.next_action || '');
+  if (rawNextAction && !isKnownContinuationAction(rawNextAction)) {
+    return {
+      next_action: 'fallback',
+      reason: 'invalid_continuation_token',
+      resume: false,
+      fail_closed: true,
+      invalid_next_action: rawNextAction,
+    };
+  }
 
   const normalizedNextAction = normalizeContinuationAction(
-    toolExecution.next,
+    rawNextAction,
     toolExecution.ok ? 'continue_planner' : 'fallback',
   );
 

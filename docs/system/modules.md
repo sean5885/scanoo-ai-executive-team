@@ -134,6 +134,12 @@ Current-truth docs for onboarding are:
     - safe-tool execution now hard-checks read-only skill boundary (`search_and_summarize` / `document_summarize` / `search_company_brain_docs` / `official_read_document`) so those skills cannot continue through write-class actions (`send_message` / `update_doc` / `create_task` / `write_memory` / `update_record`); violations are recorded as `__boundary_violation` and fail-soft to fallback
     - safe-tool continuation now also writes one unified internal state marker `__continuation_state={state,resume}` (`idle|continue|retry|ask_user|fallback`) so retry/ask/fallback telemetry uses one deterministic source
     - for tool-layer contract actions, safe-tool continuation is now derived from the same real dispatch result (through injected tool executor) and copied into `execution_result.data.tool_layer`, instead of staying only inside temporary ctx fields
+    - `runPlannerToolFlow(...)` now consumes continuation tokens as runtime control flow (not metadata-only):
+      - `retry` => bounded re-dispatch under retry policy
+      - `ask_user` => stop on explicit ask-user boundary (no implicit continue)
+      - `fallback` => stop on fallback boundary (no implicit continue)
+      - `complete_task` => accept dispatch result and terminate current action path
+      - unknown token => fail-closed (`invalid_continuation_token`) instead of silent normalization
   - that gate is fail-closed and state-derived (slot/artifact/dependency/owner/recovery/plan integrity checks), and does not introduce a second planner/workflow truth source
   - when readiness is blocked, planner routing is lockable for the turn and reuses existing controlled paths (`ask_user` / `retry` / `reroute` / `rollback` / `skip` / fail-closed stop) instead of executing the intended action directly
   - the same step/recovery/readiness signals now feed a deterministic outcome scorer v1 (`success|partial|blocked|failed`) plus `outcome_confidence`, `outcome_evidence`, `artifact_quality`, `retry_worthiness`, and `user_visible_completeness`, and malformed outcome payloads are rejected fail-closed
@@ -277,12 +283,12 @@ Current-truth docs for onboarding are:
     - each loop turn runs `selectPlannerTool(...)` for planner decision
     - resolves a bounded skill hint through `skill-registry.mjs` metadata (`getSkillMetadata`, `normalizeSkillArgs`)
     - executes only through the checked-in tool-layer contract/runtime (`tool-layer-contract.mjs`, `tool-execution-runtime.mjs`)
-    - `tool-execution-runtime.mjs` now supports injected executors only: when a host provides a dispatch adapter it uses real runtime dispatch and keeps contract-normalized continuation semantics; `runAgentE2E(...)` now preflights executor availability and fail-soft stops early with `terminal_reason = tool_executor_missing` before any step is executed
+    - `tool-execution-runtime.mjs` now supports injected executors only: when a host provides a dispatch adapter it uses real runtime dispatch, preserves explicit external continuation tokens (`next` / `next_action`) when provided, and otherwise falls back to contract defaults; `runAgentE2E(...)` now preflights executor availability and fail-soft stops early with `terminal_reason = tool_executor_missing` before any step is executed
     - `runAgentE2E(...)` now also has a hard timeout guard (`AGENT_E2E_HARD_TIMEOUT_MS`, request-timeout-aware clamping) so stalled tool dispatch cannot block the loop indefinitely and terminates with `terminal_reason = agent_e2e_timeout`
     - tool-layer continuation vocabulary is now canonicalized to one state machine (`continue_planner | complete_task | retry | ask_user | fallback`); legacy tokens (`retry_or_fallback`, `ask_or_fallback`) are normalized at continuation resolution time
-    - applies `resolveToolResultContinuation(...)` before deciding the next loop turn
+    - applies `resolveToolResultContinuation(...)` before deciding the next loop turn; unknown continuation tokens are fail-closed
     - diagnostics are now explicitly logged at ingress enter, before planner decision, before tool execution, after tool execution, before continuation decision, and terminal exit
-    - exits on `answer_user_directly` success or bounded fail-safe stop
+    - exits on `answer_user_directly` success, `complete_task`, or explicit continuation terminal boundaries (`ask_user`, `fallback`, fail-closed unknown token)
   - that helper returns one bounded envelope `{ ok, done, terminal_reason, plan, steps, state, final, debug }`, where `debug` includes chosen skills, routing decisions, and continuation state per step
   - this autonomous helper is now internal-only for bounded runtime validation and does not act as a parallel HTTP `/answer` ingress authority
   - `http-server.mjs` `/answer` now stays on the planner answer-edge runtime (`runPlannerUserInputEdge -> executePlannedUserInput`) without `runAgentE2E(...)` ingress canary branching

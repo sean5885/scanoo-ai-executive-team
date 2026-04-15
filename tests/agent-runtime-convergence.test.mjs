@@ -147,6 +147,69 @@ test('runAgentE2E fails before execution when tool executor is missing', async (
   assert.equal(result.final?.error, 'tool_executor_missing');
 });
 
+test('runAgentE2E consumes ask_user continuation token as a terminal boundary', async () => {
+  const result = await runAgentE2E('幫我查 Scanoo 文件', {
+    max_steps: 4,
+    retry_policy: { max_retries: 2 },
+    tool_executor: async ({ action }) => ({
+      ok: false,
+      action,
+      error: 'business_error',
+      next: 'ask_user',
+      trace_id: 'trace_agent_e2e_ask_user',
+      data: { reason: 'need_more_info' },
+    }),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.done, false);
+  assert.equal(result.terminal_reason, 'ask_user');
+  assert.equal(result.steps.length, 1);
+  assert.equal(result.steps[0]?.continuation?.next_action, 'ask_user');
+});
+
+test('runAgentE2E consumes fallback continuation token as a terminal boundary', async () => {
+  const result = await runAgentE2E('幫我查 Scanoo 文件', {
+    max_steps: 4,
+    retry_policy: { max_retries: 2 },
+    tool_executor: async ({ action }) => ({
+      ok: false,
+      action,
+      error: 'business_error',
+      next: 'fallback',
+      trace_id: 'trace_agent_e2e_fallback',
+      data: { reason: 'cannot_continue' },
+    }),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.done, false);
+  assert.equal(result.terminal_reason, 'fallback');
+  assert.equal(result.steps.length, 1);
+  assert.equal(result.steps[0]?.continuation?.next_action, 'fallback');
+});
+
+test('runAgentE2E fail-closes unknown continuation tokens', async () => {
+  const result = await runAgentE2E('幫我查 Scanoo 文件', {
+    max_steps: 4,
+    retry_policy: { max_retries: 2 },
+    tool_executor: async ({ action }) => ({
+      ok: true,
+      action,
+      next: 'unknown_next_token',
+      trace_id: 'trace_agent_e2e_unknown',
+      data: { total: 0, items: [] },
+    }),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.done, false);
+  assert.equal(result.terminal_reason, 'invalid_continuation_token');
+  assert.equal(result.steps.length, 1);
+  assert.equal(result.steps[0]?.continuation?.fail_closed, true);
+  assert.equal(result.steps[0]?.continuation?.invalid_next_action, 'unknown_next_token');
+});
+
 test('agent-mode ingress keeps single runtime authority by default when runAgentE2E has no final answer', async (t) => {
   withEnv(t, {
     AGENT_E2E_ENABLED: 'true',
