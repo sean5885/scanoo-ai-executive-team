@@ -18,9 +18,6 @@ test("runTaskLayer maps tasks to skills and records per-task failures", async ()
   const calls = [];
   const result = await runTaskLayer("請幫我寫文案、做配圖，最後發布", async (skill, payload) => {
     calls.push({ skill, payload });
-    if (skill === "message_send") {
-      throw new Error("publish blocked");
-    }
     return { handledBy: skill, task: payload.task };
   });
 
@@ -44,7 +41,7 @@ test("runTaskLayer maps tasks to skills and records per-task failures", async ()
   assert.deepEqual(result.errors, [
     {
       task: "publish",
-      error: "publish blocked",
+      error: "no_skill_mapped",
     },
   ]);
   assert.deepEqual(calls, [
@@ -62,18 +59,12 @@ test("runTaskLayer maps tasks to skills and records per-task failures", async ()
         task: "image",
       },
     },
-    {
-      skill: "message_send",
-      payload: {
-        input: "請幫我寫文案、做配圖，最後發布",
-        task: "publish",
-      },
-    },
   ]);
   assert.deepEqual(result.results, [
     {
       task: "copywriting",
       ok: true,
+      skill: "document_summarize",
       result: {
         handledBy: "document_summarize",
         task: "copywriting",
@@ -82,6 +73,7 @@ test("runTaskLayer maps tasks to skills and records per-task failures", async ()
     {
       task: "image",
       ok: true,
+      skill: "image_generate",
       result: {
         handledBy: "image_generate",
         task: "image",
@@ -90,12 +82,42 @@ test("runTaskLayer maps tasks to skills and records per-task failures", async ()
     {
       task: "publish",
       ok: false,
-      status: "failed",
-      blocked: false,
-      failure_class: null,
-      error: "publish blocked",
+      error: "no_skill_mapped",
     },
   ]);
+});
+
+test("runTaskLayer fail-closes when task-layer mapping points to an unregistered skill", async () => {
+  const originalPublishSkill = TASK_SKILL_MAP.publish;
+  TASK_SKILL_MAP.publish = "message_send";
+
+  try {
+    const calls = [];
+    const result = await runTaskLayer("請幫我發布", async (skill, payload) => {
+      calls.push({ skill, payload });
+      return { handledBy: skill, task: payload.task };
+    });
+
+    assert.deepEqual(calls, []);
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.tasks, ["publish"]);
+    assert.deepEqual(result.summary, {
+      publish: "failed",
+    });
+    assert.deepEqual(result.errors, [
+      {
+        task: "publish",
+        error: "skill_not_registered",
+        failure_class: "contract_violation",
+      },
+    ]);
+  } finally {
+    if (originalPublishSkill === undefined) {
+      delete TASK_SKILL_MAP.publish;
+    } else {
+      TASK_SKILL_MAP.publish = originalPublishSkill;
+    }
+  }
 });
 
 test("runTaskLayer records a fail-soft error when a task has no mapped skill", async () => {

@@ -14,7 +14,6 @@ test("real routing maps multi-task input to checked-in routing identifiers", asy
   assert.deepEqual(called, [
     "document_summarize",
     "image_generate",
-    "message_send",
   ]);
   assert.ok(called.length >= 2);
 });

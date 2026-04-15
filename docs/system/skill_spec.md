@@ -190,6 +190,8 @@ Current checked-in registry helpers:
 - `getSkillRegistryEntry(name)`
 - `getSkillMetadata(name)`
 - `normalizeSkillArgs(name, args)`
+- `message_send` remains a write-runtime action (external mutation surface) and is intentionally not a checked-in skill-registry entry in the current baseline
+- task-layer `publish` therefore stays fail-closed (`no_skill_mapped` by default; `skill_not_registered` if a mapped id is outside the checked-in skill registry)
 
 `normalizeSkillArgs(...)` is now the canonical skill-level alias normalization layer. For search skill paths, `query <-> q` compatibility is declared by registry metadata and normalized before dispatch instead of being scattered ad hoc.
 

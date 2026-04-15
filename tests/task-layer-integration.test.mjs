@@ -18,9 +18,6 @@ test("executePlannedUserInput short-circuits to multi-task result when task-laye
       if (payload.task === "image") {
         return { url: "hero.png" };
       }
-      if (payload.task === "publish") {
-        return true;
-      }
       return { name, task: payload.task };
     },
   });
@@ -34,22 +31,22 @@ test("executePlannedUserInput short-circuits to multi-task result when task-laye
   assert.deepEqual(result.execution_result?.data?.summary, {
     copywriting: "done",
     image: "done",
-    publish: "done",
+    publish: "failed",
   });
   assert.equal(
     result.execution_result?.data?.answer,
-    "文案：新品開跑，限時搶先看。\n圖片：已生成（hero.png）\n發布：已完成",
+    "文案：新品開跑，限時搶先看。\n圖片：已生成（hero.png）",
   );
   assert.deepEqual(result.execution_result?.data?.sources, [
     "任務拆解：文案、圖片、發布。",
     "文案 已完成執行。",
     "圖片 已完成執行。",
-    "發布 已完成執行。",
   ]);
   assert.deepEqual(result.execution_result?.data?.limitations, [
-    "下一步：如果你要，我可以把每個子任務展開成更完整的最終稿或後續步驟。",
+    "發布 目前沒有可用執行能力可直接完成這一步。",
+    "下一步：你可以讓我直接重試失敗項目，或指定要優先完成的子任務。",
   ]);
-  assert.equal(result.execution_result?.data?.partial, false);
+  assert.equal(result.execution_result?.data?.partial, true);
 });
 
 test("executePlannedUserInput falls back to the original planner flow when task-layer finds at most one task", async () => {
@@ -109,9 +106,6 @@ test("executePlannedUserInput keeps image task fail-closed when backend is unava
           },
         };
       }
-      if (payload.task === "publish") {
-        return true;
-      }
       return { name, task: payload.task };
     },
   });
@@ -121,13 +115,14 @@ test("executePlannedUserInput keeps image task fail-closed when backend is unava
   assert.deepEqual(result.execution_result?.data?.summary, {
     copywriting: "done",
     image: "blocked",
-    publish: "done",
+    publish: "failed",
   });
   assert.equal(result.execution_result?.data?.partial, true);
   assert.match(result.execution_result?.data?.answer, /文案：新品開跑，限時搶先看。/);
   assert.doesNotMatch(result.execution_result?.data?.answer, /圖片：已生成/);
   assert.deepEqual(result.execution_result?.data?.limitations, [
     "圖片 目前缺少可用 image backend，系統已 fail-closed 並阻擋偽成功輸出。",
+    "發布 目前沒有可用執行能力可直接完成這一步。",
     "下一步：你可以讓我直接重試失敗項目，或指定要優先完成的子任務。",
   ]);
 });

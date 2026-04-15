@@ -79,3 +79,30 @@ test("toUserFacing does not render placeholder image URL as a successful image r
     "下一步：你可以讓我直接重試失敗項目，或指定要優先完成的子任務。",
   ]);
 });
+
+test("normalizeTaskLayerResult fail-closes publish done records without a registered skill", () => {
+  const result = normalizeTaskLayerResult({
+    tasks: ["publish"],
+    summary: {
+      publish: "done",
+    },
+    data: {
+      publish: true,
+    },
+    errors: [],
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.partial, false);
+  assert.deepEqual(result.summary, {
+    publish: "failed",
+  });
+  assert.deepEqual(result.data, {});
+  assert.deepEqual(result.errors, [
+    {
+      task: "publish",
+      error: "skill_not_registered",
+      failure_class: "contract_violation",
+    },
+  ]);
+});

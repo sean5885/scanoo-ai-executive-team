@@ -3,6 +3,7 @@ import { TASK_SKILL_MAP } from "./task-skill-map.mjs";
 import { aggregateResults } from "./task-aggregator.mjs";
 import { sortTasks } from "./task-dependency.mjs";
 import { cleanText } from "../message-intent-utils.mjs";
+import { getSkillRegistryEntry } from "../skill-registry.mjs";
 
 function pickFirstText(value, keys = []) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -78,7 +79,7 @@ function buildTaskFailure(task = "", result = {}, fallbackError = "runtime_excep
   };
 }
 
-function normalizeTaskResult(task = "", result = null) {
+function normalizeTaskResult(task = "", result = null, { skill = "" } = {}) {
   if (result == null || result === false) {
     return buildTaskFailure(task, {
       error: "runtime_exception",
@@ -108,6 +109,7 @@ function normalizeTaskResult(task = "", result = null) {
   return {
     task,
     ok: true,
+    skill: cleanText(skill) || null,
     result,
   };
 }
@@ -126,10 +128,19 @@ export async function runTaskLayer(input, runSkill) {
       });
       continue;
     }
+    if (!getSkillRegistryEntry(skill)) {
+      results.push({
+        task,
+        ok: false,
+        error: "skill_not_registered",
+        failure_class: "contract_violation",
+      });
+      continue;
+    }
 
     try {
       const result = await runSkill(skill, { input, task });
-      results.push(normalizeTaskResult(task, result));
+      results.push(normalizeTaskResult(task, result, { skill }));
     } catch (error) {
       results.push({
         task,
