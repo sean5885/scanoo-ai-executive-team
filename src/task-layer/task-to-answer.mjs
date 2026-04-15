@@ -1,4 +1,5 @@
 import { cleanText } from "../message-intent-utils.mjs";
+import { getSkillRegistryEntry } from "../skill-registry.mjs";
 
 export function formatTaskLayerTaskLabel(task = "") {
   const normalized = cleanText(task);
@@ -63,7 +64,7 @@ export function normalizeTaskLayerResult(taskLayerResult = null) {
         : cleanText(item?.error || item?.details?.reason || item?.details?.message || "") || "runtime_exception",
     };
   });
-  const guardedResults = normalizedResults.map((item) => {
+  const imageGuardedResults = normalizedResults.map((item) => {
     if (cleanText(item?.task) !== "image" || item?.status !== "done") {
       return item;
     }
@@ -78,6 +79,29 @@ export function normalizeTaskLayerResult(taskLayerResult = null) {
       blocked: true,
       failure_class: "capability_gap",
       error: "placeholder_output_blocked",
+      result: null,
+    };
+  });
+  const guardedResults = imageGuardedResults.map((item) => {
+    if (item?.status !== "done") {
+      return item;
+    }
+    const task = cleanText(item?.task);
+    const skill = resolveTaskSkillName(item);
+    const registered = skill ? Boolean(getSkillRegistryEntry(skill)) : false;
+    if (task !== "publish" && (!skill || registered)) {
+      return item;
+    }
+    if (task === "publish" && skill && registered) {
+      return item;
+    }
+    return {
+      ...item,
+      status: "failed",
+      ok: false,
+      blocked: false,
+      failure_class: "contract_violation",
+      error: "skill_not_registered",
       result: null,
     };
   });
@@ -187,6 +211,15 @@ function isPlaceholderImageAsset(asset = "") {
   );
 }
 
+function resolveTaskSkillName(item = {}) {
+  return cleanText(
+    item?.skill
+    || item?.result?.skill
+    || item?.result?.handledBy
+    || "",
+  );
+}
+
 function renderCopywritingAnswer(data = {}) {
   const raw = data.copywriting;
   const directContent = typeof raw === "string"
@@ -256,6 +289,9 @@ function explainTaskFailure(item = {}) {
   }
   if (normalized === "no_skill_mapped") {
     return "目前沒有可用執行能力可直接完成這一步。";
+  }
+  if (normalized === "skill_not_registered") {
+    return "目前映射到的能力未在 checked-in skill registry 註冊，系統已 fail-closed。";
   }
   return `這一步目前未完成（${normalized}）。`;
 }

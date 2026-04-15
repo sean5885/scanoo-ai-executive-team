@@ -345,16 +345,17 @@ Current truth:
 - implemented as an adjacent helper with an optional planner pre-pass
 - current checked-in tags are `copywriting`, `image`, and `publish`
 - current checked-in execution order is `copywriting -> image -> publish`
-- current checked-in mapped identifiers are `document_summarize`, `image_generate`, and `message_send`
-- execution is sequential and callback-driven; task failures are recorded fail-soft and later tasks still run; there is no checked-in queue or checked-in skill-runtime registration on this path
+- current checked-in mapped identifiers are `document_summarize` and `image_generate`; `publish` is intentionally unmapped and fail-closed in the current baseline
+- execution is sequential and callback-driven; task failures are recorded fail-soft and later tasks still run; there is no checked-in queue on this path
+- routed task skills must exist in checked-in `skill-registry.mjs`; unregistered mappings fail-closed as `skill_not_registered`
 - if a task tag exists but no mapped identifier is present, the helper records `no_skill_mapped` and still returns the same fail-soft task-layer envelope
 - `executePlannedUserInput(...)` may call this helper before normal planning only when the caller explicitly supplies `runSkill`
 - when that optional pre-pass detects more than one task, planner execution returns a bounded `multi_task` result through the same canonical `answer / sources / limitations` boundary, and those user-facing fields are now derived by `task-to-answer.mjs` instead of being inlined inside `executive-planner.mjs`
-- on the current checked-in path, `task-to-answer.mjs` prefers exposing bounded per-task natural-language payloads for successful `copywriting`, `image`, and `publish` tasks inside `answer`; if no such payload can be rendered, it falls back to the prior execution-summary wording while still preserving fail-soft `limitations`
+- on the current checked-in path, `task-to-answer.mjs` prefers exposing bounded per-task natural-language payloads for successful `copywriting` and `image` tasks inside `answer`; `publish` is rendered only when success evidence carries a registered routed skill, otherwise it fail-closes into limitations
 - image-task guarding now blocks placeholder-like image URLs (`dummyimage`, `placeholder`) so they cannot be rendered as successful image generation in either task summary or answer text
 - if the helper detects zero or one task, or if the optional pre-pass fails, execution falls back to the original planner path
 - the checked-in public `/answer` edge does not currently supply `runSkill`, so the default public route behavior is unchanged
-- `document_summarize` is backed by the checked-in skill runtime, `message_send` is backed by the checked-in write runtime, and `image_generate` is backed by a checked-in internal-only skill runtime that fail-closes until a real image backend is wired
+- `document_summarize` is backed by the checked-in skill runtime, and `image_generate` is backed by a checked-in internal-only skill runtime that fail-closes until a real image backend is wired; task-layer `publish` stays fail-closed until a checked-in registered publish skill exists
 
 ### 4B. Comment Rewrite
 
