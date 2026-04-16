@@ -1,9 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
 import { runTaskLayer } from "../src/task-layer/orchestrator.mjs";
 import { classifyTask } from "../src/task-layer/task-classifier.mjs";
 import { TASK_SKILL_MAP } from "../src/task-layer/task-skill-map.mjs";
+
+const testDb = await createTestDbHarness();
+
+test.after(() => {
+  testDb.close();
+});
 
 test("classifyTask returns stable task tags from keyword heuristics", () => {
   assert.deepEqual(classifyTask("請幫我寫文案、做配圖，最後發布"), [

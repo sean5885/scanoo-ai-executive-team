@@ -70,6 +70,23 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/tests/http-server.trace.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/http-monitoring.test.mjs`
 
+### 1A. Autonomy Runtime Scaffold (Phase 1)
+
+- Implemented (feature-flagged additive scaffold):
+  - `/Users/seanhan/Documents/Playground/src/task-runtime/autonomy-job-types.mjs`
+  - `/Users/seanhan/Documents/Playground/src/task-runtime/autonomy-job-store.mjs`
+  - `/Users/seanhan/Documents/Playground/src/worker/enqueue-autonomy-job.mjs`
+  - `/Users/seanhan/Documents/Playground/src/worker/autonomy-worker-loop.mjs`
+  - `/Users/seanhan/Documents/Playground/src/trace/autonomy-trace-context.mjs`
+- Current truth:
+  - adds a minimal SQLite-backed autonomy job store (`autonomy_jobs`, `autonomy_job_attempts`) and worker lifecycle operations (`claim`, `heartbeat`, `complete`, `fail`)
+  - adds a feature-flagged enqueue adapter and worker loop entry (`AUTONOMY_ENABLED`)
+  - job-level trace correlation now has an additive helper surface (`job_id`, `attempt_id`, `trace_id`)
+  - this scaffold is not wired into the current main HTTP/planner/orchestrator ingress path
+  - this scaffold does not add verifier background unification, parallel specialist execution, or idempotency unification
+- Evidence:
+  - additive module-level scaffold only (no dedicated runtime tests yet)
+
 ### 2. Read Path
 
 - Implemented:

@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 import { runToolLoop } from '../src/planner/tool-loop.mjs';
+
+const testDb = await createTestDbHarness();
+
+test.after(() => {
+  testDb.close();
+});
 
 test('read-only skill cannot bypass into write action', async () => {
   const res = await runToolLoop({

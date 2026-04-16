@@ -1,7 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
 import { toUserFacing } from "../src/task-layer/task-to-answer.mjs";
+
+const testDb = await createTestDbHarness();
+
+test.after(() => {
+  testDb.close();
+});
 
 test("natural language output fail-closes unregistered publish success while preserving other completed tasks", () => {
   const reply = toUserFacing({

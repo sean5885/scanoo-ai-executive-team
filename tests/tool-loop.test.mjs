@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 import { runToolLoop } from '../src/planner/tool-loop.mjs';
+
+const testDb = await createTestDbHarness();
+
+test.after(() => {
+  testDb.close();
+});
 
 test('tool loop executes multi-step actions', async () => {
   const plan = {

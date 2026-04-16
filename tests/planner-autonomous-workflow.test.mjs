@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 import { runAutonomousWorkflow } from '../src/planner-autonomous-workflow.mjs';
+
+const testDb = await createTestDbHarness();
+
+test.after(() => {
+  testDb.close();
+});
 
 const toolExecutor = async ({ action, args }) => {
   if (action === 'search_company_brain_docs') {

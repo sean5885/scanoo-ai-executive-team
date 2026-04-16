@@ -1,9 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
 import { SKILL_CONTRACT as documentFetchContract } from "../src/skills/document-fetch.mjs";
 import { SKILL_CONTRACT as documentSummarizeContract } from "../src/skills/document-summarize-skill.mjs";
 import { SKILL_CONTRACT as searchAndSummarizeContract } from "../src/skills/search-and-summarize-skill.mjs";
+
+const testDb = await createTestDbHarness();
+
+test.after(() => {
+  testDb.close();
+});
 
 function assertSkillContractShape(contract, {
   intentIncludes = "",

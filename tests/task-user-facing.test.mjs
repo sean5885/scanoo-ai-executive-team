@@ -1,7 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
 import { normalizeTaskLayerResult, toUserFacing } from "../src/task-layer/task-to-answer.mjs";
+
+const testDb = await createTestDbHarness();
+
+test.after(() => {
+  testDb.close();
+});
 
 test("normalizeTaskLayerResult rebuilds summary and errors from partial task-layer input", () => {
   const result = normalizeTaskLayerResult({

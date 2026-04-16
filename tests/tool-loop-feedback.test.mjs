@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 import { runToolLoopWithFeedback } from '../src/planner/tool-loop-with-feedback.mjs';
+
+const testDb = await createTestDbHarness();
+
+test.after(() => {
+  testDb.close();
+});
 
 test('tool loop with feedback runs multiple steps via llm decisions', async () => {
   let call = 0;

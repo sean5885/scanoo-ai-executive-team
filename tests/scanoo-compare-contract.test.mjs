@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 import { buildScanooCompareBrief } from "../src/lane-executor.mjs";
+
+const testDb = await createTestDbHarness();
+
+test.after(() => {
+  testDb.close();
+});
 
 test("scanoo-compare brief keeps the required compare contract headings", () => {
   const brief = buildScanooCompareBrief("比較 A 店和 B 店的表現");

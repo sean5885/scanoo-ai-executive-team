@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 import { runExecutionPipeline } from '../src/planner/execution-pipeline.mjs';
+
+const testDb = await createTestDbHarness();
+
+test.after(() => {
+  testDb.close();
+});
 
 test('execution pipeline runs multi-step plan with feedback loop', async () => {
   let call = 0;

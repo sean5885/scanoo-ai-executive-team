@@ -1,11 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
 import {
   dispatchPlannerTool,
   listPlannerSkillBridges,
 } from "../src/executive-planner.mjs";
 import { getSkillMetadata } from "../src/skill-registry.mjs";
+
+const testDb = await createTestDbHarness();
+
+test.after(() => {
+  testDb.close();
+});
 
 function buildSearchSkillPayload() {
   return {

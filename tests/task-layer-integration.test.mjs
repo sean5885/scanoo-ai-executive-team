@@ -1,7 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
 import { executePlannedUserInput } from "../src/executive-planner.mjs";
+
+const testDb = await createTestDbHarness();
+
+test.after(() => {
+  testDb.close();
+});
 
 test("executePlannedUserInput short-circuits to multi-task result when task-layer detects multiple tasks", async () => {
   let requesterCalled = false;

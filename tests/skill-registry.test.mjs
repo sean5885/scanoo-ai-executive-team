@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
 import {
   defaultSkillRegistry,
@@ -7,6 +8,12 @@ import {
   getSkillRegistryEntry,
   normalizeSkillArgs,
 } from "../src/skill-registry.mjs";
+
+const testDb = await createTestDbHarness();
+
+test.after(() => {
+  testDb.close();
+});
 
 test("skill registry entries expose hardened metadata fields", () => {
   const entries = Array.from(defaultSkillRegistry.entries());

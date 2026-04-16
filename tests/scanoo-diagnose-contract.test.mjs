@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 import { buildScanooDiagnoseBrief } from "../src/lane-executor.mjs";
+
+const testDb = await createTestDbHarness();
+
+test.after(() => {
+  testDb.close();
+});
 
 test("scanoo-diagnose brief keeps the required diagnose contract headings", () => {
   const brief = buildScanooDiagnoseBrief("最近 Scanoo 門店轉化突然下滑，幫我診斷");
