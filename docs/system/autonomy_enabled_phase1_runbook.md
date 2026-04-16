@@ -1,0 +1,243 @@
+# AUTONOMY_ENABLED Phase 1 Scaffold Runbook
+
+Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
+
+## Scope
+
+這份 runbook 只覆蓋已落地的 Phase 1 autonomy scaffold：
+
+- `/Users/seanhan/Documents/Playground/src/task-runtime/autonomy-job-types.mjs`
+- `/Users/seanhan/Documents/Playground/src/task-runtime/autonomy-job-store.mjs`
+- `/Users/seanhan/Documents/Playground/src/worker/enqueue-autonomy-job.mjs`
+- `/Users/seanhan/Documents/Playground/src/worker/autonomy-worker-loop.mjs`
+
+不改主流程，不包含 Phase 2/3，不新增功能。
+
+## 1. 啟用前檢查
+
+1. 進到 repo 根目錄。
+
+```bash
+cd /Users/seanhan/Documents/Playground
+```
+
+2. 確認必要環境變數存在（`src/config.mjs` 會要求 `LARK_APP_ID`、`LARK_APP_SECRET`）。
+
+```bash
+node --input-type=module -e 'import "dotenv/config"; const req=["LARK_APP_ID","LARK_APP_SECRET"]; const miss=req.filter((k)=>!process.env[k]); if(miss.length){console.error("missing_env", miss); process.exit(1);} console.log("env_ok", req);'
+```
+
+3. 確認/建立 autonomy tables（不改主流程，只做 schema ready）。
+
+```bash
+node --input-type=module -e 'import { ensureAutonomyJobTables } from "./src/task-runtime/autonomy-job-store.mjs"; ensureAutonomyJobTables(); console.log("autonomy_tables_ready");'
+```
+
+4. 先記錄目前 autonomy queue 狀態（作為回滾前後對照）。
+
+```bash
+node --input-type=module -e 'import db from "./src/db.mjs"; const rows=db.prepare("SELECT status, COUNT(*) AS count FROM autonomy_jobs GROUP BY status ORDER BY status").all(); console.log(JSON.stringify(rows, null, 2));'
+```
+
+## 2. 啟用步驟
+
+1. 在要執行 enqueue / worker 的同一個 process 設定 `AUTONOMY_ENABLED=true`。
+
+```bash
+export AUTONOMY_ENABLED=true
+```
+
+2. 啟動 Phase 1 worker（前景執行，`Ctrl+C` 可停用）。
+
+```bash
+AUTONOMY_ENABLED=true node --input-type=module -e '
+import { startAutonomyWorkerLoop } from "./src/worker/autonomy-worker-loop.mjs";
+const loop = startAutonomyWorkerLoop({
+  workerId: "phase1-runbook-worker",
+  pollIntervalMs: 2000,
+  heartbeatIntervalMs: 10000,
+  leaseMs: 30000,
+  logger: console,
+  async executeJob({ job }) {
+    if (job.job_type !== "runbook_smoke_job") {
+      return { ok: false, error: "unsupported_job_type", data: { job_type: job.job_type } };
+    }
+    return {
+      ok: true,
+      handled_by: "phase1-runbook-worker",
+      handled_at: new Date().toISOString(),
+    };
+  },
+});
+if (!loop.started) {
+  console.error("worker_not_started", loop);
+  process.exit(2);
+}
+console.log("worker_started", loop.worker_id);
+const stop = () => { loop.stop(); process.exit(0); };
+process.on("SIGINT", stop);
+process.on("SIGTERM", stop);
+setInterval(() => {}, 60000);
+'
+```
+
+## 3. 停用步驟
+
+1. 在 worker terminal 按 `Ctrl+C` 停止 loop。
+2. 關閉開關：
+
+```bash
+export AUTONOMY_ENABLED=false
+```
+
+3. 驗證停用合約（enqueue 必須回 `skipped=true` + `reason=autonomy_disabled`）。
+
+```bash
+AUTONOMY_ENABLED=false node --input-type=module -e 'import { enqueueAutonomyJob } from "./src/worker/enqueue-autonomy-job.mjs"; const result = await enqueueAutonomyJob({ jobType:"runbook_disable_probe", traceId:"runbook_disable_probe" }); console.log(JSON.stringify({ok:result?.ok, skipped:result?.skipped, reason:result?.reason, trace_id:result?.trace_id}, null, 2));'
+```
+
+## 4. 驗證步驟
+
+1. 建立 smoke trace id 並 enqueue 一筆 smoke job。
+
+```bash
+TRACE_ID="runbook_smoke_$(date +%s)"
+TRACE_ID="$TRACE_ID" AUTONOMY_ENABLED=true node --input-type=module -e 'import { enqueueAutonomyJob } from "./src/worker/enqueue-autonomy-job.mjs"; const traceId=process.env.TRACE_ID; const result = await enqueueAutonomyJob({ jobType:"runbook_smoke_job", payload:{source:"runbook"}, traceId, maxAttempts:1 }); console.log(JSON.stringify({traceId, ok:result?.ok, job_id:result?.job_id, status:result?.status, trace_id:result?.trace_id}, null, 2));'
+```
+
+2. 以 one-shot worker 執行一次 claim/execute/complete。
+
+```bash
+AUTONOMY_ENABLED=true node --input-type=module -e 'import { runAutonomyWorkerOnce } from "./src/worker/autonomy-worker-loop.mjs"; const result = await runAutonomyWorkerOnce({ workerId:"runbook-verify-worker", enabled:true, heartbeatIntervalMs:60000, async executeJob({ job }) { if (job.job_type !== "runbook_smoke_job") return { ok:false, error:"unsupported_job_type", data:{job_type:job.job_type} }; return { ok:true, handled_job_id:job.id, source:"runbook_verify" }; } }); console.log(JSON.stringify(result, null, 2));'
+```
+
+3. 查詢 DB，確認該 trace 的 job 轉成 `completed`，且有 attempt。
+
+```bash
+TRACE_ID="$TRACE_ID" node --input-type=module -e 'import db from "./src/db.mjs"; const traceId=process.env.TRACE_ID; const jobs=db.prepare("SELECT id, job_type, status, attempt_count, trace_id FROM autonomy_jobs WHERE trace_id = ?").all(traceId); const attempts=db.prepare("SELECT id, job_id, worker_id, status, trace_id FROM autonomy_job_attempts WHERE trace_id = ? ORDER BY created_at DESC").all(traceId); console.log(JSON.stringify({jobs, attempts}, null, 2));'
+```
+
+4. 驗證標準：
+
+- enqueue 回傳 `ok=true`
+- worker 回傳 `claimed=true` 且 `completed=true`
+- `autonomy_jobs.status=completed`
+- `autonomy_job_attempts.status=completed`
+
+## Smoke Test（最小驗證）
+
+1. 啟用 `AUTONOMY_ENABLED`。
+
+```bash
+cd /Users/seanhan/Documents/Playground
+export AUTONOMY_ENABLED=true
+export TRACE_ID="smoke_autonomy_$(date +%s)"
+echo "$AUTONOMY_ENABLED $TRACE_ID"
+```
+
+預期結果：輸出 `true` 與 `smoke_autonomy_*` trace id。
+
+2. enqueue 一個 demo job。
+
+```bash
+TRACE_ID="$TRACE_ID" AUTONOMY_ENABLED=true node --input-type=module -e 'import { enqueueAutonomyJob } from "./src/worker/enqueue-autonomy-job.mjs"; const traceId=process.env.TRACE_ID; const result=await enqueueAutonomyJob({ jobType:"smoke_demo_job", payload:{source:"smoke"}, traceId, maxAttempts:1 }); console.log(JSON.stringify({ok:result?.ok, job_id:result?.job_id, status:result?.status, trace_id:result?.trace_id}, null, 2));'
+```
+
+預期結果：`ok=true`，`status=queued`，且有 `job_id`。
+
+3. 啟動 worker loop。
+
+```bash
+mkdir -p .tmp
+AUTONOMY_ENABLED=true node --input-type=module -e 'import { startAutonomyWorkerLoop } from "./src/worker/autonomy-worker-loop.mjs"; const loop=startAutonomyWorkerLoop({ workerId:"smoke-worker", pollIntervalMs:1000, heartbeatIntervalMs:10000, leaseMs:30000, enabled:true, logger:console, async executeJob({ job }) { if (job.job_type !== "smoke_demo_job") return { ok:false, error:"unsupported_job_type", data:{ job_type: job.job_type } }; return { ok:true, handled_job_id: job.id, handled_by:"smoke-worker" }; } }); if (!loop.started) { console.error("worker_not_started"); process.exit(2); } console.log("worker_started", loop.worker_id); const stop=()=>{ loop.stop(); process.exit(0); }; process.on("SIGINT", stop); process.on("SIGTERM", stop); setInterval(() => {}, 60000);' > .tmp/autonomy-smoke-worker.log 2>&1 & echo $! > .tmp/autonomy-smoke-worker.pid
+cat .tmp/autonomy-smoke-worker.pid
+```
+
+預期結果：輸出一個 PID，且 `.tmp/autonomy-smoke-worker.log` 出現 `autonomy_worker_loop_started`。
+
+4. 查詢 SQLite（`autonomy_jobs` / `autonomy_job_attempts`）。
+
+```bash
+sleep 2
+TRACE_ID="$TRACE_ID" node --input-type=module -e 'import db from "./src/db.mjs"; const traceId=process.env.TRACE_ID; const jobs=db.prepare("SELECT id, job_type, status, attempt_count, trace_id FROM autonomy_jobs WHERE trace_id = ?").all(traceId); const attempts=db.prepare("SELECT id, job_id, worker_id, status, trace_id FROM autonomy_job_attempts WHERE trace_id = ? ORDER BY created_at DESC").all(traceId); console.log(JSON.stringify({jobs, attempts}, null, 2));'
+```
+
+預期結果：`jobs` 與 `attempts` 各至少 1 筆。
+
+5. 驗證 job 完成。
+
+```bash
+TRACE_ID="$TRACE_ID" node --input-type=module -e 'import db from "./src/db.mjs"; const traceId=process.env.TRACE_ID; const job=db.prepare("SELECT status FROM autonomy_jobs WHERE trace_id = ? ORDER BY created_at DESC LIMIT 1").get(traceId); const attempt=db.prepare("SELECT status FROM autonomy_job_attempts WHERE trace_id = ? ORDER BY created_at DESC LIMIT 1").get(traceId); if (job?.status !== "completed" || attempt?.status !== "completed") { console.error(JSON.stringify({ job, attempt }, null, 2)); process.exit(1); } console.log(JSON.stringify({ job_status: job.status, attempt_status: attempt.status }, null, 2));'
+```
+
+預期結果：輸出 `job_status=completed`、`attempt_status=completed`，並以 exit code `0` 結束。
+
+6. 停止 worker。
+
+```bash
+kill "$(cat .tmp/autonomy-smoke-worker.pid)"
+sleep 1
+ps -p "$(cat .tmp/autonomy-smoke-worker.pid)" >/dev/null && echo "still_running" || echo "worker_stopped"
+```
+
+預期結果：輸出 `worker_stopped`。
+
+## 5. 回滾步驟
+
+1. 停 worker（`Ctrl+C`），並設回 `AUTONOMY_ENABLED=false`。
+
+```bash
+export AUTONOMY_ENABLED=false
+```
+
+2. 清除 runbook 產生的 smoke/probe 資料（只清 `runbook_*` trace）。
+
+```bash
+node --input-type=module -e 'import db from "./src/db.mjs"; const deletedAttempts = db.prepare("DELETE FROM autonomy_job_attempts WHERE trace_id LIKE ? OR trace_id = ?").run("runbook_smoke_%", "runbook_disable_probe"); const deletedJobs = db.prepare("DELETE FROM autonomy_jobs WHERE trace_id LIKE ? OR trace_id = ?").run("runbook_smoke_%", "runbook_disable_probe"); console.log(JSON.stringify({deletedAttempts:deletedAttempts.changes, deletedJobs:deletedJobs.changes}, null, 2));'
+```
+
+3. 最終確認沒有遺留 runbook 記錄。
+
+```bash
+node --input-type=module -e 'import db from "./src/db.mjs"; const row=db.prepare("SELECT COUNT(*) AS count FROM autonomy_jobs WHERE trace_id LIKE ? OR trace_id = ?").get("runbook_smoke_%", "runbook_disable_probe"); console.log(JSON.stringify(row, null, 2));'
+```
+
+## 6. 風險與 Guardrail
+
+- 風險：`AUTONOMY_ENABLED=true` 只開啟 enqueue/worker 可用性，不會自動把主流程接到 autonomy runtime。
+  - Guardrail：不要把這個開關當成已上線 background worker mesh。
+- 風險：`startAutonomyWorkerLoop` 預設 `executeJob` 會回 `ok:true`。
+  - Guardrail：永遠傳入明確 `executeJob`，並限制可處理 `job_type`（本 runbook 僅允許 `runbook_smoke_job`）。
+- 風險：autonomy tables 與主 DB 同一個 SQLite（`RAG_SQLITE_PATH`）。
+  - Guardrail：所有演練都加 `trace_id=runbook_*`，可精準清理。
+- 風險：worker 非受管程序（目前沒有內建 supervisor）。
+  - Guardrail：一次只開一個演練 worker，且在前景執行，停用時一定 `Ctrl+C`。
+- 風險：`maxAttempts` 預設 1，錯誤後不一定重試。
+  - Guardrail：驗證時明確設定 `maxAttempts`，並用 DB 查 `attempt_count/max_attempts`。
+
+## 7. 故障處理（最小版）
+
+1. 症狀：enqueue 回 `autonomy_disabled`。
+
+- 檢查：
+
+```bash
+AUTONOMY_ENABLED=${AUTONOMY_ENABLED:-""} node --input-type=module -e 'import { isAutonomyEnabled } from "./src/task-runtime/autonomy-job-types.mjs"; console.log(JSON.stringify({raw:process.env.AUTONOMY_ENABLED, enabled:isAutonomyEnabled()}, null, 2));'
+```
+
+- 處理：把同一個執行 process 的 `AUTONOMY_ENABLED` 設成 `true` 再重試。
+
+2. 症狀：job 長時間 `running` 不前進。
+
+- 檢查：
+
+```bash
+node --input-type=module -e 'import db from "./src/db.mjs"; const rows=db.prepare("SELECT id, status, lease_owner, lease_expires_at, attempt_count, max_attempts, trace_id FROM autonomy_jobs WHERE status IN (\"queued\",\"running\",\"failed\") ORDER BY updated_at DESC LIMIT 20").all(); console.log(JSON.stringify(rows, null, 2));'
+```
+
+- 處理：先停掉舊 worker，再用 `runAutonomyWorkerOnce` 啟動新 worker reclaim；僅對 `runbook_*` trace 做 cleanup。
+
+3. 症狀：worker 啟動但一直 claim 不到 job。
+
+- 檢查 `autonomy_jobs` 是否真的有 `queued` 且 `next_run_at <= now`。
+- 若只有 `failed`，代表已耗盡重試，需要重新 enqueue 新 job（保留新 trace）。
