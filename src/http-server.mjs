@@ -967,6 +967,31 @@ function resolvePlannerUserResponseStatusCode({ userResponse = {}, envelope = {}
   return 200;
 }
 
+function resolveAbortedAnswerStatusCode({
+  userResponse = {},
+  abortCode = "",
+} = {}) {
+  if (userResponse?.ok === true) {
+    return 200;
+  }
+  const failureClass = cleanText(userResponse?.failure_class || "");
+  const limitationSignals = Array.isArray(userResponse?.limitations)
+    ? userResponse.limitations.join(" ")
+    : "";
+  const answerSignals = cleanText(userResponse?.answer || "");
+  if (
+    userResponse?.partial === true
+    || failureClass === "capability_gap"
+    || /capability_gap|blocked/i.test(`${answerSignals} ${limitationSignals}`)
+  ) {
+    return 200;
+  }
+  if (abortCode === "request_timeout") {
+    return 504;
+  }
+  return REQUEST_CANCELLED_STATUS_CODE;
+}
+
 function companyBrainReadRequiresExplicitAuth(res, requestUrl) {
   return requestRequiresExplicitUserAuth(res?.__request_headers || null)
     || Boolean(String(requestUrl?.pathname || "").startsWith("/agent/company-brain/"));
@@ -8413,7 +8438,11 @@ async function handleAnswer(res, requestUrl, body, logger = noopHttpLogger, req 
         traceId: res?.__trace_id || null,
         handlerName: "handleAnswer",
       });
-      jsonResponse(res, userResponse.ok === true ? 200 : abortInfo.code === "request_timeout" ? 504 : REQUEST_CANCELLED_STATUS_CODE, {
+      const statusCode = resolveAbortedAnswerStatusCode({
+        userResponse,
+        abortCode: abortInfo.code,
+      });
+      jsonResponse(res, statusCode, {
         ...userResponse,
         __hide_trace_id: true,
       });

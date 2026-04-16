@@ -547,6 +547,33 @@ function maybeApplyTaskDecompositionResponse({
   if (!hasUsableTaskDecompositionFallback(response)) {
     return response;
   }
+  if (
+    decomposition.isMultiIntent
+    && decomposition.blocked.length === 0
+    && decomposition.completable.length > 1
+  ) {
+    const draft = buildDraftCopyContent(requestText);
+    return attachHiddenUserResponseMetadata({
+      ok: true,
+      answer: [
+        `我先把可直接交付的部分完成，下面是一版${draft.label}：`,
+        "",
+        draft.content,
+      ].join("\n"),
+      sources: normalizeUserResponseList([
+        `已先完成：${draft.label}。`,
+        "待補資料：摘要需要原文內容、文件連結或 doc_id 才能準確完成。",
+      ]),
+      limitations: normalizeUserResponseList([
+        "請貼上要摘要的原文，或提供文件名稱 / doc_id，我會接著補上精簡摘要版。",
+      ]),
+    }, {
+      failure_class: "partial_success",
+      failure_class_v2: "partial_data",
+      reply_mode: "partial_success",
+      partial: true,
+    });
+  }
   if (!decomposition.isMultiIntent || decomposition.completable.length === 0 || decomposition.blocked.length === 0) {
     return response;
   }
@@ -1488,7 +1515,7 @@ export function normalizeUserResponse({
 
   const objectPayload = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
   if (isCanonicalUserFacingResponse(objectPayload) || typeof objectPayload.answer === "string") {
-    const canonicalResponse = ensureFailSoftUsableShape({
+    const decompositionAwareCanonical = maybeApplyTaskDecompositionResponse({
       response: {
         ok: objectPayload.ok !== false,
         answer: normalizeText(objectPayload.answer || ""),
@@ -1497,13 +1524,33 @@ export function normalizeUserResponse({
         }),
         limitations: normalizeUserResponseList(objectPayload.limitations),
       },
-      failureClassV2: objectPayload.ok === false ? "upstream_error" : null,
+      requestText,
+      plannerEnvelope: objectPayload,
+    });
+    const canonicalFailureClass = deriveFailureClassFromEnvelope({
+      envelope: objectPayload,
+      requestText,
+      response: decompositionAwareCanonical,
+    });
+    const canonicalFailureClassV2 = deriveFailureClassV2({
+      envelope: objectPayload,
+      requestText,
+      response: decompositionAwareCanonical,
+      legacyFailureClass: canonicalFailureClass,
+    });
+    const canonicalResponse = ensureFailSoftUsableShape({
+      response: decompositionAwareCanonical,
+      failureClassV2: canonicalFailureClassV2,
     });
     const canonicalPartial = canonicalResponse.ok === true && isPartialSuccessResponse(canonicalResponse);
     attachHiddenUserResponseMetadata(canonicalResponse, {
-      failure_class: objectPayload.ok === false ? "generic_fallback" : null,
-      failure_class_v2: objectPayload.ok === false ? "upstream_error" : null,
-      reply_mode: canonicalResponse.ok === true ? "success" : "fail_soft",
+      failure_class: canonicalFailureClass,
+      failure_class_v2: canonicalFailureClassV2,
+      reply_mode: canonicalFailureClass === "partial_success"
+        ? "partial_success"
+        : canonicalResponse.ok === true
+          ? "success"
+          : "fail_soft",
       partial: canonicalPartial,
       summary: canonicalResponse.ok === false ? canonicalResponse.answer : null,
       what_we_got: canonicalResponse.ok === false ? [...canonicalResponse.sources] : null,
