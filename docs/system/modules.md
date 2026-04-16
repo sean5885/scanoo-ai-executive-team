@@ -82,10 +82,13 @@ Current-truth docs for onboarding are:
   - adds a minimal SQLite-backed autonomy job store (`autonomy_jobs`, `autonomy_job_attempts`) and worker lifecycle operations (`claim`, `heartbeat`, `complete`, `fail`)
   - adds a feature-flagged enqueue adapter and worker loop entry (`AUTONOMY_ENABLED`)
   - job-level trace correlation now has an additive helper surface (`job_id`, `attempt_id`, `trace_id`)
+  - worker completion now runs one local verifier gate (`executeJob -> normalize execution_journal/evidence -> verify -> complete/fail`) through `executive-verifier` rules before marking a job `completed`
   - this scaffold is not wired into the current main HTTP/planner/orchestrator ingress path
-  - this scaffold does not add verifier background unification, parallel specialist execution, or idempotency unification
+  - this scaffold still does not add background worker mesh, parallel specialist execution, or idempotency unification
 - Evidence:
-  - additive module-level scaffold only (no dedicated runtime tests yet)
+  - `/Users/seanhan/Documents/Playground/tests/autonomy-job-store.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/enqueue-autonomy-job.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/autonomy-worker-loop.test.mjs`
 
 ### 2. Read Path
 

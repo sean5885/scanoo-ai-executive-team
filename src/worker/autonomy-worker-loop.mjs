@@ -1,4 +1,5 @@
 import { cleanText } from "../message-intent-utils.mjs";
+import { EVIDENCE_TYPES, verifyTaskCompletion } from "../executive-verifier.mjs";
 import {
   claimNextAutonomyJob,
   completeAutonomyAttempt,
@@ -46,6 +47,175 @@ function buildNormalizedError(error) {
 
 function shouldResultBeTreatedAsFailure(result = null) {
   return result && typeof result === "object" && result.ok === false;
+}
+
+function normalizeAutonomyEvidence(items = []) {
+  return Array.isArray(items)
+    ? items.filter((item) => item && typeof item === "object" && !Array.isArray(item))
+    : [];
+}
+
+function normalizeAutonomyExecutionResultObject(executionResult = null) {
+  return executionResult && typeof executionResult === "object" && !Array.isArray(executionResult)
+    ? executionResult
+    : null;
+}
+
+function deriveAutonomyReplyText({ executionResult = null, gate = null } = {}) {
+  const gateReply = cleanText(gate?.reply_text ?? gate?.replyText);
+  if (gateReply) {
+    return gateReply;
+  }
+  const resultObject = normalizeAutonomyExecutionResultObject(executionResult);
+  if (resultObject) {
+    return cleanText(
+      resultObject.reply_text
+      ?? resultObject.replyText
+      ?? resultObject.reply?.text
+      ?? resultObject.answer
+      ?? resultObject.summary
+      ?? resultObject.message
+      ?? resultObject.output
+      ?? "",
+    );
+  }
+  return cleanText(executionResult);
+}
+
+function buildAutonomyVerificationInput({
+  job = null,
+  executionResult = null,
+} = {}) {
+  const resultObject = normalizeAutonomyExecutionResultObject(executionResult) || {};
+  const gate = resultObject.verifier_gate && typeof resultObject.verifier_gate === "object" && !Array.isArray(resultObject.verifier_gate)
+    ? resultObject.verifier_gate
+    : {};
+  const taskType = cleanText(gate.task_type ?? gate.taskType) || "search";
+  const explicitExecutionJournal =
+    gate.execution_journal && typeof gate.execution_journal === "object" && !Array.isArray(gate.execution_journal)
+      ? gate.execution_journal
+      : gate.executionJournal && typeof gate.executionJournal === "object" && !Array.isArray(gate.executionJournal)
+        ? gate.executionJournal
+        : null;
+  const explicitEvidence = normalizeAutonomyEvidence(gate.evidence);
+  const fallbackEvidence = explicitEvidence.length > 0
+    ? explicitEvidence
+    : [{
+      type: EVIDENCE_TYPES.tool_output,
+      summary: `autonomy_job_result:${cleanText(job?.job_type) || "unknown_job_type"}`,
+    }];
+  const replyText = deriveAutonomyReplyText({
+    executionResult,
+    gate,
+  });
+  const structuredResult =
+    gate.structured_result !== undefined
+      ? gate.structured_result
+      : gate.structuredResult !== undefined
+        ? gate.structuredResult
+        : resultObject.structured_result !== undefined
+          ? resultObject.structured_result
+          : resultObject.structuredResult !== undefined
+            ? resultObject.structuredResult
+            : null;
+  const expectedOutputSchema =
+    gate.expected_output_schema !== undefined
+      ? gate.expected_output_schema
+      : gate.expectedOutputSchema !== undefined
+        ? gate.expectedOutputSchema
+        : null;
+
+  if (explicitExecutionJournal) {
+    return {
+      taskType,
+      executionJournal: {
+        ...explicitExecutionJournal,
+        raw_evidence: Array.isArray(explicitExecutionJournal.raw_evidence)
+          ? explicitExecutionJournal.raw_evidence
+          : fallbackEvidence,
+        reply_text: cleanText(explicitExecutionJournal.reply_text ?? explicitExecutionJournal.replyText) || replyText,
+        structured_result:
+          explicitExecutionJournal.structured_result !== undefined
+            ? explicitExecutionJournal.structured_result
+            : explicitExecutionJournal.structuredResult !== undefined
+              ? explicitExecutionJournal.structuredResult
+              : structuredResult,
+        expected_output_schema:
+          explicitExecutionJournal.expected_output_schema !== undefined
+            ? explicitExecutionJournal.expected_output_schema
+            : explicitExecutionJournal.expectedOutputSchema !== undefined
+              ? explicitExecutionJournal.expectedOutputSchema
+              : expectedOutputSchema,
+      },
+    };
+  }
+
+  return {
+    taskType,
+    executionJournal: {
+      classified_intent: cleanText(job?.job_type) || taskType,
+      selected_action: cleanText(job?.job_type) || "autonomy_job",
+      dispatched_actions: [],
+      raw_evidence: fallbackEvidence,
+      fallback_used: false,
+      tool_required: false,
+      synthetic_agent_hint: null,
+      reply_text: replyText,
+      structured_result: structuredResult,
+      expected_output_schema: expectedOutputSchema,
+    },
+  };
+}
+
+function runAutonomyVerifierGate({
+  job = null,
+  executionResult = null,
+} = {}) {
+  const normalizedInput = buildAutonomyVerificationInput({
+    job,
+    executionResult,
+  });
+  const verification = verifyTaskCompletion({
+    taskType: normalizedInput.taskType,
+    executionJournal: normalizedInput.executionJournal,
+  });
+
+  return {
+    pass: verification?.pass === true,
+    reason: cleanText(
+      verification?.execution_policy_reason
+      || (Array.isArray(verification?.issues) ? verification.issues[0] : "")
+      || "verifier_failed",
+    ) || "verifier_failed",
+    task_type: normalizedInput.taskType,
+    execution_journal: normalizedInput.executionJournal,
+    verification,
+  };
+}
+
+function buildAutonomyStoredResult({
+  executionResult = null,
+  verifierGateResult = null,
+} = {}) {
+  const gateSummary = verifierGateResult && typeof verifierGateResult === "object"
+    ? {
+      pass: verifierGateResult.pass === true,
+      reason: cleanText(verifierGateResult.reason) || null,
+      task_type: cleanText(verifierGateResult.task_type) || null,
+      issues: Array.isArray(verifierGateResult.verification?.issues) ? verifierGateResult.verification.issues : [],
+    }
+    : null;
+  const normalized = normalizeAutonomyExecutionResultObject(executionResult);
+  if (normalized) {
+    return {
+      ...normalized,
+      verifier_gate_result: gateSummary,
+    };
+  }
+  return {
+    value: executionResult,
+    verifier_gate_result: gateSummary,
+  };
 }
 
 export async function runAutonomyWorkerOnce({
@@ -171,11 +341,50 @@ export async function runAutonomyWorkerOnce({
       };
     }
 
+    const verifierGateResult = runAutonomyVerifierGate({
+      job: claim.job,
+      executionResult,
+    });
+    if (verifierGateResult.pass !== true) {
+      const normalizedFailure = {
+        error: "verifier_failed",
+        reason: verifierGateResult.reason,
+        verifier: verifierGateResult.verification,
+      };
+      const failed = failAutonomyAttempt({
+        jobId: claim.job.id,
+        attemptId: claim.attempt.id,
+        workerId: normalizedWorkerId,
+        error: normalizedFailure,
+      });
+      resolvedLogger.warn("autonomy_job_verifier_blocked", buildAutonomyTraceFields({
+        traceContext,
+        fields: {
+          reason: verifierGateResult.reason,
+          issues: verifierGateResult.verification?.issues || [],
+          retry_scheduled: failed?.retry_scheduled === true,
+        },
+      }));
+      return {
+        ok: false,
+        claimed: true,
+        failed: true,
+        job_id: claim.job.id,
+        attempt_id: claim.attempt.id,
+        trace_id: traceContext.trace_id,
+        error: "verifier_failed",
+        reason: verifierGateResult.reason,
+      };
+    }
+
     const complete = completeAutonomyAttempt({
       jobId: claim.job.id,
       attemptId: claim.attempt.id,
       workerId: normalizedWorkerId,
-      result: executionResult,
+      result: buildAutonomyStoredResult({
+        executionResult,
+        verifierGateResult,
+      }),
     });
     if (complete?.ok !== true) {
       resolvedLogger.warn("autonomy_job_complete_failed", buildAutonomyTraceFields({
