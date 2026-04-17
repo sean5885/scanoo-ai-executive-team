@@ -25,6 +25,7 @@ import {
   startExecutiveTask,
   updateExecutiveTask,
 } from "./executive-task-state.mjs";
+import { resolveRecoveryDecisionV1 } from "./recovery-decision.mjs";
 import { runInSingleMachineRuntimeSession } from "./single-machine-runtime-coordination.mjs";
 import { normalizeUserResponse } from "./user-response-normalizer.mjs";
 
@@ -687,6 +688,95 @@ async function advanceTaskLifecycle(task, steps = [], reason = "workflow_state_a
   return current;
 }
 
+function readNumericSignal(...candidates) {
+  for (const candidate of candidates) {
+    const value = Number(candidate);
+    if (Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function readBooleanSignal(...candidates) {
+  for (const candidate of candidates) {
+    if (typeof candidate === "boolean") {
+      return candidate;
+    }
+    if (candidate === "true") {
+      return true;
+    }
+    if (candidate === "false") {
+      return false;
+    }
+  }
+  return null;
+}
+
+function deriveRecoveryWorkflowState(decision = {}) {
+  const nextState = cleanText(decision?.next_state || "");
+  const routingHint = cleanText(decision?.routing_hint || "");
+  if (nextState === "executing") {
+    return "retrying";
+  }
+  if (nextState === "blocked" && routingHint.endsWith("_waiting_user")) {
+    return "waiting_user";
+  }
+  return nextState || "blocked";
+}
+
+function resolveWorkflowRecoveryDecision({
+  task = null,
+  workflow = "",
+  verification = null,
+  structuredResult = null,
+} = {}) {
+  const structured = structuredResult && typeof structuredResult === "object" && !Array.isArray(structuredResult)
+    ? structuredResult
+    : {};
+  const taskMeta = task?.meta && typeof task.meta === "object" && !Array.isArray(task.meta)
+    ? task.meta
+    : {};
+  const normalizedWorkflow = cleanText(workflow || task?.workflow || "");
+  const retryCount = readNumericSignal(
+    structured.retry_count,
+    taskMeta.retry_count,
+    taskMeta.recovery_attempt_count,
+    Array.isArray(task?.verifications) ? task.verifications.length : null,
+    0,
+  );
+  const maxRetries = readNumericSignal(
+    structured.max_retries,
+    taskMeta.max_retries,
+    taskMeta?.retry_policy?.max_retries,
+    2,
+  );
+  const retryable = readBooleanSignal(
+    structured.retryable,
+    taskMeta.retryable,
+  );
+  const error = cleanText(
+    structured.error
+    || structured.message
+    || verification?.execution_policy_reason
+    || "",
+  );
+  const failureClass = cleanText(
+    structured.failure_class
+    || taskMeta.failure_class
+    || "",
+  );
+  return resolveRecoveryDecisionV1({
+    error,
+    failure_class: failureClass,
+    retryable,
+    retry_count: retryCount,
+    max_retries: maxRetries,
+    workflow: normalizedWorkflow,
+    verification,
+  });
+}
+
 async function ensureMeetingWorkflowTaskUnlocked({
   accountId = "",
   event = {},
@@ -856,13 +946,19 @@ async function finalizeMeetingWorkflowTaskUnlocked({
       await clearActiveExecutiveTask(accountId, sessionKey, { expectedTaskId: current.id });
     }
   } else {
-    if (current.lifecycle_state !== "blocked") {
-      current = await transitionTaskLifecycle(current, "blocked", "meeting_verification_failed");
+    const recoveryDecision = resolveWorkflowRecoveryDecision({
+      task: current,
+      workflow: "meeting",
+      verification: finalized.verification,
+      structuredResult,
+    });
+    if (current.lifecycle_state !== recoveryDecision.next_state) {
+      current = await transitionTaskLifecycle(current, recoveryDecision.next_state, recoveryDecision.reason);
     }
     current = await updateExecutiveTask(current.id, {
-      workflow_state: "blocked",
-      routing_hint: "meeting_retry_required",
-      status: "blocked",
+      workflow_state: deriveRecoveryWorkflowState(recoveryDecision),
+      routing_hint: recoveryDecision.routing_hint,
+      status: recoveryDecision.next_status,
     });
   }
 
@@ -1062,13 +1158,19 @@ async function finalizeDocRewriteWorkflowTaskUnlocked({
       await clearActiveExecutiveTask(accountId, sessionKey, { expectedTaskId: current.id });
     }
   } else {
-    if (current.lifecycle_state !== "blocked") {
-      current = await transitionTaskLifecycle(current, "blocked", "doc_rewrite_verification_failed");
+    const recoveryDecision = resolveWorkflowRecoveryDecision({
+      task: current,
+      workflow: "doc_rewrite",
+      verification: finalized.verification,
+      structuredResult,
+    });
+    if (current.lifecycle_state !== recoveryDecision.next_state) {
+      current = await transitionTaskLifecycle(current, recoveryDecision.next_state, recoveryDecision.reason);
     }
     current = await updateExecutiveTask(current.id, {
-      workflow_state: "blocked",
-      routing_hint: "doc_rewrite_retry_required",
-      status: "blocked",
+      workflow_state: deriveRecoveryWorkflowState(recoveryDecision),
+      routing_hint: recoveryDecision.routing_hint,
+      status: recoveryDecision.next_status,
     });
   }
 
@@ -1224,13 +1326,19 @@ async function finalizeDocumentReviewWorkflowTaskUnlocked({
       await clearActiveExecutiveTask(accountId, sessionKey, { expectedTaskId: current.id });
     }
   } else {
-    if (current.lifecycle_state !== "blocked") {
-      current = await transitionTaskLifecycle(current, "blocked", "document_review_verification_failed");
+    const recoveryDecision = resolveWorkflowRecoveryDecision({
+      task: current,
+      workflow: "document_review",
+      verification: finalized.verification,
+      structuredResult,
+    });
+    if (current.lifecycle_state !== recoveryDecision.next_state) {
+      current = await transitionTaskLifecycle(current, recoveryDecision.next_state, recoveryDecision.reason);
     }
     current = await updateExecutiveTask(current.id, {
-      workflow_state: "blocked",
-      routing_hint: "document_review_retry_required",
-      status: "blocked",
+      workflow_state: deriveRecoveryWorkflowState(recoveryDecision),
+      routing_hint: recoveryDecision.routing_hint,
+      status: recoveryDecision.next_status,
     });
   }
 
@@ -1468,13 +1576,19 @@ async function finalizeCloudDocWorkflowTaskUnlocked({
     });
     await clearActiveExecutiveTask(accountId, sessionKey, { expectedTaskId: current.id });
   } else {
-    if (current.lifecycle_state !== "blocked") {
-      current = await transitionTaskLifecycle(current, "blocked", "cloud_doc_verification_failed");
+    const recoveryDecision = resolveWorkflowRecoveryDecision({
+      task: current,
+      workflow: "cloud_doc",
+      verification: finalized.verification,
+      structuredResult,
+    });
+    if (current.lifecycle_state !== recoveryDecision.next_state) {
+      current = await transitionTaskLifecycle(current, recoveryDecision.next_state, recoveryDecision.reason);
     }
     current = await updateExecutiveTask(current.id, {
-      workflow_state: "blocked",
-      routing_hint: "cloud_doc_retry_required",
-      status: "blocked",
+      workflow_state: deriveRecoveryWorkflowState(recoveryDecision),
+      routing_hint: recoveryDecision.routing_hint,
+      status: recoveryDecision.next_status,
     });
   }
 

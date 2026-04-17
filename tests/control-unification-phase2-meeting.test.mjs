@@ -151,7 +151,7 @@ test("meeting confirm path writes back then verifies and completes", async () =>
   assert.equal(await getActiveExecutiveTask(accountId, scope.session_key), null);
 });
 
-test("meeting verifier failure blocks workflow and never completes", async () => {
+test("meeting verifier failure enters retrying recovery path and never completes", async () => {
   const { accountId, scope, event } = createMeetingScope(`fail-${Date.now()}`);
   await ensureMeetingWorkflowTask({
     accountId,
@@ -192,8 +192,10 @@ test("meeting verifier failure blocks workflow and never completes", async () =>
   assert.equal(finalized?.verification?.pass, false);
   assert.notEqual(finalized?.task?.lifecycle_state, "completed");
   assert.notEqual(finalized?.task?.status, "completed");
-  assert.equal(finalized?.task?.workflow_state, "blocked");
-  assert.equal(finalized?.task?.status, "blocked");
+  assert.equal(finalized?.task?.lifecycle_state, "executing");
+  assert.equal(finalized?.task?.workflow_state, "retrying");
+  assert.equal(finalized?.task?.routing_hint, "meeting_resume_same_task");
+  assert.equal(finalized?.task?.status, "active");
 
   await clearActiveExecutiveTask(accountId, scope.session_key);
 });

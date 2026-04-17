@@ -186,7 +186,7 @@ test("cloud doc apply verifies and completes", { concurrency: false }, async () 
   assert.equal(await getActiveExecutiveTask(accountId, scope.session_key), null);
 });
 
-test("cloud doc verifier fail does not complete", { concurrency: false }, async () => {
+test("cloud doc verifier fail enters retrying recovery path and does not complete", { concurrency: false }, async () => {
   const { accountId, scopeKey, scope, event } = createCloudDocScope(`fail-${Date.now()}`);
   await ensureCloudDocWorkflowTask({
     accountId,
@@ -215,7 +215,10 @@ test("cloud doc verifier fail does not complete", { concurrency: false }, async 
   });
 
   assert.equal(finalized?.verification?.pass, false);
-  assert.equal(finalized?.task?.workflow_state, "blocked");
+  assert.equal(finalized?.task?.lifecycle_state, "executing");
+  assert.equal(finalized?.task?.workflow_state, "retrying");
+  assert.equal(finalized?.task?.routing_hint, "cloud_doc_resume_same_task");
+  assert.equal(finalized?.task?.status, "active");
   assert.notEqual(finalized?.task?.status, "completed");
 
   await clearActiveExecutiveTask(accountId, scope.session_key);

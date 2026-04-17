@@ -252,7 +252,7 @@ test("doc rewrite apply readiness is fail-closed when confirmation drifts from a
   await clearActiveExecutiveTask(accountId, scope.session_key);
 });
 
-test("doc rewrite verifier fail does not complete", async () => {
+test("doc rewrite verifier fail enters retrying recovery path and does not complete", async () => {
   const { accountId, documentId, scope, event } = createRewriteScope(`fail-${Date.now()}`);
   await ensureDocRewriteWorkflowTask({
     accountId,
@@ -286,8 +286,10 @@ test("doc rewrite verifier fail does not complete", async () => {
   assert.equal(finalized?.verification?.pass, false);
   assert.notEqual(finalized?.task?.status, "completed");
   assert.notEqual(finalized?.task?.lifecycle_state, "completed");
-  assert.equal(finalized?.task?.workflow_state, "blocked");
-  assert.equal(finalized?.task?.status, "blocked");
+  assert.equal(finalized?.task?.lifecycle_state, "executing");
+  assert.equal(finalized?.task?.workflow_state, "retrying");
+  assert.equal(finalized?.task?.routing_hint, "doc_rewrite_resume_same_task");
+  assert.equal(finalized?.task?.status, "active");
 
   await clearActiveExecutiveTask(accountId, scope.session_key);
 });
