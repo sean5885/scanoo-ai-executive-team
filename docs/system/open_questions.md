@@ -26,6 +26,12 @@ For this closure-planning pass:
 12. Generic runtime questions do not reliably enter planner mode from the lane layer: resolved through `/Users/seanhan/Documents/Playground/src/planner-ingress-contract.mjs`, which is now shared by lane admission, personal-lane edge guarding, and `/Users/seanhan/Documents/Playground/src/planner-runtime-info-flow.mjs`.
 13. HTTP and mutation-runtime idempotency use different scopes: still real, but cut from the next-three closure order.
 14. Planner helper doc/code drift (`tool-loop` single-step wording) was observed and resolved on 2026-04-09 by aligning `/Users/seanhan/Documents/Playground/docs/system/modules.md` and `/Users/seanhan/Documents/Playground/docs/system/data_flow.md` to checked-in `next_action` multi-step behavior plus `/Users/seanhan/Documents/Playground/src/planner/execution-pipeline.mjs`.
+15. Workflow finalize fail recovery wording drift (`legacy blocked + *_retry_required` as one unified behavior) is resolved on 2026-04-17:
+    - legacy `blocked + *_retry_required` no longer represents the unified finalize-fail behavior.
+    - `recovery_decision_v1` is now the checked-in minimal decision owner for workflow finalize fail branches in `/Users/seanhan/Documents/Playground/src/executive-orchestrator.mjs`.
+    - this item is `resolved` for doc/code alignment; remaining runtime boundary is `deferred`:
+      - not a full escalation subsystem yet
+      - worker-side retry/escalation behavior is not fully closed-loop yet
 
 ## Ranked Closure Threads
 
@@ -56,6 +62,10 @@ Thread C is now closed in checked-in code:
   - Evidence:
     - `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`
     - `/Users/seanhan/Documents/Playground/src/http-idempotency-store.mjs`
+- workflow finalize fail recovery is minimally unified by `recovery_decision_v1`, but full escalation/runtime-worker closure remains deferred.
+  - Evidence:
+    - `/Users/seanhan/Documents/Playground/src/recovery-decision.mjs`
+    - `/Users/seanhan/Documents/Playground/src/executive-orchestrator.mjs`
 - legacy docs still reference obsolete knowledge subcommands (`consistency|brain|proposals|approve|reject|ownership|learn`) that are no longer in the checked-in runtime inventory (`audit|conflicts|distill`).
   - Evidence:
     - `/Users/seanhan/Documents/Playground/docs/system/Lobster AI Executive System Audit Report v1.md`
