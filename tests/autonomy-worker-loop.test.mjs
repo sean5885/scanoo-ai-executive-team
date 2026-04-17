@@ -86,10 +86,13 @@ test("runAutonomyWorkerOnce marks job failed when executeJob throws", async () =
   assert.equal(result?.job_id, queued.id);
   assert.equal(result?.retry_scheduled, false);
   assert.equal(result?.error?.message, "worker_boom");
+  assert.equal(typeof result?.recovery_decision?.reason, "string");
 
   const stored = getAutonomyJobById(queued.id);
   assert.equal(stored?.status, "failed");
-  assert.equal(stored?.error?.message, "worker_boom");
+  assert.equal(stored?.error?.error, "worker_boom");
+  assert.equal(stored?.error?.runtime_error?.message, "worker_boom");
+  assert.equal(typeof stored?.error?.recovery_decision?.reason, "string");
 });
 
 test("runAutonomyWorkerOnce fail-soft blocks completion when verifier gate fails", async () => {
@@ -124,9 +127,79 @@ test("runAutonomyWorkerOnce fail-soft blocks completion when verifier gate fails
   assert.equal(result?.job_id, queued.id);
   assert.equal(result?.error, "verifier_failed");
   assert.equal(typeof result?.reason, "string");
+  assert.equal(typeof result?.recovery_decision?.reason, "string");
 
   const stored = getAutonomyJobById(queued.id);
   assert.equal(stored?.status, "failed");
   assert.equal(stored?.error?.error, "verifier_failed");
   assert.equal(typeof stored?.error?.reason, "string");
+  assert.equal(typeof stored?.error?.recovery_decision?.reason, "string");
+});
+
+test("runAutonomyWorkerOnce requeues job when recovery decision says executing", async () => {
+  const queued = enqueueAutonomyJobRecord({
+    jobType: "worker_retry_via_recovery_decision_job",
+    traceId: "trace_worker_retry_via_recovery_decision",
+    maxAttempts: 2,
+  });
+
+  const result = await runAutonomyWorkerOnce({
+    workerId: "worker-retry-via-decision",
+    enabled: true,
+    heartbeatIntervalMs: 60_000,
+    async executeJob() {
+      return {
+        ok: false,
+        error: "temporary_network_failure",
+      };
+    },
+  });
+
+  assert.equal(result?.ok, false);
+  assert.equal(result?.claimed, true);
+  assert.equal(result?.failed, true);
+  assert.equal(result?.retry_scheduled, true);
+  assert.equal(result?.recovery_decision?.next_state, "executing");
+  assert.equal(result?.recovery_decision?.reason, "recovery_decision_v1_retrying");
+
+  const stored = getAutonomyJobById(queued.id);
+  assert.equal(stored?.status, "queued");
+  assert.equal(stored?.error?.error, "temporary_network_failure");
+  assert.equal(stored?.error?.recovery_decision?.next_state, "executing");
+  assert.equal(stored?.error?.recovery_decision?.reason, "recovery_decision_v1_retrying");
+});
+
+test("runAutonomyWorkerOnce stops retry when recovery decision enters waiting_user", async () => {
+  const queued = enqueueAutonomyJobRecord({
+    jobType: "worker_waiting_user_via_recovery_decision_job",
+    traceId: "trace_worker_waiting_user_via_recovery_decision",
+    maxAttempts: 3,
+  });
+
+  const result = await runAutonomyWorkerOnce({
+    workerId: "worker-waiting-user-via-decision",
+    enabled: true,
+    heartbeatIntervalMs: 60_000,
+    async executeJob() {
+      return {
+        ok: false,
+        error: "missing_slot_document_id",
+      };
+    },
+  });
+
+  assert.equal(result?.ok, false);
+  assert.equal(result?.claimed, true);
+  assert.equal(result?.failed, true);
+  assert.equal(result?.retry_scheduled, false);
+  assert.equal(result?.recovery_decision?.next_state, "blocked");
+  assert.equal(result?.recovery_decision?.waiting_user, true);
+  assert.equal(result?.recovery_decision?.routing_hint, "worker_waiting_user_via_recovery_decision_job_waiting_user");
+
+  const stored = getAutonomyJobById(queued.id);
+  assert.equal(stored?.status, "failed");
+  assert.equal(stored?.error?.error, "missing_slot_document_id");
+  assert.equal(stored?.error?.failure_class, "missing_slot");
+  assert.equal(stored?.error?.recovery_decision?.next_state, "blocked");
+  assert.equal(stored?.error?.recovery_decision?.waiting_user, true);
 });

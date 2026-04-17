@@ -1,5 +1,6 @@
 import { cleanText } from "../message-intent-utils.mjs";
 import { EVIDENCE_TYPES, verifyTaskCompletion } from "../executive-verifier.mjs";
+import { resolveRecoveryDecisionV1 } from "../recovery-decision.mjs";
 import {
   claimNextAutonomyJob,
   completeAutonomyAttempt,
@@ -218,6 +219,173 @@ function buildAutonomyStoredResult({
   };
 }
 
+function normalizeAutonomyObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+function readAutonomyNumericSignal(...candidates) {
+  for (const candidate of candidates) {
+    if (candidate == null || candidate === "") {
+      continue;
+    }
+    const numeric = Number(candidate);
+    if (Number.isFinite(numeric)) {
+      return Math.max(0, Math.floor(numeric));
+    }
+  }
+  return null;
+}
+
+function readAutonomyBooleanSignal(...candidates) {
+  for (const candidate of candidates) {
+    if (typeof candidate === "boolean") {
+      return candidate;
+    }
+    if (candidate === "true") {
+      return true;
+    }
+    if (candidate === "false") {
+      return false;
+    }
+  }
+  return null;
+}
+
+function inferAutonomyFailureClass({
+  failureClass = "",
+  error = "",
+  verification = null,
+} = {}) {
+  const explicitFailureClass = cleanText(failureClass).toLowerCase();
+  if (explicitFailureClass) {
+    return explicitFailureClass;
+  }
+
+  const verificationIssues = Array.isArray(verification?.issues)
+    ? verification.issues.map((issue) => cleanText(issue).toLowerCase()).filter(Boolean)
+    : [];
+  const normalizedError = cleanText(error).toLowerCase();
+
+  if (verificationIssues.includes("missing_slot") || normalizedError.includes("missing_slot")) {
+    return "missing_slot";
+  }
+  if (verificationIssues.includes("permission_denied") || normalizedError.includes("permission_denied")) {
+    return "permission_denied";
+  }
+  if (verificationIssues.includes("effect_committed") || normalizedError.includes("effect_committed")) {
+    return "effect_committed";
+  }
+  if (verificationIssues.includes("commit_unknown") || normalizedError.includes("commit_unknown")) {
+    return "commit_unknown";
+  }
+  return "";
+}
+
+function buildRecoveryDecisionSnapshot(decision = null) {
+  const nextState = cleanText(decision?.next_state || "") || "blocked";
+  const routingHint = cleanText(decision?.routing_hint || "");
+  return {
+    reason: cleanText(decision?.reason || "") || "recovery_decision_v1_unknown",
+    next_state: nextState,
+    next_status: cleanText(decision?.next_status || "") || "blocked",
+    routing_hint: routingHint,
+    waiting_user: nextState === "blocked" && routingHint.endsWith("_waiting_user"),
+  };
+}
+
+function normalizeAutonomyFailure({
+  job = null,
+  error = "",
+  failureClass = "",
+  retryable = null,
+  maxRetries = null,
+  workflow = "",
+  verification = null,
+  reason = "",
+  data = null,
+  source = "",
+  runtimeError = null,
+} = {}) {
+  const retryCount = readAutonomyNumericSignal(job?.attempt_count, 0) ?? 0;
+  const normalizedMaxRetries = Math.max(
+    1,
+    readAutonomyNumericSignal(maxRetries, job?.max_attempts, 1) ?? 1,
+  );
+  const normalizedError = cleanText(error) || "job_execution_failed";
+  const normalizedVerification = normalizeAutonomyObject(verification);
+  const normalizedWorkflow = cleanText(workflow) || cleanText(job?.job_type) || "autonomy_job";
+  const normalizedRetryable = readAutonomyBooleanSignal(retryable);
+  const normalizedFailureClass = inferAutonomyFailureClass({
+    failureClass,
+    error: normalizedError,
+    verification: normalizedVerification,
+  });
+
+  const decision = resolveRecoveryDecisionV1({
+    error: normalizedError,
+    failure_class: normalizedFailureClass,
+    retryable: normalizedRetryable,
+    retry_count: retryCount,
+    max_retries: normalizedMaxRetries,
+    workflow: normalizedWorkflow,
+    verification: normalizedVerification,
+  });
+  const recoveryDecision = buildRecoveryDecisionSnapshot(decision);
+
+  const failure = {
+    error: normalizedError,
+    reason: cleanText(reason) || null,
+    failure_class: normalizedFailureClass || null,
+    retryable: normalizedRetryable,
+    retry_count: retryCount,
+    max_retries: normalizedMaxRetries,
+    workflow: normalizedWorkflow,
+    verification: normalizedVerification,
+    recovery_decision: recoveryDecision,
+    source: cleanText(source) || "autonomy_worker_loop",
+  };
+
+  if (data !== undefined) {
+    failure.data = data;
+  }
+  if (runtimeError) {
+    failure.runtime_error = runtimeError;
+  }
+
+  return {
+    decision,
+    recoveryDecision,
+    failure,
+    failRetryable: recoveryDecision.next_state === "executing",
+  };
+}
+
+function buildAutonomyFailureLogFields({
+  normalizedFailure = null,
+  retryScheduled = false,
+} = {}) {
+  if (!normalizedFailure || typeof normalizedFailure !== "object") {
+    return {
+      retry_scheduled: retryScheduled === true,
+    };
+  }
+  const verificationIssues = Array.isArray(normalizedFailure.failure?.verification?.issues)
+    ? normalizedFailure.failure.verification.issues
+    : [];
+  return {
+    error: normalizedFailure.failure?.error || "job_execution_failed",
+    reason: normalizedFailure.failure?.reason || normalizedFailure.recoveryDecision?.reason || null,
+    failure_class: normalizedFailure.failure?.failure_class || null,
+    retryable: normalizedFailure.failure?.retryable,
+    retry_count: normalizedFailure.failure?.retry_count ?? 0,
+    max_retries: normalizedFailure.failure?.max_retries ?? 1,
+    workflow: normalizedFailure.failure?.workflow || "autonomy_job",
+    verification_issues: verificationIssues,
+    recovery_decision: normalizedFailure.recoveryDecision || null,
+    retry_scheduled: retryScheduled === true,
+  };
+}
+
 export async function runAutonomyWorkerOnce({
   workerId = "",
   executeJob = async () => ({ ok: true }),
@@ -317,19 +485,40 @@ export async function runAutonomyWorkerOnce({
     });
 
     if (shouldResultBeTreatedAsFailure(executionResult)) {
-      const normalizedFailure = {
-        error: cleanText(executionResult.error) || "job_execution_failed",
-        data: executionResult.data || null,
-      };
-      failAutonomyAttempt({
+      const normalizedExecutionResult = normalizeAutonomyExecutionResultObject(executionResult) || {};
+      const normalizedData = normalizeAutonomyObject(normalizedExecutionResult.data) || {};
+      const normalizedFailure = normalizeAutonomyFailure({
+        job: claim.job,
+        source: "execute_job_result",
+        error: cleanText(normalizedExecutionResult.error) || "job_execution_failed",
+        failureClass: cleanText(
+          normalizedExecutionResult.failure_class
+          || normalizedData.failure_class,
+        ),
+        retryable: normalizedExecutionResult.retryable ?? normalizedData.retryable,
+        maxRetries: normalizedExecutionResult.max_retries ?? normalizedData.max_retries,
+        workflow: cleanText(
+          normalizedExecutionResult.workflow
+          || normalizedData.workflow
+          || claim.job.job_type,
+        ),
+        verification: normalizedExecutionResult.verification ?? normalizedData.verification,
+        reason: cleanText(normalizedExecutionResult.reason || normalizedData.reason),
+        data: normalizedExecutionResult.data ?? null,
+      });
+      const failed = failAutonomyAttempt({
         jobId: claim.job.id,
         attemptId: claim.attempt.id,
         workerId: normalizedWorkerId,
-        error: normalizedFailure,
+        error: normalizedFailure.failure,
+        retryable: normalizedFailure.failRetryable,
       });
       resolvedLogger.warn("autonomy_job_failed", buildAutonomyTraceFields({
         traceContext,
-        fields: normalizedFailure,
+        fields: buildAutonomyFailureLogFields({
+          normalizedFailure,
+          retryScheduled: failed?.retry_scheduled === true,
+        }),
       }));
       return {
         ok: false,
@@ -338,6 +527,11 @@ export async function runAutonomyWorkerOnce({
         job_id: claim.job.id,
         attempt_id: claim.attempt.id,
         trace_id: traceContext.trace_id,
+        error: normalizedFailure.failure.error,
+        reason: normalizedFailure.failure.reason || normalizedFailure.recoveryDecision.reason,
+        failure_class: normalizedFailure.failure.failure_class,
+        retry_scheduled: failed?.retry_scheduled === true,
+        recovery_decision: normalizedFailure.recoveryDecision,
       };
     }
 
@@ -346,24 +540,40 @@ export async function runAutonomyWorkerOnce({
       executionResult,
     });
     if (verifierGateResult.pass !== true) {
-      const normalizedFailure = {
+      const normalizedExecutionResult = normalizeAutonomyExecutionResultObject(executionResult) || {};
+      const normalizedData = normalizeAutonomyObject(normalizedExecutionResult.data) || {};
+      const normalizedFailure = normalizeAutonomyFailure({
+        job: claim.job,
+        source: "verifier_gate",
         error: "verifier_failed",
         reason: verifierGateResult.reason,
-        verifier: verifierGateResult.verification,
-      };
+        failureClass: cleanText(
+          normalizedExecutionResult.failure_class
+          || normalizedData.failure_class,
+        ),
+        retryable: normalizedExecutionResult.retryable ?? normalizedData.retryable,
+        maxRetries: normalizedExecutionResult.max_retries ?? normalizedData.max_retries,
+        workflow: cleanText(
+          normalizedExecutionResult.workflow
+          || normalizedData.workflow
+          || verifierGateResult.task_type
+          || claim.job.job_type,
+        ),
+        verification: verifierGateResult.verification,
+      });
       const failed = failAutonomyAttempt({
         jobId: claim.job.id,
         attemptId: claim.attempt.id,
         workerId: normalizedWorkerId,
-        error: normalizedFailure,
+        error: normalizedFailure.failure,
+        retryable: normalizedFailure.failRetryable,
       });
       resolvedLogger.warn("autonomy_job_verifier_blocked", buildAutonomyTraceFields({
         traceContext,
-        fields: {
-          reason: verifierGateResult.reason,
-          issues: verifierGateResult.verification?.issues || [],
-          retry_scheduled: failed?.retry_scheduled === true,
-        },
+        fields: buildAutonomyFailureLogFields({
+          normalizedFailure,
+          retryScheduled: failed?.retry_scheduled === true,
+        }),
       }));
       return {
         ok: false,
@@ -372,8 +582,11 @@ export async function runAutonomyWorkerOnce({
         job_id: claim.job.id,
         attempt_id: claim.attempt.id,
         trace_id: traceContext.trace_id,
-        error: "verifier_failed",
-        reason: verifierGateResult.reason,
+        error: normalizedFailure.failure.error,
+        reason: normalizedFailure.failure.reason || verifierGateResult.reason,
+        failure_class: normalizedFailure.failure.failure_class,
+        retry_scheduled: failed?.retry_scheduled === true,
+        recovery_decision: normalizedFailure.recoveryDecision,
       };
     }
 
@@ -418,18 +631,27 @@ export async function runAutonomyWorkerOnce({
     };
   } catch (error) {
     const normalizedError = buildNormalizedError(error);
+    const normalizedFailure = normalizeAutonomyFailure({
+      job: claim.job,
+      source: "runtime_exception",
+      error: normalizedError.message,
+      reason: normalizedError.name,
+      workflow: cleanText(claim.job?.job_type) || "autonomy_job",
+      runtimeError: normalizedError,
+    });
     const failed = failAutonomyAttempt({
       jobId: claim.job.id,
       attemptId: claim.attempt.id,
       workerId: normalizedWorkerId,
-      error: normalizedError,
+      error: normalizedFailure.failure,
+      retryable: normalizedFailure.failRetryable,
     });
     resolvedLogger.error("autonomy_job_failed", buildAutonomyTraceFields({
       traceContext,
-      fields: {
-        error: normalizedError.message,
-        retry_scheduled: failed?.retry_scheduled === true,
-      },
+      fields: buildAutonomyFailureLogFields({
+        normalizedFailure,
+        retryScheduled: failed?.retry_scheduled === true,
+      }),
     }));
     return {
       ok: false,
@@ -439,7 +661,10 @@ export async function runAutonomyWorkerOnce({
       attempt_id: claim.attempt.id,
       trace_id: traceContext.trace_id,
       error: normalizedError,
+      failure_class: normalizedFailure.failure.failure_class,
+      reason: normalizedFailure.failure.reason || normalizedFailure.recoveryDecision.reason,
       retry_scheduled: failed?.retry_scheduled === true,
+      recovery_decision: normalizedFailure.recoveryDecision,
     };
   } finally {
     stopHeartbeat();
