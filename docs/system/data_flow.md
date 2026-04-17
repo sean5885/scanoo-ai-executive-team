@@ -401,6 +401,53 @@ Current truth:
 - structured meeting output exists
 - `/meeting` is still a specialized workflow, not proof of a generic delegated subagent framework
 
+### 4C-1. Workflow Finalize Recovery (Phase-2 Slice-3)
+
+Current path (verifier-fail branch only):
+
+1. `executive-closed-loop.mjs` verifier gate returns `verification.pass=false` in workflow finalize.
+2. `executive-orchestrator.mjs` finalize fail branch builds recovery inputs from existing task/meta/structured result/verification signals.
+3. `recovery_decision_v1` (`/Users/seanhan/Documents/Playground/src/recovery-decision.mjs`) resolves the next bounded recovery route.
+4. orchestrator applies lifecycle/status/routing updates from that decision without changing public response shape.
+
+Input signals (existing only):
+
+- `error`
+- `failure_class`
+- `retryable`
+- `retry_count`
+- `max_retries`
+- `workflow`
+- `verification`
+
+Decision outputs (existing only):
+
+- `next_state`
+- `next_status`
+- `routing_hint`
+- `reason`
+
+Wiring points (orchestrator finalize fail branches):
+
+- `finalizeMeetingWorkflowTaskUnlocked(...)`
+- `finalizeDocRewriteWorkflowTaskUnlocked(...)`
+- `finalizeDocumentReviewWorkflowTaskUnlocked(...)`
+- `finalizeCloudDocWorkflowTaskUnlocked(...)`
+
+Minimal split:
+
+- `retry/resume`: `retryable=true` and retry budget available -> `next_state=executing` (`workflow_state=retrying`, resume same task)
+- `escalated`: `failure_class in {effect_committed, commit_unknown, permission_denied}` or `retryable=false`
+- `waiting_user`: `missing_slot` -> blocked lifecycle + waiting-user workflow routing
+- fail-soft `blocked/failed`: remaining non-safe continuation paths when retry budget or verification state does not allow safe resume
+
+Boundary:
+
+- no public contract / response-shape change
+- not a full escalation subsystem
+- no automatic retry for `effect_committed` / `commit_unknown`
+- no planner/router contract change
+
 ### 4D. Personal DM Skill Tasks
 
 Current path:
