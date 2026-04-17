@@ -438,6 +438,49 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/tests/meeting-agent.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/control-unification-phase2-meeting.test.mjs`
 
+### 7AA. Workflow Recovery Decision v1 (Phase-2 Slice-3)
+
+- Implemented:
+  - `/Users/seanhan/Documents/Playground/src/recovery-decision.mjs`
+  - `/Users/seanhan/Documents/Playground/src/executive-orchestrator.mjs`
+- Purpose:
+  - add one minimal, shared recovery decision layer for workflow verifier-fail handling so finalize paths do not always collapse into `blocked + *_retry_required`
+  - keep lifecycle/public contract ownership unchanged (still verifier-gated and fail-soft)
+- Input signals (existing only):
+  - `error`
+  - `failure_class`
+  - `retryable`
+  - `retry_count`
+  - `max_retries`
+  - `workflow`
+  - `verification`
+- Output fields (existing only):
+  - `next_state`
+  - `next_status`
+  - `routing_hint`
+  - `reason`
+- Minimal decision table:
+  - `retryable=true` and retry budget available -> `next_state=executing` (orchestrator maps to `workflow_state=retrying`, resume same task)
+  - `failure_class in {effect_committed, commit_unknown, permission_denied}` or `retryable=false` -> `next_state=escalated`
+  - `missing_slot` -> `next_state=blocked` with waiting-user routing (`workflow_state=waiting_user`)
+  - otherwise not safe to continue -> fail-soft `blocked` or `failed` (based on verification state and retry budget)
+- Wiring points in orchestrator finalize fail branches:
+  - `finalizeMeetingWorkflowTaskUnlocked(...)`
+  - `finalizeDocRewriteWorkflowTaskUnlocked(...)`
+  - `finalizeDocumentReviewWorkflowTaskUnlocked(...)`
+  - `finalizeCloudDocWorkflowTaskUnlocked(...)`
+- Boundaries:
+  - no public API / response shape change
+  - not a full escalation subsystem
+  - no planner/router contract change
+  - no automatic retry for `effect_committed` / `commit_unknown`
+  - no additional workflow/runtime subsystem introduced
+- Evidence:
+  - `/Users/seanhan/Documents/Playground/tests/recovery-decision.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/control-unification-phase2-meeting.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/control-unification-phase2-doc-rewrite.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/control-unification-phase2-cloud-doc.test.mjs`
+
 ### 7A. Executive Closed-Loop Learning and Metrics
 
 - Implemented:

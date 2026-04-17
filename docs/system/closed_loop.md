@@ -146,12 +146,12 @@ Implemented through:
 
 - `meeting` 現在是第一個受控 workflow，沿用同一份 `active_task` store，不另開第二套狀態機。
 - 最小 workflow state 已落地：
-  - `created -> capturing -> awaiting_confirmation -> writing_back -> verifying -> completed|blocked`
+  - `created -> capturing -> awaiting_confirmation -> writing_back -> verifying -> completed|retrying|waiting_user|blocked|failed|escalated`
 - `lane-executor.mjs` 在 meeting start / preview / confirm 時會更新同 session `active_task`：
   - start capture -> `workflow="meeting"` + `workflow_state="capturing"`
   - summary preview -> `workflow_state="awaiting_confirmation"`
   - confirm write -> `workflow_state="writing_back"`
-- meeting completion 不再因文檔寫入成功就直接完成；`executive-closed-loop.mjs` 會先進 verifier gate，再決定 `completed` 或 `blocked`。
+- meeting completion 不再因文檔寫入成功就直接完成；`executive-closed-loop.mjs` 會先進 verifier gate，再由 `recovery_decision_v1` 決定 `completed` 或 fail-soft recovery 狀態。
 - 未經 confirm 的 meeting preview 不得 writeback，也不得進 `completed`。
 
 ## Phase-2 Doc Rewrite Workflow Control
@@ -159,7 +159,7 @@ Implemented through:
 - `doc rewrite` 已沿用同一套 `active_task` 控制骨架，不另開新的 workflow store。
 - comment suggestion card / poller 只作為 ingress，現在也會落到同一個 preview helper、同一個 `awaiting_review` task、同一個 confirmation artifact。
 - 最小 state 已落地：
-  - `created -> loading_source -> drafting -> awaiting_review -> applying -> verifying -> completed|blocked`
+  - `created -> loading_source -> drafting -> awaiting_review -> applying -> verifying -> completed|retrying|waiting_user|blocked|failed|escalated`
 - rewrite preview 只會停在 `awaiting_review`，未 review / confirm 前不得 apply，也不得進 `completed`。
 - `/api/doc/rewrite-from-comments` 是唯一 apply 入口；沒有同 document + 同 confirmation 的 `awaiting_review` task，就必須 fail-closed。
 - apply 成功後仍需進 verifier gate；只有同時具備 rewrite diff、apply evidence、且未破壞結構，才可 `completed`。
@@ -169,12 +169,45 @@ Implemented through:
 
 - `cloud doc` 也已沿用同一套 `active_task` 控制骨架，使用 `scope_key` 綁定 chat scope 或 drive/wiki 操作目標。
 - 最小 state 已落地：
-  - `created -> scoping -> previewing -> awaiting_review -> applying -> verifying -> completed|blocked`
+  - `created -> scoping -> previewing -> awaiting_review -> applying -> verifying -> completed|retrying|waiting_user|blocked|failed|escalated`
 - preview route 只能進 `awaiting_review`；未 review 前不得 apply，也不得 `completed`。
 - drive/wiki apply route 現在需要先有同 scope 的 preview/review task，不能直接繞過 review gate。
 - apply 成功後仍需進 verifier gate；只有 scope 正確且有 apply evidence 才可 `completed`。
 - `executor`、`lane`、`orchestrator`、HTTP route 都不得 direct `completed`；cloud-doc completion 只允許由 verifier gate 放行。
 - preview 結果不視為完成；沒有 `preview_plan`、`apply_evidence`、`skipped_items/conflict_items` 的 cloud-doc apply 不得通過 verifier。
+
+## Phase-2 Slice-3 Recovery Decision (recovery_decision_v1)
+
+- `recovery_decision_v1` 目前是 finalize-verification-fail 後續行為的最小共用決策層，不改主流程 contract。
+- input signals（既有欄位）：
+  - `error`
+  - `failure_class`
+  - `retryable`
+  - `retry_count`
+  - `max_retries`
+  - `workflow`
+  - `verification`
+- output fields（既有欄位）：
+  - `next_state`
+  - `next_status`
+  - `routing_hint`
+  - `reason`
+- 最小決策表：
+  - `retryable=true` 且 budget 未耗盡 -> `executing`（orchestrator 映射為 `workflow_state=retrying`，resume same task）
+  - `effect_committed / commit_unknown / permission_denied / retryable=false` -> `escalated`
+  - `missing_slot` -> `waiting_user`（lifecycle `blocked`）
+  - 其餘不可安全續跑 -> fail-soft `blocked` 或 `failed`
+- 接線位置（orchestrator finalize fail branches）：
+  - `finalizeMeetingWorkflowTaskUnlocked(...)`
+  - `finalizeDocRewriteWorkflowTaskUnlocked(...)`
+  - `finalizeDocumentReviewWorkflowTaskUnlocked(...)`
+  - `finalizeCloudDocWorkflowTaskUnlocked(...)`
+- 邊界：
+  - 不改 public API / response shape
+  - 不是完整 escalation subsystem
+  - 不對 `effect_committed` / `commit_unknown` 做自動重試
+  - 不改 planner/router contract
+  - 不新增獨立 escalation runtime
 
 ## Evidence Model
 
