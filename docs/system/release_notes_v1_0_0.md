@@ -43,3 +43,10 @@ Release date: 2026-03-21
 
 - `v1.0.0` is the frozen production baseline for the currently validated repo behavior
 - release collateral may continue to evolve, but core logic should not change on this line without cutting a new version
+
+## Post-Release Alignment Note (Phase 2 Slice 3)
+
+- Introduced `recovery_decision_v1` for workflow finalize-fail recovery routing; finalize-fail behavior is no longer uniformly `blocked + *_retry_required`.
+- Recovery routing now supports minimal bounded split: `retry/resume`, `escalated`, `waiting_user`, and fail-soft `blocked/failed`.
+- Safety posture is strengthened in combination with Phase 2 slice 1 (`verifier gate`) and slice 2 (`durable effect guard`), reducing unsafe retry after guarded write-side uncertainty.
+- Boundary remains explicit: this is not a full escalation subsystem, and worker-side retry/escalation behavior is not fully closed-loop yet.
