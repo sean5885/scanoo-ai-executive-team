@@ -290,6 +290,117 @@ test("autonomy job store ack disposition writes metadata only without status cha
   assert.equal(incidentsAfterAck.some((incident) => incident.job_id === escalatedIncident.queued.id), false);
 });
 
+test("autonomy incident disposition supports precondition and writes operator audit fields", () => {
+  const waitingIncident = createFailedSinkIncident({
+    jobType: "unit_test_precondition_success_incident",
+    traceId: "trace_store_precondition_success",
+    sinkState: "waiting_user",
+  });
+  const openIncident = listAutonomyOpenIncidents({
+    limit: 10,
+  }).find((incident) => incident.job_id === waitingIncident.queued.id);
+  assert.equal(Boolean(openIncident?.updated_at), true);
+
+  const acked = applyAutonomyIncidentDisposition({
+    jobId: waitingIncident.queued.id,
+    action: "ack_waiting_user",
+    reason: "operator_ack_with_precondition",
+    precondition: {
+      expected_updated_at: openIncident.updated_at,
+    },
+    operatorId: "operator-001",
+    requestId: "req-incident-001",
+  });
+  assert.equal(acked?.ok, true);
+  assert.equal(acked?.error, undefined);
+  assert.equal(acked?.disposition?.expected_updated_at, openIncident.updated_at);
+  assert.equal(acked?.disposition?.operator_id, "operator-001");
+  assert.equal(acked?.disposition?.request_id, "req-incident-001");
+  assert.equal(acked?.job?.status, "failed");
+  assert.equal(acked?.job?.error?.operator_disposition?.latest?.action, "ack_waiting_user");
+  assert.equal(acked?.job?.error?.operator_disposition?.latest?.operator_id, "operator-001");
+  assert.equal(acked?.job?.error?.operator_disposition?.latest?.request_id, "req-incident-001");
+  assert.equal(acked?.job?.error?.operator_disposition?.latest?.expected_updated_at, openIncident.updated_at);
+  assert.equal(acked?.job?.error?.operator_disposition?.history?.length, 1);
+  assert.equal(acked?.job?.error?.operator_disposition?.history?.[0]?.operator_id, "operator-001");
+  assert.equal(acked?.job?.error?.operator_disposition?.history?.[0]?.request_id, "req-incident-001");
+  assert.equal(acked?.job?.error?.operator_disposition?.history?.[0]?.expected_updated_at, openIncident.updated_at);
+});
+
+test("autonomy incident disposition rejects stale precondition and does not write disposition", () => {
+  const waitingIncident = createFailedSinkIncident({
+    jobType: "unit_test_precondition_stale_incident",
+    traceId: "trace_store_precondition_stale",
+    sinkState: "waiting_user",
+  });
+  const openIncident = listAutonomyOpenIncidents({
+    limit: 10,
+  }).find((incident) => incident.job_id === waitingIncident.queued.id);
+  assert.equal(Boolean(openIncident?.updated_at), true);
+
+  const forcedUpdatedAt = "2026-04-20T01:00:00.000Z";
+  db.prepare(`
+    UPDATE autonomy_jobs
+    SET updated_at = @updated_at
+    WHERE id = @job_id
+  `).run({
+    updated_at: forcedUpdatedAt,
+    job_id: waitingIncident.queued.id,
+  });
+
+  const staleWrite = applyAutonomyIncidentDisposition({
+    jobId: waitingIncident.queued.id,
+    action: "ack_waiting_user",
+    reason: "operator_ack_should_fail_stale",
+    precondition: {
+      expected_updated_at: openIncident.updated_at,
+    },
+    operatorId: "operator-should-not-write",
+    requestId: "req-should-not-write",
+  });
+  assert.equal(staleWrite?.ok, false);
+  assert.equal(staleWrite?.error, "precondition_failed");
+  assert.equal(staleWrite?.stale, true);
+  assert.equal(staleWrite?.expected_updated_at, openIncident.updated_at);
+  assert.equal(staleWrite?.current_updated_at, forcedUpdatedAt);
+
+  const jobRow = db.prepare(`
+    SELECT error_json
+    FROM autonomy_jobs
+    WHERE id = @job_id
+    LIMIT 1
+  `).get({
+    job_id: waitingIncident.queued.id,
+  });
+  const error = jobRow?.error_json ? JSON.parse(jobRow.error_json) : null;
+  assert.equal(error?.operator_disposition, undefined);
+
+  const incidentsAfterStale = listAutonomyOpenIncidents({
+    limit: 10,
+  });
+  assert.equal(incidentsAfterStale.some((incident) => incident.job_id === waitingIncident.queued.id), true);
+});
+
+test("autonomy incident disposition remains backward-compatible without new audit fields", () => {
+  const waitingIncident = createFailedSinkIncident({
+    jobType: "unit_test_backward_compatible_incident",
+    traceId: "trace_store_backward_compatible",
+    sinkState: "waiting_user",
+  });
+
+  const acked = applyAutonomyIncidentDisposition({
+    jobId: waitingIncident.queued.id,
+    action: "ack_waiting_user",
+    reason: "legacy_operator_ack",
+  });
+  assert.equal(acked?.ok, true);
+  assert.equal(acked?.job?.status, "failed");
+  assert.equal(acked?.job?.error?.operator_disposition?.latest?.action, "ack_waiting_user");
+  assert.equal(Object.hasOwn(acked?.job?.error?.operator_disposition?.latest || {}, "operator_id"), false);
+  assert.equal(Object.hasOwn(acked?.job?.error?.operator_disposition?.latest || {}, "request_id"), false);
+  assert.equal(Object.hasOwn(acked?.job?.error?.operator_disposition?.latest || {}, "expected_updated_at"), false);
+});
+
 test("autonomy job store resume disposition makes failed incident schedulable again", () => {
   const escalatedIncident = createFailedSinkIncident({
     jobType: "unit_test_resume_incident",

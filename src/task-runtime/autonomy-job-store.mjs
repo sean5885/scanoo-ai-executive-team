@@ -103,6 +103,17 @@ function normalizeAutonomyDispositionAction(action = "") {
   return normalizedAction;
 }
 
+function normalizeAutonomyDispositionPrecondition(precondition = null) {
+  if (!precondition || typeof precondition !== "object" || Array.isArray(precondition)) {
+    return {
+      expected_updated_at: null,
+    };
+  }
+  return {
+    expected_updated_at: cleanText(precondition.expected_updated_at) || null,
+  };
+}
+
 function toAutonomyOpenIncidentRecord(row = null) {
   if (!row) {
     return null;
@@ -132,6 +143,9 @@ function mergeOperatorDispositionErrorMetadata({
   at = "",
   action = "",
   reason = "",
+  operatorId = "",
+  requestId = "",
+  expectedUpdatedAt = "",
   replaySpec = null,
 } = {}) {
   const baseError = error && typeof error === "object" && !Array.isArray(error)
@@ -146,6 +160,18 @@ function mergeOperatorDispositionErrorMetadata({
     action: cleanText(action) || null,
     reason: cleanText(reason) || null,
   };
+  const normalizedOperatorId = cleanText(operatorId) || null;
+  const normalizedRequestId = cleanText(requestId) || null;
+  const normalizedExpectedUpdatedAt = cleanText(expectedUpdatedAt) || null;
+  if (normalizedOperatorId) {
+    entry.operator_id = normalizedOperatorId;
+  }
+  if (normalizedRequestId) {
+    entry.request_id = normalizedRequestId;
+  }
+  if (normalizedExpectedUpdatedAt) {
+    entry.expected_updated_at = normalizedExpectedUpdatedAt;
+  }
   history.push(entry);
   baseError.operator_disposition = {
     latest: entry,
@@ -933,11 +959,21 @@ export function applyAutonomyIncidentDisposition({
   jobId = "",
   action = "",
   reason = "",
+  precondition = null,
+  operatorId = "",
+  requestId = "",
+  operator_id = "",
+  request_id = "",
+  expected_updated_at = "",
 } = {}) {
   ensureAutonomyJobTables();
 
   const normalizedJobId = cleanText(jobId);
   const normalizedAction = normalizeAutonomyDispositionAction(action);
+  const normalizedPrecondition = normalizeAutonomyDispositionPrecondition(precondition);
+  const normalizedExpectedUpdatedAt = cleanText(normalizedPrecondition.expected_updated_at || expected_updated_at) || null;
+  const normalizedOperatorId = cleanText(operatorId || operator_id) || null;
+  const normalizedRequestId = cleanText(requestId || request_id) || null;
   if (!normalizedJobId || !normalizedAction) {
     return {
       ok: false,
@@ -987,6 +1023,9 @@ export function applyAutonomyIncidentDisposition({
       at: now,
       action: normalizedAction,
       reason: normalizedReason,
+      operatorId: normalizedOperatorId,
+      requestId: normalizedRequestId,
+      expectedUpdatedAt: normalizedExpectedUpdatedAt,
       replaySpec,
     });
 
@@ -1006,15 +1045,36 @@ export function applyAutonomyIncidentDisposition({
             error_json = @error_json
         WHERE id = @job_id
           AND status = @failed_status
+          AND (@expected_updated_at IS NULL OR updated_at = @expected_updated_at)
       `).run({
         job_id: normalizedJobId,
         queued_status: AUTONOMY_JOB_STATUS.queued,
         failed_status: AUTONOMY_JOB_STATUS.failed,
+        expected_updated_at: normalizedExpectedUpdatedAt,
         next_run_at: now,
         updated_at: now,
         error_json: stringifyJson(nextError),
       });
       if (Number(updated.changes || 0) !== 1) {
+        if (normalizedExpectedUpdatedAt) {
+          const staleRow = db.prepare(`
+            SELECT id, status, updated_at
+            FROM autonomy_jobs
+            WHERE id = @job_id
+            LIMIT 1
+          `).get({
+            job_id: normalizedJobId,
+          });
+          if (staleRow) {
+            return {
+              ok: false,
+              error: "precondition_failed",
+              stale: true,
+              expected_updated_at: normalizedExpectedUpdatedAt,
+              current_updated_at: cleanText(staleRow.updated_at) || null,
+            };
+          }
+        }
         return {
           ok: false,
           error: "open_incident_not_found",
@@ -1027,13 +1087,34 @@ export function applyAutonomyIncidentDisposition({
             error_json = @error_json
         WHERE id = @job_id
           AND status = @failed_status
+          AND (@expected_updated_at IS NULL OR updated_at = @expected_updated_at)
       `).run({
         job_id: normalizedJobId,
         failed_status: AUTONOMY_JOB_STATUS.failed,
+        expected_updated_at: normalizedExpectedUpdatedAt,
         updated_at: now,
         error_json: stringifyJson(nextError),
       });
       if (Number(updated.changes || 0) !== 1) {
+        if (normalizedExpectedUpdatedAt) {
+          const staleRow = db.prepare(`
+            SELECT id, status, updated_at
+            FROM autonomy_jobs
+            WHERE id = @job_id
+            LIMIT 1
+          `).get({
+            job_id: normalizedJobId,
+          });
+          if (staleRow) {
+            return {
+              ok: false,
+              error: "precondition_failed",
+              stale: true,
+              expected_updated_at: normalizedExpectedUpdatedAt,
+              current_updated_at: cleanText(staleRow.updated_at) || null,
+            };
+          }
+        }
         return {
           ok: false,
           error: "open_incident_not_found",
@@ -1048,6 +1129,9 @@ export function applyAutonomyIncidentDisposition({
         at: now,
         action: normalizedAction,
         reason: normalizedReason,
+        operator_id: normalizedOperatorId,
+        request_id: normalizedRequestId,
+        expected_updated_at: normalizedExpectedUpdatedAt,
       },
       replay_spec: replaySpec,
       incident,

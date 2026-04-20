@@ -89,7 +89,8 @@ Current-truth docs for onboarding are:
   - store now supports additive operator disposition writeback (`applyAutonomyIncidentDisposition`) with actions:
     - `resume_same_job`: re-queues the same failed job as schedulable (`status=queued`, `next_run_at=now`) without changing the public workflow contract
     - `ack_waiting_user` and `ack_escalated`: metadata-only acknowledgement; no job status transition
-  - operator dispositions append traceable metadata (`at / action / reason`) under `error_json.operator_disposition`; later runtime failures preserve disposition history and refresh `latest` with runtime-failure context so incidents can reopen
+  - operator dispositions append traceable metadata (`at / action / reason`, optional `operator_id / request_id / expected_updated_at`) under `error_json.operator_disposition`; later runtime failures preserve disposition history and refresh `latest` with runtime-failure context so incidents can reopen
+  - additive disposition precondition now supports `precondition.expected_updated_at`; precondition check and disposition write run in the same store transaction/update guard, and stale writes fail-soft as `precondition_failed` (`stale=true`)
   - incident-to-replay bridge is bounded metadata-only (`buildAutonomyIncidentReplaySpec`); no new replay runtime is introduced
   - this scaffold is not wired into the current main HTTP/planner/orchestrator ingress path
   - this scaffold still does not add background worker mesh, parallel specialist execution, or idempotency unification
