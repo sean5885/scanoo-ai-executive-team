@@ -11,6 +11,7 @@ import { enforceSingleLarkResponderRuntime } from "./runtime-conflict-guard.mjs"
 import { createMessageEventDeduper } from "./runtime-message-deduper.mjs";
 import { sendLaneReply } from "./runtime-message-reply.mjs";
 import { touchResolvedSession } from "./session-scope-store.mjs";
+import { executePlannedUserInput } from "./executive-planner.mjs";
 import {
   startAutonomyRuntimeManager,
   stopAutonomyRuntimeManager,
@@ -187,6 +188,7 @@ wsClient.start({ eventDispatcher });
 
 const autonomyRuntimeStatus = startAutonomyRuntimeManager({
   logger: autonomyRuntimeLogger,
+  plannerExecutor: executePlannedUserInput,
 });
 if (autonomyRuntimeStatus.status !== "running") {
   runtimeLogger.warn("autonomy_runtime_manager_not_running", {

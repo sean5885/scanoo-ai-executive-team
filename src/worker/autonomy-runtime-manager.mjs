@@ -103,7 +103,7 @@ export function startAutonomyRuntimeManager({
   workerHeartbeatIntervalMs = DEFAULT_AUTONOMY_HEARTBEAT_INTERVAL_MS,
   idleHeartbeatIntervalMs = DEFAULT_IDLE_HEARTBEAT_INTERVAL_MS,
   executeJob = null,
-  plannerExecutor = null,
+  plannerExecutor = undefined,
   setIntervalFn = setInterval,
   clearIntervalFn = clearInterval,
   startWorkerLoop = startAutonomyWorkerLoop,
@@ -209,16 +209,22 @@ export function startAutonomyRuntimeManager({
   };
 
   try {
-    const workerLoopHandle = startWorkerLoop({
+    const workerLoopArgs = {
       workerId: normalizedWorkerId,
-      executeJob,
-      plannerExecutor,
       logger: resolvedLogger,
       enabled: true,
       pollIntervalMs: normalizedPollIntervalMs,
       leaseMs,
       heartbeatIntervalMs: normalizedWorkerHeartbeatIntervalMs,
-    });
+    };
+    if (typeof executeJob === "function") {
+      workerLoopArgs.executeJob = executeJob;
+    }
+    if (typeof plannerExecutor === "function") {
+      workerLoopArgs.plannerExecutor = plannerExecutor;
+    }
+
+    const workerLoopHandle = startWorkerLoop(workerLoopArgs);
     if (!workerLoopHandle || workerLoopHandle.started !== true) {
       runtimeState.status = RUNTIME_MANAGER_STATUS.error;
       runtimeState.error = {

@@ -152,3 +152,66 @@ test("autonomy runtime manager triggers idle heartbeat timer callback", () => {
   timerTick();
   assert.equal(heartbeatCalls, 2);
 });
+
+test("autonomy runtime manager does not forward null planner executor into worker loop", () => {
+  let receivedWorkerLoopArgs = null;
+
+  const status = startAutonomyRuntimeManager({
+    logger: noopLogger,
+    enabled: true,
+    workerId: "runtime-manager-planner-null",
+    plannerExecutor: null,
+    startWorkerLoop(args) {
+      receivedWorkerLoopArgs = args;
+      return {
+        started: true,
+        worker_id: "runtime-manager-planner-null",
+        stop() {},
+      };
+    },
+    heartbeatWorker() {
+      return {
+        ok: true,
+        heartbeat_at: new Date().toISOString(),
+      };
+    },
+    setIntervalFn() {
+      return "timer-planner-null";
+    },
+  });
+
+  assert.equal(status.status, "running");
+  assert.equal(Reflect.has(receivedWorkerLoopArgs, "plannerExecutor"), false);
+});
+
+test("autonomy runtime manager forwards planner executor function when provided", () => {
+  let receivedWorkerLoopArgs = null;
+  const plannerExecutor = async () => ({ ok: true });
+
+  const status = startAutonomyRuntimeManager({
+    logger: noopLogger,
+    enabled: true,
+    workerId: "runtime-manager-planner-wired",
+    plannerExecutor,
+    startWorkerLoop(args) {
+      receivedWorkerLoopArgs = args;
+      return {
+        started: true,
+        worker_id: "runtime-manager-planner-wired",
+        stop() {},
+      };
+    },
+    heartbeatWorker() {
+      return {
+        ok: true,
+        heartbeat_at: new Date().toISOString(),
+      };
+    },
+    setIntervalFn() {
+      return "timer-planner-wired";
+    },
+  });
+
+  assert.equal(status.status, "running");
+  assert.equal(receivedWorkerLoopArgs?.plannerExecutor, plannerExecutor);
+});

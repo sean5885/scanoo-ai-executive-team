@@ -279,7 +279,10 @@ async function executePlannerUserInputAutonomyJob({
   logger = null,
   plannerExecutor = executePlannedUserInput,
 } = {}) {
-  if (typeof plannerExecutor !== "function") {
+  const resolvedPlannerExecutor = typeof plannerExecutor === "function"
+    ? plannerExecutor
+    : executePlannedUserInput;
+  if (typeof resolvedPlannerExecutor !== "function") {
     return {
       ok: false,
       error: "planner_executor_unavailable",
@@ -312,7 +315,7 @@ async function executePlannerUserInputAutonomyJob({
     };
   }
 
-  const plannerResult = await plannerExecutor({
+  const plannerResult = await resolvedPlannerExecutor({
     text,
     logger,
     baseUrl: cleanText(plannerInput.base_url) || undefined,
@@ -712,11 +715,14 @@ export async function runAutonomyWorkerOnce({
     }
   };
 
+  const resolvedPlannerExecutor = typeof plannerExecutor === "function"
+    ? plannerExecutor
+    : executePlannedUserInput;
   const resolvedExecuteJob = typeof executeJob === "function"
     ? executeJob
     : async (input = {}) => executeKnownAutonomyJob({
       ...input,
-      plannerExecutor,
+      plannerExecutor: resolvedPlannerExecutor,
     });
 
   beginHeartbeat();
