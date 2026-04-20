@@ -599,6 +599,42 @@ export function lookupAutonomyJobFinalPickupByRequestId(requestId = "") {
   return toAutonomyJobFinalPickupRecord(row);
 }
 
+export function readAutonomyQueueBacklogMetrics({
+  nowAt = "",
+} = {}) {
+  ensureAutonomyJobTables();
+  const nowMs = parseIsoToMs(nowAt) ?? Date.now();
+  const row = db.prepare(`
+    SELECT
+      SUM(CASE WHEN status = @queued THEN 1 ELSE 0 END) AS queued_count,
+      SUM(CASE WHEN status = @running THEN 1 ELSE 0 END) AS running_count,
+      SUM(CASE WHEN status = @failed THEN 1 ELSE 0 END) AS failed_count,
+      MIN(
+        CASE
+          WHEN status = @queued
+            THEN COALESCE(next_run_at, created_at)
+          ELSE NULL
+        END
+      ) AS oldest_queued_at
+    FROM autonomy_jobs
+  `).get({
+    queued: AUTONOMY_JOB_STATUS.queued,
+    running: AUTONOMY_JOB_STATUS.running,
+    failed: AUTONOMY_JOB_STATUS.failed,
+  }) || {};
+  const oldestQueuedAt = cleanText(row.oldest_queued_at) || null;
+  const oldestQueuedMs = parseIsoToMs(oldestQueuedAt);
+  return {
+    queued_count: Number.isFinite(Number(row.queued_count)) ? Number(row.queued_count) : 0,
+    running_count: Number.isFinite(Number(row.running_count)) ? Number(row.running_count) : 0,
+    failed_count: Number.isFinite(Number(row.failed_count)) ? Number(row.failed_count) : 0,
+    oldest_queued_at: oldestQueuedAt,
+    oldest_queued_age_ms: oldestQueuedMs == null
+      ? null
+      : Math.max(0, nowMs - oldestQueuedMs),
+  };
+}
+
 export function readAutonomyWorkerReadiness({
   nowAt = "",
   maxHeartbeatLagMs = DEFAULT_AUTONOMY_HEARTBEAT_INTERVAL_MS * 3,
@@ -627,10 +663,12 @@ export function readAutonomyWorkerReadiness({
   if (!row) {
     return {
       ready: false,
+      readiness_state: "not_ready",
       reason: AUTONOMY_WORKER_READINESS_REASON.heartbeatMissing,
       worker_id: null,
       heartbeat_at: null,
       lease_expires_at: null,
+      lease_remaining_ms: null,
       heartbeat_lag_ms: null,
       max_heartbeat_lag_ms: normalizedMaxHeartbeatLagMs,
     };
@@ -640,13 +678,16 @@ export function readAutonomyWorkerReadiness({
   const leaseExpiresAt = cleanText(row.lease_expires_at) || null;
   const heartbeatMs = parseIsoToMs(heartbeatAt);
   const leaseExpiresMs = parseIsoToMs(leaseExpiresAt);
+  const leaseRemainingMs = leaseExpiresMs == null ? null : leaseExpiresMs - nowMs;
   if (heartbeatMs == null) {
     return {
       ready: false,
+      readiness_state: "not_ready",
       reason: AUTONOMY_WORKER_READINESS_REASON.heartbeatInvalid,
       worker_id: cleanText(row.worker_id) || null,
       heartbeat_at: heartbeatAt,
       lease_expires_at: leaseExpiresAt,
+      lease_remaining_ms: leaseRemainingMs,
       heartbeat_lag_ms: null,
       max_heartbeat_lag_ms: normalizedMaxHeartbeatLagMs,
     };
@@ -657,10 +698,12 @@ export function readAutonomyWorkerReadiness({
   if (!leaseReady) {
     return {
       ready: false,
+      readiness_state: "not_ready",
       reason: AUTONOMY_WORKER_READINESS_REASON.leaseExpired,
       worker_id: cleanText(row.worker_id) || null,
       heartbeat_at: heartbeatAt,
       lease_expires_at: leaseExpiresAt,
+      lease_remaining_ms: leaseRemainingMs,
       heartbeat_lag_ms: heartbeatLagMs,
       max_heartbeat_lag_ms: normalizedMaxHeartbeatLagMs,
     };
@@ -668,20 +711,24 @@ export function readAutonomyWorkerReadiness({
   if (heartbeatLagMs > normalizedMaxHeartbeatLagMs) {
     return {
       ready: false,
+      readiness_state: "not_ready",
       reason: AUTONOMY_WORKER_READINESS_REASON.heartbeatStale,
       worker_id: cleanText(row.worker_id) || null,
       heartbeat_at: heartbeatAt,
       lease_expires_at: leaseExpiresAt,
+      lease_remaining_ms: leaseRemainingMs,
       heartbeat_lag_ms: heartbeatLagMs,
       max_heartbeat_lag_ms: normalizedMaxHeartbeatLagMs,
     };
   }
   return {
     ready: true,
+    readiness_state: "ready",
     reason: AUTONOMY_WORKER_READINESS_REASON.ready,
     worker_id: cleanText(row.worker_id) || null,
     heartbeat_at: heartbeatAt,
     lease_expires_at: leaseExpiresAt,
+    lease_remaining_ms: leaseRemainingMs,
     heartbeat_lag_ms: heartbeatLagMs,
     max_heartbeat_lag_ms: normalizedMaxHeartbeatLagMs,
   };

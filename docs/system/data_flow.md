@@ -201,6 +201,11 @@ Current public `/answer` path:
      - `0` force-closes queue-authoritative immediately; `100` keeps full-open behavior (still subject to worker-ready gate)
    - if candidate mode is `queue_authoritative`, one worker-ready admission gate runs first using bounded running-attempt heartbeat/lease signal (`readAutonomyWorkerReadiness`); gate is fail-closed
    - when worker-ready gate is not ready, mode is force-downgraded to `sync_authoritative` before enqueue is attempted
+   - ingress observability now emits additive runtime trace events for rollout checks:
+     - mode decision: `planner_autonomy_ingress_mode_decision`
+     - deterministic sampling miss: `planner_autonomy_queue_authoritative_sampling_miss`
+     - worker-ready gate fallback: `planner_autonomy_queue_authoritative_gate_fallback_sync`
+     - enqueue fail fallback: `planner_autonomy_ingress_fallback_sync`
 4. when mode is `queue_shadow` or `queue_authoritative`, the same bounded autonomy ingress adapter may enqueue additive job `planner_user_input_v1`
    - contract: enqueue accepted is not final completion and not a final user answer
    - fail-soft: enqueue failure / queue unavailable falls back to same-request synchronous planner path
@@ -277,6 +282,11 @@ Current truth:
   - worker not ready forces mode to `sync_authoritative` before enqueue
 - `queue_authoritative` enqueue failure fail-soft falls back to `sync_authoritative`
 - enqueue accepted is explicitly guarded as not completed; completed authority remains worker + verifier
+- monitoring diagnostics now expose one additive rollout guardrail snapshot (`getAutonomyRolloutGuardrailSnapshot`) that combines:
+  - ingress fallback/sampling counts + rates from persisted runtime trace events
+  - queue backlog counts (`queued/running/failed`) + `oldest_queued_age_ms`
+  - worker readiness projection (`readiness_state`, `heartbeat_lag_ms`, `lease_remaining_ms`)
+  - bounded alerts for high fallback rates, queue-age pressure, and worker-not-ready state
 - autonomy worker now has one built-in execute path for `planner_user_input_v1` (`queue payload -> executePlannedUserInput -> verifier/recovery`) while preserving existing `executeJob` override behavior for custom job handlers
 - that shared edge helper also absorbs current legacy planner result shapes into canonical `answer / sources / limitations` before the public boundary
 - for delivery/onboarding knowledge lookups, a single-hit company-brain search now turns into an answer-first reply that names the matched SOP/checklist document and surfaces bounded location/checklist/start-step hints from the indexed snippet, while preserving the same public `answer / sources / limitations` shape

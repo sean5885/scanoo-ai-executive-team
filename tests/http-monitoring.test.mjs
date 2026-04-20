@@ -9,12 +9,14 @@ const testDb = await createTestDbHarness();
 const [
   { startHttpServer },
   {
+    getAutonomyRolloutGuardrailSnapshot,
     getRequestMetrics,
     listRecentRequests,
     recordHttpRequest,
     recordTraceEvent,
   },
   {
+    claimNextAutonomyJob,
     enqueueAutonomyJobRecord,
     ensureAutonomyJobTables,
   },
@@ -335,6 +337,149 @@ test("monitoring autonomy final pickup supports completed and fail-soft non-comp
   assert.equal("result_json" in completedPayload, false);
   assert.equal("error_json" in completedPayload, false);
   assert.equal("planner_result" in completedPayload, false);
+});
+
+test("monitoring rollout guardrail snapshot aggregates ingress/backlog/readiness and emits alerts", () => {
+  ensureAutonomyJobTables();
+  db.exec(`
+    DELETE FROM http_request_trace_events;
+    DELETE FROM autonomy_job_attempts;
+    DELETE FROM autonomy_jobs;
+  `);
+
+  const decisionAt = "2026-04-20T00:10:00.000Z";
+  const nowAt = "2026-04-20T00:20:00.000Z";
+  for (let index = 0; index < 4; index += 1) {
+    recordTraceEvent({
+      traceId: `trace_rollout_mode_${index}`,
+      requestId: `req_rollout_mode_${index}`,
+      component: "http.request.monitoring",
+      event: "planner_autonomy_ingress_mode_decision",
+      payload: {
+        mode: "queue_authoritative",
+        reason: null,
+      },
+      createdAt: decisionAt,
+    });
+  }
+  recordTraceEvent({
+    traceId: "trace_rollout_sampling_1",
+    requestId: "req_rollout_sampling_1",
+    component: "http.request.monitoring",
+    event: "planner_autonomy_queue_authoritative_sampling_miss",
+    payload: {
+      reason: "queue_authoritative_sampling_miss",
+    },
+    createdAt: decisionAt,
+  });
+  recordTraceEvent({
+    traceId: "trace_rollout_sampling_2",
+    requestId: "req_rollout_sampling_2",
+    component: "http.request.monitoring",
+    event: "planner_autonomy_queue_authoritative_sampling_miss",
+    payload: {
+      reason: "queue_authoritative_sampling_percent_zero",
+    },
+    createdAt: decisionAt,
+  });
+  recordTraceEvent({
+    traceId: "trace_rollout_worker_gate",
+    requestId: "req_rollout_worker_gate",
+    component: "http.request.monitoring",
+    event: "planner_autonomy_queue_authoritative_gate_fallback_sync",
+    payload: {
+      reason: "worker_heartbeat_stale",
+    },
+    createdAt: decisionAt,
+  });
+  for (let index = 0; index < 3; index += 1) {
+    recordTraceEvent({
+      traceId: `trace_rollout_enqueue_ok_${index}`,
+      requestId: `req_rollout_enqueue_ok_${index}`,
+      component: "http.request.monitoring",
+      event: "planner_autonomy_ingress_enqueued",
+      payload: {
+        mode: "queue_shadow",
+      },
+      createdAt: decisionAt,
+    });
+  }
+  recordTraceEvent({
+    traceId: "trace_rollout_enqueue_fail",
+    requestId: "req_rollout_enqueue_fail",
+    component: "http.request.monitoring",
+    event: "planner_autonomy_ingress_fallback_sync",
+    payload: {
+      reason: "enqueue_exception",
+    },
+    createdAt: decisionAt,
+  });
+
+  const running = enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    traceId: "trace_rollout_backlog_running",
+    payload: { scope: "rollout" },
+    maxAttempts: 1,
+  });
+  const claim = claimNextAutonomyJob({
+    workerId: "worker-rollout-ready",
+    leaseMs: 60_000,
+  });
+  assert.equal(claim?.job?.id, running.id);
+  const queuedOld = enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    traceId: "trace_rollout_backlog_old",
+    payload: { scope: "rollout" },
+    maxAttempts: 1,
+  });
+  const failed = enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    traceId: "trace_rollout_backlog_failed",
+    payload: { scope: "rollout" },
+    maxAttempts: 1,
+  });
+  db.prepare(`
+    UPDATE autonomy_jobs
+    SET created_at = @created_at,
+        next_run_at = @next_run_at
+    WHERE id = @job_id
+  `).run({
+    created_at: "2026-04-20T00:00:00.000Z",
+    next_run_at: "2026-04-20T00:00:00.000Z",
+    job_id: queuedOld.id,
+  });
+  db.prepare(`
+    UPDATE autonomy_jobs
+    SET status = @status
+    WHERE id = @job_id
+  `).run({
+    status: "failed",
+    job_id: failed.id,
+  });
+
+  const snapshot = getAutonomyRolloutGuardrailSnapshot({
+    lookbackMinutes: 30,
+    nowAt,
+  });
+  assert.equal(snapshot?.ingress?.queue_authoritative_mode_decision_count, 4);
+  assert.equal(snapshot?.ingress?.queue_authoritative_gate_fallback_sync_count, 1);
+  assert.equal(snapshot?.ingress?.sampling_miss_count, 2);
+  assert.equal(snapshot?.ingress?.enqueue_attempt_count, 4);
+  assert.equal(snapshot?.ingress?.enqueue_fail_fallback_sync_count, 1);
+  assert.equal(snapshot?.ingress?.queue_authoritative_gate_fallback_rate, 0.25);
+  assert.equal(snapshot?.ingress?.enqueue_fail_fallback_rate, 0.25);
+  assert.equal(snapshot?.queue_backlog?.queued_count, 1);
+  assert.equal(snapshot?.queue_backlog?.running_count, 1);
+  assert.equal(snapshot?.queue_backlog?.failed_count, 1);
+  assert.equal(snapshot?.queue_backlog?.oldest_queued_age_ms, 20 * 60 * 1_000);
+  assert.equal(snapshot?.worker_readiness?.ready, true);
+  assert.equal(snapshot?.worker_readiness?.readiness_state, "ready");
+  assert.equal(Number.isFinite(Number(snapshot?.worker_readiness?.lease_remaining_ms)), true);
+  const alertCodes = new Set((snapshot?.alerts || []).map((item) => item?.code));
+  assert.equal(alertCodes.has("autonomy_queue_gate_fallback_rate_high"), true);
+  assert.equal(alertCodes.has("autonomy_enqueue_fail_fallback_rate_high"), true);
+  assert.equal(alertCodes.has("autonomy_queue_oldest_age_high"), true);
+  assert.equal(alertCodes.has("autonomy_worker_not_ready"), false);
 });
 
 test("http server records timed out requests in monitoring store", async (t) => {

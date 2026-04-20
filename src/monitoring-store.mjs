@@ -1,11 +1,22 @@
 import db from "./db.mjs";
 import { normalizeText, nowIso } from "./text-utils.mjs";
+import {
+  readAutonomyQueueBacklogMetrics,
+  readAutonomyWorkerReadiness,
+} from "./task-runtime/autonomy-job-store.mjs";
 
 const DEFAULT_RECENT_LIMIT = 50;
 const DEFAULT_ERROR_LIMIT = 10;
 const DEFAULT_DASHBOARD_RECENT_LIMIT = 10;
 const DEFAULT_DASHBOARD_ERROR_LIMIT = 10;
 const DEFAULT_TRACE_EVENT_LIMIT = 500;
+const DEFAULT_AUTONOMY_ROLLOUT_LOOKBACK_MINUTES = 60;
+const DEFAULT_AUTONOMY_ROLLOUT_EVENT_LIMIT = 5_000;
+const MAX_AUTONOMY_ROLLOUT_EVENT_LIMIT = 20_000;
+const DEFAULT_AUTONOMY_QUEUE_GATE_FALLBACK_ALERT_RATE = 0.2;
+const DEFAULT_AUTONOMY_ENQUEUE_FAIL_ALERT_RATE = 0.1;
+const DEFAULT_AUTONOMY_OLDEST_QUEUED_AGE_ALERT_MS = 10 * 60 * 1_000;
+const DEFAULT_AUTONOMY_FAILED_BACKLOG_ALERT_COUNT = 5;
 const MAX_LIMIT = 200;
 const MAX_TRACE_EVENT_LIMIT = 1_000;
 const MAX_TRACE_DEPTH = 5;
@@ -167,6 +178,27 @@ const listTraceEventsStmt = db.prepare(`
   FROM http_request_trace_events
   WHERE trace_id = ?
   ORDER BY id ASC
+  LIMIT ?
+`);
+
+const AUTONOMY_ROLLOUT_EVENTS = Object.freeze([
+  "planner_autonomy_ingress_mode_decision",
+  "planner_autonomy_queue_authoritative_sampling_miss",
+  "planner_autonomy_queue_authoritative_gate_fallback_sync",
+  "planner_autonomy_ingress_enqueued",
+  "planner_autonomy_ingress_fallback_sync",
+]);
+
+const listAutonomyRolloutEventsStmt = db.prepare(`
+  SELECT
+    event,
+    payload_json,
+    created_at
+  FROM http_request_trace_events
+  WHERE event IN (${AUTONOMY_ROLLOUT_EVENTS.map(() => "?").join(", ")})
+    AND created_at >= ?
+    AND created_at <= ?
+  ORDER BY id DESC
   LIMIT ?
 `);
 
@@ -618,6 +650,306 @@ export function getRequestMetrics() {
     error_count: errorCount,
     success_rate: totalRequests > 0 ? successCount / totalRequests : 0,
     error_rate: totalRequests > 0 ? errorCount / totalRequests : 0,
+  };
+}
+
+function clampAutonomyRolloutLookbackMinutes(value = DEFAULT_AUTONOMY_ROLLOUT_LOOKBACK_MINUTES) {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_AUTONOMY_ROLLOUT_LOOKBACK_MINUTES;
+  }
+  return Math.min(parsed, 24 * 60);
+}
+
+function clampAutonomyRolloutEventLimit(value = DEFAULT_AUTONOMY_ROLLOUT_EVENT_LIMIT) {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_AUTONOMY_ROLLOUT_EVENT_LIMIT;
+  }
+  return Math.min(parsed, MAX_AUTONOMY_ROLLOUT_EVENT_LIMIT);
+}
+
+function normalizeThresholdRate(value, fallback) {
+  const parsed = Number.parseFloat(String(value ?? ""));
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return fallback;
+  }
+  return Math.min(parsed, 1);
+}
+
+function normalizeThresholdCount(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return fallback;
+  }
+  return parsed;
+}
+
+function toRate(numerator = 0, denominator = 0) {
+  const safeDenominator = Number(denominator || 0);
+  const safeNumerator = Number(numerator || 0);
+  if (safeDenominator <= 0) {
+    return null;
+  }
+  return Number((safeNumerator / safeDenominator).toFixed(4));
+}
+
+function toPercent(rate = null) {
+  if (rate == null) {
+    return null;
+  }
+  return Number((Number(rate) * 100).toFixed(2));
+}
+
+function incrementCountBucket(bucket = {}, key = "") {
+  const normalizedKey = normalizeText(key) || "unknown";
+  bucket[normalizedKey] = Number(bucket[normalizedKey] || 0) + 1;
+}
+
+function listAutonomyRolloutEvents({
+  sinceAt = "",
+  untilAt = "",
+  eventLimit = DEFAULT_AUTONOMY_ROLLOUT_EVENT_LIMIT,
+} = {}) {
+  const normalizedSinceAt = normalizeText(sinceAt) || nowIso();
+  const normalizedUntilAt = normalizeText(untilAt) || nowIso();
+  try {
+    return listAutonomyRolloutEventsStmt
+      .all(
+        ...AUTONOMY_ROLLOUT_EVENTS,
+        normalizedSinceAt,
+        normalizedUntilAt,
+        clampAutonomyRolloutEventLimit(eventLimit),
+      )
+      .map((row) => ({
+        event: normalizeText(row?.event) || null,
+        payload: safeJsonParse(row?.payload_json),
+        created_at: normalizeText(row?.created_at) || null,
+      }))
+      .filter((row) => Boolean(row.event));
+  } catch (error) {
+    if (isClosedDbError(error)) {
+      return [];
+    }
+    throw error;
+  }
+}
+
+function buildAutonomyIngressRolloutMetrics(events = []) {
+  const metrics = {
+    mode_decision_count: 0,
+    queue_authoritative_mode_decision_count: 0,
+    queue_authoritative_gate_fallback_sync_count: 0,
+    enqueue_attempt_count: 0,
+    enqueue_accepted_count: 0,
+    enqueue_fail_fallback_sync_count: 0,
+    sampling_miss_count: 0,
+    worker_ready_gate_miss_count: 0,
+    decision_reason_counts: {},
+    queue_authoritative_gate_fallback_reason_counts: {},
+    enqueue_fail_reason_counts: {},
+  };
+  for (const eventItem of events) {
+    const eventName = normalizeText(eventItem?.event) || "";
+    const payload = eventItem?.payload && typeof eventItem.payload === "object" && !Array.isArray(eventItem.payload)
+      ? eventItem.payload
+      : {};
+    if (eventName === "planner_autonomy_ingress_mode_decision") {
+      metrics.mode_decision_count += 1;
+      if (normalizeText(payload.mode) === "queue_authoritative") {
+        metrics.queue_authoritative_mode_decision_count += 1;
+      }
+      incrementCountBucket(metrics.decision_reason_counts, normalizeText(payload.reason) || "none");
+      continue;
+    }
+    if (eventName === "planner_autonomy_queue_authoritative_sampling_miss") {
+      metrics.sampling_miss_count += 1;
+      continue;
+    }
+    if (eventName === "planner_autonomy_queue_authoritative_gate_fallback_sync") {
+      metrics.queue_authoritative_gate_fallback_sync_count += 1;
+      metrics.worker_ready_gate_miss_count += 1;
+      incrementCountBucket(
+        metrics.queue_authoritative_gate_fallback_reason_counts,
+        normalizeText(payload.reason) || "worker_not_ready",
+      );
+      continue;
+    }
+    if (eventName === "planner_autonomy_ingress_enqueued") {
+      metrics.enqueue_attempt_count += 1;
+      metrics.enqueue_accepted_count += 1;
+      continue;
+    }
+    if (eventName === "planner_autonomy_ingress_fallback_sync") {
+      metrics.enqueue_attempt_count += 1;
+      metrics.enqueue_fail_fallback_sync_count += 1;
+      incrementCountBucket(metrics.enqueue_fail_reason_counts, normalizeText(payload.reason) || "enqueue_failed");
+    }
+  }
+  const queueGateFallbackRate = toRate(
+    metrics.queue_authoritative_gate_fallback_sync_count,
+    metrics.queue_authoritative_mode_decision_count,
+  );
+  const enqueueFailFallbackRate = toRate(
+    metrics.enqueue_fail_fallback_sync_count,
+    metrics.enqueue_attempt_count,
+  );
+  return {
+    ...metrics,
+    queue_authoritative_gate_fallback_rate: queueGateFallbackRate,
+    queue_authoritative_gate_fallback_rate_percent: toPercent(queueGateFallbackRate),
+    enqueue_fail_fallback_rate: enqueueFailFallbackRate,
+    enqueue_fail_fallback_rate_percent: toPercent(enqueueFailFallbackRate),
+  };
+}
+
+function resolveAutonomyRolloutAlertThresholds(thresholds = null) {
+  const source = thresholds && typeof thresholds === "object" && !Array.isArray(thresholds)
+    ? thresholds
+    : {};
+  return {
+    queue_authoritative_gate_fallback_rate: normalizeThresholdRate(
+      source.queue_authoritative_gate_fallback_rate ?? process.env.AUTONOMY_ROLLOUT_ALERT_QUEUE_GATE_FALLBACK_RATE,
+      DEFAULT_AUTONOMY_QUEUE_GATE_FALLBACK_ALERT_RATE,
+    ),
+    enqueue_fail_fallback_rate: normalizeThresholdRate(
+      source.enqueue_fail_fallback_rate ?? process.env.AUTONOMY_ROLLOUT_ALERT_ENQUEUE_FAIL_RATE,
+      DEFAULT_AUTONOMY_ENQUEUE_FAIL_ALERT_RATE,
+    ),
+    oldest_queued_age_ms: normalizeThresholdCount(
+      source.oldest_queued_age_ms ?? process.env.AUTONOMY_ROLLOUT_ALERT_OLDEST_QUEUED_AGE_MS,
+      DEFAULT_AUTONOMY_OLDEST_QUEUED_AGE_ALERT_MS,
+    ),
+    failed_backlog_count: normalizeThresholdCount(
+      source.failed_backlog_count ?? process.env.AUTONOMY_ROLLOUT_ALERT_FAILED_BACKLOG_COUNT,
+      DEFAULT_AUTONOMY_FAILED_BACKLOG_ALERT_COUNT,
+    ),
+  };
+}
+
+function buildAutonomyRolloutAlerts({
+  ingress = {},
+  queueBacklog = {},
+  workerReadiness = {},
+  thresholds = {},
+} = {}) {
+  const alerts = [];
+  if (
+    ingress.queue_authoritative_gate_fallback_rate != null
+    && ingress.queue_authoritative_gate_fallback_rate > thresholds.queue_authoritative_gate_fallback_rate
+  ) {
+    alerts.push({
+      code: "autonomy_queue_gate_fallback_rate_high",
+      severity: "warn",
+      summary: "queue_authoritative gate fallback-to-sync rate is above threshold.",
+      details: {
+        actual_rate: ingress.queue_authoritative_gate_fallback_rate,
+        threshold_rate: thresholds.queue_authoritative_gate_fallback_rate,
+        count: ingress.queue_authoritative_gate_fallback_sync_count,
+        denominator: ingress.queue_authoritative_mode_decision_count,
+      },
+    });
+  }
+  if (ingress.enqueue_fail_fallback_rate != null && ingress.enqueue_fail_fallback_rate > thresholds.enqueue_fail_fallback_rate) {
+    alerts.push({
+      code: "autonomy_enqueue_fail_fallback_rate_high",
+      severity: "warn",
+      summary: "enqueue fail fallback-to-sync rate is above threshold.",
+      details: {
+        actual_rate: ingress.enqueue_fail_fallback_rate,
+        threshold_rate: thresholds.enqueue_fail_fallback_rate,
+        count: ingress.enqueue_fail_fallback_sync_count,
+        denominator: ingress.enqueue_attempt_count,
+      },
+    });
+  }
+  if (
+    Number.isFinite(Number(queueBacklog.oldest_queued_age_ms))
+    && Number(queueBacklog.oldest_queued_age_ms) > Number(thresholds.oldest_queued_age_ms)
+  ) {
+    alerts.push({
+      code: "autonomy_queue_oldest_age_high",
+      severity: "warn",
+      summary: "queue backlog oldest queued age exceeded threshold.",
+      details: {
+        oldest_queued_age_ms: Number(queueBacklog.oldest_queued_age_ms),
+        threshold_ms: Number(thresholds.oldest_queued_age_ms),
+        oldest_queued_at: queueBacklog.oldest_queued_at || null,
+      },
+    });
+  }
+  if (Number(queueBacklog.failed_count || 0) > Number(thresholds.failed_backlog_count)) {
+    alerts.push({
+      code: "autonomy_failed_backlog_high",
+      severity: "warn",
+      summary: "failed backlog count exceeded threshold.",
+      details: {
+        failed_count: Number(queueBacklog.failed_count || 0),
+        threshold_count: Number(thresholds.failed_backlog_count),
+      },
+    });
+  }
+  if (workerReadiness?.ready !== true) {
+    alerts.push({
+      code: "autonomy_worker_not_ready",
+      severity: "critical",
+      summary: "worker readiness is not ready.",
+      details: {
+        reason: normalizeText(workerReadiness?.reason) || "worker_not_ready",
+        heartbeat_lag_ms: workerReadiness?.heartbeat_lag_ms ?? null,
+        lease_remaining_ms: workerReadiness?.lease_remaining_ms ?? null,
+      },
+    });
+  }
+  return alerts;
+}
+
+export function getAutonomyRolloutGuardrailSnapshot({
+  lookbackMinutes = DEFAULT_AUTONOMY_ROLLOUT_LOOKBACK_MINUTES,
+  nowAt = "",
+  eventLimit = DEFAULT_AUTONOMY_ROLLOUT_EVENT_LIMIT,
+  maxHeartbeatLagMs = null,
+  alertThresholds = null,
+} = {}) {
+  const normalizedLookbackMinutes = clampAutonomyRolloutLookbackMinutes(lookbackMinutes);
+  const normalizedNowAtInput = normalizeText(nowAt);
+  const nowMsFromInput = normalizedNowAtInput ? Date.parse(normalizedNowAtInput) : null;
+  const nowMs = Number.isFinite(nowMsFromInput) ? nowMsFromInput : Date.now();
+  const generatedAt = new Date(nowMs).toISOString();
+  const sinceAt = new Date(nowMs - (normalizedLookbackMinutes * 60 * 1_000)).toISOString();
+  const ingressEvents = listAutonomyRolloutEvents({
+    sinceAt,
+    untilAt: generatedAt,
+    eventLimit,
+  });
+  const ingress = buildAutonomyIngressRolloutMetrics(ingressEvents);
+  const queueBacklog = readAutonomyQueueBacklogMetrics({
+    nowAt: generatedAt,
+  });
+  const workerReadiness = readAutonomyWorkerReadiness({
+    nowAt: generatedAt,
+    ...(maxHeartbeatLagMs == null ? {} : { maxHeartbeatLagMs }),
+  });
+  const thresholds = resolveAutonomyRolloutAlertThresholds(alertThresholds);
+  const alerts = buildAutonomyRolloutAlerts({
+    ingress,
+    queueBacklog,
+    workerReadiness,
+    thresholds,
+  });
+  return {
+    generated_at: generatedAt,
+    lookback_minutes: normalizedLookbackMinutes,
+    since_at: sinceAt,
+    ingress: {
+      ...ingress,
+      event_sample_count: ingressEvents.length,
+    },
+    queue_backlog: queueBacklog,
+    worker_readiness: workerReadiness,
+    alert_thresholds: thresholds,
+    alerts,
+    alert_count: alerts.length,
   };
 }
 

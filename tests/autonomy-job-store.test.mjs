@@ -20,6 +20,7 @@ const {
   lookupAutonomyJobFinalPickupByTraceId,
   lookupAutonomyJobReceiptByRequestId,
   lookupAutonomyJobReceiptByTraceId,
+  readAutonomyQueueBacklogMetrics,
   readAutonomyWorkerReadiness,
 } = await import("../src/task-runtime/autonomy-job-store.mjs");
 
@@ -406,8 +407,10 @@ test("autonomy worker readiness uses running attempt heartbeat and lease signals
     maxHeartbeatLagMs: 60_000,
   });
   assert.equal(ready?.ready, true);
+  assert.equal(ready?.readiness_state, "ready");
   assert.equal(ready?.reason, "worker_ready");
   assert.equal(ready?.worker_id, "worker-readiness");
+  assert.equal(Number.isFinite(Number(ready?.lease_remaining_ms)), true);
 
   db.prepare(`
     UPDATE autonomy_job_attempts
@@ -421,7 +424,94 @@ test("autonomy worker readiness uses running attempt heartbeat and lease signals
     nowAt: "2026-04-20T00:00:00.000Z",
   });
   assert.equal(expired?.ready, false);
+  assert.equal(expired?.readiness_state, "not_ready");
   assert.equal(expired?.reason, "worker_lease_expired");
+  assert.equal(Number(expired?.lease_remaining_ms) <= 0, true);
+});
+
+test("autonomy queue backlog metrics report queued/running/failed counts and oldest queued age", () => {
+  const queuedOlder = enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    traceId: "trace_backlog_queued_old",
+    payload: createPlannerUserInputPayload({
+      requestId: "req_backlog_queued_old",
+      traceId: "trace_backlog_queued_old",
+    }),
+    maxAttempts: 1,
+  });
+  const queuedNewer = enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    traceId: "trace_backlog_queued_new",
+    payload: createPlannerUserInputPayload({
+      requestId: "req_backlog_queued_new",
+      traceId: "trace_backlog_queued_new",
+    }),
+    maxAttempts: 1,
+  });
+  const running = enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    traceId: "trace_backlog_running",
+    payload: createPlannerUserInputPayload({
+      requestId: "req_backlog_running",
+      traceId: "trace_backlog_running",
+    }),
+    maxAttempts: 1,
+  });
+  const failed = enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    traceId: "trace_backlog_failed",
+    payload: createPlannerUserInputPayload({
+      requestId: "req_backlog_failed",
+      traceId: "trace_backlog_failed",
+    }),
+    maxAttempts: 1,
+  });
+
+  db.prepare(`
+    UPDATE autonomy_jobs
+    SET created_at = @created_at,
+        next_run_at = @next_run_at
+    WHERE id = @job_id
+  `).run({
+    created_at: "2026-04-20T00:00:00.000Z",
+    next_run_at: "2026-04-20T00:00:00.000Z",
+    job_id: queuedOlder.id,
+  });
+  db.prepare(`
+    UPDATE autonomy_jobs
+    SET created_at = @created_at,
+        next_run_at = @next_run_at
+    WHERE id = @job_id
+  `).run({
+    created_at: "2026-04-20T00:05:00.000Z",
+    next_run_at: "2026-04-20T00:05:00.000Z",
+    job_id: queuedNewer.id,
+  });
+  db.prepare(`
+    UPDATE autonomy_jobs
+    SET status = @status
+    WHERE id = @job_id
+  `).run({
+    status: "running",
+    job_id: running.id,
+  });
+  db.prepare(`
+    UPDATE autonomy_jobs
+    SET status = @status
+    WHERE id = @job_id
+  `).run({
+    status: "failed",
+    job_id: failed.id,
+  });
+
+  const metrics = readAutonomyQueueBacklogMetrics({
+    nowAt: "2026-04-20T00:10:00.000Z",
+  });
+  assert.equal(metrics?.queued_count, 2);
+  assert.equal(metrics?.running_count, 1);
+  assert.equal(metrics?.failed_count, 1);
+  assert.equal(metrics?.oldest_queued_at, "2026-04-20T00:00:00.000Z");
+  assert.equal(metrics?.oldest_queued_age_ms, 10 * 60 * 1_000);
 });
 
 test("autonomy job store final pickup returns canonical structured result for completed job", () => {

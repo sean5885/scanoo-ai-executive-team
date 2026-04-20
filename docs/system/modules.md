@@ -91,6 +91,8 @@ Current-truth docs for onboarding are:
     - `executeJob` injection remains the override path for other or custom job types
   - worker failure payload now adds additive `lifecycle_sink` metadata for sink-class decisions (`waiting_user` from `blocked + *_waiting_user`, `escalated` from `next_state=escalated`) while keeping the same status machine (`queued|running|completed|failed`)
   - store now also exposes one fail-closed worker-readiness helper (`readAutonomyWorkerReadiness`) using existing `autonomy_job_attempts` running heartbeat + lease signal projection; missing/stale/expired heartbeat is treated as `not ready`
+    - readiness projection now also includes additive `readiness_state` and `lease_remaining_ms` so heartbeat lag vs lease freshness can be separated during rollout checks
+  - store now also exposes one additive queue/backlog read model (`readAutonomyQueueBacklogMetrics`) for `queued/running/failed` counts plus `oldest_queued_age_ms`
   - job/attempt store records now project `lifecycle_sink` from persisted `error_json.lifecycle_sink` as read-side metadata
   - store now also exposes additive caller receipt lookup read model:
     - `lookupAutonomyJobReceiptByTraceId(trace_id)`
@@ -126,6 +128,12 @@ Current-truth docs for onboarding are:
   - CLI `disposition` enforces required write fields (`job_id`, `action`, `reason`, `operator_id`, `request_id`, `expected_updated_at`) and rejects missing-field writes before store mutation
   - CLI does not add HTTP/operator API and keeps store fail-soft semantics (`precondition_failed`, sink mismatch, not found) as passthrough output
   - incident-to-replay bridge is bounded metadata-only (`buildAutonomyIncidentReplaySpec`); no new replay runtime is introduced
+  - monitoring diagnostics now also expose one additive rollout guardrail snapshot (`getAutonomyRolloutGuardrailSnapshot`) over:
+    - ingress fallback/sampling counts and rates from persisted runtime trace events
+    - queue backlog counts and oldest-queued age from autonomy job store
+    - worker readiness state / heartbeat lag / lease freshness projection
+    - bounded alert list for high fallback rate, queue-age backlog pressure, and worker-not-ready state
+  - operator CLI now includes additive rollout snapshot command (`node scripts/monitoring-cli.mjs autonomy-rollout`)
   - this scaffold is now partially wired from planner answer-edge ingress (`planner_user_input_v1` enqueue + worker execute) but remains additive; synchronous `/answer` execution is still the user-visible response authority
   - this scaffold still does not add background worker mesh, parallel specialist execution, or idempotency unification
 - Evidence:
@@ -195,6 +203,7 @@ Current-truth docs for onboarding are:
     - enqueue is ingress evidence only and is never treated as final task completion or final user answer
     - in `queue_authoritative`, enqueue accepted short-circuits same-request sync planner execution and returns non-final pending metadata while keeping the same response shape
     - enqueue failure / queue unavailable fail-soft back to `sync_authoritative` execution in the same request
+    - ingress observability now emits additive mode/sampling events (`planner_autonomy_ingress_mode_decision`, `planner_autonomy_queue_authoritative_sampling_miss`) without changing public response shape
   - that shared answer-edge helper also lifts current legacy planner result shapes into canonical `answer / sources / limitations` before public rendering
   - `planner-ingress-contract.mjs` is the checked-in ingress rule for doc/knowledge/runtime planner admission and the personal-lane planner edge guard
   - planner ingress now only escalates high-confidence doc/runtime phrasings; generic wording such as standalone "整理" or "風險" no longer forces document/runtime routing by itself

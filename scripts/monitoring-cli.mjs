@@ -1,6 +1,7 @@
 import {
   getMonitoringDashboard,
   getLatestError,
+  getAutonomyRolloutGuardrailSnapshot,
   getRequestMetrics,
   listRecentErrors,
   listRecentRequests,
@@ -18,6 +19,7 @@ function printUsage() {
       "  errors [limit]   Show recent error requests (default: 10)",
       "  error            Show the latest error request",
       "  metrics          Show request success/error metrics",
+      "  autonomy-rollout [lookbackMinutes] [maxHeartbeatLagMs]   Show autonomy ingress/queue/readiness guardrail metrics",
       "  learning [lookbackHours] [minSampleSize]   Show routing/tool learning summary",
     ].join("\n"),
   );
@@ -109,6 +111,15 @@ if (command === "dashboard") {
       success_rate_percent: Number((metrics.success_rate * 100).toFixed(2)),
       error_rate_percent: Number((metrics.error_rate * 100).toFixed(2)),
     },
+  }, null, 2));
+} else if (command === "autonomy-rollout") {
+  const snapshot = getAutonomyRolloutGuardrailSnapshot({
+    lookbackMinutes: limit,
+    maxHeartbeatLagMs: errorLimit,
+  });
+  console.log(JSON.stringify({
+    ok: true,
+    snapshot,
   }, null, 2));
 } else if (command === "learning") {
   const summary = buildAgentLearningSummary({

@@ -410,6 +410,10 @@ function resolvePlannerUserInputExecutionMode({
   };
 }
 
+function isQueueAuthoritativeSamplingMissReason(reason = "") {
+  return /^queue_authoritative_sampling_/.test(cleanText(reason));
+}
+
 async function applyQueueAuthoritativeWorkerReadyGate({
   executionMode = PLANNER_USER_INPUT_EXECUTION_MODE.sync_authoritative,
   workerReadinessChecker = readAutonomyWorkerReadiness,
@@ -3390,6 +3394,35 @@ export async function runPlannerUserInputEdge({
     autonomyQueueAuthoritativeEnabled,
     autonomyQueueAuthoritativeSamplingPercent,
   });
+  logger?.info?.("planner_autonomy_ingress_mode_decision", {
+    stage: "planner_autonomy_ingress",
+    trace_id: cleanText(traceId) || null,
+    request_id: cleanText(requestId) || null,
+    session_key: cleanText(sessionKey) || null,
+    handler_name: cleanText(handlerName) || null,
+    mode: executionModeDecision.mode,
+    reason: executionModeDecision.reason || null,
+    allowlist_matched: executionModeDecision.allowlist_matched === true,
+    ingress_enabled: executionModeDecision.ingress_enabled === true,
+    queue_authoritative_enabled: executionModeDecision.queue_authoritative_enabled === true,
+    queue_authoritative_sampling_percent: Number.isFinite(Number(executionModeDecision.queue_authoritative_sampling_percent))
+      ? Number(executionModeDecision.queue_authoritative_sampling_percent)
+      : null,
+    queue_authoritative_sampling_subject: cleanText(executionModeDecision.queue_authoritative_sampling_subject || "") || null,
+  });
+  if (isQueueAuthoritativeSamplingMissReason(executionModeDecision.reason)) {
+    logger?.warn?.("planner_autonomy_queue_authoritative_sampling_miss", {
+      stage: "planner_autonomy_ingress",
+      trace_id: cleanText(traceId) || null,
+      request_id: cleanText(requestId) || null,
+      mode: executionModeDecision.mode,
+      reason: executionModeDecision.reason || "queue_authoritative_sampling_miss",
+      queue_authoritative_sampling_percent: Number.isFinite(Number(executionModeDecision.queue_authoritative_sampling_percent))
+        ? Number(executionModeDecision.queue_authoritative_sampling_percent)
+        : null,
+      queue_authoritative_sampling_subject: cleanText(executionModeDecision.queue_authoritative_sampling_subject || "") || null,
+    });
+  }
   const queueAuthoritativeWorkerGate = await applyQueueAuthoritativeWorkerReadyGate({
     executionMode: executionModeDecision.mode,
     workerReadinessChecker: autonomyWorkerReadinessChecker,

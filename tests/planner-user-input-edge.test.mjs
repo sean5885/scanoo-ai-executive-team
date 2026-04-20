@@ -188,6 +188,66 @@ test("runPlannerUserInputEdge queue_authoritative sampling 0% always downgrades 
   assert.equal(metadata?.queue_fallback_to_sync, false);
 });
 
+test("runPlannerUserInputEdge emits mode decision and sampling miss observability events", async () => {
+  process.env.PLANNER_AUTONOMY_INGRESS_ENABLED = "true";
+  process.env.PLANNER_AUTONOMY_INGRESS_ALLOWLIST = "session:queue-authoritative-sampling-observability";
+  process.env.PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED = "true";
+  process.env.PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_SAMPLING_PERCENT = "0";
+  const infoEvents = [];
+  const warnEvents = [];
+
+  await runPlannerUserInputEdge({
+    text: "sampling observability",
+    sessionKey: "queue-authoritative-sampling-observability",
+    requestId: "req-sampling-observability",
+    traceId: "trace-sampling-observability",
+    logger: {
+      info(event, payload) {
+        infoEvents.push([event, payload]);
+      },
+      warn(event, payload) {
+        warnEvents.push([event, payload]);
+      },
+      error() {},
+      log() {},
+      debug() {},
+      child() {
+        return this;
+      },
+    },
+    async autonomyJobEnqueuer() {
+      return {
+        ok: true,
+        job_id: "job-sampling-observability",
+        trace_id: "trace-sampling-observability",
+      };
+    },
+    async plannerExecutor() {
+      return {
+        ok: true,
+        action: "get_runtime_info",
+        execution_result: {
+          ok: true,
+          data: {
+            answer: "sync result",
+            sources: ["sync"],
+            limitations: [],
+          },
+        },
+      };
+    },
+    workingMemoryWriter: null,
+  });
+
+  const modeDecision = infoEvents.find(([event]) => event === "planner_autonomy_ingress_mode_decision");
+  assert.equal(Boolean(modeDecision), true);
+  assert.equal(modeDecision?.[1]?.mode, "queue_shadow");
+  assert.equal(modeDecision?.[1]?.reason, "queue_authoritative_sampling_percent_zero");
+  const samplingMiss = warnEvents.find(([event]) => event === "planner_autonomy_queue_authoritative_sampling_miss");
+  assert.equal(Boolean(samplingMiss), true);
+  assert.equal(samplingMiss?.[1]?.reason, "queue_authoritative_sampling_percent_zero");
+});
+
 test("runPlannerUserInputEdge queue_authoritative mode skips sync planner execution after enqueue accepted", async () => {
   process.env.PLANNER_AUTONOMY_INGRESS_ENABLED = "true";
   process.env.PLANNER_AUTONOMY_INGRESS_ALLOWLIST = "session:queue-authoritative-session";
