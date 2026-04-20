@@ -16,6 +16,8 @@ const {
   getAutonomyOpenIncidentByJobId,
   heartbeatAutonomyAttempt,
   listAutonomyOpenIncidents,
+  lookupAutonomyJobReceiptByRequestId,
+  lookupAutonomyJobReceiptByTraceId,
 } = await import("../src/task-runtime/autonomy-job-store.mjs");
 
 test.after(() => {
@@ -144,6 +146,212 @@ test("autonomy job store reclaims expired lease for the same job", () => {
   assert.equal(reclaimed?.attempt?.worker_id, "worker-second");
   assert.equal(reclaimed?.job?.lease_owner, "worker-second");
   assert.equal(reclaimed?.job?.attempt_count, 2);
+});
+
+function createPlannerUserInputPayload({
+  requestId = "",
+  traceId = "",
+  sessionKey = "",
+} = {}) {
+  return {
+    schema_version: "planner_user_input_v1",
+    planner_input: {
+      text: "lookup test input",
+      request_id: requestId || null,
+      trace_id: traceId || null,
+      session_key: sessionKey || null,
+    },
+    ingress: {
+      source: "test",
+      enqueued_at: "2026-04-20T00:00:00.000Z",
+    },
+  };
+}
+
+function assertBoundedLookupRecord(record = null) {
+  assert.equal(Boolean(record && typeof record === "object"), true);
+  assert.equal(Object.hasOwn(record, "payload"), false);
+  assert.equal(Object.hasOwn(record, "result"), false);
+  assert.equal(Object.hasOwn(record, "error"), false);
+  assert.equal(Object.hasOwn(record, "payload_json"), false);
+  assert.equal(Object.hasOwn(record, "result_json"), false);
+  assert.equal(Object.hasOwn(record, "error_json"), false);
+}
+
+test("autonomy job store lookup resolves planner job by trace_id and request_id", () => {
+  const queued = enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    traceId: "trace_lookup_planner",
+    payload: createPlannerUserInputPayload({
+      requestId: "req_lookup_planner",
+      traceId: "trace_lookup_planner",
+      sessionKey: "session_lookup_planner",
+    }),
+    maxAttempts: 1,
+  });
+
+  const byTrace = lookupAutonomyJobReceiptByTraceId("trace_lookup_planner");
+  assert.equal(byTrace?.job_id, queued.id);
+  assert.equal(byTrace?.job_type, "planner_user_input_v1");
+  assert.equal(byTrace?.status, "queued");
+  assert.equal(byTrace?.lifecycle_sink, null);
+  assert.equal(byTrace?.reason, null);
+  assert.equal(Boolean(byTrace?.updated_at), true);
+  assertBoundedLookupRecord(byTrace);
+
+  const byRequest = lookupAutonomyJobReceiptByRequestId("req_lookup_planner");
+  assert.equal(byRequest?.job_id, queued.id);
+  assert.equal(byRequest?.job_type, "planner_user_input_v1");
+  assert.equal(byRequest?.status, "queued");
+  assert.equal(byRequest?.lifecycle_sink, null);
+  assert.equal(byRequest?.reason, null);
+  assert.equal(Boolean(byRequest?.updated_at), true);
+  assertBoundedLookupRecord(byRequest);
+});
+
+test("autonomy job store lookup projects running/completed/failed safely", () => {
+  const runningJob = enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    traceId: "trace_lookup_running",
+    payload: createPlannerUserInputPayload({
+      requestId: "req_lookup_running",
+      traceId: "trace_lookup_running",
+    }),
+    maxAttempts: 1,
+  });
+  const runningClaim = claimNextAutonomyJob({
+    workerId: "worker-lookup-running",
+    leaseMs: 30_000,
+  });
+  assert.equal(runningClaim?.job?.id, runningJob.id);
+
+  const runningReceipt = lookupAutonomyJobReceiptByTraceId("trace_lookup_running");
+  assert.equal(runningReceipt?.status, "running");
+  assert.equal(runningReceipt?.lifecycle_sink, null);
+  assert.equal(runningReceipt?.reason, null);
+  assertBoundedLookupRecord(runningReceipt);
+
+  completeAutonomyAttempt({
+    jobId: runningClaim?.job?.id,
+    attemptId: runningClaim?.attempt?.id,
+    workerId: "worker-lookup-running",
+    result: {
+      ok: true,
+      answer: "done",
+    },
+  });
+  const completedReceipt = lookupAutonomyJobReceiptByRequestId("req_lookup_running");
+  assert.equal(completedReceipt?.status, "completed");
+  assert.equal(completedReceipt?.lifecycle_sink, null);
+  assert.equal(completedReceipt?.reason, null);
+  assertBoundedLookupRecord(completedReceipt);
+
+  enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    traceId: "trace_lookup_failed",
+    payload: createPlannerUserInputPayload({
+      requestId: "req_lookup_failed",
+      traceId: "trace_lookup_failed",
+    }),
+    maxAttempts: 1,
+  });
+  const failedClaim = claimNextAutonomyJob({
+    workerId: "worker-lookup-failed",
+    leaseMs: 30_000,
+  });
+  failAutonomyAttempt({
+    jobId: failedClaim?.job?.id,
+    attemptId: failedClaim?.attempt?.id,
+    workerId: "worker-lookup-failed",
+    retryable: false,
+    error: {
+      reason: "forced_lookup_failure",
+      lifecycle_sink: {
+        state: "waiting_user",
+        failure_class: "business_error",
+        routing_hint: "answer_waiting_user",
+        at: "2026-04-20T00:00:00.000Z",
+      },
+    },
+  });
+  const failedReceipt = lookupAutonomyJobReceiptByRequestId("req_lookup_failed");
+  assert.equal(failedReceipt?.status, "failed");
+  assert.equal(failedReceipt?.lifecycle_sink, "waiting_user");
+  assert.deepEqual(failedReceipt?.reason, {
+    failure_class: "business_error",
+    routing_hint: "answer_waiting_user",
+  });
+  assertBoundedLookupRecord(failedReceipt);
+});
+
+test("autonomy job store lookup returns latest visible job when multiple records match", () => {
+  const olderJob = enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    traceId: "trace_lookup_latest",
+    payload: createPlannerUserInputPayload({
+      requestId: "req_lookup_latest",
+      traceId: "trace_lookup_latest",
+      sessionKey: "session-a",
+    }),
+    maxAttempts: 1,
+  });
+  const newerJob = enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    traceId: "trace_lookup_latest",
+    payload: createPlannerUserInputPayload({
+      requestId: "req_lookup_latest",
+      traceId: "trace_lookup_latest",
+      sessionKey: "session-b",
+    }),
+    maxAttempts: 1,
+  });
+
+  db.prepare(`
+    UPDATE autonomy_jobs
+    SET updated_at = @updated_at
+    WHERE id = @job_id
+  `).run({
+    updated_at: "2026-04-20T00:00:00.000Z",
+    job_id: olderJob.id,
+  });
+  db.prepare(`
+    UPDATE autonomy_jobs
+    SET updated_at = @updated_at
+    WHERE id = @job_id
+  `).run({
+    updated_at: "2026-04-20T01:00:00.000Z",
+    job_id: newerJob.id,
+  });
+
+  const byTrace = lookupAutonomyJobReceiptByTraceId("trace_lookup_latest");
+  assert.equal(byTrace?.job_id, newerJob.id);
+  assert.equal(byTrace?.status, "queued");
+  assertBoundedLookupRecord(byTrace);
+
+  const byRequest = lookupAutonomyJobReceiptByRequestId("req_lookup_latest");
+  assert.equal(byRequest?.job_id, newerJob.id);
+  assert.equal(byRequest?.status, "queued");
+  assertBoundedLookupRecord(byRequest);
+});
+
+test("autonomy job store lookup fail-soft returns not_found", () => {
+  const traceMiss = lookupAutonomyJobReceiptByTraceId("trace_lookup_missing");
+  assert.equal(traceMiss?.status, "not_found");
+  assert.equal(traceMiss?.job_id, null);
+  assert.equal(traceMiss?.job_type, null);
+  assert.equal(traceMiss?.lifecycle_sink, null);
+  assert.equal(traceMiss?.updated_at, null);
+  assert.equal(traceMiss?.reason, null);
+  assertBoundedLookupRecord(traceMiss);
+
+  const requestMiss = lookupAutonomyJobReceiptByRequestId("req_lookup_missing");
+  assert.equal(requestMiss?.status, "not_found");
+  assert.equal(requestMiss?.job_id, null);
+  assert.equal(requestMiss?.job_type, null);
+  assert.equal(requestMiss?.lifecycle_sink, null);
+  assert.equal(requestMiss?.updated_at, null);
+  assert.equal(requestMiss?.reason, null);
+  assertBoundedLookupRecord(requestMiss);
 });
 
 function createFailedSinkIncident({

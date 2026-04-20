@@ -91,6 +91,12 @@ Current-truth docs for onboarding are:
     - `executeJob` injection remains the override path for other or custom job types
   - worker failure payload now adds additive `lifecycle_sink` metadata for sink-class decisions (`waiting_user` from `blocked + *_waiting_user`, `escalated` from `next_state=escalated`) while keeping the same status machine (`queued|running|completed|failed`)
   - job/attempt store records now project `lifecycle_sink` from persisted `error_json.lifecycle_sink` as read-side metadata
+  - store now also exposes additive caller receipt lookup read model:
+    - `lookupAutonomyJobReceiptByTraceId(trace_id)`
+    - `lookupAutonomyJobReceiptByRequestId(request_id)` (matched from persisted `payload_json` planner/request envelope fields)
+    - output is bounded to `job_id / job_type / status / lifecycle_sink / updated_at / reason(failure_class,routing_hint)` and never exposes raw `payload_json / result_json / error_json`
+    - lookup status projection is bounded to `accepted|queued|running|completed|failed|not_found`; no `partial/review-pending` style value is promoted to `completed`
+    - when multiple rows match, read model returns the latest visible job by `updated_at DESC, created_at DESC, id DESC`
   - store now also exposes a minimal operator incident read model (`listAutonomyOpenIncidents`) over `status=failed` plus `lifecycle_sink in {waiting_user, escalated}`, and excludes rows whose `error_json.operator_disposition.latest.action` is `ack_waiting_user` / `ack_escalated`; output remains bounded to `job_id / attempt_id / lifecycle_sink / failure_class / routing_hint / trace_id / updated_at`
   - store now also exposes additive single-incident read helper (`getAutonomyOpenIncidentByJobId`) using the same open-incident semantics as list-read and returning bounded incident metadata plus `operator_disposition`
   - store now supports additive operator disposition writeback (`applyAutonomyIncidentDisposition`) with actions:

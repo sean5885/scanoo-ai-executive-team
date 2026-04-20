@@ -23,6 +23,14 @@ const AUTONOMY_OPERATOR_DISPOSITION_ACK_ACTION = new Set([
   AUTONOMY_OPERATOR_DISPOSITION_ACTION.ackEscalated,
 ]);
 const AUTONOMY_RUNTIME_FAILURE_DISPOSITION_ACTION = "runtime_failure";
+const AUTONOMY_LOOKUP_STATUS = Object.freeze({
+  accepted: "accepted",
+  queued: "queued",
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+  notFound: "not_found",
+});
 
 function parseJson(value) {
   const normalized = cleanText(value);
@@ -112,6 +120,123 @@ function normalizeAutonomyDispositionPrecondition(precondition = null) {
   return {
     expected_updated_at: cleanText(precondition.expected_updated_at) || null,
   };
+}
+
+function readAutonomyLookupRequestIdFromPayload(payload = null) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+  const plannerInput = payload.planner_input;
+  if (plannerInput && typeof plannerInput === "object" && !Array.isArray(plannerInput)) {
+    const plannerRequestId = cleanText(plannerInput.request_id);
+    if (plannerRequestId) {
+      return plannerRequestId;
+    }
+  }
+  return cleanText(payload.request_id) || null;
+}
+
+function projectAutonomyLookupStatus(status = "") {
+  const normalizedStatus = cleanText(status);
+  if (normalizedStatus === AUTONOMY_JOB_STATUS.queued) {
+    return AUTONOMY_LOOKUP_STATUS.queued;
+  }
+  if (normalizedStatus === AUTONOMY_JOB_STATUS.running) {
+    return AUTONOMY_LOOKUP_STATUS.running;
+  }
+  if (normalizedStatus === AUTONOMY_JOB_STATUS.completed) {
+    return AUTONOMY_LOOKUP_STATUS.completed;
+  }
+  if (normalizedStatus === AUTONOMY_JOB_STATUS.failed) {
+    return AUTONOMY_LOOKUP_STATUS.failed;
+  }
+  return AUTONOMY_LOOKUP_STATUS.accepted;
+}
+
+function toAutonomyJobLookupNotFoundRecord() {
+  return {
+    job_id: null,
+    job_type: null,
+    status: AUTONOMY_LOOKUP_STATUS.notFound,
+    lifecycle_sink: null,
+    updated_at: null,
+    reason: null,
+  };
+}
+
+function toAutonomyJobLookupRecord(row = null) {
+  if (!row) {
+    return toAutonomyJobLookupNotFoundRecord();
+  }
+  const error = parseJson(row.error_json);
+  const lifecycleSink = readLifecycleSinkFromError(error);
+  const failureClass = cleanText(lifecycleSink?.failure_class) || null;
+  const routingHint = cleanText(lifecycleSink?.routing_hint) || null;
+  const hasReason = Boolean(failureClass || routingHint);
+  return {
+    job_id: cleanText(row.job_id) || null,
+    job_type: cleanText(row.job_type) || null,
+    status: projectAutonomyLookupStatus(row.status),
+    lifecycle_sink: cleanText(lifecycleSink?.state) || null,
+    updated_at: cleanText(row.updated_at) || null,
+    reason: hasReason
+      ? {
+          failure_class: failureClass,
+          routing_hint: routingHint,
+        }
+      : null,
+  };
+}
+
+function readAutonomyLatestJobLookupRowByTraceId(traceId = "") {
+  const normalizedTraceId = cleanText(traceId);
+  if (!normalizedTraceId) {
+    return null;
+  }
+  return db.prepare(`
+    SELECT
+      id AS job_id,
+      job_type,
+      status,
+      updated_at,
+      error_json
+    FROM autonomy_jobs
+    WHERE trace_id = @trace_id
+    ORDER BY updated_at DESC, created_at DESC, id DESC
+    LIMIT 1
+  `).get({
+    trace_id: normalizedTraceId,
+  });
+}
+
+function readAutonomyLatestJobLookupRowByRequestId(requestId = "") {
+  const normalizedRequestId = cleanText(requestId);
+  if (!normalizedRequestId) {
+    return null;
+  }
+  const rows = db.prepare(`
+    SELECT
+      id AS job_id,
+      job_type,
+      status,
+      updated_at,
+      error_json,
+      payload_json
+    FROM autonomy_jobs
+    WHERE payload_json IS NOT NULL
+      AND instr(payload_json, @request_id) > 0
+    ORDER BY updated_at DESC, created_at DESC, id DESC
+  `).all({
+    request_id: normalizedRequestId,
+  });
+  for (const row of rows) {
+    const payload = parseJson(row.payload_json);
+    const rowRequestId = readAutonomyLookupRequestIdFromPayload(payload);
+    if (rowRequestId && rowRequestId === normalizedRequestId) {
+      return row;
+    }
+  }
+  return null;
 }
 
 function toAutonomyOpenIncidentRecord(row = null, { includeOperatorDisposition = false } = {}) {
@@ -256,6 +381,18 @@ export function getAutonomyOpenIncidentByJobId(jobId = "") {
   return readAutonomyOpenIncidentByJobId(jobId, {
     includeOperatorDisposition: true,
   });
+}
+
+export function lookupAutonomyJobReceiptByTraceId(traceId = "") {
+  ensureAutonomyJobTables();
+  const row = readAutonomyLatestJobLookupRowByTraceId(traceId);
+  return toAutonomyJobLookupRecord(row);
+}
+
+export function lookupAutonomyJobReceiptByRequestId(requestId = "") {
+  ensureAutonomyJobTables();
+  const row = readAutonomyLatestJobLookupRowByRequestId(requestId);
+  return toAutonomyJobLookupRecord(row);
 }
 
 function toAutonomyJobRecord(row = null) {

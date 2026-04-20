@@ -35,6 +35,13 @@ Current additive path:
 4. job/attempt read records project `lifecycle_sink` from `error_json.lifecycle_sink` for query/observability
 5. operator read model (`listAutonomyOpenIncidents`) lists only open incidents from failed jobs where `lifecycle_sink.state in {waiting_user, escalated}` and `operator_disposition.latest.action` is not `ack_waiting_user` / `ack_escalated`
 6. single-incident helper (`getAutonomyOpenIncidentByJobId`) reuses the same open-incident filter semantics as list-read and returns one bounded record (including `operator_disposition`) for CLI-safe precondition reads
+6A. additive caller receipt lookup read model in the same store:
+   - `lookupAutonomyJobReceiptByTraceId(trace_id)`
+   - `lookupAutonomyJobReceiptByRequestId(request_id)` (request key matched from persisted job payload envelope)
+   - bounded response only: `job_id / job_type / status / lifecycle_sink / updated_at / reason(failure_class,routing_hint)`
+   - lookup status projection is bounded to `accepted|queued|running|completed|failed|not_found`
+   - unknown/miss path is fail-soft `not_found`
+   - multi-hit lookup returns latest visible row by `updated_at DESC, created_at DESC, id DESC`
 7. operator disposition writes (`applyAutonomyIncidentDisposition`) append `error_json.operator_disposition` with traceable `at/action/reason` and optional audit fields (`operator_id/request_id/expected_updated_at`)
 8. additive precondition support (`precondition.expected_updated_at`) is guarded in the same transaction/update as the disposition write; stale mismatch fails-soft as `precondition_failed` (`stale=true`)
 9. only `resume_same_job` re-queues the same job (`status=queued`, `next_run_at=now`); `ack_waiting_user` / `ack_escalated` are metadata-only and keep job status unchanged
