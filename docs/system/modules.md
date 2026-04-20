@@ -184,6 +184,10 @@ Current-truth docs for onboarding are:
   - that shared answer-edge helper now has one ingress adapter at `planner-user-input-edge`:
     - execution mode is resolved at ingress as one of `sync_authoritative`, `queue_shadow`, or `queue_authoritative` (skeleton, default-off)
     - mode resolution uses `PLANNER_AUTONOMY_INGRESS_ENABLED`, strict allowlist (`PLANNER_AUTONOMY_INGRESS_ALLOWLIST`, exact `session:|request:|trace:|handler:` match), and `PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED`
+    - when queue-authoritative is enabled, one deterministic sampling gate (`PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_SAMPLING_PERCENT`, 0~100) applies after allowlist hit and before worker-ready gate:
+      - sampling key priority is `request_id` first, then `trace_id`
+      - `0` means immediate full close (always downgrade to `queue_shadow`), `100` means full open (subject to worker-ready gate)
+      - same request/trace key always resolves to the same sampling outcome
     - `queue_authoritative` admission now has one worker-ready gate before enqueue:
       - worker readiness uses bounded heartbeat/lease read-model (`readAutonomyWorkerReadiness`) and is fail-closed
       - worker not ready forces mode downgrade to `sync_authoritative` (no enqueue accepted under queue-authoritative)

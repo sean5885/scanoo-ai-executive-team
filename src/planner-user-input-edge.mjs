@@ -4,7 +4,7 @@ import {
   executePlannedUserInput,
   looksLikeExecutiveStart,
 } from "./executive-planner.mjs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { resolveRegisteredAgentFamilyRequest } from "./agent-registry.mjs";
 import { parseMeetingCommand } from "./meeting-agent.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
@@ -114,6 +114,7 @@ const AUTONOMY_INGRESS_JOB_TYPE = "planner_user_input_v1";
 const AUTONOMY_INGRESS_ENABLE_ENV = "PLANNER_AUTONOMY_INGRESS_ENABLED";
 const AUTONOMY_INGRESS_ALLOWLIST_ENV = "PLANNER_AUTONOMY_INGRESS_ALLOWLIST";
 const AUTONOMY_QUEUE_AUTHORITATIVE_ENABLE_ENV = "PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED";
+const AUTONOMY_QUEUE_AUTHORITATIVE_SAMPLING_PERCENT_ENV = "PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_SAMPLING_PERCENT";
 const AUTONOMY_WORKER_READY_MAX_HEARTBEAT_LAG_MS_ENV = "PLANNER_AUTONOMY_WORKER_READY_MAX_HEARTBEAT_LAG_MS";
 const AUTONOMY_INGRESS_ALLOWLIST_SUBJECT_KEYS = new Set([
   "session",
@@ -145,6 +146,83 @@ function resolveAutonomyQueueAuthoritativeEnabled(value = null) {
     return value;
   }
   return isTruthyFlag(process.env[AUTONOMY_QUEUE_AUTHORITATIVE_ENABLE_ENV]);
+}
+
+function normalizeAutonomyQueueAuthoritativeSamplingPercent(rawValue = null) {
+  if (typeof rawValue === "number" && Number.isFinite(rawValue)) {
+    return Math.min(100, Math.max(0, rawValue));
+  }
+  const parsed = Number.parseFloat(cleanText(rawValue));
+  if (!Number.isFinite(parsed)) {
+    return 100;
+  }
+  return Math.min(100, Math.max(0, parsed));
+}
+
+function resolveAutonomyQueueAuthoritativeSamplingPercent(value = null) {
+  const raw = value == null
+    ? process.env[AUTONOMY_QUEUE_AUTHORITATIVE_SAMPLING_PERCENT_ENV]
+    : value;
+  return normalizeAutonomyQueueAuthoritativeSamplingPercent(raw);
+}
+
+function computeDeterministicSamplingScorePercent(seed = "") {
+  const normalizedSeed = cleanText(seed);
+  if (!normalizedSeed) {
+    return null;
+  }
+  const digest = createHash("sha256").update(normalizedSeed).digest();
+  const bucket = digest.readUInt32BE(0);
+  return (bucket / 0x100000000) * 100;
+}
+
+function resolveAutonomyQueueAuthoritativeSamplingDecision({
+  requestId = "",
+  traceId = "",
+  samplingPercent = null,
+} = {}) {
+  const percent = resolveAutonomyQueueAuthoritativeSamplingPercent(samplingPercent);
+  const normalizedRequestId = cleanText(requestId);
+  const normalizedTraceId = cleanText(traceId);
+  const samplingKey = normalizedRequestId || normalizedTraceId;
+  const samplingSubject = normalizedRequestId
+    ? "request"
+    : normalizedTraceId
+      ? "trace"
+      : "none";
+  if (percent <= 0) {
+    return {
+      accepted: false,
+      reason: "queue_authoritative_sampling_percent_zero",
+      sampling_percent: percent,
+      sampling_subject: samplingSubject,
+    };
+  }
+  if (percent >= 100) {
+    return {
+      accepted: true,
+      reason: null,
+      sampling_percent: percent,
+      sampling_subject: samplingSubject,
+    };
+  }
+  const scorePercent = computeDeterministicSamplingScorePercent(samplingKey);
+  if (scorePercent == null) {
+    return {
+      accepted: false,
+      reason: "queue_authoritative_sampling_key_missing",
+      sampling_percent: percent,
+      sampling_subject: samplingSubject,
+    };
+  }
+  return {
+    accepted: scorePercent < percent,
+    reason: scorePercent < percent
+      ? null
+      : "queue_authoritative_sampling_miss",
+    sampling_percent: percent,
+    sampling_subject: samplingSubject,
+  };
 }
 
 function resolveAutonomyWorkerReadyMaxHeartbeatLagMs(value = null) {
@@ -264,6 +342,7 @@ function resolvePlannerUserInputExecutionMode({
   autonomyIngressEnabled = null,
   autonomyIngressAllowlist = null,
   autonomyQueueAuthoritativeEnabled = null,
+  autonomyQueueAuthoritativeSamplingPercent = null,
 } = {}) {
   const ingressEnabled = resolveAutonomyIngressEnabled(autonomyIngressEnabled);
   if (!ingressEnabled) {
@@ -295,14 +374,39 @@ function resolvePlannerUserInputExecutionMode({
     };
   }
   const queueAuthoritativeEnabled = resolveAutonomyQueueAuthoritativeEnabled(autonomyQueueAuthoritativeEnabled);
+  if (queueAuthoritativeEnabled !== true) {
+    return {
+      mode: PLANNER_USER_INPUT_EXECUTION_MODE.queue_shadow,
+      reason: null,
+      allowlist_matched: true,
+      ingress_enabled: true,
+      queue_authoritative_enabled: false,
+    };
+  }
+  const samplingDecision = resolveAutonomyQueueAuthoritativeSamplingDecision({
+    requestId,
+    traceId,
+    samplingPercent: autonomyQueueAuthoritativeSamplingPercent,
+  });
+  if (samplingDecision.accepted !== true) {
+    return {
+      mode: PLANNER_USER_INPUT_EXECUTION_MODE.queue_shadow,
+      reason: samplingDecision.reason || "queue_authoritative_sampling_miss",
+      allowlist_matched: true,
+      ingress_enabled: true,
+      queue_authoritative_enabled: true,
+      queue_authoritative_sampling_percent: samplingDecision.sampling_percent,
+      queue_authoritative_sampling_subject: samplingDecision.sampling_subject,
+    };
+  }
   return {
-    mode: queueAuthoritativeEnabled
-      ? PLANNER_USER_INPUT_EXECUTION_MODE.queue_authoritative
-      : PLANNER_USER_INPUT_EXECUTION_MODE.queue_shadow,
+    mode: PLANNER_USER_INPUT_EXECUTION_MODE.queue_authoritative,
     reason: null,
     allowlist_matched: true,
     ingress_enabled: true,
-    queue_authoritative_enabled: queueAuthoritativeEnabled,
+    queue_authoritative_enabled: true,
+    queue_authoritative_sampling_percent: samplingDecision.sampling_percent,
+    queue_authoritative_sampling_subject: samplingDecision.sampling_subject,
   };
 }
 
@@ -3271,6 +3375,7 @@ export async function runPlannerUserInputEdge({
   autonomyIngressEnabled = null,
   autonomyIngressAllowlist = null,
   autonomyQueueAuthoritativeEnabled = null,
+  autonomyQueueAuthoritativeSamplingPercent = null,
   autonomyWorkerReadinessChecker = readAutonomyWorkerReadiness,
   autonomyWorkerReadyMaxHeartbeatLagMs = null,
   autonomyJobEnqueuer = enqueueAutonomyJob,
@@ -3283,6 +3388,7 @@ export async function runPlannerUserInputEdge({
     autonomyIngressEnabled,
     autonomyIngressAllowlist,
     autonomyQueueAuthoritativeEnabled,
+    autonomyQueueAuthoritativeSamplingPercent,
   });
   const queueAuthoritativeWorkerGate = await applyQueueAuthoritativeWorkerReadyGate({
     executionMode: executionModeDecision.mode,

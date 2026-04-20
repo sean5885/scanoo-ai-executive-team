@@ -195,6 +195,10 @@ Current public `/answer` path:
 3. `runPlannerUserInputEdge(...)` first resolves one bounded completion-authority execution mode:
    - mode candidates: `sync_authoritative` (default), `queue_shadow` (current), `queue_authoritative` (skeleton, default-off)
    - guard inputs: `PLANNER_AUTONOMY_INGRESS_ENABLED`, strict allowlist hit from `PLANNER_AUTONOMY_INGRESS_ALLOWLIST`, and `PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED` (only for queue authority skeleton)
+   - when queue-authoritative is enabled, deterministic sampling gate `PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_SAMPLING_PERCENT` (0~100) runs before worker-ready:
+     - sampling key uses `request_id` first, then `trace_id`
+     - sampling miss keeps the existing non-authoritative path (`queue_shadow`)
+     - `0` force-closes queue-authoritative immediately; `100` keeps full-open behavior (still subject to worker-ready gate)
    - if candidate mode is `queue_authoritative`, one worker-ready admission gate runs first using bounded running-attempt heartbeat/lease signal (`readAutonomyWorkerReadiness`); gate is fail-closed
    - when worker-ready gate is not ready, mode is force-downgraded to `sync_authoritative` before enqueue is attempted
 4. when mode is `queue_shadow` or `queue_authoritative`, the same bounded autonomy ingress adapter may enqueue additive job `planner_user_input_v1`

@@ -8,6 +8,7 @@ const { ROUTING_NO_MATCH } = await import("../src/planner-error-codes.mjs");
 const previousAutonomyIngressEnabled = process.env.PLANNER_AUTONOMY_INGRESS_ENABLED;
 const previousAutonomyIngressAllowlist = process.env.PLANNER_AUTONOMY_INGRESS_ALLOWLIST;
 const previousAutonomyQueueAuthoritativeEnabled = process.env.PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED;
+const previousAutonomyQueueAuthoritativeSamplingPercent = process.env.PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_SAMPLING_PERCENT;
 
 test.after(() => {
   if (previousAutonomyIngressEnabled == null) {
@@ -25,6 +26,11 @@ test.after(() => {
   } else {
     process.env.PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED = previousAutonomyQueueAuthoritativeEnabled;
   }
+  if (previousAutonomyQueueAuthoritativeSamplingPercent == null) {
+    delete process.env.PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_SAMPLING_PERCENT;
+  } else {
+    process.env.PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_SAMPLING_PERCENT = previousAutonomyQueueAuthoritativeSamplingPercent;
+  }
   testDb.close();
 });
 
@@ -32,6 +38,7 @@ test.beforeEach(() => {
   delete process.env.PLANNER_AUTONOMY_INGRESS_ENABLED;
   delete process.env.PLANNER_AUTONOMY_INGRESS_ALLOWLIST;
   delete process.env.PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED;
+  delete process.env.PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_SAMPLING_PERCENT;
 });
 
 test("runPlannerUserInputEdge enqueues planner_user_input_v1 under feature flag + strict allowlist hit", async () => {
@@ -87,6 +94,8 @@ test("runPlannerUserInputEdge enqueues planner_user_input_v1 under feature flag 
 test("runPlannerUserInputEdge falls back to sync planner path when enqueue fails", async () => {
   process.env.PLANNER_AUTONOMY_INGRESS_ENABLED = "true";
   process.env.PLANNER_AUTONOMY_INGRESS_ALLOWLIST = "session:autonomy-ingress-fallback";
+  process.env.PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED = "true";
+  process.env.PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_SAMPLING_PERCENT = "0";
   let plannerExecuted = false;
 
   const result = await runPlannerUserInputEdge({
@@ -114,15 +123,76 @@ test("runPlannerUserInputEdge falls back to sync planner path when enqueue fails
     workingMemoryWriter: null,
   });
 
+  const metadata = readPlannerUserInputEdgeMetadata(result);
   assert.equal(plannerExecuted, true);
+  assert.equal(metadata?.execution_mode, "queue_shadow");
   assert.equal(result?.userResponse?.ok, true);
   assert.match(result?.userResponse?.answer || "", /同步路徑回覆/);
+});
+
+test("runPlannerUserInputEdge queue_authoritative sampling 0% always downgrades to queue_shadow", async () => {
+  process.env.PLANNER_AUTONOMY_INGRESS_ENABLED = "true";
+  process.env.PLANNER_AUTONOMY_INGRESS_ALLOWLIST = "session:queue-authoritative-sampling-zero";
+  process.env.PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED = "true";
+  process.env.PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_SAMPLING_PERCENT = "0";
+  let plannerExecuted = false;
+  let enqueueCalled = false;
+  let workerReadinessChecked = false;
+
+  const result = await runPlannerUserInputEdge({
+    text: "queue authoritative sampling 0%",
+    sessionKey: "queue-authoritative-sampling-zero",
+    requestId: "req-sampling-zero",
+    traceId: "trace-sampling-zero",
+    async autonomyWorkerReadinessChecker() {
+      workerReadinessChecked = true;
+      return {
+        ready: true,
+        reason: "worker_ready",
+      };
+    },
+    async autonomyJobEnqueuer() {
+      enqueueCalled = true;
+      return {
+        ok: true,
+        job_id: "job_queue_shadow_sampling_zero",
+        trace_id: "trace-sampling-zero",
+      };
+    },
+    async plannerExecutor() {
+      plannerExecuted = true;
+      return {
+        ok: true,
+        action: "search_and_summarize",
+        execution_result: {
+          ok: true,
+          data: {
+            answer: "sampling 0% still keeps sync planner",
+            sources: ["queue shadow + sync"],
+            limitations: [],
+          },
+        },
+      };
+    },
+    workingMemoryWriter: null,
+  });
+
+  const metadata = readPlannerUserInputEdgeMetadata(result);
+  assert.equal(workerReadinessChecked, false);
+  assert.equal(enqueueCalled, true);
+  assert.equal(plannerExecuted, true);
+  assert.equal(result?.userResponse?.ok, true);
+  assert.equal(metadata?.execution_mode, "queue_shadow");
+  assert.equal(metadata?.queue_enqueue_accepted, true);
+  assert.equal(metadata?.planner_sync_executed, true);
+  assert.equal(metadata?.queue_fallback_to_sync, false);
 });
 
 test("runPlannerUserInputEdge queue_authoritative mode skips sync planner execution after enqueue accepted", async () => {
   process.env.PLANNER_AUTONOMY_INGRESS_ENABLED = "true";
   process.env.PLANNER_AUTONOMY_INGRESS_ALLOWLIST = "session:queue-authoritative-session";
   process.env.PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED = "true";
+  process.env.PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_SAMPLING_PERCENT = "100";
   let plannerExecuted = false;
   let workerReadinessChecked = false;
 
@@ -175,6 +245,79 @@ test("runPlannerUserInputEdge queue_authoritative mode skips sync planner execut
   assert.equal(metadata?.completion_authority, "worker_verifier");
   assert.equal(metadata?.queue_enqueue_accepted, true);
   assert.equal(metadata?.planner_sync_executed, false);
+});
+
+test("runPlannerUserInputEdge queue_authoritative sampling is deterministic and request_id has higher priority than trace_id", async () => {
+  process.env.PLANNER_AUTONOMY_INGRESS_ENABLED = "true";
+  process.env.PLANNER_AUTONOMY_INGRESS_ALLOWLIST = "session:queue-authoritative-sampling-stable";
+  process.env.PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED = "true";
+  process.env.PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_SAMPLING_PERCENT = "50";
+
+  async function runOnce({ requestId, traceId }) {
+    let plannerExecuted = false;
+    const result = await runPlannerUserInputEdge({
+      text: "sampling stable check",
+      sessionKey: "queue-authoritative-sampling-stable",
+      requestId,
+      traceId,
+      async autonomyWorkerReadinessChecker() {
+        return {
+          ready: true,
+          reason: "worker_ready",
+        };
+      },
+      async autonomyJobEnqueuer() {
+        return {
+          ok: true,
+          job_id: "job_sampling_stable",
+          trace_id: traceId,
+        };
+      },
+      async plannerExecutor() {
+        plannerExecuted = true;
+        return {
+          ok: true,
+          action: "get_runtime_info",
+          execution_result: {
+            ok: true,
+            data: {
+              answer: "sync fallback path",
+              sources: ["sync"],
+              limitations: [],
+            },
+          },
+        };
+      },
+      workingMemoryWriter: null,
+    });
+    return {
+      mode: readPlannerUserInputEdgeMetadata(result)?.execution_mode,
+      plannerExecuted,
+    };
+  }
+
+  const sameRequestDifferentTraceModes = new Set();
+  const sameRequestDifferentTraceSyncFlags = new Set();
+  for (let index = 0; index < 12; index += 1) {
+    const run = await runOnce({
+      requestId: "req-sampling-stable-priority",
+      traceId: `trace-variant-${index}`,
+    });
+    sameRequestDifferentTraceModes.add(run.mode);
+    sameRequestDifferentTraceSyncFlags.add(run.plannerExecuted);
+  }
+  assert.equal(sameRequestDifferentTraceModes.size, 1);
+  assert.equal(sameRequestDifferentTraceSyncFlags.size, 1);
+
+  const sameTraceWithoutRequestModes = new Set();
+  for (let index = 0; index < 12; index += 1) {
+    const run = await runOnce({
+      requestId: "",
+      traceId: "trace-sampling-stable-fallback",
+    });
+    sameTraceWithoutRequestModes.add(run.mode);
+  }
+  assert.equal(sameTraceWithoutRequestModes.size, 1);
 });
 
 test("runPlannerUserInputEdge queue_authoritative mode fail-soft falls back to sync planner when enqueue fails", async () => {
