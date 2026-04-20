@@ -6,6 +6,7 @@ import { nowIso } from "../text-utils.mjs";
 import {
   AUTONOMY_JOB_ATTEMPT_STATUS,
   AUTONOMY_JOB_STATUS,
+  DEFAULT_AUTONOMY_HEARTBEAT_INTERVAL_MS,
   DEFAULT_AUTONOMY_LEASE_MS,
   DEFAULT_AUTONOMY_MAX_ATTEMPTS,
   normalizePositiveInteger,
@@ -37,6 +38,13 @@ const AUTONOMY_FINAL_PICKUP_REASON = Object.freeze({
   failed: "failed",
   notFound: "not_found",
 });
+const AUTONOMY_WORKER_READINESS_REASON = Object.freeze({
+  ready: "worker_ready",
+  heartbeatMissing: "worker_heartbeat_missing",
+  heartbeatInvalid: "worker_heartbeat_invalid",
+  heartbeatStale: "worker_heartbeat_stale",
+  leaseExpired: "worker_lease_expired",
+});
 
 function parseJson(value) {
   const normalized = cleanText(value);
@@ -65,6 +73,11 @@ function stringifyJson(value) {
 
 function addMsToNowIso(ms = DEFAULT_AUTONOMY_LEASE_MS) {
   return new Date(Date.now() + normalizePositiveInteger(ms, DEFAULT_AUTONOMY_LEASE_MS)).toISOString();
+}
+
+function parseIsoToMs(value = "") {
+  const parsed = Date.parse(cleanText(value));
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function readLifecycleSinkFromError(error = null) {
@@ -584,6 +597,94 @@ export function lookupAutonomyJobFinalPickupByRequestId(requestId = "") {
   ensureAutonomyJobTables();
   const row = readAutonomyLatestJobLookupRowByRequestId(requestId);
   return toAutonomyJobFinalPickupRecord(row);
+}
+
+export function readAutonomyWorkerReadiness({
+  nowAt = "",
+  maxHeartbeatLagMs = DEFAULT_AUTONOMY_HEARTBEAT_INTERVAL_MS * 3,
+} = {}) {
+  ensureAutonomyJobTables();
+  const nowMs = parseIsoToMs(nowAt) ?? Date.now();
+  const normalizedMaxHeartbeatLagMs = normalizePositiveInteger(
+    maxHeartbeatLagMs,
+    DEFAULT_AUTONOMY_HEARTBEAT_INTERVAL_MS * 3,
+    { min: 1_000, max: 10 * 60 * 1_000 },
+  );
+  const row = db.prepare(`
+    SELECT
+      worker_id,
+      heartbeat_at,
+      lease_expires_at,
+      updated_at,
+      created_at
+    FROM autonomy_job_attempts
+    WHERE status = @running_status
+    ORDER BY COALESCE(heartbeat_at, updated_at, created_at) DESC
+    LIMIT 1
+  `).get({
+    running_status: AUTONOMY_JOB_ATTEMPT_STATUS.running,
+  });
+  if (!row) {
+    return {
+      ready: false,
+      reason: AUTONOMY_WORKER_READINESS_REASON.heartbeatMissing,
+      worker_id: null,
+      heartbeat_at: null,
+      lease_expires_at: null,
+      heartbeat_lag_ms: null,
+      max_heartbeat_lag_ms: normalizedMaxHeartbeatLagMs,
+    };
+  }
+
+  const heartbeatAt = cleanText(row.heartbeat_at) || cleanText(row.updated_at) || cleanText(row.created_at) || null;
+  const leaseExpiresAt = cleanText(row.lease_expires_at) || null;
+  const heartbeatMs = parseIsoToMs(heartbeatAt);
+  const leaseExpiresMs = parseIsoToMs(leaseExpiresAt);
+  if (heartbeatMs == null) {
+    return {
+      ready: false,
+      reason: AUTONOMY_WORKER_READINESS_REASON.heartbeatInvalid,
+      worker_id: cleanText(row.worker_id) || null,
+      heartbeat_at: heartbeatAt,
+      lease_expires_at: leaseExpiresAt,
+      heartbeat_lag_ms: null,
+      max_heartbeat_lag_ms: normalizedMaxHeartbeatLagMs,
+    };
+  }
+
+  const heartbeatLagMs = Math.max(0, nowMs - heartbeatMs);
+  const leaseReady = leaseExpiresMs != null && leaseExpiresMs > nowMs;
+  if (!leaseReady) {
+    return {
+      ready: false,
+      reason: AUTONOMY_WORKER_READINESS_REASON.leaseExpired,
+      worker_id: cleanText(row.worker_id) || null,
+      heartbeat_at: heartbeatAt,
+      lease_expires_at: leaseExpiresAt,
+      heartbeat_lag_ms: heartbeatLagMs,
+      max_heartbeat_lag_ms: normalizedMaxHeartbeatLagMs,
+    };
+  }
+  if (heartbeatLagMs > normalizedMaxHeartbeatLagMs) {
+    return {
+      ready: false,
+      reason: AUTONOMY_WORKER_READINESS_REASON.heartbeatStale,
+      worker_id: cleanText(row.worker_id) || null,
+      heartbeat_at: heartbeatAt,
+      lease_expires_at: leaseExpiresAt,
+      heartbeat_lag_ms: heartbeatLagMs,
+      max_heartbeat_lag_ms: normalizedMaxHeartbeatLagMs,
+    };
+  }
+  return {
+    ready: true,
+    reason: AUTONOMY_WORKER_READINESS_REASON.ready,
+    worker_id: cleanText(row.worker_id) || null,
+    heartbeat_at: heartbeatAt,
+    lease_expires_at: leaseExpiresAt,
+    heartbeat_lag_ms: heartbeatLagMs,
+    max_heartbeat_lag_ms: normalizedMaxHeartbeatLagMs,
+  };
 }
 
 function toAutonomyJobRecord(row = null) {

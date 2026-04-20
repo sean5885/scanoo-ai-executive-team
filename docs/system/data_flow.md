@@ -195,6 +195,8 @@ Current public `/answer` path:
 3. `runPlannerUserInputEdge(...)` first resolves one bounded completion-authority execution mode:
    - mode candidates: `sync_authoritative` (default), `queue_shadow` (current), `queue_authoritative` (skeleton, default-off)
    - guard inputs: `PLANNER_AUTONOMY_INGRESS_ENABLED`, strict allowlist hit from `PLANNER_AUTONOMY_INGRESS_ALLOWLIST`, and `PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED` (only for queue authority skeleton)
+   - if candidate mode is `queue_authoritative`, one worker-ready admission gate runs first using bounded running-attempt heartbeat/lease signal (`readAutonomyWorkerReadiness`); gate is fail-closed
+   - when worker-ready gate is not ready, mode is force-downgraded to `sync_authoritative` before enqueue is attempted
 4. when mode is `queue_shadow` or `queue_authoritative`, the same bounded autonomy ingress adapter may enqueue additive job `planner_user_input_v1`
    - contract: enqueue accepted is not final completion and not a final user answer
    - fail-soft: enqueue failure / queue unavailable falls back to same-request synchronous planner path
@@ -266,6 +268,9 @@ Current truth:
   - `sync_authoritative`: synchronous planner is the authority path (default)
   - `queue_shadow`: enqueue additive job then keep synchronous planner as authority
   - `queue_authoritative` (skeleton, default-off): enqueue accepted short-circuits sync planner in-request and returns non-final pending response metadata
+- `queue_authoritative` admission is now fail-closed on worker readiness:
+  - readiness signal uses bounded running-attempt heartbeat/lease projection (`readAutonomyWorkerReadiness`)
+  - worker not ready forces mode to `sync_authoritative` before enqueue
 - `queue_authoritative` enqueue failure fail-soft falls back to `sync_authoritative`
 - enqueue accepted is explicitly guarded as not completed; completed authority remains worker + verifier
 - autonomy worker now has one built-in execute path for `planner_user_input_v1` (`queue payload -> executePlannedUserInput -> verifier/recovery`) while preserving existing `executeJob` override behavior for custom job handlers

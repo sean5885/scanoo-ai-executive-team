@@ -90,6 +90,7 @@ Current-truth docs for onboarding are:
     - execute failure / verifier fail stay on existing fail-soft `recovery_decision_v1` + lifecycle sink path
     - `executeJob` injection remains the override path for other or custom job types
   - worker failure payload now adds additive `lifecycle_sink` metadata for sink-class decisions (`waiting_user` from `blocked + *_waiting_user`, `escalated` from `next_state=escalated`) while keeping the same status machine (`queued|running|completed|failed`)
+  - store now also exposes one fail-closed worker-readiness helper (`readAutonomyWorkerReadiness`) using existing `autonomy_job_attempts` running heartbeat + lease signal projection; missing/stale/expired heartbeat is treated as `not ready`
   - job/attempt store records now project `lifecycle_sink` from persisted `error_json.lifecycle_sink` as read-side metadata
   - store now also exposes additive caller receipt lookup read model:
     - `lookupAutonomyJobReceiptByTraceId(trace_id)`
@@ -183,6 +184,9 @@ Current-truth docs for onboarding are:
   - that shared answer-edge helper now has one ingress adapter at `planner-user-input-edge`:
     - execution mode is resolved at ingress as one of `sync_authoritative`, `queue_shadow`, or `queue_authoritative` (skeleton, default-off)
     - mode resolution uses `PLANNER_AUTONOMY_INGRESS_ENABLED`, strict allowlist (`PLANNER_AUTONOMY_INGRESS_ALLOWLIST`, exact `session:|request:|trace:|handler:` match), and `PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED`
+    - `queue_authoritative` admission now has one worker-ready gate before enqueue:
+      - worker readiness uses bounded heartbeat/lease read-model (`readAutonomyWorkerReadiness`) and is fail-closed
+      - worker not ready forces mode downgrade to `sync_authoritative` (no enqueue accepted under queue-authoritative)
     - in `queue_shadow` / `queue_authoritative`, adapter enqueues additive autonomy job (`job_type=planner_user_input_v1`)
     - enqueue is ingress evidence only and is never treated as final task completion or final user answer
     - in `queue_authoritative`, enqueue accepted short-circuits same-request sync planner execution and returns non-final pending metadata while keeping the same response shape

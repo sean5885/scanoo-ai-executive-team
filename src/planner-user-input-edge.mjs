@@ -38,6 +38,7 @@ import {
   buildDecisionMetricsScoreboard,
   formatDecisionMetricsScoreboardSummary,
 } from "./decision-metrics-scoreboard.mjs";
+import { readAutonomyWorkerReadiness } from "./task-runtime/autonomy-job-store.mjs";
 import { enqueueAutonomyJob } from "./worker/enqueue-autonomy-job.mjs";
 
 const REMINDER_REQUEST_PATTERNS = [
@@ -113,6 +114,7 @@ const AUTONOMY_INGRESS_JOB_TYPE = "planner_user_input_v1";
 const AUTONOMY_INGRESS_ENABLE_ENV = "PLANNER_AUTONOMY_INGRESS_ENABLED";
 const AUTONOMY_INGRESS_ALLOWLIST_ENV = "PLANNER_AUTONOMY_INGRESS_ALLOWLIST";
 const AUTONOMY_QUEUE_AUTHORITATIVE_ENABLE_ENV = "PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED";
+const AUTONOMY_WORKER_READY_MAX_HEARTBEAT_LAG_MS_ENV = "PLANNER_AUTONOMY_WORKER_READY_MAX_HEARTBEAT_LAG_MS";
 const AUTONOMY_INGRESS_ALLOWLIST_SUBJECT_KEYS = new Set([
   "session",
   "request",
@@ -143,6 +145,16 @@ function resolveAutonomyQueueAuthoritativeEnabled(value = null) {
     return value;
   }
   return isTruthyFlag(process.env[AUTONOMY_QUEUE_AUTHORITATIVE_ENABLE_ENV]);
+}
+
+function resolveAutonomyWorkerReadyMaxHeartbeatLagMs(value = null) {
+  const raw = value == null
+    ? process.env[AUTONOMY_WORKER_READY_MAX_HEARTBEAT_LAG_MS_ENV]
+    : value;
+  const parsed = Number.parseInt(cleanText(raw), 10);
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : null;
 }
 
 function normalizeAutonomyIngressAllowlist(allowlist = null) {
@@ -292,6 +304,64 @@ function resolvePlannerUserInputExecutionMode({
     ingress_enabled: true,
     queue_authoritative_enabled: queueAuthoritativeEnabled,
   };
+}
+
+async function applyQueueAuthoritativeWorkerReadyGate({
+  executionMode = PLANNER_USER_INPUT_EXECUTION_MODE.sync_authoritative,
+  workerReadinessChecker = readAutonomyWorkerReadiness,
+  workerReadyMaxHeartbeatLagMs = null,
+} = {}) {
+  if (executionMode !== PLANNER_USER_INPUT_EXECUTION_MODE.queue_authoritative) {
+    return {
+      execution_mode: executionMode,
+      worker_ready: null,
+      downgraded_to_sync: false,
+      reason: null,
+      readiness: null,
+    };
+  }
+  if (typeof workerReadinessChecker !== "function") {
+    return {
+      execution_mode: PLANNER_USER_INPUT_EXECUTION_MODE.sync_authoritative,
+      worker_ready: false,
+      downgraded_to_sync: true,
+      reason: "worker_readiness_checker_unavailable",
+      readiness: null,
+    };
+  }
+  try {
+    const readiness = await workerReadinessChecker({
+      maxHeartbeatLagMs: resolveAutonomyWorkerReadyMaxHeartbeatLagMs(workerReadyMaxHeartbeatLagMs),
+    });
+    if (readiness?.ready === true) {
+      return {
+        execution_mode: executionMode,
+        worker_ready: true,
+        downgraded_to_sync: false,
+        reason: null,
+        readiness,
+      };
+    }
+    return {
+      execution_mode: PLANNER_USER_INPUT_EXECUTION_MODE.sync_authoritative,
+      worker_ready: false,
+      downgraded_to_sync: true,
+      reason: cleanText(readiness?.reason || "") || "worker_not_ready",
+      readiness: readiness && typeof readiness === "object" && !Array.isArray(readiness)
+        ? readiness
+        : null,
+    };
+  } catch (error) {
+    return {
+      execution_mode: PLANNER_USER_INPUT_EXECUTION_MODE.sync_authoritative,
+      worker_ready: false,
+      downgraded_to_sync: true,
+      reason: "worker_readiness_exception",
+      readiness: {
+        error: cleanText(error?.message || "") || null,
+      },
+    };
+  }
 }
 
 function buildQueueAuthoritativePendingPlannerResult({
@@ -3201,6 +3271,8 @@ export async function runPlannerUserInputEdge({
   autonomyIngressEnabled = null,
   autonomyIngressAllowlist = null,
   autonomyQueueAuthoritativeEnabled = null,
+  autonomyWorkerReadinessChecker = readAutonomyWorkerReadiness,
+  autonomyWorkerReadyMaxHeartbeatLagMs = null,
   autonomyJobEnqueuer = enqueueAutonomyJob,
 } = {}) {
   const executionModeDecision = resolvePlannerUserInputExecutionMode({
@@ -3212,7 +3284,27 @@ export async function runPlannerUserInputEdge({
     autonomyIngressAllowlist,
     autonomyQueueAuthoritativeEnabled,
   });
-  const edgeExecutionMode = executionModeDecision.mode;
+  const queueAuthoritativeWorkerGate = await applyQueueAuthoritativeWorkerReadyGate({
+    executionMode: executionModeDecision.mode,
+    workerReadinessChecker: autonomyWorkerReadinessChecker,
+    workerReadyMaxHeartbeatLagMs: autonomyWorkerReadyMaxHeartbeatLagMs,
+  });
+  const edgeExecutionMode = queueAuthoritativeWorkerGate.execution_mode;
+  if (queueAuthoritativeWorkerGate.downgraded_to_sync === true) {
+    logger?.warn?.("planner_autonomy_queue_authoritative_gate_fallback_sync", {
+      stage: "planner_autonomy_ingress",
+      reason: queueAuthoritativeWorkerGate.reason || "worker_not_ready",
+      trace_id: cleanText(traceId) || null,
+      requested_mode: executionModeDecision.mode,
+      resolved_mode: edgeExecutionMode,
+      worker_ready: queueAuthoritativeWorkerGate.worker_ready === true,
+      worker_readiness: queueAuthoritativeWorkerGate.readiness
+        && typeof queueAuthoritativeWorkerGate.readiness === "object"
+        && !Array.isArray(queueAuthoritativeWorkerGate.readiness)
+        ? queueAuthoritativeWorkerGate.readiness
+        : null,
+    });
+  }
   const autonomyIngressResult = await maybeEnqueuePlannerUserInputAutonomyJob({
     text,
     baseUrl,
@@ -3607,12 +3699,20 @@ export async function runPlannerUserInputEdge({
     completionState: "final",
     queueEnqueueAccepted: autonomyIngressResult?.enqueued === true,
     plannerSyncExecuted: true,
-    queueFallbackToSync: edgeExecutionMode === PLANNER_USER_INPUT_EXECUTION_MODE.queue_authoritative
-      && autonomyIngressResult?.enqueued !== true,
+    queueFallbackToSync: queueAuthoritativeWorkerGate?.downgraded_to_sync === true
+      || (
+        edgeExecutionMode === PLANNER_USER_INPUT_EXECUTION_MODE.queue_authoritative
+        && autonomyIngressResult?.enqueued !== true
+      ),
     enqueueJobId: autonomyIngressResult?.job_id || "",
     enqueueTraceId: autonomyIngressResult?.trace_id || "",
     enqueueFailureReason: autonomyIngressResult?.enqueued === true
       ? ""
-      : (autonomyIngressResult?.reason || executionModeDecision?.reason || ""),
+      : (
+        queueAuthoritativeWorkerGate?.reason
+        || autonomyIngressResult?.reason
+        || executionModeDecision?.reason
+        || ""
+      ),
   }));
 }

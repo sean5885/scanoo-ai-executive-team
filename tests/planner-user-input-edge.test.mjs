@@ -124,11 +124,19 @@ test("runPlannerUserInputEdge queue_authoritative mode skips sync planner execut
   process.env.PLANNER_AUTONOMY_INGRESS_ALLOWLIST = "session:queue-authoritative-session";
   process.env.PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED = "true";
   let plannerExecuted = false;
+  let workerReadinessChecked = false;
 
   const result = await runPlannerUserInputEdge({
     text: "這輪要走 queue authority",
     sessionKey: "queue-authoritative-session",
     traceId: "trace-queue-authoritative",
+    async autonomyWorkerReadinessChecker() {
+      workerReadinessChecked = true;
+      return {
+        ready: true,
+        reason: "worker_ready",
+      };
+    },
     async plannerExecutor() {
       plannerExecuted = true;
       return {
@@ -156,6 +164,7 @@ test("runPlannerUserInputEdge queue_authoritative mode skips sync planner execut
   });
 
   const metadata = readPlannerUserInputEdgeMetadata(result);
+  assert.equal(workerReadinessChecked, true);
   assert.equal(plannerExecuted, false);
   assert.deepEqual(Object.keys(result).sort(), ["plannerEnvelope", "plannerResult", "userResponse"]);
   assert.equal(result?.plannerResult?.action, "queue_authoritative_pending");
@@ -178,6 +187,12 @@ test("runPlannerUserInputEdge queue_authoritative mode fail-soft falls back to s
     text: "queue authority fallback",
     sessionKey: "queue-authoritative-fallback",
     traceId: "trace-queue-authoritative-fallback",
+    async autonomyWorkerReadinessChecker() {
+      return {
+        ready: true,
+        reason: "worker_ready",
+      };
+    },
     async autonomyJobEnqueuer() {
       throw new Error("queue_unavailable");
     },
@@ -207,6 +222,110 @@ test("runPlannerUserInputEdge queue_authoritative mode fail-soft falls back to s
   assert.equal(metadata?.completion_final, true);
   assert.equal(metadata?.completion_authority, "sync_planner");
   assert.equal(metadata?.queue_fallback_to_sync, true);
+});
+
+test("runPlannerUserInputEdge queue_authoritative mode fail-closes to sync planner when worker is not ready", async () => {
+  process.env.PLANNER_AUTONOMY_INGRESS_ENABLED = "true";
+  process.env.PLANNER_AUTONOMY_INGRESS_ALLOWLIST = "session:queue-authoritative-worker-gate";
+  process.env.PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED = "true";
+  let plannerExecuted = false;
+  let enqueueCalled = false;
+
+  const result = await runPlannerUserInputEdge({
+    text: "queue authority worker gate",
+    sessionKey: "queue-authoritative-worker-gate",
+    traceId: "trace-queue-authoritative-worker-gate",
+    async autonomyWorkerReadinessChecker() {
+      return {
+        ready: false,
+        reason: "worker_heartbeat_missing",
+      };
+    },
+    async autonomyJobEnqueuer() {
+      enqueueCalled = true;
+      return {
+        ok: true,
+        job_id: "job_should_not_be_enqueued",
+      };
+    },
+    async plannerExecutor() {
+      plannerExecuted = true;
+      return {
+        ok: true,
+        action: "search_and_summarize",
+        execution_result: {
+          ok: true,
+          data: {
+            answer: "worker not ready fallback sync",
+            sources: ["sync fallback"],
+            limitations: [],
+          },
+        },
+      };
+    },
+    workingMemoryWriter: null,
+  });
+
+  const metadata = readPlannerUserInputEdgeMetadata(result);
+  assert.equal(plannerExecuted, true);
+  assert.equal(enqueueCalled, false);
+  assert.equal(result?.userResponse?.ok, true);
+  assert.match(result?.userResponse?.answer || "", /fallback sync/);
+  assert.equal(metadata?.execution_mode, "sync_authoritative");
+  assert.equal(metadata?.queue_fallback_to_sync, true);
+  assert.equal(metadata?.queue_enqueue_accepted, false);
+  assert.equal(metadata?.enqueue_failure_reason, "worker_heartbeat_missing");
+});
+
+test("runPlannerUserInputEdge keeps queue_shadow behavior even when worker-ready gate is not ready", async () => {
+  process.env.PLANNER_AUTONOMY_INGRESS_ENABLED = "true";
+  process.env.PLANNER_AUTONOMY_INGRESS_ALLOWLIST = "session:queue-shadow-still-enqueue";
+  let plannerExecuted = false;
+  let enqueueCalled = false;
+
+  const result = await runPlannerUserInputEdge({
+    text: "queue shadow still enqueue",
+    sessionKey: "queue-shadow-still-enqueue",
+    traceId: "trace-queue-shadow-still-enqueue",
+    async autonomyWorkerReadinessChecker() {
+      return {
+        ready: false,
+        reason: "worker_heartbeat_missing",
+      };
+    },
+    async autonomyJobEnqueuer() {
+      enqueueCalled = true;
+      return {
+        ok: true,
+        job_id: "job_queue_shadow",
+        trace_id: "trace-queue-shadow-still-enqueue",
+      };
+    },
+    async plannerExecutor() {
+      plannerExecuted = true;
+      return {
+        ok: true,
+        action: "get_runtime_info",
+        execution_result: {
+          ok: true,
+          data: {
+            answer: "queue shadow sync still executed",
+            sources: ["queue shadow"],
+            limitations: [],
+          },
+        },
+      };
+    },
+    workingMemoryWriter: null,
+  });
+
+  const metadata = readPlannerUserInputEdgeMetadata(result);
+  assert.equal(enqueueCalled, true);
+  assert.equal(plannerExecuted, true);
+  assert.equal(result?.userResponse?.ok, true);
+  assert.equal(metadata?.execution_mode, "queue_shadow");
+  assert.equal(metadata?.queue_enqueue_accepted, true);
+  assert.equal(metadata?.queue_fallback_to_sync, false);
 });
 
 test("runPlannerUserInputEdge keeps sync path when allowlist does not match", async () => {

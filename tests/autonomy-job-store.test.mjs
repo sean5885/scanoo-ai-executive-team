@@ -20,6 +20,7 @@ const {
   lookupAutonomyJobFinalPickupByTraceId,
   lookupAutonomyJobReceiptByRequestId,
   lookupAutonomyJobReceiptByTraceId,
+  readAutonomyWorkerReadiness,
 } = await import("../src/task-runtime/autonomy-job-store.mjs");
 
 test.after(() => {
@@ -375,6 +376,52 @@ test("autonomy job store lookup fail-soft returns not_found", () => {
   assert.equal(requestMiss?.updated_at, null);
   assert.equal(requestMiss?.reason, null);
   assertBoundedLookupRecord(requestMiss);
+});
+
+test("autonomy worker readiness is fail-closed when no running worker heartbeat exists", () => {
+  const readiness = readAutonomyWorkerReadiness();
+  assert.equal(readiness?.ready, false);
+  assert.equal(readiness?.reason, "worker_heartbeat_missing");
+  assert.equal(readiness?.worker_id, null);
+});
+
+test("autonomy worker readiness uses running attempt heartbeat and lease signals", () => {
+  enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    traceId: "trace_worker_readiness",
+    payload: createPlannerUserInputPayload({
+      requestId: "req_worker_readiness",
+      traceId: "trace_worker_readiness",
+    }),
+    maxAttempts: 1,
+  });
+  const claim = claimNextAutonomyJob({
+    workerId: "worker-readiness",
+    leaseMs: 30_000,
+  });
+  assert.equal(Boolean(claim?.attempt?.id), true);
+
+  const ready = readAutonomyWorkerReadiness({
+    nowAt: claim?.attempt?.started_at,
+    maxHeartbeatLagMs: 60_000,
+  });
+  assert.equal(ready?.ready, true);
+  assert.equal(ready?.reason, "worker_ready");
+  assert.equal(ready?.worker_id, "worker-readiness");
+
+  db.prepare(`
+    UPDATE autonomy_job_attempts
+    SET lease_expires_at = @lease_expires_at
+    WHERE id = @attempt_id
+  `).run({
+    lease_expires_at: "1970-01-01T00:00:00.000Z",
+    attempt_id: claim.attempt.id,
+  });
+  const expired = readAutonomyWorkerReadiness({
+    nowAt: "2026-04-20T00:00:00.000Z",
+  });
+  assert.equal(expired?.ready, false);
+  assert.equal(expired?.reason, "worker_lease_expired");
 });
 
 test("autonomy job store final pickup returns canonical structured result for completed job", () => {
