@@ -16,6 +16,8 @@ const {
   getAutonomyOpenIncidentByJobId,
   heartbeatAutonomyAttempt,
   listAutonomyOpenIncidents,
+  lookupAutonomyJobFinalPickupByRequestId,
+  lookupAutonomyJobFinalPickupByTraceId,
   lookupAutonomyJobReceiptByRequestId,
   lookupAutonomyJobReceiptByTraceId,
 } = await import("../src/task-runtime/autonomy-job-store.mjs");
@@ -176,6 +178,27 @@ function assertBoundedLookupRecord(record = null) {
   assert.equal(Object.hasOwn(record, "payload_json"), false);
   assert.equal(Object.hasOwn(record, "result_json"), false);
   assert.equal(Object.hasOwn(record, "error_json"), false);
+}
+
+function assertBoundedFinalPickupRecord(record = null) {
+  assert.equal(Boolean(record && typeof record === "object"), true);
+  assert.deepEqual(Object.keys(record).sort(), [
+    "answer",
+    "limitations",
+    "reason",
+    "sources",
+    "status",
+    "updated_at",
+  ]);
+  assert.equal(Object.hasOwn(record, "job_id"), false);
+  assert.equal(Object.hasOwn(record, "job_type"), false);
+  assert.equal(Object.hasOwn(record, "payload"), false);
+  assert.equal(Object.hasOwn(record, "result"), false);
+  assert.equal(Object.hasOwn(record, "error"), false);
+  assert.equal(Object.hasOwn(record, "payload_json"), false);
+  assert.equal(Object.hasOwn(record, "result_json"), false);
+  assert.equal(Object.hasOwn(record, "error_json"), false);
+  assert.equal(Object.hasOwn(record, "planner_result"), false);
 }
 
 test("autonomy job store lookup resolves planner job by trace_id and request_id", () => {
@@ -352,6 +375,328 @@ test("autonomy job store lookup fail-soft returns not_found", () => {
   assert.equal(requestMiss?.updated_at, null);
   assert.equal(requestMiss?.reason, null);
   assertBoundedLookupRecord(requestMiss);
+});
+
+test("autonomy job store final pickup returns canonical structured result for completed job", () => {
+  const queued = enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    traceId: "trace_final_pickup_completed",
+    payload: createPlannerUserInputPayload({
+      requestId: "req_final_pickup_completed",
+      traceId: "trace_final_pickup_completed",
+    }),
+    maxAttempts: 1,
+  });
+  const claim = claimNextAutonomyJob({
+    workerId: "worker-final-pickup-completed",
+    leaseMs: 30_000,
+  });
+  assert.equal(claim?.job?.id, queued.id);
+
+  completeAutonomyAttempt({
+    jobId: claim?.job?.id,
+    attemptId: claim?.attempt?.id,
+    workerId: "worker-final-pickup-completed",
+    result: {
+      reply_text: "fallback answer should not override canonical answer",
+      structured_result: {
+        answer: "canonical final answer",
+        sources: ["source://alpha", "", null],
+        limitations: ["need human confirmation"],
+      },
+      planner_result: {
+        status: "internal_only",
+      },
+    },
+  });
+
+  const byTrace = lookupAutonomyJobFinalPickupByTraceId("trace_final_pickup_completed");
+  assert.equal(byTrace?.status, "completed");
+  assert.equal(byTrace?.answer, "canonical final answer");
+  assert.deepEqual(byTrace?.sources, ["source://alpha"]);
+  assert.deepEqual(byTrace?.limitations, ["need human confirmation"]);
+  assert.equal(byTrace?.reason, null);
+  assert.equal(Boolean(byTrace?.updated_at), true);
+  assertBoundedFinalPickupRecord(byTrace);
+
+  const byRequest = lookupAutonomyJobFinalPickupByRequestId("req_final_pickup_completed");
+  assert.equal(byRequest?.status, "completed");
+  assert.equal(byRequest?.answer, "canonical final answer");
+  assert.deepEqual(byRequest?.sources, ["source://alpha"]);
+  assert.deepEqual(byRequest?.limitations, ["need human confirmation"]);
+  assert.equal(byRequest?.reason, null);
+  assertBoundedFinalPickupRecord(byRequest);
+});
+
+test("autonomy job store final pickup uses reply_text fallback without exposing internal fields", () => {
+  const queued = enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    traceId: "trace_final_pickup_reply_fallback",
+    payload: createPlannerUserInputPayload({
+      requestId: "req_final_pickup_reply_fallback",
+      traceId: "trace_final_pickup_reply_fallback",
+    }),
+    maxAttempts: 1,
+  });
+  const claim = claimNextAutonomyJob({
+    workerId: "worker-final-pickup-reply-fallback",
+    leaseMs: 30_000,
+  });
+  assert.equal(claim?.job?.id, queued.id);
+
+  completeAutonomyAttempt({
+    jobId: claim?.job?.id,
+    attemptId: claim?.attempt?.id,
+    workerId: "worker-final-pickup-reply-fallback",
+    result: {
+      reply_text: "reply text fallback answer",
+      structured_result: {
+        answer: "",
+        sources: ["source://fallback"],
+        limitations: [],
+      },
+      planner_result: {
+        status: "internal_only",
+        debug: true,
+      },
+    },
+  });
+
+  const pickup = lookupAutonomyJobFinalPickupByRequestId("req_final_pickup_reply_fallback");
+  assert.equal(pickup?.status, "completed");
+  assert.equal(pickup?.answer, "reply text fallback answer");
+  assert.deepEqual(pickup?.sources, ["source://fallback"]);
+  assert.deepEqual(pickup?.limitations, []);
+  assert.equal(pickup?.reason, null);
+  assertBoundedFinalPickupRecord(pickup);
+});
+
+test("autonomy job store final pickup keeps queued and running jobs as fail-soft non-completed", () => {
+  const runningJob = enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    traceId: "trace_final_pickup_running",
+    payload: createPlannerUserInputPayload({
+      requestId: "req_final_pickup_running",
+      traceId: "trace_final_pickup_running",
+    }),
+    maxAttempts: 1,
+  });
+  const runningClaim = claimNextAutonomyJob({
+    workerId: "worker-final-pickup-running",
+    leaseMs: 30_000,
+  });
+  assert.equal(runningClaim?.job?.id, runningJob.id);
+
+  enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    traceId: "trace_final_pickup_queued",
+    payload: createPlannerUserInputPayload({
+      requestId: "req_final_pickup_queued",
+      traceId: "trace_final_pickup_queued",
+    }),
+    maxAttempts: 1,
+  });
+
+  const runningPickup = lookupAutonomyJobFinalPickupByTraceId("trace_final_pickup_running");
+  assert.equal(runningPickup?.status, "running");
+  assert.equal(runningPickup?.answer, null);
+  assert.deepEqual(runningPickup?.sources, []);
+  assert.deepEqual(runningPickup?.limitations, []);
+  assert.equal(runningPickup?.reason, "not_ready");
+  assertBoundedFinalPickupRecord(runningPickup);
+
+  const queuedPickup = lookupAutonomyJobFinalPickupByRequestId("req_final_pickup_queued");
+  assert.equal(queuedPickup?.status, "queued");
+  assert.equal(queuedPickup?.answer, null);
+  assert.deepEqual(queuedPickup?.sources, []);
+  assert.deepEqual(queuedPickup?.limitations, []);
+  assert.equal(queuedPickup?.reason, "not_ready");
+  assertBoundedFinalPickupRecord(queuedPickup);
+});
+
+test("autonomy job store final pickup keeps failed jobs as fail-soft non-completed", () => {
+  const failedJob = enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    traceId: "trace_final_pickup_failed",
+    payload: createPlannerUserInputPayload({
+      requestId: "req_final_pickup_failed",
+      traceId: "trace_final_pickup_failed",
+    }),
+    maxAttempts: 1,
+  });
+  const failedClaim = claimNextAutonomyJob({
+    workerId: "worker-final-pickup-failed",
+    leaseMs: 30_000,
+  });
+  assert.equal(failedClaim?.job?.id, failedJob.id);
+
+  failAutonomyAttempt({
+    jobId: failedClaim?.job?.id,
+    attemptId: failedClaim?.attempt?.id,
+    workerId: "worker-final-pickup-failed",
+    retryable: false,
+    error: {
+      reason: "forced_final_pickup_failure",
+      lifecycle_sink: {
+        state: "waiting_user",
+        failure_class: "business_error",
+        routing_hint: "answer_waiting_user",
+      },
+    },
+  });
+
+  const pickup = lookupAutonomyJobFinalPickupByRequestId("req_final_pickup_failed");
+  assert.equal(pickup?.status, "failed");
+  assert.equal(pickup?.answer, null);
+  assert.deepEqual(pickup?.sources, []);
+  assert.deepEqual(pickup?.limitations, []);
+  assert.equal(pickup?.reason, "failed");
+  assertBoundedFinalPickupRecord(pickup);
+});
+
+test("autonomy job store final pickup keeps review/pending intermediate result as non-completed", () => {
+  const queued = enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    traceId: "trace_final_pickup_pending_review",
+    payload: createPlannerUserInputPayload({
+      requestId: "req_final_pickup_pending_review",
+      traceId: "trace_final_pickup_pending_review",
+    }),
+    maxAttempts: 1,
+  });
+  const claim = claimNextAutonomyJob({
+    workerId: "worker-final-pickup-pending-review",
+    leaseMs: 30_000,
+  });
+  assert.equal(claim?.job?.id, queued.id);
+
+  completeAutonomyAttempt({
+    jobId: claim?.job?.id,
+    attemptId: claim?.attempt?.id,
+    workerId: "worker-final-pickup-pending-review",
+    result: {
+      final_status: "review_pending",
+      reply_text: "should not be visible before truly completed",
+      structured_result: {
+        answer: "intermediate answer",
+        sources: ["source://intermediate"],
+        limitations: [],
+      },
+    },
+  });
+
+  const pickup = lookupAutonomyJobFinalPickupByTraceId("trace_final_pickup_pending_review");
+  assert.equal(pickup?.status, "running");
+  assert.equal(pickup?.answer, null);
+  assert.deepEqual(pickup?.sources, []);
+  assert.deepEqual(pickup?.limitations, []);
+  assert.equal(pickup?.reason, "not_ready");
+  assertBoundedFinalPickupRecord(pickup);
+});
+
+test("autonomy job store final pickup returns latest visible job when multiple records match", () => {
+  const older = enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    traceId: "trace_final_pickup_latest",
+    payload: createPlannerUserInputPayload({
+      requestId: "req_final_pickup_latest",
+      traceId: "trace_final_pickup_latest",
+      sessionKey: "session-final-pickup-older",
+    }),
+    maxAttempts: 1,
+  });
+  const olderClaim = claimNextAutonomyJob({
+    workerId: "worker-final-pickup-latest-older",
+    leaseMs: 30_000,
+  });
+  completeAutonomyAttempt({
+    jobId: olderClaim?.job?.id,
+    attemptId: olderClaim?.attempt?.id,
+    workerId: "worker-final-pickup-latest-older",
+    result: {
+      structured_result: {
+        answer: "older answer",
+        sources: ["source://older"],
+        limitations: [],
+      },
+    },
+  });
+
+  const newer = enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    traceId: "trace_final_pickup_latest",
+    payload: createPlannerUserInputPayload({
+      requestId: "req_final_pickup_latest",
+      traceId: "trace_final_pickup_latest",
+      sessionKey: "session-final-pickup-newer",
+    }),
+    maxAttempts: 1,
+  });
+  const newerClaim = claimNextAutonomyJob({
+    workerId: "worker-final-pickup-latest-newer",
+    leaseMs: 30_000,
+  });
+  completeAutonomyAttempt({
+    jobId: newerClaim?.job?.id,
+    attemptId: newerClaim?.attempt?.id,
+    workerId: "worker-final-pickup-latest-newer",
+    result: {
+      structured_result: {
+        answer: "newer answer",
+        sources: ["source://newer"],
+        limitations: [],
+      },
+    },
+  });
+
+  db.prepare(`
+    UPDATE autonomy_jobs
+    SET updated_at = @updated_at
+    WHERE id = @job_id
+  `).run({
+    updated_at: "2026-04-20T00:00:00.000Z",
+    job_id: older.id,
+  });
+  db.prepare(`
+    UPDATE autonomy_jobs
+    SET updated_at = @updated_at
+    WHERE id = @job_id
+  `).run({
+    updated_at: "2026-04-20T01:00:00.000Z",
+    job_id: newer.id,
+  });
+
+  const byTrace = lookupAutonomyJobFinalPickupByTraceId("trace_final_pickup_latest");
+  assert.equal(byTrace?.status, "completed");
+  assert.equal(byTrace?.answer, "newer answer");
+  assert.deepEqual(byTrace?.sources, ["source://newer"]);
+  assertBoundedFinalPickupRecord(byTrace);
+
+  const byRequest = lookupAutonomyJobFinalPickupByRequestId("req_final_pickup_latest");
+  assert.equal(byRequest?.status, "completed");
+  assert.equal(byRequest?.answer, "newer answer");
+  assert.deepEqual(byRequest?.sources, ["source://newer"]);
+  assertBoundedFinalPickupRecord(byRequest);
+});
+
+test("autonomy job store final pickup fail-soft returns not_found", () => {
+  const byTrace = lookupAutonomyJobFinalPickupByTraceId("trace_final_pickup_missing");
+  assert.equal(byTrace?.status, "not_found");
+  assert.equal(byTrace?.answer, null);
+  assert.deepEqual(byTrace?.sources, []);
+  assert.deepEqual(byTrace?.limitations, []);
+  assert.equal(byTrace?.updated_at, null);
+  assert.equal(byTrace?.reason, "not_found");
+  assertBoundedFinalPickupRecord(byTrace);
+
+  const byRequest = lookupAutonomyJobFinalPickupByRequestId("req_final_pickup_missing");
+  assert.equal(byRequest?.status, "not_found");
+  assert.equal(byRequest?.answer, null);
+  assert.deepEqual(byRequest?.sources, []);
+  assert.deepEqual(byRequest?.limitations, []);
+  assert.equal(byRequest?.updated_at, null);
+  assert.equal(byRequest?.reason, "not_found");
+  assertBoundedFinalPickupRecord(byRequest);
 });
 
 function createFailedSinkIncident({

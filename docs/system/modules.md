@@ -97,6 +97,13 @@ Current-truth docs for onboarding are:
     - output is bounded to `job_id / job_type / status / lifecycle_sink / updated_at / reason(failure_class,routing_hint)` and never exposes raw `payload_json / result_json / error_json`
     - lookup status projection is bounded to `accepted|queued|running|completed|failed|not_found`; no `partial/review-pending` style value is promoted to `completed`
     - when multiple rows match, read model returns the latest visible job by `updated_at DESC, created_at DESC, id DESC`
+  - store now also exposes additive final-result pickup read model (read-only, bounded projection):
+    - `lookupAutonomyJobFinalPickupByTraceId(trace_id)`
+    - `lookupAutonomyJobFinalPickupByRequestId(request_id)` (same payload-envelope request-id matching rule as receipt lookup)
+    - output is bounded to `answer / sources / limitations / status / updated_at / reason` and never exposes raw `result_json / error_json / planner_result`
+    - terminal gate is fail-soft by default: only truly completed rows project `status=completed`; `queued|running|failed|not_found` remain non-completed pickup states
+    - completed projection prefers canonical `result_json.structured_result.answer/sources/limitations`; when needed, `answer` may fallback to `reply_text`
+    - when multiple rows match, read model uses the same latest-visible ordering as receipt lookup (`updated_at DESC, created_at DESC, id DESC`)
   - read-only ingress now also exposes the same lookup model on `GET /api/monitoring/autonomy/receipt`:
     - token input accepts `trace_id` / `request_id` query params and reuses existing `X-Trace-Id` / `X-Request-Id` header semantics
     - response stays bounded to `job_id / job_type / status / lifecycle_sink / updated_at / reason`

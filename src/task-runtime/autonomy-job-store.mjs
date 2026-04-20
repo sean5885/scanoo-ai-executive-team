@@ -31,6 +31,12 @@ const AUTONOMY_LOOKUP_STATUS = Object.freeze({
   failed: "failed",
   notFound: "not_found",
 });
+const AUTONOMY_FINAL_PICKUP_INTERMEDIATE_STATUS_PATTERN = /(^|[^a-z])(partial|pending|review)([^a-z]|$)/i;
+const AUTONOMY_FINAL_PICKUP_REASON = Object.freeze({
+  notReady: "not_ready",
+  failed: "failed",
+  notFound: "not_found",
+});
 
 function parseJson(value) {
   const normalized = cleanText(value);
@@ -153,6 +159,177 @@ function projectAutonomyLookupStatus(status = "") {
   return AUTONOMY_LOOKUP_STATUS.accepted;
 }
 
+function normalizeAutonomyFinalPickupResultObject(value = null) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+function normalizeAutonomyFinalPickupStringList(items = []) {
+  return Array.isArray(items)
+    ? items
+      .map((item) => cleanText(item))
+      .filter(Boolean)
+    : [];
+}
+
+function readAutonomyFinalPickupStructuredResult(result = null) {
+  const normalized = normalizeAutonomyFinalPickupResultObject(result);
+  if (!normalized) {
+    return null;
+  }
+  const structuredResult = normalizeAutonomyFinalPickupResultObject(
+    normalized.structured_result !== undefined ? normalized.structured_result : normalized.structuredResult,
+  );
+  if (!structuredResult) {
+    return null;
+  }
+  return {
+    answer: cleanText(structuredResult.answer) || null,
+    sources: normalizeAutonomyFinalPickupStringList(structuredResult.sources),
+    limitations: normalizeAutonomyFinalPickupStringList(structuredResult.limitations),
+  };
+}
+
+function readAutonomyFinalPickupReplyText(result = null) {
+  const normalized = normalizeAutonomyFinalPickupResultObject(result);
+  if (!normalized) {
+    return null;
+  }
+  return cleanText(
+    normalized.reply_text
+    ?? normalized.replyText
+    ?? normalized.reply?.text
+    ?? "",
+  ) || null;
+}
+
+function hasAutonomyFinalPickupIntermediateSignal(result = null) {
+  const normalized = normalizeAutonomyFinalPickupResultObject(result);
+  if (!normalized) {
+    return false;
+  }
+  const plannerResult = normalizeAutonomyFinalPickupResultObject(normalized.planner_result);
+  const verifierGateResult = normalizeAutonomyFinalPickupResultObject(normalized.verifier_gate_result);
+  const candidates = [
+    normalized.status,
+    normalized.final_status,
+    normalized.finalStatus,
+    normalized.state,
+    normalized.lifecycle_state,
+    normalized.task_state,
+    normalized.task_status,
+    plannerResult?.status,
+    plannerResult?.final_status,
+    plannerResult?.finalStatus,
+    plannerResult?.state,
+    plannerResult?.lifecycle_state,
+    plannerResult?.task_state,
+    verifierGateResult?.reason,
+    verifierGateResult?.status,
+    verifierGateResult?.task_state,
+  ];
+  return candidates.some((candidate) => {
+    const normalizedValue = cleanText(candidate);
+    if (!normalizedValue) {
+      return false;
+    }
+    return AUTONOMY_FINAL_PICKUP_INTERMEDIATE_STATUS_PATTERN.test(normalizedValue.toLowerCase());
+  });
+}
+
+function isAutonomyFinalPickupTrulyCompleted(result = null) {
+  const normalized = normalizeAutonomyFinalPickupResultObject(result);
+  if (!normalized) {
+    return true;
+  }
+  const verifierGateResult = normalizeAutonomyFinalPickupResultObject(normalized.verifier_gate_result);
+  if (verifierGateResult?.pass === false) {
+    return false;
+  }
+  if (hasAutonomyFinalPickupIntermediateSignal(normalized)) {
+    return false;
+  }
+  return true;
+}
+
+function toAutonomyFinalPickupReason(status = "") {
+  const normalizedStatus = cleanText(status);
+  if (normalizedStatus === AUTONOMY_LOOKUP_STATUS.failed) {
+    return AUTONOMY_FINAL_PICKUP_REASON.failed;
+  }
+  if (normalizedStatus === AUTONOMY_LOOKUP_STATUS.notFound) {
+    return AUTONOMY_FINAL_PICKUP_REASON.notFound;
+  }
+  if (normalizedStatus === AUTONOMY_LOOKUP_STATUS.completed) {
+    return null;
+  }
+  return AUTONOMY_FINAL_PICKUP_REASON.notReady;
+}
+
+function toAutonomyJobFinalPickupNotFoundRecord() {
+  return {
+    answer: null,
+    sources: [],
+    limitations: [],
+    status: AUTONOMY_LOOKUP_STATUS.notFound,
+    updated_at: null,
+    reason: AUTONOMY_FINAL_PICKUP_REASON.notFound,
+  };
+}
+
+function toAutonomyJobFinalPickupPendingRecord({
+  status = "",
+  updatedAt = "",
+} = {}) {
+  return {
+    answer: null,
+    sources: [],
+    limitations: [],
+    status: cleanText(status) || AUTONOMY_LOOKUP_STATUS.accepted,
+    updated_at: cleanText(updatedAt) || null,
+    reason: toAutonomyFinalPickupReason(status),
+  };
+}
+
+function toAutonomyJobFinalPickupCompletedRecord({
+  result = null,
+  updatedAt = "",
+} = {}) {
+  const structuredResult = readAutonomyFinalPickupStructuredResult(result);
+  return {
+    answer: structuredResult?.answer || readAutonomyFinalPickupReplyText(result) || null,
+    sources: structuredResult?.sources || [],
+    limitations: structuredResult?.limitations || [],
+    status: AUTONOMY_LOOKUP_STATUS.completed,
+    updated_at: cleanText(updatedAt) || null,
+    reason: null,
+  };
+}
+
+function toAutonomyJobFinalPickupRecord(row = null) {
+  if (!row) {
+    return toAutonomyJobFinalPickupNotFoundRecord();
+  }
+  const updatedAt = cleanText(row.updated_at) || null;
+  const result = parseJson(row.result_json);
+  const projectedStatus = projectAutonomyLookupStatus(row.status);
+  if (projectedStatus !== AUTONOMY_LOOKUP_STATUS.completed) {
+    return toAutonomyJobFinalPickupPendingRecord({
+      status: projectedStatus,
+      updatedAt,
+    });
+  }
+  if (!isAutonomyFinalPickupTrulyCompleted(result)) {
+    return toAutonomyJobFinalPickupPendingRecord({
+      status: AUTONOMY_LOOKUP_STATUS.running,
+      updatedAt,
+    });
+  }
+  return toAutonomyJobFinalPickupCompletedRecord({
+    result,
+    updatedAt,
+  });
+}
+
 function toAutonomyJobLookupNotFoundRecord() {
   return {
     job_id: null,
@@ -199,7 +376,8 @@ function readAutonomyLatestJobLookupRowByTraceId(traceId = "") {
       job_type,
       status,
       updated_at,
-      error_json
+      error_json,
+      result_json
     FROM autonomy_jobs
     WHERE trace_id = @trace_id
     ORDER BY updated_at DESC, created_at DESC, id DESC
@@ -221,6 +399,7 @@ function readAutonomyLatestJobLookupRowByRequestId(requestId = "") {
       status,
       updated_at,
       error_json,
+      result_json,
       payload_json
     FROM autonomy_jobs
     WHERE payload_json IS NOT NULL
@@ -393,6 +572,18 @@ export function lookupAutonomyJobReceiptByRequestId(requestId = "") {
   ensureAutonomyJobTables();
   const row = readAutonomyLatestJobLookupRowByRequestId(requestId);
   return toAutonomyJobLookupRecord(row);
+}
+
+export function lookupAutonomyJobFinalPickupByTraceId(traceId = "") {
+  ensureAutonomyJobTables();
+  const row = readAutonomyLatestJobLookupRowByTraceId(traceId);
+  return toAutonomyJobFinalPickupRecord(row);
+}
+
+export function lookupAutonomyJobFinalPickupByRequestId(requestId = "") {
+  ensureAutonomyJobTables();
+  const row = readAutonomyLatestJobLookupRowByRequestId(requestId);
+  return toAutonomyJobFinalPickupRecord(row);
 }
 
 function toAutonomyJobRecord(row = null) {
