@@ -38,6 +38,7 @@ import {
   buildDecisionMetricsScoreboard,
   formatDecisionMetricsScoreboardSummary,
 } from "./decision-metrics-scoreboard.mjs";
+import { enqueueAutonomyJob } from "./worker/enqueue-autonomy-job.mjs";
 
 const REMINDER_REQUEST_PATTERNS = [
   /提醒/u,
@@ -108,6 +109,211 @@ const WORKING_MEMORY_NON_CRITICAL_STEP_TYPES = new Set([
   "best_effort",
 ]);
 const EDGE_ASK_COPY_PATTERN = /(請|请).{0,8}(補|提供|確認|确认|說|说)|please\s+(share|provide|confirm)|(?:補|提供|confirm).{0,10}(資訊|信息|資料|资料|detail)/i;
+const AUTONOMY_INGRESS_JOB_TYPE = "planner_user_input_v1";
+const AUTONOMY_INGRESS_ENABLE_ENV = "PLANNER_AUTONOMY_INGRESS_ENABLED";
+const AUTONOMY_INGRESS_ALLOWLIST_ENV = "PLANNER_AUTONOMY_INGRESS_ALLOWLIST";
+const AUTONOMY_INGRESS_ALLOWLIST_SUBJECT_KEYS = new Set([
+  "session",
+  "request",
+  "trace",
+  "handler",
+]);
+
+function isTruthyFlag(value = "") {
+  const normalized = cleanText(value).toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
+function resolveAutonomyIngressEnabled(value = null) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  return isTruthyFlag(process.env[AUTONOMY_INGRESS_ENABLE_ENV]);
+}
+
+function normalizeAutonomyIngressAllowlist(allowlist = null) {
+  const raw = Array.isArray(allowlist)
+    ? allowlist.join(",")
+    : allowlist == null
+      ? process.env[AUTONOMY_INGRESS_ALLOWLIST_ENV]
+      : allowlist;
+  const normalizedRaw = cleanText(raw || "");
+  if (!normalizedRaw) {
+    return [];
+  }
+  return normalizedRaw
+    .split(",")
+    .map((entry) => cleanText(entry))
+    .filter(Boolean)
+    .map((entry) => {
+      const separatorIndex = entry.indexOf(":");
+      if (separatorIndex < 0) {
+        return {
+          subject: "session",
+          value: entry,
+        };
+      }
+      const subject = cleanText(entry.slice(0, separatorIndex)).toLowerCase();
+      const value = cleanText(entry.slice(separatorIndex + 1));
+      if (!AUTONOMY_INGRESS_ALLOWLIST_SUBJECT_KEYS.has(subject) || !value) {
+        return null;
+      }
+      return {
+        subject,
+        value,
+      };
+    })
+    .filter(Boolean);
+}
+
+function buildAutonomyIngressAllowlistSubjects({
+  sessionKey = "",
+  requestId = "",
+  traceId = "",
+  handlerName = "",
+} = {}) {
+  return {
+    session: cleanText(sessionKey),
+    request: cleanText(requestId),
+    trace: cleanText(traceId),
+    handler: cleanText(handlerName),
+  };
+}
+
+function isAutonomyIngressAllowlistMatched({
+  allowlistEntries = [],
+  subjects = null,
+} = {}) {
+  if (!Array.isArray(allowlistEntries) || allowlistEntries.length === 0) {
+    return false;
+  }
+  const normalizedSubjects = subjects && typeof subjects === "object" && !Array.isArray(subjects)
+    ? subjects
+    : {};
+  return allowlistEntries.some((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return false;
+    }
+    const subject = cleanText(entry.subject).toLowerCase();
+    const value = cleanText(entry.value);
+    if (!subject || !value) {
+      return false;
+    }
+    return cleanText(normalizedSubjects[subject] || "") === value;
+  });
+}
+
+function buildPlannerUserInputAutonomyPayload({
+  text = "",
+  baseUrl = "",
+  authContext = null,
+  sessionKey = "",
+  requestId = "",
+  traceId = "",
+  handlerName = "",
+} = {}) {
+  return {
+    schema_version: AUTONOMY_INGRESS_JOB_TYPE,
+    planner_input: {
+      text: cleanText(text),
+      base_url: cleanText(baseUrl) || null,
+      session_key: cleanText(sessionKey) || null,
+      request_id: cleanText(requestId) || null,
+      trace_id: cleanText(traceId) || null,
+      handler_name: cleanText(handlerName) || null,
+    },
+    ingress: {
+      source: "planner_user_input_edge",
+      enqueued_at: new Date().toISOString(),
+      auth_context_present: Boolean(authContext),
+    },
+  };
+}
+
+async function maybeEnqueuePlannerUserInputAutonomyJob({
+  text = "",
+  baseUrl = "",
+  authContext = null,
+  sessionKey = "",
+  requestId = "",
+  traceId = "",
+  handlerName = "",
+  logger = console,
+  autonomyIngressEnabled = null,
+  autonomyIngressAllowlist = null,
+  autonomyJobEnqueuer = enqueueAutonomyJob,
+} = {}) {
+  const ingressEnabled = resolveAutonomyIngressEnabled(autonomyIngressEnabled);
+  if (!ingressEnabled) {
+    return {
+      attempted: false,
+      enqueued: false,
+      reason: "autonomy_ingress_disabled",
+    };
+  }
+  const allowlistEntries = normalizeAutonomyIngressAllowlist(autonomyIngressAllowlist);
+  const allowlistMatched = isAutonomyIngressAllowlistMatched({
+    allowlistEntries,
+    subjects: buildAutonomyIngressAllowlistSubjects({
+      sessionKey,
+      requestId,
+      traceId,
+      handlerName,
+    }),
+  });
+  if (!allowlistMatched) {
+    return {
+      attempted: false,
+      enqueued: false,
+      reason: "allowlist_miss",
+    };
+  }
+  if (typeof autonomyJobEnqueuer !== "function") {
+    return {
+      attempted: true,
+      enqueued: false,
+      reason: "enqueue_unavailable",
+    };
+  }
+  const payload = buildPlannerUserInputAutonomyPayload({
+    text,
+    baseUrl,
+    authContext,
+    sessionKey,
+    requestId,
+    traceId,
+    handlerName,
+  });
+  try {
+    const enqueueResult = await autonomyJobEnqueuer({
+      jobType: AUTONOMY_INGRESS_JOB_TYPE,
+      payload,
+      traceId,
+      logger,
+    });
+    if (enqueueResult?.ok === true) {
+      return {
+        attempted: true,
+        enqueued: true,
+        reason: null,
+        job_id: enqueueResult.job_id || null,
+        trace_id: enqueueResult.trace_id || null,
+      };
+    }
+    return {
+      attempted: true,
+      enqueued: false,
+      reason: cleanText(enqueueResult?.reason || enqueueResult?.error || "") || "enqueue_failed",
+    };
+  } catch (error) {
+    return {
+      attempted: true,
+      enqueued: false,
+      reason: "enqueue_exception",
+      error: cleanText(error?.message || "") || null,
+    };
+  }
+}
 
 function resolveEdgeExecution(result = {}) {
   return result?.execution_result && typeof result.execution_result === "object"
@@ -2863,7 +3069,40 @@ export async function runPlannerUserInputEdge({
   responseNormalizer = normalizeUserResponse,
   envelopeDecorator = null,
   workingMemoryWriter = applyPlannerWorkingMemoryPatch,
+  autonomyIngressEnabled = null,
+  autonomyIngressAllowlist = null,
+  autonomyJobEnqueuer = enqueueAutonomyJob,
 } = {}) {
+  const autonomyIngressResult = await maybeEnqueuePlannerUserInputAutonomyJob({
+    text,
+    baseUrl,
+    authContext,
+    sessionKey,
+    requestId,
+    traceId,
+    handlerName,
+    logger,
+    autonomyIngressEnabled,
+    autonomyIngressAllowlist,
+    autonomyJobEnqueuer,
+  });
+  if (autonomyIngressResult?.enqueued === true) {
+    logger?.info?.("planner_autonomy_ingress_enqueued", {
+      stage: "planner_autonomy_ingress",
+      job_type: AUTONOMY_INGRESS_JOB_TYPE,
+      job_id: autonomyIngressResult.job_id || null,
+      trace_id: autonomyIngressResult.trace_id || cleanText(traceId) || null,
+      mode: "shadow_enqueue_then_sync_execute",
+    });
+  } else if (autonomyIngressResult?.attempted === true) {
+    logger?.warn?.("planner_autonomy_ingress_fallback_sync", {
+      stage: "planner_autonomy_ingress",
+      reason: autonomyIngressResult.reason || "enqueue_failed",
+      trace_id: cleanText(traceId) || null,
+      mode: "sync_execute",
+    });
+  }
+
   const executedPlannerResult = await plannerExecutor({
     text,
     logger,

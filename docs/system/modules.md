@@ -153,6 +153,10 @@ Current-truth docs for onboarding are:
   - plugin-native document/message/calendar/task-style tools are explicitly classified as `plugin_native` and do not enter the internal planner/lane business path
   - planner-backed `/answer` and plugin hybrid dispatch now arm one earlier bounded-fallback abort signal before the outer HTTP hard timeout, so planner/lane fail-soft recovery can answer first and the generic timeout stays the last resort
   - `/answer` and the `knowledge-assistant` lane now share one checked-in answer-edge helper instead of rebuilding `execute -> envelope -> normalize` separately
+  - that shared answer-edge helper now has one ingress adapter at `planner-user-input-edge`:
+    - only when `PLANNER_AUTONOMY_INGRESS_ENABLED=true` and strict allowlist (`PLANNER_AUTONOMY_INGRESS_ALLOWLIST`, exact `session:|request:|trace:|handler:` match) hits, it enqueues one additive autonomy job (`job_type=planner_user_input_v1`)
+    - enqueue is ingress evidence only and is never treated as final task completion or final user answer
+    - enqueue failure / queue unavailable / guard miss fail-soft back to the existing synchronous planner execution path in the same request
   - that shared answer-edge helper also lifts current legacy planner result shapes into canonical `answer / sources / limitations` before public rendering
   - `planner-ingress-contract.mjs` is the checked-in ingress rule for doc/knowledge/runtime planner admission and the personal-lane planner edge guard
   - planner ingress now only escalates high-confidence doc/runtime phrasings; generic wording such as standalone "整理" or "風險" no longer forces document/runtime routing by itself

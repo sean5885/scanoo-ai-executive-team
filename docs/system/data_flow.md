@@ -167,8 +167,13 @@ Current public `/answer` path:
 
 1. request enters `GET /answer`
 2. `http-server.mjs` calls `planner-user-input-edge.mjs` `runPlannerUserInputEdge(...)`
-3. `runPlannerUserInputEdge(...)` calls `executePlannedUserInput(...)`
-4. `executive-planner.mjs` resolves planner action or controlled failure
+3. `runPlannerUserInputEdge(...)` first runs one bounded autonomy ingress adapter:
+   - guard: `PLANNER_AUTONOMY_INGRESS_ENABLED=true` + strict allowlist hit from `PLANNER_AUTONOMY_INGRESS_ALLOWLIST`
+   - action: enqueue additive autonomy job `planner_user_input_v1` from the same planner input boundary
+   - contract: enqueue accepted is not final completion and not a final user answer
+   - fail-soft: enqueue failure / queue unavailable / guard miss all fall back to same-request synchronous planner path
+4. `runPlannerUserInputEdge(...)` calls `executePlannedUserInput(...)`
+5. `executive-planner.mjs` resolves planner action or controlled failure
    - before active current-step continuation, planner runs one deterministic execution-readiness gate from the same session working-memory execution plan state
    - readiness is fail-closed and checks slot/artifact/dependency/owner/recovery/plan validity on current step, returning `is_ready`, blocking diagnostics, and `recommended_action`
    - when `is_ready=false`, planner does not dispatch intended step action directly; it follows existing controlled paths (`ask_user` / `retry` / `reroute` / `rollback` / `skip` / fail-closed stop)
@@ -200,13 +205,13 @@ Current public `/answer` path:
      - short/high-related follow-ups can stay on continuation path without opening a new task
      - candidate-selection short follow-ups (for example `第一份` / `第2個` / `這個`) can still be treated as continuation even when selected/current/next action hints are temporarily missing, as long as active task context remains
      - `waiting_user` turns with already-filled slots resume the current plan step (`working_memory_waiting_user_resume_plan_step`) instead of redundant ask
-5. planner reads and tool results remain internal runtime state
-6. `user-response-normalizer.mjs` converts the planner envelope into the public response shape:
+6. planner reads and tool results remain internal runtime state
+7. `user-response-normalizer.mjs` converts the planner envelope into the public response shape:
    - `answer`
    - `sources`
    - `limitations`
-7. `answer-source-mapper.mjs` converts canonical source objects into bounded public `sources[]` lines
-8. `planner-user-input-edge.mjs` performs session-scoped working-memory v2 patch write-back only after a stable final boundary response is available
+8. `answer-source-mapper.mjs` converts canonical source objects into bounded public `sources[]` lines
+9. `planner-user-input-edge.mjs` performs session-scoped working-memory v2 patch write-back only after a stable final boundary response is available
 
 Current truth:
 
@@ -223,6 +228,7 @@ Current truth:
   - `ask_user` / `fallback` terminate fail-soft (no implicit continue)
   - unknown token terminates fail-closed
 - `/answer` and the `knowledge-assistant` lane now share the same planner answer-edge helper instead of re-assembling `execute -> envelope -> normalize` separately
+- the same shared edge helper now includes one additive autonomy ingress enqueue adapter (`planner_user_input_v1`) behind feature-flag + strict allowlist guard, and keeps synchronous planner execution as the user-answer authority path
 - that shared edge helper also absorbs current legacy planner result shapes into canonical `answer / sources / limitations` before the public boundary
 - for delivery/onboarding knowledge lookups, a single-hit company-brain search now turns into an answer-first reply that names the matched SOP/checklist document and surfaces bounded location/checklist/start-step hints from the indexed snippet, while preserving the same public `answer / sources / limitations` shape
 - before the public boundary returns a generic failure, the checked-in normalizer now does a minimal mixed-request decomposition for copy/image/send-style asks and returns partial success when at least one text-draft subtask is still doable

@@ -5,9 +5,148 @@ import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 const testDb = await createTestDbHarness();
 const { runPlannerUserInputEdge } = await import("../src/planner-user-input-edge.mjs");
 const { ROUTING_NO_MATCH } = await import("../src/planner-error-codes.mjs");
+const previousAutonomyIngressEnabled = process.env.PLANNER_AUTONOMY_INGRESS_ENABLED;
+const previousAutonomyIngressAllowlist = process.env.PLANNER_AUTONOMY_INGRESS_ALLOWLIST;
 
 test.after(() => {
+  if (previousAutonomyIngressEnabled == null) {
+    delete process.env.PLANNER_AUTONOMY_INGRESS_ENABLED;
+  } else {
+    process.env.PLANNER_AUTONOMY_INGRESS_ENABLED = previousAutonomyIngressEnabled;
+  }
+  if (previousAutonomyIngressAllowlist == null) {
+    delete process.env.PLANNER_AUTONOMY_INGRESS_ALLOWLIST;
+  } else {
+    process.env.PLANNER_AUTONOMY_INGRESS_ALLOWLIST = previousAutonomyIngressAllowlist;
+  }
   testDb.close();
+});
+
+test.beforeEach(() => {
+  delete process.env.PLANNER_AUTONOMY_INGRESS_ENABLED;
+  delete process.env.PLANNER_AUTONOMY_INGRESS_ALLOWLIST;
+});
+
+test("runPlannerUserInputEdge enqueues planner_user_input_v1 under feature flag + strict allowlist hit", async () => {
+  process.env.PLANNER_AUTONOMY_INGRESS_ENABLED = "true";
+  process.env.PLANNER_AUTONOMY_INGRESS_ALLOWLIST = "session:autonomy-ingress-session";
+  const enqueuedCalls = [];
+
+  const result = await runPlannerUserInputEdge({
+    text: "幫我看 runtime",
+    sessionKey: "autonomy-ingress-session",
+    requestId: "req-ingress-1",
+    traceId: "trace-ingress-1",
+    handlerName: "planner-edge-test",
+    async plannerExecutor() {
+      return {
+        ok: true,
+        action: "get_runtime_info",
+        execution_result: {
+          ok: true,
+          data: {
+            answer: "runtime 正常",
+            sources: ["runtime 即時狀態"],
+            limitations: [],
+          },
+        },
+      };
+    },
+    async autonomyJobEnqueuer(args) {
+      enqueuedCalls.push(args);
+      return {
+        ok: true,
+        job_id: "job_ingress_1",
+        status: "queued",
+        trace_id: args.traceId,
+      };
+    },
+    workingMemoryWriter: null,
+  });
+
+  assert.equal(enqueuedCalls.length, 1);
+  assert.equal(enqueuedCalls[0].jobType, "planner_user_input_v1");
+  assert.equal(enqueuedCalls[0].traceId, "trace-ingress-1");
+  assert.equal(enqueuedCalls[0].payload?.schema_version, "planner_user_input_v1");
+  assert.equal(enqueuedCalls[0].payload?.planner_input?.session_key, "autonomy-ingress-session");
+  assert.equal(enqueuedCalls[0].payload?.planner_input?.request_id, "req-ingress-1");
+  assert.equal(enqueuedCalls[0].payload?.planner_input?.text, "幫我看 runtime");
+  assert.deepEqual(Object.keys(result).sort(), ["plannerEnvelope", "plannerResult", "userResponse"]);
+  assert.equal(typeof result?.userResponse?.answer, "string");
+  assert.equal(Array.isArray(result?.userResponse?.sources), true);
+  assert.equal(Array.isArray(result?.userResponse?.limitations), true);
+});
+
+test("runPlannerUserInputEdge falls back to sync planner path when enqueue fails", async () => {
+  process.env.PLANNER_AUTONOMY_INGRESS_ENABLED = "true";
+  process.env.PLANNER_AUTONOMY_INGRESS_ALLOWLIST = "session:autonomy-ingress-fallback";
+  let plannerExecuted = false;
+
+  const result = await runPlannerUserInputEdge({
+    text: "幫我整理重點",
+    sessionKey: "autonomy-ingress-fallback",
+    traceId: "trace-ingress-fallback",
+    async autonomyJobEnqueuer() {
+      throw new Error("queue_unavailable");
+    },
+    async plannerExecutor() {
+      plannerExecuted = true;
+      return {
+        ok: true,
+        action: "search_and_summarize",
+        execution_result: {
+          ok: true,
+          data: {
+            answer: "這是同步路徑回覆",
+            sources: ["同步執行證據"],
+            limitations: [],
+          },
+        },
+      };
+    },
+    workingMemoryWriter: null,
+  });
+
+  assert.equal(plannerExecuted, true);
+  assert.equal(result?.userResponse?.ok, true);
+  assert.match(result?.userResponse?.answer || "", /同步路徑回覆/);
+});
+
+test("runPlannerUserInputEdge keeps sync path when allowlist does not match", async () => {
+  process.env.PLANNER_AUTONOMY_INGRESS_ENABLED = "true";
+  process.env.PLANNER_AUTONOMY_INGRESS_ALLOWLIST = "session:someone-else";
+  let enqueueCalled = false;
+  let plannerExecuted = false;
+
+  await runPlannerUserInputEdge({
+    text: "這輪不入隊",
+    sessionKey: "session-not-allowlisted",
+    async autonomyJobEnqueuer() {
+      enqueueCalled = true;
+      return {
+        ok: true,
+      };
+    },
+    async plannerExecutor() {
+      plannerExecuted = true;
+      return {
+        ok: true,
+        action: "get_runtime_info",
+        execution_result: {
+          ok: true,
+          data: {
+            answer: "同步路徑",
+            sources: [],
+            limitations: [],
+          },
+        },
+      };
+    },
+    workingMemoryWriter: null,
+  });
+
+  assert.equal(enqueueCalled, false);
+  assert.equal(plannerExecuted, true);
 });
 
 test("runPlannerUserInputEdge keeps planner execute -> envelope -> normalize on one shared helper", async () => {
