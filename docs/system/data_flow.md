@@ -172,6 +172,10 @@ Current public `/answer` path:
    - action: enqueue additive autonomy job `planner_user_input_v1` from the same planner input boundary
    - contract: enqueue accepted is not final completion and not a final user answer
    - fail-soft: enqueue failure / queue unavailable / guard miss all fall back to same-request synchronous planner path
+3A. additive autonomy worker execute path for the same job type:
+   - worker claims `job_type=planner_user_input_v1`
+   - worker dispatches payload to `executePlannedUserInput(...)`
+   - worker completion still requires verifier gate pass; execute failure / verifier fail continue to `recovery_decision_v1` fail-soft handling
 4. `runPlannerUserInputEdge(...)` calls `executePlannedUserInput(...)`
 5. `executive-planner.mjs` resolves planner action or controlled failure
    - before active current-step continuation, planner runs one deterministic execution-readiness gate from the same session working-memory execution plan state
@@ -229,6 +233,7 @@ Current truth:
   - unknown token terminates fail-closed
 - `/answer` and the `knowledge-assistant` lane now share the same planner answer-edge helper instead of re-assembling `execute -> envelope -> normalize` separately
 - the same shared edge helper now includes one additive autonomy ingress enqueue adapter (`planner_user_input_v1`) behind feature-flag + strict allowlist guard, and keeps synchronous planner execution as the user-answer authority path
+- autonomy worker now has one built-in execute path for `planner_user_input_v1` (`queue payload -> executePlannedUserInput -> verifier/recovery`) while preserving existing `executeJob` override behavior for custom job handlers
 - that shared edge helper also absorbs current legacy planner result shapes into canonical `answer / sources / limitations` before the public boundary
 - for delivery/onboarding knowledge lookups, a single-hit company-brain search now turns into an answer-first reply that names the matched SOP/checklist document and surfaces bounded location/checklist/start-step hints from the indexed snippet, while preserving the same public `answer / sources / limitations` shape
 - before the public boundary returns a generic failure, the checked-in normalizer now does a minimal mixed-request decomposition for copy/image/send-style asks and returns partial success when at least one text-draft subtask is still doable

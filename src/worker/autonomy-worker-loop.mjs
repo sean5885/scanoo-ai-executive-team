@@ -1,5 +1,6 @@
 import { cleanText } from "../message-intent-utils.mjs";
 import { EVIDENCE_TYPES, verifyTaskCompletion } from "../executive-verifier.mjs";
+import { executePlannedUserInput } from "../executive-planner.mjs";
 import { resolveRecoveryDecisionV1 } from "../recovery-decision.mjs";
 import { nowIso } from "../text-utils.mjs";
 import {
@@ -25,6 +26,7 @@ const noopLogger = {
   warn() {},
   error() {},
 };
+const PLANNER_USER_INPUT_JOB_TYPE = "planner_user_input_v1";
 
 function normalizeLogger(logger = null) {
   if (logger && typeof logger === "object") {
@@ -222,6 +224,203 @@ function buildAutonomyStoredResult({
 
 function normalizeAutonomyObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+function normalizeAutonomyStringList(items = []) {
+  return Array.isArray(items)
+    ? items
+      .map((item) => cleanText(item))
+      .filter(Boolean)
+    : [];
+}
+
+function buildPlannerUserInputAutonomyResult({
+  plannerResult = null,
+  resolvedTraceId = "",
+  replyText = "",
+  structuredResult = null,
+} = {}) {
+  const normalizedPlannerResult = normalizeAutonomyObject(plannerResult) || {};
+  const normalizedExecutionResult = normalizeAutonomyObject(normalizedPlannerResult.execution_result) || {};
+  const explicitGate = normalizeAutonomyObject(
+    normalizedPlannerResult.verifier_gate || normalizedExecutionResult.verifier_gate,
+  );
+  const selectedAction = cleanText(
+    normalizedPlannerResult.action
+    || normalizedExecutionResult.action,
+  ) || null;
+  return {
+    ok: true,
+    job_type: PLANNER_USER_INPUT_JOB_TYPE,
+    selected_action: selectedAction,
+    trace_id: resolvedTraceId || null,
+    reply_text: replyText || null,
+    structured_result: structuredResult,
+    verifier_gate: explicitGate || {
+      task_type: "search",
+      evidence: [{
+        type: EVIDENCE_TYPES.tool_output,
+        summary: "planner_user_input_v1_execute_planner",
+      }],
+      structured_result: structuredResult,
+      reply_text: replyText || null,
+    },
+    planner_result: {
+      ok: normalizedPlannerResult.ok === true,
+      action: selectedAction,
+      trace_id: resolvedTraceId || null,
+      error: null,
+    },
+  };
+}
+
+async function executePlannerUserInputAutonomyJob({
+  job = null,
+  logger = null,
+  plannerExecutor = executePlannedUserInput,
+} = {}) {
+  if (typeof plannerExecutor !== "function") {
+    return {
+      ok: false,
+      error: "planner_executor_unavailable",
+      reason: "missing_planner_executor",
+      workflow: PLANNER_USER_INPUT_JOB_TYPE,
+    };
+  }
+
+  const payload = normalizeAutonomyObject(job?.payload);
+  const plannerInput = normalizeAutonomyObject(payload?.planner_input);
+  const schemaVersion = cleanText(payload?.schema_version);
+  const text = cleanText(plannerInput?.text);
+  if (
+    !payload
+    || !plannerInput
+    || !text
+    || (schemaVersion && schemaVersion !== PLANNER_USER_INPUT_JOB_TYPE)
+  ) {
+    return {
+      ok: false,
+      error: "planner_user_input_payload_invalid",
+      reason: "invalid_planner_user_input_payload",
+      workflow: PLANNER_USER_INPUT_JOB_TYPE,
+      data: {
+        has_payload: Boolean(payload),
+        has_planner_input: Boolean(plannerInput),
+        has_text: Boolean(text),
+        schema_version: schemaVersion || null,
+      },
+    };
+  }
+
+  const plannerResult = await plannerExecutor({
+    text,
+    logger,
+    baseUrl: cleanText(plannerInput.base_url) || undefined,
+    authContext: null,
+    sessionKey: cleanText(plannerInput.session_key),
+    requestId: cleanText(plannerInput.request_id),
+    telemetryAdapter: null,
+  });
+  const normalizedPlannerResult = normalizeAutonomyObject(plannerResult);
+  if (!normalizedPlannerResult) {
+    return {
+      ok: false,
+      error: "planner_execution_invalid_result",
+      reason: "planner_result_not_object",
+      workflow: PLANNER_USER_INPUT_JOB_TYPE,
+    };
+  }
+  const normalizedExecutionResult = normalizeAutonomyObject(normalizedPlannerResult.execution_result);
+  const plannerError = cleanText(
+    normalizedPlannerResult.error
+    || normalizedExecutionResult?.error,
+  );
+  if (normalizedPlannerResult.ok !== true || plannerError) {
+    return {
+      ok: false,
+      error: plannerError || "planner_execution_failed",
+      reason: cleanText(
+        normalizedPlannerResult.why
+        || normalizedExecutionResult?.reason
+        || normalizedExecutionResult?.error,
+      ) || null,
+      workflow: PLANNER_USER_INPUT_JOB_TYPE,
+      data: {
+        action: cleanText(normalizedPlannerResult.action) || null,
+      },
+    };
+  }
+
+  if (normalizedExecutionResult?.ok === false) {
+    return {
+      ok: false,
+      error: cleanText(normalizedExecutionResult.error) || "planner_execution_failed",
+      reason: cleanText(
+        normalizedExecutionResult.reason
+        || normalizedExecutionResult.error,
+      ) || null,
+      workflow: PLANNER_USER_INPUT_JOB_TYPE,
+      data: {
+        action: cleanText(normalizedPlannerResult.action || normalizedExecutionResult.action) || null,
+      },
+    };
+  }
+
+  const executionData = normalizeAutonomyObject(normalizedExecutionResult?.data);
+  const formattedOutput = normalizeAutonomyObject(normalizedPlannerResult?.formatted_output);
+  const answerText = cleanText(
+    executionData?.answer
+    || formattedOutput?.answer
+    || normalizedExecutionResult?.answer
+    || normalizedPlannerResult?.answer
+    || normalizedPlannerResult?.why
+    || "",
+  );
+  const structuredResult = {
+    answer: answerText || null,
+    sources: normalizeAutonomyStringList(executionData?.sources || formattedOutput?.sources),
+    limitations: normalizeAutonomyStringList(executionData?.limitations || formattedOutput?.limitations),
+  };
+  const hasStructuredResult =
+    structuredResult.answer
+    || structuredResult.sources.length > 0
+    || structuredResult.limitations.length > 0;
+  const resolvedTraceId = cleanText(
+    normalizedPlannerResult.trace_id
+    || normalizedExecutionResult.trace_id
+    || plannerInput.trace_id
+    || job?.trace_id,
+  );
+
+  return buildPlannerUserInputAutonomyResult({
+    plannerResult: normalizedPlannerResult,
+    resolvedTraceId,
+    replyText: answerText,
+    structuredResult: hasStructuredResult ? structuredResult : null,
+  });
+}
+
+async function executeKnownAutonomyJob({
+  job = null,
+  logger = null,
+  plannerExecutor = executePlannedUserInput,
+} = {}) {
+  const normalizedJobType = cleanText(job?.job_type);
+  if (normalizedJobType === PLANNER_USER_INPUT_JOB_TYPE) {
+    return executePlannerUserInputAutonomyJob({
+      job,
+      logger,
+      plannerExecutor,
+    });
+  }
+  return {
+    ok: false,
+    error: "unsupported_job_type",
+    reason: cleanText(normalizedJobType) || "unknown_job_type",
+    data: {
+      job_type: normalizedJobType || null,
+    },
+  };
 }
 
 function readAutonomyNumericSignal(...candidates) {
@@ -425,7 +624,8 @@ function buildAutonomyFailureLogFields({
 
 export async function runAutonomyWorkerOnce({
   workerId = "",
-  executeJob = async () => ({ ok: true }),
+  executeJob = null,
+  plannerExecutor = executePlannedUserInput,
   logger = null,
   enabled = null,
   leaseMs = DEFAULT_AUTONOMY_LEASE_MS,
@@ -512,9 +712,16 @@ export async function runAutonomyWorkerOnce({
     }
   };
 
+  const resolvedExecuteJob = typeof executeJob === "function"
+    ? executeJob
+    : async (input = {}) => executeKnownAutonomyJob({
+      ...input,
+      plannerExecutor,
+    });
+
   beginHeartbeat();
   try {
-    const executionResult = await executeJob({
+    const executionResult = await resolvedExecuteJob({
       job: claim.job,
       attempt: claim.attempt,
       traceContext,
@@ -710,7 +917,8 @@ export async function runAutonomyWorkerOnce({
 
 export function startAutonomyWorkerLoop({
   workerId = "",
-  executeJob = async () => ({ ok: true }),
+  executeJob = null,
+  plannerExecutor = executePlannedUserInput,
   logger = null,
   enabled = null,
   pollIntervalMs = DEFAULT_AUTONOMY_POLL_INTERVAL_MS,
@@ -749,6 +957,7 @@ export function startAutonomyWorkerLoop({
       await runAutonomyWorkerOnce({
         workerId: normalizedWorkerId,
         executeJob,
+        plannerExecutor,
         logger: resolvedLogger,
         leaseMs,
         heartbeatIntervalMs,

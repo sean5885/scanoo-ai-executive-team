@@ -13,6 +13,31 @@ const {
 } = await import("../src/task-runtime/autonomy-job-store.mjs");
 const { runAutonomyWorkerOnce } = await import("../src/worker/autonomy-worker-loop.mjs");
 
+function buildPlannerUserInputJobPayload({
+  text = "幫我看 runtime",
+  baseUrl = "https://example.com",
+  sessionKey = "planner-worker-session",
+  requestId = "planner-worker-request",
+  traceId = "planner-worker-trace",
+} = {}) {
+  return {
+    schema_version: "planner_user_input_v1",
+    planner_input: {
+      text,
+      base_url: baseUrl,
+      session_key: sessionKey,
+      request_id: requestId,
+      trace_id: traceId,
+      handler_name: "planner-worker-test",
+    },
+    ingress: {
+      source: "planner_user_input_edge",
+      enqueued_at: new Date().toISOString(),
+      auth_context_present: false,
+    },
+  };
+}
+
 test.after(() => {
   testDb.close();
 });
@@ -23,6 +48,149 @@ test.beforeEach(() => {
     DELETE FROM autonomy_job_attempts;
     DELETE FROM autonomy_jobs;
   `);
+});
+
+test("runAutonomyWorkerOnce executes planner_user_input_v1 via executePlannedUserInput path", async () => {
+  const queued = enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    payload: buildPlannerUserInputJobPayload({
+      text: "幫我看 runtime",
+      baseUrl: "https://planner-worker.example",
+      sessionKey: "planner-worker-session",
+      requestId: "planner-worker-request",
+      traceId: "trace_worker_planner_success",
+    }),
+    traceId: "trace_worker_planner_success",
+    maxAttempts: 2,
+  });
+  let plannerCall = null;
+
+  const result = await runAutonomyWorkerOnce({
+    workerId: "worker-planner-success",
+    enabled: true,
+    heartbeatIntervalMs: 60_000,
+    async plannerExecutor(args) {
+      plannerCall = args;
+      return {
+        ok: true,
+        action: "get_runtime_info",
+        trace_id: "trace_worker_planner_success",
+        execution_result: {
+          ok: true,
+          data: {
+            answer: "runtime 正常",
+            sources: ["runtime snapshot"],
+            limitations: [],
+          },
+        },
+      };
+    },
+  });
+
+  assert.equal(result?.ok, true);
+  assert.equal(result?.claimed, true);
+  assert.equal(result?.completed, true);
+  assert.equal(result?.job_id, queued.id);
+  assert.equal(plannerCall?.text, "幫我看 runtime");
+  assert.equal(plannerCall?.baseUrl, "https://planner-worker.example");
+  assert.equal(plannerCall?.sessionKey, "planner-worker-session");
+  assert.equal(plannerCall?.requestId, "planner-worker-request");
+
+  const stored = getAutonomyJobById(queued.id);
+  assert.equal(stored?.status, "completed");
+  assert.equal(stored?.result?.job_type, "planner_user_input_v1");
+  assert.equal(stored?.result?.selected_action, "get_runtime_info");
+  assert.equal(stored?.result?.verifier_gate_result?.pass, true);
+});
+
+test("runAutonomyWorkerOnce routes planner_user_input_v1 execute failure through recovery", async () => {
+  const queued = enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    payload: buildPlannerUserInputJobPayload({
+      text: "這輪會失敗",
+      traceId: "trace_worker_planner_execute_fail",
+    }),
+    traceId: "trace_worker_planner_execute_fail",
+    maxAttempts: 1,
+  });
+
+  const result = await runAutonomyWorkerOnce({
+    workerId: "worker-planner-execute-fail",
+    enabled: true,
+    heartbeatIntervalMs: 60_000,
+    async plannerExecutor() {
+      return {
+        ok: false,
+        error: "planner_execution_failed",
+        why: "planner_failed",
+      };
+    },
+  });
+
+  assert.equal(result?.ok, false);
+  assert.equal(result?.claimed, true);
+  assert.equal(result?.failed, true);
+  assert.equal(result?.job_id, queued.id);
+  assert.equal(result?.error, "planner_execution_failed");
+  assert.equal(typeof result?.recovery_decision?.reason, "string");
+
+  const stored = getAutonomyJobById(queued.id);
+  assert.equal(stored?.status, "failed");
+  assert.equal(stored?.error?.error, "planner_execution_failed");
+  assert.equal(typeof stored?.error?.recovery_decision?.reason, "string");
+});
+
+test("runAutonomyWorkerOnce routes planner_user_input_v1 verifier fail through fail-soft recovery", async () => {
+  const queued = enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    payload: buildPlannerUserInputJobPayload({
+      text: "這輪 verifier fail",
+      traceId: "trace_worker_planner_verifier_fail",
+    }),
+    traceId: "trace_worker_planner_verifier_fail",
+    maxAttempts: 1,
+  });
+
+  const result = await runAutonomyWorkerOnce({
+    workerId: "worker-planner-verifier-fail",
+    enabled: true,
+    heartbeatIntervalMs: 60_000,
+    async plannerExecutor() {
+      return {
+        ok: true,
+        action: "search_and_summarize",
+        verifier_gate: {
+          task_type: "cloud_doc",
+          structured_result: {},
+          evidence: [{
+            type: EVIDENCE_TYPES.tool_output,
+            summary: "planner_worker_preview_only",
+          }],
+        },
+        execution_result: {
+          ok: true,
+          data: {
+            answer: "preview only",
+            sources: [],
+            limitations: [],
+          },
+        },
+      };
+    },
+  });
+
+  assert.equal(result?.ok, false);
+  assert.equal(result?.claimed, true);
+  assert.equal(result?.failed, true);
+  assert.equal(result?.job_id, queued.id);
+  assert.equal(result?.error, "verifier_failed");
+  assert.equal(typeof result?.recovery_decision?.reason, "string");
+
+  const stored = getAutonomyJobById(queued.id);
+  assert.equal(stored?.status, "failed");
+  assert.equal(stored?.error?.error, "verifier_failed");
+  assert.equal(typeof stored?.error?.reason, "string");
+  assert.equal(typeof stored?.error?.recovery_decision?.reason, "string");
 });
 
 test("runAutonomyWorkerOnce completes claimed job on success path", async () => {
