@@ -13,6 +13,7 @@ const {
   enqueueAutonomyJobRecord,
   ensureAutonomyJobTables,
   failAutonomyAttempt,
+  getAutonomyOpenIncidentByJobId,
   heartbeatAutonomyAttempt,
   listAutonomyOpenIncidents,
 } = await import("../src/task-runtime/autonomy-job-store.mjs");
@@ -240,7 +241,30 @@ test("autonomy job store lists open incidents from failed lifecycle sinks", () =
   assert.equal(escalated?.trace_id, "trace_store_open_escalated");
   assert.equal(Boolean(escalated?.updated_at), true);
 
+  const waitingByJobId = getAutonomyOpenIncidentByJobId(waitingIncident.queued.id);
+  assert.equal(waitingByJobId?.job_id, waitingIncident.queued.id);
+  assert.equal(waitingByJobId?.attempt_id, waitingIncident.claim?.attempt?.id);
+  assert.equal(waitingByJobId?.lifecycle_sink, "waiting_user");
+  assert.equal(waitingByJobId?.failure_class, "business_error");
+  assert.equal(waitingByJobId?.routing_hint, "answer_waiting_user");
+  assert.equal(waitingByJobId?.trace_id, "trace_store_open_waiting");
+  assert.equal(Boolean(waitingByJobId?.updated_at), true);
+  assert.equal(waitingByJobId?.operator_disposition, null);
+
+  const escalatedByJobId = getAutonomyOpenIncidentByJobId(escalatedIncident.queued.id);
+  assert.equal(escalatedByJobId?.job_id, escalatedIncident.queued.id);
+  assert.equal(escalatedByJobId?.attempt_id, escalatedIncident.claim?.attempt?.id);
+  assert.equal(escalatedByJobId?.lifecycle_sink, "escalated");
+  assert.equal(escalatedByJobId?.failure_class, "permission_denied");
+  assert.equal(escalatedByJobId?.routing_hint, "need_human_approval");
+  assert.equal(escalatedByJobId?.trace_id, "trace_store_open_escalated");
+  assert.equal(Boolean(escalatedByJobId?.updated_at), true);
+  assert.equal(escalatedByJobId?.operator_disposition, null);
+
+  assert.equal(waitingByJobId?.job_id, waiting?.job_id);
+  assert.equal(escalatedByJobId?.job_id, escalated?.job_id);
   assert.equal(incidents.some((incident) => incident.job_id === nonSinkQueued.id), false);
+  assert.equal(getAutonomyOpenIncidentByJobId(nonSinkQueued.id), null);
 });
 
 test("autonomy job store ack disposition writes metadata only without status changes", () => {
@@ -288,6 +312,8 @@ test("autonomy job store ack disposition writes metadata only without status cha
   });
   assert.equal(incidentsAfterAck.some((incident) => incident.job_id === waitingIncident.queued.id), false);
   assert.equal(incidentsAfterAck.some((incident) => incident.job_id === escalatedIncident.queued.id), false);
+  assert.equal(getAutonomyOpenIncidentByJobId(waitingIncident.queued.id), null);
+  assert.equal(getAutonomyOpenIncidentByJobId(escalatedIncident.queued.id), null);
 });
 
 test("autonomy incident disposition supports precondition and writes operator audit fields", () => {
@@ -509,6 +535,13 @@ test("autonomy job store preserves operator disposition history on later runtime
   const reopened = incidents.find((item) => item.job_id === incident.queued.id);
   assert.equal(reopened?.lifecycle_sink, "waiting_user");
   assert.equal(reopened?.failure_class, "runtime_exception");
+
+  const reopenedByJobId = getAutonomyOpenIncidentByJobId(incident.queued.id);
+  assert.equal(reopenedByJobId?.job_id, incident.queued.id);
+  assert.equal(reopenedByJobId?.lifecycle_sink, "waiting_user");
+  assert.equal(reopenedByJobId?.failure_class, "runtime_exception");
+  assert.equal(reopenedByJobId?.operator_disposition?.latest?.action, "runtime_failure");
+  assert.equal(Boolean(reopened), Boolean(reopenedByJobId));
 });
 
 test("autonomy incident replay spec builder returns bounded metadata", () => {

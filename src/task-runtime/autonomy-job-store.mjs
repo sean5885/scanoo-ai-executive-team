@@ -114,7 +114,7 @@ function normalizeAutonomyDispositionPrecondition(precondition = null) {
   };
 }
 
-function toAutonomyOpenIncidentRecord(row = null) {
+function toAutonomyOpenIncidentRecord(row = null, { includeOperatorDisposition = false } = {}) {
   if (!row) {
     return null;
   }
@@ -127,7 +127,7 @@ function toAutonomyOpenIncidentRecord(row = null) {
   if (isSuppressedByOperatorAck(error)) {
     return null;
   }
-  return {
+  const incident = {
     job_id: row.job_id || null,
     attempt_id: row.attempt_id || null,
     lifecycle_sink: lifecycleSinkState,
@@ -136,6 +136,10 @@ function toAutonomyOpenIncidentRecord(row = null) {
     trace_id: cleanText(row.job_trace_id) || cleanText(row.attempt_trace_id) || null,
     updated_at: row.updated_at || null,
   };
+  if (includeOperatorDisposition) {
+    incident.operator_disposition = readOperatorDispositionFromError(error) || null;
+  }
+  return incident;
 }
 
 function mergeOperatorDispositionErrorMetadata({
@@ -221,7 +225,7 @@ function mergeFailureErrorWithOperatorDispositionHistory({
   return baseError;
 }
 
-function getAutonomyOpenIncidentByJobId(jobId = "") {
+function readAutonomyOpenIncidentByJobId(jobId = "", { includeOperatorDisposition = false } = {}) {
   const normalizedJobId = cleanText(jobId);
   if (!normalizedJobId) {
     return null;
@@ -244,7 +248,14 @@ function getAutonomyOpenIncidentByJobId(jobId = "") {
     job_id: normalizedJobId,
     failed_status: AUTONOMY_JOB_STATUS.failed,
   });
-  return toAutonomyOpenIncidentRecord(row);
+  return toAutonomyOpenIncidentRecord(row, { includeOperatorDisposition });
+}
+
+export function getAutonomyOpenIncidentByJobId(jobId = "") {
+  ensureAutonomyJobTables();
+  return readAutonomyOpenIncidentByJobId(jobId, {
+    includeOperatorDisposition: true,
+  });
 }
 
 function toAutonomyJobRecord(row = null) {
@@ -982,7 +993,7 @@ export function applyAutonomyIncidentDisposition({
   }
 
   const dispositionTx = db.transaction(() => {
-    const incident = getAutonomyOpenIncidentByJobId(normalizedJobId);
+    const incident = readAutonomyOpenIncidentByJobId(normalizedJobId);
     if (!incident) {
       return {
         ok: false,
