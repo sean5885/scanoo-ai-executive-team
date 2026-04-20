@@ -83,6 +83,8 @@ Current-truth docs for onboarding are:
   - adds a feature-flagged enqueue adapter and worker loop entry (`AUTONOMY_ENABLED`)
   - job-level trace correlation now has an additive helper surface (`job_id`, `attempt_id`, `trace_id`)
   - worker completion now runs one local verifier gate (`executeJob -> normalize execution_journal/evidence -> verify -> complete/fail`) through `executive-verifier` rules before marking a job `completed`
+  - worker failure payload now adds additive `lifecycle_sink` metadata for sink-class decisions (`waiting_user` from `blocked + *_waiting_user`, `escalated` from `next_state=escalated`) while keeping the same status machine (`queued|running|completed|failed`)
+  - job/attempt store records now project `lifecycle_sink` from persisted `error_json.lifecycle_sink` as read-side metadata
   - this scaffold is not wired into the current main HTTP/planner/orchestrator ingress path
   - this scaffold still does not add background worker mesh, parallel specialist execution, or idempotency unification
 - Evidence:

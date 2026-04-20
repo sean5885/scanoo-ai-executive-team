@@ -42,10 +42,22 @@ function addMsToNowIso(ms = DEFAULT_AUTONOMY_LEASE_MS) {
   return new Date(Date.now() + normalizePositiveInteger(ms, DEFAULT_AUTONOMY_LEASE_MS)).toISOString();
 }
 
+function readLifecycleSinkFromError(error = null) {
+  if (!error || typeof error !== "object" || Array.isArray(error)) {
+    return null;
+  }
+  const lifecycleSink = error.lifecycle_sink;
+  if (!lifecycleSink || typeof lifecycleSink !== "object" || Array.isArray(lifecycleSink)) {
+    return null;
+  }
+  return lifecycleSink;
+}
+
 function toAutonomyJobRecord(row = null) {
   if (!row) {
     return null;
   }
+  const error = parseJson(row.error_json);
   return {
     id: row.id || null,
     job_type: row.job_type || null,
@@ -59,7 +71,8 @@ function toAutonomyJobRecord(row = null) {
     max_attempts: Number.isFinite(Number(row.max_attempts)) ? Number(row.max_attempts) : DEFAULT_AUTONOMY_MAX_ATTEMPTS,
     last_attempt_id: row.last_attempt_id || null,
     result: parseJson(row.result_json),
-    error: parseJson(row.error_json),
+    error,
+    lifecycle_sink: readLifecycleSinkFromError(error),
     created_at: row.created_at || null,
     updated_at: row.updated_at || null,
     started_at: row.started_at || null,
@@ -72,6 +85,7 @@ function toAutonomyJobAttemptRecord(row = null) {
   if (!row) {
     return null;
   }
+  const error = parseJson(row.error_json);
   return {
     id: row.id || null,
     job_id: row.job_id || null,
@@ -84,7 +98,8 @@ function toAutonomyJobAttemptRecord(row = null) {
     completed_at: row.completed_at || null,
     failed_at: row.failed_at || null,
     result: parseJson(row.result_json),
-    error: parseJson(row.error_json),
+    error,
+    lifecycle_sink: readLifecycleSinkFromError(error),
     created_at: row.created_at || null,
     updated_at: row.updated_at || null,
   };

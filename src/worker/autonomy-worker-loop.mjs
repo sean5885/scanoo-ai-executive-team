@@ -1,6 +1,7 @@
 import { cleanText } from "../message-intent-utils.mjs";
 import { EVIDENCE_TYPES, verifyTaskCompletion } from "../executive-verifier.mjs";
 import { resolveRecoveryDecisionV1 } from "../recovery-decision.mjs";
+import { nowIso } from "../text-utils.mjs";
 import {
   claimNextAutonomyJob,
   completeAutonomyAttempt,
@@ -293,6 +294,30 @@ function buildRecoveryDecisionSnapshot(decision = null) {
   };
 }
 
+function deriveLifecycleSinkFromRecoveryDecision(decision = null) {
+  const nextState = cleanText(decision?.next_state || "").toLowerCase();
+  const routingHint = cleanText(decision?.routing_hint || "");
+  const reason = cleanText(decision?.reason || "") || "recovery_decision_v1_unknown";
+
+  if (nextState === "blocked" && routingHint.endsWith("_waiting_user")) {
+    return {
+      state: "waiting_user",
+      reason,
+      routing_hint: routingHint || null,
+    };
+  }
+
+  if (nextState === "escalated") {
+    return {
+      state: "escalated",
+      reason,
+      routing_hint: routingHint || null,
+    };
+  }
+
+  return null;
+}
+
 function normalizeAutonomyFailure({
   job = null,
   error = "",
@@ -331,6 +356,7 @@ function normalizeAutonomyFailure({
     verification: normalizedVerification,
   });
   const recoveryDecision = buildRecoveryDecisionSnapshot(decision);
+  const lifecycleSink = deriveLifecycleSinkFromRecoveryDecision(decision);
 
   const failure = {
     error: normalizedError,
@@ -344,6 +370,15 @@ function normalizeAutonomyFailure({
     recovery_decision: recoveryDecision,
     source: cleanText(source) || "autonomy_worker_loop",
   };
+  if (lifecycleSink) {
+    failure.lifecycle_sink = {
+      state: lifecycleSink.state,
+      reason: lifecycleSink.reason,
+      failure_class: normalizedFailureClass || null,
+      routing_hint: lifecycleSink.routing_hint,
+      at: nowIso(),
+    };
+  }
 
   if (data !== undefined) {
     failure.data = data;
@@ -382,6 +417,8 @@ function buildAutonomyFailureLogFields({
     workflow: normalizedFailure.failure?.workflow || "autonomy_job",
     verification_issues: verificationIssues,
     recovery_decision: normalizedFailure.recoveryDecision || null,
+    lifecycle_sink_state: normalizedFailure.failure?.lifecycle_sink?.state || null,
+    lifecycle_sink_reason: normalizedFailure.failure?.lifecycle_sink?.reason || null,
     retry_scheduled: retryScheduled === true,
   };
 }

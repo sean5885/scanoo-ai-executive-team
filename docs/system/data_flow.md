@@ -25,6 +25,22 @@ The OpenClaw plugin ingress is now a second bounded adjacent flow: tool calls fi
 2. executes the existing lane path through a synthetic lane event/scope
 3. returns a `plugin_native` forward decision so the plugin can continue on the existing direct document/message/calendar/task-style route without entering the internal planner/lane business flow
 
+## 0A. Autonomy Worker Failure Sink Metadata (Phase 2 additive)
+
+Current additive path:
+
+1. `/Users/seanhan/Documents/Playground/src/worker/autonomy-worker-loop.mjs` derives `recovery_decision`
+2. for sink-class decisions, worker writes additive `error.lifecycle_sink={state,reason,failure_class,routing_hint,at}` to failure payload
+3. `/Users/seanhan/Documents/Playground/src/task-runtime/autonomy-job-store.mjs` persists the same payload under `error_json`
+4. job/attempt read records project `lifecycle_sink` from `error_json.lifecycle_sink` for query/observability
+
+Current truth:
+
+- this is metadata-only and does not change job status transitions or retry state machine
+- sink state is currently bounded to:
+  - `waiting_user` when recovery decision is `blocked` with `routing_hint` ending `_waiting_user`
+  - `escalated` when recovery decision `next_state=escalated`
+
 ## 1. Read Path
 
 ### 1A. Retrieval Index Read

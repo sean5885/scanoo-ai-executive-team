@@ -202,4 +202,39 @@ test("runAutonomyWorkerOnce stops retry when recovery decision enters waiting_us
   assert.equal(stored?.error?.failure_class, "missing_slot");
   assert.equal(stored?.error?.recovery_decision?.next_state, "blocked");
   assert.equal(stored?.error?.recovery_decision?.waiting_user, true);
+  assert.equal(stored?.error?.lifecycle_sink?.state, "waiting_user");
+  assert.equal(stored?.lifecycle_sink?.state, "waiting_user");
+});
+
+test("runAutonomyWorkerOnce records escalated lifecycle sink on permission_denied", async () => {
+  const queued = enqueueAutonomyJobRecord({
+    jobType: "worker_permission_denied_via_recovery_decision_job",
+    traceId: "trace_worker_permission_denied_via_recovery_decision",
+    maxAttempts: 3,
+  });
+
+  const result = await runAutonomyWorkerOnce({
+    workerId: "worker-permission-denied-via-decision",
+    enabled: true,
+    heartbeatIntervalMs: 60_000,
+    async executeJob() {
+      return {
+        ok: false,
+        error: "permission_denied_lark_scope",
+      };
+    },
+  });
+
+  assert.equal(result?.ok, false);
+  assert.equal(result?.claimed, true);
+  assert.equal(result?.failed, true);
+  assert.equal(result?.retry_scheduled, false);
+  assert.equal(result?.recovery_decision?.next_state, "escalated");
+
+  const stored = getAutonomyJobById(queued.id);
+  assert.equal(stored?.status, "failed");
+  assert.equal(stored?.error?.error, "permission_denied_lark_scope");
+  assert.equal(stored?.error?.failure_class, "permission_denied");
+  assert.equal(stored?.error?.lifecycle_sink?.state, "escalated");
+  assert.equal(stored?.lifecycle_sink?.state, "escalated");
 });
