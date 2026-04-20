@@ -6,12 +6,15 @@ import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 const testDb = await createTestDbHarness();
 const { db } = testDb;
 const {
+  applyAutonomyIncidentDisposition,
+  buildAutonomyIncidentReplaySpec,
   claimNextAutonomyJob,
   completeAutonomyAttempt,
   enqueueAutonomyJobRecord,
   ensureAutonomyJobTables,
   failAutonomyAttempt,
   heartbeatAutonomyAttempt,
+  listAutonomyOpenIncidents,
 } = await import("../src/task-runtime/autonomy-job-store.mjs");
 
 test.after(() => {
@@ -140,4 +143,200 @@ test("autonomy job store reclaims expired lease for the same job", () => {
   assert.equal(reclaimed?.attempt?.worker_id, "worker-second");
   assert.equal(reclaimed?.job?.lease_owner, "worker-second");
   assert.equal(reclaimed?.job?.attempt_count, 2);
+});
+
+function createFailedSinkIncident({
+  jobType = "unit_test_incident_job",
+  traceId = "trace_store_incident",
+  sinkState = "waiting_user",
+  failureClass = "business_error",
+  routingHint = "answer_waiting_user",
+} = {}) {
+  const queued = enqueueAutonomyJobRecord({
+    jobType,
+    traceId,
+    maxAttempts: 1,
+  });
+  const claim = claimNextAutonomyJob({
+    workerId: `worker-${traceId}`,
+    leaseMs: 30_000,
+  });
+  const failed = failAutonomyAttempt({
+    jobId: claim?.job?.id,
+    attemptId: claim?.attempt?.id,
+    workerId: `worker-${traceId}`,
+    retryable: false,
+    error: {
+      reason: "forced_failure",
+      lifecycle_sink: {
+        state: sinkState,
+        failure_class: failureClass,
+        routing_hint: routingHint,
+        at: "2026-04-20T00:00:00.000Z",
+      },
+    },
+  });
+  return {
+    queued,
+    claim,
+    failed,
+  };
+}
+
+test("autonomy job store lists open incidents from failed lifecycle sinks", () => {
+  const waitingIncident = createFailedSinkIncident({
+    jobType: "unit_test_waiting_incident_job",
+    traceId: "trace_store_open_waiting",
+    sinkState: "waiting_user",
+    failureClass: "business_error",
+    routingHint: "answer_waiting_user",
+  });
+  const escalatedIncident = createFailedSinkIncident({
+    jobType: "unit_test_escalated_incident_job",
+    traceId: "trace_store_open_escalated",
+    sinkState: "escalated",
+    failureClass: "permission_denied",
+    routingHint: "need_human_approval",
+  });
+
+  const nonSinkQueued = enqueueAutonomyJobRecord({
+    jobType: "unit_test_failed_without_sink",
+    traceId: "trace_store_no_sink",
+    maxAttempts: 1,
+  });
+  const nonSinkClaim = claimNextAutonomyJob({
+    workerId: "worker-trace_store_no_sink",
+    leaseMs: 30_000,
+  });
+  failAutonomyAttempt({
+    jobId: nonSinkClaim?.job?.id,
+    attemptId: nonSinkClaim?.attempt?.id,
+    workerId: "worker-trace_store_no_sink",
+    retryable: false,
+    error: {
+      reason: "forced_failure_without_sink",
+    },
+  });
+
+  const incidents = listAutonomyOpenIncidents({
+    limit: 10,
+  });
+  assert.equal(Array.isArray(incidents), true);
+  assert.equal(incidents.length, 2);
+
+  const waiting = incidents.find((incident) => incident.job_id === waitingIncident.queued.id);
+  assert.equal(waiting?.attempt_id, waitingIncident.claim?.attempt?.id);
+  assert.equal(waiting?.lifecycle_sink, "waiting_user");
+  assert.equal(waiting?.failure_class, "business_error");
+  assert.equal(waiting?.routing_hint, "answer_waiting_user");
+  assert.equal(waiting?.trace_id, "trace_store_open_waiting");
+  assert.equal(Boolean(waiting?.updated_at), true);
+
+  const escalated = incidents.find((incident) => incident.job_id === escalatedIncident.queued.id);
+  assert.equal(escalated?.attempt_id, escalatedIncident.claim?.attempt?.id);
+  assert.equal(escalated?.lifecycle_sink, "escalated");
+  assert.equal(escalated?.failure_class, "permission_denied");
+  assert.equal(escalated?.routing_hint, "need_human_approval");
+  assert.equal(escalated?.trace_id, "trace_store_open_escalated");
+  assert.equal(Boolean(escalated?.updated_at), true);
+
+  assert.equal(incidents.some((incident) => incident.job_id === nonSinkQueued.id), false);
+});
+
+test("autonomy job store ack disposition writes metadata only without status changes", () => {
+  const waitingIncident = createFailedSinkIncident({
+    jobType: "unit_test_ack_waiting_incident",
+    traceId: "trace_store_ack_waiting",
+    sinkState: "waiting_user",
+  });
+
+  const acked = applyAutonomyIncidentDisposition({
+    jobId: waitingIncident.queued.id,
+    action: "ack_waiting_user",
+    reason: "operator_confirmed_waiting_user",
+  });
+  assert.equal(acked?.ok, true);
+  assert.equal(acked?.rescheduled, false);
+  assert.equal(acked?.job?.status, "failed");
+  assert.equal(acked?.disposition?.action, "ack_waiting_user");
+  assert.equal(acked?.disposition?.reason, "operator_confirmed_waiting_user");
+  assert.equal(acked?.job?.error?.operator_disposition?.latest?.action, "ack_waiting_user");
+  assert.equal(acked?.job?.error?.operator_disposition?.latest?.reason, "operator_confirmed_waiting_user");
+  assert.equal(Array.isArray(acked?.job?.error?.operator_disposition?.history), true);
+  assert.equal(acked?.job?.error?.operator_disposition?.history.length, 1);
+  assert.equal(acked?.replay_spec?.version, "autonomy_incident_replay_spec_v1");
+});
+
+test("autonomy job store resume disposition makes failed incident schedulable again", () => {
+  const escalatedIncident = createFailedSinkIncident({
+    jobType: "unit_test_resume_incident",
+    traceId: "trace_store_resume",
+    sinkState: "escalated",
+    failureClass: "permission_denied",
+    routingHint: "need_operator_resume",
+  });
+
+  const resumed = applyAutonomyIncidentDisposition({
+    jobId: escalatedIncident.queued.id,
+    action: "resume_same_job",
+    reason: "operator_resume_after_fix",
+  });
+  assert.equal(resumed?.ok, true);
+  assert.equal(resumed?.rescheduled, true);
+  assert.equal(resumed?.job?.status, "queued");
+  assert.equal(Boolean(resumed?.job?.next_run_at), true);
+  assert.equal(resumed?.job?.failed_at, null);
+  assert.equal(resumed?.job?.error?.operator_disposition?.latest?.action, "resume_same_job");
+  assert.equal(resumed?.job?.error?.operator_disposition?.latest?.reason, "operator_resume_after_fix");
+
+  const reclaimed = claimNextAutonomyJob({
+    workerId: "worker-resume-reclaim",
+    leaseMs: 30_000,
+  });
+  assert.equal(reclaimed?.job?.id, escalatedIncident.queued.id);
+  assert.equal(reclaimed?.job?.status, "running");
+});
+
+test("autonomy job store rejects sink-mismatched ack action and keeps incident unchanged", () => {
+  const waitingIncident = createFailedSinkIncident({
+    jobType: "unit_test_mismatch_incident",
+    traceId: "trace_store_mismatch",
+    sinkState: "waiting_user",
+  });
+
+  const mismatch = applyAutonomyIncidentDisposition({
+    jobId: waitingIncident.queued.id,
+    action: "ack_escalated",
+    reason: "wrong_ack",
+  });
+  assert.equal(mismatch?.ok, false);
+  assert.equal(mismatch?.error, "operator_action_lifecycle_sink_mismatch");
+
+  const incidents = listAutonomyOpenIncidents({
+    limit: 10,
+  });
+  const waiting = incidents.find((incident) => incident.job_id === waitingIncident.queued.id);
+  assert.equal(waiting?.lifecycle_sink, "waiting_user");
+});
+
+test("autonomy incident replay spec builder returns bounded metadata", () => {
+  const replaySpec = buildAutonomyIncidentReplaySpec({
+    incident: {
+      job_id: "job-1",
+      attempt_id: "attempt-1",
+      lifecycle_sink: "escalated",
+      failure_class: "permission_denied",
+      routing_hint: "need_human_approval",
+      trace_id: "trace-1",
+      updated_at: "2026-04-20T00:00:00.000Z",
+    },
+    action: "ack_escalated",
+    reason: "operator_ack",
+    generatedAt: "2026-04-20T12:00:00.000Z",
+  });
+  assert.equal(replaySpec?.version, "autonomy_incident_replay_spec_v1");
+  assert.equal(replaySpec?.action, "ack_escalated");
+  assert.equal(replaySpec?.reason, "operator_ack");
+  assert.equal(replaySpec?.incident?.job_id, "job-1");
+  assert.equal(replaySpec?.incident?.lifecycle_sink, "escalated");
 });

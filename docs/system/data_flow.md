@@ -25,7 +25,7 @@ The OpenClaw plugin ingress is now a second bounded adjacent flow: tool calls fi
 2. executes the existing lane path through a synthetic lane event/scope
 3. returns a `plugin_native` forward decision so the plugin can continue on the existing direct document/message/calendar/task-style route without entering the internal planner/lane business flow
 
-## 0A. Autonomy Worker Failure Sink Metadata (Phase 2 additive)
+## 0A. Autonomy Worker Failure Sink + Operator Incident Closure (Phase 2-3 additive)
 
 Current additive path:
 
@@ -33,6 +33,10 @@ Current additive path:
 2. for sink-class decisions, worker writes additive `error.lifecycle_sink={state,reason,failure_class,routing_hint,at}` to failure payload
 3. `/Users/seanhan/Documents/Playground/src/task-runtime/autonomy-job-store.mjs` persists the same payload under `error_json`
 4. job/attempt read records project `lifecycle_sink` from `error_json.lifecycle_sink` for query/observability
+5. operator read model (`listAutonomyOpenIncidents`) lists only open incidents from failed jobs where `lifecycle_sink.state in {waiting_user, escalated}`
+6. operator disposition writes (`applyAutonomyIncidentDisposition`) append `error_json.operator_disposition` with traceable `at/action/reason`
+7. only `resume_same_job` re-queues the same job (`status=queued`, `next_run_at=now`); `ack_waiting_user` / `ack_escalated` are metadata-only and keep job status unchanged
+8. optional replay bridge (`buildAutonomyIncidentReplaySpec`) emits bounded incident replay spec metadata only; no replay execution path is added
 
 Current truth:
 
@@ -40,6 +44,10 @@ Current truth:
 - sink state is currently bounded to:
   - `waiting_user` when recovery decision is `blocked` with `routing_hint` ending `_waiting_user`
   - `escalated` when recovery decision `next_state=escalated`
+- operator closure here is additive and local to autonomy store:
+  - no new escalation subsystem
+  - no new queue/worker mesh
+  - no planner/router/public response shape change
 
 ## 1. Read Path
 

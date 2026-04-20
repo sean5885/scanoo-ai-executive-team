@@ -12,6 +12,12 @@ import {
 } from "./autonomy-job-types.mjs";
 
 let autonomyTablesReady = false;
+const AUTONOMY_OPEN_INCIDENT_SINK_STATE = new Set(["waiting_user", "escalated"]);
+const AUTONOMY_OPERATOR_DISPOSITION_ACTION = Object.freeze({
+  resumeSameJob: "resume_same_job",
+  ackWaitingUser: "ack_waiting_user",
+  ackEscalated: "ack_escalated",
+});
 
 function parseJson(value) {
   const normalized = cleanText(value);
@@ -51,6 +57,100 @@ function readLifecycleSinkFromError(error = null) {
     return null;
   }
   return lifecycleSink;
+}
+
+function isOpenIncidentSinkState(value = "") {
+  return AUTONOMY_OPEN_INCIDENT_SINK_STATE.has(cleanText(value));
+}
+
+function normalizeAutonomyDispositionAction(action = "") {
+  const normalizedAction = cleanText(action);
+  if (!normalizedAction) {
+    return null;
+  }
+  if (
+    normalizedAction !== AUTONOMY_OPERATOR_DISPOSITION_ACTION.resumeSameJob
+    && normalizedAction !== AUTONOMY_OPERATOR_DISPOSITION_ACTION.ackWaitingUser
+    && normalizedAction !== AUTONOMY_OPERATOR_DISPOSITION_ACTION.ackEscalated
+  ) {
+    return null;
+  }
+  return normalizedAction;
+}
+
+function toAutonomyOpenIncidentRecord(row = null) {
+  if (!row) {
+    return null;
+  }
+  const error = parseJson(row.error_json);
+  const lifecycleSink = readLifecycleSinkFromError(error);
+  const lifecycleSinkState = cleanText(lifecycleSink?.state);
+  if (!isOpenIncidentSinkState(lifecycleSinkState)) {
+    return null;
+  }
+  return {
+    job_id: row.job_id || null,
+    attempt_id: row.attempt_id || null,
+    lifecycle_sink: lifecycleSinkState,
+    failure_class: cleanText(lifecycleSink?.failure_class) || null,
+    routing_hint: cleanText(lifecycleSink?.routing_hint) || null,
+    trace_id: cleanText(row.job_trace_id) || cleanText(row.attempt_trace_id) || null,
+    updated_at: row.updated_at || null,
+  };
+}
+
+function mergeOperatorDispositionErrorMetadata({
+  error = null,
+  at = "",
+  action = "",
+  reason = "",
+  replaySpec = null,
+} = {}) {
+  const baseError = error && typeof error === "object" && !Array.isArray(error)
+    ? { ...error }
+    : {};
+  const previousOperatorDisposition = baseError.operator_disposition;
+  const history = Array.isArray(previousOperatorDisposition?.history)
+    ? previousOperatorDisposition.history.slice(0)
+    : [];
+  const entry = {
+    at: cleanText(at) || nowIso(),
+    action: cleanText(action) || null,
+    reason: cleanText(reason) || null,
+  };
+  history.push(entry);
+  baseError.operator_disposition = {
+    latest: entry,
+    history,
+    replay_spec: replaySpec || null,
+  };
+  return baseError;
+}
+
+function getAutonomyOpenIncidentByJobId(jobId = "") {
+  const normalizedJobId = cleanText(jobId);
+  if (!normalizedJobId) {
+    return null;
+  }
+  const row = db.prepare(`
+    SELECT
+      jobs.id AS job_id,
+      jobs.last_attempt_id AS attempt_id,
+      jobs.trace_id AS job_trace_id,
+      attempts.trace_id AS attempt_trace_id,
+      jobs.updated_at AS updated_at,
+      jobs.error_json AS error_json
+    FROM autonomy_jobs jobs
+    LEFT JOIN autonomy_job_attempts attempts
+      ON attempts.id = jobs.last_attempt_id
+    WHERE jobs.id = @job_id
+      AND jobs.status = @failed_status
+    LIMIT 1
+  `).get({
+    job_id: normalizedJobId,
+    failed_status: AUTONOMY_JOB_STATUS.failed,
+  });
+  return toAutonomyOpenIncidentRecord(row);
 }
 
 function toAutonomyJobRecord(row = null) {
@@ -684,4 +784,202 @@ export function failAutonomyAttempt({
   });
 
   return failTx();
+}
+
+export function listAutonomyOpenIncidents({
+  limit = 100,
+} = {}) {
+  ensureAutonomyJobTables();
+  const resolvedLimit = normalizePositiveInteger(limit, 100);
+  const rows = db.prepare(`
+    SELECT
+      jobs.id AS job_id,
+      jobs.last_attempt_id AS attempt_id,
+      jobs.trace_id AS job_trace_id,
+      attempts.trace_id AS attempt_trace_id,
+      jobs.updated_at AS updated_at,
+      jobs.error_json AS error_json
+    FROM autonomy_jobs jobs
+    LEFT JOIN autonomy_job_attempts attempts
+      ON attempts.id = jobs.last_attempt_id
+    WHERE jobs.status = @failed_status
+    ORDER BY jobs.updated_at DESC, jobs.created_at DESC
+    LIMIT @limit
+  `).all({
+    failed_status: AUTONOMY_JOB_STATUS.failed,
+    limit: resolvedLimit,
+  });
+
+  const incidents = [];
+  for (const row of rows) {
+    const incident = toAutonomyOpenIncidentRecord(row);
+    if (incident) {
+      incidents.push(incident);
+    }
+  }
+  return incidents;
+}
+
+export function buildAutonomyIncidentReplaySpec({
+  incident = null,
+  action = "",
+  reason = "",
+  generatedAt = "",
+} = {}) {
+  if (!incident || typeof incident !== "object" || Array.isArray(incident)) {
+    return null;
+  }
+  const jobId = cleanText(incident.job_id);
+  if (!jobId) {
+    return null;
+  }
+  const lifecycleSink = cleanText(incident.lifecycle_sink);
+  if (!isOpenIncidentSinkState(lifecycleSink)) {
+    return null;
+  }
+  const normalizedAction = normalizeAutonomyDispositionAction(action);
+  return {
+    version: "autonomy_incident_replay_spec_v1",
+    generated_at: cleanText(generatedAt) || nowIso(),
+    action: normalizedAction || null,
+    reason: cleanText(reason) || null,
+    incident: {
+      job_id: jobId,
+      attempt_id: cleanText(incident.attempt_id) || null,
+      lifecycle_sink: lifecycleSink,
+      failure_class: cleanText(incident.failure_class) || null,
+      routing_hint: cleanText(incident.routing_hint) || null,
+      trace_id: cleanText(incident.trace_id) || null,
+      updated_at: cleanText(incident.updated_at) || null,
+    },
+  };
+}
+
+export function applyAutonomyIncidentDisposition({
+  jobId = "",
+  action = "",
+  reason = "",
+} = {}) {
+  ensureAutonomyJobTables();
+
+  const normalizedJobId = cleanText(jobId);
+  const normalizedAction = normalizeAutonomyDispositionAction(action);
+  if (!normalizedJobId || !normalizedAction) {
+    return {
+      ok: false,
+      error: "invalid_operator_disposition_input",
+    };
+  }
+
+  const dispositionTx = db.transaction(() => {
+    const incident = getAutonomyOpenIncidentByJobId(normalizedJobId);
+    if (!incident) {
+      return {
+        ok: false,
+        error: "open_incident_not_found",
+      };
+    }
+
+    if (
+      normalizedAction === AUTONOMY_OPERATOR_DISPOSITION_ACTION.ackWaitingUser
+      && incident.lifecycle_sink !== "waiting_user"
+    ) {
+      return {
+        ok: false,
+        error: "operator_action_lifecycle_sink_mismatch",
+      };
+    }
+    if (
+      normalizedAction === AUTONOMY_OPERATOR_DISPOSITION_ACTION.ackEscalated
+      && incident.lifecycle_sink !== "escalated"
+    ) {
+      return {
+        ok: false,
+        error: "operator_action_lifecycle_sink_mismatch",
+      };
+    }
+
+    const now = nowIso();
+    const normalizedReason = cleanText(reason) || null;
+    const currentJob = getAutonomyJobById(normalizedJobId);
+    const replaySpec = buildAutonomyIncidentReplaySpec({
+      incident,
+      action: normalizedAction,
+      reason: normalizedReason,
+      generatedAt: now,
+    });
+    const nextError = mergeOperatorDispositionErrorMetadata({
+      error: currentJob?.error,
+      at: now,
+      action: normalizedAction,
+      reason: normalizedReason,
+      replaySpec,
+    });
+
+    if (normalizedAction === AUTONOMY_OPERATOR_DISPOSITION_ACTION.resumeSameJob) {
+      const updated = db.prepare(`
+        UPDATE autonomy_jobs
+        SET status = @queued_status,
+            lease_owner = NULL,
+            lease_expires_at = NULL,
+            next_run_at = @next_run_at,
+            max_attempts = CASE
+              WHEN max_attempts <= attempt_count THEN attempt_count + 1
+              ELSE max_attempts
+            END,
+            failed_at = NULL,
+            updated_at = @updated_at,
+            error_json = @error_json
+        WHERE id = @job_id
+          AND status = @failed_status
+      `).run({
+        job_id: normalizedJobId,
+        queued_status: AUTONOMY_JOB_STATUS.queued,
+        failed_status: AUTONOMY_JOB_STATUS.failed,
+        next_run_at: now,
+        updated_at: now,
+        error_json: stringifyJson(nextError),
+      });
+      if (Number(updated.changes || 0) !== 1) {
+        return {
+          ok: false,
+          error: "open_incident_not_found",
+        };
+      }
+    } else {
+      const updated = db.prepare(`
+        UPDATE autonomy_jobs
+        SET updated_at = @updated_at,
+            error_json = @error_json
+        WHERE id = @job_id
+          AND status = @failed_status
+      `).run({
+        job_id: normalizedJobId,
+        failed_status: AUTONOMY_JOB_STATUS.failed,
+        updated_at: now,
+        error_json: stringifyJson(nextError),
+      });
+      if (Number(updated.changes || 0) !== 1) {
+        return {
+          ok: false,
+          error: "open_incident_not_found",
+        };
+      }
+    }
+
+    return {
+      ok: true,
+      rescheduled: normalizedAction === AUTONOMY_OPERATOR_DISPOSITION_ACTION.resumeSameJob,
+      disposition: {
+        at: now,
+        action: normalizedAction,
+        reason: normalizedReason,
+      },
+      replay_spec: replaySpec,
+      incident,
+      job: getAutonomyJobById(normalizedJobId),
+    };
+  });
+
+  return dispositionTx();
 }
