@@ -47,7 +47,7 @@ Current additive path:
    - token sources: `trace_id` / `request_id` query params, plus existing `X-Trace-Id` / `X-Request-Id` headers
    - execution: ingress resolves token -> store lookup read model (`lookupAutonomyJobReceiptByTraceId` / `lookupAutonomyJobReceiptByRequestId`)
    - response remains bounded to `job_id / job_type / status / lifecycle_sink / updated_at / reason`; unknown/miss is fail-soft `status=not_found`
-6C. additive final-result pickup read model in the same store (for later read-only pickup route wiring):
+6C. additive final-result pickup read model in the same store:
    - `lookupAutonomyJobFinalPickupByTraceId(trace_id)`
    - `lookupAutonomyJobFinalPickupByRequestId(request_id)` (same payload-envelope request-id matching and same latest-visible ordering as receipt lookup)
    - bounded response only: `answer / sources / limitations / status / updated_at / reason`
@@ -55,6 +55,11 @@ Current additive path:
    - terminal gate is fail-soft: only truly completed rows can project `status=completed`
    - `queued / running / failed / not_found` remain non-completed states
    - completed projection prefers canonical `result_json.structured_result.answer/sources/limitations`; `answer` may fallback to `reply_text` only when needed
+6D. additive read-only HTTP ingress for final pickup:
+   - `GET /api/monitoring/autonomy/final`
+   - token sources: `trace_id` / `request_id` query params, plus existing `X-Trace-Id` / `X-Request-Id` headers
+   - execution: ingress resolves token -> store lookup read model (`lookupAutonomyJobFinalPickupByTraceId` / `lookupAutonomyJobFinalPickupByRequestId`)
+   - response remains bounded to `answer / sources / limitations / status / updated_at / reason`; unknown/miss is fail-soft `status=not_found`
 7. operator disposition writes (`applyAutonomyIncidentDisposition`) append `error_json.operator_disposition` with traceable `at/action/reason` and optional audit fields (`operator_id/request_id/expected_updated_at`)
 8. additive precondition support (`precondition.expected_updated_at`) is guarded in the same transaction/update as the disposition write; stale mismatch fails-soft as `precondition_failed` (`stale=true`)
 9. only `resume_same_job` re-queues the same job (`status=queued`, `next_run_at=now`); `ack_waiting_user` / `ack_escalated` are metadata-only and keep job status unchanged

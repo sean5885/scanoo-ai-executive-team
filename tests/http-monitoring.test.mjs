@@ -18,10 +18,12 @@ const [
     enqueueAutonomyJobRecord,
     ensureAutonomyJobTables,
   },
+  { default: db },
 ] = await Promise.all([
   import("../src/http-server.mjs"),
   import("../src/monitoring-store.mjs"),
   import("../src/task-runtime/autonomy-job-store.mjs"),
+  import("../src/db.mjs"),
 ]);
 
 const execFileAsync = promisify(execFile);
@@ -180,6 +182,159 @@ test("monitoring autonomy receipt lookup supports trace/request tokens and fail-
   assert.equal(byMissPayload.lifecycle_sink, null);
   assert.equal(byMissPayload.updated_at, null);
   assert.equal(byMissPayload.reason, null);
+});
+
+test("monitoring autonomy final pickup supports completed and fail-soft non-completed states", async (t) => {
+  ensureAutonomyJobTables();
+  const stamp = Date.now();
+  const traceQueued = `trace_monitoring_final_queued_${stamp}`;
+  const requestQueued = `req_monitoring_final_queued_${stamp}`;
+  const traceCompleted = `trace_monitoring_final_completed_${stamp}`;
+  const requestCompleted = `req_monitoring_final_completed_${stamp}`;
+  const traceFailed = `trace_monitoring_final_failed_${stamp}`;
+  const requestFailed = `req_monitoring_final_failed_${stamp}`;
+
+  const queued = enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    traceId: traceQueued,
+    payload: {
+      schema_version: "planner_user_input_v1",
+      planner_input: {
+        text: "monitoring final pickup queued",
+        request_id: requestQueued,
+        trace_id: traceQueued,
+      },
+    },
+    maxAttempts: 1,
+  });
+  const completed = enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    traceId: traceCompleted,
+    payload: {
+      schema_version: "planner_user_input_v1",
+      planner_input: {
+        text: "monitoring final pickup completed",
+        request_id: requestCompleted,
+        trace_id: traceCompleted,
+      },
+    },
+    maxAttempts: 1,
+  });
+  const failed = enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    traceId: traceFailed,
+    payload: {
+      schema_version: "planner_user_input_v1",
+      planner_input: {
+        text: "monitoring final pickup failed",
+        request_id: requestFailed,
+        trace_id: traceFailed,
+      },
+    },
+    maxAttempts: 1,
+  });
+  assert.ok(queued?.id);
+  assert.ok(completed?.id);
+  assert.ok(failed?.id);
+
+  const now = new Date().toISOString();
+  db.prepare(`
+    UPDATE autonomy_jobs
+    SET status = @status,
+        result_json = @result_json,
+        completed_at = @completed_at,
+        updated_at = @updated_at
+    WHERE id = @id
+  `).run({
+    id: completed.id,
+    status: "completed",
+    result_json: JSON.stringify({
+      structured_result: {
+        answer: "final completed answer",
+        sources: ["source-1", "source-2"],
+        limitations: ["limitation-1"],
+      },
+    }),
+    completed_at: now,
+    updated_at: now,
+  });
+  db.prepare(`
+    UPDATE autonomy_jobs
+    SET status = @status,
+        failed_at = @failed_at,
+        updated_at = @updated_at
+    WHERE id = @id
+  `).run({
+    id: failed.id,
+    status: "failed",
+    failed_at: now,
+    updated_at: now,
+  });
+
+  const server = await startTestServer(t);
+  const { port } = server.address();
+
+  const queuedResponse = await fetch(
+    `http://127.0.0.1:${port}/api/monitoring/autonomy/final?trace_id=${encodeURIComponent(traceQueued)}`,
+  );
+  const queuedPayload = await queuedResponse.json();
+  assert.equal(queuedResponse.status, 200);
+  assert.equal(queuedPayload.ok, true);
+  assert.equal(queuedPayload.status, "queued");
+  assert.equal(queuedPayload.answer, null);
+  assert.deepEqual(queuedPayload.sources, []);
+  assert.deepEqual(queuedPayload.limitations, []);
+  assert.equal(queuedPayload.reason, "not_ready");
+  assert.equal(Boolean(queuedPayload.updated_at), true);
+
+  const completedResponse = await fetch(
+    `http://127.0.0.1:${port}/api/monitoring/autonomy/final`,
+    {
+      headers: {
+        "X-Request-Id": requestCompleted,
+      },
+    },
+  );
+  const completedPayload = await completedResponse.json();
+  assert.equal(completedResponse.status, 200);
+  assert.equal(completedPayload.ok, true);
+  assert.equal(completedPayload.status, "completed");
+  assert.equal(completedPayload.answer, "final completed answer");
+  assert.deepEqual(completedPayload.sources, ["source-1", "source-2"]);
+  assert.deepEqual(completedPayload.limitations, ["limitation-1"]);
+  assert.equal(completedPayload.reason, null);
+
+  const failedResponse = await fetch(
+    `http://127.0.0.1:${port}/api/monitoring/autonomy/final?request_id=${encodeURIComponent(requestFailed)}`,
+  );
+  const failedPayload = await failedResponse.json();
+  assert.equal(failedResponse.status, 200);
+  assert.equal(failedPayload.ok, true);
+  assert.equal(failedPayload.status, "failed");
+  assert.equal(failedPayload.answer, null);
+  assert.deepEqual(failedPayload.sources, []);
+  assert.deepEqual(failedPayload.limitations, []);
+  assert.equal(failedPayload.reason, "failed");
+
+  const missingResponse = await fetch(
+    `http://127.0.0.1:${port}/api/monitoring/autonomy/final?trace_id=${encodeURIComponent(`trace_missing_final_${stamp}`)}`,
+  );
+  const missingPayload = await missingResponse.json();
+  assert.equal(missingResponse.status, 200);
+  assert.equal(missingPayload.ok, true);
+  assert.equal(missingPayload.status, "not_found");
+  assert.equal(missingPayload.answer, null);
+  assert.deepEqual(missingPayload.sources, []);
+  assert.deepEqual(missingPayload.limitations, []);
+  assert.equal(missingPayload.updated_at, null);
+  assert.equal(missingPayload.reason, "not_found");
+
+  assert.equal("job_id" in completedPayload, false);
+  assert.equal("job_type" in completedPayload, false);
+  assert.equal("payload_json" in completedPayload, false);
+  assert.equal("result_json" in completedPayload, false);
+  assert.equal("error_json" in completedPayload, false);
+  assert.equal("planner_result" in completedPayload, false);
 });
 
 test("http server records timed out requests in monitoring store", async (t) => {

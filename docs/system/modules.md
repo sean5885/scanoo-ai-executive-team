@@ -108,6 +108,10 @@ Current-truth docs for onboarding are:
     - token input accepts `trace_id` / `request_id` query params and reuses existing `X-Trace-Id` / `X-Request-Id` header semantics
     - response stays bounded to `job_id / job_type / status / lifecycle_sink / updated_at / reason`
     - unknown token remains fail-soft `status=not_found`
+  - read-only ingress now also exposes final pickup lookup on `GET /api/monitoring/autonomy/final`:
+    - token input accepts `trace_id` / `request_id` query params and reuses existing `X-Trace-Id` / `X-Request-Id` header semantics
+    - response stays bounded to `answer / sources / limitations / status / updated_at / reason`
+    - unknown/miss remains fail-soft `status=not_found`; `queued|running|failed` stay non-completed states
   - store now also exposes a minimal operator incident read model (`listAutonomyOpenIncidents`) over `status=failed` plus `lifecycle_sink in {waiting_user, escalated}`, and excludes rows whose `error_json.operator_disposition.latest.action` is `ack_waiting_user` / `ack_escalated`; output remains bounded to `job_id / attempt_id / lifecycle_sink / failure_class / routing_hint / trace_id / updated_at`
   - store now also exposes additive single-incident read helper (`getAutonomyOpenIncidentByJobId`) using the same open-incident semantics as list-read and returning bounded incident metadata plus `operator_disposition`
   - store now supports additive operator disposition writeback (`applyAutonomyIncidentDisposition`) with actions:

@@ -217,6 +217,8 @@ import {
   sanitizeTracePayload,
 } from "./monitoring-store.mjs";
 import {
+  lookupAutonomyJobFinalPickupByRequestId,
+  lookupAutonomyJobFinalPickupByTraceId,
   lookupAutonomyJobReceiptByRequestId,
   lookupAutonomyJobReceiptByTraceId,
 } from "./task-runtime/autonomy-job-store.mjs";
@@ -4564,6 +4566,24 @@ function lookupMonitoringAutonomyReceipt({
   return lookupAutonomyJobReceiptByTraceId("");
 }
 
+function lookupMonitoringAutonomyFinalPickup({
+  traceId = "",
+  requestId = "",
+} = {}) {
+  const normalizedTraceId = cleanText(traceId);
+  const normalizedRequestId = cleanText(requestId);
+  if (normalizedTraceId) {
+    const byTrace = lookupAutonomyJobFinalPickupByTraceId(normalizedTraceId);
+    if (byTrace?.status !== "not_found" || !normalizedRequestId) {
+      return byTrace;
+    }
+  }
+  if (normalizedRequestId) {
+    return lookupAutonomyJobFinalPickupByRequestId(normalizedRequestId);
+  }
+  return lookupAutonomyJobFinalPickupByTraceId("");
+}
+
 async function handleMonitoringAutonomyReceipt(res, requestUrl, body = {}) {
   const lookupToken = readMonitoringAutonomyLookupToken({
     requestUrl,
@@ -4577,6 +4597,22 @@ async function handleMonitoringAutonomyReceipt(res, requestUrl, body = {}) {
   jsonResponse(res, 200, {
     ok: true,
     ...receipt,
+  });
+}
+
+async function handleMonitoringAutonomyFinalPickup(res, requestUrl, body = {}) {
+  const lookupToken = readMonitoringAutonomyLookupToken({
+    requestUrl,
+    headers: res?.__request_headers || {},
+    body,
+  });
+  const pickup = lookupMonitoringAutonomyFinalPickup({
+    traceId: lookupToken.trace_id || "",
+    requestId: lookupToken.request_id || "",
+  });
+  jsonResponse(res, 200, {
+    ok: true,
+    ...pickup,
   });
 }
 
@@ -9343,6 +9379,13 @@ export function startHttpServer({
       if (requestUrl.pathname === "/api/monitoring/autonomy/receipt" && req.method === "GET") {
         await runHttpRoute(requestLogger, "monitoring_autonomy_receipt", () =>
           handleMonitoringAutonomyReceipt(res, requestUrl, body)
+        );
+        return;
+      }
+
+      if (requestUrl.pathname === "/api/monitoring/autonomy/final" && req.method === "GET") {
+        await runHttpRoute(requestLogger, "monitoring_autonomy_final", () =>
+          handleMonitoringAutonomyFinalPickup(res, requestUrl, body)
         );
         return;
       }
