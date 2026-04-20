@@ -78,6 +78,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/worker/enqueue-autonomy-job.mjs`
   - `/Users/seanhan/Documents/Playground/src/worker/autonomy-worker-loop.mjs`
   - `/Users/seanhan/Documents/Playground/src/trace/autonomy-trace-context.mjs`
+  - `/Users/seanhan/Documents/Playground/scripts/autonomy-operator-cli.mjs`
 - Current truth:
   - adds a minimal SQLite-backed autonomy job store (`autonomy_jobs`, `autonomy_job_attempts`) and worker lifecycle operations (`claim`, `heartbeat`, `complete`, `fail`)
   - adds a feature-flagged enqueue adapter and worker loop entry (`AUTONOMY_ENABLED`)
@@ -92,6 +93,11 @@ Current-truth docs for onboarding are:
     - `ack_waiting_user` and `ack_escalated`: metadata-only acknowledgement; no job status transition
   - operator dispositions append traceable metadata (`at / action / reason`, optional `operator_id / request_id / expected_updated_at`) under `error_json.operator_disposition`; later runtime failures preserve disposition history and refresh `latest` with runtime-failure context so incidents can reopen
   - additive disposition precondition now supports `precondition.expected_updated_at`; precondition check and disposition write run in the same store transaction/update guard, and stale writes fail-soft as `precondition_failed` (`stale=true`)
+  - minimal operator CLI ingress now exists (`scripts/autonomy-operator-cli.mjs`) and only exposes:
+    - `list-open` -> `listAutonomyOpenIncidents`
+    - `disposition` -> `applyAutonomyIncidentDisposition`
+  - CLI `disposition` enforces required write fields (`job_id`, `action`, `reason`, `operator_id`, `request_id`, `expected_updated_at`) and rejects missing-field writes before store mutation
+  - CLI does not add HTTP/operator API and keeps store fail-soft semantics (`precondition_failed`, sink mismatch, not found) as passthrough output
   - incident-to-replay bridge is bounded metadata-only (`buildAutonomyIncidentReplaySpec`); no new replay runtime is introduced
   - this scaffold is not wired into the current main HTTP/planner/orchestrator ingress path
   - this scaffold still does not add background worker mesh, parallel specialist execution, or idempotency unification
@@ -99,6 +105,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/tests/autonomy-job-store.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/enqueue-autonomy-job.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/autonomy-worker-loop.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/autonomy-operator-cli.test.mjs`
 
 ### 2. Read Path
 

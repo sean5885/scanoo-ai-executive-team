@@ -39,6 +39,7 @@ Current additive path:
 8. additive precondition support (`precondition.expected_updated_at`) is guarded in the same transaction/update as the disposition write; stale mismatch fails-soft as `precondition_failed` (`stale=true`)
 9. only `resume_same_job` re-queues the same job (`status=queued`, `next_run_at=now`); `ack_waiting_user` / `ack_escalated` are metadata-only and keep job status unchanged
 10. optional replay bridge (`buildAutonomyIncidentReplaySpec`) emits bounded incident replay spec metadata only; no replay execution path is added
+11. minimal operator CLI ingress (`/Users/seanhan/Documents/Playground/scripts/autonomy-operator-cli.mjs`) reuses the same store read/write path and enforces required disposition fields (`job_id`, `action`, `reason`, `operator_id`, `request_id`, `expected_updated_at`) before allowing any write
 
 Current truth:
 

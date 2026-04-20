@@ -11,7 +11,35 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - `/Users/seanhan/Documents/Playground/src/worker/enqueue-autonomy-job.mjs`
 - `/Users/seanhan/Documents/Playground/src/worker/autonomy-worker-loop.mjs`
 
-不改主流程，不包含 Phase 2/3，不新增功能。
+主流程不改；另外補充一個 Phase 3 cut 4 的最小 operator CLI ingress（僅 list-open / disposition）。
+
+## 0. Operator CLI Ingress（最小）
+
+最小 operator CLI ingress 已落地：
+
+- `/Users/seanhan/Documents/Playground/scripts/autonomy-operator-cli.mjs`
+
+可用命令：
+
+```bash
+node scripts/autonomy-operator-cli.mjs list-open --limit 50
+```
+
+```bash
+node scripts/autonomy-operator-cli.mjs disposition \
+  --job-id <job_id> \
+  --action <ack_waiting_user|ack_escalated|resume_same_job> \
+  --reason <reason> \
+  --operator-id <operator_id> \
+  --request-id <request_id> \
+  --expected-updated-at <incident.updated_at>
+```
+
+限制與保證：
+
+- 不新增 HTTP/operator API。
+- `disposition` 缺少 `job_id/action/reason/operator_id/request_id/expected_updated_at` 任一欄位時，不會寫入。
+- `precondition_failed`、`open_incident_not_found`、`operator_action_lifecycle_sink_mismatch` 等 fail-soft 語義沿用 store 原樣輸出。
 
 ## 1. 啟用前檢查
 
