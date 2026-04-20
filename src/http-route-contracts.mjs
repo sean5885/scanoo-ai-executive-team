@@ -25,6 +25,7 @@ const EXACT_METHODS = new Map([
   ["/api/monitoring/errors", ["GET"]],
   ["/api/monitoring/errors/latest", ["GET"]],
   ["/api/monitoring/metrics", ["GET"]],
+  ["/api/monitoring/autonomy/receipt", ["GET"]],
   ["/api/drive/root", ["GET"]],
   ["/api/drive/list", ["GET"]],
   ["/api/drive/create-folder", ["POST"]],

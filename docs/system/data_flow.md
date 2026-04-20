@@ -42,6 +42,11 @@ Current additive path:
    - lookup status projection is bounded to `accepted|queued|running|completed|failed|not_found`
    - unknown/miss path is fail-soft `not_found`
    - multi-hit lookup returns latest visible row by `updated_at DESC, created_at DESC, id DESC`
+6B. additive read-only HTTP ingress for caller lookup:
+   - `GET /api/monitoring/autonomy/receipt`
+   - token sources: `trace_id` / `request_id` query params, plus existing `X-Trace-Id` / `X-Request-Id` headers
+   - execution: ingress resolves token -> store lookup read model (`lookupAutonomyJobReceiptByTraceId` / `lookupAutonomyJobReceiptByRequestId`)
+   - response remains bounded to `job_id / job_type / status / lifecycle_sink / updated_at / reason`; unknown/miss is fail-soft `status=not_found`
 7. operator disposition writes (`applyAutonomyIncidentDisposition`) append `error_json.operator_disposition` with traceable `at/action/reason` and optional audit fields (`operator_id/request_id/expected_updated_at`)
 8. additive precondition support (`precondition.expected_updated_at`) is guarded in the same transaction/update as the disposition write; stale mismatch fails-soft as `precondition_failed` (`stale=true`)
 9. only `resume_same_job` re-queues the same job (`status=queued`, `next_run_at=now`); `ack_waiting_user` / `ack_escalated` are metadata-only and keep job status unchanged

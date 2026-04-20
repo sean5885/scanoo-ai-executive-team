@@ -26,6 +26,7 @@ This is the grouped HTTP surface mirror for the current repo.
 | `/api/monitoring/errors` | `GET` | recent error requests | implemented |
 | `/api/monitoring/errors/latest` | `GET` | latest persisted error | implemented |
 | `/api/monitoring/metrics` | `GET` | aggregate request metrics | implemented |
+| `/api/monitoring/autonomy/receipt` | `GET` | read-only autonomy receipt lookup by `trace_id`/`request_id` token (`X-Trace-Id`/`X-Request-Id` compatible) with bounded status projection | implemented |
 | `/api/monitoring/learning` | `GET` | review-first learning summary from request traces | implemented |
 | `/agent/improvements/learning/generate` | `POST` | persist reviewable improvement proposals | implemented |
 | `/agent/lark-plugin/dispatch` | `POST` | official Lark plugin hybrid dispatch entry; normalizes plugin request/session metadata plus `requested_capability / capability_source`, keeps bounded `plugin_context` handoff data for explicit auth and doc/compare refs, mirrors normalized explicit user auth onto the synthetic lane event/context for downstream fallback paths, resolves capability-to-lane mapping (`mapped_lane / lane_mapping_source / fallback_reason`) before deciding `knowledge_answer` vs `lane_backend` vs `plugin_native`, includes dedicated minimal `scanoo-compare` and `scanoo-diagnose` lanes for `scanoo_compare / scanoo_diagnose`, records observability, then either executes the bounded backend path or returns a plugin-native forward decision | implemented |

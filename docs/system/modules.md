@@ -97,6 +97,10 @@ Current-truth docs for onboarding are:
     - output is bounded to `job_id / job_type / status / lifecycle_sink / updated_at / reason(failure_class,routing_hint)` and never exposes raw `payload_json / result_json / error_json`
     - lookup status projection is bounded to `accepted|queued|running|completed|failed|not_found`; no `partial/review-pending` style value is promoted to `completed`
     - when multiple rows match, read model returns the latest visible job by `updated_at DESC, created_at DESC, id DESC`
+  - read-only ingress now also exposes the same lookup model on `GET /api/monitoring/autonomy/receipt`:
+    - token input accepts `trace_id` / `request_id` query params and reuses existing `X-Trace-Id` / `X-Request-Id` header semantics
+    - response stays bounded to `job_id / job_type / status / lifecycle_sink / updated_at / reason`
+    - unknown token remains fail-soft `status=not_found`
   - store now also exposes a minimal operator incident read model (`listAutonomyOpenIncidents`) over `status=failed` plus `lifecycle_sink in {waiting_user, escalated}`, and excludes rows whose `error_json.operator_disposition.latest.action` is `ack_waiting_user` / `ack_escalated`; output remains bounded to `job_id / attempt_id / lifecycle_sink / failure_class / routing_hint / trace_id / updated_at`
   - store now also exposes additive single-incident read helper (`getAutonomyOpenIncidentByJobId`) using the same open-incident semantics as list-read and returning bounded incident metadata plus `operator_disposition`
   - store now supports additive operator disposition writeback (`applyAutonomyIncidentDisposition`) with actions:
@@ -117,6 +121,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/tests/enqueue-autonomy-job.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/autonomy-worker-loop.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/autonomy-operator-cli.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/http-monitoring.test.mjs`
 
 ### 2. Read Path
 

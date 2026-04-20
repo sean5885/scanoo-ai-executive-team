@@ -14,9 +14,14 @@ const [
     recordHttpRequest,
     recordTraceEvent,
   },
+  {
+    enqueueAutonomyJobRecord,
+    ensureAutonomyJobTables,
+  },
 ] = await Promise.all([
   import("../src/http-server.mjs"),
   import("../src/monitoring-store.mjs"),
+  import("../src/task-runtime/autonomy-job-store.mjs"),
 ]);
 
 const execFileAsync = promisify(execFile);
@@ -105,6 +110,76 @@ test("http monitoring routes expose latest error and metrics", async (t) => {
   assert.equal(requestsPayload.ok, true);
   assert.equal(Array.isArray(requestsPayload.items), true);
   assert.equal(requestsPayload.items.some((item) => item.trace_id === missingPayload.trace_id), true);
+});
+
+test("monitoring autonomy receipt lookup supports trace/request tokens and fail-soft not_found", async (t) => {
+  ensureAutonomyJobTables();
+  const stamp = Date.now();
+  const traceId = `trace_monitoring_receipt_${stamp}`;
+  const requestId = `req_monitoring_receipt_${stamp}`;
+  const queued = enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    traceId,
+    payload: {
+      schema_version: "planner_user_input_v1",
+      planner_input: {
+        text: "monitoring receipt lookup",
+        request_id: requestId,
+        trace_id: traceId,
+      },
+    },
+    maxAttempts: 1,
+  });
+  assert.ok(queued?.id);
+
+  const server = await startTestServer(t);
+  const { port } = server.address();
+
+  const byTraceResponse = await fetch(
+    `http://127.0.0.1:${port}/api/monitoring/autonomy/receipt?trace_id=${encodeURIComponent(traceId)}`,
+  );
+  const byTracePayload = await byTraceResponse.json();
+  assert.equal(byTraceResponse.status, 200);
+  assert.equal(byTracePayload.ok, true);
+  assert.equal(byTracePayload.job_id, queued.id);
+  assert.equal(byTracePayload.job_type, "planner_user_input_v1");
+  assert.equal(byTracePayload.status, "queued");
+  assert.equal(byTracePayload.lifecycle_sink, null);
+  assert.equal(byTracePayload.reason, null);
+  assert.equal(Boolean(byTracePayload.updated_at), true);
+  assert.equal("payload_json" in byTracePayload, false);
+  assert.equal("result_json" in byTracePayload, false);
+  assert.equal("error_json" in byTracePayload, false);
+  assert.equal("payload" in byTracePayload, false);
+  assert.equal("result" in byTracePayload, false);
+  assert.equal("error" in byTracePayload, false);
+
+  const byRequestHeaderResponse = await fetch(
+    `http://127.0.0.1:${port}/api/monitoring/autonomy/receipt`,
+    {
+      headers: {
+        "X-Request-Id": requestId,
+      },
+    },
+  );
+  const byRequestHeaderPayload = await byRequestHeaderResponse.json();
+  assert.equal(byRequestHeaderResponse.status, 200);
+  assert.equal(byRequestHeaderPayload.ok, true);
+  assert.equal(byRequestHeaderPayload.job_id, queued.id);
+  assert.equal(byRequestHeaderPayload.status, "queued");
+
+  const byMissResponse = await fetch(
+    `http://127.0.0.1:${port}/api/monitoring/autonomy/receipt?trace_id=${encodeURIComponent(`trace_missing_${stamp}`)}`,
+  );
+  const byMissPayload = await byMissResponse.json();
+  assert.equal(byMissResponse.status, 200);
+  assert.equal(byMissPayload.ok, true);
+  assert.equal(byMissPayload.status, "not_found");
+  assert.equal(byMissPayload.job_id, null);
+  assert.equal(byMissPayload.job_type, null);
+  assert.equal(byMissPayload.lifecycle_sink, null);
+  assert.equal(byMissPayload.updated_at, null);
+  assert.equal(byMissPayload.reason, null);
 });
 
 test("http server records timed out requests in monitoring store", async (t) => {
@@ -223,7 +298,7 @@ test("answer route keeps sources on the shared canonical mapper and strips snipp
   });
   const { port } = server.address();
 
-  const response = await fetch(`http://127.0.0.1:${port}/answer?q=${encodeURIComponent("查 delivery owner")}`);
+  const response = await fetch(`http://127.0.0.1:${port}/answer?q=${encodeURIComponent("查文件 owner checklist")}`);
   const payload = await response.json();
 
   assert.equal(response.status, 200);

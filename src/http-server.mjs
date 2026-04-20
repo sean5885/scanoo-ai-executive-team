@@ -216,6 +216,10 @@ import {
   recordHttpRequest,
   sanitizeTracePayload,
 } from "./monitoring-store.mjs";
+import {
+  lookupAutonomyJobReceiptByRequestId,
+  lookupAutonomyJobReceiptByTraceId,
+} from "./task-runtime/autonomy-job-store.mjs";
 import { normalizeUserResponse } from "./user-response-normalizer.mjs";
 import { runPlannerUserInputEdge } from "./planner-user-input-edge.mjs";
 import {
@@ -4512,6 +4516,67 @@ async function handleMonitoringMetrics(res) {
   jsonResponse(res, 200, {
     ok: true,
     metrics: getRequestMetrics(),
+  });
+}
+
+function readMonitoringAutonomyLookupToken({
+  requestUrl,
+  headers = {},
+  body = {},
+} = {}) {
+  const traceId = cleanText(
+    requestUrl?.searchParams?.get("trace_id")
+    || requestUrl?.searchParams?.get("traceId")
+    || body?.trace_id
+    || body?.traceId
+    || readRequestHeader(headers, "x-trace-id")
+    || "",
+  );
+  const requestId = cleanText(
+    requestUrl?.searchParams?.get("request_id")
+    || requestUrl?.searchParams?.get("requestId")
+    || body?.request_id
+    || body?.requestId
+    || readRequestHeader(headers, "x-request-id")
+    || "",
+  );
+  return {
+    trace_id: traceId || null,
+    request_id: requestId || null,
+  };
+}
+
+function lookupMonitoringAutonomyReceipt({
+  traceId = "",
+  requestId = "",
+} = {}) {
+  const normalizedTraceId = cleanText(traceId);
+  const normalizedRequestId = cleanText(requestId);
+  if (normalizedTraceId) {
+    const byTrace = lookupAutonomyJobReceiptByTraceId(normalizedTraceId);
+    if (byTrace?.status !== "not_found" || !normalizedRequestId) {
+      return byTrace;
+    }
+  }
+  if (normalizedRequestId) {
+    return lookupAutonomyJobReceiptByRequestId(normalizedRequestId);
+  }
+  return lookupAutonomyJobReceiptByTraceId("");
+}
+
+async function handleMonitoringAutonomyReceipt(res, requestUrl, body = {}) {
+  const lookupToken = readMonitoringAutonomyLookupToken({
+    requestUrl,
+    headers: res?.__request_headers || {},
+    body,
+  });
+  const receipt = lookupMonitoringAutonomyReceipt({
+    traceId: lookupToken.trace_id || "",
+    requestId: lookupToken.request_id || "",
+  });
+  jsonResponse(res, 200, {
+    ok: true,
+    ...receipt,
   });
 }
 
@@ -9271,6 +9336,13 @@ export function startHttpServer({
       if (requestUrl.pathname === "/api/monitoring/metrics" && req.method === "GET") {
         await runHttpRoute(requestLogger, "monitoring_metrics", () =>
           handleMonitoringMetrics(res)
+        );
+        return;
+      }
+
+      if (requestUrl.pathname === "/api/monitoring/autonomy/receipt" && req.method === "GET") {
+        await runHttpRoute(requestLogger, "monitoring_autonomy_receipt", () =>
+          handleMonitoringAutonomyReceipt(res, requestUrl, body)
         );
         return;
       }
