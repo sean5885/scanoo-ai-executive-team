@@ -10,8 +10,11 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - `/Users/seanhan/Documents/Playground/src/task-runtime/autonomy-job-store.mjs`
 - `/Users/seanhan/Documents/Playground/src/worker/enqueue-autonomy-job.mjs`
 - `/Users/seanhan/Documents/Playground/src/worker/autonomy-worker-loop.mjs`
+- `/Users/seanhan/Documents/Playground/src/worker/autonomy-runtime-manager.mjs`
+- `/Users/seanhan/Documents/Playground/src/index.mjs`（主服務接線）
 
 主流程不改；另外補充一個 Phase 3 cut 4 的最小 operator CLI ingress（僅 list-open / disposition）。
+第一刀接線後，`npm run start:full` 的主服務會在同一 process 內受管啟動 autonomy runtime manager（單一 owner）。
 
 ## 0. Operator CLI Ingress（最小）
 
@@ -75,7 +78,13 @@ node --input-type=module -e 'import db from "./src/db.mjs"; const rows=db.prepar
 export AUTONOMY_ENABLED=true
 ```
 
-2. 啟動 Phase 1 worker（前景執行，`Ctrl+C` 可停用）。
+2. 啟動主服務（受管 runtime manager 會自動啟 worker loop 並定時送 idle heartbeat）。
+
+```bash
+AUTONOMY_ENABLED=true npm run start:full
+```
+
+3. （可選）若要做 runbook 自訂 `job_type` 演練，可另外手動啟動 Phase 1 worker（前景執行，`Ctrl+C` 可停用）。
 
 ```bash
 AUTONOMY_ENABLED=true node --input-type=module -e '
@@ -111,7 +120,7 @@ setInterval(() => {}, 60000);
 
 ## 3. 停用步驟
 
-1. 在 worker terminal 按 `Ctrl+C` 停止 loop。
+1. 在主服務 terminal 按 `Ctrl+C`（`SIGINT/SIGTERM` 會觸發 manager stop + heartbeat timer stop）。
 2. 關閉開關：
 
 ```bash
@@ -232,14 +241,14 @@ node --input-type=module -e 'import db from "./src/db.mjs"; const row=db.prepare
 
 ## 6. 風險與 Guardrail
 
-- 風險：`AUTONOMY_ENABLED=true` 只開啟 enqueue/worker 可用性，不會自動把主流程接到 autonomy runtime。
-  - Guardrail：不要把這個開關當成已上線 background worker mesh。
+- 風險：`AUTONOMY_ENABLED=true` 現在會由主服務自動接線到受管 runtime manager，但仍不是 background worker mesh / distributed coordination。
+  - Guardrail：只把它視為單機單 owner 的 Phase 1 managed runtime。
 - 風險：`startAutonomyWorkerLoop` 預設 `executeJob` 會回 `ok:true`。
   - Guardrail：永遠傳入明確 `executeJob`，並限制可處理 `job_type`（本 runbook 僅允許 `runbook_smoke_job`）。
 - 風險：autonomy tables 與主 DB 同一個 SQLite（`RAG_SQLITE_PATH`）。
   - Guardrail：所有演練都加 `trace_id=runbook_*`，可精準清理。
-- 風險：worker 非受管程序（目前沒有內建 supervisor）。
-  - Guardrail：一次只開一個演練 worker，且在前景執行，停用時一定 `Ctrl+C`。
+- 風險：worker 雖已受管於主服務 process，但仍無跨進程 supervisor/租約仲裁。
+  - Guardrail：同一環境只啟動一個主服務實例；如需手動演練 worker，避免與主服務重疊長時間並行。
 - 風險：`maxAttempts` 預設 1，錯誤後不一定重試。
   - Guardrail：驗證時明確設定 `maxAttempts`，並用 DB 查 `attempt_count/max_attempts`。
 

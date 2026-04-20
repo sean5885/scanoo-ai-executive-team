@@ -77,6 +77,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/task-runtime/autonomy-job-store.mjs`
   - `/Users/seanhan/Documents/Playground/src/worker/enqueue-autonomy-job.mjs`
   - `/Users/seanhan/Documents/Playground/src/worker/autonomy-worker-loop.mjs`
+  - `/Users/seanhan/Documents/Playground/src/worker/autonomy-runtime-manager.mjs`
   - `/Users/seanhan/Documents/Playground/src/trace/autonomy-trace-context.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/autonomy-operator-cli.mjs`
 - Current truth:
@@ -91,7 +92,7 @@ Current-truth docs for onboarding are:
     - `executeJob` injection remains the override path for other or custom job types
   - worker failure payload now adds additive `lifecycle_sink` metadata for sink-class decisions (`waiting_user` from `blocked + *_waiting_user`, `escalated` from `next_state=escalated`) while keeping the same status machine (`queued|running|completed|failed`)
   - store now also exposes one fail-closed worker-readiness helper (`readAutonomyWorkerReadiness`) using bounded latest heartbeat + lease projection from running attempts and additive worker heartbeat records; missing/stale/expired heartbeat is treated as `not ready`
-    - store now also has additive worker heartbeat write helper (`heartbeatAutonomyWorker`) for idle worker liveness updates; this is store-only readiness data and not a process supervisor/autostart path
+    - store now also has additive worker heartbeat write helper (`heartbeatAutonomyWorker`) for idle worker liveness updates; `src/worker/autonomy-runtime-manager.mjs` now uses this helper from main-service bootstrap for process-local managed liveness (single worker owner in one process)
     - readiness projection now also includes additive `readiness_state` and `lease_remaining_ms` so heartbeat lag vs lease freshness can be separated during rollout checks
   - store now also exposes one additive queue/backlog read model (`readAutonomyQueueBacklogMetrics`) for `queued/running/failed` counts plus `oldest_queued_age_ms`
   - job/attempt store records now project `lifecycle_sink` from persisted `error_json.lifecycle_sink` as read-side metadata
@@ -135,12 +136,17 @@ Current-truth docs for onboarding are:
     - worker readiness state / heartbeat lag / lease freshness projection
     - bounded alert list for high fallback rate, queue-age backlog pressure, and worker-not-ready state
   - operator CLI now includes additive rollout snapshot command (`node scripts/monitoring-cli.mjs autonomy-rollout`)
+  - main service bootstrap now has one process-local autonomy runtime manager path:
+    - `src/index.mjs` starts `startAutonomyRuntimeManager(...)` after Lark runtime startup and stops it on `SIGINT/SIGTERM`
+    - manager start now owns both `startAutonomyWorkerLoop(...)` and conservative idle heartbeat writes (`heartbeatAutonomyWorker`, fixed 3s interval with re-entry guard)
+    - manager startup is fail-soft: start failure is logged and does not block HTTP/Lark service startup
   - this scaffold is now partially wired from planner answer-edge ingress (`planner_user_input_v1` enqueue + worker execute) but remains additive; synchronous `/answer` execution is still the user-visible response authority
   - this scaffold still does not add background worker mesh, parallel specialist execution, or idempotency unification
 - Evidence:
   - `/Users/seanhan/Documents/Playground/tests/autonomy-job-store.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/enqueue-autonomy-job.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/autonomy-worker-loop.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/autonomy-runtime-manager.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/autonomy-operator-cli.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/http-monitoring.test.mjs`
 

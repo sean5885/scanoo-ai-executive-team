@@ -11,6 +11,10 @@ import { enforceSingleLarkResponderRuntime } from "./runtime-conflict-guard.mjs"
 import { createMessageEventDeduper } from "./runtime-message-deduper.mjs";
 import { sendLaneReply } from "./runtime-message-reply.mjs";
 import { touchResolvedSession } from "./session-scope-store.mjs";
+import {
+  startAutonomyRuntimeManager,
+  stopAutonomyRuntimeManager,
+} from "./worker/autonomy-runtime-manager.mjs";
 
 const runtimeLogger = createRuntimeLogger({ logger: console, component: "long_connection" });
 const messageEventDeduper = createMessageEventDeduper();
@@ -147,6 +151,7 @@ const wsClient = new Lark.WSClient({
 });
 const httpServer = startHttpServer();
 const commentSuggestionPoller = startCommentSuggestionPoller({ logger: console });
+const autonomyRuntimeLogger = runtimeLogger.child("autonomy_runtime_manager");
 
 process.on("SIGINT", () => {
   runtimeLogger.info("service_shutdown_requested", {
@@ -154,6 +159,7 @@ process.on("SIGINT", () => {
     signal: "SIGINT",
     status: "stopping",
   });
+  stopAutonomyRuntimeManager({ logger: autonomyRuntimeLogger });
   commentSuggestionPoller.stop();
   httpServer.close();
   process.exit(0);
@@ -165,6 +171,7 @@ process.on("SIGTERM", () => {
     signal: "SIGTERM",
     status: "stopping",
   });
+  stopAutonomyRuntimeManager({ logger: autonomyRuntimeLogger });
   commentSuggestionPoller.stop();
   httpServer.close();
   process.exit(0);
@@ -177,3 +184,13 @@ runtimeLogger.info("service_starting", {
 });
 await enforceSingleLarkResponderRuntime({ logger: runtimeLogger.child("runtime_guard") });
 wsClient.start({ eventDispatcher });
+
+const autonomyRuntimeStatus = startAutonomyRuntimeManager({
+  logger: autonomyRuntimeLogger,
+});
+if (autonomyRuntimeStatus.status !== "running") {
+  runtimeLogger.warn("autonomy_runtime_manager_not_running", {
+    status: autonomyRuntimeStatus.status,
+    reason: autonomyRuntimeStatus.error?.reason || null,
+  });
+}

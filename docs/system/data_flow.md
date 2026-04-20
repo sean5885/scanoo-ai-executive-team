@@ -279,10 +279,15 @@ Current truth:
   - `queue_authoritative` (skeleton, default-off): enqueue accepted short-circuits sync planner in-request and returns non-final pending response metadata
 - `queue_authoritative` admission is now fail-closed on worker readiness:
   - readiness signal uses bounded latest heartbeat/lease projection (`readAutonomyWorkerReadiness`) from running-attempt + worker-heartbeat records
-  - additive store helper `heartbeatAutonomyWorker` is the idle-worker heartbeat write surface (store/readiness only, no service autostart wiring)
+  - additive store helper `heartbeatAutonomyWorker` is the idle-worker heartbeat write surface; main service now wires this through `src/worker/autonomy-runtime-manager.mjs` for one process-local managed worker owner
   - worker not ready forces mode to `sync_authoritative` before enqueue
 - `queue_authoritative` enqueue failure fail-soft falls back to `sync_authoritative`
 - enqueue accepted is explicitly guarded as not completed; completed authority remains worker + verifier
+- main service long-connection bootstrap now includes one additive managed runtime path:
+  - `src/index.mjs` starts `startAutonomyRuntimeManager(...)` after service startup
+  - manager owns `startAutonomyWorkerLoop(...)` plus a fixed conservative idle heartbeat timer (3s)
+  - `SIGINT/SIGTERM` now stop the manager via `stopAutonomyRuntimeManager(...)`
+  - manager start failure is fail-soft and does not block HTTP/Lark runtime startup
 - monitoring diagnostics now expose one additive rollout guardrail snapshot (`getAutonomyRolloutGuardrailSnapshot`) that combines:
   - ingress fallback/sampling counts + rates from persisted runtime trace events
   - queue backlog counts (`queued/running/failed`) + `oldest_queued_age_ms`
