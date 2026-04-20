@@ -31,16 +31,16 @@ Current additive path:
 
 1. `/Users/seanhan/Documents/Playground/src/worker/autonomy-worker-loop.mjs` derives `recovery_decision`
 2. for sink-class decisions, worker writes additive `error.lifecycle_sink={state,reason,failure_class,routing_hint,at}` to failure payload
-3. `/Users/seanhan/Documents/Playground/src/task-runtime/autonomy-job-store.mjs` persists the same payload under `error_json`
+3. `/Users/seanhan/Documents/Playground/src/task-runtime/autonomy-job-store.mjs` persists the failure payload under `error_json`, while preserving prior `operator_disposition.history` and refreshing `operator_disposition.latest` to runtime-failure context when applicable
 4. job/attempt read records project `lifecycle_sink` from `error_json.lifecycle_sink` for query/observability
-5. operator read model (`listAutonomyOpenIncidents`) lists only open incidents from failed jobs where `lifecycle_sink.state in {waiting_user, escalated}`
+5. operator read model (`listAutonomyOpenIncidents`) lists only open incidents from failed jobs where `lifecycle_sink.state in {waiting_user, escalated}` and `operator_disposition.latest.action` is not `ack_waiting_user` / `ack_escalated`
 6. operator disposition writes (`applyAutonomyIncidentDisposition`) append `error_json.operator_disposition` with traceable `at/action/reason`
 7. only `resume_same_job` re-queues the same job (`status=queued`, `next_run_at=now`); `ack_waiting_user` / `ack_escalated` are metadata-only and keep job status unchanged
 8. optional replay bridge (`buildAutonomyIncidentReplaySpec`) emits bounded incident replay spec metadata only; no replay execution path is added
 
 Current truth:
 
-- this is metadata-only and does not change job status transitions or retry state machine
+- this is an additive autonomy-store closure path: `ack_*` stays metadata-only while `resume_same_job` re-queues the same failed job (`status=queued`, `next_run_at=now`)
 - sink state is currently bounded to:
   - `waiting_user` when recovery decision is `blocked` with `routing_hint` ending `_waiting_user`
   - `escalated` when recovery decision `next_state=escalated`

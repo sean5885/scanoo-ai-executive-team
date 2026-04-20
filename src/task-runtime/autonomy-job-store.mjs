@@ -18,6 +18,11 @@ const AUTONOMY_OPERATOR_DISPOSITION_ACTION = Object.freeze({
   ackWaitingUser: "ack_waiting_user",
   ackEscalated: "ack_escalated",
 });
+const AUTONOMY_OPERATOR_DISPOSITION_ACK_ACTION = new Set([
+  AUTONOMY_OPERATOR_DISPOSITION_ACTION.ackWaitingUser,
+  AUTONOMY_OPERATOR_DISPOSITION_ACTION.ackEscalated,
+]);
+const AUTONOMY_RUNTIME_FAILURE_DISPOSITION_ACTION = "runtime_failure";
 
 function parseJson(value) {
   const normalized = cleanText(value);
@@ -59,8 +64,28 @@ function readLifecycleSinkFromError(error = null) {
   return lifecycleSink;
 }
 
+function readOperatorDispositionFromError(error = null) {
+  if (!error || typeof error !== "object" || Array.isArray(error)) {
+    return null;
+  }
+  const operatorDisposition = error.operator_disposition;
+  if (!operatorDisposition || typeof operatorDisposition !== "object" || Array.isArray(operatorDisposition)) {
+    return null;
+  }
+  return operatorDisposition;
+}
+
 function isOpenIncidentSinkState(value = "") {
   return AUTONOMY_OPEN_INCIDENT_SINK_STATE.has(cleanText(value));
+}
+
+function isSuppressedByOperatorAck(error = null) {
+  const operatorDisposition = readOperatorDispositionFromError(error);
+  const latestAction = cleanText(operatorDisposition?.latest?.action);
+  if (!latestAction) {
+    return false;
+  }
+  return AUTONOMY_OPERATOR_DISPOSITION_ACK_ACTION.has(latestAction);
 }
 
 function normalizeAutonomyDispositionAction(action = "") {
@@ -86,6 +111,9 @@ function toAutonomyOpenIncidentRecord(row = null) {
   const lifecycleSink = readLifecycleSinkFromError(error);
   const lifecycleSinkState = cleanText(lifecycleSink?.state);
   if (!isOpenIncidentSinkState(lifecycleSinkState)) {
+    return null;
+  }
+  if (isSuppressedByOperatorAck(error)) {
     return null;
   }
   return {
@@ -123,6 +151,46 @@ function mergeOperatorDispositionErrorMetadata({
     latest: entry,
     history,
     replay_spec: replaySpec || null,
+  };
+  return baseError;
+}
+
+function mergeFailureErrorWithOperatorDispositionHistory({
+  previousError = null,
+  nextFailureError = null,
+  failedAt = "",
+} = {}) {
+  const previousOperatorDisposition = readOperatorDispositionFromError(previousError);
+  if (!previousOperatorDisposition) {
+    return nextFailureError;
+  }
+
+  const baseError = nextFailureError && typeof nextFailureError === "object" && !Array.isArray(nextFailureError)
+    ? { ...nextFailureError }
+    : {};
+  const history = Array.isArray(previousOperatorDisposition.history)
+    ? previousOperatorDisposition.history.slice(0)
+    : [];
+  if (
+    history.length === 0
+    && previousOperatorDisposition.latest
+    && typeof previousOperatorDisposition.latest === "object"
+    && !Array.isArray(previousOperatorDisposition.latest)
+  ) {
+    history.push(previousOperatorDisposition.latest);
+  }
+  const lifecycleSink = readLifecycleSinkFromError(baseError);
+  const runtimeFailureEntry = {
+    at: cleanText(failedAt) || nowIso(),
+    action: AUTONOMY_RUNTIME_FAILURE_DISPOSITION_ACTION,
+    reason: cleanText(lifecycleSink?.reason) || cleanText(baseError.reason) || "runtime_failure",
+  };
+  history.push(runtimeFailureEntry);
+  baseError.operator_disposition = {
+    ...previousOperatorDisposition,
+    latest: runtimeFailureEntry,
+    history,
+    replay_spec: previousOperatorDisposition.replay_spec || null,
   };
   return baseError;
 }
@@ -711,6 +779,25 @@ export function failAutonomyAttempt({
 
   const failTx = db.transaction(() => {
     const now = nowIso();
+    const currentJob = db.prepare(`
+      SELECT *
+      FROM autonomy_jobs
+      WHERE id = ?
+      LIMIT 1
+    `).get(normalizedJobId);
+    if (!currentJob) {
+      return {
+        ok: false,
+        error: "job_not_found",
+      };
+    }
+    const mergedError = mergeFailureErrorWithOperatorDispositionHistory({
+      previousError: parseJson(currentJob.error_json),
+      nextFailureError: error,
+      failedAt: now,
+    });
+    const mergedErrorJson = stringifyJson(mergedError);
+
     const attemptUpdate = db.prepare(`
       UPDATE autonomy_job_attempts
       SET status = @status,
@@ -729,25 +816,12 @@ export function failAutonomyAttempt({
       running_status: AUTONOMY_JOB_ATTEMPT_STATUS.running,
       failed_at: now,
       updated_at: now,
-      error_json: stringifyJson(error),
+      error_json: mergedErrorJson,
     });
     if (Number(attemptUpdate.changes || 0) !== 1) {
       return {
         ok: false,
         error: "attempt_not_running",
-      };
-    }
-
-    const currentJob = db.prepare(`
-      SELECT *
-      FROM autonomy_jobs
-      WHERE id = ?
-      LIMIT 1
-    `).get(normalizedJobId);
-    if (!currentJob) {
-      return {
-        ok: false,
-        error: "job_not_found",
       };
     }
 
@@ -772,7 +846,7 @@ export function failAutonomyAttempt({
       next_run_at: canRetry ? now : null,
       failed_at: canRetry ? null : now,
       updated_at: now,
-      error_json: stringifyJson(error),
+      error_json: mergedErrorJson,
     });
 
     return {

@@ -85,11 +85,11 @@ Current-truth docs for onboarding are:
   - worker completion now runs one local verifier gate (`executeJob -> normalize execution_journal/evidence -> verify -> complete/fail`) through `executive-verifier` rules before marking a job `completed`
   - worker failure payload now adds additive `lifecycle_sink` metadata for sink-class decisions (`waiting_user` from `blocked + *_waiting_user`, `escalated` from `next_state=escalated`) while keeping the same status machine (`queued|running|completed|failed`)
   - job/attempt store records now project `lifecycle_sink` from persisted `error_json.lifecycle_sink` as read-side metadata
-  - store now also exposes a minimal operator incident read model (`listAutonomyOpenIncidents`) over `status=failed` plus `lifecycle_sink in {waiting_user, escalated}`, returning bounded fields: `job_id / attempt_id / lifecycle_sink / failure_class / routing_hint / trace_id / updated_at`
+  - store now also exposes a minimal operator incident read model (`listAutonomyOpenIncidents`) over `status=failed` plus `lifecycle_sink in {waiting_user, escalated}`, and excludes rows whose `error_json.operator_disposition.latest.action` is `ack_waiting_user` / `ack_escalated`; output remains bounded to `job_id / attempt_id / lifecycle_sink / failure_class / routing_hint / trace_id / updated_at`
   - store now supports additive operator disposition writeback (`applyAutonomyIncidentDisposition`) with actions:
     - `resume_same_job`: re-queues the same failed job as schedulable (`status=queued`, `next_run_at=now`) without changing the public workflow contract
     - `ack_waiting_user` and `ack_escalated`: metadata-only acknowledgement; no job status transition
-  - all dispositions append traceable metadata (`at / action / reason`) under `error_json.operator_disposition`
+  - operator dispositions append traceable metadata (`at / action / reason`) under `error_json.operator_disposition`; later runtime failures preserve disposition history and refresh `latest` with runtime-failure context so incidents can reopen
   - incident-to-replay bridge is bounded metadata-only (`buildAutonomyIncidentReplaySpec`); no new replay runtime is introduced
   - this scaffold is not wired into the current main HTTP/planner/orchestrator ingress path
   - this scaffold still does not add background worker mesh, parallel specialist execution, or idempotency unification

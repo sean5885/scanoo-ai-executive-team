@@ -69,7 +69,6 @@ Thread C is now closed in checked-in code:
 - legacy docs still reference obsolete knowledge subcommands (`consistency|brain|proposals|approve|reject|ownership|learn`) that are no longer in the checked-in runtime inventory (`audit|conflicts|distill`).
   - Evidence:
     - `/Users/seanhan/Documents/Playground/docs/system/Lobster AI Executive System Audit Report v1.md`
-
 ## Minimal Closure Order
 
 No remaining ranked closure order is defined in this file after Thread C.
