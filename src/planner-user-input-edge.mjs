@@ -112,12 +112,19 @@ const EDGE_ASK_COPY_PATTERN = /(請|请).{0,8}(補|提供|確認|确认|說|说)
 const AUTONOMY_INGRESS_JOB_TYPE = "planner_user_input_v1";
 const AUTONOMY_INGRESS_ENABLE_ENV = "PLANNER_AUTONOMY_INGRESS_ENABLED";
 const AUTONOMY_INGRESS_ALLOWLIST_ENV = "PLANNER_AUTONOMY_INGRESS_ALLOWLIST";
+const AUTONOMY_QUEUE_AUTHORITATIVE_ENABLE_ENV = "PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED";
 const AUTONOMY_INGRESS_ALLOWLIST_SUBJECT_KEYS = new Set([
   "session",
   "request",
   "trace",
   "handler",
 ]);
+const PLANNER_USER_INPUT_EXECUTION_MODE = Object.freeze({
+  sync_authoritative: "sync_authoritative",
+  queue_shadow: "queue_shadow",
+  queue_authoritative: "queue_authoritative",
+});
+const PLANNER_USER_INPUT_EDGE_METADATA_SYMBOL = Symbol.for("lobster.planner_user_input_edge.metadata");
 
 function isTruthyFlag(value = "") {
   const normalized = cleanText(value).toLowerCase();
@@ -129,6 +136,13 @@ function resolveAutonomyIngressEnabled(value = null) {
     return value;
   }
   return isTruthyFlag(process.env[AUTONOMY_INGRESS_ENABLE_ENV]);
+}
+
+function resolveAutonomyQueueAuthoritativeEnabled(value = null) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  return isTruthyFlag(process.env[AUTONOMY_QUEUE_AUTHORITATIVE_ENABLE_ENV]);
 }
 
 function normalizeAutonomyIngressAllowlist(allowlist = null) {
@@ -230,25 +244,23 @@ function buildPlannerUserInputAutonomyPayload({
   };
 }
 
-async function maybeEnqueuePlannerUserInputAutonomyJob({
-  text = "",
-  baseUrl = "",
-  authContext = null,
+function resolvePlannerUserInputExecutionMode({
   sessionKey = "",
   requestId = "",
   traceId = "",
   handlerName = "",
-  logger = console,
   autonomyIngressEnabled = null,
   autonomyIngressAllowlist = null,
-  autonomyJobEnqueuer = enqueueAutonomyJob,
+  autonomyQueueAuthoritativeEnabled = null,
 } = {}) {
   const ingressEnabled = resolveAutonomyIngressEnabled(autonomyIngressEnabled);
   if (!ingressEnabled) {
     return {
-      attempted: false,
-      enqueued: false,
+      mode: PLANNER_USER_INPUT_EXECUTION_MODE.sync_authoritative,
       reason: "autonomy_ingress_disabled",
+      allowlist_matched: false,
+      ingress_enabled: false,
+      queue_authoritative_enabled: false,
     };
   }
   const allowlistEntries = normalizeAutonomyIngressAllowlist(autonomyIngressAllowlist);
@@ -263,9 +275,126 @@ async function maybeEnqueuePlannerUserInputAutonomyJob({
   });
   if (!allowlistMatched) {
     return {
+      mode: PLANNER_USER_INPUT_EXECUTION_MODE.sync_authoritative,
+      reason: "allowlist_miss",
+      allowlist_matched: false,
+      ingress_enabled: true,
+      queue_authoritative_enabled: false,
+    };
+  }
+  const queueAuthoritativeEnabled = resolveAutonomyQueueAuthoritativeEnabled(autonomyQueueAuthoritativeEnabled);
+  return {
+    mode: queueAuthoritativeEnabled
+      ? PLANNER_USER_INPUT_EXECUTION_MODE.queue_authoritative
+      : PLANNER_USER_INPUT_EXECUTION_MODE.queue_shadow,
+    reason: null,
+    allowlist_matched: true,
+    ingress_enabled: true,
+    queue_authoritative_enabled: queueAuthoritativeEnabled,
+  };
+}
+
+function buildQueueAuthoritativePendingPlannerResult({
+  requestText = "",
+  jobId = "",
+  enqueueTraceId = "",
+} = {}) {
+  const normalizedJobId = cleanText(jobId || "");
+  const normalizedTraceId = cleanText(enqueueTraceId || "");
+  return {
+    ok: true,
+    action: "queue_authoritative_pending",
+    execution_result: {
+      ok: true,
+      data: {
+        answer: "已收到你的請求，這輪改由背景 worker 接手處理；目前回覆僅代表已受理。",
+        sources: [
+          normalizedJobId ? `queue 已受理（job_id=${normalizedJobId}）。` : "queue 已受理這筆請求。",
+          "完成狀態必須由 worker 執行並通過 verifier 後才成立。",
+        ],
+        limitations: [
+          normalizedTraceId
+            ? `目前為非最終完成狀態（trace_id=${normalizedTraceId}）。`
+            : "目前為非最終完成狀態。",
+        ],
+      },
+    },
+    completion_authority: "worker_verifier",
+    completion_pending: true,
+    request_text: cleanText(requestText) || null,
+    queued_job_id: normalizedJobId || null,
+  };
+}
+
+function buildPlannerUserInputEdgeMetadata({
+  executionMode = PLANNER_USER_INPUT_EXECUTION_MODE.sync_authoritative,
+  completionFinal = true,
+  completionAuthority = "sync_planner",
+  completionState = "final",
+  queueEnqueueAccepted = false,
+  plannerSyncExecuted = true,
+  queueFallbackToSync = false,
+  enqueueJobId = "",
+  enqueueTraceId = "",
+  enqueueFailureReason = "",
+} = {}) {
+  return Object.freeze({
+    execution_mode: cleanText(executionMode) || PLANNER_USER_INPUT_EXECUTION_MODE.sync_authoritative,
+    completion_authority: cleanText(completionAuthority) || "sync_planner",
+    completion_final: completionFinal === true,
+    completion_state: cleanText(completionState) || "final",
+    queue_enqueue_accepted: queueEnqueueAccepted === true,
+    planner_sync_executed: plannerSyncExecuted === true,
+    queue_fallback_to_sync: queueFallbackToSync === true,
+    enqueue_job_id: cleanText(enqueueJobId || "") || null,
+    enqueue_trace_id: cleanText(enqueueTraceId || "") || null,
+    enqueue_failure_reason: cleanText(enqueueFailureReason || "") || null,
+    completion_guard: "enqueue_accepted_is_not_completed_worker_verifier_required",
+  });
+}
+
+function attachPlannerUserInputEdgeMetadata(result = null, metadata = null) {
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    return result;
+  }
+  Object.defineProperty(result, PLANNER_USER_INPUT_EDGE_METADATA_SYMBOL, {
+    value: metadata && typeof metadata === "object" && !Array.isArray(metadata)
+      ? metadata
+      : Object.freeze({}),
+    enumerable: false,
+    configurable: true,
+    writable: false,
+  });
+  return result;
+}
+
+export function readPlannerUserInputEdgeMetadata(result = null) {
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    return null;
+  }
+  const metadata = result[PLANNER_USER_INPUT_EDGE_METADATA_SYMBOL];
+  return metadata && typeof metadata === "object" && !Array.isArray(metadata)
+    ? metadata
+    : null;
+}
+
+async function maybeEnqueuePlannerUserInputAutonomyJob({
+  text = "",
+  baseUrl = "",
+  authContext = null,
+  sessionKey = "",
+  requestId = "",
+  traceId = "",
+  handlerName = "",
+  logger = console,
+  executionMode = PLANNER_USER_INPUT_EXECUTION_MODE.sync_authoritative,
+  autonomyJobEnqueuer = enqueueAutonomyJob,
+} = {}) {
+  if (executionMode === PLANNER_USER_INPUT_EXECUTION_MODE.sync_authoritative) {
+    return {
       attempted: false,
       enqueued: false,
-      reason: "allowlist_miss",
+      reason: "sync_authoritative_mode",
     };
   }
   if (typeof autonomyJobEnqueuer !== "function") {
@@ -3071,8 +3200,19 @@ export async function runPlannerUserInputEdge({
   workingMemoryWriter = applyPlannerWorkingMemoryPatch,
   autonomyIngressEnabled = null,
   autonomyIngressAllowlist = null,
+  autonomyQueueAuthoritativeEnabled = null,
   autonomyJobEnqueuer = enqueueAutonomyJob,
 } = {}) {
+  const executionModeDecision = resolvePlannerUserInputExecutionMode({
+    sessionKey,
+    requestId,
+    traceId,
+    handlerName,
+    autonomyIngressEnabled,
+    autonomyIngressAllowlist,
+    autonomyQueueAuthoritativeEnabled,
+  });
+  const edgeExecutionMode = executionModeDecision.mode;
   const autonomyIngressResult = await maybeEnqueuePlannerUserInputAutonomyJob({
     text,
     baseUrl,
@@ -3082,8 +3222,7 @@ export async function runPlannerUserInputEdge({
     traceId,
     handlerName,
     logger,
-    autonomyIngressEnabled,
-    autonomyIngressAllowlist,
+    executionMode: edgeExecutionMode,
     autonomyJobEnqueuer,
   });
   if (autonomyIngressResult?.enqueued === true) {
@@ -3092,14 +3231,48 @@ export async function runPlannerUserInputEdge({
       job_type: AUTONOMY_INGRESS_JOB_TYPE,
       job_id: autonomyIngressResult.job_id || null,
       trace_id: autonomyIngressResult.trace_id || cleanText(traceId) || null,
-      mode: "shadow_enqueue_then_sync_execute",
+      mode: edgeExecutionMode,
     });
+    if (edgeExecutionMode === PLANNER_USER_INPUT_EXECUTION_MODE.queue_authoritative) {
+      // Guardrail: enqueue accepted is only admission; completion authority remains worker + verifier.
+      const plannerResult = buildQueueAuthoritativePendingPlannerResult({
+        requestText: text,
+        jobId: autonomyIngressResult.job_id || "",
+        enqueueTraceId: autonomyIngressResult.trace_id || traceId || "",
+      });
+      const plannerEnvelope = envelopeBuilder(plannerResult);
+      const userResponse = responseNormalizer({
+        plannerResult,
+        plannerEnvelope,
+        requestText: text,
+        logger,
+        traceId,
+        handlerName,
+      });
+      return attachPlannerUserInputEdgeMetadata({
+        plannerResult,
+        plannerEnvelope,
+        userResponse,
+      }, buildPlannerUserInputEdgeMetadata({
+        executionMode: edgeExecutionMode,
+        completionFinal: false,
+        completionAuthority: "worker_verifier",
+        completionState: "pending_worker_verification",
+        queueEnqueueAccepted: true,
+        plannerSyncExecuted: false,
+        queueFallbackToSync: false,
+        enqueueJobId: autonomyIngressResult.job_id || "",
+        enqueueTraceId: autonomyIngressResult.trace_id || "",
+      }));
+    }
   } else if (autonomyIngressResult?.attempted === true) {
     logger?.warn?.("planner_autonomy_ingress_fallback_sync", {
       stage: "planner_autonomy_ingress",
       reason: autonomyIngressResult.reason || "enqueue_failed",
       trace_id: cleanText(traceId) || null,
-      mode: "sync_execute",
+      mode: edgeExecutionMode === PLANNER_USER_INPUT_EXECUTION_MODE.queue_authoritative
+        ? "queue_authoritative_fallback_sync"
+        : "sync_execute",
     });
   }
 
@@ -3423,9 +3596,23 @@ export async function runPlannerUserInputEdge({
     task_trace_event_alignment: taskTrace.event_alignment,
   });
 
-  return {
+  return attachPlannerUserInputEdgeMetadata({
     plannerResult,
     plannerEnvelope,
     userResponse,
-  };
+  }, buildPlannerUserInputEdgeMetadata({
+    executionMode: edgeExecutionMode,
+    completionFinal: true,
+    completionAuthority: "sync_planner",
+    completionState: "final",
+    queueEnqueueAccepted: autonomyIngressResult?.enqueued === true,
+    plannerSyncExecuted: true,
+    queueFallbackToSync: edgeExecutionMode === PLANNER_USER_INPUT_EXECUTION_MODE.queue_authoritative
+      && autonomyIngressResult?.enqueued !== true,
+    enqueueJobId: autonomyIngressResult?.job_id || "",
+    enqueueTraceId: autonomyIngressResult?.trace_id || "",
+    enqueueFailureReason: autonomyIngressResult?.enqueued === true
+      ? ""
+      : (autonomyIngressResult?.reason || executionModeDecision?.reason || ""),
+  }));
 }

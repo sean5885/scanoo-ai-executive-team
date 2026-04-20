@@ -3,10 +3,11 @@ import assert from "node:assert/strict";
 import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
 const testDb = await createTestDbHarness();
-const { runPlannerUserInputEdge } = await import("../src/planner-user-input-edge.mjs");
+const { runPlannerUserInputEdge, readPlannerUserInputEdgeMetadata } = await import("../src/planner-user-input-edge.mjs");
 const { ROUTING_NO_MATCH } = await import("../src/planner-error-codes.mjs");
 const previousAutonomyIngressEnabled = process.env.PLANNER_AUTONOMY_INGRESS_ENABLED;
 const previousAutonomyIngressAllowlist = process.env.PLANNER_AUTONOMY_INGRESS_ALLOWLIST;
+const previousAutonomyQueueAuthoritativeEnabled = process.env.PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED;
 
 test.after(() => {
   if (previousAutonomyIngressEnabled == null) {
@@ -19,12 +20,18 @@ test.after(() => {
   } else {
     process.env.PLANNER_AUTONOMY_INGRESS_ALLOWLIST = previousAutonomyIngressAllowlist;
   }
+  if (previousAutonomyQueueAuthoritativeEnabled == null) {
+    delete process.env.PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED;
+  } else {
+    process.env.PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED = previousAutonomyQueueAuthoritativeEnabled;
+  }
   testDb.close();
 });
 
 test.beforeEach(() => {
   delete process.env.PLANNER_AUTONOMY_INGRESS_ENABLED;
   delete process.env.PLANNER_AUTONOMY_INGRESS_ALLOWLIST;
+  delete process.env.PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED;
 });
 
 test("runPlannerUserInputEdge enqueues planner_user_input_v1 under feature flag + strict allowlist hit", async () => {
@@ -110,6 +117,96 @@ test("runPlannerUserInputEdge falls back to sync planner path when enqueue fails
   assert.equal(plannerExecuted, true);
   assert.equal(result?.userResponse?.ok, true);
   assert.match(result?.userResponse?.answer || "", /同步路徑回覆/);
+});
+
+test("runPlannerUserInputEdge queue_authoritative mode skips sync planner execution after enqueue accepted", async () => {
+  process.env.PLANNER_AUTONOMY_INGRESS_ENABLED = "true";
+  process.env.PLANNER_AUTONOMY_INGRESS_ALLOWLIST = "session:queue-authoritative-session";
+  process.env.PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED = "true";
+  let plannerExecuted = false;
+
+  const result = await runPlannerUserInputEdge({
+    text: "這輪要走 queue authority",
+    sessionKey: "queue-authoritative-session",
+    traceId: "trace-queue-authoritative",
+    async plannerExecutor() {
+      plannerExecuted = true;
+      return {
+        ok: true,
+        action: "get_runtime_info",
+        execution_result: {
+          ok: true,
+          data: {
+            answer: "不應該走到這裡",
+            sources: [],
+            limitations: [],
+          },
+        },
+      };
+    },
+    async autonomyJobEnqueuer() {
+      return {
+        ok: true,
+        job_id: "job_queue_authoritative_1",
+        status: "queued",
+        trace_id: "trace-queue-authoritative",
+      };
+    },
+    workingMemoryWriter: null,
+  });
+
+  const metadata = readPlannerUserInputEdgeMetadata(result);
+  assert.equal(plannerExecuted, false);
+  assert.deepEqual(Object.keys(result).sort(), ["plannerEnvelope", "plannerResult", "userResponse"]);
+  assert.equal(result?.plannerResult?.action, "queue_authoritative_pending");
+  assert.equal(result?.userResponse?.ok, true);
+  assert.match(result?.userResponse?.limitations?.[0] || "", /非最終完成/);
+  assert.equal(metadata?.execution_mode, "queue_authoritative");
+  assert.equal(metadata?.completion_final, false);
+  assert.equal(metadata?.completion_authority, "worker_verifier");
+  assert.equal(metadata?.queue_enqueue_accepted, true);
+  assert.equal(metadata?.planner_sync_executed, false);
+});
+
+test("runPlannerUserInputEdge queue_authoritative mode fail-soft falls back to sync planner when enqueue fails", async () => {
+  process.env.PLANNER_AUTONOMY_INGRESS_ENABLED = "true";
+  process.env.PLANNER_AUTONOMY_INGRESS_ALLOWLIST = "session:queue-authoritative-fallback";
+  process.env.PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED = "true";
+  let plannerExecuted = false;
+
+  const result = await runPlannerUserInputEdge({
+    text: "queue authority fallback",
+    sessionKey: "queue-authoritative-fallback",
+    traceId: "trace-queue-authoritative-fallback",
+    async autonomyJobEnqueuer() {
+      throw new Error("queue_unavailable");
+    },
+    async plannerExecutor() {
+      plannerExecuted = true;
+      return {
+        ok: true,
+        action: "search_and_summarize",
+        execution_result: {
+          ok: true,
+          data: {
+            answer: "這是 queue_authoritative fallback 的同步結果",
+            sources: ["sync fallback"],
+            limitations: [],
+          },
+        },
+      };
+    },
+    workingMemoryWriter: null,
+  });
+
+  const metadata = readPlannerUserInputEdgeMetadata(result);
+  assert.equal(plannerExecuted, true);
+  assert.equal(result?.userResponse?.ok, true);
+  assert.match(result?.userResponse?.answer || "", /fallback 的同步結果/);
+  assert.equal(metadata?.execution_mode, "queue_authoritative");
+  assert.equal(metadata?.completion_final, true);
+  assert.equal(metadata?.completion_authority, "sync_planner");
+  assert.equal(metadata?.queue_fallback_to_sync, true);
 });
 
 test("runPlannerUserInputEdge keeps sync path when allowlist does not match", async () => {

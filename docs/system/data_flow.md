@@ -179,17 +179,22 @@ Current public `/answer` path:
 
 1. request enters `GET /answer`
 2. `http-server.mjs` calls `planner-user-input-edge.mjs` `runPlannerUserInputEdge(...)`
-3. `runPlannerUserInputEdge(...)` first runs one bounded autonomy ingress adapter:
-   - guard: `PLANNER_AUTONOMY_INGRESS_ENABLED=true` + strict allowlist hit from `PLANNER_AUTONOMY_INGRESS_ALLOWLIST`
-   - action: enqueue additive autonomy job `planner_user_input_v1` from the same planner input boundary
+3. `runPlannerUserInputEdge(...)` first resolves one bounded completion-authority execution mode:
+   - mode candidates: `sync_authoritative` (default), `queue_shadow` (current), `queue_authoritative` (skeleton, default-off)
+   - guard inputs: `PLANNER_AUTONOMY_INGRESS_ENABLED`, strict allowlist hit from `PLANNER_AUTONOMY_INGRESS_ALLOWLIST`, and `PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED` (only for queue authority skeleton)
+4. when mode is `queue_shadow` or `queue_authoritative`, the same bounded autonomy ingress adapter may enqueue additive job `planner_user_input_v1`
    - contract: enqueue accepted is not final completion and not a final user answer
-   - fail-soft: enqueue failure / queue unavailable / guard miss all fall back to same-request synchronous planner path
-3A. additive autonomy worker execute path for the same job type:
+   - fail-soft: enqueue failure / queue unavailable falls back to same-request synchronous planner path
+5. when mode is `queue_authoritative` and enqueue is accepted:
+   - edge does not call `executePlannedUserInput(...)` in the same request
+   - edge returns the existing response shape (`plannerResult / plannerEnvelope / userResponse`) with non-enumerable metadata marking `non-final` pending state
+   - completed authority remains worker + verifier only (no result delivery in this stage)
+5A. additive autonomy worker execute path for the same job type:
    - worker claims `job_type=planner_user_input_v1`
    - worker dispatches payload to `executePlannedUserInput(...)`
    - worker completion still requires verifier gate pass; execute failure / verifier fail continue to `recovery_decision_v1` fail-soft handling
-4. `runPlannerUserInputEdge(...)` calls `executePlannedUserInput(...)`
-5. `executive-planner.mjs` resolves planner action or controlled failure
+6. otherwise `runPlannerUserInputEdge(...)` calls `executePlannedUserInput(...)`
+7. `executive-planner.mjs` resolves planner action or controlled failure
    - before active current-step continuation, planner runs one deterministic execution-readiness gate from the same session working-memory execution plan state
    - readiness is fail-closed and checks slot/artifact/dependency/owner/recovery/plan validity on current step, returning `is_ready`, blocking diagnostics, and `recommended_action`
    - when `is_ready=false`, planner does not dispatch intended step action directly; it follows existing controlled paths (`ask_user` / `retry` / `reroute` / `rollback` / `skip` / fail-closed stop)
@@ -221,13 +226,13 @@ Current public `/answer` path:
      - short/high-related follow-ups can stay on continuation path without opening a new task
      - candidate-selection short follow-ups (for example `第一份` / `第2個` / `這個`) can still be treated as continuation even when selected/current/next action hints are temporarily missing, as long as active task context remains
      - `waiting_user` turns with already-filled slots resume the current plan step (`working_memory_waiting_user_resume_plan_step`) instead of redundant ask
-6. planner reads and tool results remain internal runtime state
-7. `user-response-normalizer.mjs` converts the planner envelope into the public response shape:
+8. planner reads and tool results remain internal runtime state
+9. `user-response-normalizer.mjs` converts the planner envelope into the public response shape:
    - `answer`
    - `sources`
    - `limitations`
-8. `answer-source-mapper.mjs` converts canonical source objects into bounded public `sources[]` lines
-9. `planner-user-input-edge.mjs` performs session-scoped working-memory v2 patch write-back only after a stable final boundary response is available
+10. `answer-source-mapper.mjs` converts canonical source objects into bounded public `sources[]` lines
+11. `planner-user-input-edge.mjs` performs session-scoped working-memory v2 patch write-back only after a stable final boundary response is available
 
 Current truth:
 
@@ -244,7 +249,12 @@ Current truth:
   - `ask_user` / `fallback` terminate fail-soft (no implicit continue)
   - unknown token terminates fail-closed
 - `/answer` and the `knowledge-assistant` lane now share the same planner answer-edge helper instead of re-assembling `execute -> envelope -> normalize` separately
-- the same shared edge helper now includes one additive autonomy ingress enqueue adapter (`planner_user_input_v1`) behind feature-flag + strict allowlist guard, and keeps synchronous planner execution as the user-answer authority path
+- the same shared edge helper now includes a completion-authority mode skeleton at ingress:
+  - `sync_authoritative`: synchronous planner is the authority path (default)
+  - `queue_shadow`: enqueue additive job then keep synchronous planner as authority
+  - `queue_authoritative` (skeleton, default-off): enqueue accepted short-circuits sync planner in-request and returns non-final pending response metadata
+- `queue_authoritative` enqueue failure fail-soft falls back to `sync_authoritative`
+- enqueue accepted is explicitly guarded as not completed; completed authority remains worker + verifier
 - autonomy worker now has one built-in execute path for `planner_user_input_v1` (`queue payload -> executePlannedUserInput -> verifier/recovery`) while preserving existing `executeJob` override behavior for custom job handlers
 - that shared edge helper also absorbs current legacy planner result shapes into canonical `answer / sources / limitations` before the public boundary
 - for delivery/onboarding knowledge lookups, a single-hit company-brain search now turns into an answer-first reply that names the matched SOP/checklist document and surfaces bounded location/checklist/start-step hints from the indexed snippet, while preserving the same public `answer / sources / limitations` shape
