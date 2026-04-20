@@ -75,9 +75,103 @@ function addMsToNowIso(ms = DEFAULT_AUTONOMY_LEASE_MS) {
   return new Date(Date.now() + normalizePositiveInteger(ms, DEFAULT_AUTONOMY_LEASE_MS)).toISOString();
 }
 
+function addMsToIso(baseMs = Date.now(), ms = DEFAULT_AUTONOMY_LEASE_MS) {
+  const normalizedBaseMs = Number.isFinite(Number(baseMs)) ? Number(baseMs) : Date.now();
+  return new Date(
+    normalizedBaseMs + normalizePositiveInteger(ms, DEFAULT_AUTONOMY_LEASE_MS),
+  ).toISOString();
+}
+
 function parseIsoToMs(value = "") {
   const parsed = Date.parse(cleanText(value));
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function upsertAutonomyWorkerHeartbeatRecord({
+  workerId = "",
+  heartbeatAt = "",
+  leaseExpiresAt = "",
+  source = "",
+} = {}) {
+  const normalizedWorkerId = cleanText(workerId);
+  const normalizedHeartbeatAt = cleanText(heartbeatAt);
+  if (!normalizedWorkerId || !normalizedHeartbeatAt) {
+    return false;
+  }
+  const now = nowIso();
+  db.prepare(`
+    INSERT INTO autonomy_worker_heartbeats (
+      worker_id,
+      heartbeat_at,
+      lease_expires_at,
+      source,
+      created_at,
+      updated_at
+    ) VALUES (
+      @worker_id,
+      @heartbeat_at,
+      @lease_expires_at,
+      @source,
+      @created_at,
+      @updated_at
+    )
+    ON CONFLICT(worker_id) DO UPDATE SET
+      heartbeat_at = excluded.heartbeat_at,
+      lease_expires_at = excluded.lease_expires_at,
+      source = COALESCE(excluded.source, autonomy_worker_heartbeats.source),
+      updated_at = excluded.updated_at
+  `).run({
+    worker_id: normalizedWorkerId,
+    heartbeat_at: normalizedHeartbeatAt,
+    lease_expires_at: cleanText(leaseExpiresAt) || null,
+    source: cleanText(source) || null,
+    created_at: now,
+    updated_at: now,
+  });
+  return true;
+}
+
+function readLatestAutonomyWorkerReadinessSignal() {
+  const runningAttemptSignal = db.prepare(`
+    SELECT
+      worker_id,
+      heartbeat_at,
+      lease_expires_at,
+      updated_at,
+      created_at
+    FROM autonomy_job_attempts
+    WHERE status = @running_status
+    ORDER BY COALESCE(heartbeat_at, updated_at, created_at) DESC
+    LIMIT 1
+  `).get({
+    running_status: AUTONOMY_JOB_ATTEMPT_STATUS.running,
+  });
+  const workerHeartbeatSignal = db.prepare(`
+    SELECT
+      worker_id,
+      heartbeat_at,
+      lease_expires_at,
+      updated_at,
+      created_at
+    FROM autonomy_worker_heartbeats
+    ORDER BY COALESCE(heartbeat_at, updated_at, created_at) DESC
+    LIMIT 1
+  `).get();
+  const candidates = [runningAttemptSignal, workerHeartbeatSignal].filter(Boolean);
+  if (candidates.length === 0) {
+    return null;
+  }
+  candidates.sort((left, right) => {
+    const leftSignalAt = parseIsoToMs(cleanText(left.heartbeat_at) || cleanText(left.updated_at) || cleanText(left.created_at));
+    const rightSignalAt = parseIsoToMs(cleanText(right.heartbeat_at) || cleanText(right.updated_at) || cleanText(right.created_at));
+    const normalizedLeft = Number.isFinite(Number(leftSignalAt)) ? Number(leftSignalAt) : Number.NEGATIVE_INFINITY;
+    const normalizedRight = Number.isFinite(Number(rightSignalAt)) ? Number(rightSignalAt) : Number.NEGATIVE_INFINITY;
+    if (normalizedLeft === normalizedRight) {
+      return 0;
+    }
+    return normalizedRight - normalizedLeft;
+  });
+  return candidates[0];
 }
 
 function readLifecycleSinkFromError(error = null) {
@@ -646,20 +740,7 @@ export function readAutonomyWorkerReadiness({
     DEFAULT_AUTONOMY_HEARTBEAT_INTERVAL_MS * 3,
     { min: 1_000, max: 10 * 60 * 1_000 },
   );
-  const row = db.prepare(`
-    SELECT
-      worker_id,
-      heartbeat_at,
-      lease_expires_at,
-      updated_at,
-      created_at
-    FROM autonomy_job_attempts
-    WHERE status = @running_status
-    ORDER BY COALESCE(heartbeat_at, updated_at, created_at) DESC
-    LIMIT 1
-  `).get({
-    running_status: AUTONOMY_JOB_ATTEMPT_STATUS.running,
-  });
+  const row = readLatestAutonomyWorkerReadinessSignal();
   if (!row) {
     return {
       ready: false,
@@ -831,6 +912,15 @@ export function ensureAutonomyJobTables() {
       FOREIGN KEY (job_id) REFERENCES autonomy_jobs(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS autonomy_worker_heartbeats (
+      worker_id TEXT PRIMARY KEY,
+      heartbeat_at TEXT NOT NULL,
+      lease_expires_at TEXT,
+      source TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_autonomy_jobs_claim
     ON autonomy_jobs(status, next_run_at, lease_expires_at, created_at);
 
@@ -842,6 +932,9 @@ export function ensureAutonomyJobTables() {
 
     CREATE INDEX IF NOT EXISTS idx_autonomy_job_attempts_trace
     ON autonomy_job_attempts(trace_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_autonomy_worker_heartbeats_signal
+    ON autonomy_worker_heartbeats(heartbeat_at DESC, updated_at DESC, created_at DESC);
   `);
 
   autonomyTablesReady = true;
@@ -1109,6 +1202,12 @@ export function claimNextAutonomyJob({
       created_at: now,
       updated_at: now,
     });
+    upsertAutonomyWorkerHeartbeatRecord({
+      workerId: normalizedWorkerId,
+      heartbeatAt: now,
+      leaseExpiresAt,
+      source: "running_attempt",
+    });
 
     return {
       skipped: false,
@@ -1182,6 +1281,12 @@ export function heartbeatAutonomyAttempt({
         error: "attempt_not_running",
       };
     }
+    upsertAutonomyWorkerHeartbeatRecord({
+      workerId: normalizedWorkerId,
+      heartbeatAt: now,
+      leaseExpiresAt,
+      source: "running_attempt",
+    });
 
     return {
       ok: true,
@@ -1192,6 +1297,36 @@ export function heartbeatAutonomyAttempt({
   });
 
   return heartbeatTx();
+}
+
+export function heartbeatAutonomyWorker({
+  workerId = "",
+  leaseMs = DEFAULT_AUTONOMY_LEASE_MS,
+  nowAt = "",
+} = {}) {
+  ensureAutonomyJobTables();
+  const normalizedWorkerId = cleanText(workerId);
+  if (!normalizedWorkerId) {
+    return {
+      ok: false,
+      error: "invalid_worker_heartbeat_input",
+    };
+  }
+  const nowMs = parseIsoToMs(nowAt);
+  const heartbeatAt = nowMs == null ? nowIso() : new Date(nowMs).toISOString();
+  const leaseExpiresAt = addMsToIso(nowMs == null ? Date.now() : nowMs, leaseMs);
+  upsertAutonomyWorkerHeartbeatRecord({
+    workerId: normalizedWorkerId,
+    heartbeatAt,
+    leaseExpiresAt,
+    source: "idle_worker",
+  });
+  return {
+    ok: true,
+    worker_id: normalizedWorkerId,
+    heartbeat_at: heartbeatAt,
+    lease_expires_at: leaseExpiresAt,
+  };
 }
 
 export function completeAutonomyAttempt({

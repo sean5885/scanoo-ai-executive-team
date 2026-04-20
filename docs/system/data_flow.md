@@ -199,7 +199,7 @@ Current public `/answer` path:
      - sampling key uses `request_id` first, then `trace_id`
      - sampling miss keeps the existing non-authoritative path (`queue_shadow`)
      - `0` force-closes queue-authoritative immediately; `100` keeps full-open behavior (still subject to worker-ready gate)
-   - if candidate mode is `queue_authoritative`, one worker-ready admission gate runs first using bounded running-attempt heartbeat/lease signal (`readAutonomyWorkerReadiness`); gate is fail-closed
+   - if candidate mode is `queue_authoritative`, one worker-ready admission gate runs first using bounded latest heartbeat/lease signal (`readAutonomyWorkerReadiness`) from running-attempt + worker-heartbeat records; gate is fail-closed
    - when worker-ready gate is not ready, mode is force-downgraded to `sync_authoritative` before enqueue is attempted
    - ingress observability now emits additive runtime trace events for rollout checks:
      - mode decision: `planner_autonomy_ingress_mode_decision`
@@ -278,7 +278,8 @@ Current truth:
   - `queue_shadow`: enqueue additive job then keep synchronous planner as authority
   - `queue_authoritative` (skeleton, default-off): enqueue accepted short-circuits sync planner in-request and returns non-final pending response metadata
 - `queue_authoritative` admission is now fail-closed on worker readiness:
-  - readiness signal uses bounded running-attempt heartbeat/lease projection (`readAutonomyWorkerReadiness`)
+  - readiness signal uses bounded latest heartbeat/lease projection (`readAutonomyWorkerReadiness`) from running-attempt + worker-heartbeat records
+  - additive store helper `heartbeatAutonomyWorker` is the idle-worker heartbeat write surface (store/readiness only, no service autostart wiring)
   - worker not ready forces mode to `sync_authoritative` before enqueue
 - `queue_authoritative` enqueue failure fail-soft falls back to `sync_authoritative`
 - enqueue accepted is explicitly guarded as not completed; completed authority remains worker + verifier

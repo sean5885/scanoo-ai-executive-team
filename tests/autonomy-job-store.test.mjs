@@ -15,6 +15,7 @@ const {
   failAutonomyAttempt,
   getAutonomyOpenIncidentByJobId,
   heartbeatAutonomyAttempt,
+  heartbeatAutonomyWorker,
   listAutonomyOpenIncidents,
   lookupAutonomyJobFinalPickupByRequestId,
   lookupAutonomyJobFinalPickupByTraceId,
@@ -31,6 +32,7 @@ test.after(() => {
 test.beforeEach(() => {
   ensureAutonomyJobTables();
   db.exec(`
+    DELETE FROM autonomy_worker_heartbeats;
     DELETE FROM autonomy_job_attempts;
     DELETE FROM autonomy_jobs;
   `);
@@ -379,11 +381,49 @@ test("autonomy job store lookup fail-soft returns not_found", () => {
   assertBoundedLookupRecord(requestMiss);
 });
 
-test("autonomy worker readiness is fail-closed when no running worker heartbeat exists", () => {
+test("autonomy worker readiness is fail-closed when no heartbeat exists", () => {
   const readiness = readAutonomyWorkerReadiness();
   assert.equal(readiness?.ready, false);
   assert.equal(readiness?.reason, "worker_heartbeat_missing");
   assert.equal(readiness?.worker_id, null);
+});
+
+test("autonomy worker readiness treats idle worker heartbeat as ready", () => {
+  const heartbeat = heartbeatAutonomyWorker({
+    workerId: "worker-idle-ready",
+    leaseMs: 5 * 60 * 1_000,
+    nowAt: "2026-04-20T00:00:00.000Z",
+  });
+  assert.equal(heartbeat?.ok, true);
+  assert.equal(heartbeat?.worker_id, "worker-idle-ready");
+
+  const readiness = readAutonomyWorkerReadiness({
+    nowAt: "2026-04-20T00:00:30.000Z",
+    maxHeartbeatLagMs: 60_000,
+  });
+  assert.equal(readiness?.ready, true);
+  assert.equal(readiness?.readiness_state, "ready");
+  assert.equal(readiness?.reason, "worker_ready");
+  assert.equal(readiness?.worker_id, "worker-idle-ready");
+  assert.equal(Number.isFinite(Number(readiness?.lease_remaining_ms)), true);
+});
+
+test("autonomy worker readiness marks stale idle heartbeat as not_ready", () => {
+  const heartbeat = heartbeatAutonomyWorker({
+    workerId: "worker-idle-stale",
+    leaseMs: 5 * 60 * 1_000,
+    nowAt: "2026-04-20T00:00:00.000Z",
+  });
+  assert.equal(heartbeat?.ok, true);
+
+  const stale = readAutonomyWorkerReadiness({
+    nowAt: "2026-04-20T00:02:00.000Z",
+    maxHeartbeatLagMs: 60_000,
+  });
+  assert.equal(stale?.ready, false);
+  assert.equal(stale?.readiness_state, "not_ready");
+  assert.equal(stale?.reason, "worker_heartbeat_stale");
+  assert.equal(stale?.worker_id, "worker-idle-stale");
 });
 
 test("autonomy worker readiness uses running attempt heartbeat and lease signals", () => {

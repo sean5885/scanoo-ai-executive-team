@@ -80,7 +80,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/trace/autonomy-trace-context.mjs`
   - `/Users/seanhan/Documents/Playground/scripts/autonomy-operator-cli.mjs`
 - Current truth:
-  - adds a minimal SQLite-backed autonomy job store (`autonomy_jobs`, `autonomy_job_attempts`) and worker lifecycle operations (`claim`, `heartbeat`, `complete`, `fail`)
+  - adds a minimal SQLite-backed autonomy job store (`autonomy_jobs`, `autonomy_job_attempts`, `autonomy_worker_heartbeats`) and worker lifecycle operations (`claim`, `heartbeat`, `complete`, `fail`)
   - adds a feature-flagged enqueue adapter and worker loop entry (`AUTONOMY_ENABLED`)
   - job-level trace correlation now has an additive helper surface (`job_id`, `attempt_id`, `trace_id`)
   - worker completion now runs one local verifier gate (`executeJob -> normalize execution_journal/evidence -> verify -> complete/fail`) through `executive-verifier` rules before marking a job `completed`
@@ -90,7 +90,8 @@ Current-truth docs for onboarding are:
     - execute failure / verifier fail stay on existing fail-soft `recovery_decision_v1` + lifecycle sink path
     - `executeJob` injection remains the override path for other or custom job types
   - worker failure payload now adds additive `lifecycle_sink` metadata for sink-class decisions (`waiting_user` from `blocked + *_waiting_user`, `escalated` from `next_state=escalated`) while keeping the same status machine (`queued|running|completed|failed`)
-  - store now also exposes one fail-closed worker-readiness helper (`readAutonomyWorkerReadiness`) using existing `autonomy_job_attempts` running heartbeat + lease signal projection; missing/stale/expired heartbeat is treated as `not ready`
+  - store now also exposes one fail-closed worker-readiness helper (`readAutonomyWorkerReadiness`) using bounded latest heartbeat + lease projection from running attempts and additive worker heartbeat records; missing/stale/expired heartbeat is treated as `not ready`
+    - store now also has additive worker heartbeat write helper (`heartbeatAutonomyWorker`) for idle worker liveness updates; this is store-only readiness data and not a process supervisor/autostart path
     - readiness projection now also includes additive `readiness_state` and `lease_remaining_ms` so heartbeat lag vs lease freshness can be separated during rollout checks
   - store now also exposes one additive queue/backlog read model (`readAutonomyQueueBacklogMetrics`) for `queued/running/failed` counts plus `oldest_queued_age_ms`
   - job/attempt store records now project `lifecycle_sink` from persisted `error_json.lifecycle_sink` as read-side metadata
@@ -197,7 +198,7 @@ Current-truth docs for onboarding are:
       - `0` means immediate full close (always downgrade to `queue_shadow`), `100` means full open (subject to worker-ready gate)
       - same request/trace key always resolves to the same sampling outcome
     - `queue_authoritative` admission now has one worker-ready gate before enqueue:
-      - worker readiness uses bounded heartbeat/lease read-model (`readAutonomyWorkerReadiness`) and is fail-closed
+      - worker readiness uses bounded heartbeat/lease read-model (`readAutonomyWorkerReadiness`) across running-attempt and worker-heartbeat signals, and is fail-closed
       - worker not ready forces mode downgrade to `sync_authoritative` (no enqueue accepted under queue-authoritative)
     - in `queue_shadow` / `queue_authoritative`, adapter enqueues additive autonomy job (`job_type=planner_user_input_v1`)
     - enqueue is ingress evidence only and is never treated as final task completion or final user answer
