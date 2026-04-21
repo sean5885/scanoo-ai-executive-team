@@ -216,6 +216,7 @@ Current public `/answer` path:
 5A. additive autonomy worker execute path for the same job type:
    - worker claims `job_type=planner_user_input_v1`
    - worker dispatches payload to `executePlannedUserInput(...)`
+   - worker execute stage is bounded by `AUTONOMY_EXECUTE_TIMEOUT_MS` (default 60s); timeout is fail-soft as runtime exception and does not mark completion
    - worker completion still requires verifier gate pass; execute failure / verifier fail continue to `recovery_decision_v1` fail-soft handling
 6. otherwise `runPlannerUserInputEdge(...)` calls `executePlannedUserInput(...)`
 7. `executive-planner.mjs` resolves planner action or controlled failure

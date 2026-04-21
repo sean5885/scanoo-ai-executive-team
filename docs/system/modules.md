@@ -90,6 +90,10 @@ Current-truth docs for onboarding are:
     - only execute success + verifier pass can mark `completed`
     - execute failure / verifier fail stay on existing fail-soft `recovery_decision_v1` + lifecycle sink path
     - `executeJob` injection remains the override path for other or custom job types
+  - worker execute stage now has a bounded timeout guard:
+    - `runAutonomyWorkerOnce(...)` wraps `executeJob` with a hard timeout (`AUTONOMY_EXECUTE_TIMEOUT_MS`, default 60s)
+    - timeout is normalized to `AutonomyExecuteTimeoutError` and routed through the same fail-soft `failAutonomyAttempt(...)` path
+    - goal is to prevent one hung execute from blocking the single-loop worker from claiming later queued jobs
   - worker failure payload now adds additive `lifecycle_sink` metadata for sink-class decisions (`waiting_user` from `blocked + *_waiting_user`, `escalated` from `next_state=escalated`) while keeping the same status machine (`queued|running|completed|failed`)
   - store now also exposes one fail-closed worker-readiness helper (`readAutonomyWorkerReadiness`) using bounded latest heartbeat + lease projection from running attempts and additive worker heartbeat records; missing/stale/expired heartbeat is treated as `not ready`
     - store now also has additive worker heartbeat write helper (`heartbeatAutonomyWorker`) for idle worker liveness updates; `src/worker/autonomy-runtime-manager.mjs` now uses this helper from main-service bootstrap for process-local managed liveness (single worker owner in one process)

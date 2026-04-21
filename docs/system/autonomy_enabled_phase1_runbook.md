@@ -44,6 +44,16 @@ node scripts/autonomy-operator-cli.mjs disposition \
 - `disposition` 缺少 `job_id/action/reason/operator_id/request_id/expected_updated_at` 任一欄位時，不會寫入。
 - `precondition_failed`、`open_incident_not_found`、`operator_action_lifecycle_sink_mismatch` 等 fail-soft 語義沿用 store 原樣輸出。
 
+## 0A. Canary Script Base URL（實際執行）
+
+`scripts/run-canary.sh` 與 `scripts/check-canary.sh` 的預設 `BASE_URL` 解析順序為：
+
+1. `BASE_URL`
+2. `LARK_OAUTH_BASE_URL`
+3. `http://127.0.0.1:${LARK_OAUTH_PORT:-3333}`
+
+因此若主服務使用預設 `LARK_OAUTH_PORT=3333`，可直接執行 canary 腳本，不必額外指定 `BASE_URL`。
+
 ## 1. 啟用前檢查
 
 1. 進到 repo 根目錄。
@@ -83,6 +93,8 @@ export AUTONOMY_ENABLED=true
 ```bash
 AUTONOMY_ENABLED=true npm run start:full
 ```
+
+補充：worker execute timeout 可用 `AUTONOMY_EXECUTE_TIMEOUT_MS` 調整（預設 `60000` ms）。
 
 3. （可選）若要做 runbook 自訂 `job_type` 演練，可另外手動啟動 Phase 1 worker（前景執行，`Ctrl+C` 可停用）。
 
@@ -245,6 +257,8 @@ node --input-type=module -e 'import db from "./src/db.mjs"; const row=db.prepare
   - Guardrail：只把它視為單機單 owner 的 Phase 1 managed runtime。
 - 風險：`startAutonomyWorkerLoop` 預設 `executeJob` 會回 `ok:true`。
   - Guardrail：永遠傳入明確 `executeJob`，並限制可處理 `job_type`（本 runbook 僅允許 `runbook_smoke_job`）。
+- 風險：單筆 execute 若外部依賴卡住，可能阻塞單一 loop 後續 claim。
+  - Guardrail：worker execute 現在有 `AUTONOMY_EXECUTE_TIMEOUT_MS`（預設 60s）硬性 timeout，timeout 走既有 fail-soft failed path。
 - 風險：autonomy tables 與主 DB 同一個 SQLite（`RAG_SQLITE_PATH`）。
   - Guardrail：所有演練都加 `trace_id=runbook_*`，可精準清理。
 - 風險：worker 雖已受管於主服務 process，但仍無跨進程 supervisor/租約仲裁。

@@ -406,3 +406,35 @@ test("runAutonomyWorkerOnce records escalated lifecycle sink on permission_denie
   assert.equal(stored?.error?.lifecycle_sink?.state, "escalated");
   assert.equal(stored?.lifecycle_sink?.state, "escalated");
 });
+
+test("runAutonomyWorkerOnce fail-soft fails claimed job when executeJob times out", async () => {
+  const queued = enqueueAutonomyJobRecord({
+    jobType: "worker_timeout_job",
+    traceId: "trace_worker_timeout",
+    maxAttempts: 1,
+  });
+
+  const result = await runAutonomyWorkerOnce({
+    workerId: "worker-timeout",
+    enabled: true,
+    executeTimeoutMs: 1_000,
+    heartbeatIntervalMs: 200,
+    async executeJob() {
+      return new Promise(() => {});
+    },
+  });
+
+  assert.equal(result?.ok, false);
+  assert.equal(result?.claimed, true);
+  assert.equal(result?.failed, true);
+  assert.equal(result?.job_id, queued.id);
+  assert.equal(result?.error?.name, "AutonomyExecuteTimeoutError");
+  assert.equal(result?.error?.timeout_ms, 1000);
+  assert.equal(typeof result?.recovery_decision?.reason, "string");
+
+  const stored = getAutonomyJobById(queued.id);
+  assert.equal(stored?.status, "failed");
+  assert.equal(stored?.error?.runtime_error?.name, "AutonomyExecuteTimeoutError");
+  assert.equal(stored?.error?.runtime_error?.timeout_ms, 1000);
+  assert.equal(typeof stored?.error?.recovery_decision?.reason, "string");
+});

@@ -27,6 +27,16 @@ const noopLogger = {
   error() {},
 };
 const PLANNER_USER_INPUT_JOB_TYPE = "planner_user_input_v1";
+const DEFAULT_AUTONOMY_EXECUTE_TIMEOUT_MS = 60_000;
+const AUTONOMY_EXECUTE_TIMEOUT_ENV = "AUTONOMY_EXECUTE_TIMEOUT_MS";
+
+class AutonomyExecuteTimeoutError extends Error {
+  constructor({ timeoutMs = DEFAULT_AUTONOMY_EXECUTE_TIMEOUT_MS } = {}) {
+    super(`autonomy_execute_timeout_${timeoutMs}ms`);
+    this.name = "AutonomyExecuteTimeoutError";
+    this.timeout_ms = timeoutMs;
+  }
+}
 
 function normalizeLogger(logger = null) {
   if (logger && typeof logger === "object") {
@@ -35,13 +45,58 @@ function normalizeLogger(logger = null) {
   return noopLogger;
 }
 
+function resolveAutonomyExecuteTimeoutMs() {
+  return normalizePositiveInteger(
+    process.env[AUTONOMY_EXECUTE_TIMEOUT_ENV],
+    DEFAULT_AUTONOMY_EXECUTE_TIMEOUT_MS,
+    { min: 1_000, max: 30 * 60 * 1_000 },
+  );
+}
+
+function withAutonomyExecuteTimeout({
+  executePromise = null,
+  timeoutMs = DEFAULT_AUTONOMY_EXECUTE_TIMEOUT_MS,
+} = {}) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      reject(new AutonomyExecuteTimeoutError({ timeoutMs }));
+    }, timeoutMs);
+
+    Promise.resolve(executePromise).then((value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    }).catch((error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
+}
+
 function buildNormalizedError(error) {
   if (error instanceof Error) {
-    return {
+    const normalized = {
       name: cleanText(error.name) || "Error",
       message: cleanText(error.message) || "unknown_error",
       stack: cleanText(error.stack) || null,
     };
+    const timeoutMs = Number(error.timeout_ms);
+    if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+      normalized.timeout_ms = Math.floor(timeoutMs);
+    }
+    return normalized;
   }
   return {
     name: "RuntimeError",
@@ -633,6 +688,7 @@ export async function runAutonomyWorkerOnce({
   enabled = null,
   leaseMs = DEFAULT_AUTONOMY_LEASE_MS,
   heartbeatIntervalMs = DEFAULT_AUTONOMY_HEARTBEAT_INTERVAL_MS,
+  executeTimeoutMs = null,
 } = {}) {
   const resolvedLogger = normalizeLogger(logger);
   const normalizedWorkerId = cleanText(workerId);
@@ -724,14 +780,22 @@ export async function runAutonomyWorkerOnce({
       ...input,
       plannerExecutor: resolvedPlannerExecutor,
     });
+  const normalizedExecuteTimeoutMs = normalizePositiveInteger(
+    executeTimeoutMs,
+    resolveAutonomyExecuteTimeoutMs(),
+    { min: 1_000, max: 30 * 60 * 1_000 },
+  );
 
   beginHeartbeat();
   try {
-    const executionResult = await resolvedExecuteJob({
-      job: claim.job,
-      attempt: claim.attempt,
-      traceContext,
-      logger: resolvedLogger,
+    const executionResult = await withAutonomyExecuteTimeout({
+      timeoutMs: normalizedExecuteTimeoutMs,
+      executePromise: resolvedExecuteJob({
+        job: claim.job,
+        attempt: claim.attempt,
+        traceContext,
+        logger: resolvedLogger,
+      }),
     });
 
     if (shouldResultBeTreatedAsFailure(executionResult)) {
