@@ -214,9 +214,17 @@ Current public `/answer` path:
    - edge returns the existing response shape (`plannerResult / plannerEnvelope / userResponse`) with non-enumerable metadata marking `non-final` pending state
    - completed authority remains worker + verifier only (no result delivery in this stage)
 5A. additive autonomy worker execute path for the same job type:
+   - claim stage first applies stale fail-soft guard (`AUTONOMY_MAX_QUEUED_AGE_MS`, default 60s):
+     - queued rows older than threshold are moved to `failed` with `queued_job_stale_timeout`
+     - expired running rows that are also older than threshold are moved to `failed` with `running_job_stale_timeout`
+   - queued claim order is FIFO fairness-first with recent-window priority:
+     - rows in `AUTONOMY_QUEUED_FRESH_PRIORITY_WINDOW_MS` (default 60s) are claimed before older backlog rows
+     - inside the same priority bucket, claim uses oldest schedulable `next_run_at/created_at` first
    - worker claims `job_type=planner_user_input_v1`
    - worker dispatches payload to `executePlannedUserInput(...)`
-   - worker execute stage is bounded by `AUTONOMY_EXECUTE_TIMEOUT_MS` (default 60s); timeout is fail-soft as runtime exception and does not mark completion
+   - when `AUTONOMY_CANARY_MODE=true` and payload is canary-marked (`planner_input.text` contains `autonomy canary` or `planner_input.session_key` starts with `autonomy-canary-`), worker seeds deterministic planner decision `{ action: "get_runtime_info", params: {} }` before execute to keep queue-authoritative canary throughput bounded
+   - after any successful claim, worker schedules the next tick immediately (`0ms`) so queue drain speed follows execute time rather than fixed poll interval
+   - worker execute stage is bounded by `AUTONOMY_EXECUTE_TIMEOUT_MS` (default 60s); timeout aborts in-flight execute signal, then fail-softs as runtime exception and does not mark completion
    - worker completion still requires verifier gate pass; execute failure / verifier fail continue to `recovery_decision_v1` fail-soft handling
 6. otherwise `runPlannerUserInputEdge(...)` calls `executePlannedUserInput(...)`
 7. `executive-planner.mjs` resolves planner action or controlled failure

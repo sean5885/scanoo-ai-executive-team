@@ -95,12 +95,134 @@ test("runAutonomyWorkerOnce executes planner_user_input_v1 via executePlannedUse
   assert.equal(plannerCall?.baseUrl, "https://planner-worker.example");
   assert.equal(plannerCall?.sessionKey, "planner-worker-session");
   assert.equal(plannerCall?.requestId, "planner-worker-request");
+  assert.equal(plannerCall?.plannedDecision, null);
 
   const stored = getAutonomyJobById(queued.id);
   assert.equal(stored?.status, "completed");
   assert.equal(stored?.result?.job_type, "planner_user_input_v1");
   assert.equal(stored?.result?.selected_action, "get_runtime_info");
   assert.equal(stored?.result?.verifier_gate_result?.pass, true);
+});
+
+test("runAutonomyWorkerOnce seeds canary planner_user_input_v1 with deterministic get_runtime_info decision", async () => {
+  const originalCanaryMode = process.env.AUTONOMY_CANARY_MODE;
+  process.env.AUTONOMY_CANARY_MODE = "true";
+  const queued = enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    payload: buildPlannerUserInputJobPayload({
+      text: "autonomy canary autonomy-canary-1 sample #1",
+      sessionKey: "autonomy-canary-1",
+      requestId: "planner-worker-canary-request",
+      traceId: "trace_worker_planner_canary_seed",
+    }),
+    traceId: "trace_worker_planner_canary_seed",
+    maxAttempts: 1,
+  });
+  let plannerCall = null;
+
+  try {
+    const result = await runAutonomyWorkerOnce({
+      workerId: "worker-planner-canary-seed",
+      enabled: true,
+      heartbeatIntervalMs: 60_000,
+      async plannerExecutor(args) {
+        plannerCall = args;
+        return {
+          ok: true,
+          action: "get_runtime_info",
+          trace_id: "trace_worker_planner_canary_seed",
+          execution_result: {
+            ok: true,
+            data: {
+              answer: "runtime 正常",
+              sources: ["runtime snapshot"],
+              limitations: [],
+            },
+          },
+        };
+      },
+    });
+
+    assert.equal(result?.ok, true);
+    assert.equal(result?.claimed, true);
+    assert.equal(result?.completed, true);
+    assert.equal(result?.job_id, queued.id);
+    assert.deepEqual(plannerCall?.plannedDecision, {
+      action: "get_runtime_info",
+      params: {},
+    });
+
+    const stored = getAutonomyJobById(queued.id);
+    assert.equal(stored?.status, "completed");
+    assert.equal(stored?.result?.job_type, "planner_user_input_v1");
+    assert.equal(stored?.result?.selected_action, "get_runtime_info");
+    assert.equal(stored?.result?.verifier_gate_result?.pass, true);
+  } finally {
+    if (originalCanaryMode == null) {
+      delete process.env.AUTONOMY_CANARY_MODE;
+    } else {
+      process.env.AUTONOMY_CANARY_MODE = originalCanaryMode;
+    }
+  }
+});
+
+test("runAutonomyWorkerOnce does not seed canary plannedDecision when AUTONOMY_CANARY_MODE is disabled", async () => {
+  const originalCanaryMode = process.env.AUTONOMY_CANARY_MODE;
+  process.env.AUTONOMY_CANARY_MODE = "false";
+  const queued = enqueueAutonomyJobRecord({
+    jobType: "planner_user_input_v1",
+    payload: buildPlannerUserInputJobPayload({
+      text: "autonomy canary sample #2",
+      sessionKey: "autonomy-canary-2",
+      requestId: "planner-worker-canary-disabled-request",
+      traceId: "trace_worker_planner_canary_disabled",
+    }),
+    traceId: "trace_worker_planner_canary_disabled",
+    maxAttempts: 1,
+  });
+  let plannerCall = null;
+
+  try {
+    const result = await runAutonomyWorkerOnce({
+      workerId: "worker-planner-canary-disabled",
+      enabled: true,
+      heartbeatIntervalMs: 60_000,
+      async plannerExecutor(args) {
+        plannerCall = args;
+        return {
+          ok: true,
+          action: "get_runtime_info",
+          trace_id: "trace_worker_planner_canary_disabled",
+          execution_result: {
+            ok: true,
+            data: {
+              answer: "runtime 正常",
+              sources: ["runtime snapshot"],
+              limitations: [],
+            },
+          },
+        };
+      },
+    });
+
+    assert.equal(result?.ok, true);
+    assert.equal(result?.claimed, true);
+    assert.equal(result?.completed, true);
+    assert.equal(result?.job_id, queued.id);
+    assert.equal(plannerCall?.plannedDecision, null);
+
+    const stored = getAutonomyJobById(queued.id);
+    assert.equal(stored?.status, "completed");
+    assert.equal(stored?.result?.job_type, "planner_user_input_v1");
+    assert.equal(stored?.result?.selected_action, "get_runtime_info");
+    assert.equal(stored?.result?.verifier_gate_result?.pass, true);
+  } finally {
+    if (originalCanaryMode == null) {
+      delete process.env.AUTONOMY_CANARY_MODE;
+    } else {
+      process.env.AUTONOMY_CANARY_MODE = originalCanaryMode;
+    }
+  }
 });
 
 test("runAutonomyWorkerOnce routes planner_user_input_v1 execute failure through recovery", async () => {
@@ -437,4 +559,36 @@ test("runAutonomyWorkerOnce fail-soft fails claimed job when executeJob times ou
   assert.equal(stored?.error?.runtime_error?.name, "AutonomyExecuteTimeoutError");
   assert.equal(stored?.error?.runtime_error?.timeout_ms, 1000);
   assert.equal(typeof stored?.error?.recovery_decision?.reason, "string");
+});
+
+test("runAutonomyWorkerOnce aborts executeJob signal when timeout fires", async () => {
+  const queued = enqueueAutonomyJobRecord({
+    jobType: "worker_timeout_abort_signal_job",
+    traceId: "trace_worker_timeout_abort_signal",
+    maxAttempts: 1,
+  });
+  let aborted = false;
+  let abortReasonName = null;
+
+  const result = await runAutonomyWorkerOnce({
+    workerId: "worker-timeout-abort-signal",
+    enabled: true,
+    executeTimeoutMs: 1_000,
+    heartbeatIntervalMs: 200,
+    async executeJob({ signal }) {
+      return new Promise(() => {
+        signal?.addEventListener("abort", () => {
+          aborted = true;
+          abortReasonName = signal?.reason?.name || null;
+        }, { once: true });
+      });
+    },
+  });
+
+  assert.equal(result?.ok, false);
+  assert.equal(result?.claimed, true);
+  assert.equal(result?.failed, true);
+  assert.equal(result?.job_id, queued.id);
+  assert.equal(aborted, true);
+  assert.equal(abortReasonName, "AutonomyExecuteTimeoutError");
 });

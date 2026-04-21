@@ -54,6 +54,11 @@ node scripts/autonomy-operator-cli.mjs disposition \
 
 因此若主服務使用預設 `LARK_OAUTH_PORT=3333`，可直接執行 canary 腳本，不必額外指定 `BASE_URL`。
 
+worker canary execute 補充（已落地）：
+
+- `planner_user_input_v1` 僅在 `AUTONOMY_CANARY_MODE=true` 且命中 canary 標記（`planner_input.text` 含 `autonomy canary` 或 `planner_input.session_key` 前綴為 `autonomy-canary-`）時，worker 才會先注入 deterministic `plannedDecision={ action: "get_runtime_info", params: {} }` 再執行 `executePlannedUserInput(...)`。
+- 這是 queue-authoritative canary 的 throughput 保護；不改變 `completed` gate（仍需 execute success + verifier pass）。
+
 ## 1. 啟用前檢查
 
 1. 進到 repo 根目錄。
@@ -95,6 +100,9 @@ AUTONOMY_ENABLED=true npm run start:full
 ```
 
 補充：worker execute timeout 可用 `AUTONOMY_EXECUTE_TIMEOUT_MS` 調整（預設 `60000` ms）。
+補充：queued backlog stale guard 可用 `AUTONOMY_MAX_QUEUED_AGE_MS` 調整（預設 `60000` ms）。
+補充：queued fresh-priority window 可用 `AUTONOMY_QUEUED_FRESH_PRIORITY_WINDOW_MS` 調整（預設 `60000` ms）。
+補充：worker loop 在 claim 到 job 後會立即進下一輪（0ms）；只有 queue 為空時才套用 `pollIntervalMs`。
 
 3. （可選）若要做 runbook 自訂 `job_type` 演練，可另外手動啟動 Phase 1 worker（前景執行，`Ctrl+C` 可停用）。
 
@@ -258,7 +266,9 @@ node --input-type=module -e 'import db from "./src/db.mjs"; const row=db.prepare
 - 風險：`startAutonomyWorkerLoop` 預設 `executeJob` 會回 `ok:true`。
   - Guardrail：永遠傳入明確 `executeJob`，並限制可處理 `job_type`（本 runbook 僅允許 `runbook_smoke_job`）。
 - 風險：單筆 execute 若外部依賴卡住，可能阻塞單一 loop 後續 claim。
-  - Guardrail：worker execute 現在有 `AUTONOMY_EXECUTE_TIMEOUT_MS`（預設 60s）硬性 timeout，timeout 走既有 fail-soft failed path。
+  - Guardrail：worker execute 現在有 `AUTONOMY_EXECUTE_TIMEOUT_MS`（預設 60s）硬性 timeout；timeout 會 abort in-flight execute signal，並走既有 fail-soft failed path。
+- 風險：舊的 queued backlog 可能長時間堵住新 queue-authoritative job。
+  - Guardrail：claim 前會先套用 stale fail-soft（`AUTONOMY_MAX_QUEUED_AGE_MS`，預設 60s），超時 queued 轉 `failed(queued_job_stale_timeout)`、過期過久的 running 轉 `failed(running_job_stale_timeout)`；queued claim 採 recent-window 優先 + FIFO（`AUTONOMY_QUEUED_FRESH_PRIORITY_WINDOW_MS`，預設 60s）以避免舊 backlog 阻塞新批次，同時避免同批次飢餓。
 - 風險：autonomy tables 與主 DB 同一個 SQLite（`RAG_SQLITE_PATH`）。
   - Guardrail：所有演練都加 `trace_id=runbook_*`，可精準清理。
 - 風險：worker 雖已受管於主服務 process，但仍無跨進程 supervisor/租約仲裁。

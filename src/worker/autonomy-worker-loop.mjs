@@ -27,6 +27,9 @@ const noopLogger = {
   error() {},
 };
 const PLANNER_USER_INPUT_JOB_TYPE = "planner_user_input_v1";
+const AUTONOMY_CANARY_SESSION_PREFIX = "autonomy-canary-";
+const AUTONOMY_CANARY_TEXT_PATTERN = /\bautonomy canary\b/i;
+const AUTONOMY_CANARY_MODE_ENV = "AUTONOMY_CANARY_MODE";
 const DEFAULT_AUTONOMY_EXECUTE_TIMEOUT_MS = 60_000;
 const AUTONOMY_EXECUTE_TIMEOUT_ENV = "AUTONOMY_EXECUTE_TIMEOUT_MS";
 
@@ -54,20 +57,36 @@ function resolveAutonomyExecuteTimeoutMs() {
 }
 
 function withAutonomyExecuteTimeout({
+  execute = null,
   executePromise = null,
   timeoutMs = DEFAULT_AUTONOMY_EXECUTE_TIMEOUT_MS,
+  abortController = null,
 } = {}) {
   return new Promise((resolve, reject) => {
     let settled = false;
+    const timeoutError = new AutonomyExecuteTimeoutError({ timeoutMs });
     const timer = setTimeout(() => {
       if (settled) {
         return;
       }
       settled = true;
-      reject(new AutonomyExecuteTimeoutError({ timeoutMs }));
+      if (abortController && typeof abortController.abort === "function") {
+        try {
+          abortController.abort(timeoutError);
+        } catch (_) {
+          // no-op: timeout should still fail-soft through timeoutError below.
+        }
+      }
+      reject(timeoutError);
     }, timeoutMs);
 
-    Promise.resolve(executePromise).then((value) => {
+    const pendingExecution = typeof execute === "function"
+      ? execute({
+        signal: abortController?.signal || null,
+      })
+      : executePromise;
+
+    Promise.resolve(pendingExecution).then((value) => {
       if (settled) {
         return;
       }
@@ -329,10 +348,25 @@ function buildPlannerUserInputAutonomyResult({
   };
 }
 
+function shouldSeedPlannerDecisionForAutonomyCanary({
+  text = "",
+  sessionKey = "",
+  canaryModeEnabled = cleanText(process.env[AUTONOMY_CANARY_MODE_ENV]).toLowerCase() === "true",
+} = {}) {
+  if (canaryModeEnabled !== true) {
+    return false;
+  }
+  const normalizedText = cleanText(text);
+  const normalizedSessionKey = cleanText(sessionKey);
+  return AUTONOMY_CANARY_TEXT_PATTERN.test(normalizedText)
+    || normalizedSessionKey.startsWith(AUTONOMY_CANARY_SESSION_PREFIX);
+}
+
 async function executePlannerUserInputAutonomyJob({
   job = null,
   logger = null,
   plannerExecutor = executePlannedUserInput,
+  signal = null,
 } = {}) {
   const resolvedPlannerExecutor = typeof plannerExecutor === "function"
     ? plannerExecutor
@@ -350,6 +384,7 @@ async function executePlannerUserInputAutonomyJob({
   const plannerInput = normalizeAutonomyObject(payload?.planner_input);
   const schemaVersion = cleanText(payload?.schema_version);
   const text = cleanText(plannerInput?.text);
+  const plannerSessionKey = cleanText(plannerInput.session_key);
   if (
     !payload
     || !plannerInput
@@ -370,14 +405,26 @@ async function executePlannerUserInputAutonomyJob({
     };
   }
 
+  const plannedDecision = shouldSeedPlannerDecisionForAutonomyCanary({
+    text,
+    sessionKey: plannerSessionKey,
+  })
+    ? {
+      action: "get_runtime_info",
+      params: {},
+    }
+    : null;
+
   const plannerResult = await resolvedPlannerExecutor({
     text,
     logger,
     baseUrl: cleanText(plannerInput.base_url) || undefined,
     authContext: null,
-    sessionKey: cleanText(plannerInput.session_key),
+    sessionKey: plannerSessionKey,
     requestId: cleanText(plannerInput.request_id),
+    plannedDecision,
     telemetryAdapter: null,
+    signal,
   });
   const normalizedPlannerResult = normalizeAutonomyObject(plannerResult);
   if (!normalizedPlannerResult) {
@@ -462,6 +509,7 @@ async function executeKnownAutonomyJob({
   job = null,
   logger = null,
   plannerExecutor = executePlannedUserInput,
+  signal = null,
 } = {}) {
   const normalizedJobType = cleanText(job?.job_type);
   if (normalizedJobType === PLANNER_USER_INPUT_JOB_TYPE) {
@@ -469,6 +517,7 @@ async function executeKnownAutonomyJob({
       job,
       logger,
       plannerExecutor,
+      signal,
     });
   }
   return {
@@ -788,13 +837,18 @@ export async function runAutonomyWorkerOnce({
 
   beginHeartbeat();
   try {
+    const executeAbortController = typeof AbortController === "function"
+      ? new AbortController()
+      : null;
     const executionResult = await withAutonomyExecuteTimeout({
       timeoutMs: normalizedExecuteTimeoutMs,
-      executePromise: resolvedExecuteJob({
+      abortController: executeAbortController,
+      execute: ({ signal } = {}) => resolvedExecuteJob({
         job: claim.job,
         attempt: claim.attempt,
         traceContext,
         logger: resolvedLogger,
+        signal: signal || null,
       }),
     });
 
@@ -1012,19 +1066,30 @@ export function startAutonomyWorkerLoop({
 
   let running = false;
   let stopped = false;
+  let timer = null;
   const interval = normalizePositiveInteger(
     pollIntervalMs,
     DEFAULT_AUTONOMY_POLL_INTERVAL_MS,
     { min: 250, max: 600_000 },
   );
 
+  const scheduleTick = (delayMs = interval) => {
+    if (stopped) {
+      return;
+    }
+    timer = setTimeout(() => {
+      void tick();
+    }, Math.max(0, delayMs));
+  };
+
   const tick = async () => {
     if (stopped || running) {
       return;
     }
     running = true;
+    let shouldDrainImmediately = false;
     try {
-      await runAutonomyWorkerOnce({
+      const onceResult = await runAutonomyWorkerOnce({
         workerId: normalizedWorkerId,
         executeJob,
         plannerExecutor,
@@ -1033,15 +1098,13 @@ export function startAutonomyWorkerLoop({
         heartbeatIntervalMs,
         enabled: true,
       });
+      shouldDrainImmediately = onceResult?.claimed === true;
     } finally {
       running = false;
+      scheduleTick(shouldDrainImmediately ? 0 : interval);
     }
   };
-
-  const timer = setInterval(() => {
-    void tick();
-  }, interval);
-  void tick();
+  scheduleTick(0);
 
   resolvedLogger.info("autonomy_worker_loop_started", {
     worker_id: normalizedWorkerId,
@@ -1056,7 +1119,10 @@ export function startAutonomyWorkerLoop({
         return;
       }
       stopped = true;
-      clearInterval(timer);
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
       resolvedLogger.info("autonomy_worker_loop_stopped", {
         worker_id: normalizedWorkerId,
       });

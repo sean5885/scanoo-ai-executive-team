@@ -82,18 +82,31 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/scripts/autonomy-operator-cli.mjs`
 - Current truth:
   - adds a minimal SQLite-backed autonomy job store (`autonomy_jobs`, `autonomy_job_attempts`, `autonomy_worker_heartbeats`) and worker lifecycle operations (`claim`, `heartbeat`, `complete`, `fail`)
+  - claim path now includes additive stale-queued fail-soft guard:
+    - before selecting next claim candidate, queued rows older than `AUTONOMY_MAX_QUEUED_AGE_MS` (default 60s) are marked `failed`
+    - before selecting next claim candidate, long-expired running rows (`lease_expires_at <= now` and `updated_at/started_at` older than threshold) are also marked `failed`
+    - stale failure stays in existing failure surface (`status=failed`, `error_json.error=queued_job_stale_timeout|running_job_stale_timeout`) and never projects as completed
+    - goal is to prevent old queued backlog from indefinitely blocking fresher queue-authoritative jobs
+  - queued claim ordering is FIFO fairness-first:
+    - claim first prefers rows inside a recent queued priority window (`AUTONOMY_QUEUED_FRESH_PRIORITY_WINDOW_MS`, default 60s), then applies FIFO within that window
+    - when rows are in the same priority bucket, claim prefers the oldest `COALESCE(next_run_at, created_at)` row first
+    - this avoids head-of-line starvation where earlier accepted requests stay queued while newer requests keep being claimed
   - adds a feature-flagged enqueue adapter and worker loop entry (`AUTONOMY_ENABLED`)
   - job-level trace correlation now has an additive helper surface (`job_id`, `attempt_id`, `trace_id`)
   - worker completion now runs one local verifier gate (`executeJob -> normalize execution_journal/evidence -> verify -> complete/fail`) through `executive-verifier` rules before marking a job `completed`
   - worker now includes one built-in execute adapter for `job_type=planner_user_input_v1`:
     - queue payload (`planner_input`) -> `executePlannedUserInput(...)`
+    - only when `AUTONOMY_CANARY_MODE=true` and payload text/session matches autonomy canary markers (`autonomy canary*` or `session_key` prefix `autonomy-canary-`), worker seeds deterministic planner decision `{ action: "get_runtime_info", params: {} }` before execute to keep canary throughput bounded without waiting on LLM planning latency
     - only execute success + verifier pass can mark `completed`
     - execute failure / verifier fail stay on existing fail-soft `recovery_decision_v1` + lifecycle sink path
     - `executeJob` injection remains the override path for other or custom job types
   - worker execute stage now has a bounded timeout guard:
     - `runAutonomyWorkerOnce(...)` wraps `executeJob` with a hard timeout (`AUTONOMY_EXECUTE_TIMEOUT_MS`, default 60s)
-    - timeout is normalized to `AutonomyExecuteTimeoutError` and routed through the same fail-soft `failAutonomyAttempt(...)` path
+    - timeout is normalized to `AutonomyExecuteTimeoutError`, aborts the in-flight execute signal, and routes through the same fail-soft `failAutonomyAttempt(...)` path
     - goal is to prevent one hung execute from blocking the single-loop worker from claiming later queued jobs
+  - worker loop scheduling now drains queue back-to-back:
+    - when a tick claims any job, next tick is scheduled immediately (`0ms`) instead of waiting full poll interval
+    - poll interval delay applies only when queue is empty / no claim happened
   - worker failure payload now adds additive `lifecycle_sink` metadata for sink-class decisions (`waiting_user` from `blocked + *_waiting_user`, `escalated` from `next_state=escalated`) while keeping the same status machine (`queued|running|completed|failed`)
   - store now also exposes one fail-closed worker-readiness helper (`readAutonomyWorkerReadiness`) using bounded latest heartbeat + lease projection from running attempts and additive worker heartbeat records; missing/stale/expired heartbeat is treated as `not ready`
     - store now also has additive worker heartbeat write helper (`heartbeatAutonomyWorker`) for idle worker liveness updates; `src/worker/autonomy-runtime-manager.mjs` now uses this helper from main-service bootstrap for process-local managed liveness (single worker owner in one process)
