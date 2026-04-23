@@ -12,6 +12,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - `/Users/seanhan/Documents/Playground/src/worker/autonomy-worker-loop.mjs`
 - `/Users/seanhan/Documents/Playground/src/worker/autonomy-runtime-manager.mjs`
 - `/Users/seanhan/Documents/Playground/src/index.mjs`（主服務接線）
+- `/Users/seanhan/Documents/Playground/scripts/run-autonomy-canary.mjs`（HTTP-only + runtime manager canary runner）
 
 主流程不改；另外補充一個 Phase 3 cut 4 的最小 operator CLI ingress（僅 list-open / disposition）。
 第一刀接線後，`npm run start:full` 的主服務會在同一 process 內受管啟動 autonomy runtime manager（單一 owner）。
@@ -58,6 +59,32 @@ worker canary execute 補充（已落地）：
 
 - `planner_user_input_v1` 僅在 `AUTONOMY_CANARY_MODE=true` 且命中 canary 標記（`planner_input.text` 含 `autonomy canary` 或 `planner_input.session_key` 前綴為 `autonomy-canary-`）時，worker 才會先注入 deterministic `plannedDecision={ action: "get_runtime_info", params: {} }` 再執行 `executePlannedUserInput(...)`。
 - 這是 queue-authoritative canary 的 throughput 保護；不改變 `completed` gate（仍需 execute success + verifier pass）。
+
+## 0B. One-shot Autonomy Canary Runner（HTTP-only + runtime manager）
+
+新增 one-shot runner：
+
+- `/Users/seanhan/Documents/Playground/scripts/run-autonomy-canary.mjs`
+
+用途：
+
+- 自動啟 `src/http-only.mjs`（HTTP-only server）
+- 自動啟受管 autonomy runtime manager（含 idle heartbeat）
+- 先等 `/health` 與 worker heartbeat readiness，再跑 canary
+- 依序執行 `scripts/run-canary.sh` + `scripts/check-canary.sh`
+- 最後輸出固定 summary 欄位：`total / queue_hits / completed / failed / fallback`
+
+執行方式：
+
+```bash
+node scripts/run-autonomy-canary.mjs
+```
+
+常用覆蓋：
+
+```bash
+SESSION_ID="autonomy-canary-1" OUT_DIR=".tmp/canary" node scripts/run-autonomy-canary.mjs
+```
 
 ## 1. 啟用前檢查
 
