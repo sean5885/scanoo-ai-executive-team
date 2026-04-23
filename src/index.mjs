@@ -12,6 +12,7 @@ import { createMessageEventDeduper } from "./runtime-message-deduper.mjs";
 import { sendLaneReply } from "./runtime-message-reply.mjs";
 import { touchResolvedSession } from "./session-scope-store.mjs";
 import { executePlannedUserInput } from "./executive-planner.mjs";
+import { createLongConnectionLifecycleMonitor } from "./long-connection-lifecycle-monitor.mjs";
 import {
   startAutonomyRuntimeManager,
   stopAutonomyRuntimeManager,
@@ -30,6 +31,12 @@ const eventDispatcher = new Lark.EventDispatcher({}).register({
       trace_id: traceId,
       event_id: data?.message?.message_id || null,
       ...eventSummary,
+    });
+    wsLifecycleMonitor.markIngressEvent({
+      callback_event_type: "im.message.receive_v1",
+      sender_type: senderType || null,
+      chat_id: chatId || null,
+      event_id: data?.message?.message_id || null,
     });
 
     if (!chatId || senderType === "app") {
@@ -150,6 +157,11 @@ const wsClient = new Lark.WSClient({
   ...baseConfig,
   loggerLevel: Lark.LoggerLevel.info,
 });
+const wsLifecycleMonitor = createLongConnectionLifecycleMonitor({
+  wsClient,
+  eventDispatcher,
+  logger: runtimeLogger,
+});
 const httpServer = startHttpServer();
 const commentSuggestionPoller = startCommentSuggestionPoller({ logger: console });
 const autonomyRuntimeLogger = runtimeLogger.child("autonomy_runtime_manager");
@@ -160,6 +172,7 @@ process.on("SIGINT", () => {
     signal: "SIGINT",
     status: "stopping",
   });
+  wsLifecycleMonitor.stop();
   stopAutonomyRuntimeManager({ logger: autonomyRuntimeLogger });
   commentSuggestionPoller.stop();
   httpServer.close();
@@ -172,6 +185,7 @@ process.on("SIGTERM", () => {
     signal: "SIGTERM",
     status: "stopping",
   });
+  wsLifecycleMonitor.stop();
   stopAutonomyRuntimeManager({ logger: autonomyRuntimeLogger });
   commentSuggestionPoller.stop();
   httpServer.close();
