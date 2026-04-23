@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
@@ -14,23 +15,14 @@ const sessionId = process.env.SESSION_ID || `autonomy-canary-${Date.now()}`;
 const outDir = process.env.OUT_DIR || ".tmp/canary";
 const requestsJsonl = process.env.REQUESTS_JSONL || `${outDir}/${sessionId}.requests.jsonl`;
 const checkJsonl = process.env.CHECK_JSONL || `${outDir}/${sessionId}.check.jsonl`;
-const baseUrlFromEnv = process.env.BASE_URL
-  || process.env.LARK_OAUTH_BASE_URL
-  || `http://127.0.0.1:${process.env.LARK_OAUTH_PORT || "3333"}`;
-const baseUrl = baseUrlFromEnv.replace(/\/+$/, "");
+const requestedPort = process.env.AUTONOMY_CANARY_PORT || process.env.CANARY_PORT || "";
 
-const ENV = {
-  ...process.env,
-  AUTONOMY_ENABLED: "true",
-  AUTONOMY_MAX_QUEUED_AGE_MS: process.env.AUTONOMY_MAX_QUEUED_AGE_MS || "1800000",
-  AUTONOMY_EXECUTE_TIMEOUT_MS: process.env.AUTONOMY_EXECUTE_TIMEOUT_MS || "180000",
-  AUTONOMY_CANARY_MODE: process.env.AUTONOMY_CANARY_MODE || "1",
-  SESSION_ID: sessionId,
-  OUT_DIR: outDir,
-  REQUESTS_JSONL: requestsJsonl,
-  CHECK_JSONL: checkJsonl,
-  BASE_URL: baseUrl,
-};
+const AUTONOMY_CANARY_MODE_ENV = "AUTONOMY_CANARY_MODE";
+const AUTONOMY_INGRESS_ENABLE_ENV = "PLANNER_AUTONOMY_INGRESS_ENABLED";
+const AUTONOMY_INGRESS_ALLOWLIST_ENV = "PLANNER_AUTONOMY_INGRESS_ALLOWLIST";
+const AUTONOMY_QUEUE_AUTHORITATIVE_ENABLE_ENV = "PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED";
+const AUTONOMY_QUEUE_AUTHORITATIVE_SAMPLING_PERCENT_ENV = "PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_SAMPLING_PERCENT";
+const AUTONOMY_INGRESS_ALLOWLIST_SESSION_PREFIX = "session:";
 
 const managerEntrypoint = `
 import { startAutonomyRuntimeManager, stopAutonomyRuntimeManager } from "./src/worker/autonomy-runtime-manager.mjs";
@@ -50,6 +42,129 @@ process.on("SIGTERM", shutdown);
 setInterval(() => {}, 60000);
 `;
 
+function parsePort(rawPort = "") {
+  const normalized = String(rawPort || "").trim();
+  if (!normalized) {
+    return null;
+  }
+  const parsed = Number.parseInt(normalized, 10);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+    throw new Error(`invalid_port: ${normalized}`);
+  }
+  return parsed;
+}
+
+async function findFreePort() {
+  return await new Promise((resolve, reject) => {
+    const server = createServer();
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address
+        ? Number(address.port)
+        : null;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        if (!Number.isInteger(port) || port < 1 || port > 65535) {
+          reject(new Error("failed_to_allocate_canary_port"));
+          return;
+        }
+        resolve(port);
+      });
+    });
+    server.on("error", reject);
+  });
+}
+
+async function resolveCanaryPort() {
+  const parsed = parsePort(requestedPort);
+  if (parsed != null) {
+    return parsed;
+  }
+  return await findFreePort();
+}
+
+function normalizeBooleanEnv(rawValue, fallbackValue = true) {
+  const normalized = String(rawValue || "").trim().toLowerCase();
+  if (!normalized) {
+    return fallbackValue ? "true" : "false";
+  }
+  if (normalized === "true" || normalized === "1" || normalized === "yes") {
+    return "true";
+  }
+  if (normalized === "false" || normalized === "0" || normalized === "no") {
+    return "false";
+  }
+  return fallbackValue ? "true" : "false";
+}
+
+function buildAutonomyIngressAllowlist({
+  rawAllowlist = "",
+  session = "",
+} = {}) {
+  const normalizedSession = String(session || "").trim();
+  const sessionAllowlistEntry = `${AUTONOMY_INGRESS_ALLOWLIST_SESSION_PREFIX}${normalizedSession}`;
+  const entries = String(rawAllowlist || "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (!normalizedSession) {
+    return entries.join(",");
+  }
+  const hasSessionMatch = entries.some((entry) => {
+    const separator = entry.indexOf(":");
+    if (separator < 0) {
+      return entry === normalizedSession;
+    }
+    const subject = entry.slice(0, separator).trim().toLowerCase();
+    const value = entry.slice(separator + 1).trim();
+    return subject === "session" && value === normalizedSession;
+  });
+  if (!hasSessionMatch) {
+    entries.unshift(sessionAllowlistEntry);
+  }
+  return entries.join(",");
+}
+
+function resolveRunnerEnv({
+  baseUrl = "",
+  port = null,
+} = {}) {
+  if (!baseUrl) {
+    throw new Error("missing_base_url");
+  }
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`invalid_runner_port: ${port}`);
+  }
+
+  const ingressAllowlist = buildAutonomyIngressAllowlist({
+    rawAllowlist: process.env[AUTONOMY_INGRESS_ALLOWLIST_ENV],
+    session: sessionId,
+  });
+
+  return {
+    ...process.env,
+    AUTONOMY_ENABLED: "true",
+    AUTONOMY_MAX_QUEUED_AGE_MS: process.env.AUTONOMY_MAX_QUEUED_AGE_MS || "1800000",
+    AUTONOMY_EXECUTE_TIMEOUT_MS: process.env.AUTONOMY_EXECUTE_TIMEOUT_MS || "180000",
+    [AUTONOMY_CANARY_MODE_ENV]: normalizeBooleanEnv(process.env[AUTONOMY_CANARY_MODE_ENV], true),
+    [AUTONOMY_INGRESS_ENABLE_ENV]: "true",
+    [AUTONOMY_QUEUE_AUTHORITATIVE_ENABLE_ENV]: "true",
+    [AUTONOMY_QUEUE_AUTHORITATIVE_SAMPLING_PERCENT_ENV]:
+      process.env[AUTONOMY_QUEUE_AUTHORITATIVE_SAMPLING_PERCENT_ENV] || "100",
+    [AUTONOMY_INGRESS_ALLOWLIST_ENV]: ingressAllowlist || `${AUTONOMY_INGRESS_ALLOWLIST_SESSION_PREFIX}${sessionId}`,
+    SESSION_ID: sessionId,
+    OUT_DIR: outDir,
+    REQUESTS_JSONL: requestsJsonl,
+    CHECK_JSONL: checkJsonl,
+    LARK_OAUTH_PORT: String(port),
+    LARK_OAUTH_BASE_URL: baseUrl,
+    BASE_URL: baseUrl,
+  };
+}
+
 function resolvePath(filePath) {
   if (path.isAbsolute(filePath)) {
     return filePath;
@@ -61,10 +176,24 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function spawnProcess(command, args, name) {
+function formatExit({ name = "", code = null, signal = null } = {}) {
+  return `${name}_exited_early code=${code ?? "null"} signal=${signal ?? "none"}`;
+}
+
+function buildEarlyExitError({
+  name = "",
+  code = null,
+  signal = null,
+  phase = "",
+} = {}) {
+  const suffix = phase ? ` phase=${phase}` : "";
+  return new Error(`${formatExit({ name, code, signal })}${suffix}`);
+}
+
+function spawnProcess(command, args, name, env) {
   const child = spawn(command, args, {
     cwd: repoRoot,
-    env: ENV,
+    env,
     stdio: "inherit",
   });
   child.on("exit", (code, signal) => {
@@ -75,25 +204,107 @@ function spawnProcess(command, args, name) {
   return child;
 }
 
-function ensureRunning(child, name) {
+function ensureRunning(child, name, phase = "") {
   if (!child) {
-    throw new Error(`${name}_process_missing`);
+    const suffix = phase ? ` phase=${phase}` : "";
+    throw new Error(`${name}_process_missing${suffix}`);
   }
-  if (child.exitCode != null) {
-    throw new Error(`${name}_exited_early code=${child.exitCode}`);
+  if (child.exitCode != null || child.signalCode != null) {
+    throw buildEarlyExitError({
+      name,
+      code: child.exitCode,
+      signal: child.signalCode,
+      phase,
+    });
   }
 }
 
-function runCommand(command, args, name) {
+function ensureProcessesRunning(processes = [], phase = "") {
+  for (const entry of processes) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+    ensureRunning(entry.child, entry.name || "child_process", phase);
+  }
+}
+
+function runCommand(command, args, name, {
+  env,
+  guardProcesses = [],
+} = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawnProcess(command, args, name);
-    child.on("error", reject);
-    child.on("exit", (code, signal) => {
-      if (code === 0) {
-        resolve();
+    const child = spawnProcess(command, args, name, env);
+    let settled = false;
+    const guardListeners = [];
+
+    const finalize = (error = null) => {
+      if (settled) {
         return;
       }
-      reject(new Error(`[${name}] failed (code=${code ?? "null"} signal=${signal ?? "none"})`));
+      settled = true;
+      for (const listenerRef of guardListeners) {
+        try {
+          listenerRef.child.off("exit", listenerRef.listener);
+        } catch {}
+      }
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    };
+
+    try {
+      ensureProcessesRunning(guardProcesses, `${name}_start`);
+    } catch (error) {
+      terminateProcess(child, name).finally(() => {
+        finalize(error);
+      });
+      return;
+    }
+
+    for (const guard of guardProcesses) {
+      const guardName = guard?.name || "child_process";
+      const guardChild = guard?.child;
+      if (!guardChild) {
+        continue;
+      }
+      const listener = (code, signal) => {
+        const reason = buildEarlyExitError({
+          name: guardName,
+          code,
+          signal,
+          phase: `${name}_running`,
+        });
+        terminateProcess(child, name).finally(() => {
+          finalize(reason);
+        });
+      };
+      guardChild.once("exit", listener);
+      guardListeners.push({
+        child: guardChild,
+        listener,
+      });
+    }
+
+    try {
+      ensureProcessesRunning(guardProcesses, `${name}_post_guard_attach`);
+    } catch (error) {
+      terminateProcess(child, name).finally(() => {
+        finalize(error);
+      });
+      return;
+    }
+
+    child.on("error", (error) => {
+      finalize(new Error(`[${name}] spawn_error: ${error?.message || "unknown_error"}`));
+    });
+    child.on("exit", (code, signal) => {
+      if (code === 0) {
+        finalize(null);
+        return;
+      }
+      finalize(new Error(`[${name}] failed (code=${code ?? "null"} signal=${signal ?? "none"})`));
     });
   });
 }
@@ -119,11 +330,17 @@ async function terminateProcess(child, name, timeoutMs = 8_000) {
   }
 }
 
-async function waitForHttpReadiness({ timeoutMs = 60_000, intervalMs = 1_000 } = {}) {
+async function waitForHttpReadiness({
+  baseUrl = "",
+  timeoutMs = 60_000,
+  intervalMs = 1_000,
+  monitoredProcesses = [],
+} = {}) {
   const deadline = Date.now() + timeoutMs;
   let lastError = "unknown";
 
   while (Date.now() < deadline) {
+    ensureProcessesRunning(monitoredProcesses, "http_readiness_wait");
     try {
       const response = await fetch(`${baseUrl}/health`);
       if (response.ok) {
@@ -139,11 +356,16 @@ async function waitForHttpReadiness({ timeoutMs = 60_000, intervalMs = 1_000 } =
   throw new Error(`http_readiness_timeout: ${lastError}`);
 }
 
-async function waitForRuntimeManagerReadiness({ timeoutMs = 30_000, intervalMs = 1_000 } = {}) {
+async function waitForRuntimeManagerReadiness({
+  timeoutMs = 30_000,
+  intervalMs = 1_000,
+  monitoredProcesses = [],
+} = {}) {
   const deadline = Date.now() + timeoutMs;
   let lastReadiness = null;
 
   while (Date.now() < deadline) {
+    ensureProcessesRunning(monitoredProcesses, "runtime_manager_readiness_wait");
     lastReadiness = readAutonomyWorkerReadiness();
     if (lastReadiness?.ready === true) {
       return lastReadiness;
@@ -176,25 +398,32 @@ async function readJsonl(filePath) {
   });
 }
 
-async function printSummary() {
+async function summarizeRequests() {
   const requestRows = await readJsonl(requestsJsonl);
+  return {
+    total: requestRows.length,
+    queue_hits: countWhere(requestRows, (row) => row?.queue_authoritative_hit === true),
+    fallback: countWhere(requestRows, (row) => row?.fallback_suspected === true),
+  };
+}
+
+async function printSummary(requestSummary) {
   const checkRows = await readJsonl(checkJsonl);
 
-  const total = requestRows.length;
-  const queueHits = countWhere(requestRows, (row) => row?.queue_authoritative_hit === true);
-  const fallback = countWhere(requestRows, (row) => row?.fallback_suspected === true);
   const completed = countWhere(checkRows, (row) => row?.final_status === "completed");
   const failed = checkRows.length - completed;
 
   console.log("");
   console.log("=== Autonomy Canary Summary (runner) ===");
-  console.log(`total=${total} queue_hits=${queueHits} completed=${completed} failed=${failed} fallback=${fallback}`);
+  console.log(
+    `total=${requestSummary.total} queue_hits=${requestSummary.queue_hits} completed=${completed} failed=${failed} fallback=${requestSummary.fallback}`,
+  );
   console.log(JSON.stringify({
-    total,
-    queue_hits: queueHits,
+    total: requestSummary.total,
+    queue_hits: requestSummary.queue_hits,
     completed,
     failed,
-    fallback,
+    fallback: requestSummary.fallback,
     session_id: sessionId,
     requests_jsonl: requestsJsonl,
     check_jsonl: checkJsonl,
@@ -218,29 +447,67 @@ async function main() {
   });
 
   try {
+    const canaryPort = await resolveCanaryPort();
+    const baseUrl = `http://127.0.0.1:${canaryPort}`;
+    const env = resolveRunnerEnv({
+      baseUrl,
+      port: canaryPort,
+    });
+    const guardProcesses = [];
+
+    console.log("=== Canary runner config ===");
+    console.log(`session_id=${sessionId}`);
+    console.log(`base_url=${baseUrl}`);
+    console.log(`port=${canaryPort}`);
+    console.log(`requests_jsonl=${requestsJsonl}`);
+    console.log(`check_jsonl=${checkJsonl}`);
+
     console.log("=== Starting HTTP-only server ===");
-    server = spawnProcess(process.execPath, ["src/http-only.mjs"], "http-server");
+    server = spawnProcess(process.execPath, ["src/http-only.mjs"], "http-server", env);
+    guardProcesses.push({ name: "http_server", child: server });
 
     console.log("=== Waiting for HTTP readiness ===");
-    await waitForHttpReadiness();
-    ensureRunning(server, "http_server");
+    await waitForHttpReadiness({
+      baseUrl,
+      monitoredProcesses: guardProcesses,
+    });
 
     console.log("=== Starting runtime manager (with heartbeat) ===");
-    manager = spawnProcess(process.execPath, ["--input-type=module", "-e", managerEntrypoint], "runtime-manager");
+    manager = spawnProcess(
+      process.execPath,
+      ["--input-type=module", "-e", managerEntrypoint],
+      "runtime-manager",
+      env,
+    );
+    guardProcesses.push({ name: "runtime_manager", child: manager });
 
     console.log("=== Waiting for runtime manager readiness ===");
-    await waitForRuntimeManagerReadiness();
-    ensureRunning(manager, "runtime_manager");
+    await waitForRuntimeManagerReadiness({
+      monitoredProcesses: guardProcesses,
+    });
 
     console.log("=== Running canary request phase ===");
-    ensureRunning(server, "http_server");
-    ensureRunning(manager, "runtime_manager");
-    await runCommand("bash", ["scripts/run-canary.sh"], "canary-run");
+    ensureProcessesRunning(guardProcesses, "before_canary_run");
+    await runCommand("bash", ["scripts/run-canary.sh"], "canary-run", {
+      env,
+      guardProcesses,
+    });
+
+    const requestSummary = await summarizeRequests();
+    if (requestSummary.queue_hits <= 0) {
+      throw new Error(
+        `queue_hits_zero total=${requestSummary.total} queue_hits=${requestSummary.queue_hits} requests_jsonl=${requestsJsonl} reason=autonomy_ingress_or_runtime_manager_not_effective`,
+      );
+    }
 
     console.log("=== Running canary verification phase ===");
-    await runCommand("bash", ["scripts/check-canary.sh"], "canary-check");
+    ensureProcessesRunning(guardProcesses, "before_canary_check");
+    await runCommand("bash", ["scripts/check-canary.sh"], "canary-check", {
+      env,
+      guardProcesses,
+    });
 
-    await printSummary();
+    await printSummary(requestSummary);
   } finally {
     console.log("=== Cleaning up ===");
     await terminateProcess(manager, "runtime-manager");

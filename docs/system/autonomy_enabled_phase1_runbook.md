@@ -68,10 +68,14 @@ worker canary execute 補充（已落地）：
 
 用途：
 
-- 自動啟 `src/http-only.mjs`（HTTP-only server）
+- 自動啟 `src/http-only.mjs`（HTTP-only server，預設獨立 port，不依賴既有 3333）
 - 自動啟受管 autonomy runtime manager（含 idle heartbeat）
+- 自動注入 autonomy ingress 必要 env（`AUTONOMY_ENABLED=true`、`PLANNER_AUTONOMY_INGRESS_ENABLED=true`、`PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED=true`、`PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_SAMPLING_PERCENT=100`、`AUTONOMY_CANARY_MODE=true`，並確保 allowlist 含 `session:<SESSION_ID>`）
 - 先等 `/health` 與 worker heartbeat readiness，再跑 canary
 - 依序執行 `scripts/run-canary.sh` + `scripts/check-canary.sh`
+- fail-fast 保證：
+  - `queue_hits=0` 直接失敗並輸出明確原因（不進 check phase）
+  - `http-server` 或 `runtime-manager` 任一提前退出時立即失敗（不等待 timeout）
 - 最後輸出固定 summary 欄位：`total / queue_hits / completed / failed / fallback`
 
 執行方式：
@@ -84,6 +88,10 @@ node scripts/run-autonomy-canary.mjs
 
 ```bash
 SESSION_ID="autonomy-canary-1" OUT_DIR=".tmp/canary" node scripts/run-autonomy-canary.mjs
+```
+
+```bash
+AUTONOMY_CANARY_PORT="3340" SESSION_ID="autonomy-canary-1" node scripts/run-autonomy-canary.mjs
 ```
 
 ## 1. 啟用前檢查
