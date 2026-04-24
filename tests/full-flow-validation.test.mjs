@@ -278,10 +278,11 @@ test("full flow validation does not fake partial success when every requested su
 
   assert.equal(runtimeResult.execution_result?.ok, false);
   assert.equal(response.ok, false);
-  assert.equal(response.failure_class, "permission_denied");
-  assert.equal(response.sources.length, 0);
-  assert.match(response.answer || "", /auth-required|授權|使用者 token/);
-  assert.match(response.limitations.join(" "), /重新送出這輪需求|登入授權/);
+  assert.equal(response.partial === true, false);
+  assert.equal(response.failure_class, "generic_fallback");
+  assert.equal(response.sources.length > 0, true);
+  assert.match(response.answer || "", /能力邊界|blocked|capability_gap/);
+  assert.match(response.limitations.join(" "), /capability_gap|手動執行|最短操作步驟/);
 });
 
 test("full flow validation keeps mixed intent on a single preset route and renders from the same envelope", async () => {

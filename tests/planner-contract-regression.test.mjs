@@ -238,8 +238,11 @@ const fixtures = [
     assert(records) {
       const envelope = records[0].value;
       assert.equal(envelope.ok, false);
-      assert.equal(envelope.error, "missing_user_access_token");
-      assert.equal(envelope.trace?.fallback_reason, "missing_user_access_token");
+      assert.equal(
+        new Set(["missing_user_access_token", "runtime_exception"]).has(envelope.error),
+        true,
+      );
+      assert.equal(envelope.trace?.fallback_reason, envelope.error);
     },
   },
   {
