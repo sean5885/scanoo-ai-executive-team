@@ -306,6 +306,14 @@ Current-truth docs for onboarding are:
     - `/Users/seanhan/Documents/Playground/src/decision-metrics-scoreboard.mjs` builds one per-session/per-memory snapshot from existing observability + promotion control surface:
       - action entry fields: `action_name`, `promotion_enabled`, `promotion_applied_count`, `exact_match_count`, `acceptable_divergence_count`, `hard_divergence_count`, `effective_count`, `ineffective_count`, `rollback_flag_count`, `current_rollback_disabled`, `maturity_signal`, `scoreboard_version`
       - conservative deterministic maturity rule: `high|medium|low` (fixed threshold, no statistical model)
+      - recovery split metrics are now included in the same scoreboard summary:
+        - `total_failures`
+        - `candidate_generated_count`
+        - `search_selected_count`
+        - `retry_without_candidate_count`
+        - `retry_without_candidate_ratio`
+        - `search_success_count`
+        - `search_success_rate`
       - malformed input fails closed into empty scoreboard payload with explicit reason code
     - planner observability / trace now also exposes:
       - `decision_scoreboard.actions`
@@ -555,13 +563,21 @@ Current-truth docs for onboarding are:
   - `max_retries`
   - `workflow`
   - `verification`
+  - `recovery_candidates` (optional candidate list for `route|tool|prompt` variants)
+  - `candidate_selection` (optional selected candidate id from deterministic scoring)
 - Output fields (existing only):
   - `next_state`
   - `next_status`
   - `routing_hint`
   - `reason`
+  - `recovery_mode`
+  - `decision_basis` (`why_search`, `why_retry`, `candidate_count`, selected candidate metadata)
+  - `candidate_selection` (when search candidate path is selected)
 - Minimal decision table:
-  - `retryable=true` and retry budget available -> `next_state=executing` (orchestrator maps to `workflow_state=retrying`, resume same task)
+  - candidate-based search first:
+    - when at least one valid `recovery_candidate` exists, scoring selects one candidate and runtime goes to `next_state=executing` with `routing_hint=<workflow>_search_candidate`
+  - retry only when no candidate:
+    - `retryable=true` and retry budget available with no candidate -> `next_state=executing` (orchestrator maps to `workflow_state=retrying`, resume same task)
   - `failure_class in {effect_committed, commit_unknown, permission_denied}` or `retryable=false` -> `next_state=escalated`
   - `missing_slot` -> `next_state=blocked` with waiting-user routing (`workflow_state=waiting_user`)
   - otherwise not safe to continue -> fail-soft `blocked` or `failed` (based on verification state and retry budget)

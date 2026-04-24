@@ -9,6 +9,7 @@ const [{
 }, {
   buildDecisionMetricsScoreboard,
   formatDecisionMetricsScoreboardSummary,
+  buildRecoverySearchSplitMetrics,
   DECISION_METRICS_SCOREBOARD_VERSION,
 }, {
   resolvePromotionControlSurface,
@@ -190,6 +191,66 @@ test("scoreboard fails closed on malformed metrics input", () => {
   assert.equal(scoreboard.reason_code, "malformed_metrics_input");
   assert.deepEqual(scoreboard.actions, []);
   assert.match(formatDecisionMetricsScoreboardSummary(scoreboard), /fail_closed=true/);
+});
+
+test("recovery split metrics compute retry_without_candidate ratio and search success rate from deterministic fixtures", () => {
+  const metrics = buildRecoverySearchSplitMetrics({
+    events: [
+      {
+        failure_event: true,
+        decision_path: "search_candidate",
+        candidate_count: 2,
+        search_selected: true,
+        search_success: true,
+        retry_without_candidate: false,
+      },
+      {
+        failure_event: true,
+        decision_path: "search_candidate",
+        candidate_count: 1,
+        search_selected: true,
+        search_success: false,
+        retry_without_candidate: false,
+      },
+      {
+        failure_event: true,
+        decision_path: "retry_without_candidate",
+        candidate_count: 0,
+        search_selected: false,
+        search_success: false,
+        retry_without_candidate: true,
+      },
+    ],
+  });
+
+  assert.equal(metrics.fail_closed, false);
+  assert.equal(metrics.total_failures, 3);
+  assert.equal(metrics.candidate_generated_count, 2);
+  assert.equal(metrics.search_selected_count, 2);
+  assert.equal(metrics.retry_without_candidate_count, 1);
+  assert.equal(metrics.retry_without_candidate_ratio, 1 / 3);
+  assert.equal(metrics.search_success_rate, 1 / 2);
+});
+
+test("scoreboard summary exposes recovery split metrics for search-vs-retry observability", () => {
+  const scoreboard = buildDecisionMetricsScoreboard({
+    promotion_audit_state: createDecisionPromotionAuditState(),
+    promotion_policy: resolvePromotionControlSurface(),
+    observability: {
+      recovery_decision_path: "retry_without_candidate",
+      recovery_candidate_count: 0,
+      recovery_retry_without_candidate: true,
+      outcome_status: "failed",
+    },
+  });
+
+  assert.equal(scoreboard.summary?.recovery_split_metrics?.retry_without_candidate_count, 1);
+  assert.equal(scoreboard.summary?.recovery_split_metrics?.total_failures, 1);
+  assert.equal(typeof scoreboard.summary?.recovery_split_metrics?.search_success_rate, "number");
+  assert.match(
+    formatDecisionMetricsScoreboardSummary(scoreboard),
+    /retry_without_candidate_ratio=/,
+  );
 });
 
 test("trace diagnostics includes scoreboard summary and top action fields", () => {

@@ -870,6 +870,18 @@ Runtime usage boundary:
 - selector output now runs one owner-continuity guard before dispatch: if no explicit reroute requirement (`capability_gap|owner_mismatch|step.owner_agent` mismatch), runtime keeps `current_owner_agent` and avoids non-essential owner switch
 - when `task_status=failed` and an active plan step is failed, routing now prioritizes deterministic plan-aware recovery policy v1 from that step (`retry_same_step|reroute_owner|ask_user|skip_step|rollback_to_step`) before generic selector fallback
 - retry continuity is now state-forced (`task_phase=retrying` or `recovery_action=retry_same_step`) so retry follow-ups are interpreted as continuation unless explicit topic-switch signals appear
+- failed-step retry handling now includes deterministic candidate-based search split:
+  - runtime generates bounded recovery candidates from `route|tool|prompt` variants
+  - if at least one candidate is generated, scoring selects the highest score candidate first (`recovery_action=search_candidate`)
+  - only when candidate generation yields zero candidates does runtime continue into `retry_same_step` (`recovery_decision_path=retry_without_candidate`)
+- planner observability now records the same split in-place:
+  - `recovery_decision_path`
+  - `recovery_decision_reason`
+  - `recovery_candidate_count`
+  - `recovery_candidates[]`
+  - `recovery_selected_candidate`
+  - `recovery_retry_without_candidate`
+  - `recovery_split_events[]`
 - before active plan continuation, routing now verifies the current step's incoming artifact dependencies from the same session execution plan:
   - invalid/missing `hard` dependency blocks direct continuation and enters recovery path
   - recovery priority is `rollback_to_step` when producer step is deterministically resolvable from dependency graph, otherwise fail-closed `ask_user`

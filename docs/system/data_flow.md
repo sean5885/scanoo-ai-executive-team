@@ -534,6 +534,8 @@ Input signals (existing only):
 - `max_retries`
 - `workflow`
 - `verification`
+- `recovery_candidates` (optional candidate list for route/tool/prompt variants)
+- `candidate_selection` (optional selected candidate id for deterministic scoring result)
 
 Decision outputs (existing only):
 
@@ -541,6 +543,9 @@ Decision outputs (existing only):
 - `next_status`
 - `routing_hint`
 - `reason`
+- `recovery_mode`
+- `decision_basis` (`why_search`, `why_retry`, `candidate_count`, selected candidate metadata)
+- `candidate_selection` (only when search candidate is selected)
 
 Wiring points (orchestrator finalize fail branches):
 
@@ -551,7 +556,8 @@ Wiring points (orchestrator finalize fail branches):
 
 Minimal split:
 
-- `retry/resume`: `retryable=true` and retry budget available -> `next_state=executing` (`workflow_state=retrying`, resume same task)
+- `search candidate`: when `recovery_candidates` exists and scoring selects one candidate -> `next_state=executing` with `routing_hint=<workflow>_search_candidate`
+- `retry/resume`: only when no candidate is available and retry budget is still available -> `next_state=executing` (`workflow_state=retrying`, resume same task)
 - `escalated`: `failure_class in {effect_committed, commit_unknown, permission_denied}` or `retryable=false`
 - `waiting_user`: `missing_slot` -> blocked lifecycle + waiting-user workflow routing
 - fail-soft `blocked/failed`: remaining non-safe continuation paths when retry budget or verification state does not allow safe resume

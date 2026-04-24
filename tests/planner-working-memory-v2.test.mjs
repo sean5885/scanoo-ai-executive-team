@@ -1640,7 +1640,7 @@ test("v2 waiting_user with already-filled slots resumes step instead of asking u
   resetPlannerConversationMemory({ sessionKey });
 });
 
-test("v2 retries with same agent before reroute when failure budget remains", async () => {
+test("v2 prefers scored search candidate before retry on failed retry_same_step path", async () => {
   const sessionKey = "wm-v2-retry-same";
   resetPlannerRuntimeContext({ sessionKey });
   seedWorkingMemory(sessionKey, {
@@ -1717,9 +1717,98 @@ test("v2 retries with same agent before reroute when failure budget remains", as
   const latestEvent = plannerEvents.at(-1) || {};
   assert.equal(dispatchAction, "search_company_brain_docs");
   assert.equal(result.selected_action, "search_company_brain_docs");
-  assert.equal(latestEvent.retry_attempt?.mode, "same_step");
-  assert.equal(latestEvent.resumed_from_retry, true);
+  assert.equal(latestEvent.retry_attempt || null, null);
+  assert.equal(latestEvent.resumed_from_retry, false);
+  assert.equal(latestEvent.recovery_action, "search_candidate");
+  assert.equal(latestEvent.recovery_decision_path, "search_candidate");
+  assert.equal(latestEvent.recovery_candidate_count > 0, true);
   assert.equal(latestEvent.current_step, "step-retry-1");
+
+  resetPlannerRuntimeContext({ sessionKey });
+  resetPlannerConversationMemory({ sessionKey });
+});
+
+test("v2 falls back to retry path when no recovery search candidate is generated", async () => {
+  const sessionKey = "wm-v2-retry-without-candidate";
+  resetPlannerRuntimeContext({ sessionKey });
+  seedWorkingMemory(sessionKey, {
+    task_id: "task-v2-retry-without-candidate",
+    task_phase: "failed",
+    task_status: "failed",
+    retry_count: 0,
+    retry_policy: {
+      max_retries: 2,
+      strategy: "same_agent_then_reroute",
+    },
+    execution_plan: buildSeedExecutionPlan({
+      planId: "plan-v2-retry-without-candidate",
+      planStatus: "active",
+      currentStepId: "step-retry-without-candidate-1",
+      steps: [
+        {
+          step_id: "step-retry-without-candidate-1",
+          step_type: "planner_action",
+          owner_agent: "doc_agent",
+          intended_action: "search_company_brain_docs",
+          status: "failed",
+          depends_on: [],
+          retryable: true,
+          artifact_refs: [],
+          slot_requirements: [],
+          failure_class: "capability_gap",
+          recovery_policy: "retry_same_step",
+          recovery_state: {
+            last_failure_class: "capability_gap",
+            recovery_attempt_count: 1,
+            last_recovery_action: "retry_same_step",
+            rollback_target_step_id: null,
+          },
+        },
+      ],
+    }),
+  });
+
+  let dispatchAction = null;
+  const plannerEvents = [];
+  const result = await runPlannerToolFlow({
+    userIntent: "再試一次",
+    payload: {},
+    sessionKey,
+    logger: {
+      info(event, payload) {
+        if (event === "planner_end_to_end") {
+          plannerEvents.push(payload);
+        }
+      },
+      debug() {},
+      warn() {},
+      error() {},
+    },
+    selector() {
+      return {
+        selected_action: null,
+        reason: "routing_no_match",
+        routing_reason: "routing_no_match",
+      };
+    },
+    async dispatcher({ action }) {
+      dispatchAction = action;
+      return {
+        ok: true,
+        action: "company_brain_docs_search",
+        items: [],
+        trace_id: "trace-wm-v2-retry-without-candidate",
+      };
+    },
+  });
+
+  const latestEvent = plannerEvents.at(-1) || {};
+  assert.equal(dispatchAction, "search_company_brain_docs");
+  assert.equal(result.selected_action, "search_company_brain_docs");
+  assert.equal(latestEvent.recovery_decision_path, "retry_without_candidate");
+  assert.equal(latestEvent.recovery_retry_without_candidate, true);
+  assert.equal(latestEvent.recovery_candidate_count, 0);
+  assert.equal(latestEvent.retry_attempt?.mode, "same_step");
 
   resetPlannerRuntimeContext({ sessionKey });
   resetPlannerConversationMemory({ sessionKey });

@@ -36,6 +36,134 @@ function normalizeAction(value = "") {
     : null;
 }
 
+function normalizeRatio(numerator = 0, denominator = 0) {
+  const normalizedNumerator = Number.isFinite(Number(numerator))
+    ? Math.max(0, Number(numerator))
+    : 0;
+  const normalizedDenominator = Number.isFinite(Number(denominator))
+    ? Math.max(0, Number(denominator))
+    : 0;
+  if (normalizedDenominator <= 0) {
+    return 0;
+  }
+  return normalizedNumerator / normalizedDenominator;
+}
+
+function normalizeRecoverySplitEvent(event = null) {
+  const normalized = toObject(event);
+  if (!normalized) {
+    return null;
+  }
+  const candidateCount = Number.isFinite(Number(normalized.candidate_count))
+    ? Math.max(0, Number(normalized.candidate_count))
+    : 0;
+  const searchSelected = normalized.search_selected === true
+    || cleanText(normalized.decision_path || "") === "search_candidate";
+  const retryWithoutCandidate = normalized.retry_without_candidate === true
+    || (
+      cleanText(normalized.decision_path || "") === "retry_without_candidate"
+      && candidateCount <= 0
+    );
+  const searchSuccess = normalized.search_success === true;
+  const isFailureEvent = normalized.failure_event !== false;
+  return {
+    candidate_count: candidateCount,
+    search_selected: searchSelected,
+    retry_without_candidate: retryWithoutCandidate,
+    search_success: searchSuccess,
+    failure_event: isFailureEvent,
+  };
+}
+
+export function buildRecoverySearchSplitMetrics({
+  events = [],
+} = {}) {
+  if (!Array.isArray(events)) {
+    return {
+      fail_closed: true,
+      reason_code: "malformed_recovery_split_input",
+      total_failures: 0,
+      candidate_generated_count: 0,
+      search_selected_count: 0,
+      retry_without_candidate_count: 0,
+      retry_without_candidate_ratio: 0,
+      search_success_count: 0,
+      search_success_rate: 0,
+    };
+  }
+  let totalFailures = 0;
+  let candidateGeneratedCount = 0;
+  let searchSelectedCount = 0;
+  let retryWithoutCandidateCount = 0;
+  let searchSuccessCount = 0;
+  for (const rawEvent of events) {
+    const event = normalizeRecoverySplitEvent(rawEvent);
+    if (!event || event.failure_event !== true) {
+      continue;
+    }
+    totalFailures += 1;
+    if (event.candidate_count > 0) {
+      candidateGeneratedCount += 1;
+    }
+    if (event.search_selected) {
+      searchSelectedCount += 1;
+      if (event.search_success) {
+        searchSuccessCount += 1;
+      }
+    }
+    if (event.retry_without_candidate) {
+      retryWithoutCandidateCount += 1;
+    }
+  }
+  return {
+    fail_closed: false,
+    reason_code: null,
+    total_failures: totalFailures,
+    candidate_generated_count: candidateGeneratedCount,
+    search_selected_count: searchSelectedCount,
+    retry_without_candidate_count: retryWithoutCandidateCount,
+    retry_without_candidate_ratio: normalizeRatio(retryWithoutCandidateCount, totalFailures),
+    search_success_count: searchSuccessCount,
+    search_success_rate: normalizeRatio(searchSuccessCount, searchSelectedCount),
+  };
+}
+
+function buildRecoverySearchSplitMetricsFromObservability(observability = null) {
+  const normalized = toObject(observability);
+  if (!normalized) {
+    return buildRecoverySearchSplitMetrics({ events: [] });
+  }
+  if (Array.isArray(normalized.recovery_split_events)) {
+    return buildRecoverySearchSplitMetrics({
+      events: normalized.recovery_split_events,
+    });
+  }
+  const decisionPath = cleanText(normalized.recovery_decision_path || "");
+  const candidateCount = Number.isFinite(Number(normalized.recovery_candidate_count))
+    ? Math.max(0, Number(normalized.recovery_candidate_count))
+    : Array.isArray(normalized.recovery_candidates)
+      ? normalized.recovery_candidates.length
+      : 0;
+  const retryWithoutCandidate = normalized.recovery_retry_without_candidate === true
+    || (
+      cleanText(normalized.recovery_action || "") === "retry_same_step"
+      && candidateCount <= 0
+    );
+  const searchSelected = decisionPath === "search_candidate"
+    || cleanText(normalized.recovery_action || "") === "search_candidate"
+    || Boolean(toObject(normalized.recovery_selected_candidate));
+  return buildRecoverySearchSplitMetrics({
+    events: [{
+      failure_event: decisionPath ? true : false,
+      decision_path: decisionPath || null,
+      candidate_count: candidateCount,
+      search_selected: searchSelected,
+      retry_without_candidate: retryWithoutCandidate,
+      search_success: searchSelected && cleanText(normalized.outcome_status || "") === "success",
+    }],
+  });
+}
+
 function normalizeActionMetrics(metrics = null) {
   const normalized = toObject(metrics) || {};
   const normalizeCount = (value) => Number.isFinite(Number(value))
@@ -163,6 +291,11 @@ function buildFailClosedScoreboard({
   reason_code = "malformed_metrics_input",
 } = {}) {
   const reasonCode = cleanText(reason_code || "") || "malformed_metrics_input";
+  const failClosedRecoverySplitMetrics = {
+    ...buildRecoverySearchSplitMetrics({ events: [] }),
+    fail_closed: true,
+    reason_code: reasonCode,
+  };
   return {
     scoreboard_version: DECISION_METRICS_SCOREBOARD_VERSION,
     actions: [],
@@ -177,9 +310,11 @@ function buildFailClosedScoreboard({
       highest_maturity_actions: [],
       high_risk_actions: [],
       rollback_disabled_actions: [],
+      recovery_split_metrics: failClosedRecoverySplitMetrics,
     },
     highest_maturity_actions: [],
     rollback_disabled_actions: [],
+    recovery_split_metrics: failClosedRecoverySplitMetrics,
     fail_closed: true,
     reason_code: reasonCode,
   };
@@ -300,6 +435,7 @@ export function buildDecisionMetricsScoreboard({
     ...lowMaturityActions,
     ...rollbackDisabledActions,
   ]));
+  const recoverySplitMetrics = buildRecoverySearchSplitMetricsFromObservability(normalizedObservability);
   return {
     scoreboard_version: DECISION_METRICS_SCOREBOARD_VERSION,
     actions: entries,
@@ -314,9 +450,11 @@ export function buildDecisionMetricsScoreboard({
       highest_maturity_actions: highestMaturityActions,
       high_risk_actions: highRiskActions,
       rollback_disabled_actions: rollbackDisabledActions,
+      recovery_split_metrics: recoverySplitMetrics,
     },
     highest_maturity_actions: highestMaturityActions,
     rollback_disabled_actions: rollbackDisabledActions,
+    recovery_split_metrics: recoverySplitMetrics,
     fail_closed: false,
     reason_code: null,
   };
@@ -335,6 +473,13 @@ export function formatDecisionMetricsScoreboardSummary(scoreboard = null) {
   const highestMaturityActions = toArray(summary.highest_maturity_actions || normalized.highest_maturity_actions);
   const rollbackDisabledActions = toArray(summary.rollback_disabled_actions || normalized.rollback_disabled_actions);
   const highRiskActions = toArray(summary.high_risk_actions);
+  const recoverySplitMetrics = toObject(summary.recovery_split_metrics || normalized.recovery_split_metrics) || {};
+  const retryWithoutCandidateRatio = Number.isFinite(Number(recoverySplitMetrics.retry_without_candidate_ratio))
+    ? Number(recoverySplitMetrics.retry_without_candidate_ratio).toFixed(3)
+    : "0.000";
+  const searchSuccessRate = Number.isFinite(Number(recoverySplitMetrics.search_success_rate))
+    ? Number(recoverySplitMetrics.search_success_rate).toFixed(3)
+    : "0.000";
   const actions = toArray(normalized.actions);
   const mediumActions = actions
     .filter((entry) => cleanText(entry?.maturity_signal || "") === MATURITY_MEDIUM)
@@ -344,5 +489,5 @@ export function formatDecisionMetricsScoreboardSummary(scoreboard = null) {
     .filter((entry) => cleanText(entry?.maturity_signal || "") === MATURITY_LOW)
     .map((entry) => cleanText(entry?.action_name || ""))
     .filter(Boolean);
-  return `version=${version} fail_closed=${failClosed ? "true" : "false"} reason_code=${reasonCode} high=${formatActionList(highestMaturityActions)} medium=${formatActionList(mediumActions)} low=${formatActionList(lowActions)} rollback_disabled=${formatActionList(rollbackDisabledActions)} high_risk=${formatActionList(highRiskActions)}`;
+  return `version=${version} fail_closed=${failClosed ? "true" : "false"} reason_code=${reasonCode} high=${formatActionList(highestMaturityActions)} medium=${formatActionList(mediumActions)} low=${formatActionList(lowActions)} rollback_disabled=${formatActionList(rollbackDisabledActions)} high_risk=${formatActionList(highRiskActions)} retry_without_candidate_ratio=${retryWithoutCandidateRatio} search_success_rate=${searchSuccessRate}`;
 }

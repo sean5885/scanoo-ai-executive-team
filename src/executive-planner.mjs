@@ -4292,6 +4292,187 @@ function derivePlannerWorkingMemoryRetryMode({
     : "same_agent";
 }
 
+const FAILED_RECOVERY_SEARCH_ELIGIBLE_FAILURE_CLASSES = new Set([
+  "tool_error",
+  "runtime_exception",
+  "timeout",
+  "request_timeout",
+  "service_unavailable",
+  "unknown",
+]);
+const FAILED_RECOVERY_SEARCH_BYPASS_ACTIONS = new Set([
+  "search_company_brain_docs",
+  "search_and_summarize",
+  "search_and_detail_doc",
+]);
+
+function canUsePlannerRecoverySearchCandidateAction(action = "", {
+  text = "",
+  semantics = null,
+  currentStepAction = "",
+} = {}) {
+  const normalizedAction = cleanText(action || "");
+  if (!normalizedAction) {
+    return false;
+  }
+  if (canUseWorkingMemoryAction(normalizedAction, { text, semantics })) {
+    return true;
+  }
+  if (
+    normalizedAction === cleanText(currentStepAction || "")
+    || FAILED_RECOVERY_SEARCH_BYPASS_ACTIONS.has(normalizedAction)
+  ) {
+    return Boolean(getPlannerActionContract(normalizedAction) || getPlannerPreset(normalizedAction));
+  }
+  return false;
+}
+
+function scorePlannerFailedRecoverySearchCandidate({
+  kind = "route",
+  action = "",
+  failureClass = "",
+  retryCount = 0,
+  sameAsCurrentStep = false,
+} = {}) {
+  const normalizedAction = cleanText(action || "");
+  if (!normalizedAction) {
+    return 0;
+  }
+  let score = 0.45;
+  if (kind === "route") {
+    score += 0.35;
+  } else if (kind === "tool") {
+    score += 0.25;
+  } else if (kind === "prompt") {
+    score += 0.15;
+  }
+  if (normalizedAction === "search_company_brain_docs") {
+    score += 0.2;
+  } else if (normalizedAction === "search_and_summarize") {
+    score += 0.12;
+  } else if (normalizedAction === "search_and_detail_doc") {
+    score += 0.08;
+  }
+  if (FAILED_RECOVERY_SEARCH_ELIGIBLE_FAILURE_CLASSES.has(failureClass)) {
+    score += 0.12;
+  }
+  if (sameAsCurrentStep && normalizedAction !== "search_company_brain_docs") {
+    score -= 0.1;
+  }
+  score -= Math.min(0.2, Math.max(0, Number(retryCount) || 0) * 0.03);
+  return Math.max(0, Number(score.toFixed(3)));
+}
+
+function buildPlannerFailedRecoverySearchCandidates({
+  workingMemory = null,
+  currentPlanStep = null,
+  retryPlanAction = null,
+  runningOwnerAction = "",
+  text = "",
+  semantics = null,
+  retryCount = 0,
+} = {}) {
+  const stepFailureClass = normalizePlannerWorkingMemoryFailureClass(
+    currentPlanStep?.step?.failure_class
+      || currentPlanStep?.step?.recovery_state?.last_failure_class
+      || "",
+    { allowNull: true },
+  ) || "unknown";
+  if (!FAILED_RECOVERY_SEARCH_ELIGIBLE_FAILURE_CLASSES.has(stepFailureClass)) {
+    return [];
+  }
+  const currentStepAction = cleanText(currentPlanStep?.step?.intended_action || "");
+  const candidateSeeds = [
+    {
+      kind: "route",
+      action: "search_company_brain_docs",
+      reason_code: "route_variant_search_docs",
+      reason: "failure class favors bounded search route before retry",
+    },
+    {
+      kind: "tool",
+      action: cleanText(retryPlanAction?.action || ""),
+      reason_code: "tool_variant_from_failed_step",
+      reason: "reuse failed-step tool with bounded variant scoring",
+    },
+    {
+      kind: "tool",
+      action: cleanText(runningOwnerAction || ""),
+      reason_code: "tool_variant_owner_continuation",
+      reason: "current owner can continue with search-style action",
+    },
+    {
+      kind: "prompt",
+      action: currentStepAction,
+      reason_code: "prompt_variant_same_action",
+      reason: "same action with tightened prompt/query variant",
+    },
+    {
+      kind: "route",
+      action: "search_and_summarize",
+      reason_code: "route_variant_search_and_summarize",
+      reason: "fallback to read-only summarize search variant",
+    },
+  ];
+  const seen = new Set();
+  const candidates = [];
+  for (const seed of candidateSeeds) {
+    const normalizedAction = cleanText(seed.action || "");
+    if (!normalizedAction) {
+      continue;
+    }
+    if (!canUsePlannerRecoverySearchCandidateAction(normalizedAction, {
+      text,
+      semantics,
+      currentStepAction,
+    })) {
+      continue;
+    }
+    const dedupeKey = `${seed.kind}:${normalizedAction}`;
+    if (seen.has(dedupeKey)) {
+      continue;
+    }
+    seen.add(dedupeKey);
+    const score = scorePlannerFailedRecoverySearchCandidate({
+      kind: seed.kind,
+      action: normalizedAction,
+      failureClass: stepFailureClass,
+      retryCount,
+      sameAsCurrentStep: normalizedAction === currentStepAction,
+    });
+    if (score <= 0) {
+      continue;
+    }
+    candidates.push({
+      id: dedupeKey,
+      kind: seed.kind,
+      action: normalizedAction,
+      score,
+      reason_code: seed.reason_code,
+      reason: seed.reason,
+      failure_class: stepFailureClass,
+    });
+  }
+  return candidates
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
+      return left.id.localeCompare(right.id);
+    })
+    .slice(0, 6);
+}
+
+function selectPlannerFailedRecoverySearchCandidate(candidates = []) {
+  const normalized = Array.isArray(candidates)
+    ? candidates.filter((candidate) => candidate && typeof candidate === "object" && !Array.isArray(candidate))
+    : [];
+  if (normalized.length === 0) {
+    return null;
+  }
+  return normalized[0];
+}
+
 function isPlannerWorkingMemoryTopicSwitch({
   userIntent = "",
   taskType = "",
@@ -5442,6 +5623,13 @@ function resolvePlannerWorkingMemoryContinuation({
     ask_user_recalibrated: false,
     ask_user_recalibration_summary: null,
     slot_suppressed_ask: false,
+    recovery_decision_path: null,
+    recovery_decision_reason: null,
+    recovery_candidate_count: 0,
+    recovery_candidates: [],
+    recovery_selected_candidate: null,
+    recovery_retry_without_candidate: false,
+    recovery_split_events: [],
     usage_layer: null,
     usage_layer_summary: null,
   };
@@ -5672,6 +5860,13 @@ function resolvePlannerWorkingMemoryContinuation({
   observability.ask_user_recalibrated = false;
   observability.ask_user_recalibration_summary = null;
   observability.slot_suppressed_ask = false;
+  observability.recovery_decision_path = null;
+  observability.recovery_decision_reason = null;
+  observability.recovery_candidate_count = 0;
+  observability.recovery_candidates = [];
+  observability.recovery_selected_candidate = null;
+  observability.recovery_retry_without_candidate = false;
+  observability.recovery_split_events = [];
   observability.plan_invalidated = topicSwitch && currentPlanStep?.plan
     ? {
         plan_id: currentPlanStep.plan.plan_id,
@@ -5895,29 +6090,86 @@ function resolvePlannerWorkingMemoryContinuation({
       }
     } else if (recommendedAction === "retry") {
       const retryAction = cleanText(currentPlanStep?.step?.intended_action || "");
-      observability.recovery_policy = "retry_same_step";
-      observability.recovery_action = "retry_same_step";
-      observability.recovery_attempt_count = retryCount + 1;
-      if (retryAction && canUseWorkingMemoryAction(retryAction, { text: userIntent, semantics })) {
-        selectedAction = retryAction;
-        reason = "working_memory_execution_readiness_retry";
+      const readinessRetryCandidates = buildPlannerFailedRecoverySearchCandidates({
+        workingMemory,
+        currentPlanStep,
+        retryPlanAction: retryAction
+          ? { action: retryAction }
+          : null,
+        runningOwnerAction,
+        text: userIntent,
+        semantics,
+        retryCount,
+      });
+      observability.recovery_candidate_count = readinessRetryCandidates.length;
+      observability.recovery_candidates = readinessRetryCandidates.map((candidate) => ({
+        id: candidate.id,
+        kind: candidate.kind,
+        action: candidate.action,
+        score: candidate.score,
+        reason_code: candidate.reason_code,
+        failure_class: candidate.failure_class,
+      }));
+      const selectedRetrySearchCandidate = selectPlannerFailedRecoverySearchCandidate(readinessRetryCandidates);
+      if (
+        selectedRetrySearchCandidate
+        && canUsePlannerRecoverySearchCandidateAction(selectedRetrySearchCandidate.action, {
+          text: userIntent,
+          semantics,
+          currentStepAction: currentPlanStep?.step?.intended_action || "",
+        })
+      ) {
+        selectedAction = selectedRetrySearchCandidate.action;
+        reason = "working_memory_execution_readiness_search_candidate";
         routingReason = reason;
-        observability.task_phase_transition = `${taskPhase}->retrying`;
-        observability.task_status_transition = `${taskStatus}->failed`;
-        observability.retry_attempt = {
-          task_id: taskId,
-          from: retryCount,
-          retry_count: retryCount + 1,
-          max_retries: retryPolicy.max_retries,
-          strategy: retryPolicy.strategy,
-          mode: "same_step",
+        stopError = null;
+        observability.recovery_policy = "search_candidate_selection";
+        observability.recovery_action = "search_candidate";
+        observability.recovery_attempt_count = retryCount;
+        observability.retry_attempt = null;
+        observability.resumed_from_retry = false;
+        observability.task_phase_transition = `${taskPhase}->executing`;
+        observability.task_status_transition = `${taskStatus}->running`;
+        observability.recovery_decision_path = "search_candidate";
+        observability.recovery_decision_reason = selectedRetrySearchCandidate.reason_code || "readiness_retry_candidate_selected";
+        observability.recovery_selected_candidate = {
+          id: selectedRetrySearchCandidate.id,
+          kind: selectedRetrySearchCandidate.kind,
+          action: selectedRetrySearchCandidate.action,
+          score: selectedRetrySearchCandidate.score,
+          reason_code: selectedRetrySearchCandidate.reason_code,
         };
-        observability.resumed_from_retry = true;
+        observability.recovery_retry_without_candidate = false;
+        ctx.__recovery_search_variant = selectedRetrySearchCandidate.kind;
+        ctx.__recovery_search_reason = selectedRetrySearchCandidate.reason_code;
       } else {
-        reason = "working_memory_execution_readiness_fail_closed";
-        routingReason = reason;
-        observability.task_phase_transition = `${taskPhase}->failed`;
-        observability.task_status_transition = `${taskStatus}->failed`;
+        observability.recovery_policy = "retry_same_step";
+        observability.recovery_action = "retry_same_step";
+        observability.recovery_attempt_count = retryCount + 1;
+        observability.recovery_decision_path = "retry_without_candidate";
+        observability.recovery_decision_reason = "readiness_retry_no_candidate";
+        observability.recovery_retry_without_candidate = true;
+        if (retryAction && canUseWorkingMemoryAction(retryAction, { text: userIntent, semantics })) {
+          selectedAction = retryAction;
+          reason = "working_memory_execution_readiness_retry";
+          routingReason = reason;
+          observability.task_phase_transition = `${taskPhase}->retrying`;
+          observability.task_status_transition = `${taskStatus}->failed`;
+          observability.retry_attempt = {
+            task_id: taskId,
+            from: retryCount,
+            retry_count: retryCount + 1,
+            max_retries: retryPolicy.max_retries,
+            strategy: retryPolicy.strategy,
+            mode: "same_step",
+          };
+          observability.resumed_from_retry = true;
+        } else {
+          reason = "working_memory_execution_readiness_fail_closed";
+          routingReason = reason;
+          observability.task_phase_transition = `${taskPhase}->failed`;
+          observability.task_status_transition = `${taskStatus}->failed`;
+        }
       }
     } else if (recommendedAction === "skip") {
       const currentIndex = (currentPlanStep?.plan?.steps || []).findIndex((candidate) =>
@@ -5971,7 +6223,8 @@ function resolvePlannerWorkingMemoryContinuation({
       semantics,
     });
     if (recoveryDecision) {
-      recoveryDecisionLocked = true;
+      const recoveryActionFromPolicy = cleanText(recoveryDecision.recovery_action || "");
+      recoveryDecisionLocked = recoveryActionFromPolicy !== "retry_same_step";
       selectedAction = recoveryDecision.selected_action || "";
       reason = recoveryDecision.reason || "";
       routingReason = recoveryDecision.routing_reason || reason || "";
@@ -6011,38 +6264,93 @@ function resolvePlannerWorkingMemoryContinuation({
           reason: cleanText(recoveryDecision.handoff.reason || "") || "capability_gap",
         };
       }
-    } else if (retryCount < retryPolicy.max_retries) {
-      const retryPlanAction = resolvePlannerWorkingMemoryExecutionPlanAction({
-        workingMemory,
+    }
+    const retryPlanAction = resolvePlannerWorkingMemoryExecutionPlanAction({
+      workingMemory,
+      text: userIntent,
+      semantics,
+      allowFailedStep: true,
+      allowBlockedStep: true,
+    });
+    if (!recoveryDecisionLocked && retryPlanAction?.blocked_by_dependency) {
+      recoveryDecisionLocked = true;
+      const dependencyIssue = retryPlanAction.dependency_issue || {};
+      observability.failure_class = "invalid_artifact";
+      observability.recovery_policy = dependencyIssue.rollback_target_step_id
+        ? "rollback_to_step"
+        : "ask_user";
+      observability.recovery_action = observability.recovery_policy;
+      observability.rollback_target_step_id = dependencyIssue.rollback_target_step_id || null;
+      observability.artifact_id = dependencyIssue.artifact_id || observability.artifact_id;
+      observability.artifact_type = dependencyIssue.artifact_type || observability.artifact_type;
+      observability.validity_status = dependencyIssue.validity_status || observability.validity_status;
+      observability.produced_by_step_id = dependencyIssue.produced_by_step_id || observability.produced_by_step_id;
+      observability.affected_downstream_steps = Array.isArray(dependencyIssue.affected_downstream_steps)
+        ? dependencyIssue.affected_downstream_steps
+        : observability.affected_downstream_steps;
+      observability.dependency_type = dependencyIssue.dependency_type || observability.dependency_type;
+      observability.artifact_superseded = dependencyIssue.artifact_superseded === true || observability.artifact_superseded === true;
+      observability.dependency_blocked_step = dependencyIssue.dependency_blocked_step || observability.dependency_blocked_step;
+      observability.task_phase_transition = "failed->waiting_user";
+      observability.task_status_transition = "failed->blocked";
+      reason = "working_memory_artifact_dependency_ask_user";
+      routingReason = reason;
+      observability.recovery_decision_path = "retry_blocked_dependency";
+      observability.recovery_decision_reason = "dependency_guard_blocked_retry";
+    }
+    const failedRecoveryCandidates = !recoveryDecisionLocked
+      ? buildPlannerFailedRecoverySearchCandidates({
+          workingMemory,
+          currentPlanStep,
+          retryPlanAction,
+          runningOwnerAction,
+          text: userIntent,
+          semantics,
+          retryCount,
+        })
+      : [];
+    observability.recovery_candidate_count = failedRecoveryCandidates.length;
+    observability.recovery_candidates = failedRecoveryCandidates.map((candidate) => ({
+      id: candidate.id,
+      kind: candidate.kind,
+      action: candidate.action,
+      score: candidate.score,
+      reason_code: candidate.reason_code,
+      failure_class: candidate.failure_class,
+    }));
+    if (!recoveryDecisionLocked && failedRecoveryCandidates.length > 0) {
+      const selectedRecoveryCandidate = selectPlannerFailedRecoverySearchCandidate(failedRecoveryCandidates);
+      if (selectedRecoveryCandidate && canUsePlannerRecoverySearchCandidateAction(selectedRecoveryCandidate.action, {
         text: userIntent,
         semantics,
-        allowFailedStep: true,
-        allowBlockedStep: true,
-      });
-      if (retryPlanAction?.blocked_by_dependency) {
-        recoveryDecisionLocked = true;
-        const dependencyIssue = retryPlanAction.dependency_issue || {};
-        observability.failure_class = "invalid_artifact";
-        observability.recovery_policy = dependencyIssue.rollback_target_step_id
-          ? "rollback_to_step"
-          : "ask_user";
-        observability.recovery_action = observability.recovery_policy;
-        observability.rollback_target_step_id = dependencyIssue.rollback_target_step_id || null;
-        observability.artifact_id = dependencyIssue.artifact_id || observability.artifact_id;
-        observability.artifact_type = dependencyIssue.artifact_type || observability.artifact_type;
-        observability.validity_status = dependencyIssue.validity_status || observability.validity_status;
-        observability.produced_by_step_id = dependencyIssue.produced_by_step_id || observability.produced_by_step_id;
-        observability.affected_downstream_steps = Array.isArray(dependencyIssue.affected_downstream_steps)
-          ? dependencyIssue.affected_downstream_steps
-          : observability.affected_downstream_steps;
-        observability.dependency_type = dependencyIssue.dependency_type || observability.dependency_type;
-        observability.artifact_superseded = dependencyIssue.artifact_superseded === true || observability.artifact_superseded === true;
-        observability.dependency_blocked_step = dependencyIssue.dependency_blocked_step || observability.dependency_blocked_step;
-        observability.task_phase_transition = "failed->waiting_user";
-        observability.task_status_transition = "failed->blocked";
-        reason = "working_memory_artifact_dependency_ask_user";
+        currentStepAction: currentPlanStep?.step?.intended_action || "",
+      })) {
+        selectedAction = selectedRecoveryCandidate.action;
+        reason = "working_memory_recovery_search_candidate_selected";
         routingReason = reason;
+        observability.recovery_policy = "search_candidate_selection";
+        observability.recovery_action = "search_candidate";
+        observability.task_phase_transition = "failed->executing";
+        observability.task_status_transition = "failed->running";
+        observability.recovery_attempt_count = retryCount;
+        observability.retry_attempt = null;
+        observability.resumed_from_retry = false;
+        observability.recovery_decision_path = "search_candidate";
+        observability.recovery_decision_reason = selectedRecoveryCandidate.reason_code || "candidate_score_selected";
+        observability.recovery_selected_candidate = {
+          id: selectedRecoveryCandidate.id,
+          kind: selectedRecoveryCandidate.kind,
+          action: selectedRecoveryCandidate.action,
+          score: selectedRecoveryCandidate.score,
+          reason_code: selectedRecoveryCandidate.reason_code,
+        };
+        observability.recovery_retry_without_candidate = false;
+        ctx.__recovery_search_variant = selectedRecoveryCandidate.kind;
+        ctx.__recovery_search_reason = selectedRecoveryCandidate.reason_code;
+        recoveryDecisionLocked = true;
       }
+    }
+    if (!recoveryDecisionLocked && !selectedAction && retryCount < retryPolicy.max_retries) {
       const retryMode = derivePlannerWorkingMemoryRetryMode({
         retryPolicy,
         retryCount,
@@ -6054,7 +6362,7 @@ function resolvePlannerWorkingMemoryContinuation({
             semantics,
           })
         : retryPlanAction?.action || runningOwnerAction;
-      if (!recoveryDecisionLocked && retryAction && canUseWorkingMemoryAction(retryAction, { text: userIntent, semantics })) {
+      if (retryAction && canUseWorkingMemoryAction(retryAction, { text: userIntent, semantics })) {
         selectedAction = retryAction;
         reason = retryMode === "reroute"
           ? "working_memory_retry_reroute"
@@ -6075,6 +6383,9 @@ function resolvePlannerWorkingMemoryContinuation({
         observability.recovery_policy = observability.recovery_action;
         observability.recovery_attempt_count = retryCount + 1;
         observability.resumed_from_retry = Boolean(retryPlanAction?.action && retryAction === retryPlanAction.action);
+        observability.recovery_decision_path = "retry_without_candidate";
+        observability.recovery_decision_reason = "no_recovery_candidates_available";
+        observability.recovery_retry_without_candidate = true;
         if (retryPlanAction?.action && retryAction === retryPlanAction.action) {
           observability.plan_id = retryPlanAction.plan_id || observability.plan_id;
           observability.plan_status = retryPlanAction.plan_status || observability.plan_status;
@@ -6090,6 +6401,11 @@ function resolvePlannerWorkingMemoryContinuation({
           };
         }
       }
+    }
+    if (!observability.recovery_decision_path && cleanText(observability.recovery_action || "") === "retry_same_step") {
+      observability.recovery_decision_path = "retry_without_candidate";
+      observability.recovery_decision_reason = cleanText(observability.recovery_decision_reason || "") || "policy_selected_retry";
+      observability.recovery_retry_without_candidate = true;
     }
   } else if (
     confidenceAllowed
@@ -6352,6 +6668,19 @@ function resolvePlannerWorkingMemoryContinuation({
     unresolvedSlots: effectiveUnresolvedSlots,
     stopError,
   });
+  observability.recovery_split_events = observability.recovery_decision_path
+    ? [{
+        failure_event: true,
+        decision_path: observability.recovery_decision_path,
+        candidate_count: Number.isFinite(Number(observability.recovery_candidate_count))
+          ? Number(observability.recovery_candidate_count)
+          : 0,
+        search_selected: observability.recovery_decision_path === "search_candidate",
+        retry_without_candidate: observability.recovery_retry_without_candidate === true,
+        search_success: observability.recovery_decision_path === "search_candidate"
+          && cleanText(observability.outcome_status || "") === "success",
+      }]
+    : [];
   applyStepDecisionAdvisorObservability({
     observability,
     currentPlanStep,
@@ -6494,6 +6823,9 @@ function resolvePlannerWorkingMemoryContinuation({
       observability.recovery_policy = "retry_same_step";
       observability.recovery_action = "retry_same_step";
       observability.recovery_attempt_count = retryCount + 1;
+      observability.recovery_decision_path = "retry_without_candidate";
+      observability.recovery_decision_reason = "promoted_retry_action";
+      observability.recovery_retry_without_candidate = true;
       if (retryAction && canUseWorkingMemoryAction(retryAction, { text: userIntent, semantics })) {
         selectedAction = retryAction;
         reason = "decision_engine_promotion_retry";

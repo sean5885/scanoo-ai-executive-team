@@ -76,3 +76,96 @@ test("recovery decision fail-softs to failed when retry budget is exhausted and 
   assert.equal(decision.next_status, "failed");
   assert.equal(decision.routing_hint, "meeting_failed_fail_soft");
 });
+
+test("recovery decision prefers search candidate selection before retry", () => {
+  const decision = resolveRecoveryDecisionV1({
+    workflow: "meeting",
+    retryable: true,
+    retry_count: 0,
+    max_retries: 2,
+    failure_class: "tool_error",
+    recovery_candidates: [
+      {
+        id: "route-search",
+        kind: "route",
+        action: "search_company_brain_docs",
+        score: 0.92,
+        reason: "route variant outperforms retry",
+      },
+    ],
+  });
+
+  assert.equal(decision.next_state, "executing");
+  assert.equal(decision.next_status, "active");
+  assert.equal(decision.routing_hint, "meeting_search_candidate");
+  assert.equal(decision.reason, "recovery_decision_v1_search_candidate_selected");
+  assert.equal(decision.recovery_mode, "search_candidate");
+  assert.equal(decision.decision_basis?.why_retry, "retry_deferred_because_search_candidate_available");
+  assert.equal(decision.candidate_selection?.selected_candidate?.id, "route-search");
+});
+
+test("recovery decision records retry_without_candidate when no candidates are generated", () => {
+  const decision = resolveRecoveryDecisionV1({
+    workflow: "doc_rewrite",
+    retryable: true,
+    retry_count: 0,
+    max_retries: 3,
+    failure_class: "runtime_exception",
+    recovery_candidates: [],
+  });
+
+  assert.equal(decision.reason, "recovery_decision_v1_retrying");
+  assert.equal(decision.recovery_mode, "retry");
+  assert.equal(decision.decision_basis?.why_retry, "no_recovery_candidates_available");
+});
+
+test("recovery decision deterministic fixtures cover multiple failure classes for search-vs-retry split", () => {
+  const fixtures = [
+    {
+      id: "tool-error-search",
+      input: {
+        workflow: "meeting",
+        retryable: true,
+        retry_count: 0,
+        max_retries: 2,
+        failure_class: "tool_error",
+        recovery_candidates: [
+          { id: "c1", kind: "route", action: "search_company_brain_docs", score: 0.9 },
+          { id: "c2", kind: "prompt", action: "search_and_summarize", score: 0.6 },
+        ],
+      },
+      expectedReason: "recovery_decision_v1_search_candidate_selected",
+    },
+    {
+      id: "runtime-exception-retry",
+      input: {
+        workflow: "meeting",
+        retryable: true,
+        retry_count: 0,
+        max_retries: 2,
+        failure_class: "runtime_exception",
+        recovery_candidates: [],
+      },
+      expectedReason: "recovery_decision_v1_retrying",
+    },
+    {
+      id: "permission-denied-escalated",
+      input: {
+        workflow: "meeting",
+        retryable: true,
+        retry_count: 0,
+        max_retries: 2,
+        failure_class: "permission_denied",
+        recovery_candidates: [
+          { id: "c3", kind: "route", action: "search_company_brain_docs", score: 1 },
+        ],
+      },
+      expectedReason: "recovery_decision_v1_permission_denied",
+    },
+  ];
+
+  for (const fixture of fixtures) {
+    const decision = resolveRecoveryDecisionV1(fixture.input);
+    assert.equal(decision.reason, fixture.expectedReason, fixture.id);
+  }
+});
