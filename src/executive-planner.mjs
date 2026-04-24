@@ -9711,6 +9711,58 @@ function parseStrictPlannerUserInputJson(text = "") {
   return parsed;
 }
 
+function normalizePlannerDecisionMemory(decisionMemory = null) {
+  if (!decisionMemory || typeof decisionMemory !== "object" || Array.isArray(decisionMemory)) {
+    return {
+      has_context: false,
+      needs_context: false,
+      query: null,
+      session_memory: [],
+      approved_memory: [],
+      observability: null,
+    };
+  }
+  const rawContext = decisionMemory.decision_context
+    && typeof decisionMemory.decision_context === "object"
+    && !Array.isArray(decisionMemory.decision_context)
+    ? decisionMemory.decision_context
+    : {};
+  const normalizeMemoryRows = (rows = []) => (Array.isArray(rows) ? rows : [])
+    .slice(0, 6)
+    .map((row) => {
+      if (!row || typeof row !== "object" || Array.isArray(row)) {
+        return null;
+      }
+      return {
+        id: cleanText(row.id || "") || null,
+        type: cleanText(row.type || "") || null,
+        title: cleanText(row.title || "") || null,
+        content: cleanText(row.content || "") || null,
+        tags: Array.isArray(row.tags) ? row.tags.map((item) => cleanText(item)).filter(Boolean).slice(0, 6) : [],
+        task_id: cleanText(row.task_id || "") || null,
+        memory_tier: cleanText(row.memory_tier || "") || null,
+        updated_at: cleanText(row.updated_at || "") || null,
+        score: Number.isFinite(Number(row.score)) ? Number(row.score) : 0,
+      };
+    })
+    .filter(Boolean);
+  const sessionMemory = normalizeMemoryRows(rawContext.session_memory);
+  const approvedMemory = normalizeMemoryRows(rawContext.approved_memory);
+  const observability = decisionMemory.observability
+    && typeof decisionMemory.observability === "object"
+    && !Array.isArray(decisionMemory.observability)
+    ? decisionMemory.observability
+    : null;
+  return {
+    has_context: sessionMemory.length + approvedMemory.length > 0,
+    needs_context: rawContext.needs_context === true || observability?.memory_retrieval_needs_context === true,
+    query: cleanText(rawContext.query || "") || null,
+    session_memory: sessionMemory,
+    approved_memory: approvedMemory,
+    observability,
+  };
+}
+
 export async function requestPlannerJson({
   systemPrompt,
   prompt,
@@ -9755,11 +9807,18 @@ export async function requestPlannerJson({
   return data.choices?.[0]?.message?.content || "";
 }
 
-async function buildPlannerUserInputPrompt({ text = "", sessionKey = "" } = {}) {
+async function buildPlannerUserInputPrompt({
+  text = "",
+  sessionKey = "",
+  decisionMemory = null,
+} = {}) {
   restorePlannerRuntimeContextFromSummary({ sessionKey });
   const latestSummary = getPlannerConversationMemoryLayer({ sessionKey })?.latest_summary || null;
   const recentMessages = (getPlannerConversationMemoryLayer({ sessionKey })?.recent_messages || []).slice(-4);
   const docQueryContext = getPlannerDocQueryContext({ sessionKey });
+  const normalizedDecisionMemory = normalizePlannerDecisionMemory(decisionMemory);
+  const memoryContextMarker = normalizedDecisionMemory.has_context ? "true" : "false";
+  const memoryNeedsContextMarker = normalizedDecisionMemory.needs_context ? "true" : "false";
   const systemPrompt = buildCompactSystemPrompt("你是 Lobster user-input planner。", [
     "所有 user input 必須先被規劃成受控 planner action/preset，禁止直接回答問題。",
     "只輸出單一合法 JSON object，不要 Markdown、不要 code fence、不要前後文、不要多餘欄位。",
@@ -9770,6 +9829,7 @@ async function buildPlannerUserInputPrompt({ text = "", sessionKey = "" } = {}) 
     `如果 user_request 內有 document card、document_id 或 file link，steps 第一項必須是 {"action":"${FETCH_DOCUMENT_ACTION}","intent":"${FETCH_DOCUMENT_STEP_INTENT}","required":true}。`,
     "params 必須是 object，且需符合對應 contract 的 required params。",
     "如果已有 active_doc 或 active_candidates，優先利用那些 doc_id 做 detail/read 決策。",
+    "若 executive_memory_context 有內容，只能當決策輔助，不可把它當成已執行結果或偽造來源。",
     "看文件列表用 list，找資料用 search，讀某份文件內容才用 detail；不要混用。",
     "不可因 recent_dialogue 或 latest_summary 而直接重用上一輪 decision；只有明確是同一 task follow-up 才能沿用。",
     "若無法安全決策，不要輸出自然語言說明。",
@@ -9796,6 +9856,8 @@ async function buildPlannerUserInputPrompt({ text = "", sessionKey = "" } = {}) 
           "steps 內 action 只能來自 type=action 條目，不可使用 preset。",
           `若 user_request 帶 document card、document_id 或 file link，steps 第一項必須加 {"action":"${FETCH_DOCUMENT_ACTION}","intent":"${FETCH_DOCUMENT_STEP_INTENT}","required":true}。`,
           "params 只能放該 action/preset 需要的欄位。",
+          `executive_memory_context_hit=${memoryContextMarker}`,
+          `executive_memory_context_needs_context=${memoryNeedsContextMarker}`,
           "不可直接複製上一輪 decision；如果 user_request 和前一輪不是同一 task，必須重新決策。",
           "不可直接回答使用者問題，不可輸出 free text fallback。",
         ].join("\n"),
@@ -9823,6 +9885,27 @@ async function buildPlannerUserInputPrompt({ text = "", sessionKey = "" } = {}) 
         summaryText: trimTextForBudget(JSON.stringify(docQueryContext || {}, null, 2), 260),
         required: true,
         maxTokens: 90,
+      },
+      {
+        name: "executive_memory_context",
+        label: "executive_memory_context",
+        text: normalizedDecisionMemory.has_context
+          ? trimTextForBudget(JSON.stringify({
+              needs_context: normalizedDecisionMemory.needs_context === true,
+              query: normalizedDecisionMemory.query,
+              session_memory: normalizedDecisionMemory.session_memory,
+              approved_memory: normalizedDecisionMemory.approved_memory,
+            }, null, 2), 900)
+          : "none",
+        summaryText: normalizedDecisionMemory.has_context
+          ? trimTextForBudget(JSON.stringify({
+              needs_context: normalizedDecisionMemory.needs_context === true,
+              session_memory: normalizedDecisionMemory.session_memory.slice(0, 3),
+              approved_memory: normalizedDecisionMemory.approved_memory.slice(0, 2),
+            }, null, 2), 360)
+          : "none",
+        required: normalizedDecisionMemory.needs_context === true,
+        maxTokens: 100,
       },
       {
         name: "recent_dialogue",
@@ -10845,6 +10928,7 @@ export async function planUserInputAction({
   requester = requestPlannerJson,
   signal = null,
   sessionKey = "",
+  decisionMemory = null,
 } = {}) {
   const preAbortInfo = derivePlannerAbortInfo({ signal });
   if (preAbortInfo) {
@@ -10859,7 +10943,11 @@ export async function planUserInputAction({
     reason: "pre_plan_user_input_action",
     sessionKey,
   });
-  let promptInput = await buildPlannerUserInputPrompt({ text, sessionKey });
+  let promptInput = await buildPlannerUserInputPrompt({
+    text,
+    sessionKey,
+    decisionMemory,
+  });
   let prompt = promptInput.prompt;
   let lastInvalidDecision = null;
 
@@ -10955,6 +11043,7 @@ export async function planUserInputAction({
     promptInput = await buildPlannerUserInputPrompt({
       text: `${text}\n請只輸出合法 JSON，且僅能使用 target_catalog 的 action；不可沿用上一輪 decision，必須依這一輪 user_request 重新決策。`,
       sessionKey,
+      decisionMemory,
     });
     prompt = promptInput.prompt;
   }
@@ -11145,6 +11234,7 @@ export async function executePlannedUserInput({
   authContext = null,
   signal = null,
   sessionKey = "",
+  decisionMemory = null,
   requestId = "",
   telemetryAdapter = null,
   runSkill = null,
@@ -11218,7 +11308,13 @@ export async function executePlannedUserInput({
           { text },
         );
       })()
-    : await planUserInputAction({ text, requester, signal, sessionKey });
+    : await planUserInputAction({
+        text,
+        requester,
+        signal,
+        sessionKey,
+        decisionMemory,
+      });
   const memorySeedObservability = memorySeedDecision?.observability
     && typeof memorySeedDecision.observability === "object"
     ? {

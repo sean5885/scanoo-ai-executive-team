@@ -8,6 +8,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { resolveRegisteredAgentFamilyRequest } from "./agent-registry.mjs";
 import { parseMeetingCommand } from "./meeting-agent.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
+import { retrieveExecutiveDecisionMemory } from "./executive-memory.mjs";
 import { ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
 import { getPlannerSkillAction } from "./planner/skill-bridge.mjs";
 import { applyPlannerWorkingMemoryPatch, readPlannerWorkingMemoryForRouting } from "./planner-conversation-memory.mjs";
@@ -128,6 +129,8 @@ const PLANNER_USER_INPUT_EXECUTION_MODE = Object.freeze({
   queue_authoritative: "queue_authoritative",
 });
 const PLANNER_USER_INPUT_EDGE_METADATA_SYMBOL = Symbol.for("lobster.planner_user_input_edge.metadata");
+const MEMORY_RETRIEVAL_USAGE_STATS_KEY_FALLBACK = "__global__";
+const plannerMemoryRetrievalUsageStatsBySession = new Map();
 
 function isTruthyFlag(value = "") {
   const normalized = cleanText(value).toLowerCase();
@@ -515,6 +518,16 @@ function buildPlannerUserInputEdgeMetadata({
   enqueueJobId = "",
   enqueueTraceId = "",
   enqueueFailureReason = "",
+  memoryRetrievalAttempted = false,
+  memoryRetrievalNeedsContext = false,
+  memoryRetrievalHit = false,
+  memoryRetrievalSessionHitCount = 0,
+  memoryRetrievalApprovedHitCount = 0,
+  memoryRetrievalUsed = false,
+  memoryRetrievalUsedRate = null,
+  memoryRetrievalEligibleCount = 0,
+  memoryRetrievalUsedCount = 0,
+  memoryRetrievalRateTargetMet = null,
 } = {}) {
   return Object.freeze({
     execution_mode: cleanText(executionMode) || PLANNER_USER_INPUT_EXECUTION_MODE.sync_authoritative,
@@ -527,6 +540,32 @@ function buildPlannerUserInputEdgeMetadata({
     enqueue_job_id: cleanText(enqueueJobId || "") || null,
     enqueue_trace_id: cleanText(enqueueTraceId || "") || null,
     enqueue_failure_reason: cleanText(enqueueFailureReason || "") || null,
+    memory_retrieval_attempted: memoryRetrievalAttempted === true,
+    memory_retrieval_needs_context: memoryRetrievalNeedsContext === true,
+    memory_retrieval_hit: memoryRetrievalHit === true,
+    memory_retrieval_session_hit_count: Number.isFinite(Number(memoryRetrievalSessionHitCount))
+      ? Number(memoryRetrievalSessionHitCount)
+      : 0,
+    memory_retrieval_approved_hit_count: Number.isFinite(Number(memoryRetrievalApprovedHitCount))
+      ? Number(memoryRetrievalApprovedHitCount)
+      : 0,
+    memory_retrieval_used: memoryRetrievalUsed === true,
+    memory_retrieval_used_rate: memoryRetrievalUsedRate === null || memoryRetrievalUsedRate === undefined
+      ? null
+      : (
+        Number.isFinite(Number(memoryRetrievalUsedRate))
+          ? Number(memoryRetrievalUsedRate)
+          : null
+      ),
+    memory_retrieval_eligible_count: Number.isFinite(Number(memoryRetrievalEligibleCount))
+      ? Number(memoryRetrievalEligibleCount)
+      : 0,
+    memory_retrieval_used_count: Number.isFinite(Number(memoryRetrievalUsedCount))
+      ? Number(memoryRetrievalUsedCount)
+      : 0,
+    memory_retrieval_rate_target_met: typeof memoryRetrievalRateTargetMet === "boolean"
+      ? memoryRetrievalRateTargetMet
+      : null,
     completion_guard: "enqueue_accepted_is_not_completed_worker_verifier_required",
   });
 }
@@ -554,6 +593,149 @@ export function readPlannerUserInputEdgeMetadata(result = null) {
   return metadata && typeof metadata === "object" && !Array.isArray(metadata)
     ? metadata
     : null;
+}
+
+function resolvePlannerEdgeAccountId(authContext = null) {
+  if (!authContext || typeof authContext !== "object" || Array.isArray(authContext)) {
+    return "";
+  }
+  return cleanText(
+    authContext.account_id
+    || authContext.accountId
+    || authContext?.auth?.account_id
+    || authContext?.auth?.accountId
+    || "",
+  );
+}
+
+function updatePlannerMemoryRetrievalUsageStats({
+  sessionKey = "",
+  eligible = false,
+  used = false,
+} = {}) {
+  const key = cleanText(sessionKey) || MEMORY_RETRIEVAL_USAGE_STATS_KEY_FALLBACK;
+  const current = plannerMemoryRetrievalUsageStatsBySession.get(key)
+    && typeof plannerMemoryRetrievalUsageStatsBySession.get(key) === "object"
+    ? plannerMemoryRetrievalUsageStatsBySession.get(key)
+    : {
+        eligible_count: 0,
+        used_count: 0,
+      };
+  if (eligible) {
+    current.eligible_count += 1;
+    if (used) {
+      current.used_count += 1;
+    }
+  }
+  plannerMemoryRetrievalUsageStatsBySession.set(key, current);
+  const rate = current.eligible_count > 0
+    ? current.used_count / current.eligible_count
+    : null;
+  return {
+    eligible_count: current.eligible_count,
+    used_count: current.used_count,
+    used_rate: rate,
+    rate_target_met: rate === null || rate === undefined
+      ? null
+      : (
+        Number.isFinite(Number(rate))
+          ? Number(rate) >= 0.8
+          : null
+      ),
+  };
+}
+
+async function retrievePlannerDecisionMemory({
+  text = "",
+  authContext = null,
+  sessionKey = "",
+  logger = console,
+} = {}) {
+  const accountId = resolvePlannerEdgeAccountId(authContext);
+  const normalizedSessionKey = cleanText(sessionKey);
+  if (!accountId && !normalizedSessionKey) {
+    return {
+      decisionMemory: null,
+      observability: {
+        memory_retrieval_attempted: false,
+        memory_retrieval_needs_context: false,
+        memory_retrieval_hit: false,
+        memory_retrieval_session_hit_count: 0,
+        memory_retrieval_approved_hit_count: 0,
+        memory_retrieval_used: false,
+        memory_retrieval_used_rate: null,
+        memory_retrieval_eligible_count: 0,
+        memory_retrieval_used_count: 0,
+        memory_retrieval_rate_target_met: null,
+        memory_retrieval_reason: "missing_account_and_session",
+      },
+    };
+  }
+  const retrieval = await retrieveExecutiveDecisionMemory({
+    accountId,
+    sessionKey: normalizedSessionKey,
+    text,
+  });
+  const retrievalObservability = retrieval?.observability
+    && typeof retrieval.observability === "object"
+    && !Array.isArray(retrieval.observability)
+    ? retrieval.observability
+    : {};
+  const hit = retrievalObservability.memory_retrieval_hit === true;
+  const needsContext = retrievalObservability.memory_retrieval_needs_context === true;
+  const used = needsContext && hit;
+  const usageStats = updatePlannerMemoryRetrievalUsageStats({
+    sessionKey: normalizedSessionKey,
+    eligible: needsContext,
+    used,
+  });
+  const observability = {
+    memory_retrieval_attempted: retrievalObservability.memory_retrieval_attempted === true || retrieval?.ok === true,
+    memory_retrieval_needs_context: needsContext,
+    memory_retrieval_hit: hit,
+    memory_retrieval_session_hit_count: Number.isFinite(Number(retrievalObservability.memory_retrieval_session_hit_count))
+      ? Number(retrievalObservability.memory_retrieval_session_hit_count)
+      : 0,
+    memory_retrieval_approved_hit_count: Number.isFinite(Number(retrievalObservability.memory_retrieval_approved_hit_count))
+      ? Number(retrievalObservability.memory_retrieval_approved_hit_count)
+      : 0,
+    memory_retrieval_used: used,
+    memory_retrieval_used_rate: usageStats.used_rate,
+    memory_retrieval_eligible_count: usageStats.eligible_count,
+    memory_retrieval_used_count: usageStats.used_count,
+    memory_retrieval_rate_target_met: usageStats.rate_target_met,
+    memory_retrieval_mode: cleanText(retrievalObservability.memory_retrieval_mode || "") || null,
+    memory_retrieval_error: cleanText(retrievalObservability.memory_retrieval_error || "") || null,
+  };
+  logger?.info?.("planner_memory_retrieval", {
+    stage: "planner_ingress_memory_retrieval",
+    session_key: normalizedSessionKey || null,
+    account_id_present: Boolean(accountId),
+    ...observability,
+  });
+  return {
+    decisionMemory: retrieval?.ok === true && retrieval?.decision_context
+      ? retrieval
+      : null,
+    observability,
+  };
+}
+
+function buildEmptyPlannerMemoryRetrievalObservability() {
+  return {
+    memory_retrieval_attempted: false,
+    memory_retrieval_needs_context: false,
+    memory_retrieval_hit: false,
+    memory_retrieval_session_hit_count: 0,
+    memory_retrieval_approved_hit_count: 0,
+    memory_retrieval_used: false,
+    memory_retrieval_used_rate: null,
+    memory_retrieval_eligible_count: 0,
+    memory_retrieval_used_count: 0,
+    memory_retrieval_rate_target_met: null,
+    memory_retrieval_mode: null,
+    memory_retrieval_error: null,
+  };
 }
 
 async function maybeEnqueuePlannerUserInputAutonomyJob({
@@ -3384,6 +3566,7 @@ export async function runPlannerUserInputEdge({
   autonomyWorkerReadyMaxHeartbeatLagMs = null,
   autonomyJobEnqueuer = enqueueAutonomyJob,
 } = {}) {
+  const defaultMemoryRetrievalObservability = buildEmptyPlannerMemoryRetrievalObservability();
   const executionModeDecision = resolvePlannerUserInputExecutionMode({
     sessionKey,
     requestId,
@@ -3494,6 +3677,16 @@ export async function runPlannerUserInputEdge({
         queueFallbackToSync: false,
         enqueueJobId: autonomyIngressResult.job_id || "",
         enqueueTraceId: autonomyIngressResult.trace_id || "",
+        memoryRetrievalAttempted: defaultMemoryRetrievalObservability.memory_retrieval_attempted,
+        memoryRetrievalNeedsContext: defaultMemoryRetrievalObservability.memory_retrieval_needs_context,
+        memoryRetrievalHit: defaultMemoryRetrievalObservability.memory_retrieval_hit,
+        memoryRetrievalSessionHitCount: defaultMemoryRetrievalObservability.memory_retrieval_session_hit_count,
+        memoryRetrievalApprovedHitCount: defaultMemoryRetrievalObservability.memory_retrieval_approved_hit_count,
+        memoryRetrievalUsed: defaultMemoryRetrievalObservability.memory_retrieval_used,
+        memoryRetrievalUsedRate: defaultMemoryRetrievalObservability.memory_retrieval_used_rate,
+        memoryRetrievalEligibleCount: defaultMemoryRetrievalObservability.memory_retrieval_eligible_count,
+        memoryRetrievalUsedCount: defaultMemoryRetrievalObservability.memory_retrieval_used_count,
+        memoryRetrievalRateTargetMet: defaultMemoryRetrievalObservability.memory_retrieval_rate_target_met,
       }));
     }
   } else if (autonomyIngressResult?.attempted === true) {
@@ -3507,6 +3700,18 @@ export async function runPlannerUserInputEdge({
     });
   }
 
+  const plannerMemoryRetrieval = await retrievePlannerDecisionMemory({
+    text,
+    authContext,
+    sessionKey,
+    logger,
+  });
+  const plannerMemoryRetrievalObservability = {
+    ...defaultMemoryRetrievalObservability,
+    ...(plannerMemoryRetrieval?.observability && typeof plannerMemoryRetrieval.observability === "object"
+      ? plannerMemoryRetrieval.observability
+      : {}),
+  };
   const executedPlannerResult = await plannerExecutor({
     text,
     logger,
@@ -3517,6 +3722,7 @@ export async function runPlannerUserInputEdge({
     sessionKey,
     requestId,
     telemetryAdapter,
+    decisionMemory: plannerMemoryRetrieval?.decisionMemory || null,
   });
   const recoveredPlannerResult = maybeRecoverPlannerFailedAtUsageLayer({
     plannerResult: executedPlannerResult,
@@ -3608,6 +3814,33 @@ export async function runPlannerUserInputEdge({
     task_abandoned: null,
     usage_layer: null,
     usage_layer_summary: null,
+    memory_retrieval_attempted: plannerMemoryRetrievalObservability.memory_retrieval_attempted === true,
+    memory_retrieval_needs_context: plannerMemoryRetrievalObservability.memory_retrieval_needs_context === true,
+    memory_retrieval_hit: plannerMemoryRetrievalObservability.memory_retrieval_hit === true,
+    memory_retrieval_session_hit_count: Number.isFinite(Number(plannerMemoryRetrievalObservability.memory_retrieval_session_hit_count))
+      ? Number(plannerMemoryRetrievalObservability.memory_retrieval_session_hit_count)
+      : 0,
+    memory_retrieval_approved_hit_count: Number.isFinite(Number(plannerMemoryRetrievalObservability.memory_retrieval_approved_hit_count))
+      ? Number(plannerMemoryRetrievalObservability.memory_retrieval_approved_hit_count)
+      : 0,
+    memory_retrieval_used: plannerMemoryRetrievalObservability.memory_retrieval_used === true,
+    memory_retrieval_used_rate: plannerMemoryRetrievalObservability.memory_retrieval_used_rate === null
+      || plannerMemoryRetrievalObservability.memory_retrieval_used_rate === undefined
+      ? null
+      : (
+        Number.isFinite(Number(plannerMemoryRetrievalObservability.memory_retrieval_used_rate))
+          ? Number(plannerMemoryRetrievalObservability.memory_retrieval_used_rate)
+          : null
+      ),
+    memory_retrieval_eligible_count: Number.isFinite(Number(plannerMemoryRetrievalObservability.memory_retrieval_eligible_count))
+      ? Number(plannerMemoryRetrievalObservability.memory_retrieval_eligible_count)
+      : 0,
+    memory_retrieval_used_count: Number.isFinite(Number(plannerMemoryRetrievalObservability.memory_retrieval_used_count))
+      ? Number(plannerMemoryRetrievalObservability.memory_retrieval_used_count)
+      : 0,
+    memory_retrieval_rate_target_met: typeof plannerMemoryRetrievalObservability.memory_retrieval_rate_target_met === "boolean"
+      ? plannerMemoryRetrievalObservability.memory_retrieval_rate_target_met
+      : null,
   };
   let previousWorkingMemory = null;
   if (shouldWriteWorkingMemory && typeof workingMemoryWriter === "function") {
@@ -3711,6 +3944,33 @@ export async function runPlannerUserInputEdge({
     memory_write_attempted: shouldWriteWorkingMemory && typeof workingMemoryWriter === "function",
     memory_write_succeeded: memoryWriteResult?.ok === true,
     memory_snapshot: mergedMemoryObservability.memory_snapshot || null,
+    memory_retrieval_attempted: mergedMemoryObservability.memory_retrieval_attempted === true,
+    memory_retrieval_needs_context: mergedMemoryObservability.memory_retrieval_needs_context === true,
+    memory_retrieval_hit: mergedMemoryObservability.memory_retrieval_hit === true,
+    memory_retrieval_session_hit_count: Number.isFinite(Number(mergedMemoryObservability.memory_retrieval_session_hit_count))
+      ? Number(mergedMemoryObservability.memory_retrieval_session_hit_count)
+      : 0,
+    memory_retrieval_approved_hit_count: Number.isFinite(Number(mergedMemoryObservability.memory_retrieval_approved_hit_count))
+      ? Number(mergedMemoryObservability.memory_retrieval_approved_hit_count)
+      : 0,
+    memory_retrieval_used: mergedMemoryObservability.memory_retrieval_used === true,
+    memory_retrieval_used_rate: mergedMemoryObservability.memory_retrieval_used_rate === null
+      || mergedMemoryObservability.memory_retrieval_used_rate === undefined
+      ? null
+      : (
+        Number.isFinite(Number(mergedMemoryObservability.memory_retrieval_used_rate))
+          ? Number(mergedMemoryObservability.memory_retrieval_used_rate)
+          : null
+      ),
+    memory_retrieval_eligible_count: Number.isFinite(Number(mergedMemoryObservability.memory_retrieval_eligible_count))
+      ? Number(mergedMemoryObservability.memory_retrieval_eligible_count)
+      : 0,
+    memory_retrieval_used_count: Number.isFinite(Number(mergedMemoryObservability.memory_retrieval_used_count))
+      ? Number(mergedMemoryObservability.memory_retrieval_used_count)
+      : 0,
+    memory_retrieval_rate_target_met: typeof mergedMemoryObservability.memory_retrieval_rate_target_met === "boolean"
+      ? mergedMemoryObservability.memory_retrieval_rate_target_met
+      : null,
     task_id: mergedMemoryObservability.task_id || null,
     task_phase_transition: mergedMemoryObservability.task_phase_transition || null,
     task_status_transition: mergedMemoryObservability.task_status_transition || null,
@@ -3853,5 +4113,15 @@ export async function runPlannerUserInputEdge({
         || executionModeDecision?.reason
         || ""
       ),
+    memoryRetrievalAttempted: mergedMemoryObservability.memory_retrieval_attempted === true,
+    memoryRetrievalNeedsContext: mergedMemoryObservability.memory_retrieval_needs_context === true,
+    memoryRetrievalHit: mergedMemoryObservability.memory_retrieval_hit === true,
+    memoryRetrievalSessionHitCount: mergedMemoryObservability.memory_retrieval_session_hit_count,
+    memoryRetrievalApprovedHitCount: mergedMemoryObservability.memory_retrieval_approved_hit_count,
+    memoryRetrievalUsed: mergedMemoryObservability.memory_retrieval_used === true,
+    memoryRetrievalUsedRate: mergedMemoryObservability.memory_retrieval_used_rate,
+    memoryRetrievalEligibleCount: mergedMemoryObservability.memory_retrieval_eligible_count,
+    memoryRetrievalUsedCount: mergedMemoryObservability.memory_retrieval_used_count,
+    memoryRetrievalRateTargetMet: mergedMemoryObservability.memory_retrieval_rate_target_met,
   }));
 }

@@ -5,6 +5,7 @@ import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 const testDb = await createTestDbHarness();
 const { runPlannerUserInputEdge, readPlannerUserInputEdgeMetadata } = await import("../src/planner-user-input-edge.mjs");
 const { ROUTING_NO_MATCH } = await import("../src/planner-error-codes.mjs");
+const { appendApprovedMemory, appendSessionMemory } = await import("../src/executive-memory.mjs");
 const previousAutonomyIngressEnabled = process.env.PLANNER_AUTONOMY_INGRESS_ENABLED;
 const previousAutonomyIngressAllowlist = process.env.PLANNER_AUTONOMY_INGRESS_ALLOWLIST;
 const previousAutonomyQueueAuthoritativeEnabled = process.env.PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED;
@@ -639,6 +640,174 @@ test("runPlannerUserInputEdge keeps planner execute -> envelope -> normalize on 
     ["decorate", "get_runtime_info"],
     ["normalize", "shared", "幫我看 runtime", "trace-edge-1", "planner-edge-test"],
   ]);
+});
+
+test("runPlannerUserInputEdge injects retrieved memory into planner decision context and surfaces used-rate", async () => {
+  const accountId = `acct-edge-memory-${Date.now()}`;
+  const sessionKey = `session-edge-memory-${Date.now()}`;
+  await appendSessionMemory({
+    account_id: accountId,
+    session_key: sessionKey,
+    task_id: "task-edge-memory",
+    type: "working_memory",
+    title: "上次 onboarding checklist 討論",
+    content: "先補 owner，再補 deadline。",
+    tags: ["onboarding", "checklist"],
+  });
+  await appendApprovedMemory({
+    account_id: accountId,
+    session_key: sessionKey,
+    task_id: "task-edge-memory",
+    type: "approved_memory",
+    title: "批准規則：action items",
+    content: "沒有 owner 不能宣稱完成。",
+    tags: ["owner", "approval"],
+  });
+
+  let capturedDecisionMemory = null;
+  const result = await runPlannerUserInputEdge({
+    text: "延續上一題，這個 checklist 還缺什麼？",
+    sessionKey,
+    authContext: {
+      account_id: accountId,
+    },
+    async plannerExecutor(args) {
+      capturedDecisionMemory = args?.decisionMemory || null;
+      return {
+        ok: true,
+        action: "search_company_brain_docs",
+        execution_result: {
+          ok: true,
+          data: {
+            answer: "補 owner 與 deadline。",
+            sources: ["memory-guided"],
+            limitations: [],
+          },
+        },
+      };
+    },
+    workingMemoryWriter: null,
+  });
+
+  const metadata = readPlannerUserInputEdgeMetadata(result);
+  assert.equal(capturedDecisionMemory?.decision_context?.session_memory?.length > 0, true);
+  assert.equal(capturedDecisionMemory?.decision_context?.approved_memory?.length > 0, true);
+  assert.equal(metadata?.memory_retrieval_attempted, true);
+  assert.equal(metadata?.memory_retrieval_needs_context, true);
+  assert.equal(metadata?.memory_retrieval_hit, true);
+  assert.equal(metadata?.memory_retrieval_used, true);
+  assert.equal(Number(metadata?.memory_retrieval_used_rate) >= 0.8, true);
+  assert.equal(metadata?.memory_retrieval_rate_target_met, true);
+});
+
+test("runPlannerUserInputEdge produces routing/answer difference between memory-hit and memory-miss", async () => {
+  const accountId = `acct-edge-routing-${Date.now()}`;
+  const sessionWithMemory = `session-edge-routing-hit-${Date.now()}`;
+  const sessionWithoutMemory = `session-edge-routing-miss-${Date.now()}`;
+  await appendSessionMemory({
+    account_id: accountId,
+    session_key: sessionWithMemory,
+    task_id: "task-edge-routing",
+    type: "working_memory",
+    title: "上次討論 onboarding 清單",
+    content: "優先補 owner 與 deadline。",
+    tags: ["onboarding", "checklist"],
+  });
+  await appendApprovedMemory({
+    account_id: accountId,
+    session_key: sessionWithMemory,
+    task_id: "task-edge-routing",
+    type: "approved_memory",
+    title: "批准規則：onboarding action item",
+    content: "沒有 owner 不可宣稱完成。",
+    tags: ["approval", "owner"],
+  });
+
+  const plannerExecutor = async (args) => {
+    const hasMemory = Array.isArray(args?.decisionMemory?.decision_context?.session_memory)
+      && args.decisionMemory.decision_context.session_memory.length > 0;
+    return hasMemory
+      ? {
+          ok: true,
+          action: "search_company_brain_docs",
+          execution_result: {
+            ok: true,
+            data: {
+              answer: "命中 memory，改走文件查詢路由。",
+              sources: ["memory-hit"],
+              limitations: [],
+            },
+          },
+        }
+      : {
+          ok: true,
+          action: "get_runtime_info",
+          execution_result: {
+            ok: true,
+            data: {
+              answer: "沒有 memory，退回 runtime 路由。",
+              sources: ["memory-miss"],
+              limitations: [],
+            },
+          },
+        };
+  };
+
+  const hitResult = await runPlannerUserInputEdge({
+    text: "延續上一題，這個 checklist 還缺什麼？",
+    sessionKey: sessionWithMemory,
+    authContext: {
+      account_id: accountId,
+    },
+    plannerExecutor,
+    workingMemoryWriter: null,
+  });
+  const missResult = await runPlannerUserInputEdge({
+    text: "延續上一題，這個 checklist 還缺什麼？",
+    sessionKey: sessionWithoutMemory,
+    authContext: {
+      account_id: accountId,
+    },
+    plannerExecutor,
+    workingMemoryWriter: null,
+  });
+
+  assert.equal(hitResult?.plannerResult?.action, "search_company_brain_docs");
+  assert.equal(missResult?.plannerResult?.action, "get_runtime_info");
+  assert.match(hitResult?.userResponse?.answer || "", /命中 memory/);
+  assert.match(missResult?.userResponse?.answer || "", /沒有 memory/);
+});
+
+test("runPlannerUserInputEdge does not overclaim memory retrieval usage when context is not needed", async () => {
+  const result = await runPlannerUserInputEdge({
+    text: "幫我看 runtime",
+    sessionKey: `session-edge-no-memory-${Date.now()}`,
+    authContext: {
+      account_id: `acct-edge-no-memory-${Date.now()}`,
+    },
+    async plannerExecutor() {
+      return {
+        ok: true,
+        action: "get_runtime_info",
+        execution_result: {
+          ok: true,
+          data: {
+            answer: "runtime 正常",
+            sources: ["runtime"],
+            limitations: [],
+          },
+        },
+      };
+    },
+    workingMemoryWriter: null,
+  });
+
+  const metadata = readPlannerUserInputEdgeMetadata(result);
+  assert.equal(metadata?.memory_retrieval_attempted, true);
+  assert.equal(metadata?.memory_retrieval_needs_context, false);
+  assert.equal(metadata?.memory_retrieval_used, false);
+  assert.equal(metadata?.memory_retrieval_used_rate, null);
+  assert.equal(metadata?.memory_retrieval_rate_target_met, null);
 });
 
 test("runPlannerUserInputEdge recovers meeting planner_failed into a bounded workflow handoff reply", async () => {

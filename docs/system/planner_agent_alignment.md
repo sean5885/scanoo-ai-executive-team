@@ -931,6 +931,16 @@ Observed routing/write signals now include:
 - `memory_hit`
 - `memory_miss`
 - `memory_used_in_routing`
+- `memory_retrieval_attempted`
+- `memory_retrieval_needs_context`
+- `memory_retrieval_hit`
+- `memory_retrieval_session_hit_count`
+- `memory_retrieval_approved_hit_count`
+- `memory_retrieval_used` (bounded to `needs_context && hit`; no overclaim when context is not needed or not hit)
+- `memory_retrieval_used_rate`
+- `memory_retrieval_eligible_count`
+- `memory_retrieval_used_count`
+- `memory_retrieval_rate_target_met`
 - `memory_write_attempted`
 - `memory_write_succeeded`
 - `memory_snapshot`

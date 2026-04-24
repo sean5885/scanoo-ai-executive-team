@@ -13,6 +13,8 @@ import { readJsonFile, writeJsonFile } from "./token-store.mjs";
 const EXECUTIVE_SESSION_MEMORY_PREFIX = "executive_session_memory:";
 const EXECUTIVE_PENDING_PROPOSAL_PREFIX = "executive_pending_proposal:";
 const EXECUTIVE_APPROVED_MEMORY_PREFIX = "executive_approved_memory:";
+const EXECUTIVE_DECISION_MEMORY_NEEDS_CONTEXT_PATTERN = /(這個|那个|那個|this|that|上一題|上一轮|上一輪|上次|剛剛|刚刚|延續|延续|繼續|继续|same task|follow[-\s]?up|context|之前|前面|續上)/i;
+const EXECUTIVE_MEMORY_QUERY_TOKEN_SPLIT_PATTERN = /[\s,.;:!?，。！？、；：/\\|()\[\]{}<>《》「」"'`]+/;
 
 function createSessionStore() {
   return { items: [] };
@@ -114,6 +116,139 @@ function normalizeEntry(entry = {}) {
   };
 }
 
+function normalizeMemoryText(value = "") {
+  return cleanText(String(value || "").toLowerCase());
+}
+
+function tokenizeMemoryQuery(text = "") {
+  const normalized = normalizeMemoryText(text);
+  if (!normalized) {
+    return [];
+  }
+  const tokens = normalized
+    .split(EXECUTIVE_MEMORY_QUERY_TOKEN_SPLIT_PATTERN)
+    .map((token) => cleanText(token))
+    .filter((token) => token.length >= 2);
+  return Array.from(new Set(tokens)).slice(0, 12);
+}
+
+function parseIsoTimestamp(value = "") {
+  const timestamp = Date.parse(cleanText(value));
+  return Number.isFinite(timestamp)
+    ? timestamp
+    : 0;
+}
+
+function scoreMemoryEntry(entry = {}, {
+  query = "",
+  tokens = [],
+} = {}) {
+  const title = normalizeMemoryText(entry?.title || "");
+  const content = normalizeMemoryText(entry?.content || "");
+  const type = normalizeMemoryText(entry?.type || "");
+  const tags = Array.isArray(entry?.tags)
+    ? entry.tags.map((item) => normalizeMemoryText(item)).filter(Boolean)
+    : [];
+  const haystack = [title, content, type, ...tags].filter(Boolean).join("\n");
+  if (!haystack) {
+    return 0;
+  }
+
+  let score = 0;
+  if (query && haystack.includes(query)) {
+    score += 4;
+  }
+  for (const token of Array.isArray(tokens) ? tokens : []) {
+    if (haystack.includes(token)) {
+      score += 1;
+    }
+  }
+  if (query && title && title.includes(query)) {
+    score += 2;
+  }
+  if (query && type && query.includes(type)) {
+    score += 1;
+  }
+
+  const updatedAt = parseIsoTimestamp(entry?.updated_at || entry?.created_at || "");
+  if (updatedAt > 0) {
+    const ageMs = Math.max(0, Date.now() - updatedAt);
+    if (ageMs <= 1000 * 60 * 60 * 24 * 3) {
+      score += 1;
+    } else if (ageMs <= 1000 * 60 * 60 * 24 * 7) {
+      score += 0.5;
+    }
+  }
+  return score;
+}
+
+function toDecisionMemorySnippet(entry = {}, {
+  tier = "",
+  score = 0,
+} = {}) {
+  return {
+    id: cleanText(entry?.id || "") || null,
+    type: cleanText(entry?.type || "") || "note",
+    title: cleanText(entry?.title || "") || null,
+    content: cleanText(entry?.content || "") || null,
+    tags: Array.isArray(entry?.tags) ? entry.tags.map((item) => cleanText(item)).filter(Boolean).slice(0, 8) : [],
+    task_id: cleanText(entry?.task_id || "") || null,
+    session_key: cleanText(entry?.session_key || "") || null,
+    updated_at: cleanText(entry?.updated_at || entry?.created_at || "") || null,
+    memory_tier: cleanText(tier || "") || null,
+    score: Number.isFinite(Number(score))
+      ? Number(score)
+      : 0,
+  };
+}
+
+function rankMemoryEntries(entries = [], {
+  query = "",
+  tokens = [],
+  limit = 4,
+  tier = "",
+  includeZeroScore = false,
+} = {}) {
+  const scored = [];
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      continue;
+    }
+    const score = scoreMemoryEntry(entry, {
+      query,
+      tokens,
+    });
+    if (!includeZeroScore && score <= 0) {
+      continue;
+    }
+    scored.push({
+      entry,
+      score,
+    });
+  }
+
+  scored.sort((left, right) => {
+    if (right.score !== left.score) {
+      return right.score - left.score;
+    }
+    const rightUpdatedAt = parseIsoTimestamp(right.entry?.updated_at || right.entry?.created_at || "");
+    const leftUpdatedAt = parseIsoTimestamp(left.entry?.updated_at || left.entry?.created_at || "");
+    return rightUpdatedAt - leftUpdatedAt;
+  });
+
+  const normalizedLimit = Math.max(1, Number.isFinite(Number(limit)) ? Number(limit) : 4);
+  return scored
+    .slice(0, normalizedLimit)
+    .map((item) => toDecisionMemorySnippet(item.entry, {
+      tier,
+      score: item.score,
+    }));
+}
+
+export function needsExecutiveMemoryContext({ text = "" } = {}) {
+  return EXECUTIVE_DECISION_MEMORY_NEEDS_CONTEXT_PATTERN.test(cleanText(text));
+}
+
 export async function appendSessionMemory(entry = {}) {
   const item = normalizeEntry(entry);
   guardedMemorySet({
@@ -189,4 +324,117 @@ export async function listPendingKnowledgeProposals({ accountId = "", limit = 20
   return items
     .filter((item) => !accountId || item.account_id === cleanText(accountId))
     .slice(-Math.max(1, limit));
+}
+
+export async function listApprovedMemory({ accountId = "", limit = 20 } = {}) {
+  const authorityItems = listAuthorityEntries(EXECUTIVE_APPROVED_MEMORY_PREFIX);
+  const store = await loadStore(executiveApprovedMemoryStorePath, createApprovedStore);
+  const persistedItems = Array.isArray(store.items) ? store.items : [];
+  hydrateAuthorityEntries(persistedItems, EXECUTIVE_APPROVED_MEMORY_PREFIX);
+  const items = mergeMemoryEntries(authorityItems, persistedItems);
+  return items
+    .filter((item) => !accountId || item.account_id === cleanText(accountId))
+    .slice(-Math.max(1, limit));
+}
+
+export async function retrieveExecutiveDecisionMemory({
+  accountId = "",
+  sessionKey = "",
+  text = "",
+  sessionLimit = 4,
+  approvedLimit = 3,
+} = {}) {
+  const normalizedAccountId = cleanText(accountId);
+  const normalizedSessionKey = cleanText(sessionKey);
+  const normalizedText = cleanText(text);
+  const normalizedQuery = normalizeMemoryText(normalizedText);
+  const queryTokens = tokenizeMemoryQuery(normalizedText);
+  const needsContext = needsExecutiveMemoryContext({ text: normalizedText });
+  try {
+    const [sessionCandidates, approvedCandidates] = await Promise.all([
+      listSessionMemory({
+        accountId: normalizedAccountId,
+        sessionKey: normalizedSessionKey,
+        limit: 80,
+      }),
+      listApprovedMemory({
+        accountId: normalizedAccountId,
+        limit: 120,
+      }),
+    ]);
+
+    let sessionHits = rankMemoryEntries(sessionCandidates, {
+      query: normalizedQuery,
+      tokens: queryTokens,
+      limit: sessionLimit,
+      tier: "session",
+      includeZeroScore: false,
+    });
+    let approvedHits = rankMemoryEntries(approvedCandidates, {
+      query: normalizedQuery,
+      tokens: queryTokens,
+      limit: approvedLimit,
+      tier: "approved",
+      includeZeroScore: false,
+    });
+
+    let retrievalMode = "scored_match";
+    if (sessionHits.length + approvedHits.length === 0 && needsContext) {
+      sessionHits = rankMemoryEntries(sessionCandidates, {
+        query: "",
+        tokens: [],
+        limit: Math.max(1, Number(sessionLimit) || 4),
+        tier: "session",
+        includeZeroScore: true,
+      });
+      approvedHits = rankMemoryEntries(approvedCandidates, {
+        query: "",
+        tokens: [],
+        limit: Math.max(1, Number(approvedLimit) || 3),
+        tier: "approved",
+        includeZeroScore: true,
+      });
+      retrievalMode = "recent_fallback";
+    } else if (sessionHits.length + approvedHits.length === 0) {
+      retrievalMode = "no_match";
+    }
+
+    return {
+      ok: true,
+      decision_context: {
+        query: normalizedText || null,
+        needs_context: needsContext,
+        session_memory: sessionHits,
+        approved_memory: approvedHits,
+      },
+      observability: {
+        memory_retrieval_attempted: true,
+        memory_retrieval_needs_context: needsContext,
+        memory_retrieval_hit: (sessionHits.length + approvedHits.length) > 0,
+        memory_retrieval_session_hit_count: sessionHits.length,
+        memory_retrieval_approved_hit_count: approvedHits.length,
+        memory_retrieval_mode: retrievalMode,
+        memory_retrieval_query_tokens: queryTokens.length,
+      },
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      decision_context: {
+        query: normalizedText || null,
+        needs_context: needsContext,
+        session_memory: [],
+        approved_memory: [],
+      },
+      observability: {
+        memory_retrieval_attempted: true,
+        memory_retrieval_needs_context: needsContext,
+        memory_retrieval_hit: false,
+        memory_retrieval_session_hit_count: 0,
+        memory_retrieval_approved_hit_count: 0,
+        memory_retrieval_mode: "error",
+        memory_retrieval_error: cleanText(error?.message || "") || "memory_retrieval_failed",
+      },
+    };
+  }
 }

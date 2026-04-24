@@ -231,6 +231,9 @@ Current-truth docs for onboarding are:
     - enqueue is ingress evidence only and is never treated as final task completion or final user answer
     - in `queue_authoritative`, enqueue accepted short-circuits same-request sync planner execution and returns non-final pending metadata while keeping the same response shape
     - enqueue failure / queue unavailable fail-soft back to `sync_authoritative` execution in the same request
+    - on sync execution path, ingress now runs one executive memory retrieval pre-step (`session memory + approved memory`) through `/Users/seanhan/Documents/Playground/src/executive-memory.mjs` and injects that bounded result into planner execution via internal `decisionMemory` only (no public response-shape change)
+    - planner prompt assembly now consumes that bounded memory context before strict user-input planning, through `executive_memory_context` plus deterministic markers (`executive_memory_context_hit`, `executive_memory_context_needs_context`)
+    - ingress now emits additive retrieval observability (`planner_memory_retrieval`) and carries non-enumerable edge metadata fields such as `memory_retrieval_used_rate` for diagnostics
     - ingress observability now emits additive mode/sampling events (`planner_autonomy_ingress_mode_decision`, `planner_autonomy_queue_authoritative_sampling_miss`) without changing public response shape
   - that shared answer-edge helper also lifts current legacy planner result shapes into canonical `answer / sources / limitations` before public rendering
   - `planner-ingress-contract.mjs` is the checked-in ingress rule for doc/knowledge/runtime planner admission and the personal-lane planner edge guard
@@ -592,6 +595,11 @@ Current-truth docs for onboarding are:
   - execution reflection remains the checked-in source for per-step `success / deviation / reason`
   - top-level reflection records now also classify `missing_access_token`, `permission_denied`, and `document_not_found` as `reason = missing_info` with `deviation = true`
   - finalized executive turns now archive a local evolution snapshot alongside the reflection record
+  - improvement workflow records now include strategy version metadata (`strategy_version`, `active_strategy_version`, `strategy_history`) for apply/rollback traceability
+  - low-risk learning-loop proposals can auto-apply, but high-risk categories remain human-gated (`human_approval`)
+  - applied improvements now attach additive `effect_evidence` with before/after metric comparison and `improvement_delta`
+  - measurable `improved` deltas keep `status=applied`; non-improving (`same`) and regressed deltas are fail-soft rolled back
+  - when effect verification is non-improving or regressed, workflow marks the proposal as `rolled_back` and records rollback metadata/version transition
   - the runtime logger now emits one structured `executive_evolution_metrics` event with rolling local rates for `reflection_deviation_rate`, `improvement_trigger_rate`, and `retry_success_rate`
   - bounded executive replay can now compare the same task across `first_run` and `second_run` run specs and output `improvement_delta` for success, steps, and deviation
   - the checked-in replay pack runner executes every JSON spec under `evals/executive-replay/fixtures`, reports one bounded result line per case, and can also emit a single JSON summary document
