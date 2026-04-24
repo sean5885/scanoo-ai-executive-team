@@ -395,6 +395,28 @@ node scripts/routing-eval-fixture-candidates.mjs --input /tmp/routing-eval.json 
 node --test tests/routing-eval-decision-advice.test.mjs tests/routing-eval-closed-loop.test.mjs
 ```
 
+Canary gate baseline（stability + routing + boundary）：
+
+```bash
+node scripts/run-canary.mjs --cases=100
+node scripts/check-canary.mjs --strict
+```
+
+用途：
+
+- 固定把 canary gate 壓成可重跑 JSON contract，不靠人工讀 log
+- runner 固定輸出 `canary_run_report_v1`，包含：
+  - `thresholds`
+  - `metrics.routing_accuracy_ratio`
+  - `metrics.boundary_accuracy_ratio`
+  - `metrics.stability_ratio`
+  - `gate.status`
+  - `gate.degradation_reasons[]`
+- checker 固定輸出 `canary_check_report_v1`
+- `--strict` exit contract：
+  - exit `0` = pass
+  - exit `1` = fail
+
 用途：
 
 - `node scripts/regression-check.mjs` 提供最小的 read-side regression quick check，固定串接 `scripts/retrieval-eval.mjs`、`tests/routing-eval-lite.mjs`、`scripts/retrieval-realworld-eval.mjs`、`scripts/doc-workflow-eval.mjs` 與 `scripts/runtime-workflow-eval.mjs`

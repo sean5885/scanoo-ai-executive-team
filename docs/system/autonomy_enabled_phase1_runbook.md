@@ -44,15 +44,35 @@ node scripts/autonomy-operator-cli.mjs disposition \
 - `disposition` 缺少 `job_id/action/reason/operator_id/request_id/expected_updated_at` 任一欄位時，不會寫入。
 - `precondition_failed`、`open_incident_not_found`、`operator_action_lifecycle_sink_mismatch` 等 fail-soft 語義沿用 store 原樣輸出。
 
-## 0A. Canary Script Base URL（實際執行）
+## 0A. Canary Gate Scripts（實際執行）
 
-`scripts/run-canary.sh` 與 `scripts/check-canary.sh` 的預設 `BASE_URL` 解析順序為：
+Phase 1 現在有固定 JSON contract 的 canary gate：
 
-1. `BASE_URL`
-2. `LARK_OAUTH_BASE_URL`
-3. `http://127.0.0.1:${LARK_OAUTH_PORT:-3333}`
+- `node scripts/run-canary.mjs --cases=100`
+- `node scripts/check-canary.mjs --strict`
 
-因此若主服務使用預設 `LARK_OAUTH_PORT=3333`，可直接執行 canary 腳本，不必額外指定 `BASE_URL`。
+對應檔案：
+
+- `/Users/seanhan/Documents/Playground/scripts/run-canary.mjs`
+- `/Users/seanhan/Documents/Playground/scripts/check-canary.mjs`
+- `/Users/seanhan/Documents/Playground/evals/canary/cases.json`
+
+固定輸出 schema：
+
+- runner：`canary_run_report_v1`
+- checker：`canary_check_report_v1`
+
+固定 gate 指標與 threshold（由 `evals/canary/cases.json` 提供）：
+
+- `routing_accuracy_ratio`
+- `boundary_accuracy_ratio`
+- `stability_ratio`
+
+`check-canary --strict` contract：
+
+- `gate.status=pass` -> exit `0`
+- `gate.status=fail` -> exit `1`
+- fail 時固定回傳 `degradation_reasons[]`（machine-readable），不需要人工解讀 log
 
 worker canary execute 補充（已落地）：
 

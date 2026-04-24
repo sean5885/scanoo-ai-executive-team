@@ -71,6 +71,7 @@ This file explains which directories are part of the current runtime, which are 
 
 - checked-in fixture sets and review inputs
 - current groups:
+  - canary
   - routing
   - retrieval
   - document workflow

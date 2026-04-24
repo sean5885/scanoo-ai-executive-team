@@ -1,0 +1,1763 @@
+{
+  "schema_version": "canary_cases_v1",
+  "generated_from": "evals/routing-eval-set.mjs",
+  "generated_at": "2026-04-24T00:00:00.000Z",
+  "default_stability_repeats": 3,
+  "thresholds": {
+    "min_routing_accuracy_ratio": 0.98,
+    "min_boundary_accuracy_ratio": 0.98,
+    "min_stability_ratio": 1
+  },
+  "cases": [
+    {
+      "id": "canary-001",
+      "source_case_id": "doc-001",
+      "category": "doc",
+      "text": "幫我整理 OKR 文件重點",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "search_and_detail_doc",
+        "agent_or_tool": "tool:search_and_detail_doc"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": true,
+        "must_fail_closed": false,
+        "blocked_lanes": [
+          "personal_assistant",
+          "group_shared_assistant"
+        ]
+      }
+    },
+    {
+      "id": "canary-002",
+      "source_case_id": "doc-002",
+      "category": "doc",
+      "text": "幫我查詢 OKR 文件",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "search_company_brain_docs",
+        "agent_or_tool": "tool:search_company_brain_docs"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-003",
+      "source_case_id": "doc-003",
+      "category": "doc",
+      "text": "請搜尋 onboarding 文件流程並解釋",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "search_company_brain_docs",
+        "agent_or_tool": "tool:search_company_brain_docs"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-004",
+      "source_case_id": "doc-004",
+      "category": "doc",
+      "text": "幫我搜尋 onboarding SOP 文件",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "search_company_brain_docs",
+        "agent_or_tool": "tool:search_company_brain_docs"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-005",
+      "source_case_id": "doc-005",
+      "category": "doc",
+      "text": "幫我整理 BD 客戶跟進文件",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "search_and_detail_doc",
+        "agent_or_tool": "tool:search_and_detail_doc"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": true,
+        "must_fail_closed": false,
+        "blocked_lanes": [
+          "personal_assistant",
+          "group_shared_assistant"
+        ]
+      }
+    },
+    {
+      "id": "canary-006",
+      "source_case_id": "doc-006",
+      "category": "doc",
+      "text": "幫我搜尋提案文件",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "search_company_brain_docs",
+        "agent_or_tool": "tool:search_company_brain_docs"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-007",
+      "source_case_id": "doc-007",
+      "category": "doc",
+      "text": "幫我看這份文件的評論並改稿",
+      "expected_route": {
+        "lane": "doc_editor",
+        "planner_action": "comment_rewrite_preview",
+        "agent_or_tool": "tool:lark_doc_rewrite_from_comments"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-008",
+      "source_case_id": "doc-008",
+      "category": "doc",
+      "text": "請讀這份文件內容 doccnread001",
+      "expected_route": {
+        "lane": "doc_editor",
+        "planner_action": "document_read",
+        "agent_or_tool": "tool:lark_doc_read"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-009",
+      "source_case_id": "doc-009",
+      "category": "doc",
+      "text": "幫我修改這份文檔",
+      "expected_route": {
+        "lane": "doc_editor",
+        "planner_action": "comment_rewrite_preview",
+        "agent_or_tool": "tool:lark_doc_rewrite_from_comments"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-010",
+      "source_case_id": "doc-010",
+      "category": "doc",
+      "text": "請整理文件摘要",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "search_and_detail_doc",
+        "agent_or_tool": "tool:search_and_detail_doc"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": true,
+        "must_fail_closed": false,
+        "blocked_lanes": [
+          "personal_assistant",
+          "group_shared_assistant"
+        ]
+      }
+    },
+    {
+      "id": "canary-011",
+      "source_case_id": "doc-011",
+      "category": "doc",
+      "text": "search company brain 列出文件",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "list_company_brain_docs",
+        "agent_or_tool": "tool:list_company_brain_docs"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": true,
+        "must_fail_closed": false,
+        "blocked_lanes": [
+          "personal_assistant",
+          "group_shared_assistant"
+        ]
+      }
+    },
+    {
+      "id": "canary-012",
+      "source_case_id": "doc-012",
+      "category": "doc",
+      "text": "search company brain 建立文件",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "create_doc",
+        "agent_or_tool": "tool:create_doc"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": true,
+        "must_fail_closed": false,
+        "blocked_lanes": [
+          "personal_assistant",
+          "group_shared_assistant"
+        ]
+      }
+    },
+    {
+      "id": "canary-013",
+      "source_case_id": "doc-013",
+      "category": "doc",
+      "text": "search learn this doc",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "ingest_learning_doc",
+        "agent_or_tool": "tool:ingest_learning_doc"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-014",
+      "source_case_id": "doc-014",
+      "category": "doc",
+      "text": "search update learning state",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "update_learning_state",
+        "agent_or_tool": "tool:update_learning_state"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-015",
+      "source_case_id": "doc-015",
+      "category": "doc",
+      "text": "知識 create doc then list docs",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "create_and_list_doc",
+        "agent_or_tool": "preset:create_and_list_doc"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-016",
+      "source_case_id": "doc-016",
+      "category": "doc",
+      "text": "company brain create then search doc",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "create_search_detail_list_doc",
+        "agent_or_tool": "preset:create_search_detail_list_doc"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": true,
+        "must_fail_closed": false,
+        "blocked_lanes": [
+          "personal_assistant",
+          "group_shared_assistant"
+        ]
+      }
+    },
+    {
+      "id": "canary-017",
+      "source_case_id": "doc-017",
+      "category": "doc",
+      "text": "根據文件打開這份文件內容",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "get_company_brain_doc_detail",
+        "agent_or_tool": "tool:get_company_brain_doc_detail"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      },
+      "context": {
+        "planner": {
+          "active_doc": {
+            "doc_id": "doc-active-1",
+            "title": "Active Doc"
+          }
+        }
+      }
+    },
+    {
+      "id": "canary-018",
+      "source_case_id": "doc-018",
+      "category": "doc",
+      "text": "根據文件打開第2份",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "get_company_brain_doc_detail",
+        "agent_or_tool": "tool:get_company_brain_doc_detail"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      },
+      "context": {
+        "planner": {
+          "active_candidates": [
+            {
+              "doc_id": "doc-candidate-1",
+              "title": "Candidate 1"
+            },
+            {
+              "doc_id": "doc-candidate-2",
+              "title": "Candidate 2"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "canary-019",
+      "source_case_id": "doc-019",
+      "category": "doc",
+      "text": "把我的雲文檔做分類 指派給對應的角色",
+      "expected_route": {
+        "lane": "cloud_doc_workflow",
+        "planner_action": "preview",
+        "agent_or_tool": "workflow:cloud_doc_organization"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": true,
+        "must_fail_closed": false,
+        "blocked_lanes": [
+          "personal_assistant",
+          "group_shared_assistant"
+        ]
+      }
+    },
+    {
+      "id": "canary-020",
+      "source_case_id": "doc-020",
+      "category": "doc",
+      "text": "好的，現在請告訴我還有什麼內容是需要我二次做確認的",
+      "expected_route": {
+        "lane": "cloud_doc_workflow",
+        "planner_action": "review",
+        "agent_or_tool": "workflow:cloud_doc_organization"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      },
+      "context": {
+        "active_workflow_mode": "cloud_doc_organization"
+      }
+    },
+    {
+      "id": "canary-021",
+      "source_case_id": "doc-021",
+      "category": "doc",
+      "text": "這些待人工確認的文件，到底為什麼不能直接分配？",
+      "expected_route": {
+        "lane": "cloud_doc_workflow",
+        "planner_action": "why",
+        "agent_or_tool": "workflow:cloud_doc_organization"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": true,
+        "must_fail_closed": false,
+        "blocked_lanes": [
+          "personal_assistant",
+          "group_shared_assistant"
+        ]
+      },
+      "context": {
+        "active_workflow_mode": "cloud_doc_organization"
+      }
+    },
+    {
+      "id": "canary-022",
+      "source_case_id": "doc-022",
+      "category": "doc",
+      "text": "去學習吧 各個角色分別看完之後要告訴我哪些文檔跟你無關 我們再重新分配",
+      "expected_route": {
+        "lane": "cloud_doc_workflow",
+        "planner_action": "rereview",
+        "agent_or_tool": "workflow:cloud_doc_organization"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": true,
+        "must_fail_closed": false,
+        "blocked_lanes": [
+          "personal_assistant",
+          "group_shared_assistant"
+        ]
+      },
+      "context": {
+        "active_workflow_mode": "cloud_doc_organization"
+      }
+    },
+    {
+      "id": "canary-023",
+      "source_case_id": "doc-023",
+      "category": "doc",
+      "text": "退出分類模式",
+      "expected_route": {
+        "lane": "cloud_doc_workflow",
+        "planner_action": "exit",
+        "agent_or_tool": "workflow:cloud_doc_organization"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      },
+      "context": {
+        "active_workflow_mode": "cloud_doc_organization"
+      }
+    },
+    {
+      "id": "canary-024",
+      "source_case_id": "doc-023a",
+      "category": "doc",
+      "text": "把非 scanoo 的文檔摘出去",
+      "expected_route": {
+        "lane": "cloud_doc_workflow",
+        "planner_action": "rereview",
+        "agent_or_tool": "workflow:cloud_doc_organization"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": true,
+        "must_fail_closed": false,
+        "blocked_lanes": [
+          "personal_assistant",
+          "group_shared_assistant"
+        ]
+      }
+    },
+    {
+      "id": "canary-025",
+      "source_case_id": "doc-023b",
+      "category": "doc",
+      "text": "把跟 scanoo 無關的文檔排除",
+      "expected_route": {
+        "lane": "cloud_doc_workflow",
+        "planner_action": "rereview",
+        "agent_or_tool": "workflow:cloud_doc_organization"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": true,
+        "must_fail_closed": false,
+        "blocked_lanes": [
+          "personal_assistant",
+          "group_shared_assistant"
+        ]
+      }
+    },
+    {
+      "id": "canary-026",
+      "source_case_id": "doc-023c",
+      "category": "doc",
+      "text": "摘出無關文檔",
+      "expected_route": {
+        "lane": "cloud_doc_workflow",
+        "planner_action": "rereview",
+        "agent_or_tool": "workflow:cloud_doc_organization"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": true,
+        "must_fail_closed": false,
+        "blocked_lanes": [
+          "personal_assistant",
+          "group_shared_assistant"
+        ]
+      }
+    },
+    {
+      "id": "canary-027",
+      "source_case_id": "doc-023d",
+      "category": "doc",
+      "text": "只保留 AI agent 主題的文檔，把非 AI agent 的文檔排出去",
+      "expected_route": {
+        "lane": "cloud_doc_workflow",
+        "planner_action": "rereview",
+        "agent_or_tool": "workflow:cloud_doc_organization"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": true,
+        "must_fail_closed": false,
+        "blocked_lanes": [
+          "personal_assistant",
+          "group_shared_assistant"
+        ]
+      }
+    },
+    {
+      "id": "canary-028",
+      "source_case_id": "doc-023e",
+      "category": "doc",
+      "text": "只保留 onboarding 主題文件，把非 onboarding 的文件摘出去",
+      "expected_route": {
+        "lane": "cloud_doc_workflow",
+        "planner_action": "rereview",
+        "agent_or_tool": "workflow:cloud_doc_organization"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": true,
+        "must_fail_closed": false,
+        "blocked_lanes": [
+          "personal_assistant",
+          "group_shared_assistant"
+        ]
+      }
+    },
+    {
+      "id": "canary-029",
+      "source_case_id": "doc-023f",
+      "category": "doc",
+      "text": "把不是產品需求範圍的文件移出去",
+      "expected_route": {
+        "lane": "cloud_doc_workflow",
+        "planner_action": "rereview",
+        "agent_or_tool": "workflow:cloud_doc_organization"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": true,
+        "must_fail_closed": false,
+        "blocked_lanes": [
+          "personal_assistant",
+          "group_shared_assistant"
+        ]
+      }
+    },
+    {
+      "id": "canary-030",
+      "source_case_id": "doc-023g",
+      "category": "doc",
+      "text": "把 HR 之外的文檔剔出去",
+      "expected_route": {
+        "lane": "cloud_doc_workflow",
+        "planner_action": "rereview",
+        "agent_or_tool": "workflow:cloud_doc_organization"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": true,
+        "must_fail_closed": false,
+        "blocked_lanes": [
+          "personal_assistant",
+          "group_shared_assistant"
+        ]
+      }
+    },
+    {
+      "id": "canary-031",
+      "source_case_id": "doc-023h",
+      "category": "doc",
+      "text": "把非交付集合的文件排出去",
+      "expected_route": {
+        "lane": "cloud_doc_workflow",
+        "planner_action": "rereview",
+        "agent_or_tool": "workflow:cloud_doc_organization"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-032",
+      "source_case_id": "doc-023i",
+      "category": "doc",
+      "text": "重新審核哪些文件不屬於 scanoo 集合",
+      "expected_route": {
+        "lane": "cloud_doc_workflow",
+        "planner_action": "rereview",
+        "agent_or_tool": "workflow:cloud_doc_organization"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-033",
+      "source_case_id": "doc-023j",
+      "category": "doc",
+      "text": "再審核哪些文檔不屬於產品文檔集合",
+      "expected_route": {
+        "lane": "cloud_doc_workflow",
+        "planner_action": "rereview",
+        "agent_or_tool": "workflow:cloud_doc_organization"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-034",
+      "source_case_id": "doc-023k",
+      "category": "doc",
+      "text": "把非客服知識庫範圍的文件排除",
+      "expected_route": {
+        "lane": "cloud_doc_workflow",
+        "planner_action": "rereview",
+        "agent_or_tool": "workflow:cloud_doc_organization"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": true,
+        "must_fail_closed": false,
+        "blocked_lanes": [
+          "personal_assistant",
+          "group_shared_assistant"
+        ]
+      }
+    },
+    {
+      "id": "canary-035",
+      "source_case_id": "doc-024",
+      "category": "doc",
+      "text": "根據文件這份文件寫了什麼",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "get_company_brain_doc_detail",
+        "agent_or_tool": "tool:get_company_brain_doc_detail"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      },
+      "context": {
+        "planner": {
+          "active_theme": "okr",
+          "active_doc": {
+            "doc_id": "doc-okr-1",
+            "title": "OKR Weekly"
+          }
+        }
+      }
+    },
+    {
+      "id": "canary-036",
+      "source_case_id": "doc-025",
+      "category": "doc",
+      "text": "根據文件讀這份文件",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "get_company_brain_doc_detail",
+        "agent_or_tool": "tool:get_company_brain_doc_detail"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      },
+      "context": {
+        "planner": {
+          "active_theme": "delivery",
+          "active_doc": {
+            "doc_id": "doc-delivery-1",
+            "title": "Delivery SOP"
+          }
+        }
+      }
+    },
+    {
+      "id": "canary-037",
+      "source_case_id": "doc-026",
+      "category": "doc",
+      "text": "查一下這份文件",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "search_company_brain_docs",
+        "agent_or_tool": "tool:search_company_brain_docs"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-038",
+      "source_case_id": "doc-027",
+      "category": "doc",
+      "text": "根據文件查一下這份內容",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "get_company_brain_doc_detail",
+        "agent_or_tool": "tool:get_company_brain_doc_detail"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      },
+      "context": {
+        "planner": {
+          "active_doc": {
+            "doc_id": "doc-followup-1",
+            "title": "Onboarding SOP"
+          }
+        }
+      }
+    },
+    {
+      "id": "canary-039",
+      "source_case_id": "doc-028",
+      "category": "doc",
+      "text": "根據文件打開第3份內容",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "get_company_brain_doc_detail",
+        "agent_or_tool": "tool:get_company_brain_doc_detail"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      },
+      "context": {
+        "planner": {
+          "active_candidates": [
+            {
+              "doc_id": "doc-followup-1",
+              "title": "Onboarding SOP"
+            },
+            {
+              "doc_id": "doc-followup-2",
+              "title": "Delivery Guide"
+            },
+            {
+              "doc_id": "doc-followup-3",
+              "title": "Runtime Notes"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "canary-040",
+      "source_case_id": "doc-029",
+      "category": "doc",
+      "text": "搜尋 onboarding SOP 然後打開內容",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "search_company_brain_docs",
+        "agent_or_tool": "tool:search_company_brain_docs"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-041",
+      "source_case_id": "doc-030",
+      "category": "doc",
+      "text": "搜索交付驗收文件並讀內容",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "search_company_brain_docs",
+        "agent_or_tool": "tool:search_company_brain_docs"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-042",
+      "source_case_id": "doc-031",
+      "category": "doc",
+      "text": "查詢客戶提案文件內容",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "search_company_brain_docs",
+        "agent_or_tool": "tool:search_company_brain_docs"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-043",
+      "source_case_id": "doc-032",
+      "category": "doc",
+      "text": "幫我搜尋客戶跟進文件並打開內容",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "search_company_brain_docs",
+        "agent_or_tool": "tool:search_company_brain_docs"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-044",
+      "source_case_id": "doc-033",
+      "category": "doc",
+      "text": "查一下 onboarding 文件內容",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "search_company_brain_docs",
+        "agent_or_tool": "tool:search_company_brain_docs"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-045",
+      "source_case_id": "doc-034",
+      "category": "doc",
+      "text": "搜尋 onboarding 文件",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "search_company_brain_docs",
+        "agent_or_tool": "tool:search_company_brain_docs"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-046",
+      "source_case_id": "doc-035",
+      "category": "doc",
+      "text": "整理 onboarding 文件重點",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "search_and_detail_doc",
+        "agent_or_tool": "tool:search_and_detail_doc"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": true,
+        "must_fail_closed": false,
+        "blocked_lanes": [
+          "personal_assistant",
+          "group_shared_assistant"
+        ]
+      }
+    },
+    {
+      "id": "canary-047",
+      "source_case_id": "doc-036",
+      "category": "doc",
+      "text": "幫我把這份文件的評論整合後改稿",
+      "expected_route": {
+        "lane": "doc_editor",
+        "planner_action": "comment_rewrite_preview",
+        "agent_or_tool": "tool:lark_doc_rewrite_from_comments"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-048",
+      "source_case_id": "doc-037",
+      "category": "doc",
+      "text": "看一下這份文檔評論並幫我修改",
+      "expected_route": {
+        "lane": "doc_editor",
+        "planner_action": "comment_rewrite_preview",
+        "agent_or_tool": "tool:lark_doc_rewrite_from_comments"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-049",
+      "source_case_id": "doc-038",
+      "category": "doc",
+      "text": "這份文件在講什麼",
+      "expected_route": {
+        "lane": "personal_assistant",
+        "planner_action": "ROUTING_NO_MATCH",
+        "agent_or_tool": "error:ROUTING_NO_MATCH"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": true,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-050",
+      "source_case_id": "doc-039",
+      "category": "doc",
+      "text": "打開這份給我看",
+      "expected_route": {
+        "lane": "personal_assistant",
+        "planner_action": "ROUTING_NO_MATCH",
+        "agent_or_tool": "error:ROUTING_NO_MATCH"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": true,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-051",
+      "source_case_id": "doc-040",
+      "category": "doc",
+      "text": "請整理交付驗收流程",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "search_and_detail_doc",
+        "agent_or_tool": "tool:search_and_detail_doc"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-052",
+      "source_case_id": "doc-041",
+      "category": "doc",
+      "text": "把 onboarding 流程講給我聽",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "search_and_detail_doc",
+        "agent_or_tool": "tool:search_and_detail_doc"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-053",
+      "source_case_id": "doc-042",
+      "category": "doc",
+      "text": "導入 SOP 在哪",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "search_company_brain_docs",
+        "agent_or_tool": "tool:search_company_brain_docs"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-054",
+      "source_case_id": "meeting-001",
+      "category": "meeting",
+      "text": "我要開會了",
+      "expected_route": {
+        "lane": "meeting_workflow",
+        "planner_action": "start_capture",
+        "agent_or_tool": "workflow:meeting_agent"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-055",
+      "source_case_id": "meeting-002",
+      "category": "meeting",
+      "text": "開始旁聽這場會議",
+      "expected_route": {
+        "lane": "meeting_workflow",
+        "planner_action": "start_capture_calendar",
+        "agent_or_tool": "workflow:meeting_agent"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-056",
+      "source_case_id": "meeting-003",
+      "category": "meeting",
+      "text": "會議",
+      "expected_route": {
+        "lane": "meeting_workflow",
+        "planner_action": "start_capture",
+        "agent_or_tool": "workflow:meeting_agent"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-057",
+      "source_case_id": "meeting-004",
+      "category": "meeting",
+      "text": "/meeting start",
+      "expected_route": {
+        "lane": "meeting_workflow",
+        "planner_action": "start_capture",
+        "agent_or_tool": "workflow:meeting_agent"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-058",
+      "source_case_id": "meeting-005",
+      "category": "meeting",
+      "text": "/meeting current",
+      "expected_route": {
+        "lane": "meeting_workflow",
+        "planner_action": "start_capture_calendar",
+        "agent_or_tool": "workflow:meeting_agent"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-059",
+      "source_case_id": "meeting-006",
+      "category": "meeting",
+      "text": "會議結束了",
+      "expected_route": {
+        "lane": "meeting_workflow",
+        "planner_action": "stop_capture",
+        "agent_or_tool": "workflow:meeting_agent"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-060",
+      "source_case_id": "meeting-007",
+      "category": "meeting",
+      "text": "/meeting stop",
+      "expected_route": {
+        "lane": "meeting_workflow",
+        "planner_action": "stop_capture",
+        "agent_or_tool": "workflow:meeting_agent"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-061",
+      "source_case_id": "meeting-008",
+      "category": "meeting",
+      "text": "/meeting confirm confirm-123",
+      "expected_route": {
+        "lane": "meeting_workflow",
+        "planner_action": "confirm",
+        "agent_or_tool": "workflow:meeting_agent"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-062",
+      "source_case_id": "meeting-009",
+      "category": "meeting",
+      "text": "/meeting 客戶會議 參與人員：Sean、Amy TODO：Sean 整理 PRD",
+      "expected_route": {
+        "lane": "meeting_workflow",
+        "planner_action": "process",
+        "agent_or_tool": "workflow:meeting_agent"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-063",
+      "source_case_id": "meeting-010",
+      "category": "meeting",
+      "text": "請問在持續記錄中嗎",
+      "expected_route": {
+        "lane": "meeting_workflow",
+        "planner_action": "capture_status",
+        "agent_or_tool": "workflow:meeting_agent"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      },
+      "context": {
+        "meeting_capture_active": true
+      }
+    },
+    {
+      "id": "canary-064",
+      "source_case_id": "meeting-011",
+      "category": "meeting",
+      "text": "還在錄嗎",
+      "expected_route": {
+        "lane": "meeting_workflow",
+        "planner_action": "capture_status",
+        "agent_or_tool": "workflow:meeting_agent"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      },
+      "context": {
+        "meeting_capture_active": true
+      }
+    },
+    {
+      "id": "canary-065",
+      "source_case_id": "meeting-012",
+      "category": "meeting",
+      "text": "線下會議請記錄一下",
+      "expected_route": {
+        "lane": "meeting_workflow",
+        "planner_action": "start_capture",
+        "agent_or_tool": "workflow:meeting_agent"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-066",
+      "source_case_id": "meeting-013",
+      "category": "meeting",
+      "text": "我們一起參會，請同步記錄",
+      "expected_route": {
+        "lane": "meeting_workflow",
+        "planner_action": "start_capture",
+        "agent_or_tool": "workflow:meeting_agent"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-067",
+      "source_case_id": "meeting-014",
+      "category": "meeting",
+      "text": "停止會議記錄",
+      "expected_route": {
+        "lane": "meeting_workflow",
+        "planner_action": "stop_capture",
+        "agent_or_tool": "workflow:meeting_agent"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-068",
+      "source_case_id": "meeting-015",
+      "category": "meeting",
+      "text": "/meeting end",
+      "expected_route": {
+        "lane": "meeting_workflow",
+        "planner_action": "stop_capture",
+        "agent_or_tool": "workflow:meeting_agent"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-069",
+      "source_case_id": "runtime-001",
+      "category": "runtime",
+      "text": "查詢 runtime 運行資訊",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "get_runtime_info",
+        "agent_or_tool": "tool:get_runtime_info"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-070",
+      "source_case_id": "runtime-002",
+      "category": "runtime",
+      "text": "查一下 runtime db path",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "get_runtime_info",
+        "agent_or_tool": "tool:get_runtime_info"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-071",
+      "source_case_id": "runtime-003",
+      "category": "runtime",
+      "text": "search runtime cwd",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "get_runtime_info",
+        "agent_or_tool": "tool:get_runtime_info"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-072",
+      "source_case_id": "runtime-004",
+      "category": "runtime",
+      "text": "查詢 service start runtime",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "get_runtime_info",
+        "agent_or_tool": "tool:get_runtime_info"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-073",
+      "source_case_id": "runtime-005",
+      "category": "runtime",
+      "text": "幫我看今天日程",
+      "expected_route": {
+        "lane": "personal_assistant",
+        "planner_action": "calendar_summary",
+        "agent_or_tool": "tool:lark_calendar_primary"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-074",
+      "source_case_id": "runtime-006",
+      "category": "runtime",
+      "text": "幫我看目前任務",
+      "expected_route": {
+        "lane": "personal_assistant",
+        "planner_action": "tasks_summary",
+        "agent_or_tool": "tool:lark_tasks_list"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-075",
+      "source_case_id": "runtime-007",
+      "category": "runtime",
+      "text": "幫我總結最近對話",
+      "expected_route": {
+        "lane": "personal_assistant",
+        "planner_action": "summarize_recent_dialogue",
+        "agent_or_tool": "tool:lark_messages_list"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-076",
+      "source_case_id": "runtime-008",
+      "category": "runtime",
+      "text": "幫我總結最近對話",
+      "expected_route": {
+        "lane": "group_shared_assistant",
+        "planner_action": "summarize_recent_dialogue",
+        "agent_or_tool": "tool:lark_messages_list"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      },
+      "scope": {
+        "chat_type": "group"
+      }
+    },
+    {
+      "id": "canary-077",
+      "source_case_id": "runtime-009",
+      "category": "runtime",
+      "text": "幫我回覆這段群聊",
+      "expected_route": {
+        "lane": "group_shared_assistant",
+        "planner_action": "draft_group_reply",
+        "agent_or_tool": "tool:lark_message_reply_card"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      },
+      "scope": {
+        "chat_type": "group"
+      }
+    },
+    {
+      "id": "canary-078",
+      "source_case_id": "runtime-010",
+      "category": "runtime",
+      "text": "晚點提醒我一下",
+      "expected_route": {
+        "lane": "personal_assistant",
+        "planner_action": "ROUTING_NO_MATCH",
+        "agent_or_tool": "error:ROUTING_NO_MATCH"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": true,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-079",
+      "source_case_id": "runtime-011",
+      "category": "runtime",
+      "text": "查一下現在的 db path",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "get_runtime_info",
+        "agent_or_tool": "tool:get_runtime_info"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-080",
+      "source_case_id": "runtime-012",
+      "category": "runtime",
+      "text": "查一下 runtime pid",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "get_runtime_info",
+        "agent_or_tool": "tool:get_runtime_info"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-081",
+      "source_case_id": "runtime-013",
+      "category": "runtime",
+      "text": "查一下 runtime cwd",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "get_runtime_info",
+        "agent_or_tool": "tool:get_runtime_info"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-082",
+      "source_case_id": "runtime-014",
+      "category": "runtime",
+      "text": "查詢 service start runtime",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "get_runtime_info",
+        "agent_or_tool": "tool:get_runtime_info"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-083",
+      "source_case_id": "runtime-015",
+      "category": "runtime",
+      "text": "查一下 runtime onboarding 文件",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "get_runtime_info",
+        "agent_or_tool": "tool:get_runtime_info"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-084",
+      "source_case_id": "runtime-016",
+      "category": "runtime",
+      "text": "查一下 onboarding runtime 流程",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "get_runtime_info",
+        "agent_or_tool": "tool:get_runtime_info"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-085",
+      "source_case_id": "runtime-017",
+      "category": "runtime",
+      "text": "查一下 db path 文件",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "get_runtime_info",
+        "agent_or_tool": "tool:get_runtime_info"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-086",
+      "source_case_id": "runtime-018",
+      "category": "runtime",
+      "text": "查詢 service start 文件",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "get_runtime_info",
+        "agent_or_tool": "tool:get_runtime_info"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-087",
+      "source_case_id": "runtime-019",
+      "category": "runtime",
+      "text": "幫我搜尋 runtime db path 文件",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "get_runtime_info",
+        "agent_or_tool": "tool:get_runtime_info"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-088",
+      "source_case_id": "runtime-020",
+      "category": "runtime",
+      "text": "查一下這份文件的 db path 說明",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "get_runtime_info",
+        "agent_or_tool": "tool:get_runtime_info"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-089",
+      "source_case_id": "runtime-021",
+      "category": "runtime",
+      "text": "我想看 runtime 的文件摘要",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "get_runtime_info",
+        "agent_or_tool": "tool:get_runtime_info"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": true,
+        "must_fail_closed": false,
+        "blocked_lanes": [
+          "personal_assistant",
+          "group_shared_assistant"
+        ]
+      }
+    },
+    {
+      "id": "canary-090",
+      "source_case_id": "runtime-022",
+      "category": "runtime",
+      "text": "幫我整理 runtime 文件重點",
+      "expected_route": {
+        "lane": "knowledge_assistant",
+        "planner_action": "get_runtime_info",
+        "agent_or_tool": "tool:get_runtime_info"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": true,
+        "must_fail_closed": false,
+        "blocked_lanes": [
+          "personal_assistant",
+          "group_shared_assistant"
+        ]
+      }
+    },
+    {
+      "id": "canary-091",
+      "source_case_id": "mixed-001",
+      "category": "mixed",
+      "text": "/cmo 幫我整理定位",
+      "expected_route": {
+        "lane": "registered_agent",
+        "planner_action": "dispatch_registered_agent",
+        "agent_or_tool": "agent:cmo"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-092",
+      "source_case_id": "mixed-002",
+      "category": "mixed",
+      "text": "/knowledge conflicts 找出 Scanoo 文件衝突",
+      "expected_route": {
+        "lane": "registered_agent",
+        "planner_action": "dispatch_registered_agent",
+        "agent_or_tool": "agent:knowledge-conflicts"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-093",
+      "source_case_id": "mixed-003",
+      "category": "mixed",
+      "text": "/knowledge audit 盤點 OKR 文件缺口",
+      "expected_route": {
+        "lane": "registered_agent",
+        "planner_action": "dispatch_registered_agent",
+        "agent_or_tool": "agent:knowledge-audit"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-094",
+      "source_case_id": "mixed-004",
+      "category": "mixed",
+      "text": "/knowledge distill 幫我濃縮這批文件",
+      "expected_route": {
+        "lane": "registered_agent",
+        "planner_action": "dispatch_registered_agent",
+        "agent_or_tool": "agent:knowledge-distill"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-095",
+      "source_case_id": "mixed-005",
+      "category": "mixed",
+      "text": "/tech 幫我看架構風險",
+      "expected_route": {
+        "lane": "registered_agent",
+        "planner_action": "dispatch_registered_agent",
+        "agent_or_tool": "agent:tech"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-096",
+      "source_case_id": "mixed-006",
+      "category": "mixed",
+      "text": "先請各個 agent 一起看這批文檔，最後再統一收斂建議",
+      "expected_route": {
+        "lane": "executive",
+        "planner_action": "start",
+        "agent_or_tool": "agent:generalist"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-097",
+      "source_case_id": "mixed-007",
+      "category": "mixed",
+      "text": "把這輪改交給 /cmo",
+      "expected_route": {
+        "lane": "executive",
+        "planner_action": "start",
+        "agent_or_tool": "agent:cmo"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-098",
+      "source_case_id": "mixed-008",
+      "category": "mixed",
+      "text": "這個需要高層決策，請一起協作",
+      "expected_route": {
+        "lane": "executive",
+        "planner_action": "start",
+        "agent_or_tool": "agent:ceo"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-099",
+      "source_case_id": "mixed-009",
+      "category": "mixed",
+      "text": "請 consult agent 做方案比較",
+      "expected_route": {
+        "lane": "executive",
+        "planner_action": "start",
+        "agent_or_tool": "agent:consult"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    },
+    {
+      "id": "canary-100",
+      "source_case_id": "mixed-010",
+      "category": "mixed",
+      "text": "請 product agent 從產品角度拆解這個任務",
+      "expected_route": {
+        "lane": "executive",
+        "planner_action": "start",
+        "agent_or_tool": "agent:product"
+      },
+      "boundary_expectation": {
+        "doc_boundary_intent": false,
+        "must_fail_closed": false,
+        "blocked_lanes": []
+      }
+    }
+  ]
+}
