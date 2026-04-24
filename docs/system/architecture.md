@@ -154,7 +154,9 @@ These describe code structure and responsibility, not how many processes are run
 - `agent-learning-loop.mjs`
   - reads recent request-monitor rows plus persisted trace events
   - summarizes routing failure patterns, tool success-rate/latency patterns, and draft routing/tool-weight proposals
-  - writes those proposals into the existing improvement workflow only as human-reviewable pending items
+  - adds bounded time-split A/B replay evidence (`control` vs `candidate`) plus `improvement_delta` for each draft proposal
+  - low-risk learning proposals (`tool_weight_adjustment`) can be upgraded to `auto_apply`, while high-risk routing proposals stay `human_approval`
+  - writes proposals into the existing improvement workflow with replay evidence so apply-stage verification can compare before/after metrics
 
 - `binding-runtime.mjs`
   - converts Lark event identity into binding/session/workspace/sandbox keys
@@ -187,8 +189,16 @@ These describe code structure and responsibility, not how many processes are run
 - `executive-improvement.mjs`
   - derives one lightweight pure `improvement_proposal` from `reflection_result`
   - task-journal proposal shape remains limited to `type / summary / action_suggestion`
+  - provides shared low/high-risk policy resolution (`resolveImprovementExecutionPolicy`) used by both reflection proposals and learning-loop proposals
   - when a proposal is generated, it also stages one create-only JSON record under `/Users/seanhan/Documents/Playground/src/knowledge/pending/` with `id / type / summary / action_suggestion / confidence / created_at`
   - that file staging is pending-only and does not auto-approve or promote into `/Users/seanhan/Documents/Playground/src/knowledge/approved/`; workflow metadata and improvement-review persistence are still added downstream by the closed-loop improvement workflow
+
+- `executive-improvement-workflow.mjs`
+  - normalizes proposal risk/mode using shared policy before persistence
+  - auto-apply proposals now require additive `effect_evidence` with before/after metric comparison and delta status
+  - only measurable `improved` deltas stay `applied`; `same`/`regressed` outcomes are fail-soft rolled back
+  - proposal records now carry strategy versioning metadata (`strategy_version`, `active_strategy_version`, `strategy_history`)
+  - non-improving or regressed effect evidence triggers rollback state (`status=rolled_back`) with rollback record and version rollback target
 
 - `knowledge/approve.mjs`
   - provides manual-only local helpers for staged improvement knowledge files

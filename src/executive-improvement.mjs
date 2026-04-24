@@ -21,6 +21,19 @@ const RETRYABLE_ERROR_TYPES = new Set([
   "permission_denied",
 ]);
 
+const LOW_RISK_IMPROVEMENT_CATEGORIES = new Set([
+  "prompt_improvement",
+  "verification_improvement",
+  "meeting_agent_improvement",
+  "tool_weight_adjustment",
+]);
+
+const HIGH_RISK_IMPROVEMENT_CATEGORIES = new Set([
+  "routing_improvement",
+  "knowledge_policy_update",
+  "rule_improvement",
+]);
+
 const KNOWLEDGE_PENDING_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "knowledge",
@@ -73,6 +86,47 @@ function buildMissingElementsSummary(prefix = "", missingElements = []) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+export function resolveImprovementExecutionPolicy({
+  category = "",
+  requestedMode = "",
+  context = null,
+  autoUpgrade = false,
+} = {}) {
+  const normalizedCategory = cleanText(category);
+  const normalizedRequestedMode = cleanText(requestedMode);
+  const isLearningLoop = cleanText(context?.source) === "learning_loop";
+  const isLowRisk = LOW_RISK_IMPROVEMENT_CATEGORIES.has(normalizedCategory);
+  const isHighRisk = HIGH_RISK_IMPROVEMENT_CATEGORIES.has(normalizedCategory);
+  const riskLevel = isLowRisk ? "low_risk" : "high_risk";
+
+  if (isHighRisk) {
+    return {
+      mode: "human_approval",
+      risk_level: "high_risk",
+      policy_reason: "high_risk_requires_human_approval",
+    };
+  }
+
+  if (
+    isLowRisk
+    && (normalizedRequestedMode === "auto_apply" || (autoUpgrade && isLearningLoop))
+  ) {
+    return {
+      mode: "auto_apply",
+      risk_level: "low_risk",
+      policy_reason: normalizedRequestedMode === "auto_apply"
+        ? "explicit_auto_apply_low_risk"
+        : "learning_loop_auto_upgrade_low_risk",
+    };
+  }
+
+  return {
+    mode: normalizedRequestedMode || (isLowRisk && isLearningLoop ? "proposal_only" : "human_approval"),
+    risk_level: riskLevel,
+    policy_reason: isLowRisk ? "low_risk_needs_explicit_apply" : "default_human_approval",
+  };
 }
 
 function clampConfidence(value) {
@@ -297,47 +351,72 @@ function toLegacyWorkflowProposal(improvementProposal = null, reflection = null,
   }
 
   const issues = collectSignals(reflection).issues;
+  const isMeetingTask = cleanText(task?.current_agent_id) === "meeting" || cleanText(task?.task_type).includes("meeting");
 
   switch (improvementProposal.type) {
-    case "routing_fix":
+    case "routing_fix": {
+      const policy = resolveImprovementExecutionPolicy({
+        category: "routing_improvement",
+        requestedMode: "proposal_only",
+      });
       return {
         category: "routing_improvement",
-        mode: "proposal_only",
+        mode: policy.mode,
+        risk_level: policy.risk_level,
         title: "Adjust routing hints",
         description: improvementProposal.action_suggestion,
         target: "lane-executor",
       };
-    case "knowledge_gap":
+    }
+    case "knowledge_gap": {
+      const category = issues.includes("knowledge_write_error") ? "knowledge_policy_update" : "verification_improvement";
+      const policy = resolveImprovementExecutionPolicy({
+        category,
+        requestedMode: issues.includes("knowledge_write_error") ? "human_approval" : "proposal_only",
+      });
       return {
-        category: issues.includes("knowledge_write_error") ? "knowledge_policy_update" : "verification_improvement",
-        mode: issues.includes("knowledge_write_error") ? "human_approval" : "proposal_only",
+        category,
+        mode: policy.mode,
+        risk_level: policy.risk_level,
         title: "Close verified knowledge gap",
         description: improvementProposal.action_suggestion,
         target: issues.includes("knowledge_write_error") ? "executive-rules" : "executive-verifier",
       };
-    case "retry_strategy":
+    }
+    case "retry_strategy": {
+      const category = isMeetingTask
+        ? "meeting_agent_improvement"
+        : "rule_improvement";
+      const policy = resolveImprovementExecutionPolicy({
+        category,
+        requestedMode: isMeetingTask ? "auto_apply" : "proposal_only",
+      });
       return {
-        category: cleanText(task?.current_agent_id) === "meeting" || cleanText(task?.task_type).includes("meeting")
-          ? "meeting_agent_improvement"
-          : "rule_improvement",
-        mode: cleanText(task?.current_agent_id) === "meeting" || cleanText(task?.task_type).includes("meeting")
-          ? "auto_apply"
-          : "proposal_only",
+        category,
+        mode: policy.mode,
+        risk_level: policy.risk_level,
         title: "Add controlled retry path",
         description: improvementProposal.action_suggestion,
-        target: cleanText(task?.current_agent_id) === "meeting" || cleanText(task?.task_type).includes("meeting")
+        target: isMeetingTask
           ? "meeting-agent"
           : "executive-rules",
       };
+    }
     case "prompt_fix":
-    default:
+    default: {
+      const policy = resolveImprovementExecutionPolicy({
+        category: "prompt_improvement",
+        requestedMode: "proposal_only",
+      });
       return {
         category: "prompt_improvement",
-        mode: "proposal_only",
+        mode: policy.mode,
+        risk_level: policy.risk_level,
         title: "Tighten execution prompt",
         description: improvementProposal.action_suggestion,
         target: "agent-dispatcher",
       };
+    }
   }
 }
 

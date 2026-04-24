@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
 import db from "./db.mjs";
+import { resolveImprovementExecutionPolicy } from "./executive-improvement.mjs";
 import { registerImprovementWorkflowProposals } from "./executive-improvement-workflow.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 
@@ -252,6 +253,95 @@ function computeLatencyStats(samples = []) {
   };
 }
 
+function normalizeReplayRank(value) {
+  const normalized = Number(value);
+  if (!Number.isFinite(normalized) || normalized < 0) {
+    return MAX_RECENCY_RANK;
+  }
+  return Math.round(normalized);
+}
+
+function buildReplaySegmentMetrics(samples = []) {
+  const normalized = (Array.isArray(samples) ? samples : [])
+    .filter((item) => item && typeof item === "object")
+    .map((item) => ({
+      success: item.success === true,
+      duration_ms: normalizeDuration(item.duration_ms),
+    }));
+  const sampleCount = normalized.length;
+  const successCount = normalized.filter((item) => item.success).length;
+  const failureCount = Math.max(0, sampleCount - successCount);
+  const successRate = sampleCount > 0 ? successCount / sampleCount : 0;
+  const failureRate = sampleCount > 0 ? failureCount / sampleCount : 0;
+  return {
+    sample_count: sampleCount,
+    success_count: successCount,
+    failure_count: failureCount,
+    success_rate: toFixedNumber(successRate, 4),
+    failure_rate: toFixedNumber(failureRate, 4),
+    success_rate_percent: toPercent(successRate),
+    failure_rate_percent: toPercent(failureRate),
+    ...computeLatencyStats(normalized.map((item) => item.duration_ms)),
+  };
+}
+
+function computeDirectionalStatus(delta, betterDirection = "higher") {
+  if (!Number.isFinite(delta) || delta === 0) {
+    return "same";
+  }
+  if (betterDirection === "lower") {
+    return delta < 0 ? "improved" : "regressed";
+  }
+  return delta > 0 ? "improved" : "regressed";
+}
+
+function buildABReplayEvidence({
+  samples = [],
+  metric = "",
+  betterDirection = "higher",
+} = {}) {
+  const normalizedMetric = cleanText(metric) || "success_rate";
+  const sortedSamples = (Array.isArray(samples) ? samples : [])
+    .filter((item) => item && typeof item === "object")
+    .map((item) => ({
+      ...item,
+      request_rank: normalizeReplayRank(item.request_rank),
+    }))
+    .sort((left, right) => right.request_rank - left.request_rank);
+
+  if (sortedSamples.length < 2) {
+    return null;
+  }
+  const splitIndex = Math.floor(sortedSamples.length / 2);
+  if (splitIndex < 1 || sortedSamples.length - splitIndex < 1) {
+    return null;
+  }
+
+  const controlSamples = sortedSamples.slice(0, splitIndex);
+  const candidateSamples = sortedSamples.slice(splitIndex);
+  const control = buildReplaySegmentMetrics(controlSamples);
+  const candidate = buildReplaySegmentMetrics(candidateSamples);
+  const beforeValue = Number(control[normalizedMetric] || 0);
+  const afterValue = Number(candidate[normalizedMetric] || 0);
+  const deltaValue = toFixedNumber(afterValue - beforeValue, 4);
+  const status = computeDirectionalStatus(deltaValue, betterDirection);
+
+  return {
+    method: "ab_replay_time_split_v1",
+    metric: normalizedMetric,
+    better_direction: betterDirection,
+    control,
+    candidate,
+    improvement_delta: {
+      before: toFixedNumber(beforeValue, 4),
+      after: toFixedNumber(afterValue, 4),
+      delta: deltaValue,
+      status,
+      measurable: Math.abs(deltaValue) >= 0.01,
+    },
+  };
+}
+
 function summarizeErrors(errorMap = new Map(), limit = COMMON_ERROR_LIMIT) {
   return Array.from(errorMap.entries())
     .map(([error_type, count]) => ({ error_type, count }))
@@ -334,6 +424,15 @@ function truncateLabel(value = "", max = 80) {
 }
 
 function buildRoutingDraftProposal(item, lookbackHours) {
+  const policy = resolveImprovementExecutionPolicy({
+    category: "routing_improvement",
+    requestedMode: "human_approval",
+    context: {
+      source: "learning_loop",
+      learning_kind: "routing",
+    },
+    autoUpgrade: true,
+  });
   const topError = item.common_errors[0]?.error_type || "unknown_error";
   return {
     id: buildDeterministicProposalId("routing", [
@@ -345,7 +444,8 @@ function buildRoutingDraftProposal(item, lookbackHours) {
       item.sample_trace_ids.join(","),
     ]),
     category: "routing_improvement",
-    mode: "human_approval",
+    mode: policy.mode,
+    risk_level: policy.risk_level,
     title: `Review routing: ${truncateLabel(item.routing_key, 60)}`,
     description: `最近 ${lookbackHours}h 內，routing "${item.routing_key}" 失敗 ${item.failure_count}/${item.sample_count} 次（${item.failure_rate_percent}%），主要錯誤是 ${topError}。建議調整 routing hint、fallback 順序或 hard-route 規則。`,
     target: "lane-executor",
@@ -366,6 +466,7 @@ function buildRoutingDraftProposal(item, lookbackHours) {
       p95_latency_ms: item.p95_latency_ms,
       common_errors: item.common_errors,
       sample_trace_ids: item.sample_trace_ids,
+      ab_replay: item.ab_replay,
     },
   };
 }
@@ -375,6 +476,15 @@ function buildToolDraftProposal(item, lookbackHours) {
   if (!delta) {
     return null;
   }
+  const policy = resolveImprovementExecutionPolicy({
+    category: "tool_weight_adjustment",
+    requestedMode: "human_approval",
+    context: {
+      source: "learning_loop",
+      learning_kind: "tool_weight",
+    },
+    autoUpgrade: true,
+  });
   const direction = delta > 0 ? "increase" : "decrease";
   return {
     id: buildDeterministicProposalId("tool_weight", [
@@ -387,9 +497,12 @@ function buildToolDraftProposal(item, lookbackHours) {
       item.sample_trace_ids.join(","),
     ]),
     category: "tool_weight_adjustment",
-    mode: "human_approval",
+    mode: policy.mode,
+    risk_level: policy.risk_level,
     title: `${direction === "increase" ? "Increase" : "Decrease"} tool weight: ${item.tool_name}`,
-    description: `最近 ${lookbackHours}h 內，tool "${item.tool_name}" 成功 ${item.success_count}/${item.sample_count} 次（${item.success_rate_percent}%），建議人工審核後再將 routing 權重 ${direction} ${Math.abs(delta)}。`,
+    description: policy.mode === "auto_apply"
+      ? `最近 ${lookbackHours}h 內，tool "${item.tool_name}" 成功 ${item.success_count}/${item.sample_count} 次（${item.success_rate_percent}%），屬低風險調整，將自動套用權重 ${direction} ${Math.abs(delta)} 並進行 replay 驗證。`
+      : `最近 ${lookbackHours}h 內，tool "${item.tool_name}" 成功 ${item.success_count}/${item.sample_count} 次（${item.success_rate_percent}%），建議人工審核後再將 routing 權重 ${direction} ${Math.abs(delta)}。`,
     target: "executive-planner",
     context: {
       source: "learning_loop",
@@ -406,6 +519,7 @@ function buildToolDraftProposal(item, lookbackHours) {
       p95_latency_ms: item.p95_latency_ms,
       common_errors: item.common_errors,
       sample_trace_ids: item.sample_trace_ids,
+      ab_replay: item.ab_replay,
     },
   };
 }
@@ -460,11 +574,13 @@ function buildRoutingInsights(
         latest_finished_at: cleanText(request.finished_at) || cleanText(request.started_at) || null,
         latest_trace_id: cleanText(request.trace_id) || null,
         sample_trace_ids: [],
+        replay_samples: [],
       });
     }
     const bucket = buckets.get(key);
     bucket.sample_count += 1;
     bucket.latencies.push(request.duration_ms);
+    const requestSuccess = request.ok === true && !request.error_code;
     if (request.ok === true && !request.error_code) {
       bucket.success_count += 1;
     } else {
@@ -474,6 +590,11 @@ function buildRoutingInsights(
     if (bucket.sample_trace_ids.length < SAMPLE_TRACE_LIMIT && request.trace_id) {
       bucket.sample_trace_ids.push(request.trace_id);
     }
+    bucket.replay_samples.push({
+      request_rank: index,
+      success: requestSuccess,
+      duration_ms: request.duration_ms,
+    });
   }
 
   return Array.from(buckets.values())
@@ -493,6 +614,11 @@ function buildRoutingInsights(
         failure_rate_percent: toPercent(failureRate),
         ...computeLatencyStats(item.latencies),
         common_errors: summarizeErrors(item.error_counts),
+        ab_replay: buildABReplayEvidence({
+          samples: item.replay_samples,
+          metric: "failure_rate",
+          betterDirection: "lower",
+        }),
         latest_request_rank: item.latest_request_rank,
         latest_finished_at: item.latest_finished_at,
         latest_trace_id: item.latest_trace_id,
@@ -533,6 +659,7 @@ function buildToolInsights(events = [], traceRecencyByTraceId = new Map(), minSa
         latest_finished_at: null,
         latest_trace_id: null,
         sample_trace_ids: [],
+        replay_samples: [],
       });
     }
     const bucket = buckets.get(action);
@@ -559,6 +686,11 @@ function buildToolInsights(events = [], traceRecencyByTraceId = new Map(), minSa
     if (event.trace_id && !bucket.sample_trace_ids.includes(event.trace_id)) {
       bucket.sample_trace_ids.push(event.trace_id);
     }
+    bucket.replay_samples.push({
+      request_rank: normalizeReplayRank(traceMeta.latest_request_rank),
+      success,
+      duration_ms: durationMs,
+    });
   }
 
   const normalized = Array.from(buckets.values())
@@ -582,6 +714,11 @@ function buildToolInsights(events = [], traceRecencyByTraceId = new Map(), minSa
         suggested_weight_delta: suggestedWeightDelta,
         ...computeLatencyStats(item.latencies),
         common_errors: summarizeErrors(item.error_counts),
+        ab_replay: buildABReplayEvidence({
+          samples: item.replay_samples,
+          metric: "success_rate",
+          betterDirection: "higher",
+        }),
         latest_request_rank: item.latest_request_rank,
         latest_finished_at: item.latest_finished_at,
         latest_trace_id: item.latest_trace_id,

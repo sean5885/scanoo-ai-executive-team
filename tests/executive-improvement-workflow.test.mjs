@@ -12,6 +12,7 @@ import {
   applyImprovementWorkflowProposal,
   archiveExecutiveReflection,
   listImprovementWorkflowProposals,
+  rollbackImprovementWorkflowProposal,
   registerImprovementWorkflowProposals,
   resolveImprovementWorkflowProposal,
 } from "../src/executive-improvement-workflow.mjs";
@@ -199,8 +200,74 @@ test("improvement workflow archives reflections and supports approve/apply loop"
     actor: "sean",
   });
   assert.equal(applied.status, "applied");
+  assert.ok(applied.effect_evidence);
+  assert.equal(typeof applied.strategy_version, "number");
+  assert.equal(applied.strategy_version >= 2, true);
 
   const finalTask = await getExecutiveTask(task.id);
   assert.equal(finalTask.improvement_proposals.some((item) => item.id === "proposal-1" && item.status === "applied"), true);
   assert.equal(finalTask.lifecycle_state, "improved");
+});
+
+test("learning auto-apply proposal rolls back on regressed replay delta with strategy version history", async (t) => {
+  const files = [
+    executiveImprovementStorePath,
+  ];
+  const snapshots = await Promise.all(files.map((filePath) => snapshotFile(filePath)));
+  t.after(async () => {
+    await Promise.all(files.map((filePath, index) => restoreFile(filePath, snapshots[index])));
+  });
+
+  const proposals = await registerImprovementWorkflowProposals({
+    accountId: "acct-learning-regress",
+    sessionKey: "sess-learning-regress",
+    reflection: {
+      error_type: "learning_loop",
+    },
+    proposals: [
+      {
+        id: "learning-tool-regress-1",
+        category: "tool_weight_adjustment",
+        mode: "human_approval",
+        title: "Decrease tool weight",
+        description: "regression case",
+        target: "executive-planner",
+        context: {
+          source: "learning_loop",
+          learning_kind: "tool_weight",
+          ab_replay: {
+            method: "ab_replay_time_split_v1",
+            metric: "success_rate",
+            better_direction: "higher",
+            control: { sample_count: 2, success_rate: 1 },
+            candidate: { sample_count: 2, success_rate: 0 },
+            improvement_delta: {
+              before: 1,
+              after: 0,
+              delta: -1,
+              status: "regressed",
+              measurable: true,
+            },
+          },
+        },
+      },
+    ],
+  });
+
+  assert.equal(proposals.length, 1);
+  assert.equal(proposals[0].mode, "auto_apply");
+  assert.equal(proposals[0].status, "rolled_back");
+  assert.equal(proposals[0].rollback?.rolled_back, true);
+  assert.equal(proposals[0].verification_status, "failed");
+  assert.equal(proposals[0].strategy_version >= 3, true);
+  assert.equal(Array.isArray(proposals[0].strategy_history), true);
+  assert.equal(proposals[0].strategy_history.some((item) => item.event === "rolled_back"), true);
+
+  const rolledBack = await rollbackImprovementWorkflowProposal({
+    proposalId: "learning-tool-regress-1",
+    actor: "sean",
+    reason: "manual_followup",
+  });
+  assert.equal(rolledBack.status, "rolled_back");
+  assert.equal(rolledBack.rollback?.reason, "manual_followup");
 });

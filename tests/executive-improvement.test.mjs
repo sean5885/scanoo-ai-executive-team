@@ -81,6 +81,7 @@ test("compatibility wrapper still returns one workflow proposal for closed-loop 
   assert.deepEqual(proposals[0], {
     category: "meeting_agent_improvement",
     mode: "auto_apply",
+    risk_level: "low_risk",
     title: "Add controlled retry path",
     description: "Retry with explicit validation steps and fail-soft stopping conditions for missing fields, permissions, or tool failures.",
     target: "meeting-agent",

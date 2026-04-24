@@ -150,6 +150,11 @@ test("agent learning summary finds routing failures and tool weight candidates",
   });
 
   assert.ok(persisted.proposals.length >= 3);
-  assert.ok(persisted.proposals.every((item) => item.status === "pending_approval"));
+  const toolProposals = persisted.proposals.filter((item) => item.category === "tool_weight_adjustment");
+  assert.ok(toolProposals.length >= 2);
+  assert.ok(toolProposals.every((item) => item.mode === "auto_apply"));
+  assert.ok(toolProposals.every((item) => item.status === "applied" || item.status === "rolled_back"));
+  assert.ok(toolProposals.every((item) => item.effect_evidence && item.effect_evidence.before_value != null && item.effect_evidence.after_value != null));
+  assert.ok(persisted.proposals.some((item) => item.category === "routing_improvement" && item.status === "pending_approval"));
   assert.ok(persisted.proposals.some((item) => item.context?.tool_name === goodTool));
 });

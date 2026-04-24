@@ -890,7 +890,8 @@ test("learning proposal route persists pending improvements for human review", a
   assert.equal(response.status, 200);
   assert.equal(payload.ok, true);
   assert.ok(Array.isArray(payload.items));
-  assert.ok(payload.items.every((item) => item.status === "pending_approval"));
+  assert.ok(payload.items.every((item) => ["pending_approval", "applied", "rolled_back"].includes(item.status)));
+  assert.ok(payload.items.filter((item) => item.status === "applied").every((item) => item.effect_evidence && item.effect_evidence.before_value != null && item.effect_evidence.after_value != null));
 });
 
 test("monitoring dashboard page renders rates and recent request sections", async (t) => {
