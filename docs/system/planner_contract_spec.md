@@ -28,6 +28,10 @@
 - `routing_reason`
   - checked-in enum for stable route-selection reason codes
   - replaces public reliance on free-text reason strings for router / doc-query / planner surfaces
+- `release_gates`
+  - checked-in release-check gate policy mirror
+  - currently includes `closed_loop_non_regression_v1` with feature flag, contract-test requirements, snapshot requirements, and required closed-loop elements (`memory/retrieval/learning/non_regression`)
+  - release gate policy is additive and must not widen planner public output schemas
 
 ## Public Surfaces
 

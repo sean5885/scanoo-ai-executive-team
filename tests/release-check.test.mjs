@@ -213,6 +213,245 @@ test("release-check report passes when self-check, routing, and planner are stab
   });
 });
 
+test("release-check keeps baseline behavior when closed-loop non-regression gate is disabled", () => {
+  const closedLoopGate = {
+    gate_id: "closed_loop_non_regression_v1",
+    enabled: false,
+    status: "disabled",
+    feature_flag: {
+      env: "RELEASE_CHECK_CLOSED_LOOP_NON_REGRESSION",
+      default: false,
+      enabled: false,
+    },
+    contract_tests: {
+      status: "skipped",
+      required: ["planner_contract_gate", "planner_contract_consistency"],
+      failed: [],
+      checks: {},
+    },
+    snapshot_gate: {
+      status: "skipped",
+      required_checks: ["routing_latest_snapshot", "routing_compare_available", "planner_latest_snapshot", "planner_compare_available"],
+      failed: [],
+      checks: {},
+    },
+    elements: {
+      status: "skipped",
+      required: ["memory", "retrieval", "learning", "non_regression"],
+      failed: [],
+      checks: {},
+    },
+    failing_elements: [],
+    failing_checks: [],
+  };
+  const report = buildReleaseCheckReport({
+    selfCheckResult: {
+      ok: true,
+      system_summary: {
+        core_checks: "pass",
+        company_brain_status: "pass",
+      },
+      company_brain_summary: {
+        status: "pass",
+      },
+      control_summary: {
+        status: "pass",
+      },
+      dependency_summary: {
+        status: "pass",
+      },
+      write_summary: STABLE_WRITE_SUMMARY,
+      routing_summary: {
+        status: "pass",
+        compare: {
+          has_obvious_regression: false,
+        },
+      },
+      planner_summary: {
+        gate: "pass",
+        compare: {
+          has_obvious_regression: false,
+        },
+      },
+      planner_contract: {
+        gate_ok: true,
+        consistency_ok: true,
+      },
+    },
+    drilldown: {
+      failing_area: null,
+      representative_fail_case: [],
+      drilldown_source: [],
+    },
+    closedLoopGate,
+  });
+
+  assert.deepEqual(report, {
+    overall_status: "pass",
+    blocking_checks: [],
+    doc_boundary_regression: false,
+    write_governance: CURRENT_WRITE_GOVERNANCE,
+    suggested_next_step: "目前這個入口沒有 blocking check；若要正式 release，仍需跑既有測試與發布驗證流程。",
+    action_hint: null,
+    failing_area: null,
+    representative_fail_case: [],
+    drilldown_source: [],
+  });
+});
+
+test("release-check blocks on closed-loop non-regression gate when feature flag path is enabled", () => {
+  const gateConfigOverride = {
+    release_gates: {
+      closed_loop_non_regression_v1: {
+        gate_id: "closed_loop_non_regression_v1",
+        feature_flag: {
+          env: "PHASE5_CLOSED_LOOP_TEST_FLAG",
+          default: true,
+        },
+        contract_tests: ["planner_contract_gate", "planner_contract_consistency"],
+        snapshot_gate: {
+          required_checks: [
+            "routing_latest_snapshot",
+            "routing_compare_available",
+            "planner_latest_snapshot",
+            "planner_compare_available",
+          ],
+        },
+        required_elements: ["memory", "retrieval", "learning", "non_regression"],
+      },
+    },
+  };
+  const selfCheckResult = {
+    ok: true,
+    system_summary: {
+      core_checks: "pass",
+      company_brain_status: "pass",
+    },
+    company_brain_summary: {
+      status: "pass",
+    },
+    control_summary: {
+      status: "pass",
+    },
+    dependency_summary: {
+      status: "pass",
+    },
+    write_summary: STABLE_WRITE_SUMMARY,
+    routing_summary: {
+      status: "pass",
+      latest_snapshot: {
+        run_id: "routing-snapshot-pass",
+      },
+      compare: {
+        available: true,
+        has_obvious_regression: false,
+      },
+    },
+    planner_summary: {
+      gate: "pass",
+      compare: {
+        available: false,
+        has_obvious_regression: false,
+      },
+      latest_snapshot: null,
+    },
+    planner_contract: {
+      gate_ok: true,
+      consistency_ok: true,
+    },
+  };
+  const drilldown = buildReleaseCheckDrilldown({
+    selfCheckResult,
+    gateConfigOverride,
+  });
+  const report = buildReleaseCheckReport({
+    selfCheckResult,
+    drilldown,
+    gateConfigOverride,
+  });
+
+  assert.deepEqual(drilldown, {
+    failing_area: "runtime",
+    representative_fail_case: [
+      "closed_loop_snapshot_gate_failed:planner_latest_snapshot,planner_compare_available",
+    ],
+    drilldown_source: ["release-check triage", "closed-loop non-regression gate"],
+  });
+  assert.deepEqual(report, {
+    overall_status: "fail",
+    blocking_checks: ["closed_loop_non_regression_failure"],
+    doc_boundary_regression: false,
+    write_governance: CURRENT_WRITE_GOVERNANCE,
+    closed_loop_non_regression: {
+      gate_id: "closed_loop_non_regression_v1",
+      enabled: true,
+      status: "fail",
+      feature_flag: {
+        env: "PHASE5_CLOSED_LOOP_TEST_FLAG",
+        default: true,
+        enabled: true,
+      },
+      contract_tests: {
+        status: "pass",
+        required: ["planner_contract_gate", "planner_contract_consistency"],
+        failed: [],
+        checks: {
+          planner_contract_gate: true,
+          planner_contract_consistency: true,
+        },
+      },
+      snapshot_gate: {
+        status: "fail",
+        required_checks: [
+          "routing_latest_snapshot",
+          "routing_compare_available",
+          "planner_latest_snapshot",
+          "planner_compare_available",
+        ],
+        failed: ["planner_latest_snapshot", "planner_compare_available"],
+        checks: {
+          routing_latest_snapshot: true,
+          routing_compare_available: true,
+          planner_latest_snapshot: false,
+          planner_compare_available: false,
+        },
+      },
+      elements: {
+        status: "pass",
+        required: ["memory", "retrieval", "learning", "non_regression"],
+        failed: [],
+        checks: {
+          memory: {
+            pass: true,
+            reason: "planner_summary.gate must be pass",
+          },
+          retrieval: {
+            pass: true,
+            reason: "routing_summary.status must be pass",
+          },
+          learning: {
+            pass: true,
+            reason: "company_brain_summary.status must be pass",
+          },
+          non_regression: {
+            pass: true,
+            reason: "routing/planner compare must not show obvious regression",
+          },
+        },
+      },
+      failing_elements: [],
+      failing_checks: ["snapshot_gate"],
+    },
+    suggested_next_step: "先看閉環 non-regression gate（snapshot_gate=planner_latest_snapshot/planner_compare_available）：檢查 feature flag、planner contract test、diagnostics snapshot gate，並補齊 memory/retrieval/learning/non-regression 四要素。",
+    action_hint: "inspect closed-loop feature flag, contract tests, snapshot gate, and four-element evidence",
+    failing_area: "runtime",
+    representative_fail_case: [
+      "closed_loop_snapshot_gate_failed:planner_latest_snapshot,planner_compare_available",
+    ],
+    drilldown_source: ["release-check triage", "closed-loop non-regression gate"],
+  });
+});
+
 test("release-check compare summary only reports status and field changes", () => {
   assert.deepEqual(buildReleaseCheckCompareSummary({
     currentReport: {

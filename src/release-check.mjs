@@ -1,4 +1,6 @@
 import path from "node:path";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import { cleanText } from "./message-intent-utils.mjs";
 import { resolveControlDiagnosticsSnapshot } from "./control-diagnostics-history.mjs";
@@ -15,6 +17,7 @@ const BLOCKING_WRITE_POLICY_FAILURE = "write_policy_failure";
 const BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE = "company_brain_lifecycle_failure";
 const BLOCKING_ROUTING_REGRESSION = "routing_regression";
 const BLOCKING_PLANNER_CONTRACT_FAILURE = "planner_contract_failure";
+const BLOCKING_CLOSED_LOOP_NON_REGRESSION_FAILURE = "closed_loop_non_regression_failure";
 const FAILING_AREA_DOC = "doc";
 const FAILING_AREA_MEETING = "meeting";
 const FAILING_AREA_RUNTIME = "runtime";
@@ -23,7 +26,10 @@ const RELEASE_CHECK_TRIAGE_SOURCE = "release-check triage";
 const CONTROL_DRILLDOWN_SOURCE = "control diagnostics/history";
 const ROUTING_DRILLDOWN_SOURCE = "routing-eval diagnostics/history";
 const PLANNER_DRILLDOWN_SOURCE = "planner diagnostics/history";
+const CLOSED_LOOP_DRILLDOWN_SOURCE = "closed-loop non-regression gate";
 const DOC_BOUNDARY_ACTION_HINT = "run routing-eval doc-boundary pack and inspect message-intent-utils / lane-executor guard";
+const CLOSED_LOOP_RELEASE_GATE_ID = "closed_loop_non_regression_v1";
+const PLANNER_CONTRACT_FILE = fileURLToPath(new URL("../docs/system/planner_contract.json", import.meta.url));
 const PLANNER_FINDING_ORDER = [
   "undefined_actions",
   "undefined_presets",
@@ -31,10 +37,99 @@ const PLANNER_FINDING_ORDER = [
   "action_governance_mismatches",
   "deprecated_reachable_targets",
 ];
+const CLOSED_LOOP_DEFAULT_GATE_CONFIG = Object.freeze({
+  gate_id: CLOSED_LOOP_RELEASE_GATE_ID,
+  feature_flag: {
+    env: "RELEASE_CHECK_CLOSED_LOOP_NON_REGRESSION",
+    default: false,
+  },
+  required_elements: ["memory", "retrieval", "learning", "non_regression"],
+  contract_tests: [
+    "planner_contract_gate",
+    "planner_contract_consistency",
+  ],
+  snapshot_gate: {
+    required_checks: [
+      "routing_latest_snapshot",
+      "routing_compare_available",
+      "planner_latest_snapshot",
+      "planner_compare_available",
+    ],
+  },
+});
 const RELEASE_STATUS_ORDER = {
   fail: 0,
   pass: 1,
 };
+
+function parseFlagBoolean(value, defaultValue = false) {
+  const normalized = cleanText(value).toLowerCase();
+  if (!normalized) {
+    return defaultValue;
+  }
+  if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on" || normalized === "enabled") {
+    return true;
+  }
+  if (normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off" || normalized === "disabled") {
+    return false;
+  }
+  return defaultValue;
+}
+
+function resolveClosedLoopGateContract({ gateConfigOverride = null } = {}) {
+  if (gateConfigOverride && typeof gateConfigOverride === "object" && !Array.isArray(gateConfigOverride)) {
+    const releaseGate = gateConfigOverride?.release_gates?.[CLOSED_LOOP_RELEASE_GATE_ID];
+    if (releaseGate && typeof releaseGate === "object" && !Array.isArray(releaseGate)) {
+      return releaseGate;
+    }
+    return gateConfigOverride;
+  }
+
+  try {
+    const plannerContract = JSON.parse(readFileSync(PLANNER_CONTRACT_FILE, "utf8"));
+    const releaseGate = plannerContract?.release_gates?.[CLOSED_LOOP_RELEASE_GATE_ID];
+    if (releaseGate && typeof releaseGate === "object" && !Array.isArray(releaseGate)) {
+      return releaseGate;
+    }
+  } catch {
+    return {};
+  }
+
+  return {};
+}
+
+function resolveClosedLoopGateConfig({ gateConfigOverride = null } = {}) {
+  const contractGate = resolveClosedLoopGateContract({ gateConfigOverride });
+  const featureFlagContract = contractGate?.feature_flag && typeof contractGate.feature_flag === "object"
+    ? contractGate.feature_flag
+    : {};
+  const envName = cleanText(featureFlagContract?.env) || CLOSED_LOOP_DEFAULT_GATE_CONFIG.feature_flag.env;
+  const featureFlagDefault = parseFlagBoolean(featureFlagContract?.default, CLOSED_LOOP_DEFAULT_GATE_CONFIG.feature_flag.default);
+  const featureFlagEnabled = parseFlagBoolean(process.env?.[envName], featureFlagDefault);
+  const requiredElements = Array.isArray(contractGate?.required_elements)
+    ? contractGate.required_elements.map((item) => cleanText(item)).filter(Boolean)
+    : CLOSED_LOOP_DEFAULT_GATE_CONFIG.required_elements;
+  const contractTests = Array.isArray(contractGate?.contract_tests)
+    ? contractGate.contract_tests.map((item) => cleanText(item)).filter(Boolean)
+    : CLOSED_LOOP_DEFAULT_GATE_CONFIG.contract_tests;
+  const snapshotGateRequiredChecks = Array.isArray(contractGate?.snapshot_gate?.required_checks)
+    ? contractGate.snapshot_gate.required_checks.map((item) => cleanText(item)).filter(Boolean)
+    : CLOSED_LOOP_DEFAULT_GATE_CONFIG.snapshot_gate.required_checks;
+
+  return {
+    gate_id: cleanText(contractGate?.gate_id) || CLOSED_LOOP_DEFAULT_GATE_CONFIG.gate_id,
+    feature_flag: {
+      env: envName,
+      default: featureFlagDefault,
+      enabled: featureFlagEnabled,
+    },
+    required_elements: requiredElements,
+    contract_tests: contractTests,
+    snapshot_gate: {
+      required_checks: snapshotGateRequiredChecks,
+    },
+  };
+}
 
 function normalizeServiceModule(modulePath = "") {
   const normalized = cleanText(modulePath);
@@ -158,6 +253,25 @@ function buildPlannerContractFailureNextStep(selfCheckResult = {}) {
   return "先看 planner contract failure：src/executive-planner.mjs 與 src/planner-*-flow.mjs；只有 intentional stable target 才改 docs/system/planner_contract.json。";
 }
 
+function buildClosedLoopNonRegressionNextStep(closedLoopGate = {}) {
+  const failingElements = Array.isArray(closedLoopGate?.failing_elements)
+    ? closedLoopGate.failing_elements.map((item) => cleanText(item)).filter(Boolean)
+    : [];
+  const failedContractTests = Array.isArray(closedLoopGate?.contract_tests?.failed)
+    ? closedLoopGate.contract_tests.failed
+    : [];
+  const failedSnapshotChecks = Array.isArray(closedLoopGate?.snapshot_gate?.failed)
+    ? closedLoopGate.snapshot_gate.failed
+    : [];
+  const failFocus = [
+    ...(failingElements.length > 0 ? [`elements=${failingElements.join("/")}`] : []),
+    ...(failedContractTests.length > 0 ? [`contract_tests=${failedContractTests.join("/")}`] : []),
+    ...(failedSnapshotChecks.length > 0 ? [`snapshot_gate=${failedSnapshotChecks.join("/")}`] : []),
+  ];
+  const focusLine = failFocus.length > 0 ? `（${failFocus.join(" | ")}）` : "";
+  return `先看閉環 non-regression gate${focusLine}：檢查 feature flag、planner contract test、diagnostics snapshot gate，並補齊 memory/retrieval/learning/non-regression 四要素。`;
+}
+
 function buildRoutingActionHint(drilldown = {}, { docBoundaryRegression = false } = {}) {
   if (docBoundaryRegression) {
     return DOC_BOUNDARY_ACTION_HINT;
@@ -232,6 +346,9 @@ function buildReleaseCheckActionHint({
   }
   if (firstBlockingCheck === BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE) {
     return "inspect company-brain lifecycle contract and apply gate";
+  }
+  if (firstBlockingCheck === BLOCKING_CLOSED_LOOP_NON_REGRESSION_FAILURE) {
+    return "inspect closed-loop feature flag, contract tests, snapshot gate, and four-element evidence";
   }
   if (firstBlockingCheck === BLOCKING_SYSTEM_REGRESSION || firstBlockingCheck === BLOCKING_CONTROL_REGRESSION) {
     return buildReleaseActionHint({ blockingChecks, drilldown });
@@ -309,6 +426,172 @@ function hasBlockingPlannerIssue(selfCheckResult = {}) {
     cleanText(selfCheckResult?.planner_summary?.gate) !== "pass"
     || selfCheckResult?.planner_summary?.compare?.has_obvious_regression === true
   );
+}
+
+function evaluateClosedLoopNonRegressionGate({
+  selfCheckResult = {},
+  gateConfigOverride = null,
+  closedLoopGateOverride = null,
+} = {}) {
+  if (
+    closedLoopGateOverride
+    && typeof closedLoopGateOverride === "object"
+    && !Array.isArray(closedLoopGateOverride)
+  ) {
+    return closedLoopGateOverride;
+  }
+
+  const gateConfig = resolveClosedLoopGateConfig({ gateConfigOverride });
+  if (gateConfig?.feature_flag?.enabled !== true) {
+    return {
+      gate_id: cleanText(gateConfig?.gate_id) || CLOSED_LOOP_RELEASE_GATE_ID,
+      enabled: false,
+      status: "disabled",
+      feature_flag: gateConfig.feature_flag,
+      contract_tests: {
+        status: "skipped",
+        required: gateConfig.contract_tests,
+        failed: [],
+        checks: {},
+      },
+      snapshot_gate: {
+        status: "skipped",
+        required_checks: gateConfig.snapshot_gate.required_checks,
+        failed: [],
+        checks: {},
+      },
+      elements: {
+        status: "skipped",
+        required: gateConfig.required_elements,
+        failed: [],
+        checks: {},
+      },
+      failing_elements: [],
+      failing_checks: [],
+    };
+  }
+
+  const contractChecks = {
+    planner_contract_gate: selfCheckResult?.planner_contract?.gate_ok === true,
+    planner_contract_consistency: selfCheckResult?.planner_contract?.consistency_ok === true,
+  };
+  const requiredContractChecks = Array.isArray(gateConfig.contract_tests)
+    ? gateConfig.contract_tests
+    : [];
+  const failedContractChecks = requiredContractChecks.filter((checkId) => contractChecks[checkId] !== true);
+  const contractStatus = failedContractChecks.length === 0 ? "pass" : "fail";
+
+  const snapshotChecks = {
+    routing_latest_snapshot: Boolean(cleanText(selfCheckResult?.routing_summary?.latest_snapshot?.run_id)),
+    routing_compare_available: selfCheckResult?.routing_summary?.compare?.available === true,
+    planner_latest_snapshot: Boolean(cleanText(selfCheckResult?.planner_summary?.latest_snapshot?.run_id)),
+    planner_compare_available: selfCheckResult?.planner_summary?.compare?.available === true,
+  };
+  const requiredSnapshotChecks = Array.isArray(gateConfig?.snapshot_gate?.required_checks)
+    ? gateConfig.snapshot_gate.required_checks
+    : [];
+  const failedSnapshotChecks = requiredSnapshotChecks.filter((checkId) => snapshotChecks[checkId] !== true);
+  const snapshotStatus = failedSnapshotChecks.length === 0 ? "pass" : "fail";
+
+  const elementChecks = {
+    memory: {
+      pass: cleanText(selfCheckResult?.planner_summary?.gate) === "pass",
+      reason: "planner_summary.gate must be pass",
+    },
+    retrieval: {
+      pass: cleanText(selfCheckResult?.routing_summary?.status) === "pass",
+      reason: "routing_summary.status must be pass",
+    },
+    learning: {
+      pass: cleanText(selfCheckResult?.company_brain_summary?.status) === "pass",
+      reason: "company_brain_summary.status must be pass",
+    },
+    non_regression: {
+      pass: (
+        selfCheckResult?.routing_summary?.compare?.has_obvious_regression !== true
+        && selfCheckResult?.planner_summary?.compare?.has_obvious_regression !== true
+      ),
+      reason: "routing/planner compare must not show obvious regression",
+    },
+  };
+  const requiredElements = Array.isArray(gateConfig.required_elements)
+    ? gateConfig.required_elements
+    : [];
+  const failedElements = requiredElements.filter((elementId) => elementChecks[elementId]?.pass !== true);
+  const elementStatus = failedElements.length === 0 ? "pass" : "fail";
+
+  const overallStatus = contractStatus === "pass" && snapshotStatus === "pass" && elementStatus === "pass"
+    ? "pass"
+    : "fail";
+
+  return {
+    gate_id: cleanText(gateConfig?.gate_id) || CLOSED_LOOP_RELEASE_GATE_ID,
+    enabled: true,
+    status: overallStatus,
+    feature_flag: gateConfig.feature_flag,
+    contract_tests: {
+      status: contractStatus,
+      required: requiredContractChecks,
+      failed: failedContractChecks,
+      checks: contractChecks,
+    },
+    snapshot_gate: {
+      status: snapshotStatus,
+      required_checks: requiredSnapshotChecks,
+      failed: failedSnapshotChecks,
+      checks: snapshotChecks,
+    },
+    elements: {
+      status: elementStatus,
+      required: requiredElements,
+      failed: failedElements,
+      checks: elementChecks,
+    },
+    failing_elements: failedElements,
+    failing_checks: [
+      ...(contractStatus === "fail" ? ["contract_tests"] : []),
+      ...(snapshotStatus === "fail" ? ["snapshot_gate"] : []),
+      ...failedElements.map((element) => `element:${element}`),
+    ],
+  };
+}
+
+function hasBlockingClosedLoopNonRegressionIssue(closedLoopGate = null) {
+  return closedLoopGate?.enabled === true && cleanText(closedLoopGate?.status) !== "pass";
+}
+
+function collectBlockingChecks({
+  selfCheckResult = {},
+  closedLoopGate = null,
+} = {}) {
+  const blockingChecks = [];
+
+  if (cleanText(selfCheckResult?.system_summary?.core_checks) !== "pass") {
+    blockingChecks.push(BLOCKING_SYSTEM_REGRESSION);
+  }
+  if (hasBlockingControlIssue(selfCheckResult)) {
+    blockingChecks.push(BLOCKING_CONTROL_REGRESSION);
+  }
+  if (hasBlockingDependencyIssue(selfCheckResult)) {
+    blockingChecks.push(BLOCKING_DEPENDENCY_POLICY_FAILURE);
+  }
+  if (hasBlockingWritePolicyIssue(selfCheckResult)) {
+    blockingChecks.push(BLOCKING_WRITE_POLICY_FAILURE);
+  }
+  if (hasBlockingCompanyBrainIssue(selfCheckResult)) {
+    blockingChecks.push(BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE);
+  }
+  if (hasBlockingRoutingIssue(selfCheckResult)) {
+    blockingChecks.push(BLOCKING_ROUTING_REGRESSION);
+  }
+  if (hasBlockingPlannerIssue(selfCheckResult)) {
+    blockingChecks.push(BLOCKING_PLANNER_CONTRACT_FAILURE);
+  }
+  if (hasBlockingClosedLoopNonRegressionIssue(closedLoopGate)) {
+    blockingChecks.push(BLOCKING_CLOSED_LOOP_NON_REGRESSION_FAILURE);
+  }
+
+  return blockingChecks;
 }
 
 function uniqValues(values = []) {
@@ -652,24 +935,66 @@ function buildWriteDrilldown(selfCheckResult = {}) {
   };
 }
 
+function buildClosedLoopNonRegressionDrilldown(closedLoopGate = {}) {
+  const failingElements = Array.isArray(closedLoopGate?.failing_elements)
+    ? closedLoopGate.failing_elements.map((item) => cleanText(item)).filter(Boolean)
+    : [];
+  const failedContractTests = Array.isArray(closedLoopGate?.contract_tests?.failed)
+    ? closedLoopGate.contract_tests.failed
+    : [];
+  const failedSnapshotChecks = Array.isArray(closedLoopGate?.snapshot_gate?.failed)
+    ? closedLoopGate.snapshot_gate.failed
+    : [];
+  const representativeFailCase = [
+    ...(failingElements.length > 0 ? failingElements.map((item) => `closed_loop_element_failed:${item}`) : []),
+    ...(failedContractTests.length > 0 ? [`closed_loop_contract_tests_failed:${failedContractTests.join(",")}`] : []),
+    ...(failedSnapshotChecks.length > 0 ? [`closed_loop_snapshot_gate_failed:${failedSnapshotChecks.join(",")}`] : []),
+  ].slice(0, 2);
+
+  const failingArea = coalesceFailingArea([
+    ...failingElements.map((item) => (
+      item === "retrieval" || item === "learning"
+        ? FAILING_AREA_DOC
+        : item === "memory"
+          ? FAILING_AREA_RUNTIME
+          : FAILING_AREA_MIXED
+    )),
+    ...(failedContractTests.length > 0 ? [FAILING_AREA_MIXED] : []),
+    ...(failedSnapshotChecks.length > 0 ? [FAILING_AREA_RUNTIME] : []),
+  ]) || FAILING_AREA_MIXED;
+
+  return {
+    failing_area: failingArea,
+    representative_fail_case: representativeFailCase.length > 0
+      ? representativeFailCase
+      : ["closed-loop non-regression gate failed without representative case"],
+    drilldown_source: [
+      RELEASE_CHECK_TRIAGE_SOURCE,
+      CLOSED_LOOP_DRILLDOWN_SOURCE,
+    ],
+  };
+}
+
 export function buildReleaseCheckDrilldown({
   selfCheckResult = {},
   controlSnapshot = null,
   latestRoutingSnapshot = null,
   plannerReport = null,
   blockingChecks = null,
+  closedLoopGate = null,
+  gateConfigOverride = null,
 } = {}) {
+  const resolvedClosedLoopGate = evaluateClosedLoopNonRegressionGate({
+    selfCheckResult,
+    gateConfigOverride,
+    closedLoopGateOverride: closedLoopGate,
+  });
   const resolvedBlockingChecks = Array.isArray(blockingChecks)
     ? blockingChecks
-    : [
-        ...(cleanText(selfCheckResult?.system_summary?.core_checks) !== "pass" ? [BLOCKING_SYSTEM_REGRESSION] : []),
-        ...(hasBlockingControlIssue(selfCheckResult) ? [BLOCKING_CONTROL_REGRESSION] : []),
-        ...(hasBlockingDependencyIssue(selfCheckResult) ? [BLOCKING_DEPENDENCY_POLICY_FAILURE] : []),
-        ...(hasBlockingWritePolicyIssue(selfCheckResult) ? [BLOCKING_WRITE_POLICY_FAILURE] : []),
-        ...(hasBlockingCompanyBrainIssue(selfCheckResult) ? [BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE] : []),
-        ...(hasBlockingRoutingIssue(selfCheckResult) ? [BLOCKING_ROUTING_REGRESSION] : []),
-        ...(hasBlockingPlannerIssue(selfCheckResult) ? [BLOCKING_PLANNER_CONTRACT_FAILURE] : []),
-      ];
+    : collectBlockingChecks({
+      selfCheckResult,
+      closedLoopGate: resolvedClosedLoopGate,
+    });
   const firstBlockingCheck = resolvedBlockingChecks[0] || null;
 
   if (firstBlockingCheck === BLOCKING_SYSTEM_REGRESSION) {
@@ -693,6 +1018,9 @@ export function buildReleaseCheckDrilldown({
   if (firstBlockingCheck === BLOCKING_PLANNER_CONTRACT_FAILURE) {
     return buildPlannerDrilldown({ plannerReport });
   }
+  if (firstBlockingCheck === BLOCKING_CLOSED_LOOP_NON_REGRESSION_FAILURE) {
+    return buildClosedLoopNonRegressionDrilldown(resolvedClosedLoopGate);
+  }
   return {
     failing_area: null,
     representative_fail_case: [],
@@ -700,36 +1028,21 @@ export function buildReleaseCheckDrilldown({
   };
 }
 
-export function buildReleaseCheckReport({ selfCheckResult = {}, drilldown = null } = {}) {
-  const blockingChecks = [];
-
-  if (cleanText(selfCheckResult?.system_summary?.core_checks) !== "pass") {
-    blockingChecks.push(BLOCKING_SYSTEM_REGRESSION);
-  }
-
-  if (hasBlockingControlIssue(selfCheckResult)) {
-    blockingChecks.push(BLOCKING_CONTROL_REGRESSION);
-  }
-
-  if (hasBlockingDependencyIssue(selfCheckResult)) {
-    blockingChecks.push(BLOCKING_DEPENDENCY_POLICY_FAILURE);
-  }
-
-  if (hasBlockingWritePolicyIssue(selfCheckResult)) {
-    blockingChecks.push(BLOCKING_WRITE_POLICY_FAILURE);
-  }
-
-  if (hasBlockingCompanyBrainIssue(selfCheckResult)) {
-    blockingChecks.push(BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE);
-  }
-
-  if (hasBlockingRoutingIssue(selfCheckResult)) {
-    blockingChecks.push(BLOCKING_ROUTING_REGRESSION);
-  }
-
-  if (hasBlockingPlannerIssue(selfCheckResult)) {
-    blockingChecks.push(BLOCKING_PLANNER_CONTRACT_FAILURE);
-  }
+export function buildReleaseCheckReport({
+  selfCheckResult = {},
+  drilldown = null,
+  closedLoopGate = null,
+  gateConfigOverride = null,
+} = {}) {
+  const resolvedClosedLoopGate = evaluateClosedLoopNonRegressionGate({
+    selfCheckResult,
+    gateConfigOverride,
+    closedLoopGateOverride: closedLoopGate,
+  });
+  const blockingChecks = collectBlockingChecks({
+    selfCheckResult,
+    closedLoopGate: resolvedClosedLoopGate,
+  });
 
   const docBoundaryRegression = hasBlockingRoutingIssue(selfCheckResult)
     && (
@@ -751,6 +1064,8 @@ export function buildReleaseCheckReport({ selfCheckResult = {}, drilldown = null
       ? buildRoutingRegressionNextStep(selfCheckResult)
       : firstBlockingCheck === BLOCKING_PLANNER_CONTRACT_FAILURE
         ? buildPlannerContractFailureNextStep(selfCheckResult)
+        : firstBlockingCheck === BLOCKING_CLOSED_LOOP_NON_REGRESSION_FAILURE
+          ? buildClosedLoopNonRegressionNextStep(resolvedClosedLoopGate)
         : "目前這個入口沒有 blocking check；若要正式 release，仍需跑既有測試與發布驗證流程。";
   const normalizedDrilldown = {
     failing_area: normalizeFailingArea(drilldown?.failing_area),
@@ -769,6 +1084,7 @@ export function buildReleaseCheckReport({ selfCheckResult = {}, drilldown = null
     blocking_checks: blockingChecks,
     doc_boundary_regression: docBoundaryRegression,
     ...(selfCheckResult?.write_summary ? { write_governance: buildWriteGovernanceSummary(selfCheckResult) } : {}),
+    ...(resolvedClosedLoopGate?.enabled === true ? { closed_loop_non_regression: resolvedClosedLoopGate } : {}),
     suggested_next_step: suggestedNextStep,
     action_hint: actionHint,
     failing_area: normalizedDrilldown.failing_area,
@@ -798,6 +1114,9 @@ function renderBlockingLineLabel(blockingCheck = "") {
   }
   if (blockingCheck === BLOCKING_PLANNER_CONTRACT_FAILURE) {
     return "planner contract failure";
+  }
+  if (blockingCheck === BLOCKING_CLOSED_LOOP_NON_REGRESSION_FAILURE) {
+    return "closed-loop non-regression failure";
   }
   return "無";
 }
@@ -925,39 +1244,29 @@ export async function runReleaseCheck(options = {}) {
     plannerReport = null;
   }
 
-  const blockingChecks = [];
-  if (cleanText(selfCheckResult?.system_summary?.core_checks) !== "pass") {
-    blockingChecks.push(BLOCKING_SYSTEM_REGRESSION);
-  }
-  if (hasBlockingControlIssue(selfCheckResult)) {
-    blockingChecks.push(BLOCKING_CONTROL_REGRESSION);
-  }
-  if (hasBlockingDependencyIssue(selfCheckResult)) {
-    blockingChecks.push(BLOCKING_DEPENDENCY_POLICY_FAILURE);
-  }
-  if (hasBlockingWritePolicyIssue(selfCheckResult)) {
-    blockingChecks.push(BLOCKING_WRITE_POLICY_FAILURE);
-  }
-  if (hasBlockingCompanyBrainIssue(selfCheckResult)) {
-    blockingChecks.push(BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE);
-  }
-  if (hasBlockingRoutingIssue(selfCheckResult)) {
-    blockingChecks.push(BLOCKING_ROUTING_REGRESSION);
-  }
-  if (hasBlockingPlannerIssue(selfCheckResult)) {
-    blockingChecks.push(BLOCKING_PLANNER_CONTRACT_FAILURE);
-  }
-  const firstBlockingCheck = blockingChecks[0] || null;
+  const closedLoopGate = evaluateClosedLoopNonRegressionGate({
+    selfCheckResult,
+    gateConfigOverride: options?.plannerContractOverride,
+    closedLoopGateOverride: options?.closedLoopGate,
+  });
+  const blockingChecks = collectBlockingChecks({
+    selfCheckResult,
+    closedLoopGate,
+  });
   const drilldown = buildReleaseCheckDrilldown({
     selfCheckResult,
     controlSnapshot: latestControlSnapshot,
     latestRoutingSnapshot,
     plannerReport,
     blockingChecks,
+    closedLoopGate,
+    gateConfigOverride: options?.plannerContractOverride,
   });
   const report = buildReleaseCheckReport({
     selfCheckResult,
     drilldown,
+    closedLoopGate,
+    gateConfigOverride: options?.plannerContractOverride,
   });
   const releaseCheckArchive = await archiveReleaseCheckSnapshot({
     ...(options?.releaseCheckArchiveDir ? { baseDir: options.releaseCheckArchiveDir } : {}),

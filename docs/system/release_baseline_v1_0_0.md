@@ -101,6 +101,7 @@ Notes:
 - the current release decision layer checkpoint is the CI + triage complete version:
   - CI entry = `release-check:ci`
   - triage classes = `system_regression` / `control_regression` / `dependency_policy_failure` / `write_policy_failure` / `routing_regression` / `planner_contract_failure`
+  - Phase 5 adds a feature-flagged class `closed_loop_non_regression_failure` (enabled only when `RELEASE_CHECK_CLOSED_LOOP_NON_REGRESSION=true`) to enforce the closed-loop four-element gate (`memory/retrieval/learning/non_regression`) with contract-test and snapshot-gate evidence
   - `suggested_next_step` stays minimal but points to the first module family or file type to inspect
 - `npm run check:dependencies` is the lockfile-only dependency safety gate:
   - it scans every checked-in `package-lock.json`

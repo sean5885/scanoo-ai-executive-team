@@ -229,6 +229,25 @@ const fixtures = [
         async requester() {
           return '額外說明 {"action":"search_company_brain_docs","params":{"q":"OKR"}}';
         },
+        async toolFlowRunner() {
+          return {
+            selected_action: "search_company_brain_docs",
+            execution_result: {
+              ok: false,
+              action: "search_company_brain_docs",
+              error: "missing_user_access_token",
+              data: {
+                stop_reason: "missing_user_access_token",
+                routing_reason: "selector_search_company_brain_docs",
+                message: "explicit auth required",
+              },
+              trace_id: null,
+            },
+            formatted_output: null,
+            routing_reason: "selector_search_company_brain_docs",
+            trace_id: null,
+          };
+        },
       });
       return [{
         contractName: "planned_user_input_envelope",

@@ -1378,5 +1378,32 @@
         }
       }
     }
+  },
+  "release_gates": {
+    "closed_loop_non_regression_v1": {
+      "gate_id": "closed_loop_non_regression_v1",
+      "feature_flag": {
+        "env": "RELEASE_CHECK_CLOSED_LOOP_NON_REGRESSION",
+        "default": false
+      },
+      "contract_tests": [
+        "planner_contract_gate",
+        "planner_contract_consistency"
+      ],
+      "snapshot_gate": {
+        "required_checks": [
+          "routing_latest_snapshot",
+          "routing_compare_available",
+          "planner_latest_snapshot",
+          "planner_compare_available"
+        ]
+      },
+      "required_elements": [
+        "memory",
+        "retrieval",
+        "learning",
+        "non_regression"
+      ]
+    }
   }
 }
