@@ -116,7 +116,7 @@ test('runAgentE2E enforces global request budget and avoids long stall latency',
   assert.equal(String(result.final?.result?.reason || '').startsWith('agent_e2e_'), true);
 });
 
-test('/answer returns bounded fallback under stalled agent tool dispatch', { timeout: 12000 }, async (t) => {
+test('/answer keeps bounded planner fallback even when AGENT_E2E rollout flags are enabled', { timeout: 12000 }, async (t) => {
   withEnv(t, {
     AGENT_E2E_ENABLED: 'true',
     AGENT_E2E_RATIO: '1',
@@ -125,7 +125,7 @@ test('/answer returns bounded fallback under stalled agent tool dispatch', { tim
     AGENT_E2E_HARD_TIMEOUT_MS: '40000',
   });
   const server = await startTestServer(t, {
-    async dispatchPlannerTool() {
+    async executePlannedUserInput() {
       return new Promise(() => {});
     },
   });
@@ -146,15 +146,12 @@ test('/answer returns bounded fallback under stalled agent tool dispatch', { tim
 
   assert.equal(elapsedMs < 6_000, true);
   assert.equal(elapsedMs < 40_000, true);
-  assert.equal(response.status, 503);
+  assert.equal(response.status, 504);
   assert.equal(payload.ok, false);
   assert.equal(typeof payload.answer, 'string');
   assert.equal(payload.answer.length > 0, true);
   assert.equal(Array.isArray(payload.limitations), true);
-  assert.equal(
-    payload.limitations.some((item) => /agent_terminal_reason=agent_e2e_(timeout|budget_exhausted)/.test(String(item || ''))),
-    true,
-  );
+  assert.equal(payload.limitations.some((item) => String(item || '').includes('timeout_layer=planner')), true);
 });
 
 test('/answer legacy planner path is also bounded by latency budget when canary is not selected', { timeout: 12000 }, async (t) => {
@@ -191,16 +188,18 @@ test('/answer legacy planner path is also bounded by latency budget when canary 
   assert.match(String(payload.answer || ''), /逾時/);
 });
 
-test('/answer can force agent canary by query flag even when rollout ratio is zero', async (t) => {
+test('/answer keeps planner edge authority even when query asks to force agent canary', async (t) => {
   withEnv(t, {
     AGENT_E2E_ENABLED: 'true',
     AGENT_E2E_RATIO: '0',
     AGENT_E2E_LEGACY_FALLBACK_ENABLED: 'false',
     AGENT_E2E_BUDGET_MS: '5000',
   });
+  let agentCalls = 0;
   const plannerCalls = [];
   const server = await startTestServer(t, {
     async runAgentE2E() {
+      agentCalls += 1;
       return {
         ok: true,
         final: {
@@ -222,7 +221,7 @@ test('/answer can force agent canary by query flag even when rollout ratio is ze
         execution_result: {
           ok: true,
           data: {
-            answer: 'legacy planner should not run',
+            answer: 'planner edge authority answer',
             sources: [],
             limitations: [],
           },
@@ -237,6 +236,7 @@ test('/answer can force agent canary by query flag even when rollout ratio is ze
   const payload = await response.json();
 
   assert.equal(response.status, 200);
-  assert.equal(payload.answer, 'forced canary answer');
-  assert.equal(plannerCalls.length, 0);
+  assert.equal(payload.answer, 'planner edge authority answer');
+  assert.equal(agentCalls, 0);
+  assert.equal(plannerCalls.length, 1);
 });

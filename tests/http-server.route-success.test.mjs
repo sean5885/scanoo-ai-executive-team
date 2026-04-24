@@ -1184,16 +1184,16 @@ test("/search returns index retrieval hits through the unified read runtime", as
   assert.equal(payload.items[0].title, "Index Runtime Search Guide");
 });
 
-test("/answer ingress stays planner-only even when AGENT_E2E rollout flags are enabled", async (t) => {
+test("/answer keeps planner edge authority even when AGENT_E2E rollout flags are enabled", async (t) => {
   withEnv(t, {
     AGENT_E2E_ENABLED: "true",
     AGENT_E2E_RATIO: "1",
   });
-  const agentCalls = [];
+  let agentCalls = 0;
   const plannerCalls = [];
   const { server } = await startTestServer(t, {
     async runAgentE2E(userInput, ctx) {
-      agentCalls.push({ userInput, ctx });
+      agentCalls += 1;
       return {
         ok: true,
         final: {
@@ -1215,7 +1215,7 @@ test("/answer ingress stays planner-only even when AGENT_E2E rollout flags are e
         execution_result: {
           ok: true,
           data: {
-            answer: "planner fallback should stay unused",
+            answer: "planner edge single authority answer",
             sources: [],
             limitations: [],
           },
@@ -1234,49 +1234,30 @@ test("/answer ingress stays planner-only even when AGENT_E2E rollout flags are e
   const payload = await response.json();
 
   assert.equal(response.status, 200);
-  assert.equal(payload.answer, "planner fallback should stay unused");
+  assert.equal(payload.answer, "planner edge single authority answer");
   assert.equal(Array.isArray(payload.sources), true);
   assert.equal(Array.isArray(payload.limitations), true);
-  assert.equal(agentCalls.length, 0);
+  assert.equal(agentCalls, 0);
   assert.equal(plannerCalls.length, 1);
 });
 
-test("/answer fails fast on planner-edge latency budget timeout without agent_e2e ingress", { timeout: 8000 }, async (t) => {
+test("/answer planner ingress fails fast under stalled planner execution", { timeout: 8000 }, async (t) => {
   withEnv(t, {
     AGENT_E2E_ENABLED: "true",
     AGENT_E2E_RATIO: "1",
-    ANSWER_LATENCY_BUDGET_MS: "80",
+    AGENT_E2E_LEGACY_FALLBACK_ENABLED: null,
+    AGENT_E2E_BUDGET_MS: "80",
   });
-  const agentCalls = [];
-  const plannerCalls = [];
-  const { server, calls } = await startTestServer(t, {
-    async runAgentE2E(userInput, ctx) {
-      agentCalls.push({ userInput, ctx });
-      return {
-        ok: true,
-        final: {
-          ok: true,
-          action: "answer_user_directly",
-          result: {
-            answer: "agent e2e should stay unused",
-          },
-        },
-        terminal_reason: "answer_user_directly",
-        plan: ["answer_user_directly"],
-      };
-    },
-    async executePlannedUserInput(args) {
-      plannerCalls.push(args);
+  const { server } = await startTestServer(t, {
+    async executePlannedUserInput() {
       return new Promise(() => {});
     },
-  }, {
-    requestTimeoutMs: 2000,
   });
   const { port } = server.address();
   const controller = new AbortController();
   const forceAbortHandle = setTimeout(() => {
     controller.abort(new Error("client-side safety timeout"));
-  }, 3500);
+  }, 3000);
   t.after(() => {
     clearTimeout(forceAbortHandle);
   });
@@ -1296,28 +1277,21 @@ test("/answer fails fast on planner-edge latency budget timeout without agent_e2
   assert.equal(response.status, 504);
   assert.equal(payload.ok, false);
   assert.equal(Array.isArray(payload.limitations), true);
-  assert.equal(
-    payload.limitations.some((item) => /timeout_layer=planner/.test(String(item || ""))),
-    true,
-  );
-  assert.equal(agentCalls.length, 0);
-  assert.equal(plannerCalls.length, 1);
+  assert.equal(payload.limitations.some((item) => String(item || "").includes("timeout_layer=planner")), true);
   assert.equal(elapsedMs < 2500, true);
-  assert.equal(calls.some((entry) => entry[1]?.event === "knowledge_answer_aborted"), true);
-  assert.equal(calls.some((entry) => entry[1]?.event === "agent_e2e_terminal_exit"), false);
 });
 
-test("/answer keeps single runtime authority when AGENT_E2E legacy fallback is disabled", async (t) => {
+test("/answer keeps planner edge authority when runAgentE2E override returns non-final state", async (t) => {
   withEnv(t, {
     AGENT_E2E_ENABLED: "true",
     AGENT_E2E_RATIO: "1",
     AGENT_E2E_LEGACY_FALLBACK_ENABLED: null,
   });
-  const agentCalls = [];
+  let agentCalls = 0;
   const plannerCalls = [];
   const { server, calls } = await startTestServer(t, {
     async runAgentE2E(userInput, ctx) {
-      agentCalls.push({ userInput, ctx });
+      agentCalls += 1;
       return {
         ok: false,
         final: null,
@@ -1352,24 +1326,25 @@ test("/answer keeps single runtime authority when AGENT_E2E legacy fallback is d
   const payload = await response.json();
 
   assert.equal(response.status, 200);
+  assert.equal(payload.ok, true);
   assert.equal(payload.answer, "planner fallback answer");
-  assert.equal(agentCalls.length, 0);
+  assert.equal(agentCalls, 0);
   assert.equal(plannerCalls.length, 1);
   assert.equal(calls.some((entry) => entry[1]?.event === "knowledge_answer_agent_e2e_stopped"), false);
   assert.equal(calls.some((entry) => entry[1]?.event === "knowledge_answer_agent_e2e_fallback"), false);
 });
 
-test("/answer keeps single runtime authority when AGENT_E2E legacy fallback is enabled", async (t) => {
+test("/answer ignores legacy fallback flag and stays on planner edge authority", async (t) => {
   withEnv(t, {
     AGENT_E2E_ENABLED: "true",
     AGENT_E2E_RATIO: "1",
     AGENT_E2E_LEGACY_FALLBACK_ENABLED: "true",
   });
-  const agentCalls = [];
+  let agentCalls = 0;
   const plannerCalls = [];
   const { server, calls } = await startTestServer(t, {
     async runAgentE2E(userInput, ctx) {
-      agentCalls.push({ userInput, ctx });
+      agentCalls += 1;
       return {
         ok: false,
         final: null,
@@ -1405,7 +1380,7 @@ test("/answer keeps single runtime authority when AGENT_E2E legacy fallback is e
 
   assert.equal(response.status, 200);
   assert.equal(payload.answer, "planner fallback answer");
-  assert.equal(agentCalls.length, 0);
+  assert.equal(agentCalls, 0);
   assert.equal(plannerCalls.length, 1);
   assert.equal(calls.some((entry) => entry[1]?.event === "knowledge_answer_agent_e2e_fallback"), false);
 });

@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
 const testDb = await createTestDbHarness();
+const { db } = testDb;
 
 const [
   { startHttpServer },
@@ -20,12 +21,10 @@ const [
     enqueueAutonomyJobRecord,
     ensureAutonomyJobTables,
   },
-  { default: db },
 ] = await Promise.all([
   import("../src/http-server.mjs"),
   import("../src/monitoring-store.mjs"),
   import("../src/task-runtime/autonomy-job-store.mjs"),
-  import("../src/db.mjs"),
 ]);
 
 const execFileAsync = promisify(execFile);

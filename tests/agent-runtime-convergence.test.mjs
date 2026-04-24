@@ -210,16 +210,18 @@ test('runAgentE2E fail-closes unknown continuation tokens', async () => {
   assert.equal(result.steps[0]?.continuation?.invalid_next_action, 'unknown_next_token');
 });
 
-test('agent-mode ingress keeps single runtime authority by default when runAgentE2E has no final answer', async (t) => {
+test('HTTP /answer keeps planner edge as single runtime authority', async (t) => {
   withEnv(t, {
     AGENT_E2E_ENABLED: 'true',
     AGENT_E2E_RATIO: '1',
     AGENT_E2E_LEGACY_FALLBACK_ENABLED: null,
   });
 
+  let agentCalls = 0;
   const plannerCalls = [];
   const { server } = await startTestServer(t, {
     async runAgentE2E() {
+      agentCalls += 1;
       return {
         ok: false,
         final: null,
@@ -235,7 +237,7 @@ test('agent-mode ingress keeps single runtime authority by default when runAgent
         execution_result: {
           ok: true,
           data: {
-            answer: 'legacy planner fallback answer',
+            answer: 'planner edge single authority answer',
             sources: [],
             limitations: [],
           },
@@ -253,22 +255,25 @@ test('agent-mode ingress keeps single runtime authority by default when runAgent
   });
   const payload = await response.json();
 
-  assert.equal(response.status, 503);
-  assert.equal(payload.ok, false);
-  assert.match(payload.answer, /單一路徑/);
-  assert.equal(plannerCalls.length, 0);
+  assert.equal(response.status, 200);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.answer, 'planner edge single authority answer');
+  assert.equal(agentCalls, 0);
+  assert.equal(plannerCalls.length, 1);
 });
 
-test('agent-mode ingress can opt into explicit legacy fallback', async (t) => {
+test('legacy fallback env flag does not bypass planner edge authority', async (t) => {
   withEnv(t, {
     AGENT_E2E_ENABLED: 'true',
     AGENT_E2E_RATIO: '1',
     AGENT_E2E_LEGACY_FALLBACK_ENABLED: 'true',
   });
 
+  let agentCalls = 0;
   const plannerCalls = [];
   const { server, calls } = await startTestServer(t, {
     async runAgentE2E() {
+      agentCalls += 1;
       return {
         ok: false,
         final: null,
@@ -304,48 +309,32 @@ test('agent-mode ingress can opt into explicit legacy fallback', async (t) => {
 
   assert.equal(response.status, 200);
   assert.equal(payload.answer, 'legacy planner fallback answer');
+  assert.equal(agentCalls, 0);
   assert.equal(plannerCalls.length, 1);
-  assert.equal(calls.some((entry) => entry[1]?.event === 'knowledge_answer_agent_e2e_fallback'), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === 'knowledge_answer_agent_e2e_fallback'), false);
 });
 
-test('normal HTTP agent ingress provides tool executor and avoids tool_executor_missing', async (t) => {
+test('normal HTTP /answer ingress does not execute runAgentE2E even if overridden', async (t) => {
   withEnv(t, {
     AGENT_E2E_ENABLED: 'true',
     AGENT_E2E_RATIO: '1',
     AGENT_E2E_LEGACY_FALLBACK_ENABLED: null,
   });
 
-  const dispatchCalls = [];
+  let agentCalls = 0;
   const plannerCalls = [];
   const { server, calls } = await startTestServer(t, {
-    async dispatchPlannerTool({ action, payload }) {
-      dispatchCalls.push({ action, payload });
-      if (action === 'search_company_brain_docs') {
-        return {
-          ok: true,
-          data: {
-            total: 1,
-            docs: [
-              {
-                document_ref: 'doc-convergence-1',
-                title: 'Scanoo Brief',
-                snippet: 'Scanoo 是一個 AI workflow tool',
-              },
-            ],
-          },
-        };
-      }
-      if (action === 'official_read_document') {
-        return {
-          ok: true,
-          data: {
-            content: `document: ${payload?.document_ref || 'doc-convergence-1'}`,
-          },
-        };
-      }
+    async runAgentE2E() {
+      agentCalls += 1;
       return {
-        ok: false,
-        error: 'invalid_action',
+        ok: true,
+        final: {
+          ok: true,
+          action: 'answer_user_directly',
+          result: {
+            answer: 'agent path should not run from HTTP ingress',
+          },
+        },
       };
     },
     async executePlannedUserInput(args) {
@@ -356,7 +345,7 @@ test('normal HTTP agent ingress provides tool executor and avoids tool_executor_
         execution_result: {
           ok: true,
           data: {
-            answer: 'planner should stay unused in this test',
+            answer: 'planner runtime answer from HTTP ingress',
             sources: [],
             limitations: [],
           },
@@ -376,9 +365,8 @@ test('normal HTTP agent ingress provides tool executor and avoids tool_executor_
 
   assert.equal(response.status, 200);
   assert.equal(payload.ok, true);
-  assert.match(payload.answer, /搜尋結果/);
-  assert.equal(dispatchCalls.some((entry) => entry.action === 'search_company_brain_docs'), true);
-  assert.equal(dispatchCalls.some((entry) => entry.action === 'official_read_document'), true);
-  assert.equal(plannerCalls.length, 0);
+  assert.equal(payload.answer, 'planner runtime answer from HTTP ingress');
+  assert.equal(agentCalls, 0);
+  assert.equal(plannerCalls.length, 1);
   assert.equal(calls.some((entry) => entry[1]?.event === 'knowledge_answer_agent_e2e_fallback'), false);
 });
