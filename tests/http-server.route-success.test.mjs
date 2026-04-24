@@ -1184,7 +1184,7 @@ test("/search returns index retrieval hits through the unified read runtime", as
   assert.equal(payload.items[0].title, "Index Runtime Search Guide");
 });
 
-test("/answer canary ingress uses runAgentE2E when rollout gate is enabled", async (t) => {
+test("/answer ingress stays planner-only even when AGENT_E2E rollout flags are enabled", async (t) => {
   withEnv(t, {
     AGENT_E2E_ENABLED: "true",
     AGENT_E2E_RATIO: "1",
@@ -1234,33 +1234,49 @@ test("/answer canary ingress uses runAgentE2E when rollout gate is enabled", asy
   const payload = await response.json();
 
   assert.equal(response.status, 200);
-  assert.equal(payload.answer, "agent e2e canary answer");
+  assert.equal(payload.answer, "planner fallback should stay unused");
   assert.equal(Array.isArray(payload.sources), true);
   assert.equal(Array.isArray(payload.limitations), true);
-  assert.equal(agentCalls.length, 1);
-  assert.equal(plannerCalls.length, 0);
-  assert.equal(agentCalls[0]?.ctx?.authContext?.account_id, "acct-1");
+  assert.equal(agentCalls.length, 0);
+  assert.equal(plannerCalls.length, 1);
 });
 
-test("/answer canary ingress fails fast when agent tool dispatch stalls", { timeout: 8000 }, async (t) => {
+test("/answer fails fast on planner-edge latency budget timeout without agent_e2e ingress", { timeout: 8000 }, async (t) => {
   withEnv(t, {
     AGENT_E2E_ENABLED: "true",
     AGENT_E2E_RATIO: "1",
-    AGENT_E2E_LEGACY_FALLBACK_ENABLED: null,
-    AGENT_E2E_HARD_TIMEOUT_MS: "80",
+    ANSWER_LATENCY_BUDGET_MS: "80",
   });
-  const dispatchCalls = [];
+  const agentCalls = [];
+  const plannerCalls = [];
   const { server, calls } = await startTestServer(t, {
-    async dispatchPlannerTool(input) {
-      dispatchCalls.push(input);
+    async runAgentE2E(userInput, ctx) {
+      agentCalls.push({ userInput, ctx });
+      return {
+        ok: true,
+        final: {
+          ok: true,
+          action: "answer_user_directly",
+          result: {
+            answer: "agent e2e should stay unused",
+          },
+        },
+        terminal_reason: "answer_user_directly",
+        plan: ["answer_user_directly"],
+      };
+    },
+    async executePlannedUserInput(args) {
+      plannerCalls.push(args);
       return new Promise(() => {});
     },
+  }, {
+    requestTimeoutMs: 2000,
   });
   const { port } = server.address();
   const controller = new AbortController();
   const forceAbortHandle = setTimeout(() => {
     controller.abort(new Error("client-side safety timeout"));
-  }, 3000);
+  }, 3500);
   t.after(() => {
     clearTimeout(forceAbortHandle);
   });
@@ -1277,20 +1293,21 @@ test("/answer canary ingress fails fast when agent tool dispatch stalls", { time
   const payload = await response.json();
   const elapsedMs = Date.now() - startedAt;
 
-  assert.equal(response.status, 503);
+  assert.equal(response.status, 504);
   assert.equal(payload.ok, false);
   assert.equal(Array.isArray(payload.limitations), true);
   assert.equal(
-    payload.limitations.some((item) => /agent_terminal_reason=agent_e2e_timeout/.test(String(item || ""))),
+    payload.limitations.some((item) => /timeout_layer=planner/.test(String(item || ""))),
     true,
   );
-  assert.equal(dispatchCalls.length > 0, true);
+  assert.equal(agentCalls.length, 0);
+  assert.equal(plannerCalls.length, 1);
   assert.equal(elapsedMs < 2500, true);
-  assert.equal(calls.some((entry) => entry[1]?.event === "agent_e2e_before_tool_execution"), true);
-  assert.equal(calls.some((entry) => entry[1]?.event === "agent_e2e_terminal_exit"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "knowledge_answer_aborted"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "agent_e2e_terminal_exit"), false);
 });
 
-test("/answer canary ingress keeps single runtime authority by default when agent has no stable final answer", async (t) => {
+test("/answer keeps single runtime authority when AGENT_E2E legacy fallback is disabled", async (t) => {
   withEnv(t, {
     AGENT_E2E_ENABLED: "true",
     AGENT_E2E_RATIO: "1",
@@ -1334,16 +1351,15 @@ test("/answer canary ingress keeps single runtime authority by default when agen
   });
   const payload = await response.json();
 
-  assert.equal(response.status, 503);
-  assert.equal(payload.ok, false);
-  assert.match(payload.answer, /單一路徑/);
-  assert.equal(agentCalls.length, 1);
-  assert.equal(plannerCalls.length, 0);
-  assert.equal(calls.some((entry) => entry[1]?.event === "knowledge_answer_agent_e2e_stopped"), true);
+  assert.equal(response.status, 200);
+  assert.equal(payload.answer, "planner fallback answer");
+  assert.equal(agentCalls.length, 0);
+  assert.equal(plannerCalls.length, 1);
+  assert.equal(calls.some((entry) => entry[1]?.event === "knowledge_answer_agent_e2e_stopped"), false);
   assert.equal(calls.some((entry) => entry[1]?.event === "knowledge_answer_agent_e2e_fallback"), false);
 });
 
-test("/answer canary ingress uses explicit legacy fallback only when enabled", async (t) => {
+test("/answer keeps single runtime authority when AGENT_E2E legacy fallback is enabled", async (t) => {
   withEnv(t, {
     AGENT_E2E_ENABLED: "true",
     AGENT_E2E_RATIO: "1",
@@ -1389,9 +1405,9 @@ test("/answer canary ingress uses explicit legacy fallback only when enabled", a
 
   assert.equal(response.status, 200);
   assert.equal(payload.answer, "planner fallback answer");
-  assert.equal(agentCalls.length, 1);
+  assert.equal(agentCalls.length, 0);
   assert.equal(plannerCalls.length, 1);
-  assert.equal(calls.some((entry) => entry[1]?.event === "knowledge_answer_agent_e2e_fallback"), true);
+  assert.equal(calls.some((entry) => entry[1]?.event === "knowledge_answer_agent_e2e_fallback"), false);
 });
 
 test("agent company-brain search and detail routes return structured summaries for planner use", async (t) => {
