@@ -76,6 +76,18 @@ const REQUIRED_SERVICE_MODULES = [
 ];
 
 const ROUTING_EVAL_MIN_ACCURACY_RATIO = 0.9;
+const USAGE_LAYER_GATE_STAGE_PHASE_1 = "phase1";
+const USAGE_LAYER_GATE_STAGE_PHASE_2 = "phase2";
+const USAGE_LAYER_GATE_THRESHOLDS = {
+  [USAGE_LAYER_GATE_STAGE_PHASE_1]: {
+    fthr_min_percent: 70,
+    generic_rate_max_percent: 30,
+  },
+  [USAGE_LAYER_GATE_STAGE_PHASE_2]: {
+    fthr_min_percent: 80,
+    generic_rate_max_percent: 20,
+  },
+};
 const SYSTEM_STATUS_ORDER = {
   fail: 0,
   degrade: 1,
@@ -85,6 +97,133 @@ const PLANNER_STATUS_ORDER = {
   fail: 0,
   pass: 1,
 };
+
+function resolveUsageLayerGateStage(stage = "") {
+  const normalized = cleanText(stage || process.env.USAGE_LAYER_GATE_STAGE || "").toLowerCase();
+  if (
+    normalized === "2"
+    || normalized === "stage2"
+    || normalized === "phase2"
+    || normalized === "p2"
+  ) {
+    return USAGE_LAYER_GATE_STAGE_PHASE_2;
+  }
+  return USAGE_LAYER_GATE_STAGE_PHASE_1;
+}
+
+function parsePercentMetric(value = null) {
+  if (value == null) {
+    return null;
+  }
+  const text = cleanText(value);
+  if (text) {
+    const parsed = Number.parseFloat(text.replace(/%/g, ""));
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+  if (numeric >= 0 && numeric <= 1) {
+    return numeric * 100;
+  }
+  return numeric;
+}
+
+function formatPercentMetric(value = null) {
+  if (!Number.isFinite(Number(value))) {
+    return null;
+  }
+  return `${Number(value).toFixed(2)}%`;
+}
+
+async function runUsageLayerEvalSummary() {
+  const [{ usageLayerEvals }, { runUsageLayerEvalCase, summarizeResults }] = await Promise.all([
+    import("../evals/usage-layer/usage-layer-evals.mjs"),
+    import("../evals/usage-layer/usage-layer-runner.mjs"),
+  ]);
+
+  const results = [];
+  for (const testCase of usageLayerEvals) {
+    results.push(await runUsageLayerEvalCase(testCase));
+  }
+  return summarizeResults(results);
+}
+
+async function buildUsageLayerSummary({
+  usageLayerCheck = runUsageLayerEvalSummary,
+  usageLayerGateStage = "",
+} = {}) {
+  const gateStage = resolveUsageLayerGateStage(usageLayerGateStage);
+  const thresholds = USAGE_LAYER_GATE_THRESHOLDS[gateStage] || USAGE_LAYER_GATE_THRESHOLDS[USAGE_LAYER_GATE_STAGE_PHASE_1];
+
+  let evalSummary = null;
+  try {
+    evalSummary = await usageLayerCheck();
+  } catch (error) {
+    return {
+      status: "fail",
+      gate_stage: gateStage,
+      thresholds,
+      metrics: {
+        FTHR: null,
+        generic_rate: null,
+        fthr_percent: null,
+        generic_rate_percent: null,
+      },
+      total_cases: 0,
+      blocking_reasons: ["usage_eval_error"],
+      summary: "usage-layer gate failed",
+      guidance: "先跑 npm run eval:usage-layer；usage-layer metrics 無法取得時不可放行 merge/release。",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  const metrics = evalSummary?.metrics || {};
+  const totalCases = Number(evalSummary?.total || evalSummary?.total_cases || 0);
+  const fthrPercent = parsePercentMetric(metrics?.fthr_percent ?? metrics?.FTHR);
+  const genericRatePercent = parsePercentMetric(metrics?.generic_rate_percent ?? metrics?.generic_rate);
+  const blockingReasons = [];
+
+  if (!Number.isFinite(fthrPercent)) {
+    blockingReasons.push("fthr_unavailable");
+  } else if (fthrPercent < Number(thresholds.fthr_min_percent)) {
+    blockingReasons.push("fthr_below_threshold");
+  }
+
+  if (!Number.isFinite(genericRatePercent)) {
+    blockingReasons.push("generic_rate_unavailable");
+  } else if (genericRatePercent > Number(thresholds.generic_rate_max_percent)) {
+    blockingReasons.push("generic_rate_above_threshold");
+  }
+
+  const status = blockingReasons.length === 0 ? "pass" : "fail";
+  const fthrLine = formatPercentMetric(fthrPercent) || "unknown";
+  const genericLine = formatPercentMetric(genericRatePercent) || "unknown";
+  const targetLine = `FTHR >= ${Number(thresholds.fthr_min_percent).toFixed(0)}%、Generic <= ${Number(thresholds.generic_rate_max_percent).toFixed(0)}%`;
+
+  return {
+    status,
+    gate_stage: gateStage,
+    thresholds,
+    metrics: {
+      FTHR: cleanText(metrics?.FTHR) || formatPercentMetric(fthrPercent),
+      generic_rate: cleanText(metrics?.generic_rate) || formatPercentMetric(genericRatePercent),
+      fthr_percent: Number.isFinite(fthrPercent) ? Number(fthrPercent.toFixed(2)) : null,
+      generic_rate_percent: Number.isFinite(genericRatePercent) ? Number(genericRatePercent.toFixed(2)) : null,
+    },
+    total_cases: Number.isFinite(totalCases) ? totalCases : 0,
+    blocking_reasons: blockingReasons,
+    summary: status === "pass"
+      ? "usage-layer gate passes"
+      : "usage-layer gate fails",
+    guidance: status === "pass"
+      ? `usage-layer gate 通過：${targetLine}（目前 FTHR ${fthrLine}、Generic ${genericLine}）。`
+      : `先跑 npm run eval:usage-layer 並修正 usage 回覆品質：目標 ${targetLine}（目前 FTHR ${fthrLine}、Generic ${genericLine}）。`,
+  };
+}
 
 function validateAgentContract(agent) {
   const contract = agent?.contract || {};
@@ -355,12 +494,14 @@ function buildSystemSummary({
   controlSummary = {},
   dependencySummary = {},
   writeSummary = {},
+  usageLayerSummary = {},
   routingSummary = {},
   plannerSummary = {},
 } = {}) {
   const companyBrainStatus = cleanText(companyBrainSummary?.status) === "pass" ? "pass" : "fail";
   const controlStatus = cleanText(controlSummary?.status) === "pass" ? "pass" : "fail";
   const dependencyStatus = cleanText(dependencySummary?.status) === "fail" ? "fail" : "pass";
+  const usageLayerStatus = cleanText(usageLayerSummary?.status) === "pass" ? "pass" : "fail";
   const routingStatus = routingSummary?.status || "fail";
   const plannerGate = plannerSummary?.gate || "fail";
   const hasObviousRegression = Boolean(
@@ -372,6 +513,7 @@ function buildSystemSummary({
     || controlStatus === "fail"
     || dependencyStatus === "fail"
     || cleanText(writeSummary?.status) !== "pass"
+    || usageLayerStatus === "fail"
     || routingStatus === "fail"
     || plannerGate === "fail"
     ? "fail"
@@ -383,6 +525,7 @@ function buildSystemSummary({
     && controlStatus === "pass"
     && dependencyStatus === "pass"
     && cleanText(writeSummary?.status) === "pass"
+    && usageLayerStatus === "pass"
     && routingStatus === "pass"
     && plannerGate === "pass"
     && hasObviousRegression === false;
@@ -396,6 +539,8 @@ function buildSystemSummary({
       ? "dependency"
     : cleanText(writeSummary?.status) !== "pass"
       ? "write_policy"
+    : usageLayerStatus !== "pass"
+      ? "usage_layer"
     : routingStatus !== "pass" || routingSummary?.compare?.has_obvious_regression
       ? "routing"
       : plannerGate !== "pass" || plannerSummary?.compare?.has_obvious_regression
@@ -411,6 +556,8 @@ function buildSystemSummary({
       ? "先看 dependency guardrails：package-lock 不可解析到 axios 1.14.1 / 0.30.4；先跑 npm run check:dependencies，必要時調整 direct/transitive constraints 後再更新。"
     : reviewPriority === "write_policy"
       ? "先看 write governance：external write 必須統一走 canonical request -> runtime；先修 src/http-server.mjs、src/runtime-message-reply.mjs、src/meeting-agent.mjs、src/lane-executor.mjs、src/lark-mutation-runtime.mjs 與對應 route contract/diagnostics。"
+      : reviewPriority === "usage_layer"
+        ? "先看 usage-layer gate：跑 npm run eval:usage-layer，優先修 first-turn helpfulness 與 generic reply 漂移。"
       : reviewPriority === "routing"
       ? routingSummary?.doc_boundary_regression === true
         ? "這是 doc-boundary 類問題，優先檢查 intent guard；先看 src/message-intent-utils.mjs、src/lane-executor.mjs，再用 routing-eval doc-boundary pack 驗證。"
@@ -428,6 +575,7 @@ function buildSystemSummary({
     control_status: controlStatus,
     dependency_status: dependencyStatus,
     write_policy_status: cleanText(writeSummary?.status) || "fail",
+    usage_layer_status: usageLayerStatus,
     routing_status: routingStatus,
     planner_gate: plannerGate,
     has_obvious_regression: hasObviousRegression,
@@ -464,6 +612,9 @@ export function normalizeSystemSelfCheckStatus(report = {}) {
   );
   const routingStatus = normalizeRoutingStatus(report?.system_summary?.routing_status || report?.routing_summary?.status);
   const plannerStatus = normalizePlannerStatus(report?.system_summary?.planner_gate || report?.planner_summary?.gate);
+  const usageLayerStatus = normalizePlannerStatus(
+    report?.system_summary?.usage_layer_status || report?.usage_layer_summary?.status || "pass",
+  );
   const hasObviousRegression = Boolean(report?.system_summary?.has_obvious_regression);
 
   if (
@@ -471,6 +622,7 @@ export function normalizeSystemSelfCheckStatus(report = {}) {
     || companyBrainStatus === "fail"
     || controlStatus === "fail"
     || dependencyStatus === "fail"
+    || usageLayerStatus === "fail"
     || routingStatus === "fail"
     || plannerStatus === "fail"
   ) {
@@ -541,6 +693,15 @@ export function buildSystemSelfCheckCompareSummary({
 export function renderSystemSelfCheckReport(result = {}) {
   const systemSummary = result?.system_summary || {};
   const writeSummary = result?.write_summary || {};
+  const usageLayerSummary = result?.usage_layer_summary || {};
+  const usageGateStage = cleanText(usageLayerSummary?.gate_stage) || USAGE_LAYER_GATE_STAGE_PHASE_1;
+  const usageThresholds = usageLayerSummary?.thresholds || USAGE_LAYER_GATE_THRESHOLDS[usageGateStage] || USAGE_LAYER_GATE_THRESHOLDS[USAGE_LAYER_GATE_STAGE_PHASE_1];
+  const usageFthr = cleanText(usageLayerSummary?.metrics?.FTHR)
+    || formatPercentMetric(usageLayerSummary?.metrics?.fthr_percent)
+    || "unknown";
+  const usageGeneric = cleanText(usageLayerSummary?.metrics?.generic_rate)
+    || formatPercentMetric(usageLayerSummary?.metrics?.generic_rate_percent)
+    || "unknown";
   const rolloutBasisSummary = writeSummary?.rollout_advice?.basis_summary || {};
   const writeModes = Object.entries(writeSummary?.enforcement_modes?.mode_counts || {})
     .map(([mode, count]) => `${mode}:${count}`)
@@ -566,10 +727,11 @@ export function renderSystemSelfCheckReport(result = {}) {
   return [
     "System Self-Check",
     `現在系統能不能放心改：${systemSummary?.answer || "先不要"}`,
-    `結論：core ${systemSummary?.core_checks || "fail"} | company-brain ${systemSummary?.company_brain_status || "fail"} | control ${systemSummary?.control_status || "fail"} | dependency ${systemSummary?.dependency_status || "pass"} | write-policy ${systemSummary?.write_policy_status || "fail"} | routing ${systemSummary?.routing_status || "fail"} | planner ${systemSummary?.planner_gate || "fail"} | regression ${systemSummary?.has_obvious_regression ? "yes" : "no"}`,
+    `結論：core ${systemSummary?.core_checks || "fail"} | company-brain ${systemSummary?.company_brain_status || "fail"} | control ${systemSummary?.control_status || "fail"} | dependency ${systemSummary?.dependency_status || "pass"} | write-policy ${systemSummary?.write_policy_status || "fail"} | usage-layer ${systemSummary?.usage_layer_status || "fail"} | routing ${systemSummary?.routing_status || "fail"} | planner ${systemSummary?.planner_gate || "fail"} | regression ${systemSummary?.has_obvious_regression ? "yes" : "no"}`,
     `write policy：coverage ${Number(writeSummary?.policy_coverage?.enforced_route_count || 0)}/${Number(writeSummary?.policy_coverage?.metadata_route_count || 0)} | modes ${writeModes || "none"}`,
     `write evidence：real_only_violation ${realOnlyLine} | rollout_basis ${rolloutBasisLine}`,
     `write rollout：ready ${upgradeReady.length > 0 ? upgradeReady.join(",") : "none"} | high_risk ${highRisk.length > 0 ? highRisk.join(",") : "none"}`,
+    `usage gate：${usageGateStage} | FTHR ${usageFthr} (>=${Number(usageThresholds?.fthr_min_percent || 0).toFixed(0)}%) | Generic ${usageGeneric} (<=${Number(usageThresholds?.generic_rate_max_percent || 0).toFixed(0)}%)`,
     `先看：${systemSummary?.review_priority || "base"}`,
     `指引：${systemSummary?.guidance || "先看 self-check 失敗項目。"}`
   ].join("\n");
@@ -582,6 +744,8 @@ export async function runSystemSelfCheck({
   dependencyCheck = buildDependencySummary,
   writeCheck = buildWriteSummary,
   plannerContractCheck = runPlannerContractConsistencyCheck,
+  usageLayerCheck = runUsageLayerEvalSummary,
+  usageLayerGateStage = "",
 } = {}) {
   const agents = listRegisteredAgents();
   const agentMap = new Map(agents.map((agent) => [agent.id, agent]));
@@ -616,10 +780,11 @@ export async function runSystemSelfCheck({
     }
   }
 
-  const [controlSummary, dependencySummary, writeSummary, plannerSummary, routingSummary] = await Promise.all([
+  const [controlSummary, dependencySummary, writeSummary, usageLayerSummary, plannerSummary, routingSummary] = await Promise.all([
     buildControlSummary(),
     dependencyCheck(),
     writeCheck(),
+    buildUsageLayerSummary({ usageLayerCheck, usageLayerGateStage }),
     buildPlannerSummary({ plannerArchiveDir, plannerContractCheck }),
     buildRoutingSummary({ routingArchiveDir }),
   ]);
@@ -639,6 +804,7 @@ export async function runSystemSelfCheck({
     controlSummary,
     dependencySummary,
     writeSummary,
+    usageLayerSummary,
     routingSummary,
     plannerSummary,
   });
@@ -652,6 +818,7 @@ export async function runSystemSelfCheck({
     control_summary: controlSummary,
     dependency_summary: dependencySummary,
     write_summary: writeSummary,
+    usage_layer_summary: usageLayerSummary,
     routing_summary: routingSummary,
     planner_summary: {
       gate: plannerSummary.gate,

@@ -7,6 +7,7 @@ function getArgValue(flag = "") {
 }
 
 const writeSummaryFixturePath = process.env.SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE || "";
+const usageSummaryFixturePath = process.env.SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE || "";
 
 function printUsage() {
   console.log([
@@ -18,16 +19,26 @@ function printUsage() {
 }
 
 async function resolveRuntimeOverrides() {
-  if (!writeSummaryFixturePath) {
+  if (!writeSummaryFixturePath && !usageSummaryFixturePath) {
     return {};
   }
 
   const { readFile } = await import("node:fs/promises");
-  const raw = await readFile(writeSummaryFixturePath, "utf8");
-  const summary = JSON.parse(raw);
-  return {
-    writeCheck: async () => summary,
-  };
+  const overrides = {};
+
+  if (writeSummaryFixturePath) {
+    const raw = await readFile(writeSummaryFixturePath, "utf8");
+    const summary = JSON.parse(raw);
+    overrides.writeCheck = async () => summary;
+  }
+
+  if (usageSummaryFixturePath) {
+    const raw = await readFile(usageSummaryFixturePath, "utf8");
+    const summary = JSON.parse(raw);
+    overrides.usageLayerCheck = async () => summary;
+  }
+
+  return overrides;
 }
 
 if (process.argv.includes("--help")) {

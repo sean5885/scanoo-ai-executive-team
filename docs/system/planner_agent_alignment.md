@@ -509,6 +509,17 @@ Thread 59 action hint checkpoint:
 - keeps human-readable output line count unchanged and only rewrites the last hint line into `下一步`
 - does not add fallback, auto-fix, new routing logic, or a new diagnostics subsystem
 
+Thread E usage-layer release gate checkpoint:
+
+- adds deterministic usage-layer gating into `self-check` + `release-check` using the checked-in `eval:usage-layer` metrics
+- gate is staged, default `phase1`:
+  - `phase1`: `FTHR >= 70%` and `Generic Rate <= 30%`
+  - `phase2`: `FTHR >= 80%` and `Generic Rate <= 20%`
+- stage selection is controlled by `USAGE_LAYER_GATE_STAGE` (`phase1` default, supports `phase2`/`2`)
+- `self-check` now surfaces `usage_layer_status` and blocks `safe_to_change` when this gate fails
+- `release-check` now adds blocking class `usage_layer_failure` and includes usage-metric drilldown in the same minimal report shape
+- when usage metrics are unavailable, gate fails closed as `usage_eval_error`; this remains fail-soft (structured failure), not runtime throw
+
 Current daily-entry CLI:
 
 - `npm run daily-status`

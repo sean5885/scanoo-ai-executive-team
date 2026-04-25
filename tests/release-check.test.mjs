@@ -187,8 +187,22 @@ const STABLE_WRITE_SUMMARY = {
   },
 };
 
+const STABLE_USAGE_LAYER_SUMMARY = {
+  total: 50,
+  metrics: {
+    FTHR: "76.00%",
+    generic_rate: "24.00%",
+  },
+};
+
 async function createWriteSummaryFixture(baseDir, summary = STABLE_WRITE_SUMMARY) {
   const fixturePath = path.join(baseDir, "write-summary-fixture.json");
+  await writeFile(fixturePath, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
+  return fixturePath;
+}
+
+async function createUsageSummaryFixture(baseDir, summary = STABLE_USAGE_LAYER_SUMMARY) {
+  const fixturePath = path.join(baseDir, "usage-summary-fixture.json");
   await writeFile(fixturePath, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
   return fixturePath;
 }
@@ -198,6 +212,7 @@ test("release-check report passes when self-check, routing, and planner are stab
   const result = await runReleaseCheck({
     ...archives,
     writeCheck: async () => STABLE_WRITE_SUMMARY,
+    usageLayerCheck: async () => STABLE_USAGE_LAYER_SUMMARY,
   });
 
   assert.deepEqual(result.report, {
@@ -332,6 +347,58 @@ test("release-check report blocks on dependency policy failures", () => {
     action_hint: "inspect dependency guardrails and replace blocked package versions",
     failing_area: "runtime",
     representative_fail_case: ["axios@1.14.1 via package-lock.json"],
+    drilldown_source: ["release-check triage"],
+  });
+});
+
+test("release-check report blocks on usage-layer gate failures", () => {
+  const selfCheckResult = {
+    ok: false,
+    system_summary: {
+      core_checks: "pass",
+      usage_layer_status: "fail",
+    },
+    usage_layer_summary: {
+      status: "fail",
+      thresholds: {
+        fthr_min_percent: 70,
+        generic_rate_max_percent: 30,
+      },
+      metrics: {
+        FTHR: "60.00%",
+        generic_rate: "40.00%",
+      },
+    },
+    routing_summary: {
+      status: "pass",
+      compare: {
+        has_obvious_regression: false,
+      },
+    },
+    planner_summary: {
+      gate: "pass",
+      compare: {
+        has_obvious_regression: false,
+      },
+    },
+  };
+  const drilldown = buildReleaseCheckDrilldown({ selfCheckResult });
+  const report = buildReleaseCheckReport({
+    selfCheckResult,
+    drilldown,
+  });
+
+  assert.deepEqual(report, {
+    overall_status: "fail",
+    blocking_checks: ["usage_layer_failure"],
+    doc_boundary_regression: false,
+    suggested_next_step: "先跑 npm run eval:usage-layer；先把 FTHR 拉到 >= 70% 且 Generic Rate 壓到 <= 30%（目前 FTHR 60.00%、Generic 40.00%）。",
+    action_hint: "run eval:usage-layer and improve first-turn helpfulness while reducing generic replies",
+    failing_area: "runtime",
+    representative_fail_case: [
+      "usage_layer_fthr:60.00% target>=70%",
+      "usage_layer_generic_rate:40.00% target<=30%",
+    ],
     drilldown_source: ["release-check triage"],
   });
 });
@@ -883,6 +950,7 @@ test("release-check human output flags doc-boundary routing regressions", () => 
 test("release-check CLI emits only the minimal JSON structure", async () => {
   const archives = await seedReleaseCheckArchives();
   const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
+  const usageSummaryFixturePath = await createUsageSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
   const raw = execFileSync("node", ["scripts/release-check.mjs", "--json"], {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -893,6 +961,7 @@ test("release-check CLI emits only the minimal JSON structure", async () => {
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
+      SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
     },
   });
   const parsed = JSON.parse(raw);
@@ -943,6 +1012,7 @@ test("release-check CLI emits only the minimal JSON structure", async () => {
 test("release-check CLI default output stays limited to the minimal write-governance view", async () => {
   const archives = await seedReleaseCheckArchives();
   const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
+  const usageSummaryFixturePath = await createUsageSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
   const output = execFileSync("node", ["scripts/release-check.mjs"], {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -953,6 +1023,7 @@ test("release-check CLI default output stays limited to the minimal write-govern
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
+      SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
     },
   });
 
@@ -974,6 +1045,7 @@ test("release-check exit code maps pass/fail strictly", () => {
 test("release-check CLI compare-previous prints only the minimal compare view", async () => {
   const archives = await seedReleaseCheckArchives();
   const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
+  const usageSummaryFixturePath = await createUsageSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
   const firstRaw = execFileSync("node", ["scripts/release-check.mjs", "--json"], {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -984,6 +1056,7 @@ test("release-check CLI compare-previous prints only the minimal compare view", 
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
+      SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
     },
   });
   const firstReport = JSON.parse(firstRaw);
@@ -1027,6 +1100,7 @@ test("release-check CLI compare-previous prints only the minimal compare view", 
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
+      SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
     },
   });
 
@@ -1051,6 +1125,7 @@ test("release-check CLI compare-previous prints only the minimal compare view", 
 test("release-check CLI json compare-snapshot only returns the compare summary", async () => {
   const archives = await seedReleaseCheckArchives();
   const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
+  const usageSummaryFixturePath = await createUsageSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
   execFileSync("node", ["scripts/release-check.mjs", "--json"], {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -1061,6 +1136,7 @@ test("release-check CLI json compare-snapshot only returns the compare summary",
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
+      SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
     },
   });
 
@@ -1095,6 +1171,7 @@ test("release-check CLI json compare-snapshot only returns the compare summary",
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
+      SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
     },
   });
   const parsed = JSON.parse(raw);
@@ -1109,6 +1186,7 @@ test("release-check CLI json compare-snapshot only returns the compare summary",
 test("release-check CI entry emits minimal JSON and exits 0 on pass", async () => {
   const archives = await seedReleaseCheckArchives();
   const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
+  const usageSummaryFixturePath = await createUsageSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
   const result = spawnSync("node", ["scripts/release-check-ci.mjs"], {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -1119,6 +1197,7 @@ test("release-check CI entry emits minimal JSON and exits 0 on pass", async () =
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
+      SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
     },
   });
 
@@ -1142,6 +1221,7 @@ test("release-check CI entry emits minimal JSON and exits 0 on pass", async () =
 test("release-check CI compare-previous emits only the compare summary JSON", async () => {
   const archives = await seedReleaseCheckArchives();
   const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
+  const usageSummaryFixturePath = await createUsageSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
   spawnSync("node", ["scripts/release-check-ci.mjs"], {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -1152,6 +1232,7 @@ test("release-check CI compare-previous emits only the compare summary JSON", as
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
+      SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
     },
   });
 
@@ -1184,6 +1265,7 @@ test("release-check CI compare-previous emits only the compare summary JSON", as
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
+      SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
     },
   });
 
@@ -1206,6 +1288,7 @@ test("release-check CI entry exits 1 on fail", async () => {
   await mkdir(plannerArchiveDir, { recursive: true });
   await mkdir(selfCheckArchiveDir, { recursive: true });
   const writeSummaryFixturePath = await createWriteSummaryFixture(baseDir);
+  const usageSummaryFixturePath = await createUsageSummaryFixture(baseDir);
 
   const result = spawnSync("node", ["scripts/release-check-ci.mjs"], {
     cwd: process.cwd(),
@@ -1217,6 +1300,7 @@ test("release-check CI entry exits 1 on fail", async () => {
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
+      SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
     },
   });
 

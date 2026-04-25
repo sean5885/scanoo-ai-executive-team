@@ -12,6 +12,7 @@ const BLOCKING_SYSTEM_REGRESSION = "system_regression";
 const BLOCKING_CONTROL_REGRESSION = "control_regression";
 const BLOCKING_DEPENDENCY_POLICY_FAILURE = "dependency_policy_failure";
 const BLOCKING_WRITE_POLICY_FAILURE = "write_policy_failure";
+const BLOCKING_USAGE_LAYER_FAILURE = "usage_layer_failure";
 const BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE = "company_brain_lifecycle_failure";
 const BLOCKING_ROUTING_REGRESSION = "routing_regression";
 const BLOCKING_PLANNER_CONTRACT_FAILURE = "planner_contract_failure";
@@ -105,6 +106,24 @@ function buildCompanyBrainRegressionNextStep() {
 
 function buildWritePolicyRegressionNextStep() {
   return "先看 write governance：src/http-server.mjs、src/runtime-message-reply.mjs、src/meeting-agent.mjs、src/lane-executor.mjs、src/lark-mutation-runtime.mjs、src/http-route-contracts.mjs、src/control-diagnostics.mjs。";
+}
+
+function buildUsageLayerRegressionNextStep(selfCheckResult = {}) {
+  const usageSummary = selfCheckResult?.usage_layer_summary || {};
+  const thresholds = usageSummary?.thresholds || {};
+  const metrics = usageSummary?.metrics || {};
+  const fthrTarget = Number.isFinite(Number(thresholds?.fthr_min_percent))
+    ? Number(thresholds.fthr_min_percent).toFixed(0)
+    : "70";
+  const genericTarget = Number.isFinite(Number(thresholds?.generic_rate_max_percent))
+    ? Number(thresholds.generic_rate_max_percent).toFixed(0)
+    : "30";
+  const fthrMetric = cleanText(metrics?.FTHR)
+    || (Number.isFinite(Number(metrics?.fthr_percent)) ? `${Number(metrics.fthr_percent).toFixed(2)}%` : "unknown");
+  const genericMetric = cleanText(metrics?.generic_rate)
+    || (Number.isFinite(Number(metrics?.generic_rate_percent)) ? `${Number(metrics.generic_rate_percent).toFixed(2)}%` : "unknown");
+
+  return `先跑 npm run eval:usage-layer；先把 FTHR 拉到 >= ${fthrTarget}% 且 Generic Rate 壓到 <= ${genericTarget}%（目前 FTHR ${fthrMetric}、Generic ${genericMetric}）。`;
 }
 
 function buildRoutingRegressionNextStep(selfCheckResult = {}) {
@@ -227,6 +246,9 @@ function buildReleaseCheckActionHint({
   if (firstBlockingCheck === BLOCKING_WRITE_POLICY_FAILURE) {
     return "inspect write governance runtime and route coverage";
   }
+  if (firstBlockingCheck === BLOCKING_USAGE_LAYER_FAILURE) {
+    return "run eval:usage-layer and improve first-turn helpfulness while reducing generic replies";
+  }
   if (firstBlockingCheck === BLOCKING_PLANNER_CONTRACT_FAILURE) {
     return buildPlannerActionHint({ suggestedNextStep, drilldown });
   }
@@ -292,6 +314,16 @@ function hasBlockingDependencyIssue(selfCheckResult = {}) {
     selfCheckResult?.dependency_summary?.status || selfCheckResult?.system_summary?.dependency_status || "pass",
   );
   return dependencyStatus !== "pass";
+}
+
+function hasBlockingUsageLayerIssue(selfCheckResult = {}) {
+  const usageLayerStatus = cleanText(
+    selfCheckResult?.usage_layer_summary?.status || selfCheckResult?.system_summary?.usage_layer_status,
+  );
+  if (!usageLayerStatus) {
+    return false;
+  }
+  return usageLayerStatus !== "pass";
 }
 
 function hasBlockingCompanyBrainIssue(selfCheckResult = {}) {
@@ -652,6 +684,32 @@ function buildWriteDrilldown(selfCheckResult = {}) {
   };
 }
 
+function buildUsageLayerDrilldown(selfCheckResult = {}) {
+  const usageSummary = selfCheckResult?.usage_layer_summary || {};
+  const metrics = usageSummary?.metrics || {};
+  const thresholds = usageSummary?.thresholds || {};
+  const representativeFailCase = [];
+  const fthrTarget = Number.isFinite(Number(thresholds?.fthr_min_percent))
+    ? Number(thresholds.fthr_min_percent).toFixed(0)
+    : "70";
+  const genericTarget = Number.isFinite(Number(thresholds?.generic_rate_max_percent))
+    ? Number(thresholds.generic_rate_max_percent).toFixed(0)
+    : "30";
+  const fthrMetric = cleanText(metrics?.FTHR)
+    || (Number.isFinite(Number(metrics?.fthr_percent)) ? `${Number(metrics.fthr_percent).toFixed(2)}%` : "unknown");
+  const genericMetric = cleanText(metrics?.generic_rate)
+    || (Number.isFinite(Number(metrics?.generic_rate_percent)) ? `${Number(metrics.generic_rate_percent).toFixed(2)}%` : "unknown");
+
+  representativeFailCase.push(`usage_layer_fthr:${fthrMetric} target>=${fthrTarget}%`);
+  representativeFailCase.push(`usage_layer_generic_rate:${genericMetric} target<=${genericTarget}%`);
+
+  return {
+    failing_area: FAILING_AREA_RUNTIME,
+    representative_fail_case: representativeFailCase,
+    drilldown_source: [RELEASE_CHECK_TRIAGE_SOURCE],
+  };
+}
+
 export function buildReleaseCheckDrilldown({
   selfCheckResult = {},
   controlSnapshot = null,
@@ -666,6 +724,7 @@ export function buildReleaseCheckDrilldown({
         ...(hasBlockingControlIssue(selfCheckResult) ? [BLOCKING_CONTROL_REGRESSION] : []),
         ...(hasBlockingDependencyIssue(selfCheckResult) ? [BLOCKING_DEPENDENCY_POLICY_FAILURE] : []),
         ...(hasBlockingWritePolicyIssue(selfCheckResult) ? [BLOCKING_WRITE_POLICY_FAILURE] : []),
+        ...(hasBlockingUsageLayerIssue(selfCheckResult) ? [BLOCKING_USAGE_LAYER_FAILURE] : []),
         ...(hasBlockingCompanyBrainIssue(selfCheckResult) ? [BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE] : []),
         ...(hasBlockingRoutingIssue(selfCheckResult) ? [BLOCKING_ROUTING_REGRESSION] : []),
         ...(hasBlockingPlannerIssue(selfCheckResult) ? [BLOCKING_PLANNER_CONTRACT_FAILURE] : []),
@@ -683,6 +742,9 @@ export function buildReleaseCheckDrilldown({
   }
   if (firstBlockingCheck === BLOCKING_WRITE_POLICY_FAILURE) {
     return buildWriteDrilldown(selfCheckResult);
+  }
+  if (firstBlockingCheck === BLOCKING_USAGE_LAYER_FAILURE) {
+    return buildUsageLayerDrilldown(selfCheckResult);
   }
   if (firstBlockingCheck === BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE) {
     return buildCompanyBrainDrilldown(selfCheckResult);
@@ -719,6 +781,10 @@ export function buildReleaseCheckReport({ selfCheckResult = {}, drilldown = null
     blockingChecks.push(BLOCKING_WRITE_POLICY_FAILURE);
   }
 
+  if (hasBlockingUsageLayerIssue(selfCheckResult)) {
+    blockingChecks.push(BLOCKING_USAGE_LAYER_FAILURE);
+  }
+
   if (hasBlockingCompanyBrainIssue(selfCheckResult)) {
     blockingChecks.push(BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE);
   }
@@ -745,6 +811,8 @@ export function buildReleaseCheckReport({ selfCheckResult = {}, drilldown = null
       ? buildDependencyRegressionNextStep(selfCheckResult)
     : firstBlockingCheck === BLOCKING_WRITE_POLICY_FAILURE
       ? buildWritePolicyRegressionNextStep(selfCheckResult)
+    : firstBlockingCheck === BLOCKING_USAGE_LAYER_FAILURE
+      ? buildUsageLayerRegressionNextStep(selfCheckResult)
     : firstBlockingCheck === BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE
       ? buildCompanyBrainRegressionNextStep(selfCheckResult)
     : firstBlockingCheck === BLOCKING_ROUTING_REGRESSION
@@ -789,6 +857,9 @@ function renderBlockingLineLabel(blockingCheck = "") {
   }
   if (blockingCheck === BLOCKING_WRITE_POLICY_FAILURE) {
     return "write policy failure";
+  }
+  if (blockingCheck === BLOCKING_USAGE_LAYER_FAILURE) {
+    return "usage-layer failure";
   }
   if (blockingCheck === BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE) {
     return "company-brain lifecycle failure";
@@ -938,6 +1009,9 @@ export async function runReleaseCheck(options = {}) {
   if (hasBlockingWritePolicyIssue(selfCheckResult)) {
     blockingChecks.push(BLOCKING_WRITE_POLICY_FAILURE);
   }
+  if (hasBlockingUsageLayerIssue(selfCheckResult)) {
+    blockingChecks.push(BLOCKING_USAGE_LAYER_FAILURE);
+  }
   if (hasBlockingCompanyBrainIssue(selfCheckResult)) {
     blockingChecks.push(BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE);
   }
@@ -947,7 +1021,6 @@ export async function runReleaseCheck(options = {}) {
   if (hasBlockingPlannerIssue(selfCheckResult)) {
     blockingChecks.push(BLOCKING_PLANNER_CONTRACT_FAILURE);
   }
-  const firstBlockingCheck = blockingChecks[0] || null;
   const drilldown = buildReleaseCheckDrilldown({
     selfCheckResult,
     controlSnapshot: latestControlSnapshot,

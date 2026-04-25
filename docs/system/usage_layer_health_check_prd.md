@@ -119,6 +119,15 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 以上數字是 next-round target，不是當前 repo 已量得的現況。
 
+### Release Gate 分階段門檻（Thread E）
+
+自 Thread E 起，usage-layer metrics 已進入 `self-check` / `release-check` 的 blocking gate，採分階段收緊：
+
+- 第 1 階段（預設 `phase1`）：`FTHR >= 70%` 且 `Generic Rate <= 30%`
+- 第 2 階段（`phase2`）：`FTHR >= 80%` 且 `Generic Rate <= 20%`
+
+切換方式：`USAGE_LAYER_GATE_STAGE=phase2`（也接受 `2`）。
+
 ## 六個使用層指標
 
 | 指標 | 全名 | 主要回答的問題 | 建議公式 |

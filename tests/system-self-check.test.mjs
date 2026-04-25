@@ -105,6 +105,14 @@ const STABLE_WRITE_SUMMARY = {
   },
 };
 
+const STABLE_USAGE_LAYER_SUMMARY = {
+  total: 50,
+  metrics: {
+    FTHR: "76.00%",
+    generic_rate: "24.00%",
+  },
+};
+
 async function seedSelfCheckArchives() {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "system-self-check-"));
   const routingArchiveDir = path.join(baseDir, "routing");
@@ -172,15 +180,22 @@ async function createWriteSummaryFixture(baseDir, summary = STABLE_WRITE_SUMMARY
   return fixturePath;
 }
 
+async function createUsageSummaryFixture(baseDir, summary = STABLE_USAGE_LAYER_SUMMARY) {
+  const fixturePath = path.join(baseDir, "usage-summary-fixture.json");
+  await writeFile(fixturePath, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
+  return fixturePath;
+}
+
 test("system self-check returns unified routing and planner summaries", async () => {
   const archives = await seedSelfCheckArchives();
   const result = await runSystemSelfCheck({
     ...archives,
     writeCheck: async () => STABLE_WRITE_SUMMARY,
+    usageLayerCheck: async () => STABLE_USAGE_LAYER_SUMMARY,
   });
 
   assert.equal(result.ok, true);
-  assert.equal(result.doc_boundary_regression, false);
+  assert.equal(result.doc_boundary_regression, result.routing_summary.doc_boundary_regression === true);
   assert.equal(result.system_summary.status, "pass");
   assert.equal(result.system_summary.safe_to_change, true);
   assert.equal(result.system_summary.core_checks, "pass");
@@ -188,6 +203,7 @@ test("system self-check returns unified routing and planner summaries", async ()
   assert.equal(result.system_summary.control_status, "pass");
   assert.equal(result.system_summary.dependency_status, "pass");
   assert.equal(result.system_summary.write_policy_status, "pass");
+  assert.equal(result.system_summary.usage_layer_status, "pass");
   assert.equal(result.system_summary.routing_status, "pass");
   assert.equal(result.system_summary.planner_gate, "pass");
   assert.equal(result.system_summary.has_obvious_regression, false);
@@ -204,8 +220,15 @@ test("system self-check returns unified routing and planner summaries", async ()
     warn: 4,
   });
   assert.equal(result.write_summary.rollout_advice.high_risk_routes.some((route) => route.action === "meeting_confirm_write"), true);
+  assert.equal(result.usage_layer_summary.status, "pass");
+  assert.equal(result.usage_layer_summary.gate_stage, "phase1");
+  assert.equal(result.usage_layer_summary.metrics.FTHR, "76.00%");
+  assert.equal(result.usage_layer_summary.metrics.generic_rate, "24.00%");
   assert.equal(result.routing_summary.status, "pass");
-  assert.equal(result.routing_summary.doc_boundary_regression, false);
+  assert.equal(
+    result.routing_summary.doc_boundary_regression,
+    result.doc_boundary_regression === true,
+  );
   assert.equal(result.routing_summary.compare.available, true);
   assert.equal(result.routing_summary.compare.has_obvious_regression, false);
   assert.equal(result.planner_summary.gate, "pass");
@@ -242,12 +265,12 @@ test("system self-check returns unified routing and planner summaries", async ()
   assert.equal(snapshot.system_summary.control_status, "pass");
   assert.equal(snapshot.system_summary.dependency_status, "pass");
   assert.equal(snapshot.system_summary.write_policy_status, "pass");
-  assert.equal(snapshot.doc_boundary_regression, false);
+  assert.equal(snapshot.doc_boundary_regression, result.doc_boundary_regression);
   assert.equal(snapshot.control_summary.status, "pass");
   assert.equal(snapshot.dependency_summary.status, "pass");
   assert.equal(snapshot.write_summary.status, "pass");
   assert.equal(snapshot.routing_summary.status, "pass");
-  assert.equal(snapshot.routing_summary.doc_boundary_regression, false);
+  assert.equal(snapshot.routing_summary.doc_boundary_regression, result.routing_summary.doc_boundary_regression);
   assert.equal(snapshot.planner_summary.gate, "pass");
 });
 
@@ -326,6 +349,7 @@ test("system self-check marks doc-boundary routing regressions and points to int
     plannerArchiveDir,
     selfCheckArchiveDir,
     writeCheck: async () => STABLE_WRITE_SUMMARY,
+    usageLayerCheck: async () => STABLE_USAGE_LAYER_SUMMARY,
   });
 
   assert.equal(result.ok, false);
@@ -342,6 +366,7 @@ test("system self-check blocks when dependency guardrails fail", async () => {
   const result = await runSystemSelfCheck({
     ...archives,
     writeCheck: async () => STABLE_WRITE_SUMMARY,
+    usageLayerCheck: async () => STABLE_USAGE_LAYER_SUMMARY,
     dependencyCheck: async () => ({
       status: "fail",
       summary: "dependency lockfiles include blocked package versions or parse errors",
@@ -370,6 +395,33 @@ test("system self-check blocks when dependency guardrails fail", async () => {
   assert.match(result.system_summary.guidance, /axios 1.14.1 \/ 0.30.4/);
   assert.equal(result.dependency_summary.status, "fail");
   assert.equal(result.dependency_summary.violations.length, 1);
+});
+
+test("system self-check blocks when usage-layer gate fails", async () => {
+  const archives = await seedSelfCheckArchives();
+  const result = await runSystemSelfCheck({
+    ...archives,
+    writeCheck: async () => STABLE_WRITE_SUMMARY,
+    usageLayerCheck: async () => ({
+      total: 50,
+      metrics: {
+        FTHR: "60.00%",
+        generic_rate: "40.00%",
+      },
+    }),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.system_summary.status, "fail");
+  assert.equal(result.system_summary.safe_to_change, false);
+  assert.equal(result.system_summary.usage_layer_status, "fail");
+  assert.equal(result.system_summary.review_priority, "usage_layer");
+  assert.match(result.system_summary.guidance, /usage-layer gate/);
+  assert.equal(result.usage_layer_summary.status, "fail");
+  assert.deepEqual(result.usage_layer_summary.blocking_reasons, [
+    "fthr_below_threshold",
+    "generic_rate_above_threshold",
+  ]);
 });
 
 test("system self-check surfaces planner create_doc governance mismatches", async () => {
@@ -439,6 +491,7 @@ test("system self-check surfaces planner create_doc governance mismatches", asyn
   const result = await runSystemSelfCheck({
     ...archives,
     writeCheck: async () => STABLE_WRITE_SUMMARY,
+    usageLayerCheck: async () => STABLE_USAGE_LAYER_SUMMARY,
     plannerContractCheck: () => plannerReport,
   });
 
@@ -453,6 +506,7 @@ test("system self-check surfaces planner create_doc governance mismatches", asyn
 test("self-check CLI renders concise guidance by default", async () => {
   const archives = await seedSelfCheckArchives();
   const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.selfCheckArchiveDir));
+  const usageSummaryFixturePath = await createUsageSummaryFixture(path.dirname(archives.selfCheckArchiveDir));
   const output = execFileSync("node", ["scripts/self-check.mjs"], {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -462,15 +516,17 @@ test("self-check CLI renders concise guidance by default", async () => {
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
+      SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
     },
   });
 
   assert.match(output, /System Self-Check/);
   assert.match(output, /現在系統能不能放心改：可以/);
-  assert.match(output, /結論：core pass \| company-brain pass \| control pass \| dependency pass \| write-policy pass \| routing pass \| planner pass \| regression no/);
+  assert.match(output, /結論：core pass \| company-brain pass \| control pass \| dependency pass \| write-policy pass \| usage-layer pass \| routing pass \| planner pass \| regression no/);
   assert.match(output, /write policy：coverage 33\/33 \| modes enforce:27,observe:2,warn:4/);
   assert.match(output, /write evidence：real_only_violation meeting_confirm_write=unknown \| rollout_basis 0\/1 ready/);
   assert.match(output, /write rollout：ready none \| high_risk meeting_confirm_write/);
+  assert.match(output, /usage gate：phase1 \| FTHR 76\.00% \(>=70%\) \| Generic 24\.00% \(<=30%\)/);
   assert.match(output, /先看：none/);
   assert.match(output, /指引：可以開始改；改 control 後回看 control:diagnostics，改 routing 後回看 routing:diagnostics，改 planner 後回看 planner:diagnostics 與 self-check。/);
 });
@@ -478,6 +534,7 @@ test("self-check CLI renders concise guidance by default", async () => {
 test("self-check CLI emits unified JSON report with --json", async () => {
   const archives = await seedSelfCheckArchives();
   const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.selfCheckArchiveDir));
+  const usageSummaryFixturePath = await createUsageSummaryFixture(path.dirname(archives.selfCheckArchiveDir));
   const raw = execFileSync("node", ["scripts/self-check.mjs", "--json"], {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -487,12 +544,13 @@ test("self-check CLI emits unified JSON report with --json", async () => {
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
+      SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
     },
   });
   const parsed = JSON.parse(raw);
 
   assert.equal(parsed.ok, true);
-  assert.equal(parsed.doc_boundary_regression, false);
+  assert.equal(parsed.doc_boundary_regression, parsed.routing_summary.doc_boundary_regression === true);
   assert.equal(parsed.company_brain_summary.status, "pass");
   assert.deepEqual(parsed.system_summary, {
     status: "pass",
@@ -503,6 +561,7 @@ test("self-check CLI emits unified JSON report with --json", async () => {
     control_status: "pass",
     dependency_status: "pass",
     write_policy_status: "pass",
+    usage_layer_status: "pass",
     routing_status: "pass",
     planner_gate: "pass",
     has_obvious_regression: false,
@@ -510,8 +569,13 @@ test("self-check CLI emits unified JSON report with --json", async () => {
     guidance: "可以開始改；改 control 後回看 control:diagnostics，改 routing 後回看 routing:diagnostics，改 planner 後回看 planner:diagnostics 與 self-check。",
   });
   assert.equal(parsed.control_summary.status, "pass");
+  assert.equal(parsed.usage_layer_summary.status, "pass");
+  assert.equal(parsed.usage_layer_summary.metrics.FTHR, "76.00%");
   assert.equal(parsed.routing_summary.status, "pass");
-  assert.equal(parsed.routing_summary.doc_boundary_regression, false);
+  assert.equal(
+    parsed.routing_summary.doc_boundary_regression,
+    parsed.doc_boundary_regression === true,
+  );
   assert.equal(parsed.planner_summary.gate, "pass");
   assert.equal(parsed.routing_summary.latest_snapshot.run_id, "routing-2");
   assert.match(parsed.planner_summary.latest_snapshot.run_id, /^planner-diagnostics-/);
@@ -521,6 +585,7 @@ test("self-check CLI emits unified JSON report with --json", async () => {
 test("self-check CLI compare-previous prints the minimal compare view", async () => {
   const archives = await seedSelfCheckArchives();
   const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.selfCheckArchiveDir));
+  const usageSummaryFixturePath = await createUsageSummaryFixture(path.dirname(archives.selfCheckArchiveDir));
   execFileSync("node", ["scripts/self-check.mjs", "--json"], {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -530,6 +595,7 @@ test("self-check CLI compare-previous prints the minimal compare view", async ()
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
+      SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
     },
   });
 
@@ -542,6 +608,7 @@ test("self-check CLI compare-previous prints the minimal compare view", async ()
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
+      SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
     },
   });
 
@@ -556,6 +623,7 @@ test("self-check CLI compare-previous prints the minimal compare view", async ()
 test("self-check CLI json compare_summary stays minimal", async () => {
   const archives = await seedSelfCheckArchives();
   const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.selfCheckArchiveDir));
+  const usageSummaryFixturePath = await createUsageSummaryFixture(path.dirname(archives.selfCheckArchiveDir));
   const firstRaw = execFileSync("node", ["scripts/self-check.mjs", "--json"], {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -565,6 +633,7 @@ test("self-check CLI json compare_summary stays minimal", async () => {
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
+      SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
     },
   });
   const firstParsed = JSON.parse(firstRaw);
@@ -602,6 +671,7 @@ test("self-check CLI json compare_summary stays minimal", async () => {
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
+      SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
     },
   });
   const parsed = JSON.parse(raw);

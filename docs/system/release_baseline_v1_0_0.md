@@ -100,8 +100,15 @@ Notes:
 - the current release history checkpoint is the snapshot + manifest + compare version over the same release-check gate
 - the current release decision layer checkpoint is the CI + triage complete version:
   - CI entry = `release-check:ci`
-  - triage classes = `system_regression` / `control_regression` / `dependency_policy_failure` / `write_policy_failure` / `routing_regression` / `planner_contract_failure`
+  - triage classes = `system_regression` / `control_regression` / `dependency_policy_failure` / `write_policy_failure` / `usage_layer_failure` / `routing_regression` / `planner_contract_failure`
   - `suggested_next_step` stays minimal but points to the first module family or file type to inspect
+- `npm run self-check` and `npm run release-check` now both treat usage-layer metrics as blocking gate:
+  - stage config is `USAGE_LAYER_GATE_STAGE` (`phase1` default)
+  - `phase1`: `FTHR >= 70%` and `Generic Rate <= 30%`
+  - `phase2`: `FTHR >= 80%` and `Generic Rate <= 20%`
+  - self-check blocks `safe_to_change` when `usage_layer_summary.status !== "pass"`
+  - release-check blocks merge/release with `usage_layer_failure` when usage gate fails
+  - usage metrics unavailable is fail-closed (`usage_eval_error`) and still represented as structured gate failure
 - `npm run check:dependencies` is the lockfile-only dependency safety gate:
   - it scans every checked-in `package-lock.json`
   - it currently blocks `axios@1.14.1` and `axios@0.30.4`

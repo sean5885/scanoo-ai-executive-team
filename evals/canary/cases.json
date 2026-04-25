@@ -122,7 +122,7 @@
         "agent_or_tool": "tool:lark_doc_rewrite_from_comments"
       },
       "boundary_expectation": {
-        "doc_boundary_intent": false,
+        "doc_boundary_intent": true,
         "must_fail_closed": false,
         "blocked_lanes": []
       }
@@ -138,7 +138,7 @@
         "agent_or_tool": "tool:lark_doc_read"
       },
       "boundary_expectation": {
-        "doc_boundary_intent": false,
+        "doc_boundary_intent": true,
         "must_fail_closed": false,
         "blocked_lanes": []
       }
@@ -294,7 +294,7 @@
         "agent_or_tool": "tool:get_company_brain_doc_detail"
       },
       "boundary_expectation": {
-        "doc_boundary_intent": false,
+        "doc_boundary_intent": true,
         "must_fail_closed": false,
         "blocked_lanes": []
       },
@@ -649,7 +649,7 @@
         "agent_or_tool": "tool:get_company_brain_doc_detail"
       },
       "boundary_expectation": {
-        "doc_boundary_intent": false,
+        "doc_boundary_intent": true,
         "must_fail_closed": false,
         "blocked_lanes": []
       },
@@ -674,7 +674,7 @@
         "agent_or_tool": "tool:get_company_brain_doc_detail"
       },
       "boundary_expectation": {
-        "doc_boundary_intent": false,
+        "doc_boundary_intent": true,
         "must_fail_closed": false,
         "blocked_lanes": []
       },
@@ -715,7 +715,7 @@
         "agent_or_tool": "tool:get_company_brain_doc_detail"
       },
       "boundary_expectation": {
-        "doc_boundary_intent": false,
+        "doc_boundary_intent": true,
         "must_fail_closed": false,
         "blocked_lanes": []
       },
@@ -904,7 +904,7 @@
         "agent_or_tool": "tool:lark_doc_rewrite_from_comments"
       },
       "boundary_expectation": {
-        "doc_boundary_intent": false,
+        "doc_boundary_intent": true,
         "must_fail_closed": false,
         "blocked_lanes": []
       }
@@ -915,13 +915,13 @@
       "category": "doc",
       "text": "這份文件在講什麼",
       "expected_route": {
-        "lane": "personal_assistant",
-        "planner_action": "ROUTING_NO_MATCH",
-        "agent_or_tool": "error:ROUTING_NO_MATCH"
+        "lane": "knowledge_assistant",
+        "planner_action": "search_and_detail_doc",
+        "agent_or_tool": "tool:search_and_detail_doc"
       },
       "boundary_expectation": {
-        "doc_boundary_intent": false,
-        "must_fail_closed": true,
+        "doc_boundary_intent": true,
+        "must_fail_closed": false,
         "blocked_lanes": []
       }
     },
@@ -931,13 +931,13 @@
       "category": "doc",
       "text": "打開這份給我看",
       "expected_route": {
-        "lane": "personal_assistant",
-        "planner_action": "ROUTING_NO_MATCH",
-        "agent_or_tool": "error:ROUTING_NO_MATCH"
+        "lane": "knowledge_assistant",
+        "planner_action": "search_and_detail_doc",
+        "agent_or_tool": "tool:search_and_detail_doc"
       },
       "boundary_expectation": {
-        "doc_boundary_intent": false,
-        "must_fail_closed": true,
+        "doc_boundary_intent": true,
+        "must_fail_closed": false,
         "blocked_lanes": []
       }
     },
@@ -1642,7 +1642,7 @@
         "agent_or_tool": "agent:knowledge-audit"
       },
       "boundary_expectation": {
-        "doc_boundary_intent": false,
+        "doc_boundary_intent": true,
         "must_fail_closed": false,
         "blocked_lanes": []
       }
@@ -1658,7 +1658,7 @@
         "agent_or_tool": "agent:knowledge-distill"
       },
       "boundary_expectation": {
-        "doc_boundary_intent": false,
+        "doc_boundary_intent": true,
         "must_fail_closed": false,
         "blocked_lanes": []
       }

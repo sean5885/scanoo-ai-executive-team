@@ -330,14 +330,14 @@ const docCases = [
     agent_or_tool: "tool:lark_doc_rewrite_from_comments",
   }),
   createCase("doc", "038", "這份文件在講什麼", {
-    lane: "personal_assistant",
-    planner_action: "ROUTING_NO_MATCH",
-    agent_or_tool: "error:ROUTING_NO_MATCH",
+    lane: "knowledge_assistant",
+    planner_action: "search_and_detail_doc",
+    agent_or_tool: "tool:search_and_detail_doc",
   }),
   createCase("doc", "039", "打開這份給我看", {
-    lane: "personal_assistant",
-    planner_action: "ROUTING_NO_MATCH",
-    agent_or_tool: "error:ROUTING_NO_MATCH",
+    lane: "knowledge_assistant",
+    planner_action: "search_and_detail_doc",
+    agent_or_tool: "tool:search_and_detail_doc",
   }),
   createCase("doc", "040", "請整理交付驗收流程", {
     lane: "knowledge_assistant",

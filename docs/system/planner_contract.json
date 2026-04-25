@@ -150,6 +150,9 @@
     "forced_selection": {
       "surface": ["planner"]
     },
+    "missing_user_access_token": {
+      "surface": ["planner", "planner_flow"]
+    },
     "strict_user_input_planner": {
       "surface": ["planner"]
     }
