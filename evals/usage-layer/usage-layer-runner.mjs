@@ -1,4 +1,6 @@
 import { pathToFileURL } from "node:url";
+import path from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { usageLayerEvals } from "./usage-layer-evals.mjs";
 import { followupMultiIntentContinuityEvals } from "./followup-multi-intent-continuity-evals.mjs";
 import { registeredAgentFamilyEvals } from "./registered-agent-family-evals.mjs";
@@ -41,6 +43,11 @@ const DEFAULT_USAGE_LAYER_EVAL_CASE_TIMEOUT_MS = Number.parseInt(
 );
 const DEFAULT_USAGE_LAYER_EVAL_STUCK_WARNING_MS = Number.parseInt(
   process.env.USAGE_LAYER_EVAL_STUCK_WARNING_MS || "10000",
+  10,
+);
+const DEFAULT_USAGE_LAYER_EVAL_ARTIFACT_DIR = process.env.USAGE_LAYER_EVAL_ARTIFACT_DIR || ".tmp/usage-layer";
+const DEFAULT_USAGE_LAYER_BASELINE_DRIFT_TOLERANCE = Number.parseInt(
+  process.env.USAGE_LAYER_BASELINE_DRIFT_TOLERANCE || "1",
   10,
 );
 
