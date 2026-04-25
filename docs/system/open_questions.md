@@ -32,6 +32,10 @@ For this closure-planning pass:
     - this item is `resolved` for doc/code alignment; remaining runtime boundary is `deferred`:
       - not a full escalation subsystem yet
       - worker-side retry/escalation behavior is not fully closed-loop yet
+16. Improvement workflow wording drift (`auto_apply` described as immediate applied-only) is resolved on 2026-04-25:
+    - checked-in runtime (`/Users/seanhan/Documents/Playground/src/executive-improvement-workflow.mjs`) applies effect verification in `buildAppliedRecord(...)`; non-improving/regressed outcomes are auto-marked `rolled_back`.
+    - docs are now aligned in `/Users/seanhan/Documents/Playground/docs/system/closed_loop.md`, `/Users/seanhan/Documents/Playground/docs/system/data_flow.md`, and `/Users/seanhan/Documents/Playground/docs/system/modules.md`.
+    - this item is `resolved` for doc/code alignment; no extra runtime path was introduced.
 
 ## Ranked Closure Threads
 

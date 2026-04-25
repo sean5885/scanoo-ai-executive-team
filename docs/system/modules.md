@@ -341,6 +341,8 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/answer-service.mjs`
   - still exists for internal retrieval-answer generation and tests
   - not the main `/answer` route entry
+  - text-model resolution on this path is owned by `/Users/seanhan/Documents/Playground/src/config.mjs` and now treats `MINIMAX_TEXT_MODEL` as primary with `LLM_MODEL` legacy fallback (`MiniMax-M2.7` default)
+  - prompt contract on this helper constrains generated text to stable section order `答案 -> 來源 -> 待確認/限制`; helper fallback stays bounded to extractive `answer + sources`, and final public shaping remains owned by the shared normalizer path
 - Evidence:
   - `/Users/seanhan/Documents/Playground/tests/executive-planner.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/user-response-normalizer.test.mjs`

@@ -346,6 +346,8 @@ Current truth:
 
 - this helper is implemented and tested
 - it is not the main public `/answer` route
+- text-model selection for this helper follows `/Users/seanhan/Documents/Playground/src/config.mjs`: `MINIMAX_TEXT_MODEL` is primary, legacy `LLM_MODEL` is fallback, default remains `MiniMax-M2.7`
+- answer-service prompt contract explicitly constrains generated text to the stable order `答案 -> 來源 -> 待確認/限制`; when generation fails, helper falls back to extractive `answer + sources` and leaves final public shaping to the shared normalizer path
 - even when planner uses a skill-backed action, the final user-facing reply still goes through the existing answer normalization path rather than exposing raw skill payload fields
 
 ### 3A. Plugin Hybrid Dispatch Path

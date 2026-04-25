@@ -233,9 +233,11 @@ Closed-loop layer 對齊的 evidence 類型為：
 
 ## Improvement Approval Workflow
 
-- `auto_apply` proposals are persisted and marked applied immediately
+- `auto_apply` proposals are persisted through the same workflow record path, then evaluated via effect evidence: measurable `improved` keeps `status=applied`, while `same/regressed` is fail-soft `status=rolled_back`
+- `auto_apply` records still keep explicit versioned traceability (`strategy_version`, `active_strategy_version`, `strategy_history`) plus rollback metadata when rollback is triggered
 - `proposal_only` and `human_approval` proposals are persisted as pending items
 - approval and apply are now explicit HTTP workflow steps instead of only task-local fields
+- `verification_status` is tracked on the same proposal record (`pending|passed|failed`) and is updated by apply/rollback outcomes rather than by conversational status text
 - a monitoring-driven learning summary can now draft the same pending improvement items without auto-applying them:
   - `GET /api/monitoring/learning`
   - `POST /agent/improvements/learning/generate`
