@@ -272,6 +272,13 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - dataset: `/Users/seanhan/Documents/Playground/evals/usage-layer/usage-layer-evals.mjs`
 - runner: `/Users/seanhan/Documents/Playground/evals/usage-layer/usage-layer-runner.mjs`
 - CLI: `npm run eval:usage-layer`
+- default artifacts:
+  - fail report: `/Users/seanhan/Documents/Playground/.tmp/usage-layer/fail-report.json`
+  - run snapshot: `/Users/seanhan/Documents/Playground/.tmp/usage-layer/last-run.json`
+  - fixed baseline: `/Users/seanhan/Documents/Playground/.tmp/usage-layer/baseline.json`
+- runner 會為每條 case 輸出 `issue_codes[]`，並且把 fail case 固定成 per-case fail matrix（最少包含 `id`、`expected`、`actual`、`issue_codes`、`owner_surface`）
+- baseline compare 會在同一輪 run 內比對 `last-run` 與 `baseline` 的 case signature；預設容忍值是 `1 case`（可用 `USAGE_LAYER_BASELINE_DRIFT_TOLERANCE` 或 `--drift-tolerance` 覆寫）
+- 若 baseline 不存在，runner 會自動建立 baseline；可用 `--write-baseline` 強制更新 baseline
 - runner 目前會沿用 routing eval 的 owner truth：
   - `cloud_doc_workflow` 走既有 workflow reply surface
   - `meeting_workflow` 走既有 workflow-style reply surface，不再為 eval 重跑 planner
@@ -350,6 +357,86 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
   - decision promotion judge 會在同一條 eval path 傳入 ask-user gate context（`required_slots` / `unresolved_slots` / `slot_state` / `waiting_user_all_required_slots_filled` / `continuation_ready` / resume 可用性），讓 `slot_ask_suppression_success_rate` 與 ask-user promotion metrics 對齊 runtime 的 ask-user recalibration gate
 - `RDR` 目前先保留 TODO，只做 case log，不宣稱已收斂成穩定自動 judge
 - 由於目前 repo 本地沒有 stored explicit user auth / account context，checked-in pack 會把 auth-required company-brain read 與 account-required cloud-doc workflow case 標成 `fail_closed`；這是當前 code truth，不是宣稱能力不存在
+
+### Per-Case Fail Report Shape
+
+`/Users/seanhan/Documents/Playground/.tmp/usage-layer/fail-report.json` 會固定輸出下列結構：
+
+```json
+{
+  "generated_at": "2026-04-25T00:00:00.000Z",
+  "pack": "default",
+  "total_cases": 50,
+  "failed_cases": 12,
+  "cases": [
+    {
+      "id": "EU-01",
+      "expected": {
+        "lane": "knowledge_assistant",
+        "planner_action": "search_and_detail_doc",
+        "agent_or_tool": "tool:search_and_detail_doc",
+        "reply_mode": "answer_first",
+        "success_type": "direct_answer",
+        "eval_outcome": "good_answer"
+      },
+      "actual": {
+        "lane": "knowledge_assistant",
+        "planner_action": "search_and_detail_doc",
+        "agent_or_tool": "tool:search_and_detail_doc",
+        "executed_target": "tool:search_and_detail_doc",
+        "reply_mode": "fail_soft",
+        "success_type": "fail_soft",
+        "eval_outcome": "fail_closed",
+        "failure_class": "permission_denied",
+        "timed_out": false,
+        "duration_ms": 123
+      },
+      "issue_codes": [
+        "FIRST_TURN_SUCCESS_MISS",
+        "EVAL_OUTCOME_MISS",
+        "FAILURE_CLASS_PERMISSION_DENIED"
+      ],
+      "owner_surface": {
+        "expected": null,
+        "actual": "permission_denied"
+      }
+    }
+  ]
+}
+```
+
+### Baseline Snapshot Shape
+
+`/Users/seanhan/Documents/Playground/.tmp/usage-layer/baseline.json` 與 `last-run.json` 都使用同一個 case snapshot shape，runner 會比對每個 case 的 signature（`issue_codes` + `actual` + `owner_surface`）：
+
+```json
+{
+  "pack": "default",
+  "total_cases": 50,
+  "metrics": {
+    "FTHR": "76.00%"
+  },
+  "cases": [
+    {
+      "id": "EU-01",
+      "expected": { "...": "..." },
+      "actual": { "...": "..." },
+      "issue_codes": ["..."],
+      "owner_surface": {
+        "expected": null,
+        "actual": "permission_denied"
+      }
+    }
+  ]
+}
+```
+
+drift 判定規則：
+
+1. 若 `baseline` 與本次 run case signature 差異 case 數 `<= 1`，視為可接受波動
+2. 若差異 case 數 `> 1`，視為 baseline drift（需要追蹤清單與修正）
+3. `new_cases` / `missing_cases` 也算 drift case
+4. 為降低語氣型波動，signature 比對時會忽略 `REPLY_MODE_MISS` 與 `UNNECESSARY_CLARIFICATION`
 
 ## 結論
 

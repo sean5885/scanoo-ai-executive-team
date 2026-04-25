@@ -1193,35 +1193,63 @@ async function runRoutingNoMatchEvalCase(testCase = {}, route = {}) {
   };
 }
 
-function summarizeFailReasons(result = {}) {
-  const reasons = [];
-  if (normalizeText(result.governance_family || "")) {
-    reasons.push(`governance_family(${result.governance_family})`);
-  }
+function normalizeIssueCode(value = "") {
+  return normalizeText(value)
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toUpperCase();
+}
+
+function deriveIssueCodes(result = {}) {
+  const issueCodes = new Set();
   if (result.timed_out === true) {
-    reasons.push(`case_timeout(${result.duration_ms}ms)`);
+    issueCodes.add("CASE_TIMEOUT");
   }
   if (result.first_turn_success !== true) {
-    reasons.push(`first_turn_success_miss(${result.actual_success_type} vs ${result.expected_success_type})`);
+    issueCodes.add("FIRST_TURN_SUCCESS_MISS");
   }
   if (result.wrong_route === true) {
-    reasons.push(
-      `wrong_route(${result.actual_lane}/${result.actual_action}/${result.actual_tool} vs ${result.expected_lane}/${result.expected_planner_action}/${result.expected_agent_or_tool})`,
-    );
+    issueCodes.add("WRONG_ROUTE");
   }
   if (result.tool_omission === true) {
-    reasons.push(`tool_omission(executed=${result.executed_target || "none"})`);
+    issueCodes.add("TOOL_OMISSION");
   }
   if (result.generic === true && result.should_fail_if_generic === true) {
-    reasons.push("generic_reply");
+    issueCodes.add("GENERIC_REPLY");
   }
   if (result.wrong_owner_surface === true) {
-    reasons.push(`wrong_owner_surface(${result.actual_owner_surface || "unknown"} vs ${result.expected_owner_surface || "unknown"})`);
+    issueCodes.add("WRONG_OWNER_SURFACE");
   }
   if (result.unnecessary_clarification === true) {
-    reasons.push("unnecessary_clarification");
+    issueCodes.add("UNNECESSARY_CLARIFICATION");
   }
-  return reasons;
+  if (
+    normalizeText(result.expected_eval_outcome || "")
+    && normalizeText(result.actual_eval_outcome || "")
+    && normalizeText(result.expected_eval_outcome || "") !== normalizeText(result.actual_eval_outcome || "")
+  ) {
+    issueCodes.add("EVAL_OUTCOME_MISS");
+  }
+  if (
+    normalizeText(result.expected_reply_mode || "")
+    && normalizeText(result.actual_reply_mode || "")
+    && normalizeText(result.expected_reply_mode || "") !== normalizeText(result.actual_reply_mode || "")
+  ) {
+    issueCodes.add("REPLY_MODE_MISS");
+  }
+  const normalizedFailureClass = normalizeText(result.failure_class || "");
+  if (normalizedFailureClass && normalizedFailureClass !== "none") {
+    issueCodes.add(`FAILURE_CLASS_${normalizeIssueCode(normalizedFailureClass)}`);
+  }
+  const normalizedGovernanceFamily = normalizeText(result.governance_family || "");
+  if (normalizedGovernanceFamily && normalizedGovernanceFamily !== "none" && normalizedGovernanceFamily !== "pass") {
+    issueCodes.add(`GOVERNANCE_${normalizeIssueCode(normalizedGovernanceFamily)}`);
+  }
+  return [...issueCodes];
+}
+
+function summarizeFailReasons(result = {}) {
+  return deriveIssueCodes(result);
 }
 
 function deriveGovernanceFamilyFromResult(result = {}) {
@@ -1372,7 +1400,7 @@ export async function runUsageLayerEvalCase(testCase = {}, {
     needsFixtureMock: governance?.needs_fixture_mock === true,
   });
 
-  return {
+  const caseResult = {
     id: testCase.id,
     source_anchor: testCase.source_anchor || null,
     user_text: testCase.user_text,
@@ -1407,6 +1435,10 @@ export async function runUsageLayerEvalCase(testCase = {}, {
     duration_ms: durationMs,
     governance_family: governanceFamily,
   };
+  return {
+    ...caseResult,
+    issue_codes: deriveIssueCodes(caseResult),
+  };
 }
 
 export function summarizeResults(results = []) {
@@ -1414,6 +1446,7 @@ export function summarizeResults(results = []) {
   const normalizedResults = results.map((item) => ({
     ...item,
     governance_family: deriveGovernanceFamilyFromResult(item),
+    issue_codes: Array.isArray(item.issue_codes) ? item.issue_codes : deriveIssueCodes(item),
   }));
   const toolRequiredCases = normalizedResults.filter((item) => item.tool_required === true);
   const genericSensitiveCases = normalizedResults.filter((item) => item.should_fail_if_generic === true);
@@ -1463,6 +1496,17 @@ export function summarizeResults(results = []) {
     acc[key] = (acc[key] || 0) + 1;
     return acc;
   }, {});
+  const issueCodeBreakdown = normalizedResults.reduce((acc, item) => {
+    const issueCodes = Array.isArray(item.issue_codes) ? item.issue_codes : [];
+    for (const issueCode of issueCodes) {
+      const normalizedIssueCode = normalizeText(issueCode || "").toUpperCase();
+      if (!normalizedIssueCode) {
+        continue;
+      }
+      acc[normalizedIssueCode] = (acc[normalizedIssueCode] || 0) + 1;
+    }
+    return acc;
+  }, {});
 
   return {
     total,
@@ -1497,6 +1541,7 @@ export function summarizeResults(results = []) {
     expected_outcome_breakdown: expectedOutcomeBreakdown,
     actual_outcome_breakdown: actualOutcomeBreakdown,
     failure_breakdown: failureBreakdown,
+    issue_code_breakdown: issueCodeBreakdown,
     governance_breakdown: governanceBreakdown,
     top_failure_categories: topFailureCategories,
     top_fail_cases: failCases,
@@ -1534,6 +1579,7 @@ function printSummary(summary = {}) {
   console.log(`RDR: ${summary.metrics.RDR} (${summary.counts.reply_discipline_logged_cases} cases logged for manual reply-discipline review)`);
   console.log(`Expected outcomes: ${JSON.stringify(summary.expected_outcome_breakdown)}`);
   console.log(`Actual outcomes: ${JSON.stringify(summary.actual_outcome_breakdown)}`);
+  console.log(`Issue codes: ${JSON.stringify(summary.issue_code_breakdown)}`);
   console.log(`Governance families: ${JSON.stringify(summary.governance_breakdown)}`);
   console.log("");
   console.log("Top failure categories:");
@@ -1590,11 +1636,298 @@ function resolveUsageLayerEvalPack(packName = "") {
   throw new Error(`unknown usage-layer eval pack: ${packName}`);
 }
 
+function resolveCliOptions(argv = process.argv.slice(2)) {
+  const options = {
+    pack: "",
+    artifactDir: DEFAULT_USAGE_LAYER_EVAL_ARTIFACT_DIR,
+    baselinePath: "",
+    runReportPath: "",
+    failReportPath: "",
+    writeBaseline: false,
+    skipBaselineCheck: false,
+    driftTolerance: Number.isFinite(DEFAULT_USAGE_LAYER_BASELINE_DRIFT_TOLERANCE)
+      ? DEFAULT_USAGE_LAYER_BASELINE_DRIFT_TOLERANCE
+      : 1,
+  };
+  for (let index = 0; index < argv.length; index += 1) {
+    const token = argv[index];
+    if (token === "--pack") {
+      options.pack = argv[index + 1] || "";
+      index += 1;
+      continue;
+    }
+    if (token === "--artifact-dir") {
+      options.artifactDir = argv[index + 1] || options.artifactDir;
+      index += 1;
+      continue;
+    }
+    if (token === "--baseline") {
+      options.baselinePath = argv[index + 1] || "";
+      index += 1;
+      continue;
+    }
+    if (token === "--run-report") {
+      options.runReportPath = argv[index + 1] || "";
+      index += 1;
+      continue;
+    }
+    if (token === "--fail-report") {
+      options.failReportPath = argv[index + 1] || "";
+      index += 1;
+      continue;
+    }
+    if (token === "--drift-tolerance") {
+      const parsed = Number.parseInt(argv[index + 1] || "", 10);
+      if (Number.isFinite(parsed) && parsed >= 0) {
+        options.driftTolerance = parsed;
+      }
+      index += 1;
+      continue;
+    }
+    if (token === "--write-baseline") {
+      options.writeBaseline = true;
+      continue;
+    }
+    if (token === "--skip-baseline-check") {
+      options.skipBaselineCheck = true;
+      continue;
+    }
+  }
+  return options;
+}
+
+function resolveUsageLayerArtifactPaths({
+  artifactDir = DEFAULT_USAGE_LAYER_EVAL_ARTIFACT_DIR,
+  packName = "",
+  baselinePath = "",
+  runReportPath = "",
+  failReportPath = "",
+} = {}) {
+  const normalizedPackName = normalizeText(packName || "") || "default";
+  const scopedSuffix = normalizedPackName === "default"
+    ? ""
+    : `.${normalizedPackName.replace(/[^a-z0-9_-]+/g, "_")}`;
+  return {
+    artifactDir,
+    baselinePath: baselinePath || path.join(artifactDir, `baseline${scopedSuffix}.json`),
+    runReportPath: runReportPath || path.join(artifactDir, `last-run${scopedSuffix}.json`),
+    failReportPath: failReportPath || path.join(artifactDir, `fail-report${scopedSuffix}.json`),
+  };
+}
+
+function buildPerCaseFailReportEntry(result = {}) {
+  const issueCodes = Array.isArray(result.issue_codes) ? result.issue_codes : deriveIssueCodes(result);
+  return {
+    id: result.id,
+    expected: {
+      lane: result.expected_lane || null,
+      planner_action: result.expected_planner_action || null,
+      agent_or_tool: result.expected_agent_or_tool || null,
+      reply_mode: result.expected_reply_mode || null,
+      success_type: result.expected_success_type || null,
+      eval_outcome: result.expected_eval_outcome || null,
+    },
+    actual: {
+      lane: result.actual_lane || null,
+      planner_action: result.actual_action || null,
+      agent_or_tool: result.actual_tool || null,
+      executed_target: result.executed_target || null,
+      reply_mode: result.actual_reply_mode || null,
+      success_type: result.actual_success_type || null,
+      eval_outcome: result.actual_eval_outcome || null,
+      failure_class: result.failure_class || null,
+      timed_out: result.timed_out === true,
+      duration_ms: Number.isFinite(Number(result.duration_ms)) ? Number(result.duration_ms) : null,
+    },
+    issue_codes: issueCodes,
+    owner_surface: {
+      expected: result.expected_owner_surface || null,
+      actual: result.actual_owner_surface || null,
+    },
+  };
+}
+
+function buildFailReport(results = [], summary = {}, {
+  packName = "",
+} = {}) {
+  const failCases = results
+    .map((result) => buildPerCaseFailReportEntry(result))
+    .filter((entry) => Array.isArray(entry.issue_codes) && entry.issue_codes.length > 0);
+  return {
+    generated_at: new Date().toISOString(),
+    pack: normalizeText(packName || "") || "default",
+    total_cases: results.length,
+    failed_cases: failCases.length,
+    metrics: summary.metrics || {},
+    failure_breakdown: summary.failure_breakdown || {},
+    issue_code_breakdown: summary.issue_code_breakdown || {},
+    cases: failCases,
+  };
+}
+
+function buildBaselineCaseSnapshot(result = {}) {
+  const issueCodes = Array.isArray(result.issue_codes) ? result.issue_codes : deriveIssueCodes(result);
+  return {
+    id: result.id,
+    expected: {
+      lane: result.expected_lane || null,
+      planner_action: result.expected_planner_action || null,
+      agent_or_tool: result.expected_agent_or_tool || null,
+      reply_mode: result.expected_reply_mode || null,
+      success_type: result.expected_success_type || null,
+      eval_outcome: result.expected_eval_outcome || null,
+    },
+    actual: {
+      lane: result.actual_lane || null,
+      planner_action: result.actual_action || null,
+      agent_or_tool: result.actual_tool || null,
+      executed_target: result.executed_target || null,
+      reply_mode: result.actual_reply_mode || null,
+      success_type: result.actual_success_type || null,
+      eval_outcome: result.actual_eval_outcome || null,
+      failure_class: result.failure_class || null,
+      timed_out: result.timed_out === true,
+      governance_family: result.governance_family || null,
+    },
+    issue_codes: issueCodes,
+    owner_surface: {
+      expected: result.expected_owner_surface || null,
+      actual: result.actual_owner_surface || null,
+    },
+  };
+}
+
+function buildBaselineSnapshot(results = [], summary = {}, {
+  packName = "",
+} = {}) {
+  return {
+    generated_at: new Date().toISOString(),
+    pack: normalizeText(packName || "") || "default",
+    total_cases: results.length,
+    metrics: summary.metrics || {},
+    cases: results
+      .map((result) => buildBaselineCaseSnapshot(result))
+      .sort((left, right) => String(left.id || "").localeCompare(String(right.id || ""))),
+  };
+}
+
+function buildCaseSignature(caseItem = {}) {
+  const issueCodes = Array.isArray(caseItem.issue_codes) ? [...caseItem.issue_codes].sort() : [];
+  const volatileIssueCodes = new Set([
+    "UNNECESSARY_CLARIFICATION",
+    "REPLY_MODE_MISS",
+  ]);
+  const stableIssueCodes = issueCodes.filter((issueCode) => !volatileIssueCodes.has(String(issueCode || "").toUpperCase()));
+  return JSON.stringify({
+    issue_codes: stableIssueCodes,
+    owner_surface_actual: normalizeText(caseItem?.owner_surface?.actual || ""),
+    owner_surface_expected: normalizeText(caseItem?.owner_surface?.expected || ""),
+    actual_lane: normalizeText(caseItem?.actual?.lane || ""),
+    actual_planner_action: normalizeText(caseItem?.actual?.planner_action || ""),
+    actual_agent_or_tool: normalizeText(caseItem?.actual?.agent_or_tool || ""),
+    actual_executed_target: normalizeText(caseItem?.actual?.executed_target || ""),
+    actual_eval_outcome: normalizeText(caseItem?.actual?.eval_outcome || ""),
+    failure_class: normalizeText(caseItem?.actual?.failure_class || ""),
+    timed_out: caseItem?.actual?.timed_out === true,
+    governance_family: normalizeText(caseItem?.actual?.governance_family || ""),
+  });
+}
+
+function compareWithBaseline(baseline = {}, current = {}, {
+  driftTolerance = DEFAULT_USAGE_LAYER_BASELINE_DRIFT_TOLERANCE,
+} = {}) {
+  const baselinePack = normalizeText(baseline?.pack || "") || "default";
+  const currentPack = normalizeText(current?.pack || "") || "default";
+  if (baselinePack !== currentPack) {
+    return {
+      ok: false,
+      reason: "pack_mismatch",
+      baseline_pack: baselinePack,
+      current_pack: currentPack,
+      drift_tolerance: driftTolerance,
+      drift_case_count: Number.POSITIVE_INFINITY,
+      changed_cases: [],
+      new_cases: [],
+      missing_cases: [],
+    };
+  }
+
+  const baselineCases = Array.isArray(baseline?.cases) ? baseline.cases : [];
+  const currentCases = Array.isArray(current?.cases) ? current.cases : [];
+  const baselineMap = new Map(baselineCases.map((item) => [item.id, item]));
+  const currentMap = new Map(currentCases.map((item) => [item.id, item]));
+
+  const changedCases = [];
+  const missingCases = [];
+  const newCases = [];
+
+  for (const [id, baselineItem] of baselineMap.entries()) {
+    if (!currentMap.has(id)) {
+      missingCases.push(id);
+      continue;
+    }
+    const currentItem = currentMap.get(id);
+    const baselineSignature = buildCaseSignature(baselineItem);
+    const currentSignature = buildCaseSignature(currentItem);
+    if (baselineSignature !== currentSignature) {
+      changedCases.push({
+        id,
+        baseline_issue_codes: Array.isArray(baselineItem.issue_codes) ? baselineItem.issue_codes : [],
+        current_issue_codes: Array.isArray(currentItem.issue_codes) ? currentItem.issue_codes : [],
+      });
+    }
+  }
+  for (const id of currentMap.keys()) {
+    if (!baselineMap.has(id)) {
+      newCases.push(id);
+    }
+  }
+
+  const driftCaseCount = changedCases.length + missingCases.length + newCases.length;
+  return {
+    ok: driftCaseCount <= driftTolerance,
+    reason: driftCaseCount <= driftTolerance ? "within_tolerance" : "exceeds_tolerance",
+    baseline_pack: baselinePack,
+    current_pack: currentPack,
+    drift_tolerance: driftTolerance,
+    drift_case_count: driftCaseCount,
+    changed_cases: changedCases,
+    new_cases: newCases,
+    missing_cases: missingCases,
+  };
+}
+
+async function writeJsonFile(filepath = "", payload = {}) {
+  const dirname = path.dirname(filepath);
+  await mkdir(dirname, { recursive: true });
+  await writeFile(filepath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+}
+
+async function readJsonFileOrNull(filepath = "") {
+  try {
+    const content = await readFile(filepath, "utf8");
+    return JSON.parse(content);
+  } catch (error) {
+    const code = String(error?.code || "").trim().toLowerCase();
+    if (code === "enoent") {
+      return null;
+    }
+    throw error;
+  }
+}
+
 async function main() {
   const startedAt = Date.now();
-  const packFlagIndex = process.argv.indexOf("--pack");
-  const requestedPack = packFlagIndex >= 0 ? process.argv[packFlagIndex + 1] : "";
-  const selectedPack = resolveUsageLayerEvalPack(requestedPack);
+  const cliOptions = resolveCliOptions(process.argv.slice(2));
+  const selectedPack = resolveUsageLayerEvalPack(cliOptions.pack);
+  const selectedPackName = normalizeText(cliOptions.pack || "") || "default";
+  const artifactPaths = resolveUsageLayerArtifactPaths({
+    artifactDir: cliOptions.artifactDir,
+    packName: selectedPackName,
+    baselinePath: cliOptions.baselinePath,
+    runReportPath: cliOptions.runReportPath,
+    failReportPath: cliOptions.failReportPath,
+  });
   const results = [];
   for (const testCase of selectedPack) {
     console.log(`[usage-layer][case:start] ${testCase.id} ${testCase.user_text}`);
@@ -1607,9 +1940,63 @@ async function main() {
     );
   }
   const summary = summarizeResults(results);
+  const failReport = buildFailReport(results, summary, { packName: selectedPackName });
+  const baselineSnapshot = buildBaselineSnapshot(results, summary, { packName: selectedPackName });
+  await writeJsonFile(artifactPaths.failReportPath, failReport);
+  await writeJsonFile(artifactPaths.runReportPath, {
+    ...baselineSnapshot,
+    summary,
+    generated_by: "usage-layer-runner",
+    version: 1,
+  });
+  const existingBaseline = await readJsonFileOrNull(artifactPaths.baselinePath);
+  let baselineStatus = null;
+  if (existingBaseline && !cliOptions.skipBaselineCheck) {
+    baselineStatus = compareWithBaseline(existingBaseline, baselineSnapshot, {
+      driftTolerance: cliOptions.driftTolerance,
+    });
+  }
+  const shouldWriteBaseline = cliOptions.writeBaseline || !existingBaseline;
+  if (shouldWriteBaseline) {
+    await writeJsonFile(artifactPaths.baselinePath, {
+      ...baselineSnapshot,
+      baseline_created_at: existingBaseline?.baseline_created_at || new Date().toISOString(),
+      baseline_updated_at: new Date().toISOString(),
+      generated_by: "usage-layer-runner",
+      version: 1,
+    });
+  }
   printSummary(summary);
   console.log("");
-  console.log(`Selected pack: ${normalizeText(requestedPack || "") || "default"}`);
+  console.log(`Selected pack: ${selectedPackName}`);
+  console.log(`Fail report: ${artifactPaths.failReportPath}`);
+  console.log(`Run report: ${artifactPaths.runReportPath}`);
+  console.log(`Baseline: ${artifactPaths.baselinePath}`);
+  if (baselineStatus) {
+    console.log(
+      `Baseline drift: ${baselineStatus.drift_case_count} case(s), tolerance=${baselineStatus.drift_tolerance}, status=${baselineStatus.ok ? "PASS" : "FAIL"}`,
+    );
+    if (baselineStatus.reason === "pack_mismatch") {
+      console.log(`Baseline compare skipped by pack mismatch (${baselineStatus.baseline_pack} vs ${baselineStatus.current_pack})`);
+    } else if (baselineStatus.changed_cases.length > 0) {
+      for (const item of baselineStatus.changed_cases.slice(0, 10)) {
+        console.log(`- drift ${item.id} | baseline=${item.baseline_issue_codes.join(",") || "none"} | current=${item.current_issue_codes.join(",") || "none"}`);
+      }
+      if (baselineStatus.changed_cases.length > 10) {
+        console.log(`- ... ${baselineStatus.changed_cases.length - 10} more changed case(s)`);
+      }
+    }
+    if (baselineStatus.new_cases.length > 0) {
+      console.log(`- new cases: ${baselineStatus.new_cases.join(", ")}`);
+    }
+    if (baselineStatus.missing_cases.length > 0) {
+      console.log(`- missing cases: ${baselineStatus.missing_cases.join(", ")}`);
+    }
+  } else if (cliOptions.skipBaselineCheck) {
+    console.log("Baseline compare: skipped (--skip-baseline-check)");
+  } else {
+    console.log("Baseline compare: no existing baseline, created a new one.");
+  }
   console.log(`Total duration: ${Date.now() - startedAt}ms`);
 }
 
