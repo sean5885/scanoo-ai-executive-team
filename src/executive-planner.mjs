@@ -414,6 +414,19 @@ async function attemptLocalPlannerReadonlyFallback({
 
   const accountId = await resolvePlannerLocalFallbackAccountId(authContext);
   if (!accountId) {
+    if (actionRequiresExplicitUserAuth(normalizedAction)) {
+      return buildPlannerStoppedResult({
+        action: normalizedAction,
+        error: "missing_user_access_token",
+        data: {
+          reason: "missing_user_access_token",
+          source: "local_readonly_fallback",
+          auth_required: true,
+        },
+        traceId: null,
+        stopReason: "missing_user_access_token",
+      });
+    }
     return null;
   }
 
@@ -925,6 +938,9 @@ export function resolvePlannerUserFacingFailureClass({
   if (normalizedError === "planner_failed") {
     return "planner_failed";
   }
+  if (normalizedError === "fail_closed") {
+    return "planner_failed";
+  }
   return "generic_fallback";
 }
 
@@ -969,6 +985,9 @@ function buildPlannerUserFacingAnswer({
   }
   if (normalizedError === "request_cancelled") {
     return "這次處理被中斷了，所以我先不回傳不完整結果。";
+  }
+  if (normalizedError === "fail_closed") {
+    return "這次我先停在 fail-closed 邊界，因為目前結果還不符合可安全交付的條件。";
   }
   if (failureClass === "planner_failed") {
     return "這輪不是你問題不清楚，而是我這邊沒有順利排出安全可執行的步驟，所以先不亂做。";
@@ -1046,6 +1065,12 @@ function buildPlannerUserFacingLimitations({
       "這次請求在完成前被取消，所以沒有可安全交付的最終結果。",
     ]);
   }
+  if (normalizedError === "fail_closed") {
+    return normalizePlannerUserFacingList([
+      "目前這條路徑停在受控 fail-closed 邊界，我不會把未驗證結果包裝成完成。",
+      "你可以直接重試同一句，或先拆成更小步驟（例如先查 runtime / 先搜文件）讓我逐步交付。",
+    ]);
+  }
   if (failureClass === "planner_failed") {
     return normalizePlannerUserFacingList([
       "這輪卡在我這邊的規劃步驟，不代表你的需求本身一定不清楚。",
@@ -1081,7 +1106,15 @@ export function buildPlannedUserInputUserFacingReply(result = {}, { requestText 
   const envelope = buildPlannedUserInputEnvelope(result);
   const executionError = cleanText(envelope?.execution_result?.error || "");
   const topLevelError = cleanText(envelope?.error || "");
-  const errorCode = executionError || topLevelError;
+  const rawErrorCode = executionError || topLevelError;
+  const toolLayerError = cleanText(
+    envelope?.execution_result?.data?.tool_layer?.execution?.error
+    || envelope?.execution_result?.data?.tool_layer?.error
+    || "",
+  );
+  const errorCode = rawErrorCode === "fail_closed" && toolLayerError
+    ? toolLayerError
+    : rawErrorCode;
 
   if (!errorCode) {
     return null;
@@ -1091,6 +1124,7 @@ export function buildPlannedUserInputUserFacingReply(result = {}, { requestText 
     envelope?.trace?.fallback_reason
     || envelope?.execution_result?.data?.reason
     || envelope?.execution_result?.data?.routing_reason
+    || rawErrorCode
     || errorCode,
   ) || errorCode;
 
@@ -7773,9 +7807,15 @@ export async function dispatchPlannerTool({
         if (localFallback) {
           return localFallback;
         }
-      }
-      if (abortResult) {
         return abortResult;
+      }
+      const localFallback = await attemptLocalPlannerReadonlyFallback({
+        action: tool.action,
+        payload: effectivePayload,
+        authContext: normalizedAuthContext,
+      });
+      if (localFallback) {
+        return localFallback;
       }
       return normalizeError({
         ok: false,

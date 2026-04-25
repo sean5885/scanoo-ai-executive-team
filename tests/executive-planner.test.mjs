@@ -2562,10 +2562,35 @@ test("dispatchPlannerTool normalizes tool failure to tool_error without throwing
   }
 });
 
-test("dispatchPlannerTool normalizes runtime exception without throwing", async () => {
+test("dispatchPlannerTool normalizes runtime exception without throwing when no readonly fallback exists", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => {
     throw new Error("network exploded");
+  };
+
+  try {
+    const result = await dispatchPlannerTool({
+      action: "create_doc",
+      payload: { title: "demo" },
+      logger: console,
+      baseUrl: "http://localhost:3333",
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.action, "create_doc");
+    assert.equal(result.error, "runtime_exception");
+    assert.equal(result.data.message, "network exploded");
+    assert.equal(result.data.stopped, true);
+    assert.equal(result.data.stop_reason, "runtime_exception");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("dispatchPlannerTool falls back to local runtime info when upstream runtime read throws", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new Error("runtime upstream unreachable");
   };
 
   try {
@@ -2576,12 +2601,38 @@ test("dispatchPlannerTool normalizes runtime exception without throwing", async 
       baseUrl: "http://localhost:3333",
     });
 
-    assert.equal(result.ok, false);
+    assert.equal(result.ok, true);
     assert.equal(result.action, "get_runtime_info");
-    assert.equal(result.error, "runtime_exception");
-    assert.equal(result.data.message, "network exploded");
-    assert.equal(result.data.stopped, true);
-    assert.equal(result.data.stop_reason, "runtime_exception");
+    assert.equal(typeof result.data.db_path, "string");
+    assert.equal(typeof result.data.cwd, "string");
+    assert.equal(typeof result.data.node_pid, "number");
+    assert.equal(result.meta?.source, "local_readonly_fallback");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("dispatchPlannerTool maps readonly company-brain network exception to missing_user_access_token when account context is absent", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new Error("search upstream unreachable");
+  };
+
+  try {
+    const result = await dispatchPlannerTool({
+      action: "search_company_brain_docs",
+      payload: { q: "OKR", query: "OKR" },
+      logger: console,
+      baseUrl: "http://localhost:3333",
+      authContext: null,
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.action, "search_company_brain_docs");
+    assert.equal(result.error, "missing_user_access_token");
+    assert.equal(result.data.reason, "missing_user_access_token");
+    assert.equal(result.data.source, "local_readonly_fallback");
+    assert.equal(result.data.auth_required, true);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -2634,8 +2685,8 @@ test("dispatchPlannerTool stops after exhausting runtime_exception retry policy"
 
   try {
     const result = await dispatchPlannerTool({
-      action: "get_runtime_info",
-      payload: {},
+      action: "create_doc",
+      payload: { title: "demo" },
       logger: console,
       baseUrl: "http://localhost:3333",
     });
@@ -2725,13 +2776,21 @@ test("dispatchPlannerTool retries runtime_exception once and can return success"
       async text() {
         return JSON.stringify({
           ok: true,
-          action: "get_runtime_info",
-          trace_id: "trace_runtime_success",
+          action: "create_doc",
+          trace_id: "trace_retry_runtime",
           data: {
-            db_path: "/tmp/db.sqlite",
-            node_pid: 123,
-            cwd: "/tmp",
-            service_start_time: "2026-03-19T00:00:00.000Z",
+            account_id: "acc",
+            auth_mode: "user_access_token",
+            document_id: "doc_1",
+            revision_id: 1,
+            title: "demo",
+            folder_token: null,
+            url: "https://example.com/doc_1",
+            fallback_root: false,
+            permission_grant_failed: false,
+            permission_grant_skipped: true,
+            permission_grant_error: null,
+            write_result: null,
           },
         });
       },
@@ -2740,8 +2799,8 @@ test("dispatchPlannerTool retries runtime_exception once and can return success"
 
   try {
     const result = await dispatchPlannerTool({
-      action: "get_runtime_info",
-      payload: {},
+      action: "create_doc",
+      payload: { title: "demo" },
       logger: console,
       baseUrl: "http://localhost:3333",
     });
