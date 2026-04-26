@@ -21,6 +21,12 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - memory 寫入已存在，但 retrieval-to-decision 鏈路未完整閉環
 - learning 以 proposal 為主，缺少「生效 -> 驗證 -> 回滾」完整路徑
 
+## 現況補記（2026-04-26）
+
+- routing eval baseline 出現 `doc-038`、`doc-039` 漂移：deictic 文件跟進問句誤落 `personal_assistant + ROUTING_NO_MATCH`。
+- 已在 `/Users/seanhan/Documents/Playground/src/planner-ingress-contract.mjs` 補上 deictic 文件 detail ingress，讓「這份文件在講什麼」「打開這份給我看」回到 `knowledge_assistant + search_and_detail_doc`。
+- 對應回歸測試已補在 `/Users/seanhan/Documents/Playground/tests/message-intent-utils.test.mjs`。
+
 ## 修正範圍與原則
 
 - 所有高風險區變更（planner/dispatch/routing/answer/knowledge write）必須 fail-soft，禁止 throw 掩蓋失敗。

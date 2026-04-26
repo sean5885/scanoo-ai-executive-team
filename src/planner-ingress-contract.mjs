@@ -41,6 +41,8 @@ const RUNTIME_INFO_KEYWORDS = [
 
 const DELIVERY_KNOWLEDGE_THEME_PATTERN = /(交付|onboarding|導入|导入|\bsop\b)/i;
 const DELIVERY_KNOWLEDGE_CUE_PATTERN = /(查(?:一下|詢|询)?|搜尋|搜索|找|整理|流程|步驟|步骤|在哪(?:裡|里)?|內容|内容|講給我聽|讲给我听|怎麼做|怎么做|寫了什麼|写了什么)/i;
+const DEICTIC_DOC_REFERENCE_PATTERN = /(這份文件|这份文件|那份文件|這個文件|这个文件|那個文件|那个文件|這份|这份|那份|這個|这个|那個|那个)/i;
+const DEICTIC_DOC_DETAIL_CUE_PATTERN = /(在講什麼|在讲什么|寫了什麼|写了什么|內容|内容|打開|打开|讀|读|看|看看|給我看|给我看)/i;
 
 function hasAny(text, keywords = []) {
   return keywords.some((keyword) => text.includes(keyword));
@@ -67,6 +69,14 @@ function looksLikePlannerDeliveryKnowledgeIntent(input = {}) {
     return false;
   }
   return DELIVERY_KNOWLEDGE_THEME_PATTERN.test(text) && DELIVERY_KNOWLEDGE_CUE_PATTERN.test(text);
+}
+
+function looksLikePlannerDeicticDocDetailIntent(input = {}) {
+  const text = normalizePlannerIngressText(input);
+  if (!text) {
+    return false;
+  }
+  return DEICTIC_DOC_REFERENCE_PATTERN.test(text) && DEICTIC_DOC_DETAIL_CUE_PATTERN.test(text);
 }
 
 export function resolvePlannerKnowledgeAssistantIngress(input = {}) {
@@ -109,6 +119,15 @@ export function resolvePlannerKnowledgeAssistantIngress(input = {}) {
       lane_label: "知識助手",
       lane_reason: "message_mentions_delivery_knowledge_lookup",
       planner_ingress_surface: "delivery_knowledge",
+    };
+  }
+
+  if (looksLikePlannerDeicticDocDetailIntent(text)) {
+    return {
+      capability_lane: "knowledge-assistant",
+      lane_label: "知識助手",
+      lane_reason: "message_mentions_deictic_document_detail",
+      planner_ingress_surface: "document_deictic_detail",
     };
   }
 

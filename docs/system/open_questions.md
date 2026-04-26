@@ -36,6 +36,10 @@ For this closure-planning pass:
     - checked-in runtime (`/Users/seanhan/Documents/Playground/src/executive-improvement-workflow.mjs`) applies effect verification in `buildAppliedRecord(...)`; non-improving/regressed outcomes are auto-marked `rolled_back`.
     - docs are now aligned in `/Users/seanhan/Documents/Playground/docs/system/closed_loop.md`, `/Users/seanhan/Documents/Playground/docs/system/data_flow.md`, and `/Users/seanhan/Documents/Playground/docs/system/modules.md`.
     - this item is `resolved` for doc/code alignment; no extra runtime path was introduced.
+17. Deictic doc follow-up ingress drift (`doc-038`/`doc-039`) is resolved on 2026-04-26:
+    - checked-in planner ingress now treats deictic doc-detail utterances (for example `這份文件在講什麼`, `打開這份給我看`) as planner knowledge ingress, so they no longer fall through personal-lane `ROUTING_NO_MATCH`.
+    - code is aligned at `/Users/seanhan/Documents/Playground/src/planner-ingress-contract.mjs`; regression coverage is aligned at `/Users/seanhan/Documents/Playground/tests/message-intent-utils.test.mjs` and `/Users/seanhan/Documents/Playground/evals/routing-eval-set.mjs`.
+    - this item is `resolved` for routing/doc alignment; no new fallback path was introduced.
 
 ## Ranked Closure Threads
 

@@ -158,6 +158,34 @@ test("delivery/onboarding 知識查詢即使沒寫文件也會進 knowledge-assi
   assert.equal(lane.lane_reason, "message_mentions_delivery_knowledge_lookup");
 });
 
+test("deictic 文件跟進問句會進 knowledge-assistant", () => {
+  const firstLane = resolveCapabilityLane(
+    { chat_type: "p2p" },
+    {
+      message: {
+        content: JSON.stringify({
+          text: "這份文件在講什麼",
+        }),
+      },
+    },
+  );
+  const secondLane = resolveCapabilityLane(
+    { chat_type: "p2p" },
+    {
+      message: {
+        content: JSON.stringify({
+          text: "打開這份給我看",
+        }),
+      },
+    },
+  );
+
+  assert.equal(firstLane.capability_lane, "knowledge-assistant");
+  assert.equal(firstLane.lane_reason, "message_mentions_deictic_document_detail");
+  assert.equal(secondLane.capability_lane, "knowledge-assistant");
+  assert.equal(secondLane.lane_reason, "message_mentions_deictic_document_detail");
+});
+
 test("PRD 驗收條件問句不會被 delivery knowledge ingress 誤吸進 knowledge-assistant", () => {
   const lane = resolveCapabilityLane(
     { chat_type: "p2p" },
