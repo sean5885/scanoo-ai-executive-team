@@ -363,3 +363,14 @@ warn -> enforce 目前最小規則是：
 - `real request-backed sample size >= 20`
 
 test / replay / detached sample 可以保留在 diagnostics 裡，但不能直接當 rollout 依據。
+
+另外，`meeting_confirm_write` 的 warn->enforce 建議現在會固定輸出 `risk_hint`：
+
+- 樣本不足：`insufficient_real_request_backed_samples:<actual>/<min>`
+- coverage 不完整：`coverage_incomplete_confirm_or_review_required`
+- 違規率超標：`real_request_backed_violation_rate_above_threshold:<rate>>=<threshold>`
+
+`risk_hint` 會同時出現在：
+
+- `control-diagnostics` route 細節（JSON / human-readable）
+- `self-check` / `release-check` 的 write rollout 摘要行，避免只看到 `high_risk` 卻沒有原因

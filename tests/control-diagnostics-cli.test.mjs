@@ -515,9 +515,40 @@ test("write policy runtime stats split real/test traffic and rollout gating uses
 
   assert.equal(rollout.recommendation, "upgrade_to_enforce");
   assert.equal(rollout.upgrade_ready, true);
+  assert.equal(rollout.risk_hint, null);
   assert.equal(rollout.rollout_basis.eligible, true);
+  assert.equal(rollout.rollout_basis.risk_hint, null);
   assert.equal(rollout.rollout_basis.real_traffic_sample_count, 20);
   assert.equal(rollout.rollout_basis.real_traffic_violation_rate, 0);
+});
+
+test("write rollout gate keeps meeting_confirm_write on warn when real request-backed samples are below minimum and emits risk hint", () => {
+  const rollout = buildWriteRouteRolloutAdvice({
+    pathname: "/api/meeting/confirm",
+    action: "meeting_confirm_write",
+    mode: "warn",
+    checks: {
+      scope_key: true,
+      idempotency_key: false,
+      confirm_required: true,
+      review_required: true,
+    },
+    runtime: {
+      real_traffic_sample_count: 19,
+      real_traffic_violation_rate: 0,
+      test_traffic_sample_count: 50,
+      test_traffic_violation_rate: 0,
+      replay_traffic_sample_count: 0,
+      replay_traffic_violation_rate: null,
+    },
+  });
+
+  assert.equal(rollout.recommendation, "hold_warn");
+  assert.equal(rollout.upgrade_ready, false);
+  assert.equal(rollout.high_risk, true);
+  assert.equal(rollout.risk_hint, "insufficient_real_request_backed_samples:19/20");
+  assert.equal(rollout.rollout_basis.eligible, false);
+  assert.equal(rollout.rollout_basis.risk_hint, "insufficient_real_request_backed_samples:19/20");
 });
 
 test("control diagnostics CLI renders compare-previous with directional markers", async () => {

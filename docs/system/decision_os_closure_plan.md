@@ -29,6 +29,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - full-flow validation 的 fail-soft 錯誤分類已對齊現行 runtime contract：`missing_user_access_token` 類路徑的 canonical `failure_class` 固定為 `permission_denied`，不再把同一路徑判成 `generic_fallback`。
 - `scripts/release-check-ci.mjs` 已加上 full test gate：在 release-check report 為 `pass` 時，會再執行 `node --test` 與 `npm run test:ci`；任一失敗都會把 CI exit code 固定為 `1`，並在最小 JSON 報告中標示 `full_test_failure`。
 - 新增 `/Users/seanhan/Documents/Playground/scripts/memory-influence-gate.mjs`，以 AB 驗證輸出 memory influence gate，固定提供 `memory_hit_rate` 與 `action_changed_by_memory_rate`（含 action-level 差異 evidence）。
+- write rollout guard 已手動收斂為 `real_request_backed` 可信樣本門檻：`meeting_confirm_write` 在 `real request-backed sample size < 20` 時不得從 `warn` 升 `enforce`，並在 diagnostics / self-check / release-check 輸出固定 `risk_hint`（例如 `insufficient_real_request_backed_samples:19/20`）。
 
 ## 修正範圍與原則
 

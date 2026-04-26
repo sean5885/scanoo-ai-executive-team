@@ -712,6 +712,13 @@ export function renderSystemSelfCheckReport(result = {}) {
   const highRisk = Array.isArray(writeSummary?.rollout_advice?.high_risk_routes)
     ? uniqLabels(writeSummary.rollout_advice.high_risk_routes.map((route) => cleanText(route?.action) || cleanText(route?.pathname)))
     : [];
+  const highRiskHints = Array.isArray(writeSummary?.rollout_advice?.high_risk_routes)
+    ? uniqLabels(writeSummary.rollout_advice.high_risk_routes.map((route) => {
+      const label = cleanText(route?.action) || cleanText(route?.pathname) || "unknown";
+      const hint = cleanText(route?.risk_hint);
+      return hint ? `${label}=${hint}` : "";
+    }).filter(Boolean))
+    : [];
   const rolloutBasisRoutes = Array.isArray(rolloutBasisSummary?.routes)
     ? rolloutBasisSummary.routes
     : [];
@@ -731,6 +738,7 @@ export function renderSystemSelfCheckReport(result = {}) {
     `write policy：coverage ${Number(writeSummary?.policy_coverage?.enforced_route_count || 0)}/${Number(writeSummary?.policy_coverage?.metadata_route_count || 0)} | modes ${writeModes || "none"}`,
     `write evidence：real_only_violation ${realOnlyLine} | rollout_basis ${rolloutBasisLine}`,
     `write rollout：ready ${upgradeReady.length > 0 ? upgradeReady.join(",") : "none"} | high_risk ${highRisk.length > 0 ? highRisk.join(",") : "none"}`,
+    `write rollout risk：${highRiskHints.length > 0 ? highRiskHints.join(",") : "none"}`,
     `usage gate：${usageGateStage} | FTHR ${usageFthr} (>=${Number(usageThresholds?.fthr_min_percent || 0).toFixed(0)}%) | Generic ${usageGeneric} (<=${Number(usageThresholds?.generic_rate_max_percent || 0).toFixed(0)}%)`,
     `先看：${systemSummary?.review_priority || "base"}`,
     `指引：${systemSummary?.guidance || "先看 self-check 失敗項目。"}`

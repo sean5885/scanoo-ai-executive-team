@@ -771,6 +771,7 @@ export function buildWriteRouteRolloutAdvice({
     upgrade_ready: false,
     high_risk: false,
     risk_level: "low",
+    risk_hint: null,
     rationale: [],
     rollout_basis: {
       source: WRITE_POLICY_ROLLOUT_EVIDENCE_SOURCE,
@@ -780,6 +781,7 @@ export function buildWriteRouteRolloutAdvice({
       max_real_violation_rate: WRITE_POLICY_PHASE4_MAX_REAL_VIOLATION_RATE,
       real_traffic_sample_count: realTrafficSamples,
       real_traffic_violation_rate: realViolationRate,
+      risk_hint: null,
       rationale: [],
     },
   };
@@ -789,7 +791,9 @@ export function buildWriteRouteRolloutAdvice({
       result.recommendation = "hold_warn";
       result.high_risk = true;
       result.risk_level = "high";
+      result.risk_hint = "coverage_incomplete_confirm_or_review_required";
       result.rationale.push("confirm_required/review_required coverage is incomplete.");
+      result.rollout_basis.risk_hint = result.risk_hint;
       result.rollout_basis.rationale.push("confirm_required/review_required coverage is incomplete.");
       return result;
     }
@@ -797,11 +801,13 @@ export function buildWriteRouteRolloutAdvice({
       result.recommendation = "hold_warn";
       result.high_risk = true;
       result.risk_level = "high";
+      result.risk_hint = `insufficient_real_request_backed_samples:0/${WRITE_POLICY_PHASE4_MIN_REAL_SAMPLE_SIZE}`;
       result.rationale.push("No real request-backed runtime samples are available yet.");
       if (testTrafficSamples > 0 || replayTrafficSamples > 0) {
         result.rationale.push(`Current request-backed samples are non-rollout evidence only (test=${testTrafficSamples}, replay=${replayTrafficSamples}).`);
       }
       result.rationale.push("Keep warn for now; fail-open fallback is available if enforce rollout needs emergency rollback.");
+      result.rollout_basis.risk_hint = result.risk_hint;
       result.rollout_basis.rationale.push("No real request-backed runtime samples are available yet.");
       if (testTrafficSamples > 0 || replayTrafficSamples > 0) {
         result.rollout_basis.rationale.push(`Only non-real request-backed samples are present (test=${testTrafficSamples}, replay=${replayTrafficSamples}).`);
@@ -812,7 +818,9 @@ export function buildWriteRouteRolloutAdvice({
       result.recommendation = "hold_warn";
       result.high_risk = true;
       result.risk_level = "high";
+      result.risk_hint = `insufficient_real_request_backed_samples:${realTrafficSamples}/${WRITE_POLICY_PHASE4_MIN_REAL_SAMPLE_SIZE}`;
       result.rationale.push(`real request-backed sample size is ${realTrafficSamples}, below the rollout minimum ${WRITE_POLICY_PHASE4_MIN_REAL_SAMPLE_SIZE}.`);
+      result.rollout_basis.risk_hint = result.risk_hint;
       result.rollout_basis.rationale.push(`real request-backed sample size is ${realTrafficSamples}, below the rollout minimum ${WRITE_POLICY_PHASE4_MIN_REAL_SAMPLE_SIZE}.`);
       return result;
     }
@@ -829,8 +837,10 @@ export function buildWriteRouteRolloutAdvice({
     result.recommendation = "hold_warn";
     result.high_risk = true;
     result.risk_level = "high";
+    result.risk_hint = `real_request_backed_violation_rate_above_threshold:${formatNamedRate(realViolationRate)}>=${WRITE_POLICY_PHASE4_MAX_REAL_VIOLATION_RATE}`;
     result.rationale.push(`real request-backed violation rate is ${formatNamedRate(realViolationRate)}.`);
     result.rationale.push("If operators still want to trial enforce, enable fail-open fallback first.");
+    result.rollout_basis.risk_hint = result.risk_hint;
     result.rollout_basis.rationale.push(`real request-backed violation rate must stay below ${WRITE_POLICY_PHASE4_MAX_REAL_VIOLATION_RATE}.`);
     return result;
   }
@@ -910,6 +920,7 @@ function buildWritePolicyRolloutRoutes({
       upgrade_ready: rollout.upgrade_ready,
       high_risk: rollout.high_risk,
       risk_level: rollout.risk_level,
+      risk_hint: rollout.risk_hint,
       rationale: rollout.rationale,
       rollout_basis: rollout.rollout_basis,
     };
@@ -952,6 +963,7 @@ function buildWritePolicyRolloutSummary(routes = []) {
         eligible: route?.rollout_basis?.eligible === true,
         real_traffic_sample_count: Number(route?.rollout_basis?.real_traffic_sample_count || 0),
         real_traffic_violation_rate: route?.rollout_basis?.real_traffic_violation_rate ?? null,
+        risk_hint: cleanText(route?.risk_hint) || cleanText(route?.rollout_basis?.risk_hint) || null,
       })),
     },
     upgrade_ready_routes: routes
@@ -975,6 +987,7 @@ function buildWritePolicyRolloutSummary(routes = []) {
         recommendation: route.recommendation,
         real_traffic_sample_count: Number(route?.rollout_basis?.real_traffic_sample_count || 0),
         real_traffic_violation_rate: route?.rollout_basis?.real_traffic_violation_rate ?? null,
+        risk_hint: cleanText(route?.risk_hint) || cleanText(route?.rollout_basis?.risk_hint) || null,
       })),
   };
 }

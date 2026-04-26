@@ -91,6 +91,7 @@ const STABLE_WRITE_SUMMARY = {
         recommendation: "hold_warn",
         real_traffic_sample_count: 0,
         real_traffic_violation_rate: null,
+        risk_hint: "insufficient_real_request_backed_samples:0/20",
       },
       {
         pathname: "/meeting/confirm",
@@ -100,6 +101,7 @@ const STABLE_WRITE_SUMMARY = {
         recommendation: "hold_warn",
         real_traffic_sample_count: 0,
         real_traffic_violation_rate: null,
+        risk_hint: "insufficient_real_request_backed_samples:0/20",
       },
     ],
   },
@@ -526,6 +528,7 @@ test("self-check CLI renders concise guidance by default", async () => {
   assert.match(output, /write policy：coverage 33\/33 \| modes enforce:27,observe:2,warn:4/);
   assert.match(output, /write evidence：real_only_violation meeting_confirm_write=unknown \| rollout_basis 0\/1 ready/);
   assert.match(output, /write rollout：ready none \| high_risk meeting_confirm_write/);
+  assert.match(output, /write rollout risk：meeting_confirm_write=insufficient_real_request_backed_samples:0\/20/);
   assert.match(output, /usage gate：phase1 \| FTHR 76\.00% \(>=70%\) \| Generic 24\.00% \(<=30%\)/);
   assert.match(output, /先看：none/);
   assert.match(output, /指引：可以開始改；改 control 後回看 control:diagnostics，改 routing 後回看 routing:diagnostics，改 planner 後回看 planner:diagnostics 與 self-check。/);

@@ -938,6 +938,13 @@ export function renderReleaseCheckReport(report = {}) {
   const highRisk = Array.isArray(report?.write_governance?.high_risk_routes)
     ? uniqValues(report.write_governance.high_risk_routes.map((route) => cleanText(route?.action) || cleanText(route?.pathname)))
     : [];
+  const highRiskHints = Array.isArray(report?.write_governance?.high_risk_routes)
+    ? uniqValues(report.write_governance.high_risk_routes.map((route) => {
+      const label = cleanText(route?.action) || cleanText(route?.pathname) || "unknown";
+      const hint = cleanText(route?.risk_hint);
+      return hint ? `${label}=${hint}` : "";
+    }).filter(Boolean))
+    : [];
   const rolloutBasisRoutes = Array.isArray(rolloutBasisSummary?.routes)
     ? rolloutBasisSummary.routes
     : [];
@@ -956,6 +963,7 @@ export function renderReleaseCheckReport(report = {}) {
     `下一步：${docBoundaryNote}${actionHint}`,
     `write evidence：real_only_violation ${realOnlyLine} | rollout_basis ${rolloutBasisLine}`,
     `write rollout：ready ${upgradeReady.length > 0 ? upgradeReady.join(",") : "none"} | high_risk ${highRisk.length > 0 ? highRisk.join(",") : "none"}`,
+    `write rollout risk：${highRiskHints.length > 0 ? highRiskHints.join(",") : "none"}`,
   ].join("\n");
 }
 

@@ -48,6 +48,11 @@ For this closure-planning pass:
     - checked-in gate script `/Users/seanhan/Documents/Playground/scripts/memory-influence-gate.mjs` now runs deterministic AB cases and emits fixed JSON metrics with action-level evidence.
     - regression coverage is aligned at `/Users/seanhan/Documents/Playground/tests/executive-memory.test.mjs`, `/Users/seanhan/Documents/Playground/tests/planner-user-input-edge.test.mjs`, and `/Users/seanhan/Documents/Playground/tests/decision-metrics-scoreboard.test.mjs`.
     - this item is `resolved` for memory influence measurement; no public answer response shape change was introduced.
+20. Write rollout risk signal drift (`meeting_confirm_write` warn->enforce upgrade lacked explicit sample-shortage hint in release/self-check outputs) is resolved on 2026-04-26:
+    - checked-in rollout advice now keeps `real_request_backed` sample threshold as the only enforce-upgrade evidence for `meeting_confirm_write`; sample shortage (`<20`) remains `hold_warn`.
+    - risk cause is now emitted as deterministic `risk_hint` (for example `insufficient_real_request_backed_samples:0/20`) in `/Users/seanhan/Documents/Playground/src/control-diagnostics.mjs` and surfaced by `/Users/seanhan/Documents/Playground/src/system-self-check.mjs` + `/Users/seanhan/Documents/Playground/src/release-check.mjs`.
+    - regression coverage is aligned at `/Users/seanhan/Documents/Playground/tests/control-diagnostics-cli.test.mjs`, `/Users/seanhan/Documents/Playground/tests/system-self-check.test.mjs`, and `/Users/seanhan/Documents/Playground/tests/release-check.test.mjs`.
+    - this item is `resolved` for rollout-risk observability; no runtime write-policy fallback was widened.
 
 ## Ranked Closure Threads
 

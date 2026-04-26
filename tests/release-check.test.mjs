@@ -152,6 +152,7 @@ const CURRENT_WRITE_GOVERNANCE = {
       recommendation: "hold_warn",
       real_traffic_sample_count: 0,
       real_traffic_violation_rate: null,
+      risk_hint: "insufficient_real_request_backed_samples:0/20",
     },
     {
       pathname: "/meeting/confirm",
@@ -161,6 +162,7 @@ const CURRENT_WRITE_GOVERNANCE = {
       recommendation: "hold_warn",
       real_traffic_sample_count: 0,
       real_traffic_violation_rate: null,
+      risk_hint: "insufficient_real_request_backed_samples:0/20",
     },
   ],
 };
@@ -932,6 +934,7 @@ test("release-check human output stays minimal with drilldown line", () => {
       "下一步：inspect blocking_checks and representative_fail_case",
       "write evidence：real_only_violation none | rollout_basis none",
       "write rollout：ready none | high_risk none",
+      "write rollout risk：none",
     ].join("\n"),
   );
 });
@@ -951,6 +954,7 @@ test("release-check human output flags doc-boundary routing regressions", () => 
       "下一步：這是 doc-boundary 類問題，優先檢查 intent guard；run routing-eval doc-boundary pack and inspect message-intent-utils / lane-executor guard",
       "write evidence：real_only_violation none | rollout_basis none",
       "write rollout：ready none | high_risk none",
+      "write rollout risk：none",
     ].join("\n"),
   );
 });
@@ -1041,6 +1045,7 @@ test("release-check CLI default output stays limited to the minimal write-govern
     "下一步：無",
     "write evidence：real_only_violation meeting_confirm_write=unknown | rollout_basis 0/1 ready",
     "write rollout：ready none | high_risk meeting_confirm_write",
+    "write rollout risk：meeting_confirm_write=insufficient_real_request_backed_samples:0/20",
   ].join("\n"));
 });
 
