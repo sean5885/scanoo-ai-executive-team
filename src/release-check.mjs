@@ -16,6 +16,7 @@ const BLOCKING_USAGE_LAYER_FAILURE = "usage_layer_failure";
 const BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE = "company_brain_lifecycle_failure";
 const BLOCKING_ROUTING_REGRESSION = "routing_regression";
 const BLOCKING_PLANNER_CONTRACT_FAILURE = "planner_contract_failure";
+const BLOCKING_FULL_TEST_FAILURE = "full_test_failure";
 const FAILING_AREA_DOC = "doc";
 const FAILING_AREA_MEETING = "meeting";
 const FAILING_AREA_RUNTIME = "runtime";
@@ -177,6 +178,14 @@ function buildPlannerContractFailureNextStep(selfCheckResult = {}) {
   return "先看 planner contract failure：src/executive-planner.mjs 與 src/planner-*-flow.mjs；只有 intentional stable target 才改 docs/system/planner_contract.json。";
 }
 
+function buildFullTestFailureNextStep({ failedCommand = "" } = {}) {
+  const normalizedCommand = cleanText(failedCommand);
+  if (!normalizedCommand) {
+    return "先修 full test gate：先在本地重跑 node --test 與 npm run test:ci，並修第一個失敗的測試或 guardrail。";
+  }
+  return `先修 full test gate：${normalizedCommand} 失敗；先在本地重跑 node --test 與 npm run test:ci，並修第一個失敗的測試或 guardrail。`;
+}
+
 function buildRoutingActionHint(drilldown = {}, { docBoundaryRegression = false } = {}) {
   if (docBoundaryRegression) {
     return DOC_BOUNDARY_ACTION_HINT;
@@ -251,6 +260,9 @@ function buildReleaseCheckActionHint({
   }
   if (firstBlockingCheck === BLOCKING_PLANNER_CONTRACT_FAILURE) {
     return buildPlannerActionHint({ suggestedNextStep, drilldown });
+  }
+  if (firstBlockingCheck === BLOCKING_FULL_TEST_FAILURE) {
+    return "run node --test and npm run test:ci; inspect first failing suite";
   }
   if (firstBlockingCheck === BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE) {
     return "inspect company-brain lifecycle contract and apply gate";
@@ -845,6 +857,42 @@ export function buildReleaseCheckReport({ selfCheckResult = {}, drilldown = null
   };
 }
 
+export function applyFullTestGateFailureReport(report = {}, { failedCommand = "", failedExitCode = null } = {}) {
+  const normalizedBlockingChecks = normalizeBlockingChecks(report?.blocking_checks);
+  const blockingChecks = normalizedBlockingChecks.includes(BLOCKING_FULL_TEST_FAILURE)
+    ? normalizedBlockingChecks
+    : [...normalizedBlockingChecks, BLOCKING_FULL_TEST_FAILURE];
+  const drilldown = {
+    failing_area: normalizeFailingArea(report?.failing_area) || FAILING_AREA_RUNTIME,
+    representative_fail_case: [
+      `full_test_gate:${cleanText(failedCommand) || "unknown"} exit ${
+        Number.isFinite(Number(failedExitCode)) ? Number(failedExitCode) : "unknown"
+      }`,
+    ],
+    drilldown_source: normalizeDrilldownSource([
+      ...(Array.isArray(report?.drilldown_source) ? report.drilldown_source : []),
+      "full test gate",
+    ]),
+  };
+  const suggestedNextStep = buildFullTestFailureNextStep({ failedCommand });
+
+  return {
+    ...report,
+    overall_status: "fail",
+    blocking_checks: blockingChecks,
+    suggested_next_step: suggestedNextStep,
+    action_hint: buildReleaseCheckActionHint({
+      blockingChecks,
+      suggestedNextStep,
+      drilldown,
+      docBoundaryRegression: false,
+    }),
+    failing_area: drilldown.failing_area,
+    representative_fail_case: drilldown.representative_fail_case,
+    drilldown_source: drilldown.drilldown_source,
+  };
+}
+
 function renderBlockingLineLabel(blockingCheck = "") {
   if (blockingCheck === BLOCKING_SYSTEM_REGRESSION) {
     return "system regression";
@@ -869,6 +917,9 @@ function renderBlockingLineLabel(blockingCheck = "") {
   }
   if (blockingCheck === BLOCKING_PLANNER_CONTRACT_FAILURE) {
     return "planner contract failure";
+  }
+  if (blockingCheck === BLOCKING_FULL_TEST_FAILURE) {
+    return "full test failure";
   }
   return "無";
 }

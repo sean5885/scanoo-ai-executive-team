@@ -207,6 +207,14 @@ async function createUsageSummaryFixture(baseDir, summary = STABLE_USAGE_LAYER_S
   return fixturePath;
 }
 
+function withReleaseCheckCiEnv(env = {}, { skipFullTestGate = true } = {}) {
+  return {
+    ...process.env,
+    ...env,
+    ...(skipFullTestGate ? { RELEASE_CHECK_CI_SKIP_FULL_TEST_GATE: "1" } : {}),
+  };
+}
+
 test("release-check report passes when self-check, routing, and planner are stable", async () => {
   const archives = await seedReleaseCheckArchives();
   const result = await runReleaseCheck({
@@ -1190,15 +1198,14 @@ test("release-check CI entry emits minimal JSON and exits 0 on pass", async () =
   const result = spawnSync("node", ["scripts/release-check-ci.mjs"], {
     cwd: process.cwd(),
     encoding: "utf8",
-    env: {
-      ...process.env,
+    env: withReleaseCheckCiEnv({
       RELEASE_CHECK_ARCHIVE_DIR: archives.releaseCheckArchiveDir,
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
       SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
-    },
+    }),
   });
 
   assert.equal(result.status, 0);
@@ -1225,15 +1232,14 @@ test("release-check CI compare-previous emits only the compare summary JSON", as
   spawnSync("node", ["scripts/release-check-ci.mjs"], {
     cwd: process.cwd(),
     encoding: "utf8",
-    env: {
-      ...process.env,
+    env: withReleaseCheckCiEnv({
       RELEASE_CHECK_ARCHIVE_DIR: archives.releaseCheckArchiveDir,
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
       SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
-    },
+    }),
   });
 
   const manifestPath = path.join(archives.releaseCheckArchiveDir, "manifest.json");
@@ -1258,15 +1264,14 @@ test("release-check CI compare-previous emits only the compare summary JSON", as
   const result = spawnSync("node", ["scripts/release-check-ci.mjs", "--compare-previous"], {
     cwd: process.cwd(),
     encoding: "utf8",
-    env: {
-      ...process.env,
+    env: withReleaseCheckCiEnv({
       RELEASE_CHECK_ARCHIVE_DIR: archives.releaseCheckArchiveDir,
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
       SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
-    },
+    }),
   });
 
   assert.equal(result.status, 0);
@@ -1293,15 +1298,14 @@ test("release-check CI entry exits 1 on fail", async () => {
   const result = spawnSync("node", ["scripts/release-check-ci.mjs"], {
     cwd: process.cwd(),
     encoding: "utf8",
-    env: {
-      ...process.env,
+    env: withReleaseCheckCiEnv({
       RELEASE_CHECK_ARCHIVE_DIR: releaseCheckArchiveDir,
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
       SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
-    },
+    }),
   });
 
   assert.equal(result.status, 1);
@@ -1316,4 +1320,68 @@ test("release-check CI entry exits 1 on fail", async () => {
     representative_fail_case: ["routing latest snapshot unavailable or has no miss case"],
     drilldown_source: ["release-check triage", "routing-eval diagnostics/history"],
   });
+});
+
+test("release-check CI entry exits 1 when node --test gate fails", async () => {
+  const archives = await seedReleaseCheckArchives();
+  const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
+  const usageSummaryFixturePath = await createUsageSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
+
+  const result = spawnSync("node", ["scripts/release-check-ci.mjs"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: withReleaseCheckCiEnv({
+      RELEASE_CHECK_ARCHIVE_DIR: archives.releaseCheckArchiveDir,
+      ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
+      PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
+      SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+      SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
+      SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
+      RELEASE_CHECK_CI_NODE_TEST_COMMAND_JSON: JSON.stringify(["node", "-e", "process.exit(1)"]),
+      RELEASE_CHECK_CI_TEST_CI_COMMAND_JSON: JSON.stringify(["node", "-e", "process.exit(0)"]),
+    }, {
+      skipFullTestGate: false,
+    }),
+  });
+
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(result.status, 1);
+  assert.equal(parsed.overall_status, "fail");
+  assert.deepEqual(parsed.blocking_checks, ["full_test_failure"]);
+  assert.equal(parsed.action_hint, "run node --test and npm run test:ci; inspect first failing suite");
+  assert.match(parsed.suggested_next_step, /node --test/);
+  assert.deepEqual(parsed.representative_fail_case, ["full_test_gate:node --test exit 1"]);
+  assert.deepEqual(parsed.drilldown_source, ["full test gate"]);
+});
+
+test("release-check CI entry exits 1 when npm run test:ci gate fails", async () => {
+  const archives = await seedReleaseCheckArchives();
+  const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
+  const usageSummaryFixturePath = await createUsageSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
+
+  const result = spawnSync("node", ["scripts/release-check-ci.mjs"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: withReleaseCheckCiEnv({
+      RELEASE_CHECK_ARCHIVE_DIR: archives.releaseCheckArchiveDir,
+      ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
+      PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
+      SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+      SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
+      SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
+      RELEASE_CHECK_CI_NODE_TEST_COMMAND_JSON: JSON.stringify(["node", "-e", "process.exit(0)"]),
+      RELEASE_CHECK_CI_TEST_CI_COMMAND_JSON: JSON.stringify(["node", "-e", "process.exit(1)"]),
+    }, {
+      skipFullTestGate: false,
+    }),
+  });
+
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(result.status, 1);
+  assert.equal(parsed.overall_status, "fail");
+  assert.deepEqual(parsed.blocking_checks, ["full_test_failure"]);
+  assert.equal(parsed.action_hint, "run node --test and npm run test:ci; inspect first failing suite");
+  assert.match(parsed.suggested_next_step, /npm run test:ci/);
+  assert.deepEqual(parsed.representative_fail_case, ["full_test_gate:npm run test:ci exit 1"]);
+  assert.deepEqual(parsed.drilldown_source, ["full test gate"]);
 });

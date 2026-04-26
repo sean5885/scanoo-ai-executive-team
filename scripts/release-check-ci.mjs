@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+
 function getArgValue(flag = "") {
   const index = process.argv.indexOf(flag);
   if (index === -1) {
@@ -41,6 +43,119 @@ async function resolveRuntimeOverrides() {
   return overrides;
 }
 
+function parseCommandSpecFromEnv(envName = "", fallbackSpec = { command: "node", args: ["--test"] }) {
+  const raw = process.env[envName];
+  if (!raw) {
+    return fallbackSpec;
+  }
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`${envName} must be a JSON array command, e.g. [\"node\",\"--test\"]`);
+  }
+
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error(`${envName} must be a non-empty JSON array command`);
+  }
+
+  const [commandRaw, ...argsRaw] = parsed;
+  const command = String(commandRaw || "").trim();
+  if (!command) {
+    throw new Error(`${envName} command must be a non-empty string`);
+  }
+
+  return {
+    command,
+    args: argsRaw.map((item) => String(item)),
+  };
+}
+
+function renderCommandSpec(spec = {}) {
+  const command = String(spec?.command || "").trim();
+  const args = Array.isArray(spec?.args) ? spec.args : [];
+  return [command, ...args].join(" ").trim();
+}
+
+function runCommandSpec(spec = {}) {
+  const command = String(spec?.command || "").trim();
+  const args = Array.isArray(spec?.args) ? spec.args : [];
+  if (!command) {
+    return {
+      ok: false,
+      exitCode: 1,
+      signal: null,
+      stderr: "empty command",
+    };
+  }
+
+  const commandResult = spawnSync(command, args, {
+    cwd: process.cwd(),
+    env: process.env,
+    stdio: ["ignore", "ignore", "pipe"],
+    encoding: "utf8",
+  });
+
+  if (commandResult.error) {
+    return {
+      ok: false,
+      exitCode: 1,
+      signal: null,
+      stderr: commandResult.error.message || "spawn error",
+    };
+  }
+
+  return {
+    ok: commandResult.status === 0,
+    exitCode: Number.isInteger(commandResult.status) ? commandResult.status : 1,
+    signal: commandResult.signal || null,
+    stderr: String(commandResult.stderr || ""),
+  };
+}
+
+function runFullTestGate() {
+  const commandPlans = [
+    {
+      label: "node --test",
+      spec: parseCommandSpecFromEnv(
+        "RELEASE_CHECK_CI_NODE_TEST_COMMAND_JSON",
+        { command: "node", args: ["--test"] },
+      ),
+    },
+    {
+      label: "npm run test:ci",
+      spec: parseCommandSpecFromEnv(
+        "RELEASE_CHECK_CI_TEST_CI_COMMAND_JSON",
+        { command: "npm", args: ["run", "test:ci"] },
+      ),
+    },
+  ];
+
+  for (const commandPlan of commandPlans) {
+    const execution = runCommandSpec(commandPlan.spec);
+    if (!execution.ok) {
+      return {
+        ok: false,
+        failedCommandLabel: commandPlan.label,
+        failedCommand: renderCommandSpec(commandPlan.spec),
+        failedExitCode: execution.exitCode,
+        failedSignal: execution.signal,
+        stderr: execution.stderr,
+      };
+    }
+  }
+
+  return {
+    ok: true,
+    failedCommandLabel: null,
+    failedCommand: null,
+    failedExitCode: null,
+    failedSignal: null,
+    stderr: "",
+  };
+}
+
 if (process.argv.includes("--help")) {
   printUsage();
   process.exit(0);
@@ -51,6 +166,7 @@ process.stdout.write = (() => true);
 
 try {
   let buildReleaseCheckCompareSummary;
+  let applyFullTestGateFailureReport;
   let getReleaseCheckExitCode;
   let runReleaseCheck;
   let resolvePreviousReleaseCheckSnapshot;
@@ -59,6 +175,7 @@ try {
 
   try {
     ({
+      applyFullTestGateFailureReport,
       buildReleaseCheckCompareSummary,
       getReleaseCheckExitCode,
       runReleaseCheck,
@@ -93,8 +210,12 @@ try {
     throw new Error("Choose only one compare selector: --compare-previous or --compare-snapshot");
   }
 
+  const compareMode = comparePrevious || compareSnapshot;
+  const shouldRunFullTestGate = !compareMode && process.env.RELEASE_CHECK_CI_SKIP_FULL_TEST_GATE !== "1";
+
   let output = report;
-  if (comparePrevious || compareSnapshot) {
+  let exitReport = report;
+  if (compareMode) {
     const compareTarget = comparePrevious
       ? await resolvePreviousReleaseCheckSnapshot({
           reference: result?.release_check_archive?.run_id || "latest",
@@ -106,10 +227,30 @@ try {
       currentReport: report,
       previousReport: compareTarget?.report || {},
     });
+  } else if (shouldRunFullTestGate && getReleaseCheckExitCode(report) === 0) {
+    const fullTestGateResult = runFullTestGate();
+    if (!fullTestGateResult.ok) {
+      exitReport = applyFullTestGateFailureReport(report, {
+        failedCommand: fullTestGateResult.failedCommandLabel || fullTestGateResult.failedCommand,
+        failedExitCode: fullTestGateResult.failedExitCode,
+      });
+      output = exitReport;
+
+      const stderrTail = String(fullTestGateResult.stderr || "")
+        .trim()
+        .split("\n")
+        .slice(-8)
+        .join("\n");
+      if (stderrTail) {
+        console.error(`release-check ci full test gate failed: ${fullTestGateResult.failedCommand || "unknown command"}\n${stderrTail}`);
+      } else {
+        console.error(`release-check ci full test gate failed: ${fullTestGateResult.failedCommand || "unknown command"} (exit ${fullTestGateResult.failedExitCode ?? "unknown"})`);
+      }
+    }
   }
 
   console.log(JSON.stringify(output, null, 2));
-  process.exit(getReleaseCheckExitCode(report));
+  process.exit(getReleaseCheckExitCode(exitReport));
 } catch (error) {
   process.stdout.write = originalWrite;
   console.error(`release-check ci error: ${error instanceof Error ? error.message : String(error)}`);
