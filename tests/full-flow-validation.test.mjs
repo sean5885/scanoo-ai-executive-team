@@ -279,7 +279,7 @@ test("full flow validation does not fake partial success when every requested su
   assert.equal(runtimeResult.execution_result?.ok, false);
   assert.equal(response.ok, false);
   assert.equal(response.partial === true, false);
-  assert.equal(response.failure_class, "generic_fallback");
+  assert.equal(response.failure_class, "permission_denied");
   assert.equal(response.sources.length > 0, true);
   assert.match(response.answer || "", /能力邊界|blocked|capability_gap/);
   assert.match(response.limitations.join(" "), /capability_gap|手動執行|最短操作步驟/);

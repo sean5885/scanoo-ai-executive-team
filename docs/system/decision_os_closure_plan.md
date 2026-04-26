@@ -26,6 +26,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - routing eval baseline 出現 `doc-038`、`doc-039` 漂移：deictic 文件跟進問句誤落 `personal_assistant + ROUTING_NO_MATCH`。
 - 已在 `/Users/seanhan/Documents/Playground/src/planner-ingress-contract.mjs` 補上 deictic 文件 detail ingress，讓「這份文件在講什麼」「打開這份給我看」回到 `knowledge_assistant + search_and_detail_doc`。
 - 對應回歸測試已補在 `/Users/seanhan/Documents/Playground/tests/message-intent-utils.test.mjs`。
+- full-flow validation 的 fail-soft 錯誤分類已對齊現行 runtime contract：`missing_user_access_token` 類路徑的 canonical `failure_class` 固定為 `permission_denied`，不再把同一路徑判成 `generic_fallback`。
 
 ## 修正範圍與原則
 

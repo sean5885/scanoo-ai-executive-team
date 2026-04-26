@@ -40,6 +40,10 @@ For this closure-planning pass:
     - checked-in planner ingress now treats deictic doc-detail utterances (for example `這份文件在講什麼`, `打開這份給我看`) as planner knowledge ingress, so they no longer fall through personal-lane `ROUTING_NO_MATCH`.
     - code is aligned at `/Users/seanhan/Documents/Playground/src/planner-ingress-contract.mjs`; regression coverage is aligned at `/Users/seanhan/Documents/Playground/tests/message-intent-utils.test.mjs` and `/Users/seanhan/Documents/Playground/evals/routing-eval-set.mjs`.
     - this item is `resolved` for routing/doc alignment; no new fallback path was introduced.
+18. Full-flow vs diagnostics failure taxonomy drift (`generic_fallback` vs `permission_denied`) is resolved on 2026-04-26:
+    - current runtime contract already canonicalizes `missing_user_access_token` family to `permission_denied` at the planner user-facing failure boundary.
+    - full-flow validation is now aligned to that checked-in contract (`/Users/seanhan/Documents/Playground/tests/full-flow-validation.test.mjs`), so the same fail-soft path no longer carries two competing canonical labels.
+    - this item is `resolved` for contract/test alignment; no public response shape change was introduced.
 
 ## Ranked Closure Threads
 
