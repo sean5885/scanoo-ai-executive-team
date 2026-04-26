@@ -28,6 +28,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - 對應回歸測試已補在 `/Users/seanhan/Documents/Playground/tests/message-intent-utils.test.mjs`。
 - full-flow validation 的 fail-soft 錯誤分類已對齊現行 runtime contract：`missing_user_access_token` 類路徑的 canonical `failure_class` 固定為 `permission_denied`，不再把同一路徑判成 `generic_fallback`。
 - `scripts/release-check-ci.mjs` 已加上 full test gate：在 release-check report 為 `pass` 時，會再執行 `node --test` 與 `npm run test:ci`；任一失敗都會把 CI exit code 固定為 `1`，並在最小 JSON 報告中標示 `full_test_failure`。
+- 新增 `/Users/seanhan/Documents/Playground/scripts/memory-influence-gate.mjs`，以 AB 驗證輸出 memory influence gate，固定提供 `memory_hit_rate` 與 `action_changed_by_memory_rate`（含 action-level 差異 evidence）。
 
 ## 修正範圍與原則
 
@@ -83,6 +84,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 - 需要上下文的 case 有可追蹤 retrieval evidence
 - retrieval miss 時仍有可用回答
+- `node scripts/memory-influence-gate.mjs --json` 會輸出 `memory_hit_rate` 與 `action_changed_by_memory_rate`，且 `action_level_evidence` 可追蹤 action 變更
 
 ### Phase 3：Learning 影響策略（可控）
 
@@ -151,6 +153,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 2. usage-layer 指標改善（FTHR 上升、Generic Rate 下降）
 3. canary 可穩定執行且有 fail gate
 4. memory retrieval 進入決策鏈且可觀測
+   - 至少能以 `memory_hit_rate`、`action_changed_by_memory_rate` 量測並附 action-level evidence
 5. learning 有受控生效與回滾能力
 6. 高風險區 contract 穩定，無未授權 response-shape 漂移
 7. docs/system 與 code 同步完成

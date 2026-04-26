@@ -778,6 +778,104 @@ test("runPlannerUserInputEdge produces routing/answer difference between memory-
   assert.match(missResult?.userResponse?.answer || "", /沒有 memory/);
 });
 
+test("runPlannerUserInputEdge can produce AB-computable memory influence rates with action-level evidence", async () => {
+  const baseId = Date.now();
+  const samples = [];
+
+  for (let index = 0; index < 2; index += 1) {
+    const accountId = `acct-edge-ab-${baseId}-${index}`;
+    const sessionWithMemory = `session-edge-ab-hit-${baseId}-${index}`;
+    const sessionWithoutMemory = `session-edge-ab-miss-${baseId}-${index}`;
+    const text = `延續上一題，這個 checklist 還缺什麼？ #${index + 1}`;
+
+    await appendSessionMemory({
+      account_id: accountId,
+      session_key: sessionWithMemory,
+      task_id: `task-edge-ab-${index}`,
+      type: "working_memory",
+      title: "上次 onboarding checklist 討論",
+      content: "優先補 owner 與 deadline。",
+      tags: ["onboarding", "checklist"],
+    });
+    await appendApprovedMemory({
+      account_id: accountId,
+      session_key: sessionWithMemory,
+      task_id: `task-edge-ab-${index}`,
+      type: "approved_memory",
+      title: "批准規則：onboarding action item",
+      content: "沒有 owner 不可宣稱完成。",
+      tags: ["approval", "owner"],
+    });
+
+    const plannerExecutor = async (args) => {
+      const hasMemory = Array.isArray(args?.decisionMemory?.decision_context?.session_memory)
+        && args.decisionMemory.decision_context.session_memory.length > 0;
+      return hasMemory
+        ? {
+            ok: true,
+            action: "search_company_brain_docs",
+            execution_result: {
+              ok: true,
+              data: {
+                answer: "命中 memory，改走文件查詢路由。",
+                sources: ["memory-hit"],
+                limitations: [],
+              },
+            },
+          }
+        : {
+            ok: true,
+            action: "get_runtime_info",
+            execution_result: {
+              ok: true,
+              data: {
+                answer: "沒有 memory，退回 runtime 路由。",
+                sources: ["memory-miss"],
+                limitations: [],
+              },
+            },
+          };
+    };
+
+    const hitResult = await runPlannerUserInputEdge({
+      text,
+      sessionKey: sessionWithMemory,
+      authContext: { account_id: accountId },
+      plannerExecutor,
+      workingMemoryWriter: null,
+    });
+    const missResult = await runPlannerUserInputEdge({
+      text,
+      sessionKey: sessionWithoutMemory,
+      authContext: { account_id: accountId },
+      plannerExecutor,
+      workingMemoryWriter: null,
+    });
+    const hitMetadata = readPlannerUserInputEdgeMetadata(hitResult);
+    samples.push({
+      needsContext: hitMetadata?.memory_retrieval_needs_context === true,
+      hit: hitMetadata?.memory_retrieval_hit === true,
+      actionWithMemory: hitResult?.plannerResult?.action || null,
+      actionWithoutMemory: missResult?.plannerResult?.action || null,
+    });
+  }
+
+  const eligibleSamples = samples.filter((item) => item.needsContext);
+  const hitSamples = eligibleSamples.filter((item) => item.hit);
+  const changedSamples = hitSamples.filter(
+    (item) => item.actionWithMemory && item.actionWithoutMemory && item.actionWithMemory !== item.actionWithoutMemory,
+  );
+
+  const memoryHitRate = hitSamples.length / eligibleSamples.length;
+  const actionChangedByMemoryRate = changedSamples.length / hitSamples.length;
+
+  assert.equal(eligibleSamples.length, 2);
+  assert.equal(hitSamples.length, 2);
+  assert.equal(changedSamples.length, 2);
+  assert.equal(memoryHitRate >= 0.8, true);
+  assert.equal(actionChangedByMemoryRate > 0, true);
+});
+
 test("runPlannerUserInputEdge does not overclaim memory retrieval usage when context is not needed", async () => {
   const result = await runPlannerUserInputEdge({
     text: "幫我看 runtime",

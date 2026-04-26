@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 
 const [{
   createDecisionPromotionAuditState,
@@ -302,4 +303,27 @@ test("trace diagnostics includes scoreboard summary and top action fields", () =
   assert.equal(Array.isArray(trace.snapshot?.rollback_disabled_actions), true);
   assert.equal(trace.diff.some((line) => line.startsWith("decision_scoreboard_summary:")), true);
   assert.match(trace.summary || "", /decision_scoreboard=/);
+});
+
+test("memory influence gate script reports memory_hit_rate and action_changed_by_memory_rate with action evidence", () => {
+  const raw = execFileSync(
+    "node",
+    ["scripts/memory-influence-gate.mjs", "--json"],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        LARK_APP_ID: process.env.LARK_APP_ID || "memory-gate-test-app-id",
+        LARK_APP_SECRET: process.env.LARK_APP_SECRET || "memory-gate-test-app-secret",
+      },
+    },
+  );
+  const report = JSON.parse(raw);
+  assert.equal(typeof report?.metrics?.memory_hit_rate, "number");
+  assert.equal(typeof report?.metrics?.action_changed_by_memory_rate, "number");
+  assert.equal(report?.checks?.memory_hit_rate?.ok, true);
+  assert.equal(report?.checks?.action_changed_by_memory_rate?.ok, true);
+  assert.equal(Array.isArray(report?.action_level_evidence), true);
+  assert.equal(report?.action_level_evidence.length > 0, true);
 });

@@ -44,6 +44,10 @@ For this closure-planning pass:
     - current runtime contract already canonicalizes `missing_user_access_token` family to `permission_denied` at the planner user-facing failure boundary.
     - full-flow validation is now aligned to that checked-in contract (`/Users/seanhan/Documents/Playground/tests/full-flow-validation.test.mjs`), so the same fail-soft path no longer carries two competing canonical labels.
     - this item is `resolved` for contract/test alignment; no public response shape change was introduced.
+19. Memory influence observability closure (`memory_hit_rate` / `action_changed_by_memory_rate`) is resolved on 2026-04-26:
+    - checked-in gate script `/Users/seanhan/Documents/Playground/scripts/memory-influence-gate.mjs` now runs deterministic AB cases and emits fixed JSON metrics with action-level evidence.
+    - regression coverage is aligned at `/Users/seanhan/Documents/Playground/tests/executive-memory.test.mjs`, `/Users/seanhan/Documents/Playground/tests/planner-user-input-edge.test.mjs`, and `/Users/seanhan/Documents/Playground/tests/decision-metrics-scoreboard.test.mjs`.
+    - this item is `resolved` for memory influence measurement; no public answer response shape change was introduced.
 
 ## Ranked Closure Threads
 

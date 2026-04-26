@@ -94,3 +94,23 @@ test("executive decision memory retrieval combines session + approved context wi
   assert.equal(result?.observability?.memory_retrieval_session_hit_count > 0, true);
   assert.equal(result?.observability?.memory_retrieval_approved_hit_count > 0, true);
 });
+
+test("executive decision memory retrieval reports no_match without overclaim when memory is absent", async () => {
+  const accountId = `acct-retrieval-miss-${Date.now()}`;
+  const sessionKey = `session-retrieval-miss-${Date.now()}`;
+  const result = await retrieveExecutiveDecisionMemory({
+    accountId,
+    sessionKey,
+    text: "這輪先看 runtime health",
+  });
+
+  assert.equal(result?.ok, true);
+  assert.equal(result?.decision_context?.needs_context, false);
+  assert.deepEqual(result?.decision_context?.session_memory, []);
+  assert.deepEqual(result?.decision_context?.approved_memory, []);
+  assert.equal(result?.observability?.memory_retrieval_attempted, true);
+  assert.equal(result?.observability?.memory_retrieval_hit, false);
+  assert.equal(result?.observability?.memory_retrieval_mode, "no_match");
+  assert.equal(result?.observability?.memory_retrieval_session_hit_count, 0);
+  assert.equal(result?.observability?.memory_retrieval_approved_hit_count, 0);
+});
