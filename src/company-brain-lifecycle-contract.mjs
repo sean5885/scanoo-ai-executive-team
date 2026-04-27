@@ -92,7 +92,7 @@ const COMPANY_BRAIN_ROUTE_CONTRACT_FIXTURES = Object.freeze([
       apply_gate: true,
       allowed_states: Object.freeze(["approved", "applied"]),
       apply_requires_review_status: "approved",
-      blocks_on: Object.freeze(["review_missing", "approval_missing", "conflict_unresolved", "review_rejected"]),
+      blocks_on: Object.freeze(["review_missing", "review_pending", "approval_missing", "conflict_unresolved", "review_rejected"]),
     }),
   },
   {
@@ -140,6 +140,12 @@ function normalizeReviewStatus(status = "") {
 
 function normalizeApprovalStatus(status = "") {
   return cleanText(status).toLowerCase() === "approved" ? "approved" : null;
+}
+
+function normalizeStringList(items = []) {
+  return Array.isArray(items)
+    ? Array.from(new Set(items.map((item) => cleanText(item)).filter(Boolean))).sort()
+    : [];
 }
 
 export function getCompanyBrainLifecycleContract() {
@@ -326,6 +332,26 @@ export function runCompanyBrainLifecycleSelfCheck({ getRouteContract } = {}) {
     if (cleanText(actualGovernance?.review_required) !== cleanText(expected.governance?.review_required)) {
       issues.push("review_required_mismatch");
     }
+    if (
+      JSON.stringify(normalizeStringList(actualGovernance?.allowed_states))
+      !== JSON.stringify(normalizeStringList(expected.governance?.allowed_states))
+    ) {
+      issues.push("allowed_states_mismatch");
+    }
+    if (Boolean(expected.governance?.apply_gate) === true) {
+      if (
+        cleanText(actualGovernance?.apply_requires_review_status)
+        !== cleanText(expected.governance?.apply_requires_review_status)
+      ) {
+        issues.push("apply_requires_review_status_mismatch");
+      }
+      if (
+        JSON.stringify(normalizeStringList(actualGovernance?.blocks_on))
+        !== JSON.stringify(normalizeStringList(expected.governance?.blocks_on))
+      ) {
+        issues.push("apply_blocks_on_mismatch");
+      }
+    }
 
     return {
       pathname: expected.pathname,
@@ -351,6 +377,27 @@ export function runCompanyBrainLifecycleSelfCheck({ getRouteContract } = {}) {
         },
         approvalState: {
           review_state: null,
+          approval: null,
+        },
+      }),
+    },
+    {
+      case_id: "pending_review",
+      expected: {
+        lifecycle_state: "pending_review",
+        can_apply: false,
+        blocking_reasons: ["review_pending", "approval_missing"],
+      },
+      actual: evaluateCompanyBrainApplyGate({
+        intakeBoundary: {
+          review_required: true,
+          approval_required_for_formal_source: true,
+          review_status: "pending_review",
+        },
+        approvalState: {
+          review_state: {
+            status: "pending_review",
+          },
           approval: null,
         },
       }),

@@ -34,6 +34,22 @@ function buildExpectedExecutionEnvelope({
   };
 }
 
+function findScopedIdempotencyEntry(rawKey = "") {
+  const store = globalThis.__mutation_idempotency_store__;
+  if (!(store instanceof Map)) {
+    return null;
+  }
+  const prefix = `${rawKey}::`;
+  const matchedKey = Array.from(store.keys()).find((key) => String(key).startsWith(prefix));
+  if (!matchedKey) {
+    return null;
+  }
+  return {
+    key: matchedKey,
+    entry: store.get(matchedKey),
+  };
+}
+
 test("runMutation returns a stable error when no execute callback is provided", async () => {
   const result = await runMutation({
     action: "create_doc",
@@ -389,6 +405,59 @@ test("runMutation replays the first successful response when context idempotency
   }
 });
 
+test("runMutation scopes idempotency by account/action/path so shared keys across flows do not collide", async () => {
+  const idempotencyKey = "mutation-runtime-shared-key";
+  const calls = [];
+
+  delete globalThis.__mutation_idempotency_store__;
+
+  const reviewResult = await runMutation({
+    action: "review_company_brain_doc",
+    payload: { doc_id: "doc-1" },
+    context: {
+      account_id: "acct-1",
+      pathname: "/agent/company-brain/review",
+      idempotency_key: idempotencyKey,
+    },
+    async execute() {
+      calls.push("review");
+      return {
+        ok: true,
+        path: "review",
+      };
+    },
+  });
+
+  const approvalResult = await runMutation({
+    action: "approval_transition_company_brain_doc",
+    payload: { doc_id: "doc-1", decision: "approve" },
+    context: {
+      account_id: "acct-1",
+      pathname: "/agent/company-brain/approval-transition",
+      idempotency_key: idempotencyKey,
+    },
+    async execute() {
+      calls.push("approval_transition");
+      return {
+        ok: true,
+        path: "approval_transition",
+      };
+    },
+  });
+
+  assert.equal(reviewResult.ok, true);
+  assert.equal(approvalResult.ok, true);
+  assert.deepEqual(calls, ["review", "approval_transition"]);
+  assert.equal(
+    Array.from(globalThis.__mutation_idempotency_store__.keys())
+      .filter((key) => String(key).startsWith(`${idempotencyKey}::`))
+      .length,
+    2,
+  );
+
+  delete globalThis.__mutation_idempotency_store__;
+});
+
 test("runMutation returns idempotency_in_progress while the same context idempotency_key is still executing", async () => {
   const payload = { title: "demo" };
   const context = {
@@ -436,10 +505,7 @@ test("runMutation returns idempotency_in_progress while the same context idempot
   const firstResult = await firstRun;
 
   assert.equal(firstResult.ok, true);
-  assert.equal(
-    globalThis.__mutation_idempotency_store__.get(context.idempotency_key).__status,
-    "done",
-  );
+  assert.equal(findScopedIdempotencyEntry(context.idempotency_key)?.entry?.__status, "done");
 
   delete globalThis.__mutation_idempotency_store__;
 });
@@ -464,10 +530,7 @@ test("runMutation clears pending idempotency state after execution failure", asy
 
   assert.equal(failedResult.ok, false);
   assert.equal(failedResult.error, "execution_failed");
-  assert.equal(
-    globalThis.__mutation_idempotency_store__?.has(context.idempotency_key),
-    false,
-  );
+  assert.equal(findScopedIdempotencyEntry(context.idempotency_key), null);
 
   const retriedResult = await runMutation({
     action: "create_doc",

@@ -53,6 +53,12 @@ For this closure-planning pass:
     - risk cause is now emitted as deterministic `risk_hint` (for example `insufficient_real_request_backed_samples:0/20`) in `/Users/seanhan/Documents/Playground/src/control-diagnostics.mjs` and surfaced by `/Users/seanhan/Documents/Playground/src/system-self-check.mjs` + `/Users/seanhan/Documents/Playground/src/release-check.mjs`.
     - regression coverage is aligned at `/Users/seanhan/Documents/Playground/tests/control-diagnostics-cli.test.mjs`, `/Users/seanhan/Documents/Playground/tests/system-self-check.test.mjs`, and `/Users/seanhan/Documents/Playground/tests/release-check.test.mjs`.
     - this item is `resolved` for rollout-risk observability; no runtime write-policy fallback was widened.
+21. Company-brain review/conflict/approval/apply invariants and re-apply idempotency are resolved on 2026-04-27:
+    - approval transition now requires an existing review lifecycle state and respects bounded lifecycle transitions; direct mirror-only promotion is no longer treated as valid transition.
+    - apply now preserves idempotency evidence for re-apply (`applied -> applied`) instead of rewriting approval timestamp on repeated apply calls.
+    - mutation-runtime idempotency now uses scoped store keys (`idempotency_key + account/action/path/resource scope`) so different mutation flows with the same raw key do not collide.
+    - regression coverage is aligned at `/Users/seanhan/Documents/Playground/tests/company-brain-review-approval.test.mjs`, `/Users/seanhan/Documents/Playground/tests/company-brain-lifecycle-contract.test.mjs`, and `/Users/seanhan/Documents/Playground/tests/mutation-runtime.test.mjs`.
+    - this item is `resolved` for checked-in governance closure; it does not claim full HTTP/runtime idempotency unification.
 
 ## Ranked Closure Threads
 
@@ -80,6 +86,7 @@ Thread C is now closed in checked-in code:
     - `/Users/seanhan/Documents/Playground/src/lobster-security-bridge.mjs`
     - `/Users/seanhan/Documents/Playground/lobster_security`
 - HTTP idempotency and mutation-runtime idempotency still use different scopes.
+  - mutation-runtime is now fail-soft scoped by account/action/path/resource; HTTP and runtime stores are still separate systems.
   - Evidence:
     - `/Users/seanhan/Documents/Playground/src/mutation-runtime.mjs`
     - `/Users/seanhan/Documents/Playground/src/http-idempotency-store.mjs`

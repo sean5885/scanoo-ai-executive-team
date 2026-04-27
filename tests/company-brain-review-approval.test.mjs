@@ -287,6 +287,35 @@ test("apply stays blocked when formal admission has not entered review yet", () 
   }
 });
 
+test("approval transition stays blocked when review state is missing", () => {
+  const accountId = `acct_company_brain_transition_missing_review_${Date.now()}`;
+  const docId = "doc_company_brain_transition_missing_review_1";
+  ensureTestAccount(accountId);
+  insertDocFixture({
+    accountId,
+    docId,
+    title: "Transition Without Review",
+    rawText: "# Transition Without Review\nNo review state exists yet.",
+  });
+
+  try {
+    const transitioned = approvalTransitionCompanyBrainDocAction({
+      accountId,
+      docId,
+      decision: "approve",
+      actor: "reviewer@test",
+      notes: "Should be blocked before review staging.",
+    });
+
+    assert.equal(transitioned.success, false);
+    assert.equal(transitioned.error, "approval_required");
+    assert.equal(transitioned.data.approval_state.review_state, null);
+    assert.equal(transitioned.data.approval_state.approval, null);
+  } finally {
+    cleanupAccountFixtures(accountId);
+  }
+});
+
 test("apply stays blocked when approval decision is rejected", () => {
   const accountId = `acct_company_brain_rejected_${Date.now()}`;
   const docId = "doc_company_brain_rejected_1";
@@ -328,6 +357,55 @@ test("apply stays blocked when approval decision is rejected", () => {
     assert.equal(applied.data.review_state.status, "rejected");
     assert.equal(applied.data.approval_state.review_state.status, "rejected");
     assert.equal(applied.data.approval_state.approval, null);
+  } finally {
+    cleanupAccountFixtures(accountId);
+  }
+});
+
+test("apply keeps approved knowledge timestamp stable on idempotent re-apply", () => {
+  const accountId = `acct_company_brain_apply_idempotent_${Date.now()}`;
+  const docId = "doc_company_brain_apply_idempotent_1";
+  ensureTestAccount(accountId);
+  insertDocFixture({
+    accountId,
+    docId,
+    title: "Idempotent Approval Contract",
+    rawText: "# Idempotent Approval Contract\nApplied knowledge should be stable.",
+  });
+
+  try {
+    const staged = stageCompanyBrainReviewState({
+      accountId,
+      docId,
+      sourceStage: "mirror",
+      proposedAction: "approval_transition",
+      reviewStatus: "pending_review",
+    });
+    assert.equal(staged.success, true);
+
+    const approved = approvalTransitionCompanyBrainDocAction({
+      accountId,
+      docId,
+      decision: "approve",
+      actor: "reviewer@test",
+    });
+    assert.equal(approved.success, true);
+    assert.equal(approved.data.review_state.status, "approved");
+
+    const firstApply = applyApprovedCompanyBrainKnowledgeAction({
+      accountId,
+      docId,
+      actor: "reviewer@test",
+    });
+    assert.equal(firstApply.success, true);
+
+    const secondApply = applyApprovedCompanyBrainKnowledgeAction({
+      accountId,
+      docId,
+      actor: "reviewer2@test",
+    });
+    assert.equal(secondApply.success, true);
+    assert.equal(secondApply.data.approval.approved_at, firstApply.data.approval.approved_at);
   } finally {
     cleanupAccountFixtures(accountId);
   }

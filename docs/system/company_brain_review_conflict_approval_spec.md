@@ -4,15 +4,15 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 ## Purpose
 
-This document defines the minimum company-brain review/conflict/approval contract.
+This document defines the checked-in minimum company-brain review/conflict/approval contract.
 
-It is a spec only:
+It remains intentionally bounded:
 
-- it does not claim that a full runtime already exists
+- it does not claim a full human-workflow governance runtime
 - it does not replace the current controlled document/runtime write path
 - it does not change the current read-side routes
 
-The goal is to create a bounded contract for the next layer after `create_doc`, `update_doc`, and `ingest_doc`.
+The goal is to keep the review/conflict/approval/apply invariants explicit and testable after `create_doc`, `update_doc`, and `ingest_doc`.
 
 ## Lifecycle Contract
 
@@ -122,6 +122,7 @@ Conflict check is not required for:
 `approval_transition` is allowed only when:
 
 - the document/intake target is already identified
+- review state already exists as `pending_review` or `conflict_detected`
 - review has returned an approvable result
 - required conflict checks have either passed or produced an explicit accepted resolution
 - the result is no longer only proposal/mirror state
@@ -132,6 +133,7 @@ Approval transition is not allowed when:
 - the document is still only in mirror/proposal state
 - review is missing, rejected, or unresolved
 - conflict state is unresolved
+- lifecycle transition does not match the bounded transition map
 - evidence is incomplete
 
 ## `review_doc`
@@ -284,6 +286,11 @@ Approval transition is not allowed when:
 - review is `conflict_detected`
 - review is `rejected`
 
+### idempotency
+
+- re-running `apply` after `applied` must be idempotent (`applied -> applied`)
+- idempotent re-apply must not rewrite prior `approved_at` evidence
+
 ## Contract Coverage
 
 The checked-in governance coverage for this lifecycle must stay aligned across:
@@ -374,6 +381,6 @@ The checked-in governance coverage for this lifecycle must stay aligned across:
 
 ## Current Boundary Summary
 
-- `review_doc`, `conflict_check`, and `approval_transition` are the minimum missing layer between current controlled document/runtime paths and a future clearer company-brain write/intake runtime
-- current repo behavior already supports the neighboring create/update/ingest/read-side pieces
-- this layer is still spec-only and should remain bounded until a dedicated runtime refactor phase begins
+- `review_doc`, `conflict_check`, `approval_transition`, and `apply` are now grounded as a bounded checked-in runtime slice
+- current repo behavior supports neighboring create/update/ingest/read-side pieces, while keeping formal admission separated from mirror ingest
+- this layer stays intentionally bounded and is not a full human approval workflow runtime

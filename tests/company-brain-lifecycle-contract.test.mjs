@@ -50,6 +50,25 @@ test("apply gate blocks missing review, unresolved conflict, and missing approva
     intakeBoundary: {
       review_required: true,
       approval_required_for_formal_source: true,
+      review_status: "pending_review",
+    },
+    approvalState: {
+      review_state: {
+        status: "pending_review",
+      },
+      approval: null,
+    },
+  }), {
+    lifecycle_state: "pending_review",
+    can_apply: false,
+    already_applied: false,
+    blocking_reasons: ["review_pending", "approval_missing"],
+  });
+
+  assert.deepEqual(evaluateCompanyBrainApplyGate({
+    intakeBoundary: {
+      review_required: true,
+      approval_required_for_formal_source: true,
       review_status: "rejected",
     },
     approvalState: {
@@ -104,6 +123,7 @@ test("route contracts expose company-brain lifecycle governance for review throu
   assert.equal(applyContract.action, "apply_company_brain_approved_knowledge");
   assert.equal(applyContract.governance.lifecycle_entry, "apply");
   assert.equal(applyContract.governance.apply_gate, true);
+  assert.equal(applyContract.governance.blocks_on.includes("review_pending"), true);
 });
 
 test("company-brain lifecycle self-check stays aligned on routes and apply gate cases", () => {
@@ -116,6 +136,10 @@ test("company-brain lifecycle self-check stays aligned on routes and apply gate 
   assert.equal(result.failing_cases.length, 0);
   assert.equal(result.failing_transitions.length, 0);
   assert.equal(result.apply_gate_cases.find((item) => item.case_id === "missing_review")?.actual.can_apply, false);
+  assert.deepEqual(
+    result.apply_gate_cases.find((item) => item.case_id === "pending_review")?.actual.blocking_reasons,
+    ["review_pending", "approval_missing"],
+  );
   assert.deepEqual(
     result.apply_gate_cases.find((item) => item.case_id === "unresolved_conflict")?.actual.blocking_reasons,
     ["conflict_unresolved", "approval_missing"],

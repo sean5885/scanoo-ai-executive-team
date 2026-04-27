@@ -23,14 +23,37 @@ function getMutationIdempotencyStore() {
   return globalThis.__mutation_idempotency_store__;
 }
 
-function clearPendingMutationIdempotency(idempotencyKey) {
-  if (!idempotencyKey) {
+function buildMutationIdempotencyStoreKey({
+  idempotencyKey = "",
+  action = "",
+  context = null,
+  canonicalRequest = null,
+} = {}) {
+  const normalizedKey = cleanText(idempotencyKey);
+  if (!normalizedKey) {
+    return null;
+  }
+
+  const scopeParts = [
+    cleanText(canonicalRequest?.actor?.account_id) || cleanText(context?.account_id),
+    cleanText(canonicalRequest?.action_type) || cleanText(action),
+    cleanText(canonicalRequest?.resource_type),
+    cleanText(canonicalRequest?.resource_id),
+    cleanText(canonicalRequest?.context?.scope_key) || cleanText(context?.scope_key),
+    cleanText(canonicalRequest?.context?.pathname) || cleanText(context?.pathname),
+  ].filter(Boolean);
+
+  return `${normalizedKey}::${scopeParts.join("|") || "global"}`;
+}
+
+function clearPendingMutationIdempotency(storeKey) {
+  if (!storeKey) {
     return;
   }
 
-  const entry = globalThis.__mutation_idempotency_store__?.get(idempotencyKey);
+  const entry = globalThis.__mutation_idempotency_store__?.get(storeKey);
   if (entry?.__status === "pending") {
-    globalThis.__mutation_idempotency_store__.delete(idempotencyKey);
+    globalThis.__mutation_idempotency_store__.delete(storeKey);
   }
 }
 
@@ -303,10 +326,33 @@ export async function runMutation({ action, payload, context, execute }) {
     });
   }
 
-  const idempotencyKey = cleanText(context?.idempotency_key) || null;
-  if (idempotencyKey) {
+  const canonicalRequestInput = context?.canonical_request ?? context?.canonicalRequest ?? null;
+  let canonicalRequest = null;
+  if (canonicalRequestInput) {
+    try {
+      canonicalRequest = assertCanonicalMutationRequestSchema(canonicalRequestInput);
+    } catch {
+      return buildExecutionEnvelope({
+        ok: false,
+        action,
+        error: "invalid_canonical_request",
+      });
+    }
+  }
+
+  const idempotencyKey =
+    cleanText(context?.idempotency_key)
+    || cleanText(canonicalRequest?.context?.idempotency_key)
+    || null;
+  const idempotencyStoreKey = buildMutationIdempotencyStoreKey({
+    idempotencyKey,
+    action,
+    context,
+    canonicalRequest,
+  });
+  if (idempotencyStoreKey) {
     const store = getMutationIdempotencyStore();
-    const existing = store.get(idempotencyKey);
+    const existing = store.get(idempotencyStoreKey);
 
     if (existing) {
       if (existing.__status === "pending") {
@@ -321,31 +367,17 @@ export async function runMutation({ action, payload, context, execute }) {
         : existing;
     }
 
-    store.set(idempotencyKey, {
+    store.set(idempotencyStoreKey, {
       __status: "pending",
     });
   }
 
   const failSoft = (failure) => {
-    clearPendingMutationIdempotency(idempotencyKey);
+    clearPendingMutationIdempotency(idempotencyStoreKey);
     return failure;
   };
 
   const resolvedLogger = normalizeLogger(context?.logger);
-  const canonicalRequestInput = context?.canonical_request ?? context?.canonicalRequest ?? null;
-  let canonicalRequest = null;
-
-  if (canonicalRequestInput) {
-    try {
-      canonicalRequest = assertCanonicalMutationRequestSchema(canonicalRequestInput);
-    } catch {
-      return failSoft(buildExecutionEnvelope({
-        ok: false,
-        action,
-        error: "invalid_canonical_request",
-      }));
-    }
-  }
 
   const mode = context?.execution_mode || "passthrough";
   const verifierProfile = cleanText(context?.verifier_profile ?? context?.verifierProfile);
@@ -525,8 +557,8 @@ export async function runMutation({ action, payload, context, execute }) {
     }),
   });
 
-  if (idempotencyKey) {
-    getMutationIdempotencyStore().set(idempotencyKey, {
+  if (idempotencyStoreKey) {
+    getMutationIdempotencyStore().set(idempotencyStoreKey, {
       __status: "done",
       response,
     });
