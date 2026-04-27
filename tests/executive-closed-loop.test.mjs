@@ -1,40 +1,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs/promises";
 
-import {
-  executiveImprovementStorePath,
-  executiveReflectionStorePath,
-  executiveSessionMemoryStorePath,
-} from "../src/config.mjs";
 import {
   buildExecutionJournal,
   buildExecutionReflection,
   finalizeExecutiveTaskTurn,
 } from "../src/executive-closed-loop.mjs";
+import { listArchivedExecutiveReflections } from "../src/executive-improvement-workflow.mjs";
 import {
   getExecutiveTask,
   startExecutiveTask,
 } from "../src/executive-task-state.mjs";
 import { setupExecutiveTaskStateTestHarness } from "./helpers/executive-task-state-harness.mjs";
 
-setupExecutiveTaskStateTestHarness();
-
-async function snapshotFile(filePath) {
-  try {
-    return await fs.readFile(filePath, "utf8");
-  } catch {
-    return null;
-  }
-}
-
-async function restoreFile(filePath, content) {
-  if (content == null) {
-    await fs.rm(filePath, { force: true });
-    return;
-  }
-  await fs.writeFile(filePath, content, "utf8");
-}
+setupExecutiveTaskStateTestHarness({
+  includeImprovementWorkflowStores: true,
+  includeExecutiveMemoryStores: true,
+});
 
 test("execution reflection marks completed planner steps as success", () => {
   const reflection = buildExecutionReflection({
@@ -317,17 +299,7 @@ test("execution reflection classifies missing info when success criteria stay un
   });
 });
 
-test("closed loop attaches lightweight improvement proposal to execution journal after reflection", async (t) => {
-  const files = [
-    executiveReflectionStorePath,
-    executiveImprovementStorePath,
-    executiveSessionMemoryStorePath,
-  ];
-  const snapshots = await Promise.all(files.map((filePath) => snapshotFile(filePath)));
-  t.after(async () => {
-    await Promise.all(files.map((filePath, index) => restoreFile(filePath, snapshots[index])));
-  });
-
+test("closed loop attaches lightweight improvement proposal to execution journal after reflection", async () => {
   const task = await startExecutiveTask({
     accountId: "acct-improvement-journal",
     sessionKey: "sess-improvement-journal",
@@ -381,8 +353,13 @@ test("closed loop attaches lightweight improvement proposal to execution journal
     retry_succeeded: false,
   });
 
-  const reflectionStore = JSON.parse(await fs.readFile(executiveReflectionStorePath, "utf8"));
-  const archived = reflectionStore.items.at(-1);
+  const archived = (await listArchivedExecutiveReflections({
+    accountId: "acct-improvement-journal",
+    sessionKey: "sess-improvement-journal",
+    taskId: task.id,
+    limit: 2,
+  })).at(-1);
+  assert.equal(Boolean(archived), true);
   assert.equal(archived.improvement_triggered, true);
   assert.equal(archived.retry_attempted, false);
   assert.equal(archived.retry_succeeded, false);

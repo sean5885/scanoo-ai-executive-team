@@ -61,6 +61,7 @@ Implemented through:
 
 - `src/executive-verifier.mjs`
 - evidence stored in `src/executive-task-state.mjs`
+- `src/executive-task-state.mjs` now serializes store mutations through one in-process queue, and append-style helpers (`evidence` / `verifications` / `reflections` / `improvement_proposals` / turns/handoffs/agent outputs) now apply task-local patching from the latest committed task snapshot instead of separate `read -> patch -> write` calls, reducing same-process lost-update races under overlapping finalize/update paths
 - the verifier now reads only the task `execution_journal`; Phase-1 minimum journal fields are `classified_intent`, `selected_action`, `dispatched_actions`, `raw_evidence`, `fallback_used`, and `verifier_verdict`
 - `supportingOutputs` no longer count as `tool_output`, `reply.text` no longer counts as `structured_output`, and synthetic planner lane hints do not count as execution evidence
 - when `tool_required=true` and `dispatched_actions` is empty, verification cannot pass; no-dispatch paths fail or block instead of completing
@@ -99,6 +100,7 @@ Implemented through:
 - `src/executive-improvement.mjs`
 - memory stores in `src/executive-memory.mjs`
 - workflow persistence and approval routes in `src/executive-improvement-workflow.mjs`
+- `src/executive-improvement-workflow.mjs` now serializes reflection/proposal store writes per backing file through an in-process mutation queue, and exposes a bounded archived-reflection listing helper for task-scoped readback (`listArchivedExecutiveReflections(...)`) so verification/eval callers do not rely on global latest-row ordering under concurrent write traffic
 - `src/agent-learning-loop.mjs` now also derives review-first improvement proposals from persisted monitoring / trace history, including routing-failure summaries and suggested tool-weight adjustments
 
 ## Lifecycle States

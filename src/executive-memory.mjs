@@ -28,12 +28,60 @@ function createProposalStore() {
   return { items: [] };
 }
 
+let inMemoryStoreOverride = null;
+const storeMutationQueueByPath = new Map();
+
+function cloneStorePayload(store = { items: [] }) {
+  return {
+    items: Array.isArray(store?.items)
+      ? store.items.map((item) => (item && typeof item === "object" ? { ...item } : item))
+      : [],
+  };
+}
+
+function getInMemoryStore(filePath) {
+  if (!inMemoryStoreOverride) {
+    return null;
+  }
+  if (!Object.hasOwn(inMemoryStoreOverride, filePath)) {
+    return null;
+  }
+  return cloneStorePayload(inMemoryStoreOverride[filePath]);
+}
+
+function setInMemoryStore(filePath, store = { items: [] }) {
+  if (!inMemoryStoreOverride) {
+    return false;
+  }
+  inMemoryStoreOverride[filePath] = cloneStorePayload(store);
+  return true;
+}
+
+async function queueStoreMutation(filePath, operation) {
+  const previous = storeMutationQueueByPath.get(filePath) || Promise.resolve();
+  const current = previous
+    .catch(() => {})
+    .then(() => operation());
+  storeMutationQueueByPath.set(filePath, current);
+  try {
+    return await current;
+  } finally {
+    if (storeMutationQueueByPath.get(filePath) === current) {
+      storeMutationQueueByPath.delete(filePath);
+    }
+  }
+}
+
 async function loadStore(filePath, fallbackFactory) {
+  const inMemoryStore = getInMemoryStore(filePath);
+  if (inMemoryStore) {
+    return inMemoryStore;
+  }
   const raw = await readJsonFile(filePath);
   if (!raw || typeof raw !== "object" || !Array.isArray(raw.items)) {
     return fallbackFactory();
   }
-  return raw;
+  return cloneStorePayload(raw);
 }
 
 function buildExecutiveMemoryKey(prefix = "", id = "") {
@@ -92,10 +140,41 @@ async function persistExecutiveMirrorItem({
   item,
   limit,
 }) {
-  const store = await loadStore(filePath, fallbackFactory);
-  store.items = [...store.items, item].slice(-Math.max(1, limit));
-  await writeJsonFile(filePath, store);
-  return item;
+  return queueStoreMutation(filePath, async () => {
+    const store = await loadStore(filePath, fallbackFactory);
+    store.items = [...store.items, item].slice(-Math.max(1, limit));
+    if (!setInMemoryStore(filePath, store)) {
+      await writeJsonFile(filePath, store);
+    }
+    return item;
+  });
+}
+
+export function useInMemoryExecutiveMemoryStoresForTests() {
+  inMemoryStoreOverride = {
+    [executiveSessionMemoryStorePath]: createSessionStore(),
+    [executivePendingProposalStorePath]: createProposalStore(),
+    [executiveApprovedMemoryStorePath]: createApprovedStore(),
+  };
+}
+
+export async function resetExecutiveMemoryStoresForTests() {
+  if (!inMemoryStoreOverride) {
+    await Promise.all([
+      writeJsonFile(executiveSessionMemoryStorePath, createSessionStore()),
+      writeJsonFile(executivePendingProposalStorePath, createProposalStore()),
+      writeJsonFile(executiveApprovedMemoryStorePath, createApprovedStore()),
+    ]);
+    return;
+  }
+  inMemoryStoreOverride[executiveSessionMemoryStorePath] = createSessionStore();
+  inMemoryStoreOverride[executivePendingProposalStorePath] = createProposalStore();
+  inMemoryStoreOverride[executiveApprovedMemoryStorePath] = createApprovedStore();
+}
+
+export function restoreExecutiveMemoryStoresForTests() {
+  inMemoryStoreOverride = null;
+  storeMutationQueueByPath.clear();
 }
 
 function normalizeEntry(entry = {}) {

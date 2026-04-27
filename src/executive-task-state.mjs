@@ -6,6 +6,7 @@ import { readJsonFile, writeJsonFile } from "./token-store.mjs";
 
 const ACTIVE_TASK_TTL_MS = 6 * 60 * 60 * 1000;
 let inMemoryStoreOverride = null;
+let storeMutationQueue = Promise.resolve();
 
 function createStore() {
   return {
@@ -287,146 +288,22 @@ async function saveStore(store) {
   await writeJsonFile(executiveTaskStateStorePath, store);
 }
 
-export function useInMemoryExecutiveTaskStateStoreForTests() {
-  inMemoryStoreOverride = createStore();
+async function queueStoreMutation(operation) {
+  const current = storeMutationQueue
+    .catch(() => {})
+    .then(() => operation());
+  storeMutationQueue = current;
+  try {
+    return await current;
+  } finally {
+    if (storeMutationQueue === current) {
+      storeMutationQueue = Promise.resolve();
+    }
+  }
 }
 
-export async function resetExecutiveTaskStateStoreForTests() {
-  if (inMemoryStoreOverride) {
-    inMemoryStoreOverride = createStore();
-    return;
-  }
-  await writeJsonFile(executiveTaskStateStorePath, createStore());
-}
-
-export function restoreExecutiveTaskStateStoreForTests() {
-  inMemoryStoreOverride = null;
-}
-
-function sessionIndexKey(accountId = "", sessionKey = "") {
-  const account = normalizeText(accountId);
-  const session = normalizeText(sessionKey);
-  return account && session ? `${account}::${session}` : "";
-}
-
-function isExpired(task) {
-  const updatedAtMs = Date.parse(task?.updated_at || "");
-  if (!Number.isFinite(updatedAtMs)) {
-    return false;
-  }
-  return Date.now() - updatedAtMs > ACTIVE_TASK_TTL_MS;
-}
-
-export async function getExecutiveTask(taskId = "") {
-  const normalizedTaskId = normalizeText(taskId);
-  if (!normalizedTaskId) {
-    return null;
-  }
-  const store = await loadStore();
-  const task = store.tasks[normalizedTaskId];
-  return task ? normalizeTask(task) : null;
-}
-
-export async function getActiveExecutiveTask(accountId = "", sessionKey = "") {
-  const indexKey = sessionIndexKey(accountId, sessionKey);
-  if (!indexKey) {
-    return null;
-  }
-  const store = await loadStore();
-  const taskId = store.active_by_session[indexKey];
-  if (!taskId) {
-    return null;
-  }
-  const task = normalizeTask(store.tasks[taskId] || {});
-  if (!task.id || isExpired(task) || task.status !== "active") {
-    delete store.active_by_session[indexKey];
-    await saveStore(store);
-    return null;
-  }
-  return task;
-}
-
-export async function startExecutiveTask({
-  accountId,
-  sessionKey,
-  chatId = "",
-  workflow = "executive",
-  workflowState = "active",
-  routingHint = "",
-  traceId = "",
-  objective = "",
-  primaryAgentId = "",
-  currentAgentId = "",
-  supportingAgentIds = [],
-  pendingQuestions = [],
-  constraints = [],
-  taskType = "search",
-  lifecycleState = "created",
-  goal = "",
-  successCriteria = [],
-  failureCriteria = [],
-  evidenceRequirements = [],
-  validationMethod = "",
-  retryPolicy = "",
-  escalationPolicy = "",
-  riskLevel = "medium",
-  workPlan = [],
-  agentOutputs = [],
-  meta = {},
-} = {}) {
-  const account = normalizeText(accountId);
-  const session = normalizeText(sessionKey);
-  if (!account || !session) {
-    return null;
-  }
-  const store = await loadStore();
-  const taskId = crypto.randomUUID();
-  const task = normalizeTask({
-    id: taskId,
-    account_id: account,
-    session_key: session,
-    chat_id: chatId,
-    workflow,
-    workflow_state: workflowState,
-    routing_hint: routingHint,
-    trace_id: traceId,
-    objective,
-    goal,
-    primary_agent_id: primaryAgentId,
-    current_agent_id: currentAgentId || primaryAgentId,
-    task_type: taskType,
-    lifecycle_state: lifecycleState,
-    supporting_agent_ids: supportingAgentIds,
-    pending_questions: pendingQuestions,
-    constraints,
-    success_criteria: successCriteria,
-    failure_criteria: failureCriteria,
-    evidence_requirements: evidenceRequirements,
-    validation_method: validationMethod,
-    retry_policy: retryPolicy,
-    escalation_policy: escalationPolicy,
-    risk_level: riskLevel,
-    work_plan: workPlan,
-    agent_outputs: agentOutputs,
-    meta,
-  });
-  store.tasks[taskId] = task;
-  store.active_by_session[sessionIndexKey(account, session)] = taskId;
-  await saveStore(store);
-  return task;
-}
-
-export async function updateExecutiveTask(taskId = "", patch = {}) {
-  const normalizedTaskId = normalizeText(taskId);
-  if (!normalizedTaskId) {
-    return null;
-  }
-  const store = await loadStore();
-  const current = normalizeTask(store.tasks[normalizedTaskId] || {});
-  if (!current.id) {
-    return null;
-  }
-  const next = normalizeTask({
+function buildPatchedTask(current = {}, patch = {}) {
+  return normalizeTask({
     ...current,
     ...patch,
     supporting_agent_ids:
@@ -467,171 +344,312 @@ export async function updateExecutiveTask(taskId = "", patch = {}) {
     },
     updated_at: nowIso(),
   });
-  store.tasks[normalizedTaskId] = next;
-  await saveStore(store);
-  return next;
+}
+
+async function mutateTaskRecord(taskId = "", updater = null) {
+  const normalizedTaskId = normalizeText(taskId);
+  if (!normalizedTaskId || typeof updater !== "function") {
+    return null;
+  }
+  return queueStoreMutation(async () => {
+    const store = await loadStore();
+    const current = normalizeTask(store.tasks[normalizedTaskId] || {});
+    if (!current.id) {
+      return null;
+    }
+    const patch = await updater(current);
+    if (!patch || typeof patch !== "object") {
+      return current;
+    }
+    const next = buildPatchedTask(current, patch);
+    store.tasks[normalizedTaskId] = next;
+    await saveStore(store);
+    return next;
+  });
+}
+
+export function useInMemoryExecutiveTaskStateStoreForTests() {
+  inMemoryStoreOverride = createStore();
+}
+
+export async function resetExecutiveTaskStateStoreForTests() {
+  storeMutationQueue = Promise.resolve();
+  if (inMemoryStoreOverride) {
+    inMemoryStoreOverride = createStore();
+    return;
+  }
+  await writeJsonFile(executiveTaskStateStorePath, createStore());
+}
+
+export function restoreExecutiveTaskStateStoreForTests() {
+  inMemoryStoreOverride = null;
+  storeMutationQueue = Promise.resolve();
+}
+
+function sessionIndexKey(accountId = "", sessionKey = "") {
+  const account = normalizeText(accountId);
+  const session = normalizeText(sessionKey);
+  return account && session ? `${account}::${session}` : "";
+}
+
+function isExpired(task) {
+  const updatedAtMs = Date.parse(task?.updated_at || "");
+  if (!Number.isFinite(updatedAtMs)) {
+    return false;
+  }
+  return Date.now() - updatedAtMs > ACTIVE_TASK_TTL_MS;
+}
+
+export async function getExecutiveTask(taskId = "") {
+  const normalizedTaskId = normalizeText(taskId);
+  if (!normalizedTaskId) {
+    return null;
+  }
+  const store = await loadStore();
+  const task = store.tasks[normalizedTaskId];
+  return task ? normalizeTask(task) : null;
+}
+
+export async function getActiveExecutiveTask(accountId = "", sessionKey = "") {
+  const indexKey = sessionIndexKey(accountId, sessionKey);
+  if (!indexKey) {
+    return null;
+  }
+  const store = await loadStore();
+  const taskId = store.active_by_session[indexKey];
+  if (!taskId) {
+    return null;
+  }
+  const task = normalizeTask(store.tasks[taskId] || {});
+  if (!task.id || isExpired(task) || task.status !== "active") {
+    await queueStoreMutation(async () => {
+      const latest = await loadStore();
+      if (latest.active_by_session[indexKey] !== taskId) {
+        return;
+      }
+      delete latest.active_by_session[indexKey];
+      await saveStore(latest);
+    });
+    return null;
+  }
+  return task;
+}
+
+export async function startExecutiveTask({
+  accountId,
+  sessionKey,
+  chatId = "",
+  workflow = "executive",
+  workflowState = "active",
+  routingHint = "",
+  traceId = "",
+  objective = "",
+  primaryAgentId = "",
+  currentAgentId = "",
+  supportingAgentIds = [],
+  pendingQuestions = [],
+  constraints = [],
+  taskType = "search",
+  lifecycleState = "created",
+  goal = "",
+  successCriteria = [],
+  failureCriteria = [],
+  evidenceRequirements = [],
+  validationMethod = "",
+  retryPolicy = "",
+  escalationPolicy = "",
+  riskLevel = "medium",
+  workPlan = [],
+  agentOutputs = [],
+  meta = {},
+} = {}) {
+  const account = normalizeText(accountId);
+  const session = normalizeText(sessionKey);
+  if (!account || !session) {
+    return null;
+  }
+  return queueStoreMutation(async () => {
+    const store = await loadStore();
+    const taskId = crypto.randomUUID();
+    const task = normalizeTask({
+      id: taskId,
+      account_id: account,
+      session_key: session,
+      chat_id: chatId,
+      workflow,
+      workflow_state: workflowState,
+      routing_hint: routingHint,
+      trace_id: traceId,
+      objective,
+      goal,
+      primary_agent_id: primaryAgentId,
+      current_agent_id: currentAgentId || primaryAgentId,
+      task_type: taskType,
+      lifecycle_state: lifecycleState,
+      supporting_agent_ids: supportingAgentIds,
+      pending_questions: pendingQuestions,
+      constraints,
+      success_criteria: successCriteria,
+      failure_criteria: failureCriteria,
+      evidence_requirements: evidenceRequirements,
+      validation_method: validationMethod,
+      retry_policy: retryPolicy,
+      escalation_policy: escalationPolicy,
+      risk_level: riskLevel,
+      work_plan: workPlan,
+      agent_outputs: agentOutputs,
+      meta,
+    });
+    store.tasks[taskId] = task;
+    store.active_by_session[sessionIndexKey(account, session)] = taskId;
+    await saveStore(store);
+    return task;
+  });
+}
+
+export async function updateExecutiveTask(taskId = "", patch = {}) {
+  return mutateTaskRecord(taskId, () => patch);
 }
 
 export async function appendExecutiveTaskTurn(taskId = "", turn = {}) {
-  const task = await getExecutiveTask(taskId);
-  if (!task) {
-    return null;
-  }
-  const nextTurns = [
-    ...task.turns,
-    {
-      role: normalizeText(turn.role || "user") || "user",
-      text: normalizeText(turn.text || ""),
-      agent_id: normalizeText(turn.agent_id || ""),
-      at: nowIso(),
-    },
-  ].slice(-12);
-  return updateExecutiveTask(taskId, { turns: nextTurns });
+  return mutateTaskRecord(taskId, (task) => ({
+    turns: [
+      ...task.turns,
+      {
+        role: normalizeText(turn.role || "user") || "user",
+        text: normalizeText(turn.text || ""),
+        agent_id: normalizeText(turn.agent_id || ""),
+        at: nowIso(),
+      },
+    ].slice(-12),
+  }));
 }
 
 export async function appendExecutiveTaskHandoff(taskId = "", handoff = {}) {
-  const task = await getExecutiveTask(taskId);
-  if (!task) {
-    return null;
-  }
-  const nextHandoffs = [
-    ...task.handoffs,
-    {
-      from_agent_id: normalizeText(handoff.from_agent_id || ""),
-      to_agent_id: normalizeText(handoff.to_agent_id || ""),
-      reason: normalizeText(handoff.reason || ""),
-      at: nowIso(),
-    },
-  ].slice(-12);
-  return updateExecutiveTask(taskId, { handoffs: nextHandoffs });
+  return mutateTaskRecord(taskId, (task) => ({
+    handoffs: [
+      ...task.handoffs,
+      {
+        from_agent_id: normalizeText(handoff.from_agent_id || ""),
+        to_agent_id: normalizeText(handoff.to_agent_id || ""),
+        reason: normalizeText(handoff.reason || ""),
+        at: nowIso(),
+      },
+    ].slice(-12),
+  }));
 }
 
 export async function appendExecutiveAgentOutput(taskId = "", output = {}) {
-  const task = await getExecutiveTask(taskId);
-  if (!task) {
-    return null;
-  }
-  const nextOutputs = [
-    ...task.agent_outputs,
-    {
-      agent_id: normalizeText(output.agent_id || ""),
-      task: normalizeText(output.task || ""),
-      summary: normalizeText(output.summary || ""),
-      status: normalizeText(output.status || "completed") || "completed",
-      at: nowIso(),
-    },
-  ]
-    .filter((item) => item.agent_id && item.summary)
-    .slice(-12);
-  return updateExecutiveTask(taskId, { agent_outputs: nextOutputs });
+  return mutateTaskRecord(taskId, (task) => ({
+    agent_outputs: [
+      ...task.agent_outputs,
+      {
+        agent_id: normalizeText(output.agent_id || ""),
+        task: normalizeText(output.task || ""),
+        summary: normalizeText(output.summary || ""),
+        status: normalizeText(output.status || "completed") || "completed",
+        at: nowIso(),
+      },
+    ]
+      .filter((item) => item.agent_id && item.summary)
+      .slice(-12),
+  }));
 }
 
 export async function appendExecutiveTaskEvidence(taskId = "", evidence = {}) {
-  const task = await getExecutiveTask(taskId);
-  if (!task) {
-    return null;
-  }
-  const nextEvidence = [
-    ...task.evidence,
-    {
-      type: normalizeText(evidence.type || ""),
-      summary: normalizeText(evidence.summary || ""),
-      status: normalizeText(evidence.status || "present") || "present",
-      at: nowIso(),
-    },
-  ].filter((item) => item.type).slice(-24);
-  return updateExecutiveTask(taskId, { evidence: nextEvidence });
+  return mutateTaskRecord(taskId, (task) => ({
+    evidence: [
+      ...task.evidence,
+      {
+        type: normalizeText(evidence.type || ""),
+        summary: normalizeText(evidence.summary || ""),
+        status: normalizeText(evidence.status || "present") || "present",
+        at: nowIso(),
+      },
+    ].filter((item) => item.type).slice(-24),
+  }));
 }
 
 export async function appendExecutiveTaskVerification(taskId = "", verification = {}) {
-  const task = await getExecutiveTask(taskId);
-  if (!task) {
-    return null;
-  }
-  const nextVerifications = [
-    ...task.verifications,
-    {
-      verifier: normalizeText(verification.verifier || "rule_based_v1"),
-      task_type: normalizeText(verification.task_type || task.task_type || "search"),
-      pass: verification.pass === true,
-      issues: normalizeList(verification.issues || [], 12),
-      checklist: normalizeList(verification.checklist || [], 12),
-      required_evidence_present: verification.required_evidence_present !== false,
-      fake_completion: verification.fake_completion === true,
-      overclaim: verification.overclaim === true,
-      partial_completion: verification.partial_completion === true,
-      execution_policy_state: normalizeText(verification.execution_policy_state || ""),
-      execution_policy_reason: normalizeText(verification.execution_policy_reason || ""),
-      at: nowIso(),
-    },
-  ].slice(-12);
-  return updateExecutiveTask(taskId, { verifications: nextVerifications });
+  return mutateTaskRecord(taskId, (task) => ({
+    verifications: [
+      ...task.verifications,
+      {
+        verifier: normalizeText(verification.verifier || "rule_based_v1"),
+        task_type: normalizeText(verification.task_type || task.task_type || "search"),
+        pass: verification.pass === true,
+        issues: normalizeList(verification.issues || [], 12),
+        checklist: normalizeList(verification.checklist || [], 12),
+        required_evidence_present: verification.required_evidence_present !== false,
+        fake_completion: verification.fake_completion === true,
+        overclaim: verification.overclaim === true,
+        partial_completion: verification.partial_completion === true,
+        execution_policy_state: normalizeText(verification.execution_policy_state || ""),
+        execution_policy_reason: normalizeText(verification.execution_policy_reason || ""),
+        at: nowIso(),
+      },
+    ].slice(-12),
+  }));
 }
 
 export async function appendExecutiveTaskReflection(taskId = "", reflection = {}) {
-  const task = await getExecutiveTask(taskId);
-  if (!task) {
-    return null;
-  }
-  const nextReflections = [
-    ...task.reflections,
-    {
-      created_at: reflection.created_at || nowIso(),
-      task_type: normalizeText(reflection.task_type || task.task_type),
-      task_input: normalizeText(reflection.task_input || reflection.what_was_asked || ""),
-      action_taken: normalizeText(reflection.action_taken || reflection.what_was_done || ""),
-      what_went_wrong: normalizeList(reflection.what_went_wrong || [], 12),
-      missing_elements: normalizeList(reflection.missing_elements || reflection.what_was_missing || [], 12),
-      error_type: normalizeText(reflection.error_type || ""),
-    },
-  ].slice(-12);
-  return updateExecutiveTask(taskId, { reflections: nextReflections });
+  return mutateTaskRecord(taskId, (task) => ({
+    reflections: [
+      ...task.reflections,
+      {
+        created_at: reflection.created_at || nowIso(),
+        task_type: normalizeText(reflection.task_type || task.task_type),
+        task_input: normalizeText(reflection.task_input || reflection.what_was_asked || ""),
+        action_taken: normalizeText(reflection.action_taken || reflection.what_was_done || ""),
+        what_went_wrong: normalizeList(reflection.what_went_wrong || [], 12),
+        missing_elements: normalizeList(reflection.missing_elements || reflection.what_was_missing || [], 12),
+        error_type: normalizeText(reflection.error_type || ""),
+      },
+    ].slice(-12),
+  }));
 }
 
 export async function appendExecutiveTaskImprovementProposal(taskId = "", proposal = {}) {
-  const task = await getExecutiveTask(taskId);
-  if (!task) {
-    return null;
-  }
-  const nextProposals = [
-    ...task.improvement_proposals,
-    {
-      id: normalizeText(proposal.id || ""),
-      category: normalizeText(proposal.category || ""),
-      mode: normalizeText(proposal.mode || ""),
-      title: normalizeText(proposal.title || ""),
-      description: normalizeText(proposal.description || ""),
-      target: normalizeText(proposal.target || ""),
-      status: normalizeText(proposal.status || "proposed") || "proposed",
-      decision_actor: normalizeText(proposal.decision_actor || ""),
-      decision_at: proposal.decision_at || null,
-      applied_by: normalizeText(proposal.applied_by || ""),
-      applied_at: proposal.applied_at || null,
-      created_at: proposal.created_at || nowIso(),
-    },
-  ].filter((item) => item.title).slice(-12);
-  return updateExecutiveTask(taskId, { improvement_proposals: nextProposals });
+  return mutateTaskRecord(taskId, (task) => ({
+    improvement_proposals: [
+      ...task.improvement_proposals,
+      {
+        id: normalizeText(proposal.id || ""),
+        category: normalizeText(proposal.category || ""),
+        mode: normalizeText(proposal.mode || ""),
+        title: normalizeText(proposal.title || ""),
+        description: normalizeText(proposal.description || ""),
+        target: normalizeText(proposal.target || ""),
+        status: normalizeText(proposal.status || "proposed") || "proposed",
+        decision_actor: normalizeText(proposal.decision_actor || ""),
+        decision_at: proposal.decision_at || null,
+        applied_by: normalizeText(proposal.applied_by || ""),
+        applied_at: proposal.applied_at || null,
+        created_at: proposal.created_at || nowIso(),
+      },
+    ].filter((item) => item.title).slice(-12),
+  }));
 }
 
 export async function updateExecutiveTaskImprovementProposal(taskId = "", proposalId = "", patch = {}) {
-  const task = await getExecutiveTask(taskId);
-  if (!task || !proposalId) {
+  if (!proposalId) {
     return null;
   }
-  const nextProposals = task.improvement_proposals.map((item) => {
-    if (normalizeText(item.id) !== normalizeText(proposalId)) {
-      return item;
-    }
-    return {
-      ...item,
-      status: normalizeText(patch.status || item.status || "proposed") || "proposed",
-      decision_actor: normalizeText(patch.decision_actor || item.decision_actor || ""),
-      decision_at: patch.decision_at || item.decision_at || null,
-      applied_by: normalizeText(patch.applied_by || item.applied_by || ""),
-      applied_at: patch.applied_at || item.applied_at || null,
-    };
-  });
-  return updateExecutiveTask(taskId, { improvement_proposals: nextProposals });
+  return mutateTaskRecord(taskId, (task) => ({
+    improvement_proposals: task.improvement_proposals.map((item) => {
+      if (normalizeText(item.id) !== normalizeText(proposalId)) {
+        return item;
+      }
+      return {
+        ...item,
+        status: normalizeText(patch.status || item.status || "proposed") || "proposed",
+        decision_actor: normalizeText(patch.decision_actor || item.decision_actor || ""),
+        decision_at: patch.decision_at || item.decision_at || null,
+        applied_by: normalizeText(patch.applied_by || item.applied_by || ""),
+        applied_at: patch.applied_at || item.applied_at || null,
+      };
+    }),
+  }));
 }
 
 export async function clearActiveExecutiveTask(accountId = "", sessionKey = "", { expectedTaskId = "" } = {}) {
@@ -639,13 +657,15 @@ export async function clearActiveExecutiveTask(accountId = "", sessionKey = "", 
   if (!indexKey) {
     return null;
   }
-  const store = await loadStore();
-  const activeTaskId = normalizeText(store.active_by_session[indexKey] || "");
-  const expected = normalizeText(expectedTaskId);
-  if (expected && activeTaskId && activeTaskId !== expected) {
-    return false;
-  }
-  delete store.active_by_session[indexKey];
-  await saveStore(store);
-  return true;
+  return queueStoreMutation(async () => {
+    const store = await loadStore();
+    const activeTaskId = normalizeText(store.active_by_session[indexKey] || "");
+    const expected = normalizeText(expectedTaskId);
+    if (expected && activeTaskId && activeTaskId !== expected) {
+      return false;
+    }
+    delete store.active_by_session[indexKey];
+    await saveStore(store);
+    return true;
+  });
 }

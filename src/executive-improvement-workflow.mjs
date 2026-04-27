@@ -19,6 +19,55 @@ function createStore() {
   return { items: [] };
 }
 
+let inMemoryStoreOverride = null;
+const storeMutationQueueByPath = new Map();
+
+function cloneStorePayload(store = createStore()) {
+  return {
+    items: Array.isArray(store?.items)
+      ? store.items.map((item) => (item && typeof item === "object" ? { ...item } : item))
+      : [],
+  };
+}
+
+function getInMemoryStore(filePath) {
+  if (!inMemoryStoreOverride) {
+    return null;
+  }
+  if (!Object.hasOwn(inMemoryStoreOverride, filePath)) {
+    return null;
+  }
+  return cloneStorePayload(inMemoryStoreOverride[filePath]);
+}
+
+function setInMemoryStore(filePath, store = createStore()) {
+  if (!inMemoryStoreOverride) {
+    return false;
+  }
+  inMemoryStoreOverride[filePath] = cloneStorePayload(store);
+  return true;
+}
+
+async function queueStoreMutation(filePath, operation) {
+  const previous = storeMutationQueueByPath.get(filePath) || Promise.resolve();
+  let settled = false;
+  const current = previous
+    .catch(() => {})
+    .then(() => operation());
+  storeMutationQueueByPath.set(filePath, current);
+  try {
+    const result = await current;
+    settled = true;
+    return result;
+  } finally {
+    if (storeMutationQueueByPath.get(filePath) === current) {
+      storeMutationQueueByPath.delete(filePath);
+    } else if (!settled) {
+      storeMutationQueueByPath.delete(filePath);
+    }
+  }
+}
+
 function normalizeInteger(value, fallback = 0, min = 0) {
   const parsed = Number.parseInt(String(value ?? ""), 10);
   if (!Number.isFinite(parsed)) {
@@ -238,11 +287,15 @@ function toVerificationStatus(effectStatus = "") {
 }
 
 async function loadStore(filePath) {
+  const inMemoryStore = getInMemoryStore(filePath);
+  if (inMemoryStore) {
+    return inMemoryStore;
+  }
   const raw = await readJsonFile(filePath);
   if (!raw || typeof raw !== "object" || !Array.isArray(raw.items)) {
     return createStore();
   }
-  return raw;
+  return cloneStorePayload(raw);
 }
 
 function findLatestProposalIndex(store, proposalId = "") {
@@ -259,7 +312,49 @@ function findLatestProposalIndex(store, proposalId = "") {
 }
 
 async function saveStore(filePath, store) {
+  if (setInMemoryStore(filePath, store)) {
+    return;
+  }
   await writeJsonFile(filePath, store);
+}
+
+export function useInMemoryExecutiveImprovementWorkflowStoresForTests() {
+  inMemoryStoreOverride = {
+    [executiveReflectionStorePath]: createStore(),
+    [executiveImprovementStorePath]: createStore(),
+  };
+}
+
+export async function resetExecutiveImprovementWorkflowStoresForTests() {
+  if (!inMemoryStoreOverride) {
+    await Promise.all([
+      writeJsonFile(executiveReflectionStorePath, createStore()),
+      writeJsonFile(executiveImprovementStorePath, createStore()),
+    ]);
+    return;
+  }
+  inMemoryStoreOverride[executiveReflectionStorePath] = createStore();
+  inMemoryStoreOverride[executiveImprovementStorePath] = createStore();
+}
+
+export function replaceExecutiveImprovementWorkflowStoresForTests({
+  reflectionStore = null,
+  improvementStore = null,
+} = {}) {
+  if (!inMemoryStoreOverride) {
+    return;
+  }
+  if (reflectionStore && typeof reflectionStore === "object") {
+    inMemoryStoreOverride[executiveReflectionStorePath] = cloneStorePayload(reflectionStore);
+  }
+  if (improvementStore && typeof improvementStore === "object") {
+    inMemoryStoreOverride[executiveImprovementStorePath] = cloneStorePayload(improvementStore);
+  }
+}
+
+export function restoreExecutiveImprovementWorkflowStoresForTests() {
+  inMemoryStoreOverride = null;
+  storeMutationQueueByPath.clear();
 }
 
 function normalizeReflectionEntry(entry = {}) {
@@ -347,16 +442,37 @@ export async function archiveExecutiveReflection({
   if (!reflection || typeof reflection !== "object") {
     return null;
   }
-  const store = await loadStore(executiveReflectionStorePath);
-  const record = normalizeReflectionEntry({
-    ...reflection,
-    task_id: taskId || reflection.task_id,
-    account_id: accountId,
-    session_key: sessionKey,
+  return queueStoreMutation(executiveReflectionStorePath, async () => {
+    const store = await loadStore(executiveReflectionStorePath);
+    const record = normalizeReflectionEntry({
+      ...reflection,
+      task_id: taskId || reflection.task_id,
+      account_id: accountId,
+      session_key: sessionKey,
+    });
+    store.items = [...store.items, record].slice(-500);
+    await saveStore(executiveReflectionStorePath, store);
+    return record;
   });
-  store.items = [...store.items, record].slice(-500);
-  await saveStore(executiveReflectionStorePath, store);
-  return record;
+}
+
+export async function listArchivedExecutiveReflections({
+  accountId = "",
+  sessionKey = "",
+  taskId = "",
+  limit = 50,
+} = {}) {
+  const store = await loadStore(executiveReflectionStorePath);
+  const normalizedAccountId = cleanText(accountId);
+  const normalizedSessionKey = cleanText(sessionKey);
+  const normalizedTaskId = cleanText(taskId);
+  return store.items
+    .map((item) => normalizeReflectionEntry(item))
+    .filter((item) =>
+      (!normalizedAccountId || item.account_id === normalizedAccountId)
+      && (!normalizedSessionKey || item.session_key === normalizedSessionKey)
+      && (!normalizedTaskId || item.task_id === normalizedTaskId))
+    .slice(-Math.max(1, limit));
 }
 
 function buildAppliedRecord(current = {}, actor = "system") {
@@ -510,22 +626,29 @@ export async function registerImprovementWorkflowProposals({
   reflection = null,
   proposals = [],
 } = {}) {
-  const store = await loadStore(executiveImprovementStorePath);
-  const persisted = [];
-  for (const proposal of Array.isArray(proposals) ? proposals : []) {
-    const record = createRegisteredProposalRecord({
-      proposal,
-      taskId,
-      accountId,
-      sessionKey,
-      reflectionId,
-      reflection,
-    });
-    if (!record) {
-      continue;
+  const persisted = await queueStoreMutation(executiveImprovementStorePath, async () => {
+    const store = await loadStore(executiveImprovementStorePath);
+    const nextPersisted = [];
+    for (const proposal of Array.isArray(proposals) ? proposals : []) {
+      const record = createRegisteredProposalRecord({
+        proposal,
+        taskId,
+        accountId,
+        sessionKey,
+        reflectionId,
+        reflection,
+      });
+      if (!record) {
+        continue;
+      }
+      store.items.push(record);
+      nextPersisted.push(record);
     }
-    store.items.push(record);
-    persisted.push(record);
+    store.items = store.items.slice(-500);
+    await saveStore(executiveImprovementStorePath, store);
+    return nextPersisted;
+  });
+  for (const record of persisted) {
     if (record.status === "applied") {
       const effectStatus = cleanText(record.effect_evidence?.status) || "same";
       await appendApprovedMemory({
@@ -557,8 +680,6 @@ export async function registerImprovementWorkflowProposals({
       });
     }
   }
-  store.items = store.items.slice(-500);
-  await saveStore(executiveImprovementStorePath, store);
   return persisted;
 }
 
@@ -616,19 +737,25 @@ async function syncTaskImprovementLifecycle(taskId = "") {
 }
 
 async function updateProposalRecord(proposalId, updater) {
-  const store = await loadStore(executiveImprovementStorePath);
-  const index = findLatestProposalIndex(store, proposalId);
-  if (index < 0) {
+  const next = await queueStoreMutation(executiveImprovementStorePath, async () => {
+    const store = await loadStore(executiveImprovementStorePath);
+    const index = findLatestProposalIndex(store, proposalId);
+    if (index < 0) {
+      return null;
+    }
+    const current = normalizeImprovementEntry(store.items[index]);
+    const updated = normalizeImprovementEntry({
+      ...current,
+      ...updater(current),
+      updated_at: nowIso(),
+    });
+    store.items[index] = updated;
+    await saveStore(executiveImprovementStorePath, store);
+    return updated;
+  });
+  if (!next) {
     return null;
   }
-  const current = normalizeImprovementEntry(store.items[index]);
-  const next = normalizeImprovementEntry({
-    ...current,
-    ...updater(current),
-    updated_at: nowIso(),
-  });
-  store.items[index] = next;
-  await saveStore(executiveImprovementStorePath, store);
   await syncTaskProposalStatus(next);
   await syncTaskImprovementLifecycle(next.task_id);
   return next;
