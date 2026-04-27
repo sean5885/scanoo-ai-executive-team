@@ -611,8 +611,10 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/scripts/executive-evolution-replay-pack.mjs`
 - Current truth:
   - execution reflection remains the checked-in source for per-step `success / deviation / reason`
+  - `executive-task-state.mjs` write paths now run through one in-process mutation queue, and append-style updates are applied from the latest task snapshot inside that queue, so overlapping same-process closed-loop updates are less likely to drop prior appended evidence/verifier/reflection entries
   - top-level reflection records now also classify `missing_access_token`, `permission_denied`, and `document_not_found` as `reason = missing_info` with `deviation = true`
   - finalized executive turns now archive a local evolution snapshot alongside the reflection record
+  - `executive-improvement-workflow.mjs` now serializes reflection/proposal persistence per backing store file and provides task-scoped archived reflection readback (`listArchivedExecutiveReflections`) so consumers can avoid global latest-item assumptions under concurrent writes
   - improvement workflow records now include strategy version metadata (`strategy_version`, `active_strategy_version`, `strategy_history`) for apply/rollback traceability
   - low-risk learning-loop proposals can auto-apply, but high-risk categories remain human-gated (`human_approval`)
   - applied improvements now attach additive `effect_evidence` with before/after metric comparison and `improvement_delta`

@@ -1,17 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs/promises";
 
-import {
-  executiveApprovedMemoryStorePath,
-  executiveImprovementStorePath,
-  executiveReflectionStorePath,
-} from "../src/config.mjs";
 import { buildLifecycleTransition } from "../src/executive-lifecycle.mjs";
 import {
   applyImprovementWorkflowProposal,
   archiveExecutiveReflection,
   listImprovementWorkflowProposals,
+  replaceExecutiveImprovementWorkflowStoresForTests,
   rollbackImprovementWorkflowProposal,
   registerImprovementWorkflowProposals,
   resolveImprovementWorkflowProposal,
@@ -24,38 +19,14 @@ import {
 } from "../src/executive-task-state.mjs";
 import { setupExecutiveTaskStateTestHarness } from "./helpers/executive-task-state-harness.mjs";
 
-setupExecutiveTaskStateTestHarness();
+setupExecutiveTaskStateTestHarness({
+  includeImprovementWorkflowStores: true,
+  includeExecutiveMemoryStores: true,
+});
 
-async function snapshotFile(filePath) {
-  try {
-    return await fs.readFile(filePath, "utf8");
-  } catch {
-    return null;
-  }
-}
-
-async function restoreFile(filePath, content) {
-  if (content == null) {
-    await fs.rm(filePath, { force: true });
-    return;
-  }
-  await fs.writeFile(filePath, content, "utf8");
-}
-
-test("improvement workflow archives reflections and supports approve/apply loop", async (t) => {
-  const files = [
-    executiveReflectionStorePath,
-    executiveImprovementStorePath,
-    executiveApprovedMemoryStorePath,
-  ];
-  const snapshots = await Promise.all(files.map((filePath) => snapshotFile(filePath)));
-  t.after(async () => {
-    await Promise.all(files.map((filePath, index) => restoreFile(filePath, snapshots[index])));
-  });
-
-  await fs.writeFile(
-    executiveImprovementStorePath,
-    `${JSON.stringify({
+test("improvement workflow archives reflections and supports approve/apply loop", async () => {
+  replaceExecutiveImprovementWorkflowStoresForTests({
+    improvementStore: {
       items: [{
         id: "proposal-1",
         task_id: "stale-task",
@@ -76,9 +47,8 @@ test("improvement workflow archives reflections and supports approve/apply loop"
         created_at: "2026-01-01T00:00:00.000Z",
         updated_at: "2026-01-01T00:00:00.000Z",
       }],
-    }, null, 2)}\n`,
-    "utf8",
-  );
+    },
+  });
 
   const task = await startExecutiveTask({
     accountId: "acct-1",
@@ -209,15 +179,7 @@ test("improvement workflow archives reflections and supports approve/apply loop"
   assert.equal(finalTask.lifecycle_state, "improved");
 });
 
-test("learning auto-apply proposal rolls back on regressed replay delta with strategy version history", async (t) => {
-  const files = [
-    executiveImprovementStorePath,
-  ];
-  const snapshots = await Promise.all(files.map((filePath) => snapshotFile(filePath)));
-  t.after(async () => {
-    await Promise.all(files.map((filePath, index) => restoreFile(filePath, snapshots[index])));
-  });
-
+test("learning auto-apply proposal rolls back on regressed replay delta with strategy version history", async () => {
   const proposals = await registerImprovementWorkflowProposals({
     accountId: "acct-learning-regress",
     sessionKey: "sess-learning-regress",
