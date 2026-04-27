@@ -1,4 +1,8 @@
 import { resolveCompanyBrainWriteIntake } from "./company-brain-write-intake.mjs";
+import {
+  deriveCompanyBrainLifecycleState,
+  isCompanyBrainLifecycleTransitionAllowed,
+} from "./company-brain-lifecycle-contract.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import {
   upsertCompanyBrainApprovedKnowledge,
@@ -38,6 +42,38 @@ function parseConflictItems(row = {}) {
   } catch {
     return [];
   }
+}
+
+function resolveApprovalState(accountId = "", docId = "") {
+  return getCompanyBrainApprovalStateFromRuntimeSync({
+    accountId,
+    docId,
+  }) || {
+    review_state: null,
+    approval: null,
+  };
+}
+
+function deriveCurrentLifecycleState(approvalState = null) {
+  return deriveCompanyBrainLifecycleState({
+    approvalState: approvalState && typeof approvalState === "object" ? approvalState : {},
+  });
+}
+
+function isReviewLifecycleTransitionAllowed({
+  currentLifecycleState = "",
+  targetReviewStatus = "",
+} = {}) {
+  if (!cleanText(currentLifecycleState) || !normalizeReviewStatus(targetReviewStatus)) {
+    return false;
+  }
+  if (cleanText(currentLifecycleState) === cleanText(targetReviewStatus)) {
+    return true;
+  }
+  return isCompanyBrainLifecycleTransitionAllowed({
+    from: currentLifecycleState,
+    to: targetReviewStatus,
+  });
 }
 
 export function parseCompanyBrainReviewState(row = {}) {
@@ -115,6 +151,36 @@ export function stageCompanyBrainReviewState({
     return buildUnifiedResult(false, {}, "not_found");
   }
 
+  const approvalState = resolveApprovalState(normalizedAccountId, normalizedDocId);
+  const currentReviewState = approvalState.review_state || null;
+  const currentLifecycleState = deriveCurrentLifecycleState(approvalState);
+  const transitionAllowed = isReviewLifecycleTransitionAllowed({
+    currentLifecycleState,
+    targetReviewStatus: normalizedReviewStatus,
+  });
+  if (!transitionAllowed) {
+    return buildUnifiedResult(false, {
+      doc_id: normalizedDocId,
+      review_state: currentReviewState,
+      approval: approvalState.approval || null,
+      lifecycle: {
+        from: currentLifecycleState,
+        to: normalizedReviewStatus,
+      },
+    }, "lifecycle_transition_denied");
+  }
+  if (
+    currentReviewState?.status === normalizedReviewStatus
+    && cleanText(currentLifecycleState) === cleanText(normalizedReviewStatus)
+  ) {
+    return buildUnifiedResult(true, {
+      doc_id: normalizedDocId,
+      review_state: currentReviewState,
+      approval: approvalState.approval || null,
+      idempotent: true,
+    });
+  }
+
   const stored = upsertCompanyBrainReviewState({
     account_id: normalizedAccountId,
     doc_id: normalizedDocId,
@@ -128,6 +194,7 @@ export function stageCompanyBrainReviewState({
   return buildUnifiedResult(true, {
     doc_id: normalizedDocId,
     review_state: parseCompanyBrainReviewState(stored),
+    approval: approvalState.approval || null,
   });
 }
 
@@ -212,14 +279,46 @@ export function resolveCompanyBrainReviewDecision({
     return buildUnifiedResult(false, {}, "not_found");
   }
 
-  const existing = getCompanyBrainApprovalStateFromRuntimeSync({
-    accountId: normalizedAccountId,
-    docId: normalizedDocId,
-  })?.review_state;
+  const approvalState = resolveApprovalState(normalizedAccountId, normalizedDocId);
+  const existing = approvalState.review_state || null;
+  const targetReviewStatus = approved ? "approved" : "rejected";
+  if (!existing?.status) {
+    return buildUnifiedResult(false, {
+      doc_id: normalizedDocId,
+      approval: approvalState.approval || null,
+      review_state: null,
+    }, "approval_required");
+  }
+  if (normalizeReviewStatus(existing.status) === targetReviewStatus) {
+    return buildUnifiedResult(true, {
+      doc_id: normalizedDocId,
+      review_state: existing,
+      approval: approvalState.approval || null,
+      idempotent: true,
+    });
+  }
+
+  const currentLifecycleState = deriveCurrentLifecycleState(approvalState);
+  const transitionAllowed = isReviewLifecycleTransitionAllowed({
+    currentLifecycleState,
+    targetReviewStatus,
+  });
+  if (!transitionAllowed) {
+    return buildUnifiedResult(false, {
+      doc_id: normalizedDocId,
+      approval: approvalState.approval || null,
+      review_state: existing,
+      lifecycle: {
+        from: currentLifecycleState,
+        to: targetReviewStatus,
+      },
+    }, "approval_required");
+  }
+
   const stored = upsertCompanyBrainReviewState({
     account_id: normalizedAccountId,
     doc_id: normalizedDocId,
-    review_status: approved ? "approved" : "rejected",
+    review_status: targetReviewStatus,
     source_stage: cleanText(existing?.source_stage) || "mirror",
     proposed_action: cleanText(existing?.proposed_action) || "review_doc",
     conflict_items: Array.isArray(existing?.conflict_items) ? existing.conflict_items : [],
@@ -231,6 +330,7 @@ export function resolveCompanyBrainReviewDecision({
   return buildUnifiedResult(true, {
     doc_id: normalizedDocId,
     review_state: parseCompanyBrainReviewState(stored),
+    approval: approvalState.approval || null,
   });
 }
 
@@ -257,15 +357,21 @@ export function promoteApprovedCompanyBrainKnowledge({
     return buildUnifiedResult(false, {}, "not_found");
   }
 
-  const reviewState = getCompanyBrainApprovalStateFromRuntimeSync({
-    accountId: normalizedAccountId,
-    docId: normalizedDocId,
-  })?.review_state || null;
+  const approvalState = resolveApprovalState(normalizedAccountId, normalizedDocId);
+  const reviewState = approvalState.review_state || null;
   if (reviewState?.status !== "approved") {
     return buildUnifiedResult(false, {
       doc_id: normalizedDocId,
       review_state: reviewState,
     }, "approval_required");
+  }
+  if (approvalState.approval?.status === "approved") {
+    return buildUnifiedResult(true, {
+      doc_id: normalizedDocId,
+      review_state: reviewState,
+      approval: approvalState.approval,
+      idempotent: true,
+    });
   }
 
   const stored = upsertCompanyBrainApprovedKnowledge({
