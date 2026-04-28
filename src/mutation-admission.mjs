@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { cleanText } from "./message-intent-utils.mjs";
+import { getRequiredMutationVerifierProfile } from "./mutation-verifier.mjs";
 import { decideWriteGuard } from "./write-guard.mjs";
 import {
   listExternalMutationSpecs,
@@ -47,6 +48,13 @@ export const MUTATION_ADMISSION_RESOURCE_TYPES = Object.freeze([
     ...EXTERNAL_MUTATION_RESOURCE_TYPES,
     "company_brain_doc",
   ]),
+]);
+export const MUTATION_HIGH_RISK_WRITE_ACTION_TYPES = Object.freeze([
+  "meeting_confirm_write",
+  "rewrite_apply",
+  "company_brain_apply",
+  "ingest_learning_doc",
+  "update_learning_state",
 ]);
 
 const MUTATION_ADMISSION_READY_ROUTE_FIXTURES = Object.freeze([
@@ -946,6 +954,10 @@ export function buildIngestCompanyBrainDocCanonicalRequest({
 export function listMutationAdmissionReadyRoutes() {
   return MUTATION_ADMISSION_READY_ROUTE_FIXTURES.map((entry) => ({
     ...entry,
+    high_risk: MUTATION_HIGH_RISK_WRITE_ACTION_TYPES.includes(cleanText(entry?.action_type || "")),
+    verifier_gate_required: Boolean(getRequiredMutationVerifierProfile({
+      action_type: cleanText(entry?.action_type || ""),
+    })),
   }));
 }
 
@@ -983,12 +995,25 @@ export function admitMutation({
   const request = assertCanonicalMutationRequestSchema(canonicalRequest);
   const resolvedTraceId = normalizeNullableText(traceId) || buildTraceId(request);
   const policySnapshot = buildPolicySnapshotFromCanonicalRequest(request);
-  const guardResult = callMutationAdmissionWriteGuard({
+  let guardResult = callMutationAdmissionWriteGuard({
     canonicalRequest: request,
     policySnapshot,
     logger,
     traceId: resolvedTraceId,
   });
+  const requiredVerifierProfile = getRequiredMutationVerifierProfile(request);
+  if (
+    guardResult.decision === "allow"
+    && requiredVerifierProfile
+    && request.context.verifier_completed !== true
+  ) {
+    guardResult = sanitizeGuardResult({
+      decision: "deny",
+      reason: "verifier_incomplete",
+      error_code: "write_guard_verifier_incomplete",
+      policy_enforcement: guardResult.policy_enforcement,
+    });
+  }
 
   return Object.freeze({
     allowed: guardResult.decision === "allow",

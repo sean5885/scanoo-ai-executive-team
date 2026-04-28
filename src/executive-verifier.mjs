@@ -56,6 +56,27 @@ function validateBasicSections(text = "", keywords = []) {
   return keywords.every((keyword) => normalized.includes(keyword));
 }
 
+function isObjectRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value);
+}
+
+function hasExpectedType(value, expectedType = "") {
+  switch (expectedType) {
+    case "array":
+      return Array.isArray(value);
+    case "string":
+      return typeof value === "string";
+    case "number":
+      return typeof value === "number" && Number.isFinite(value);
+    case "boolean":
+      return typeof value === "boolean";
+    case "object":
+      return isObjectRecord(value);
+    default:
+      return true;
+  }
+}
+
 function buildExecutionJournal({
   executionJournal = null,
   replyText = "",
@@ -154,6 +175,41 @@ export function verifyTaskCompletion({
     execution_policy_reason: "",
     pass: false,
   };
+
+  if (normalizedExpectedOutputSchema && isObjectRecord(normalizedExpectedOutputSchema)) {
+    const structuredObject = isObjectRecord(normalizedStructuredResult) ? normalizedStructuredResult : null;
+    if (!structuredObject) {
+      issues.push("schema_invalid");
+      result.partial_completion = true;
+    } else {
+      const missingFields = [];
+      const invalidTypes = [];
+      for (const [field, expectedType] of Object.entries(normalizedExpectedOutputSchema)) {
+        const value = structuredObject[field];
+        if (value === undefined || value === null) {
+          missingFields.push(field);
+          continue;
+        }
+        if (!hasExpectedType(value, cleanText(expectedType))) {
+          invalidTypes.push(field);
+        }
+      }
+      if (missingFields.length > 0) {
+        issues.push("missing_fields");
+        for (const field of missingFields) {
+          issues.push(`missing_field:${field}`);
+        }
+        result.partial_completion = true;
+      }
+      if (invalidTypes.length > 0) {
+        issues.push("schema_invalid");
+        for (const field of invalidTypes) {
+          issues.push(`field_type_invalid:${field}`);
+        }
+        result.partial_completion = true;
+      }
+    }
+  }
 
   if (toolRequired && dispatchedActions.length === 0) {
     issues.push("tool_dispatch_missing");

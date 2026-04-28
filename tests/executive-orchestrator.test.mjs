@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createTestDbHarness } from "./utils/test-db-factory.mjs";
+import { setupExecutiveTaskStateTestHarness } from "./helpers/executive-task-state-harness.mjs";
 import { FALLBACK_DISABLED } from "../src/planner-error-codes.mjs";
 
 const testDb = await createTestDbHarness();
@@ -9,10 +10,19 @@ const {
   buildSupportingContext,
   buildVisibleSupportingOutputs,
   buildVisibleWorkPlan,
+  ensureDocRewriteWorkflowTask,
   executeExecutiveTurn,
   executeWorkItemsSequentially,
+  finalizeDocRewriteWorkflowTask,
+  markDocRewriteApplying,
   normalizeWorkPlan,
 } = await import("../src/executive-orchestrator.mjs");
+const {
+  getActiveExecutiveTask,
+  updateExecutiveTask,
+} = await import("../src/executive-task-state.mjs");
+
+setupExecutiveTaskStateTestHarness();
 
 test.after(() => {
   testDb.close();
@@ -354,4 +364,65 @@ test("executeExecutiveTurn planner fallback-disabled reply is natural language a
       summary: "如需繼續，必須先提供更明確的 agent 指令或讓 planner 重新產生合法 JSON。",
     },
   });
+});
+
+test("workflow finalize fail-soft does not keep failed terminal state after verifier rejection", async () => {
+  const scope = {
+    session_key: `doc-rewrite-orchestrator-${Date.now()}`,
+    trace_id: "trace-orchestrator-fail-soft",
+  };
+  const event = {
+    trace_id: "trace-orchestrator-fail-soft",
+    message: {
+      chat_id: "chat-orchestrator-fail-soft",
+      message_id: "msg-orchestrator-fail-soft",
+    },
+  };
+  await ensureDocRewriteWorkflowTask({
+    accountId: "acct-orchestrator-fail-soft",
+    documentId: "doc-orchestrator-fail-soft",
+    documentTitle: "規格草稿",
+    scope,
+    event,
+    workflowState: "awaiting_review",
+    routingHint: "doc_rewrite_review_pending",
+  });
+  await markDocRewriteApplying({
+    accountId: "acct-orchestrator-fail-soft",
+    scope,
+    event,
+    meta: {
+      confirmation_id: "confirm-orchestrator-fail-soft",
+    },
+  });
+  const applyingTask = await getActiveExecutiveTask("acct-orchestrator-fail-soft", scope.session_key);
+  await updateExecutiveTask(applyingTask.id, {
+    execution_journal: {
+      tool_required: true,
+      dispatched_actions: [],
+      fallback_used: false,
+      raw_evidence: [],
+    },
+  });
+  const finalized = await finalizeDocRewriteWorkflowTask({
+    accountId: "acct-orchestrator-fail-soft",
+    scope,
+    structuredResult: {
+      patch_plan: [],
+      structure_preserved: false,
+      retry_count: 3,
+      max_retries: 1,
+    },
+    extraEvidence: [
+      { type: "file_updated", summary: "document:doc-orchestrator-fail-soft" },
+    ],
+  });
+
+  assert.equal(finalized?.verification?.pass, false);
+  assert.notEqual(finalized?.task?.lifecycle_state, "completed");
+  assert.notEqual(finalized?.task?.status, "completed");
+  assert.notEqual(finalized?.task?.lifecycle_state, "failed");
+  assert.notEqual(finalized?.task?.status, "failed");
+  assert.equal(finalized?.task?.lifecycle_state, "blocked");
+  assert.equal(finalized?.task?.status, "blocked");
 });

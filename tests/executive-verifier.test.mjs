@@ -115,3 +115,40 @@ test("synthetic agent hint cannot count as execution evidence", () => {
   assert.equal(result.required_evidence_present, false);
   assert.match(result.issues.join(" "), /insufficient_evidence/);
 });
+
+test("expected schema missing fields are flagged as partial completion", () => {
+  const result = verifyTaskCompletion({
+    taskType: "meeting_processing",
+    structuredResult: {
+      summary: "會議摘要",
+      action_items: [{ title: "補齊規格", owner: "Amy", deadline: "2026-05-31" }],
+      knowledge_writeback: { proposals: [] },
+    },
+    expectedOutputSchema: {
+      summary: "string",
+      decisions: "array",
+      action_items: "array",
+    },
+    evidence: [
+      { type: EVIDENCE_TYPES.summary_generated, summary: "meeting_summary" },
+      { type: EVIDENCE_TYPES.structured_output, summary: "meeting_structured_result" },
+    ],
+  });
+
+  assert.equal(result.pass, false);
+  assert.equal(result.partial_completion, true);
+  assert.match(result.issues.join(" "), /missing_fields/);
+  assert.match(result.issues.join(" "), /missing_field:decisions/);
+});
+
+test("overclaim language is blocked when search evidence is missing", () => {
+  const result = verifyTaskCompletion({
+    taskType: "search",
+    replyText: "我已確認一定完全沒有問題。",
+    evidence: [],
+  });
+
+  assert.equal(result.pass, false);
+  assert.equal(result.overclaim, true);
+  assert.match(result.issues.join(" "), /overclaim/);
+});

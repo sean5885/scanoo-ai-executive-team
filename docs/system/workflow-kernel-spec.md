@@ -283,6 +283,38 @@ follow-up 吸附優先順序應固定如下：
 
 就直接視為 workflow 完成
 
+## WS-3 High-risk Write Verifier Coverage
+
+WS-3 針對 high-risk write 補齊「no-verification-no-complete / no-bypass」最小保證，覆蓋目前已落地路徑：
+
+- `meeting_confirm_write`
+  - canonical admission 仍走 external write guard
+  - `confirmed` 與 `verifier_completed` 任一缺失都會 deny（`confirmation_required` / `verifier_incomplete`）
+- `document_comment_rewrite_apply`（`rewrite_apply`）
+  - canonical admission 仍走 external write guard
+  - `verifier_completed=false` 不可進入 apply 寫入
+- `company_brain_apply`
+  - internal write path 也必須帶 `verifier_completed=true`
+  - mutation verifier profile 必須是 `knowledge_write_v1`，缺失或錯配會在 pre phase fail-closed
+- `ingest_learning_doc` / `update_learning_state`
+  - internal write path 也必須帶 `verifier_completed=true`
+  - mutation verifier profile 必須是 `knowledge_write_v1`，缺失或錯配會在 pre phase fail-closed
+
+對應實作來源：
+
+- `src/mutation-admission.mjs`
+  - internal high-risk write 的 verifier-completion deny gate
+  - ready-route metadata 補上 `high_risk` 與 `verifier_gate_required`
+- `src/mutation-verifier.mjs`
+  - action-to-required-profile coverage map
+  - missing/mismatch profile fail-closed verifier result
+
+此外，workflow finalize fail-soft 路徑在 orchestrator 收斂為受控集合：
+
+- verifier fail 後只允許進入 `executing`（`workflow_state=retrying`）/ `blocked` / `escalated`
+- 不允許在 finalize fail path 停在 `failed` 或回寫 `completed`
+- 對應實作：`src/executive-orchestrator.mjs`
+
 ## Verifier Contract
 
 所有受控 workflow 至少都要滿足：
