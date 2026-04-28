@@ -138,6 +138,41 @@ node scripts/monitoring-cli.mjs learning 1 1
 - `tests/agent-learning-loop.test.mjs` 會驗證 learning summary 連續執行結果一致，draft proposal 也保持穩定
 - `tests/http-monitoring.test.mjs` 會驗證 `/api/monitoring/learning` 與 CLI `learning` 都覆蓋 monitoring-backed regression path，且 top-N 不會讓舊 high-score buckets 擠掉新樣本
 
+### 5. Executive Concurrency Baseline
+
+用途：
+
+- 固定壓測 executive closed-loop / improvement workflow 在高並行下的穩定性
+- 針對同一批檔案反覆回歸 `null` / JSON parse transient / proposal update race 類問題
+
+命令：
+
+```bash
+npm run test:executive:concurrency:stress
+```
+
+預設設定（checked-in script）：
+
+- `rounds=20`
+- `parallel=8`
+- `testConcurrency=8`
+- 測試集合固定為：
+  - `tests/executive-improvement-workflow.test.mjs`
+  - `tests/executive-closed-loop.test.mjs`
+  - `tests/executive-lifecycle.test.mjs`
+
+CI 最小 smoke（固定至少 10 輪）：
+
+```bash
+npm run test:executive:concurrency:smoke
+```
+
+目前 smoke 參數：
+
+- `rounds=10`
+- `parallel=4`
+- `testConcurrency=8`
+
 ## When To Run
 
 ### Run Smoke Baseline When
@@ -146,8 +181,11 @@ node scripts/monitoring-cli.mjs learning 1 1
 - 修改 `src/executive-orchestrator.mjs`
 - 修改 `src/executive-closed-loop.mjs`
 - 修改 `src/executive-verifier.mjs`
+- 修改 `src/executive-improvement-workflow.mjs`
 - 修改 `src/write-guard.mjs`
 - 修改 workflow state / gate 邏輯
+
+且若涉及 executive lifecycle / reflection / improvement state store 的並行路徑，應再加跑 Executive Concurrency Baseline。
 
 ### Run Integration Baseline When
 

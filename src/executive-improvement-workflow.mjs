@@ -15,6 +15,12 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function sleep(ms = 4) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 function createStore() {
   return { items: [] };
 }
@@ -291,7 +297,16 @@ async function loadStore(filePath) {
   if (inMemoryStore) {
     return inMemoryStore;
   }
-  const raw = await readJsonFile(filePath);
+  let raw = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    raw = await readJsonFile(filePath);
+    if (raw && typeof raw === "object" && Array.isArray(raw.items)) {
+      break;
+    }
+    if (attempt < 1) {
+      await sleep();
+    }
+  }
   if (!raw || typeof raw !== "object" || !Array.isArray(raw.items)) {
     return createStore();
   }

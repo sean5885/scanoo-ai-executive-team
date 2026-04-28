@@ -8,6 +8,12 @@ const ACTIVE_TASK_TTL_MS = 6 * 60 * 60 * 1000;
 let inMemoryStoreOverride = null;
 let storeMutationQueue = Promise.resolve();
 
+function sleep(ms = 4) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 function createStore() {
   return {
     tasks: {},
@@ -269,7 +275,16 @@ async function loadStore() {
   if (inMemoryStoreOverride) {
     return cloneStore(inMemoryStoreOverride);
   }
-  const raw = await readJsonFile(executiveTaskStateStorePath);
+  let raw = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    raw = await readJsonFile(executiveTaskStateStorePath);
+    if (raw && typeof raw === "object") {
+      break;
+    }
+    if (attempt < 1) {
+      await sleep();
+    }
+  }
   if (!raw || typeof raw !== "object") {
     return createStore();
   }

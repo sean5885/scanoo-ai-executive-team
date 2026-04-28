@@ -26,9 +26,17 @@
    - any test that imports a DB-bound src module must use `createTestDbHarness()` so the suite binds runtime DB access to a temp SQLite path before module load
    - `/Users/seanhan/Documents/Playground/scripts/test-db-guardrails.mjs` enforces both rules and is exposed through:
      - `npm run lint:test-db`
-     - `npm run check:test-db-factory`
-     - `npm run check:test-db-guardrails`
-     - `npm run test:ci`
+   - `npm run check:test-db-factory`
+   - `npm run check:test-db-guardrails`
+   - `npm run test:ci`
+
+5. Executive concurrency regressions must have a fixed smoke gate in CI.
+   - `npm run test:executive:concurrency:smoke` is now part of `npm run test:ci`
+   - smoke floor is fixed at 10 rounds with parallel workers (`scripts/stress-executive-concurrency.mjs`)
+   - target suite is fixed to:
+     - `tests/executive-improvement-workflow.test.mjs`
+     - `tests/executive-closed-loop.test.mjs`
+     - `tests/executive-lifecycle.test.mjs`
 
 ## Follow-up
 

@@ -5,6 +5,7 @@ import { buildLifecycleTransition } from "../src/executive-lifecycle.mjs";
 import {
   applyImprovementWorkflowProposal,
   archiveExecutiveReflection,
+  getImprovementWorkflowProposal,
   listImprovementWorkflowProposals,
   replaceExecutiveImprovementWorkflowStoresForTests,
   rollbackImprovementWorkflowProposal,
@@ -232,4 +233,84 @@ test("learning auto-apply proposal rolls back on regressed replay delta with str
   });
   assert.equal(rolledBack.status, "rolled_back");
   assert.equal(rolledBack.rollback?.reason, "manual_followup");
+});
+
+test("improvement workflow race regression keeps latest duplicate proposal stable under parallel resolve/apply reads", async () => {
+  const task = await startExecutiveTask({
+    accountId: "acct-race",
+    sessionKey: "sess-race",
+    objective: "race regression",
+    primaryAgentId: "generalist",
+    currentAgentId: "generalist",
+  });
+
+  const reflection = await archiveExecutiveReflection({
+    accountId: "acct-race",
+    sessionKey: "sess-race",
+    taskId: task.id,
+    reflection: {
+      task_type: "search",
+      task_input: "parallel update",
+      action_taken: "register proposal",
+      evidence_collected: [{ type: "structured_output", summary: "seeded" }],
+      verification_result: { pass: false, issues: ["race_guard"] },
+      what_went_wrong: ["race_guard"],
+      missing_elements: ["none"],
+      routing_quality: { correct: true },
+      response_quality: { robotic_response: false },
+      error_type: "race_guard",
+    },
+  });
+
+  const proposals = await registerImprovementWorkflowProposals({
+    accountId: "acct-race",
+    sessionKey: "sess-race",
+    taskId: task.id,
+    reflectionId: reflection.id,
+    reflection,
+    proposals: Array.from({ length: 24 }, (_, index) => ({
+      id: "race-proposal-1",
+      category: "verification_improvement",
+      mode: "proposal_only",
+      title: `Race Proposal ${index}`,
+      description: `parallel registration ${index}`,
+      target: "executive-verifier",
+    })),
+  });
+  assert.equal(proposals.length, 24);
+
+  await Promise.all(
+    Array.from({ length: 20 }, (_, index) =>
+      resolveImprovementWorkflowProposal({
+        proposalId: "race-proposal-1",
+        approved: true,
+        actor: `approver-${index}`,
+      })),
+  );
+
+  const results = await Promise.all(
+    Array.from({ length: 20 }, (_, index) =>
+      applyImprovementWorkflowProposal({
+        proposalId: "race-proposal-1",
+        actor: `applier-${index}`,
+      })),
+  );
+  assert.equal(results.every((item) => Boolean(item?.id)), true);
+
+  const snapshots = await Promise.all(
+    Array.from({ length: 20 }, () => listImprovementWorkflowProposals({
+      accountId: "acct-race",
+      limit: 120,
+    })),
+  );
+  assert.equal(snapshots.every((items) => Array.isArray(items) && items.length >= 24), true);
+  assert.equal(
+    snapshots.every((items) => items.every((entry) => entry && typeof entry === "object" && entry.id)),
+    true,
+  );
+
+  const latest = await getImprovementWorkflowProposal("race-proposal-1");
+  assert.equal(Boolean(latest?.id), true);
+  assert.equal(latest?.task_id, task.id);
+  assert.equal(["applied", "rolled_back"].includes(latest?.status), true);
 });

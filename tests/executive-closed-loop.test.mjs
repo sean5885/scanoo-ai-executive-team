@@ -375,3 +375,61 @@ test("closed loop attaches lightweight improvement proposal to execution journal
   assert.deepEqual(logs[0].payload.metrics.current, updatedTask?.meta?.evolution_metrics?.current);
   assert.deepEqual(logs[0].payload.metrics.rolling, updatedTask?.meta?.evolution_metrics?.rolling);
 });
+
+test("closed loop race regression keeps reflection archive readable during parallel finalize", async () => {
+  const accountId = "acct-closed-loop-race";
+  const tasks = await Promise.all(
+    Array.from({ length: 14 }, (_, index) =>
+      startExecutiveTask({
+        accountId,
+        sessionKey: `sess-closed-loop-race-${index}`,
+        objective: `parallel finalize ${index}`,
+        primaryAgentId: "generalist",
+        currentAgentId: "generalist",
+        taskType: "search",
+        lifecycleState: "awaiting_result",
+      })),
+  );
+
+  const finalizeRuns = tasks.map((task, index) =>
+    finalizeExecutiveTaskTurn({
+      task,
+      accountId,
+      sessionKey: `sess-closed-loop-race-${index}`,
+      requestText: `請整理第 ${index} 筆`,
+      reply: {
+        text: `第 ${index} 筆已整理完成，附上結論。`,
+      },
+      routing: {
+        action: "answer_user",
+        dispatched_actions: [
+          { action: "answer_user", status: "completed" },
+        ],
+      },
+      logger: {
+        info() {},
+      },
+    }),
+  );
+
+  const archiveReaders = Array.from({ length: 20 }, () =>
+    listArchivedExecutiveReflections({
+      accountId,
+      limit: 240,
+    }));
+
+  await Promise.all([...finalizeRuns, ...archiveReaders]);
+
+  const archived = await listArchivedExecutiveReflections({
+    accountId,
+    limit: 240,
+  });
+  assert.equal(archived.length >= tasks.length, true);
+  assert.equal(
+    archived.every((item) => item && typeof item === "object" && item.id && item.task_id),
+    true,
+  );
+  for (const task of tasks) {
+    assert.equal(archived.some((item) => item.task_id === task.id), true);
+  }
+});
