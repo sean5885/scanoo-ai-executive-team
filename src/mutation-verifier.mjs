@@ -14,6 +14,17 @@ export const MUTATION_VERIFIER_PROFILES = Object.freeze([
   "knowledge_write_v1",
 ]);
 
+export const MUTATION_VERIFIER_REQUIRED_PROFILE_BY_ACTION = Object.freeze({
+  organize_apply: "cloud_doc_v1",
+  review_company_brain_doc: "knowledge_write_v1",
+  check_company_brain_conflicts: "knowledge_write_v1",
+  approval_transition_company_brain_doc: "knowledge_write_v1",
+  company_brain_apply: "knowledge_write_v1",
+  ingest_doc: "knowledge_write_v1",
+  ingest_learning_doc: "knowledge_write_v1",
+  update_learning_state: "knowledge_write_v1",
+});
+
 function normalizeProfile(profile = "") {
   const normalized = cleanText(profile);
   return MUTATION_VERIFIER_PROFILES.includes(normalized) ? normalized : null;
@@ -49,6 +60,47 @@ function buildVerifierResult({
     verification: verification && typeof verification === "object" ? { ...verification } : null,
     message: cleanText(message) || null,
   };
+}
+
+export function getRequiredMutationVerifierProfile(canonicalRequest = null) {
+  const actionType = cleanText(canonicalRequest?.action_type);
+  return actionType ? (MUTATION_VERIFIER_REQUIRED_PROFILE_BY_ACTION[actionType] || null) : null;
+}
+
+export function evaluateMutationVerifierCoverage({
+  phase = "pre",
+  profile = "",
+  canonicalRequest = null,
+} = {}) {
+  const requiredProfile = getRequiredMutationVerifierProfile(canonicalRequest);
+  if (!requiredProfile) {
+    return null;
+  }
+
+  const normalizedProfile = normalizeProfile(profile);
+  if (!normalizedProfile) {
+    return buildVerifierResult({
+      phase,
+      profile: requiredProfile,
+      pass: false,
+      reason: "verifier_profile_required",
+      issues: ["missing_verifier_profile"],
+      message: `Mutation action requires verifier profile: ${requiredProfile}.`,
+    });
+  }
+
+  if (normalizedProfile !== requiredProfile) {
+    return buildVerifierResult({
+      phase,
+      profile: requiredProfile,
+      pass: false,
+      reason: "verifier_profile_mismatch",
+      issues: ["verifier_profile_mismatch"],
+      message: `Mutation action requires verifier profile ${requiredProfile}, received ${normalizedProfile}.`,
+    });
+  }
+
+  return null;
 }
 
 function verifyCloudDocPre({
@@ -350,6 +402,15 @@ export function runMutationVerification({
   verifierInput = null,
   executeResult = null,
 } = {}) {
+  const coverage = evaluateMutationVerifierCoverage({
+    phase,
+    profile,
+    canonicalRequest,
+  });
+  if (coverage) {
+    return coverage;
+  }
+
   const normalizedProfile = normalizeProfile(profile);
   if (!normalizedProfile) {
     return null;

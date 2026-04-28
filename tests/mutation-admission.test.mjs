@@ -290,4 +290,59 @@ test("ready route list stays builder-only and covers the current Step 2 surfaces
     routes.find((entry) => entry.pathname === "/agent/company-brain/docs/:doc_id/apply")?.ordering,
     "lifecycle_first_adapter_second",
   );
+  assert.equal(
+    routes.find((entry) => entry.pathname === "/api/meeting/confirm")?.high_risk,
+    true,
+  );
+  assert.equal(
+    routes.find((entry) => entry.pathname === "/api/doc/rewrite-from-comments")?.high_risk,
+    true,
+  );
+  assert.equal(
+    routes.find((entry) => entry.pathname === "/agent/company-brain/docs/:doc_id/apply")?.verifier_gate_required,
+    true,
+  );
+  assert.equal(
+    routes.find((entry) => entry.pathname === "/agent/company-brain/learning/ingest")?.verifier_gate_required,
+    true,
+  );
+});
+
+test("internal high-risk writes are denied when verifier completion is missing", () => {
+  const companyBrainApply = buildCompanyBrainApplyCanonicalRequest({
+    docId: "cb-apply-1",
+    actor: {
+      accountId: "acct-1",
+    },
+    context: {
+      externalWrite: false,
+      confirmed: true,
+      verifierCompleted: false,
+      reviewRequiredActive: true,
+    },
+  });
+  const learningIngest = buildIngestLearningDocCanonicalRequest({
+    docId: "cb-learning-1",
+    actor: {
+      accountId: "acct-1",
+    },
+    context: {
+      confirmed: true,
+      verifierCompleted: false,
+    },
+  });
+
+  const applyResult = admitMutation({
+    canonicalRequest: companyBrainApply,
+  });
+  const learningResult = admitMutation({
+    canonicalRequest: learningIngest,
+  });
+
+  assert.equal(applyResult.allowed, false);
+  assert.equal(applyResult.reason, "verifier_incomplete");
+  assert.equal(applyResult.guard_result.error_code, "write_guard_verifier_incomplete");
+  assert.equal(learningResult.allowed, false);
+  assert.equal(learningResult.reason, "verifier_incomplete");
+  assert.equal(learningResult.guard_result.error_code, "write_guard_verifier_incomplete");
 });

@@ -725,6 +725,19 @@ function deriveRecoveryWorkflowState(decision = {}) {
   return nextState || "blocked";
 }
 
+function sanitizeWorkflowRecoveryDecision(decision = {}) {
+  const nextState = cleanText(decision?.next_state || "");
+  if (nextState === "executing" || nextState === "blocked" || nextState === "escalated") {
+    return decision;
+  }
+  return {
+    ...decision,
+    next_state: "blocked",
+    next_status: "blocked",
+    reason: cleanText(decision?.reason || "workflow_verifier_failed") || "workflow_verifier_failed",
+  };
+}
+
 function resolveWorkflowRecoveryDecision({
   task = null,
   workflow = "",
@@ -946,12 +959,12 @@ async function finalizeMeetingWorkflowTaskUnlocked({
       await clearActiveExecutiveTask(accountId, sessionKey, { expectedTaskId: current.id });
     }
   } else {
-    const recoveryDecision = resolveWorkflowRecoveryDecision({
+    const recoveryDecision = sanitizeWorkflowRecoveryDecision(resolveWorkflowRecoveryDecision({
       task: current,
       workflow: "meeting",
       verification: finalized.verification,
       structuredResult,
-    });
+    }));
     if (current.lifecycle_state !== recoveryDecision.next_state) {
       current = await transitionTaskLifecycle(current, recoveryDecision.next_state, recoveryDecision.reason);
     }
@@ -1158,12 +1171,12 @@ async function finalizeDocRewriteWorkflowTaskUnlocked({
       await clearActiveExecutiveTask(accountId, sessionKey, { expectedTaskId: current.id });
     }
   } else {
-    const recoveryDecision = resolveWorkflowRecoveryDecision({
+    const recoveryDecision = sanitizeWorkflowRecoveryDecision(resolveWorkflowRecoveryDecision({
       task: current,
       workflow: "doc_rewrite",
       verification: finalized.verification,
       structuredResult,
-    });
+    }));
     if (current.lifecycle_state !== recoveryDecision.next_state) {
       current = await transitionTaskLifecycle(current, recoveryDecision.next_state, recoveryDecision.reason);
     }
@@ -1326,12 +1339,12 @@ async function finalizeDocumentReviewWorkflowTaskUnlocked({
       await clearActiveExecutiveTask(accountId, sessionKey, { expectedTaskId: current.id });
     }
   } else {
-    const recoveryDecision = resolveWorkflowRecoveryDecision({
+    const recoveryDecision = sanitizeWorkflowRecoveryDecision(resolveWorkflowRecoveryDecision({
       task: current,
       workflow: "document_review",
       verification: finalized.verification,
       structuredResult,
-    });
+    }));
     if (current.lifecycle_state !== recoveryDecision.next_state) {
       current = await transitionTaskLifecycle(current, recoveryDecision.next_state, recoveryDecision.reason);
     }
@@ -1576,12 +1589,12 @@ async function finalizeCloudDocWorkflowTaskUnlocked({
     });
     await clearActiveExecutiveTask(accountId, sessionKey, { expectedTaskId: current.id });
   } else {
-    const recoveryDecision = resolveWorkflowRecoveryDecision({
+    const recoveryDecision = sanitizeWorkflowRecoveryDecision(resolveWorkflowRecoveryDecision({
       task: current,
       workflow: "cloud_doc",
       verification: finalized.verification,
       structuredResult,
-    });
+    }));
     if (current.lifecycle_state !== recoveryDecision.next_state) {
       current = await transitionTaskLifecycle(current, recoveryDecision.next_state, recoveryDecision.reason);
     }

@@ -924,6 +924,50 @@ test("runMutation blocks company-brain apply before execute when lifecycle gate 
   assert.equal(result.data?.verifier?.phase, "pre");
 });
 
+test("runMutation blocks high-risk knowledge writes when verifier profile is missing", async () => {
+  const canonicalRequest = buildCompanyBrainApplyCanonicalRequest({
+    pathname: "/agent/company-brain/docs/:doc_id/apply",
+    docId: "doc-apply-2",
+    actor: {
+      accountId: "acct-1",
+    },
+    context: {
+      externalWrite: false,
+      confirmed: true,
+      verifierCompleted: true,
+      reviewRequiredActive: true,
+    },
+  });
+  let called = false;
+
+  const result = await runMutation({
+    action: "apply_company_brain_approved_knowledge",
+    payload: {
+      doc_id: "doc-apply-2",
+    },
+    context: {
+      account_id: "acct-1",
+      pathname: "/agent/company-brain/docs/:doc_id/apply",
+      canonical_request: canonicalRequest,
+      verifier_input: {
+        account_id: "acct-1",
+        doc_id: "doc-apply-2",
+        expected_write: "approved_knowledge",
+      },
+    },
+    async execute() {
+      called = true;
+      return { success: true, data: { doc_id: "doc-apply-2" }, error: null };
+    },
+  });
+
+  assert.equal(called, false);
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "mutation_verifier_blocked");
+  assert.equal(result.data?.verifier?.phase, "pre");
+  assert.equal(result.data?.verifier?.reason, "verifier_profile_required");
+});
+
 test("runMutation blocks knowledge write after execute when durable db evidence is missing", async () => {
   const canonicalRequest = buildIngestLearningDocCanonicalRequest({
     docId: "doc-learning-1",
