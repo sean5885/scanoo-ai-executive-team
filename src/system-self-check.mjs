@@ -1,5 +1,10 @@
 import { listRegisteredAgents } from "./agent-registry.mjs";
-import { buildControlSummary, buildWriteSummary } from "./control-diagnostics.mjs";
+import {
+  buildControlSummary,
+  buildDiagnosticsReportingSummary,
+  buildVerificationFailureTaxonomy,
+  buildWriteSummary,
+} from "./control-diagnostics.mjs";
 import { runCompanyBrainLifecycleSelfCheck } from "./company-brain-lifecycle-contract.mjs";
 import { buildDependencySummary } from "./dependency-guardrails.mjs";
 import { getAllowedMethodsForPath, getRouteContract } from "./http-route-contracts.mjs";
@@ -96,6 +101,12 @@ const SYSTEM_STATUS_ORDER = {
 const PLANNER_STATUS_ORDER = {
   fail: 0,
   pass: 1,
+};
+const DECISION_OS_OBSERVABILITY_VERSION = "decision_os_observability_v1";
+const DECISION_OS_SCORE_WEIGHTS = {
+  gate: 55,
+  routing: 30,
+  memory: 15,
 };
 
 function resolveUsageLayerGateStage(stage = "") {
@@ -584,6 +595,385 @@ function buildSystemSummary({
   };
 }
 
+function toFiniteNumber(value = null, fallback = null) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return numeric;
+}
+
+function clampNumber(value = 0, minimum = 0, maximum = 1) {
+  const numeric = toFiniteNumber(value, minimum);
+  return Math.min(maximum, Math.max(minimum, numeric));
+}
+
+function roundNumber(value = 0, digits = 2) {
+  const numeric = toFiniteNumber(value, 0);
+  const precision = Number.isFinite(Number(digits)) ? Number(digits) : 2;
+  return Number(numeric.toFixed(precision));
+}
+
+function normalizeMemoryInfluenceSummary(summary = null) {
+  if (!summary || typeof summary !== "object" || Array.isArray(summary)) {
+    return {
+      status: "unknown",
+      source: "not_configured",
+      gate: "unknown",
+      summary: "memory influence signal unavailable",
+      metrics: {
+        memory_hit_rate: null,
+        action_changed_by_memory_rate: null,
+      },
+      thresholds: {
+        memory_hit_rate_min: null,
+        action_changed_by_memory_rate_min: null,
+      },
+    };
+  }
+
+  const gate = cleanText(summary?.gate)
+    || (summary?.ok === true ? "pass" : summary?.ok === false ? "fail" : "unknown");
+  const status = gate === "pass"
+    ? "pass"
+    : gate === "fail"
+      ? "fail"
+      : "unknown";
+
+  return {
+    status,
+    source: cleanText(summary?.source) || "memory_influence_check",
+    gate,
+    summary: cleanText(summary?.summary)
+      || (
+        gate === "pass"
+          ? "memory influence gate passes"
+          : gate === "fail"
+            ? "memory influence gate fails"
+            : "memory influence gate unavailable"
+      ),
+    metrics: {
+      memory_hit_rate: toFiniteNumber(summary?.metrics?.memory_hit_rate, null),
+      action_changed_by_memory_rate: toFiniteNumber(summary?.metrics?.action_changed_by_memory_rate, null),
+    },
+    thresholds: {
+      memory_hit_rate_min: toFiniteNumber(summary?.thresholds?.memory_hit_rate_min, null),
+      action_changed_by_memory_rate_min: toFiniteNumber(summary?.thresholds?.action_changed_by_memory_rate_min, null),
+    },
+  };
+}
+
+async function resolveMemoryInfluenceSummary({ memoryInfluenceCheck = null } = {}) {
+  if (typeof memoryInfluenceCheck !== "function") {
+    return normalizeMemoryInfluenceSummary(null);
+  }
+
+  try {
+    return normalizeMemoryInfluenceSummary(await memoryInfluenceCheck());
+  } catch (error) {
+    return {
+      status: "fail",
+      source: "memory_influence_check_error",
+      gate: "fail",
+      summary: "memory influence check failed",
+      metrics: {
+        memory_hit_rate: null,
+        action_changed_by_memory_rate: null,
+      },
+      thresholds: {
+        memory_hit_rate_min: null,
+        action_changed_by_memory_rate_min: null,
+      },
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function buildDecisionOsGateChecks({
+  baseOk = false,
+  companyBrainSummary = {},
+  controlSummary = {},
+  dependencySummary = {},
+  writeSummary = {},
+  usageLayerSummary = {},
+  routingSummary = {},
+  plannerSummary = {},
+} = {}) {
+  const routingStatus = normalizeRoutingStatus(routingSummary?.status);
+  const plannerStatus = normalizePlannerStatus(plannerSummary?.gate);
+
+  const checks = [
+    {
+      gate_id: "base_checks",
+      pass: baseOk === true,
+    },
+    {
+      gate_id: "company_brain_lifecycle",
+      pass: cleanText(companyBrainSummary?.status) === "pass",
+    },
+    {
+      gate_id: "control_integrity",
+      pass: cleanText(controlSummary?.status) === "pass",
+    },
+    {
+      gate_id: "dependency_policy",
+      pass: cleanText(dependencySummary?.status || "pass") === "pass",
+    },
+    {
+      gate_id: "write_policy",
+      pass: cleanText(writeSummary?.status) === "pass",
+    },
+    {
+      gate_id: "usage_layer_quality",
+      pass: cleanText(usageLayerSummary?.status) === "pass",
+    },
+    {
+      gate_id: "routing_snapshot",
+      pass: routingStatus === "pass",
+    },
+    {
+      gate_id: "routing_compare",
+      pass: routingSummary?.compare?.has_obvious_regression !== true,
+    },
+    {
+      gate_id: "planner_contract",
+      pass: plannerStatus === "pass",
+    },
+    {
+      gate_id: "planner_compare",
+      pass: plannerSummary?.compare?.has_obvious_regression !== true,
+    },
+  ];
+  const passCount = checks.filter((check) => check.pass === true).length;
+  const total = checks.length;
+  const failCount = Math.max(0, total - passCount);
+  const passRate = total > 0 ? Number((passCount / total).toFixed(4)) : 0;
+
+  return {
+    checks,
+    total,
+    pass_count: passCount,
+    fail_count: failCount,
+    pass_rate: passRate,
+  };
+}
+
+function buildDecisionOsBlockedReasons({
+  baseOk = false,
+  companyBrainSummary = {},
+  controlSummary = {},
+  dependencySummary = {},
+  writeSummary = {},
+  usageLayerSummary = {},
+  routingSummary = {},
+  plannerSummary = {},
+  verificationFailureTaxonomy = {},
+} = {}) {
+  const reasons = [];
+  if (!baseOk) {
+    reasons.push("base_regression");
+  }
+  if (cleanText(companyBrainSummary?.status) !== "pass") {
+    reasons.push("company_brain_lifecycle_failure");
+  }
+  if (cleanText(controlSummary?.status) !== "pass") {
+    reasons.push("control_regression");
+  }
+  if (cleanText(dependencySummary?.status || "pass") !== "pass") {
+    reasons.push("dependency_policy_failure");
+  }
+  if (cleanText(writeSummary?.status) !== "pass") {
+    reasons.push("write_policy_failure");
+  }
+  if (cleanText(usageLayerSummary?.status) !== "pass") {
+    reasons.push("usage_layer_failure");
+    if (Array.isArray(usageLayerSummary?.blocking_reasons)) {
+      for (const reason of usageLayerSummary.blocking_reasons) {
+        const normalized = cleanText(reason);
+        if (normalized) {
+          reasons.push(`usage_layer:${normalized}`);
+        }
+      }
+    }
+  }
+  if (
+    normalizeRoutingStatus(routingSummary?.status) !== "pass"
+    || routingSummary?.compare?.has_obvious_regression === true
+  ) {
+    reasons.push("routing_regression");
+    if (routingSummary?.doc_boundary_regression === true) {
+      reasons.push("routing_doc_boundary_regression");
+    }
+  }
+  if (
+    normalizePlannerStatus(plannerSummary?.gate) !== "pass"
+    || plannerSummary?.compare?.has_obvious_regression === true
+  ) {
+    reasons.push("planner_contract_failure");
+    const plannerFailingCategories = Array.isArray(plannerSummary?.report?.gate?.failing_categories)
+      ? plannerSummary.report.gate.failing_categories
+      : [];
+    for (const category of plannerFailingCategories) {
+      const normalized = cleanText(category);
+      if (normalized) {
+        reasons.push(`planner:${normalized}`);
+      }
+    }
+  }
+  if (cleanText(verificationFailureTaxonomy?.status) === "fail") {
+    reasons.push("verification_failure_taxonomy");
+    const topCases = Array.isArray(verificationFailureTaxonomy?.top_regression_cases)
+      ? verificationFailureTaxonomy.top_regression_cases
+      : [];
+    for (const item of topCases.slice(0, 2)) {
+      const line = cleanText(item?.line) || "unknown";
+      const caseId = cleanText(item?.case_id) || "unknown";
+      reasons.push(`verification:${line}:${caseId}`);
+    }
+  }
+  return uniqLabels(reasons);
+}
+
+function buildDecisionOsRoutingSignal(routingSummary = {}) {
+  const status = normalizeRoutingStatus(routingSummary?.status);
+  const accuracyRatio = toFiniteNumber(routingSummary?.latest_snapshot?.accuracy_ratio, null);
+  const threshold = toFiniteNumber(routingSummary?.latest_snapshot?.threshold, null)
+    || ROUTING_EVAL_MIN_ACCURACY_RATIO;
+  const hasObviousRegression = routingSummary?.compare?.has_obvious_regression === true;
+  const gatePass = status === "pass" && hasObviousRegression !== true;
+
+  return {
+    status,
+    gate_pass: gatePass,
+    accuracy_ratio: accuracyRatio,
+    threshold,
+    has_obvious_regression: hasObviousRegression,
+    doc_boundary_regression: routingSummary?.doc_boundary_regression === true,
+  };
+}
+
+function buildDecisionOsReadinessScore({
+  gateChecks = {},
+  routingSignal = {},
+  memoryInfluenceSummary = {},
+} = {}) {
+  const gatePassRate = clampNumber(gateChecks?.pass_rate, 0, 1);
+  const gateComponent = DECISION_OS_SCORE_WEIGHTS.gate * gatePassRate;
+
+  const routingAccuracyRatio = toFiniteNumber(routingSignal?.accuracy_ratio, null);
+  const routingThreshold = toFiniteNumber(routingSignal?.threshold, ROUTING_EVAL_MIN_ACCURACY_RATIO);
+  const routingAccuracyFactor = routingAccuracyRatio == null || routingThreshold <= 0
+    ? (routingSignal?.status === "fail" ? 0 : 1)
+    : clampNumber(routingAccuracyRatio / routingThreshold, 0, 1);
+  const routingStatusFactor = routingSignal?.status === "pass"
+    ? 1
+    : routingSignal?.status === "degrade"
+      ? 0.6
+      : 0;
+  const routingRegressionFactor = routingSignal?.has_obvious_regression === true ? 0.5 : 1;
+  const routingComponent = DECISION_OS_SCORE_WEIGHTS.routing
+    * routingStatusFactor
+    * routingAccuracyFactor
+    * routingRegressionFactor;
+
+  const memoryStatus = cleanText(memoryInfluenceSummary?.status);
+  const memoryStatusFactor = memoryStatus === "pass"
+    ? 1
+    : memoryStatus === "fail"
+      ? 0
+      : 0.5;
+  const memoryComponent = DECISION_OS_SCORE_WEIGHTS.memory * memoryStatusFactor;
+
+  const score = roundNumber(gateComponent + routingComponent + memoryComponent, 2);
+  const level = score >= 85
+    ? "ready"
+    : score >= 70
+      ? "watch"
+      : "at_risk";
+
+  return {
+    score,
+    level,
+    score_breakdown: {
+      gate_checks: roundNumber(gateComponent, 2),
+      routing_closed_loop: roundNumber(routingComponent, 2),
+      memory_influence: roundNumber(memoryComponent, 2),
+    },
+  };
+}
+
+function buildDecisionOsObservability({
+  baseOk = false,
+  companyBrainSummary = {},
+  controlSummary = {},
+  dependencySummary = {},
+  writeSummary = {},
+  usageLayerSummary = {},
+  routingSummary = {},
+  plannerSummary = {},
+  verificationFailureTaxonomy = {},
+  memoryInfluenceSummary = {},
+} = {}) {
+  const gateChecks = buildDecisionOsGateChecks({
+    baseOk,
+    companyBrainSummary,
+    controlSummary,
+    dependencySummary,
+    writeSummary,
+    usageLayerSummary,
+    routingSummary,
+    plannerSummary,
+  });
+  const blockedReasons = buildDecisionOsBlockedReasons({
+    baseOk,
+    companyBrainSummary,
+    controlSummary,
+    dependencySummary,
+    writeSummary,
+    usageLayerSummary,
+    routingSummary,
+    plannerSummary,
+    verificationFailureTaxonomy,
+  });
+  const routingSignal = buildDecisionOsRoutingSignal(routingSummary);
+  const normalizedMemoryInfluence = normalizeMemoryInfluenceSummary(memoryInfluenceSummary);
+  const readinessScore = buildDecisionOsReadinessScore({
+    gateChecks,
+    routingSignal,
+    memoryInfluenceSummary: normalizedMemoryInfluence,
+  });
+  const regressionItems = uniqLabels([
+    ...blockedReasons.slice(0, 3),
+    ...(
+      Array.isArray(verificationFailureTaxonomy?.top_regression_cases)
+        ? verificationFailureTaxonomy.top_regression_cases.slice(0, 2).map((item) => (
+          `${cleanText(item?.line) || "unknown"}:${cleanText(item?.case_id) || "unknown"}`
+        ))
+        : []
+    ),
+  ]);
+
+  return {
+    version: DECISION_OS_OBSERVABILITY_VERSION,
+    generated_at: new Date().toISOString(),
+    gate_pass_rate: gateChecks.pass_rate,
+    gate_summary: {
+      total_gates: gateChecks.total,
+      passed_gates: gateChecks.pass_count,
+      failed_gates: gateChecks.fail_count,
+    },
+    gate_checks: gateChecks.checks,
+    blocked_reasons: blockedReasons,
+    verification_fail_taxonomy: verificationFailureTaxonomy,
+    closed_loop_metrics: {
+      routing_closed_loop: routingSignal,
+      memory_influence: normalizedMemoryInfluence,
+    },
+    readiness_score: readinessScore,
+    regression_items: regressionItems,
+  };
+}
+
 function normalizeRoutingStatus(status = "") {
   const normalized = cleanText(status);
   if (normalized === "pass" || normalized === "degrade") {
@@ -694,6 +1084,19 @@ export function renderSystemSelfCheckReport(result = {}) {
   const systemSummary = result?.system_summary || {};
   const writeSummary = result?.write_summary || {};
   const usageLayerSummary = result?.usage_layer_summary || {};
+  const decisionOs = result?.decision_os_observability || {};
+  const decisionOsScore = toFiniteNumber(decisionOs?.readiness_score?.score, null);
+  const decisionOsLevel = cleanText(decisionOs?.readiness_score?.level) || "unknown";
+  const decisionOsGatePassRate = Number.isFinite(Number(decisionOs?.gate_pass_rate))
+    ? `${(Number(decisionOs.gate_pass_rate) * 100).toFixed(2)}%`
+    : "unknown";
+  const decisionOsGateSummary = decisionOs?.gate_summary || {};
+  const decisionOsBlockedReasons = Array.isArray(decisionOs?.blocked_reasons)
+    ? decisionOs.blocked_reasons
+    : [];
+  const decisionOsVerification = decisionOs?.verification_fail_taxonomy || {};
+  const decisionOsRoutingClosedLoop = decisionOs?.closed_loop_metrics?.routing_closed_loop || {};
+  const decisionOsMemoryInfluence = decisionOs?.closed_loop_metrics?.memory_influence || {};
   const usageGateStage = cleanText(usageLayerSummary?.gate_stage) || USAGE_LAYER_GATE_STAGE_PHASE_1;
   const usageThresholds = usageLayerSummary?.thresholds || USAGE_LAYER_GATE_THRESHOLDS[usageGateStage] || USAGE_LAYER_GATE_THRESHOLDS[USAGE_LAYER_GATE_STAGE_PHASE_1];
   const usageFthr = cleanText(usageLayerSummary?.metrics?.FTHR)
@@ -740,6 +1143,10 @@ export function renderSystemSelfCheckReport(result = {}) {
     `write rollout：ready ${upgradeReady.length > 0 ? upgradeReady.join(",") : "none"} | high_risk ${highRisk.length > 0 ? highRisk.join(",") : "none"}`,
     `write rollout risk：${highRiskHints.length > 0 ? highRiskHints.join(",") : "none"}`,
     `usage gate：${usageGateStage} | FTHR ${usageFthr} (>=${Number(usageThresholds?.fthr_min_percent || 0).toFixed(0)}%) | Generic ${usageGeneric} (<=${Number(usageThresholds?.generic_rate_max_percent || 0).toFixed(0)}%)`,
+    `decision-os：score ${decisionOsScore == null ? "unknown" : decisionOsScore}/100 | level ${decisionOsLevel} | gate ${Number(decisionOsGateSummary?.passed_gates || 0)}/${Number(decisionOsGateSummary?.total_gates || 0)} (${decisionOsGatePassRate})`,
+    `decision-os blockers：${decisionOsBlockedReasons.length > 0 ? decisionOsBlockedReasons.join(",") : "none"}`,
+    `decision-os verification：${cleanText(decisionOsVerification?.status) || "unknown"} | taxonomy ${Number(decisionOsVerification?.top_regression_case_count || 0)} cases`,
+    `decision-os closed-loop：routing ${cleanText(decisionOsRoutingClosedLoop?.status) || "unknown"} | memory ${cleanText(decisionOsMemoryInfluence?.status) || "unknown"}`,
     `先看：${systemSummary?.review_priority || "base"}`,
     `指引：${systemSummary?.guidance || "先看 self-check 失敗項目。"}`
   ].join("\n");
@@ -754,6 +1161,7 @@ export async function runSystemSelfCheck({
   plannerContractCheck = runPlannerContractConsistencyCheck,
   usageLayerCheck = runUsageLayerEvalSummary,
   usageLayerGateStage = "",
+  memoryInfluenceCheck = null,
 } = {}) {
   const agents = listRegisteredAgents();
   const agentMap = new Map(agents.map((agent) => [agent.id, agent]));
@@ -788,16 +1196,25 @@ export async function runSystemSelfCheck({
     }
   }
 
-  const [controlSummary, dependencySummary, writeSummary, usageLayerSummary, plannerSummary, routingSummary] = await Promise.all([
+  const [controlSummary, dependencySummary, writeSummary, usageLayerSummary, plannerSummary, routingSummary, memoryInfluenceSummary] = await Promise.all([
     buildControlSummary(),
     dependencyCheck(),
     writeCheck(),
     buildUsageLayerSummary({ usageLayerCheck, usageLayerGateStage }),
     buildPlannerSummary({ plannerArchiveDir, plannerContractCheck }),
     buildRoutingSummary({ routingArchiveDir }),
+    resolveMemoryInfluenceSummary({ memoryInfluenceCheck }),
   ]);
   const companyBrainSummary = runCompanyBrainLifecycleSelfCheck({
     getRouteContract,
+  });
+  const diagnosticsReportingSummary = buildDiagnosticsReportingSummary({
+    controlSummary,
+    routingSummary,
+    writeSummary,
+  });
+  const verificationFailureTaxonomy = buildVerificationFailureTaxonomy({
+    reportingSummary: diagnosticsReportingSummary,
   });
   const baseOk = !hasBlockingBaseFailures({
     missingAgents,
@@ -815,6 +1232,18 @@ export async function runSystemSelfCheck({
     usageLayerSummary,
     routingSummary,
     plannerSummary,
+  });
+  const decisionOsObservability = buildDecisionOsObservability({
+    baseOk,
+    companyBrainSummary,
+    controlSummary,
+    dependencySummary,
+    writeSummary,
+    usageLayerSummary,
+    routingSummary,
+    plannerSummary,
+    verificationFailureTaxonomy,
+    memoryInfluenceSummary,
   });
   const ok = systemSummary.safe_to_change === true;
 
@@ -855,6 +1284,7 @@ export async function runSystemSelfCheck({
         : [],
       summary: plannerSummary?.report?.summary || null,
     },
+    decision_os_observability: decisionOsObservability,
   };
 
   const selfCheckArchive = await archiveSystemSelfCheckSnapshot({

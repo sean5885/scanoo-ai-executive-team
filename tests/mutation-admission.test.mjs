@@ -1,7 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
-import {
+const dbHarness = await createTestDbHarness();
+
+test.after(() => {
+  dbHarness.close();
+});
+
+const {
   admitMutation,
   buildCompanyBrainApprovalTransitionCanonicalRequest,
   buildCompanyBrainApplyCanonicalRequest,
@@ -19,7 +26,7 @@ import {
   collectCanonicalMutationRequestSchemaIssues,
   collectMutationAdmissionOutputSchemaIssues,
   listMutationAdmissionReadyRoutes,
-} from "../src/mutation-admission.mjs";
+} = await import("../src/mutation-admission.mjs");
 
 test("canonical mutation builders emit the fixed request schema for the current Step 2 route families", () => {
   const createDoc = buildCreateDocCanonicalRequest({

@@ -124,10 +124,18 @@ function buildTaskReplayRun({
   routing = {},
   structuredResult = null,
   extraEvidence = [],
+  expectedOutputSchema = null,
+  expected_output_schema = null,
   plannerSteps = [],
 } = {}) {
   const taskType = cleanText(task?.task_type || "") || "search";
   const toolRequired = (Array.isArray(task?.work_plan) ? task.work_plan : []).some((item) => item?.tool_required === true);
+  const normalizedExpectedOutputSchema =
+    expectedOutputSchema && typeof expectedOutputSchema === "object" && !Array.isArray(expectedOutputSchema)
+      ? expectedOutputSchema
+      : expected_output_schema && typeof expected_output_schema === "object" && !Array.isArray(expected_output_schema)
+        ? expected_output_schema
+        : null;
   const executionJournal = buildExecutionJournal({
     classifiedIntent: taskType,
     selectedAction: cleanText(routing?.action || ""),
@@ -140,7 +148,7 @@ function buildTaskReplayRun({
     fallbackUsed: routing?.fallback_used === true,
     toolRequired,
     syntheticAgentHint: routing?.synthetic_agent_hint || null,
-    expectedOutputSchema: { text: "string" },
+    expectedOutputSchema: normalizedExpectedOutputSchema,
   });
   const evidence = buildExecutionEvidence({
     executionJournal,

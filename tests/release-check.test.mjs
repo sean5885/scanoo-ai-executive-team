@@ -217,6 +217,28 @@ function withReleaseCheckCiEnv(env = {}, { skipFullTestGate = true } = {}) {
   };
 }
 
+function stripDecisionOsReadiness(report = {}) {
+  if (!report || typeof report !== "object" || Array.isArray(report)) {
+    return report;
+  }
+  const { decision_os_readiness: _decisionOsReadiness, ...rest } = report;
+  return rest;
+}
+
+function assertDecisionOsReadinessShape(readiness = {}) {
+  assert.equal(readiness && typeof readiness === "object", true);
+  assert.equal(readiness.version, "decision_os_readiness_v1");
+  assert.equal(typeof readiness.final_score, "number");
+  assert.equal(typeof readiness.readiness_level, "string");
+  assert.equal(typeof readiness.gate_pass_rate, "number");
+  assert.equal(readiness.gate_pass_rate >= 0 && readiness.gate_pass_rate <= 1, true);
+  assert.equal(Array.isArray(readiness.blocked_reasons), true);
+  assert.equal(Array.isArray(readiness.regression_items), true);
+  assert.equal(Array.isArray(readiness.rollback_candidates), true);
+  assert.equal(typeof readiness.verification_fail_taxonomy, "object");
+  assert.equal(typeof readiness.closed_loop_metrics, "object");
+}
+
 test("release-check report passes when self-check, routing, and planner are stable", async () => {
   const archives = await seedReleaseCheckArchives();
   const result = await runReleaseCheck({
@@ -225,7 +247,7 @@ test("release-check report passes when self-check, routing, and planner are stab
     usageLayerCheck: async () => STABLE_USAGE_LAYER_SUMMARY,
   });
 
-  assert.deepEqual(result.report, {
+  assert.deepEqual(stripDecisionOsReadiness(result.report), {
     overall_status: "pass",
     blocking_checks: [],
     doc_boundary_regression: false,
@@ -236,6 +258,7 @@ test("release-check report passes when self-check, routing, and planner are stab
     representative_fail_case: [],
     drilldown_source: [],
   });
+  assertDecisionOsReadinessShape(result.report.decision_os_readiness);
 });
 
 test("release-check compare summary only reports status and field changes", () => {
@@ -301,7 +324,7 @@ test("release-check report blocks on company-brain lifecycle governance failures
     },
   });
 
-  assert.deepEqual(report, {
+  assert.deepEqual(stripDecisionOsReadiness(report), {
     overall_status: "fail",
     blocking_checks: ["company_brain_lifecycle_failure"],
     doc_boundary_regression: false,
@@ -311,6 +334,7 @@ test("release-check report blocks on company-brain lifecycle governance failures
     representative_fail_case: ["company_brain_apply_gate:missing_review"],
     drilldown_source: ["release-check triage"],
   });
+  assertDecisionOsReadinessShape(report.decision_os_readiness);
 });
 
 test("release-check report blocks on dependency policy failures", () => {
@@ -349,7 +373,7 @@ test("release-check report blocks on dependency policy failures", () => {
     drilldown,
   });
 
-  assert.deepEqual(report, {
+  assert.deepEqual(stripDecisionOsReadiness(report), {
     overall_status: "fail",
     blocking_checks: ["dependency_policy_failure"],
     doc_boundary_regression: false,
@@ -359,6 +383,7 @@ test("release-check report blocks on dependency policy failures", () => {
     representative_fail_case: ["axios@1.14.1 via package-lock.json"],
     drilldown_source: ["release-check triage"],
   });
+  assertDecisionOsReadinessShape(report.decision_os_readiness);
 });
 
 test("release-check report blocks on usage-layer gate failures", () => {
@@ -398,7 +423,7 @@ test("release-check report blocks on usage-layer gate failures", () => {
     drilldown,
   });
 
-  assert.deepEqual(report, {
+  assert.deepEqual(stripDecisionOsReadiness(report), {
     overall_status: "fail",
     blocking_checks: ["usage_layer_failure"],
     doc_boundary_regression: false,
@@ -411,6 +436,7 @@ test("release-check report blocks on usage-layer gate failures", () => {
     ],
     drilldown_source: ["release-check triage"],
   });
+  assertDecisionOsReadinessShape(report.decision_os_readiness);
 });
 
 test("release-check drilldown derives write representative issues from self-check", () => {
@@ -497,7 +523,7 @@ test("release-check report prioritizes routing before planner when both block", 
     },
   });
 
-  assert.deepEqual(report, {
+  assert.deepEqual(stripDecisionOsReadiness(report), {
     overall_status: "fail",
     blocking_checks: ["routing_regression", "planner_contract_failure"],
     doc_boundary_regression: true,
@@ -507,6 +533,7 @@ test("release-check report prioritizes routing before planner when both block", 
     representative_fail_case: ["doc-001 [doc] planner_action via planner_flow"],
     drilldown_source: ["release-check triage", "routing-eval diagnostics/history"],
   });
+  assertDecisionOsReadinessShape(report.decision_os_readiness);
 });
 
 test("release-check report classifies system regression and points to base modules", () => {
@@ -546,7 +573,7 @@ test("release-check report classifies system regression and points to base modul
     },
   });
 
-  assert.deepEqual(report, {
+  assert.deepEqual(stripDecisionOsReadiness(report), {
     overall_status: "fail",
     blocking_checks: ["system_regression"],
     doc_boundary_regression: false,
@@ -556,6 +583,7 @@ test("release-check report classifies system regression and points to base modul
     representative_fail_case: ["agent_missing:cmo"],
     drilldown_source: ["release-check triage"],
   });
+  assertDecisionOsReadinessShape(report.decision_os_readiness);
 });
 
 test("release-check report classifies control regression and points to control modules", () => {
@@ -589,7 +617,7 @@ test("release-check report classifies control regression and points to control m
     },
   });
 
-  assert.deepEqual(report, {
+  assert.deepEqual(stripDecisionOsReadiness(report), {
     overall_status: "fail",
     blocking_checks: ["control_regression"],
     doc_boundary_regression: false,
@@ -599,6 +627,7 @@ test("release-check report classifies control regression and points to control m
     representative_fail_case: ["control_integration_missing:lane_executor_owner_assertions via src/lane-executor.mjs"],
     drilldown_source: ["release-check triage", "control diagnostics/history"],
   });
+  assertDecisionOsReadinessShape(report.decision_os_readiness);
 });
 
 test("release-check report points planner contract failure to planner registry first", () => {
@@ -632,7 +661,7 @@ test("release-check report points planner contract failure to planner registry f
     },
   });
 
-  assert.deepEqual(report, {
+  assert.deepEqual(stripDecisionOsReadiness(report), {
     overall_status: "fail",
     blocking_checks: ["planner_contract_failure"],
     doc_boundary_regression: false,
@@ -642,6 +671,7 @@ test("release-check report points planner contract failure to planner registry f
     representative_fail_case: ["undefined_actions:search_and_detail_doc via planner_tool_registry"],
     drilldown_source: ["release-check triage", "planner diagnostics/history"],
   });
+  assertDecisionOsReadinessShape(report.decision_os_readiness);
 });
 
 test("release-check report points create_doc governance mismatch to gate modules", () => {
@@ -675,7 +705,7 @@ test("release-check report points create_doc governance mismatch to gate modules
     },
   });
 
-  assert.deepEqual(report, {
+  assert.deepEqual(stripDecisionOsReadiness(report), {
     overall_status: "fail",
     blocking_checks: ["planner_contract_failure"],
     doc_boundary_regression: false,
@@ -685,6 +715,7 @@ test("release-check report points create_doc governance mismatch to gate modules
     representative_fail_case: ["action_governance_mismatches:create_doc via action_governance:create_doc:contract_vs_route_contract"],
     drilldown_source: ["release-check triage", "planner diagnostics/history"],
   });
+  assertDecisionOsReadinessShape(report.decision_os_readiness);
 });
 
 test("release-check drilldown derives routing representative miss cases from history", () => {
@@ -935,6 +966,9 @@ test("release-check human output stays minimal with drilldown line", () => {
       "write evidence：real_only_violation none | rollout_basis none",
       "write rollout：ready none | high_risk none",
       "write rollout risk：none",
+      "decision-os：score unknown/100 | level unknown | gate_pass_rate unknown",
+      "decision-os blockers：none",
+      "decision-os rollback：none",
     ].join("\n"),
   );
 });
@@ -955,6 +989,9 @@ test("release-check human output flags doc-boundary routing regressions", () => 
       "write evidence：real_only_violation none | rollout_basis none",
       "write rollout：ready none | high_risk none",
       "write rollout risk：none",
+      "decision-os：score unknown/100 | level unknown | gate_pass_rate unknown",
+      "decision-os blockers：none",
+      "decision-os rollback：none",
     ].join("\n"),
   );
 });
@@ -978,7 +1015,7 @@ test("release-check CLI emits only the minimal JSON structure", async () => {
   });
   const parsed = JSON.parse(raw);
 
-  assert.deepEqual(parsed, {
+  assert.deepEqual(stripDecisionOsReadiness(parsed), {
     overall_status: "pass",
     blocking_checks: [],
     doc_boundary_regression: false,
@@ -989,6 +1026,7 @@ test("release-check CLI emits only the minimal JSON structure", async () => {
     representative_fail_case: [],
     drilldown_source: [],
   });
+  assertDecisionOsReadinessShape(parsed.decision_os_readiness);
 
   const manifest = readJson(path.join(archives.releaseCheckArchiveDir, "manifest.json"));
   const latestEntry = manifest.snapshots[0];
@@ -1006,7 +1044,7 @@ test("release-check CLI emits only the minimal JSON structure", async () => {
     blocking_checks: [],
     suggested_next_step: "目前這個入口沒有 blocking check；若要正式 release，仍需跑既有測試與發布驗證流程。",
   });
-  assert.deepEqual(snapshot, {
+  assert.deepEqual(stripDecisionOsReadiness(snapshot), {
     run_id: manifest.latest_run_id,
     timestamp: latestEntry.timestamp,
     overall_status: "pass",
@@ -1019,6 +1057,7 @@ test("release-check CLI emits only the minimal JSON structure", async () => {
     representative_fail_case: [],
     drilldown_source: [],
   });
+  assertDecisionOsReadinessShape(snapshot.decision_os_readiness);
 });
 
 test("release-check CLI default output stays limited to the minimal write-governance view", async () => {
@@ -1039,14 +1078,15 @@ test("release-check CLI default output stays limited to the minimal write-govern
     },
   });
 
-  assert.equal(output.trim(), [
-    "能否放心合併/發布：可以",
-    "若不能，先修哪一條線：無",
-    "下一步：無",
-    "write evidence：real_only_violation meeting_confirm_write=unknown | rollout_basis 0/1 ready",
-    "write rollout：ready none | high_risk meeting_confirm_write",
-    "write rollout risk：meeting_confirm_write=insufficient_real_request_backed_samples:0/20",
-  ].join("\n"));
+  assert.match(output, /能否放心合併\/發布：可以/);
+  assert.match(output, /若不能，先修哪一條線：無/);
+  assert.match(output, /下一步：無/);
+  assert.match(output, /write evidence：real_only_violation meeting_confirm_write=unknown \| rollout_basis 0\/1 ready/);
+  assert.match(output, /write rollout：ready none \| high_risk meeting_confirm_write/);
+  assert.match(output, /write rollout risk：meeting_confirm_write=insufficient_real_request_backed_samples:0\/20/);
+  assert.match(output, /decision-os：score [0-9]+(?:\.[0-9]+)?\/100 \| level (ready|watch|at_risk) \| gate_pass_rate [0-9]+\.[0-9]{2}%/);
+  assert.match(output, /decision-os blockers：none/);
+  assert.match(output, /decision-os rollback：none/);
 });
 
 test("release-check exit code maps pass/fail strictly", () => {
@@ -1073,7 +1113,7 @@ test("release-check CLI compare-previous prints only the minimal compare view", 
     },
   });
   const firstReport = JSON.parse(firstRaw);
-  assert.deepEqual(firstReport, {
+  assert.deepEqual(stripDecisionOsReadiness(firstReport), {
     overall_status: "pass",
     blocking_checks: [],
     doc_boundary_regression: false,
@@ -1084,6 +1124,7 @@ test("release-check CLI compare-previous prints only the minimal compare view", 
     representative_fail_case: [],
     drilldown_source: [],
   });
+  assertDecisionOsReadinessShape(firstReport.decision_os_readiness);
   const manifestPath = path.join(archives.releaseCheckArchiveDir, "manifest.json");
   const manifest = readJson(manifestPath);
   const firstSnapshotPath = path.join(
@@ -1117,7 +1158,7 @@ test("release-check CLI compare-previous prints only the minimal compare view", 
     },
   });
 
-  assert.deepEqual(firstReport, {
+  assert.deepEqual(stripDecisionOsReadiness(firstReport), {
     overall_status: "pass",
     blocking_checks: [],
     doc_boundary_regression: false,
@@ -1128,6 +1169,7 @@ test("release-check CLI compare-previous prints only the minimal compare view", 
     representative_fail_case: [],
     drilldown_source: [],
   });
+  assertDecisionOsReadinessShape(firstReport.decision_os_readiness);
   assert.equal(output.trim(), [
     "release 狀態：變好",
     "blocking_checks：有改變",
@@ -1214,7 +1256,8 @@ test("release-check CI entry emits minimal JSON and exits 0 on pass", async () =
   });
 
   assert.equal(result.status, 0);
-  assert.deepEqual(JSON.parse(result.stdout), {
+  const ciPassPayload = JSON.parse(result.stdout);
+  assert.deepEqual(stripDecisionOsReadiness(ciPassPayload), {
     overall_status: "pass",
     blocking_checks: [],
     doc_boundary_regression: false,
@@ -1225,6 +1268,7 @@ test("release-check CI entry emits minimal JSON and exits 0 on pass", async () =
     representative_fail_case: [],
     drilldown_source: [],
   });
+  assertDecisionOsReadinessShape(ciPassPayload.decision_os_readiness);
 
   const manifest = readJson(path.join(archives.releaseCheckArchiveDir, "manifest.json"));
   assert.match(manifest.latest_run_id, /^release-check-/);
@@ -1314,7 +1358,8 @@ test("release-check CI entry exits 1 on fail", async () => {
   });
 
   assert.equal(result.status, 1);
-  assert.deepEqual(JSON.parse(result.stdout), {
+  const ciFailPayload = JSON.parse(result.stdout);
+  assert.deepEqual(stripDecisionOsReadiness(ciFailPayload), {
     overall_status: "fail",
     blocking_checks: ["routing_regression"],
     doc_boundary_regression: false,
@@ -1325,6 +1370,7 @@ test("release-check CI entry exits 1 on fail", async () => {
     representative_fail_case: ["routing latest snapshot unavailable or has no miss case"],
     drilldown_source: ["release-check triage", "routing-eval diagnostics/history"],
   });
+  assertDecisionOsReadinessShape(ciFailPayload.decision_os_readiness);
 });
 
 test("release-check CI entry exits 1 when node --test gate fails", async () => {

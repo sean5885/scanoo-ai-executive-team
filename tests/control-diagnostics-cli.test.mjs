@@ -10,6 +10,7 @@ import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 const testDb = await createTestDbHarness();
 const {
   buildDiagnosticsReportingSummary,
+  buildVerificationFailureTaxonomy,
   buildWritePolicyRuntimeStatsFromRows,
   buildWriteRouteRolloutAdvice,
   runControlDiagnostics,
@@ -421,6 +422,59 @@ test("control diagnostics reporting emits stable top regression cases without ch
       failure_group: "routing:top_miss_cases",
     },
   ]);
+});
+
+test("verification failure taxonomy is deterministic and fail-closed on regression cases", () => {
+  const reportingSummary = buildDiagnosticsReportingSummary({
+    controlSummary: {
+      status: "fail",
+      issues: [
+        {
+          code: "control_scenario_failed:active_executive_task_keeps_follow_up_ownership",
+          summary: "Control scenario failed: active executive task follow-up",
+          file: path.join(process.cwd(), "src/control-kernel.mjs"),
+        },
+      ],
+    },
+    routingSummary: {
+      status: "degrade",
+      diagnostics_summary: {
+        top_miss_cases: [
+          {
+            id: "doc-023a",
+            category: "doc",
+            miss_dimensions: ["planner_action"],
+            actual: {
+              planner_action: "ROUTING_NO_MATCH",
+              route_source: "planner_flow",
+            },
+          },
+        ],
+      },
+      latest_snapshot: {
+        snapshot_path: path.join(process.cwd(), ".tmp/routing-diagnostics-history/snapshots/routing-2.json"),
+      },
+      issue_count: 1,
+      issues: [
+        {
+          code: "routing_compare_regression",
+          summary: "Routing compare shows an obvious regression.",
+          file: path.join(process.cwd(), ".tmp/routing-diagnostics-history/snapshots/routing-2.json"),
+        },
+      ],
+    },
+    writeSummary: {
+      status: "pass",
+      issues: [],
+    },
+  });
+
+  const taxonomy = buildVerificationFailureTaxonomy({ reportingSummary });
+  assert.equal(taxonomy.status, "fail");
+  assert.equal(taxonomy.error_code_class_count > 0, true);
+  assert.equal(taxonomy.failure_group_count > 0, true);
+  assert.equal(taxonomy.top_regression_case_count > 0, true);
+  assert.equal(taxonomy.top_regression_cases.some((item) => item.case_id === "doc-023a"), true);
 });
 
 test("write policy runtime stats split real/test traffic and rollout gating uses real request-backed evidence only", () => {
