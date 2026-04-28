@@ -167,6 +167,7 @@ test('continuation stays on unified planner runtime contract surface', async () 
   let dispatchCalls = 0;
   const result = await runPlannerToolFlow({
     userIntent: '查 launch checklist',
+    sessionKey: 'test_routing_authority_convergence_continuation',
     payload: {
       q: 'launch checklist',
     },

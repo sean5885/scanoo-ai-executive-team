@@ -780,6 +780,7 @@ export function buildWriteRouteRolloutAdvice({
       min_real_sample_size: WRITE_POLICY_PHASE4_MIN_REAL_SAMPLE_SIZE,
       max_real_violation_rate: WRITE_POLICY_PHASE4_MAX_REAL_VIOLATION_RATE,
       real_traffic_sample_count: realTrafficSamples,
+      real_request_backed_sample_progress: `${realTrafficSamples}/${WRITE_POLICY_PHASE4_MIN_REAL_SAMPLE_SIZE}`,
       real_traffic_violation_rate: realViolationRate,
       risk_hint: null,
       rationale: [],
@@ -941,6 +942,41 @@ function buildWritePolicyRolloutSummary(routes = []) {
     candidateRouteKeys.add(candidateKey);
     candidateRoutes.push(route);
   }
+  const readinessRoutes = candidateRoutes.map((route) => {
+    const current = Number(route?.rollout_basis?.real_traffic_sample_count || 0);
+    const minimum = Number(route?.rollout_basis?.min_real_sample_size || WRITE_POLICY_PHASE4_MIN_REAL_SAMPLE_SIZE);
+    const eligible = route?.rollout_basis?.eligible === true;
+    const riskHint = cleanText(route?.risk_hint) || cleanText(route?.rollout_basis?.risk_hint) || null;
+    const insufficientSamples = riskHint?.startsWith("insufficient_real_request_backed_samples:") === true;
+    return {
+      pathname: route.pathname,
+      action: route.action,
+      current_mode: route.mode,
+      target_mode: route.target_mode,
+      eligible,
+      real_traffic_sample_count: current,
+      min_real_sample_size: minimum,
+      real_request_backed_sample_progress: `${current}/${minimum}`,
+      real_traffic_violation_rate: route?.rollout_basis?.real_traffic_violation_rate ?? null,
+      risk_hint: riskHint,
+      operational_debt: insufficientSamples
+        ? {
+            present: true,
+            category: "insufficient_real_request_backed_samples",
+            detail: `${current}/${minimum}`,
+          }
+        : null,
+    };
+  });
+  const operationalDebtItems = readinessRoutes
+    .filter((route) => route?.operational_debt?.present === true)
+    .map((route) => ({
+      action: route.action,
+      pathname: route.pathname,
+      category: route.operational_debt.category,
+      detail: route.operational_debt.detail,
+    }));
+
   return {
     rollout_rules: {
       evidence_source: WRITE_POLICY_ROLLOUT_EVIDENCE_SOURCE,
@@ -955,16 +991,33 @@ function buildWritePolicyRolloutSummary(routes = []) {
       candidate_route_count: candidateRoutes.length,
       eligible_route_count: candidateRoutes.filter((route) => route?.rollout_basis?.eligible === true).length,
       blocked_route_count: candidateRoutes.filter((route) => route?.rollout_basis?.eligible !== true).length,
-      routes: candidateRoutes.map((route) => ({
+      routes: readinessRoutes.map((route) => ({
         pathname: route.pathname,
         action: route.action,
-        current_mode: route.mode,
+        current_mode: route.current_mode,
         target_mode: route.target_mode,
-        eligible: route?.rollout_basis?.eligible === true,
-        real_traffic_sample_count: Number(route?.rollout_basis?.real_traffic_sample_count || 0),
-        real_traffic_violation_rate: route?.rollout_basis?.real_traffic_violation_rate ?? null,
-        risk_hint: cleanText(route?.risk_hint) || cleanText(route?.rollout_basis?.risk_hint) || null,
+        eligible: route.eligible,
+        real_traffic_sample_count: route.real_traffic_sample_count,
+        min_real_sample_size: route.min_real_sample_size,
+        real_request_backed_sample_progress: route.real_request_backed_sample_progress,
+        real_traffic_violation_rate: route.real_traffic_violation_rate,
+        risk_hint: route.risk_hint,
       })),
+      warn_to_enforce_readiness: readinessRoutes.map((route) => ({
+        pathname: route.pathname,
+        action: route.action,
+        current_mode: route.current_mode,
+        target_mode: route.target_mode,
+        eligible: route.eligible,
+        real_request_backed_sample_progress: route.real_request_backed_sample_progress,
+        risk_hint: route.risk_hint,
+        operational_debt: route.operational_debt,
+      })),
+      operational_debt: {
+        present: operationalDebtItems.length > 0,
+        item_count: operationalDebtItems.length,
+        items: operationalDebtItems,
+      },
     },
     upgrade_ready_routes: routes
       .filter((route) => route.upgrade_ready === true)

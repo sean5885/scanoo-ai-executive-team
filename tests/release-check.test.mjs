@@ -138,9 +138,40 @@ const CURRENT_WRITE_GOVERNANCE = {
         target_mode: "enforce",
         eligible: false,
         real_traffic_sample_count: 0,
+        min_real_sample_size: 20,
+        real_request_backed_sample_progress: "0/20",
         real_traffic_violation_rate: null,
+        risk_hint: "insufficient_real_request_backed_samples:0/20",
       },
     ],
+    warn_to_enforce_readiness: [
+      {
+        pathname: "/api/meeting/confirm",
+        action: "meeting_confirm_write",
+        current_mode: "warn",
+        target_mode: "enforce",
+        eligible: false,
+        real_request_backed_sample_progress: "0/20",
+        risk_hint: "insufficient_real_request_backed_samples:0/20",
+        operational_debt: {
+          present: true,
+          category: "insufficient_real_request_backed_samples",
+          detail: "0/20",
+        },
+      },
+    ],
+    operational_debt: {
+      present: true,
+      item_count: 1,
+      items: [
+        {
+          action: "meeting_confirm_write",
+          pathname: "/api/meeting/confirm",
+          category: "insufficient_real_request_backed_samples",
+          detail: "0/20",
+        },
+      ],
+    },
   },
   upgrade_ready_routes: [],
   high_risk_routes: [
@@ -964,8 +995,10 @@ test("release-check human output stays minimal with drilldown line", () => {
       "若不能，先修哪一條線：system regression",
       "下一步：inspect blocking_checks and representative_fail_case",
       "write evidence：real_only_violation none | rollout_basis none",
+      "warn->enforce readiness：none",
       "write rollout：ready none | high_risk none",
       "write rollout risk：none",
+      "operational debt：none",
       "decision-os：score unknown/100 | level unknown | gate_pass_rate unknown",
       "decision-os blockers：none",
       "decision-os rollback：none",
@@ -987,8 +1020,10 @@ test("release-check human output flags doc-boundary routing regressions", () => 
       "若不能，先修哪一條線：routing regression",
       "下一步：這是 doc-boundary 類問題，優先檢查 intent guard；run routing-eval doc-boundary pack and inspect message-intent-utils / lane-executor guard",
       "write evidence：real_only_violation none | rollout_basis none",
+      "warn->enforce readiness：none",
       "write rollout：ready none | high_risk none",
       "write rollout risk：none",
+      "operational debt：none",
       "decision-os：score unknown/100 | level unknown | gate_pass_rate unknown",
       "decision-os blockers：none",
       "decision-os rollback：none",
@@ -1082,8 +1117,10 @@ test("release-check CLI default output stays limited to the minimal write-govern
   assert.match(output, /若不能，先修哪一條線：無/);
   assert.match(output, /下一步：無/);
   assert.match(output, /write evidence：real_only_violation meeting_confirm_write=unknown \| rollout_basis 0\/1 ready/);
+  assert.match(output, /warn->enforce readiness：meeting_confirm_write=0\/20/);
   assert.match(output, /write rollout：ready none \| high_risk meeting_confirm_write/);
   assert.match(output, /write rollout risk：meeting_confirm_write=insufficient_real_request_backed_samples:0\/20/);
+  assert.match(output, /operational debt：meeting_confirm_write=0\/20/);
   assert.match(output, /decision-os：score [0-9]+(?:\.[0-9]+)?\/100 \| level (ready|watch|at_risk) \| gate_pass_rate [0-9]+\.[0-9]{2}%/);
   assert.match(output, /decision-os blockers：none/);
   assert.match(output, /decision-os rollback：none/);

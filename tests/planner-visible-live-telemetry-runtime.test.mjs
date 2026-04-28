@@ -86,6 +86,7 @@ test("runtime skill success path emits planner-visible selection and answer tele
   const runtimeResult = await runPlannerToolFlow({
     userIntent: "幫我整理 launch checklist",
     taskType: "skill_read",
+    sessionKey: "test_planner_visible_live_telemetry_runtime_skill_success",
     requestId: "req_runtime_skill_success",
     payload: {
       account_id: "acct_runtime_skill_success",
@@ -164,6 +165,7 @@ test("runtime can inject a non-default in-memory telemetry adapter", async () =>
   const runtimeResult = await runPlannerToolFlow({
     userIntent: "幫我整理 launch checklist",
     taskType: "skill_read",
+    sessionKey: "test_planner_visible_live_telemetry_runtime_custom_adapter",
     requestId: "req_runtime_custom_in_memory_adapter",
     telemetryAdapter,
     payload: {

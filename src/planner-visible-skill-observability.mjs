@@ -520,6 +520,7 @@ async function runSearchAndSummarizeSuccessProbe() {
   const result = await runPlannerToolFlow({
     userIntent: "幫我搜尋 launch checklist 並整理重點",
     taskType: "skill_read",
+    sessionKey: "planner_visible_skill_observability_search_probe",
     payload: {
       account_id: "acct_search_obs_success",
       q: "launch checklist",
@@ -568,6 +569,7 @@ async function runDocumentSummarizeSuccessProbe() {
   const result = await runPlannerToolFlow({
     userIntent: "幫我整理 launch checklist 文件重點",
     taskType: "document_summary_skill",
+    sessionKey: "planner_visible_skill_observability_detail_probe",
     payload: {
       account_id: "acct_planner_visible_success",
       doc_id: "doc_planner_visible_success",
@@ -628,6 +630,7 @@ async function runDocumentSummarizeFailClosedProbe() {
   const result = await runPlannerToolFlow({
     userIntent: "幫我整理 launch checklist 文件重點",
     taskType: "document_summary_skill",
+    sessionKey: "planner_visible_skill_observability_fail_closed_probe",
     payload: {
       account_id: "acct_planner_visible_fail_closed",
       doc_id: "doc_planner_visible_missing",

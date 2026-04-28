@@ -104,6 +104,8 @@ The coexistence watch now verifies both success paths plus one fail-closed negat
 - `document_summarize` success probe
 - `document_summarize` fail-closed probe
 
+To keep the probe result deterministic while the repository test suite runs in parallel, each probe now uses its own fixed `sessionKey` scope in planner runtime memory. This isolation is additive and does not change planner routing/output contracts.
+
 Each probe must keep:
 
 - `planner_skill_boundary = "answer_pipeline"`

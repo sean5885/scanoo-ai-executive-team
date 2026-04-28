@@ -1153,6 +1153,22 @@ export function renderReleaseCheckReport(report = {}) {
   const rolloutBasisRoutes = Array.isArray(rolloutBasisSummary?.routes)
     ? rolloutBasisSummary.routes
     : [];
+  const warnToEnforceReadiness = Array.isArray(rolloutBasisSummary?.warn_to_enforce_readiness)
+    ? rolloutBasisSummary.warn_to_enforce_readiness
+    : [];
+  const warnToEnforceReadinessLine = warnToEnforceReadiness.length > 0
+    ? warnToEnforceReadiness
+      .map((route) => `${cleanText(route?.action) || cleanText(route?.pathname) || "unknown"}=${cleanText(route?.real_request_backed_sample_progress) || "0/0"}`)
+      .join(",")
+    : "none";
+  const operationalDebtItems = Array.isArray(rolloutBasisSummary?.operational_debt?.items)
+    ? rolloutBasisSummary.operational_debt.items
+    : [];
+  const operationalDebtLine = operationalDebtItems.length > 0
+    ? operationalDebtItems
+      .map((item) => `${cleanText(item?.action) || cleanText(item?.pathname) || "unknown"}=${cleanText(item?.detail) || "unknown"}`)
+      .join(",")
+    : "none";
   const realOnlyLine = rolloutBasisRoutes.length > 0
     ? rolloutBasisRoutes
       .map((route) => `${cleanText(route?.action) || cleanText(route?.pathname) || "unknown"}=${route?.real_traffic_violation_rate == null ? "unknown" : route.real_traffic_violation_rate}`)
@@ -1167,8 +1183,10 @@ export function renderReleaseCheckReport(report = {}) {
     `若不能，先修哪一條線：${renderBlockingLineLabel(firstBlockingLine)}`,
     `下一步：${docBoundaryNote}${actionHint}`,
     `write evidence：real_only_violation ${realOnlyLine} | rollout_basis ${rolloutBasisLine}`,
+    `warn->enforce readiness：${warnToEnforceReadinessLine}`,
     `write rollout：ready ${upgradeReady.length > 0 ? upgradeReady.join(",") : "none"} | high_risk ${highRisk.length > 0 ? highRisk.join(",") : "none"}`,
     `write rollout risk：${highRiskHints.length > 0 ? highRiskHints.join(",") : "none"}`,
+    `operational debt：${operationalDebtLine}`,
     `decision-os：score ${decisionOsScore == null ? "unknown" : decisionOsScore}/100 | level ${decisionOsLevel} | gate_pass_rate ${decisionOsGatePassRate}`,
     `decision-os blockers：${decisionOsBlockedReasons.length > 0 ? decisionOsBlockedReasons.join(",") : "none"}`,
     `decision-os rollback：${decisionOsRollbackCandidates.length > 0 ? decisionOsRollbackCandidates.join(" | ") : "none"}`,

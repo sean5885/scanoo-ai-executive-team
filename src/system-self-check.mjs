@@ -1125,6 +1125,22 @@ export function renderSystemSelfCheckReport(result = {}) {
   const rolloutBasisRoutes = Array.isArray(rolloutBasisSummary?.routes)
     ? rolloutBasisSummary.routes
     : [];
+  const warnToEnforceReadiness = Array.isArray(rolloutBasisSummary?.warn_to_enforce_readiness)
+    ? rolloutBasisSummary.warn_to_enforce_readiness
+    : [];
+  const warnToEnforceReadinessLine = warnToEnforceReadiness.length > 0
+    ? warnToEnforceReadiness
+      .map((route) => `${cleanText(route?.action) || cleanText(route?.pathname) || "unknown"}=${cleanText(route?.real_request_backed_sample_progress) || "0/0"}`)
+      .join(",")
+    : "none";
+  const operationalDebtItems = Array.isArray(rolloutBasisSummary?.operational_debt?.items)
+    ? rolloutBasisSummary.operational_debt.items
+    : [];
+  const operationalDebtLine = operationalDebtItems.length > 0
+    ? operationalDebtItems
+      .map((item) => `${cleanText(item?.action) || cleanText(item?.pathname) || "unknown"}=${cleanText(item?.detail) || "unknown"}`)
+      .join(",")
+    : "none";
   const realOnlyLine = rolloutBasisRoutes.length > 0
     ? rolloutBasisRoutes
       .map((route) => `${cleanText(route?.action) || cleanText(route?.pathname) || "unknown"}=${route?.real_traffic_violation_rate == null ? "unknown" : route.real_traffic_violation_rate}`)
@@ -1140,8 +1156,10 @@ export function renderSystemSelfCheckReport(result = {}) {
     `結論：core ${systemSummary?.core_checks || "fail"} | company-brain ${systemSummary?.company_brain_status || "fail"} | control ${systemSummary?.control_status || "fail"} | dependency ${systemSummary?.dependency_status || "pass"} | write-policy ${systemSummary?.write_policy_status || "fail"} | usage-layer ${systemSummary?.usage_layer_status || "fail"} | routing ${systemSummary?.routing_status || "fail"} | planner ${systemSummary?.planner_gate || "fail"} | regression ${systemSummary?.has_obvious_regression ? "yes" : "no"}`,
     `write policy：coverage ${Number(writeSummary?.policy_coverage?.enforced_route_count || 0)}/${Number(writeSummary?.policy_coverage?.metadata_route_count || 0)} | modes ${writeModes || "none"}`,
     `write evidence：real_only_violation ${realOnlyLine} | rollout_basis ${rolloutBasisLine}`,
+    `warn->enforce readiness：${warnToEnforceReadinessLine}`,
     `write rollout：ready ${upgradeReady.length > 0 ? upgradeReady.join(",") : "none"} | high_risk ${highRisk.length > 0 ? highRisk.join(",") : "none"}`,
     `write rollout risk：${highRiskHints.length > 0 ? highRiskHints.join(",") : "none"}`,
+    `operational debt：${operationalDebtLine}`,
     `usage gate：${usageGateStage} | FTHR ${usageFthr} (>=${Number(usageThresholds?.fthr_min_percent || 0).toFixed(0)}%) | Generic ${usageGeneric} (<=${Number(usageThresholds?.generic_rate_max_percent || 0).toFixed(0)}%)`,
     `decision-os：score ${decisionOsScore == null ? "unknown" : decisionOsScore}/100 | level ${decisionOsLevel} | gate ${Number(decisionOsGateSummary?.passed_gates || 0)}/${Number(decisionOsGateSummary?.total_gates || 0)} (${decisionOsGatePassRate})`,
     `decision-os blockers：${decisionOsBlockedReasons.length > 0 ? decisionOsBlockedReasons.join(",") : "none"}`,
