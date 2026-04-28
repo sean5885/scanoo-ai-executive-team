@@ -1320,6 +1320,47 @@ export function buildDiagnosticsReportingSummary({
   };
 }
 
+export function buildVerificationFailureTaxonomy({
+  reportingSummary = {},
+} = {}) {
+  const errorCodeClasses = Array.isArray(reportingSummary?.error_code_classes)
+    ? reportingSummary.error_code_classes
+    : [];
+  const failureGroups = Array.isArray(reportingSummary?.failure_groups)
+    ? reportingSummary.failure_groups
+    : [];
+  const topRegressionCases = Array.isArray(reportingSummary?.top_regression_cases)
+    ? reportingSummary.top_regression_cases
+    : [];
+
+  const errorCodeClassCounts = errorCodeClasses.map((item) => ({
+    class_key: cleanText(item?.class_key) || "unknown",
+    count: Number(item?.count || 0),
+  }));
+  const failureGroupCounts = failureGroups.map((item) => ({
+    group_key: cleanText(item?.group_key) || "unknown",
+    count: Number(item?.count || 0),
+  }));
+  const topCases = topRegressionCases.map((item) => ({
+    line: cleanText(item?.line) || "unknown",
+    case_id: cleanText(item?.case_id) || "unknown",
+    code: cleanText(item?.code) || "unknown",
+  }));
+
+  return {
+    status: topCases.length === 0 ? "pass" : "fail",
+    summary: topCases.length === 0
+      ? "no verification regression taxonomy signal"
+      : "verification regression taxonomy signal detected",
+    error_code_class_count: Number(reportingSummary?.error_code_class_count || errorCodeClassCounts.length || 0),
+    failure_group_count: Number(reportingSummary?.failure_group_count || failureGroupCounts.length || 0),
+    top_regression_case_count: Number(reportingSummary?.top_regression_case_count || topCases.length || 0),
+    error_code_class_counts: errorCodeClassCounts,
+    failure_group_counts: failureGroupCounts,
+    top_regression_cases: topCases,
+  };
+}
+
 function withEnv(values = {}, callback) {
   const previous = new Map();
   for (const [key, value] of Object.entries(values)) {

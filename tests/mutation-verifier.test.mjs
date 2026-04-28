@@ -1,11 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
-import {
+const dbHarness = await createTestDbHarness();
+
+test.after(() => {
+  dbHarness.close();
+});
+
+const {
   evaluateMutationVerifierCoverage,
   getRequiredMutationVerifierProfile,
   runMutationVerification,
-} from "../src/mutation-verifier.mjs";
+} = await import("../src/mutation-verifier.mjs");
 
 test("mutation verifier coverage declares required profile for high-risk knowledge writes", () => {
   const required = getRequiredMutationVerifierProfile({

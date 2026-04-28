@@ -4,12 +4,38 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 本文件用來做目前 Lobster 系統的收口檢查。所有結論都以程式碼、設定、測試與已提交文檔為依據，不使用舊聊天上下文或推測補齊。
 
-Last verified in this repo on 2026-03-29.
+Last verified in this repo on 2026-04-28.
 
 本次額外驗證：
 
-- `node --test tests/planner-contract-consistency.test.mjs tests/planner-contract-closure.test.mjs tests/mutation-runtime.test.mjs tests/lark-mutation-runtime.test.mjs tests/meeting-agent.test.mjs tests/doc-comment-rewrite.test.mjs`
-- 結果：66 tests / 66 passed
+- `node --test tests/release-check.test.mjs tests/system-self-check.test.mjs tests/planner-contract-closure.test.mjs tests/planner-contract-consistency.test.mjs`
+- `npm run check:self -- --json`
+- `npm run check:release -- --json`
+- `npm run routing:closed-loop -- rerun`
+- `node scripts/memory-influence-gate.mjs --json`
+- `npm run release-check:ci`
+
+## 0. WS-4 Observability And Readiness Gate
+
+整體狀態：已收口（repo-code release gate 維持 pass）
+
+- `check:self`：`ok=true`，`decision_os_observability` 已落地並輸出：
+  - `readiness_score.score=92.5`
+  - `readiness_score.level=ready`
+  - `gate_summary=10/10 passed`
+  - `verification_fail_taxonomy.status=pass`
+  - `closed_loop_metrics.routing_closed_loop.status=pass`
+  - `closed_loop_metrics.memory_influence.status=unknown`（預設未注入 memory gate runner）
+- `check:release` / `release-check:ci`：`overall_status=pass`，`decision_os_readiness` 已落地並輸出：
+  - `final_score=92.5`
+  - `readiness_level=ready`
+  - `gate_pass_rate=1`
+  - `blocked_reasons=[]`
+  - `rollback_candidates=[]`
+- `routing:closed-loop -- rerun`：`Eval gate: pass`、`Diagnostics summary: observe_only (info)`。
+- `memory-influence-gate --json`：`gate=pass`、`memory_hit_rate=1`、`action_changed_by_memory_rate=1`。
+- write rollout 現況仍維持既有高風險保守策略：
+  - `meeting_confirm_write` 仍在 `warn`，原因為 `insufficient_real_request_backed_samples:0/20`。
 
 ## 1. Contract Closure
 
