@@ -20,14 +20,14 @@ Last verified in this repo on 2026-04-28.
 整體狀態：已收口（repo-code release gate 維持 pass）
 
 - `check:self`：`ok=true`，`decision_os_observability` 已落地並輸出：
-  - `readiness_score.score=92.5`
+  - `readiness_score.score=100`
   - `readiness_score.level=ready`
   - `gate_summary=10/10 passed`
   - `verification_fail_taxonomy.status=pass`
   - `closed_loop_metrics.routing_closed_loop.status=pass`
-  - `closed_loop_metrics.memory_influence.status=unknown`（預設未注入 memory gate runner）
+  - `closed_loop_metrics.memory_influence.status=pass`（`scripts/self-check.mjs` / `src/release-check.mjs` 會注入 memory gate runner；runner 不可用時維持 fail-soft `unknown` fallback shape）
 - `check:release` / `release-check:ci`：`overall_status=pass`，`decision_os_readiness` 已落地並輸出：
-  - `final_score=92.5`
+  - `final_score=100`
   - `readiness_level=ready`
   - `gate_pass_rate=1`
   - `blocked_reasons=[]`

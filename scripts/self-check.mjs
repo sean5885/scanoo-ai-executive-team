@@ -70,6 +70,7 @@ const {
   renderSystemSelfCheckReport,
   runSystemSelfCheck,
 } = await import("../src/system-self-check.mjs");
+const { runMemoryInfluenceCheck } = await import("./memory-influence-gate.mjs");
 const {
   resolvePreviousSystemSelfCheckSnapshot,
   resolveSystemSelfCheckSnapshot,
@@ -105,7 +106,13 @@ async function resolveCompareTarget(currentRunId = "") {
 try {
   let result;
   try {
-    result = await runSystemSelfCheck(await resolveRuntimeOverrides());
+    const runtimeOverrides = await resolveRuntimeOverrides();
+    result = await runSystemSelfCheck({
+      ...runtimeOverrides,
+      memoryInfluenceCheck: typeof runtimeOverrides?.memoryInfluenceCheck === "function"
+        ? runtimeOverrides.memoryInfluenceCheck
+        : runMemoryInfluenceCheck,
+    });
   } finally {
     process.stdout.write = originalWrite;
   }

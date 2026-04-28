@@ -671,11 +671,10 @@ async function resolveMemoryInfluenceSummary({ memoryInfluenceCheck = null } = {
   try {
     return normalizeMemoryInfluenceSummary(await memoryInfluenceCheck());
   } catch (error) {
-    return {
-      status: "fail",
-      source: "memory_influence_check_error",
+    return normalizeMemoryInfluenceSummary({
       gate: "fail",
-      summary: "memory influence check failed",
+      source: "memory_influence_check_error",
+      summary: `memory influence check failed: ${error instanceof Error ? error.message : String(error)}`,
       metrics: {
         memory_hit_rate: null,
         action_changed_by_memory_rate: null,
@@ -684,8 +683,7 @@ async function resolveMemoryInfluenceSummary({ memoryInfluenceCheck = null } = {
         memory_hit_rate_min: null,
         action_changed_by_memory_rate_min: null,
       },
-      error: error instanceof Error ? error.message : String(error),
-    };
+    });
   }
 }
 

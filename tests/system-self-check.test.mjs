@@ -115,6 +115,19 @@ const STABLE_USAGE_LAYER_SUMMARY = {
   },
 };
 
+const STABLE_MEMORY_INFLUENCE_SUMMARY = {
+  gate: "pass",
+  summary: "memory influence gate passes",
+  metrics: {
+    memory_hit_rate: 1,
+    action_changed_by_memory_rate: 1,
+  },
+  thresholds: {
+    memory_hit_rate_min: 0.8,
+    action_changed_by_memory_rate_min: 0.5,
+  },
+};
+
 async function seedSelfCheckArchives() {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "system-self-check-"));
   const routingArchiveDir = path.join(baseDir, "routing");
@@ -194,6 +207,7 @@ test("system self-check returns unified routing and planner summaries", async ()
     ...archives,
     writeCheck: async () => STABLE_WRITE_SUMMARY,
     usageLayerCheck: async () => STABLE_USAGE_LAYER_SUMMARY,
+    memoryInfluenceCheck: async () => STABLE_MEMORY_INFLUENCE_SUMMARY,
   });
 
   assert.equal(result.ok, true);
@@ -248,7 +262,7 @@ test("system self-check returns unified routing and planner summaries", async ()
   assert.equal(typeof result.decision_os_observability.gate_pass_rate, "number");
   assert.equal(typeof result.decision_os_observability.readiness_score?.score, "number");
   assert.equal(result.decision_os_observability.closed_loop_metrics?.routing_closed_loop?.status, "pass");
-  assert.equal(result.decision_os_observability.closed_loop_metrics?.memory_influence?.status, "unknown");
+  assert.equal(result.decision_os_observability.closed_loop_metrics?.memory_influence?.status, "pass");
   assert.match(result.self_check_archive.run_id, /^self-check-/);
 
   const manifest = readJson(path.join(archives.selfCheckArchiveDir, "manifest.json"));
@@ -280,6 +294,17 @@ test("system self-check returns unified routing and planner summaries", async ()
   assert.equal(snapshot.routing_summary.doc_boundary_regression, result.routing_summary.doc_boundary_regression);
   assert.equal(snapshot.planner_summary.gate, "pass");
   assert.equal(snapshot.decision_os_observability.version, "decision_os_observability_v1");
+});
+
+test("system self-check keeps unknown memory_influence when check is not injected", async () => {
+  const archives = await seedSelfCheckArchives();
+  const result = await runSystemSelfCheck({
+    ...archives,
+    writeCheck: async () => STABLE_WRITE_SUMMARY,
+    usageLayerCheck: async () => STABLE_USAGE_LAYER_SUMMARY,
+  });
+
+  assert.equal(result.decision_os_observability.closed_loop_metrics?.memory_influence?.status, "unknown");
 });
 
 test("system self-check marks doc-boundary routing regressions and points to intent guards", async () => {
@@ -590,7 +615,7 @@ test("self-check CLI emits unified JSON report with --json", async () => {
   assert.match(parsed.planner_summary.latest_snapshot.run_id, /^planner-diagnostics-/);
   assert.equal(parsed.decision_os_observability.version, "decision_os_observability_v1");
   assert.equal(typeof parsed.decision_os_observability.readiness_score?.score, "number");
-  assert.equal(parsed.decision_os_observability.closed_loop_metrics?.memory_influence?.status, "unknown");
+  assert.equal(parsed.decision_os_observability.closed_loop_metrics?.memory_influence?.status, "pass");
   assert.match(parsed.self_check_archive.run_id, /^self-check-/);
 });
 

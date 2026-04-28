@@ -7,6 +7,7 @@ import { archiveReleaseCheckSnapshot } from "./release-check-history.mjs";
 import { resolveRoutingDiagnosticsSnapshot } from "./routing-diagnostics-history.mjs";
 import { detectDocBoundaryRoutingRegression } from "./routing-eval-diagnostics.mjs";
 import { runSystemSelfCheck } from "./system-self-check.mjs";
+import { runMemoryInfluenceCheck } from "../scripts/memory-influence-gate.mjs";
 
 const BLOCKING_SYSTEM_REGRESSION = "system_regression";
 const BLOCKING_CONTROL_REGRESSION = "control_regression";
@@ -1223,7 +1224,13 @@ export function buildReleaseCheckCompareSummary({
 }
 
 export async function runReleaseCheck(options = {}) {
-  const selfCheckResult = await runSystemSelfCheck(options);
+  const normalizedOptions = options && typeof options === "object" ? options : {};
+  const selfCheckResult = await runSystemSelfCheck({
+    ...normalizedOptions,
+    memoryInfluenceCheck: typeof normalizedOptions?.memoryInfluenceCheck === "function"
+      ? normalizedOptions.memoryInfluenceCheck
+      : runMemoryInfluenceCheck,
+  });
   let latestControlSnapshot = null;
   let latestRoutingSnapshot = null;
   let plannerReport = null;
@@ -1231,7 +1238,7 @@ export async function runReleaseCheck(options = {}) {
   try {
     latestControlSnapshot = await resolveControlDiagnosticsSnapshot({
       reference: "latest",
-      ...(options?.controlArchiveDir ? { baseDir: options.controlArchiveDir } : {}),
+      ...(normalizedOptions?.controlArchiveDir ? { baseDir: normalizedOptions.controlArchiveDir } : {}),
     });
   } catch {
     latestControlSnapshot = null;
@@ -1240,7 +1247,7 @@ export async function runReleaseCheck(options = {}) {
   try {
     latestRoutingSnapshot = await resolveRoutingDiagnosticsSnapshot({
       reference: "latest",
-      ...(options?.routingArchiveDir ? { baseDir: options.routingArchiveDir } : {}),
+      ...(normalizedOptions?.routingArchiveDir ? { baseDir: normalizedOptions.routingArchiveDir } : {}),
     });
   } catch {
     latestRoutingSnapshot = null;
@@ -1300,7 +1307,7 @@ export async function runReleaseCheck(options = {}) {
     drilldown,
   });
   const releaseCheckArchive = await archiveReleaseCheckSnapshot({
-    ...(options?.releaseCheckArchiveDir ? { baseDir: options.releaseCheckArchiveDir } : {}),
+    ...(normalizedOptions?.releaseCheckArchiveDir ? { baseDir: normalizedOptions.releaseCheckArchiveDir } : {}),
     report,
   });
 

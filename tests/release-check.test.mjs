@@ -197,6 +197,19 @@ const STABLE_USAGE_LAYER_SUMMARY = {
   },
 };
 
+const STABLE_MEMORY_INFLUENCE_SUMMARY = {
+  gate: "pass",
+  summary: "memory influence gate passes",
+  metrics: {
+    memory_hit_rate: 1,
+    action_changed_by_memory_rate: 1,
+  },
+  thresholds: {
+    memory_hit_rate_min: 0.8,
+    action_changed_by_memory_rate_min: 0.5,
+  },
+};
+
 async function createWriteSummaryFixture(baseDir, summary = STABLE_WRITE_SUMMARY) {
   const fixturePath = path.join(baseDir, "write-summary-fixture.json");
   await writeFile(fixturePath, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
@@ -245,6 +258,7 @@ test("release-check report passes when self-check, routing, and planner are stab
     ...archives,
     writeCheck: async () => STABLE_WRITE_SUMMARY,
     usageLayerCheck: async () => STABLE_USAGE_LAYER_SUMMARY,
+    memoryInfluenceCheck: async () => STABLE_MEMORY_INFLUENCE_SUMMARY,
   });
 
   assert.deepEqual(stripDecisionOsReadiness(result.report), {
@@ -259,6 +273,20 @@ test("release-check report passes when self-check, routing, and planner are stab
     drilldown_source: [],
   });
   assertDecisionOsReadinessShape(result.report.decision_os_readiness);
+  assert.equal(result.report.decision_os_readiness.closed_loop_metrics?.memory_influence?.status, "pass");
+});
+
+test("release-check keeps unknown memory_influence when injected check returns unavailable payload", async () => {
+  const archives = await seedReleaseCheckArchives();
+  const result = await runReleaseCheck({
+    ...archives,
+    writeCheck: async () => STABLE_WRITE_SUMMARY,
+    usageLayerCheck: async () => STABLE_USAGE_LAYER_SUMMARY,
+    memoryInfluenceCheck: async () => null,
+  });
+
+  assertDecisionOsReadinessShape(result.report.decision_os_readiness);
+  assert.equal(result.report.decision_os_readiness.closed_loop_metrics?.memory_influence?.status, "unknown");
 });
 
 test("release-check compare summary only reports status and field changes", () => {

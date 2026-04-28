@@ -2,6 +2,7 @@
 
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { mkdtemp, rm } from "node:fs/promises";
 import { cleanText } from "../src/message-intent-utils.mjs";
 
@@ -294,6 +295,18 @@ async function buildMemoryInfluenceReport({
   }
 }
 
+export async function runMemoryInfluenceCheck({
+  caseCount = DEFAULT_CASE_COUNT,
+  memoryHitRateMin = DEFAULT_MEMORY_HIT_RATE_MIN,
+  actionChangedRateMin = DEFAULT_ACTION_CHANGED_RATE_MIN,
+} = {}) {
+  return buildMemoryInfluenceReport({
+    caseCount,
+    memoryHitRateMin,
+    actionChangedRateMin,
+  });
+}
+
 function renderTextReport(report = {}) {
   const lines = [
     `memory influence gate: ${report?.gate || "fail"}`,
@@ -306,7 +319,7 @@ function renderTextReport(report = {}) {
 
 async function main() {
   const args = parseArgs();
-  const report = await buildMemoryInfluenceReport({
+  const report = await runMemoryInfluenceCheck({
     caseCount: args.caseCount,
     memoryHitRateMin: args.memoryHitRateMin,
     actionChangedRateMin: args.actionChangedRateMin,
@@ -320,14 +333,27 @@ async function main() {
     process.exitCode = 1;
   }
 }
+const cliEntrypoint = (() => {
+  const argv1 = cleanText(process.argv[1]);
+  if (!argv1) {
+    return false;
+  }
+  try {
+    return import.meta.url === pathToFileURL(path.resolve(argv1)).href;
+  } catch {
+    return false;
+  }
+})();
 
-main().catch((error) => {
-  const result = {
-    gate_version: GATE_VERSION,
-    ok: false,
-    gate: "fail",
-    error: cleanText(error?.message || "") || "memory_influence_gate_runtime_error",
-  };
-  console.error(JSON.stringify(result, null, 2));
-  process.exitCode = 1;
-});
+if (cliEntrypoint) {
+  main().catch((error) => {
+    const result = {
+      gate_version: GATE_VERSION,
+      ok: false,
+      gate: "fail",
+      error: cleanText(error?.message || "") || "memory_influence_gate_runtime_error",
+    };
+    console.error(JSON.stringify(result, null, 2));
+    process.exitCode = 1;
+  });
+}
