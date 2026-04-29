@@ -394,6 +394,9 @@ Current-truth docs for onboarding are:
       - fail conditions `pdf_e2e_total < 50` or `pdf_task_success_rate < 0.9` are hard-gate failures
   - `release-check.mjs` blocks on `truthful_completion_metrics.status=fail`; sample-insufficient `unknown` remains non-blocking only for non-hard-gate metrics
     - truthful-completion drilldown now includes bounded root-cause hints (`pdf_acceptance_case_count`, `pdf_acceptance_success_rate`, `documentation_consistency_rate`) for direct triage
+  - checked-in acceptance gate script:
+    - `scripts/truthful-completion-acceptance.mjs`
+    - converts A-grade truthful completion metrics into executable pass/fail contract with CI-friendly exit code
   - planner/read evidence is converted into public `sources[]` lines through canonical source mapping
 - Secondary implemented path:
   - `/Users/seanhan/Documents/Playground/src/answer-service.mjs`

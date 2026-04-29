@@ -23,6 +23,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 ```bash
 npm run metrics:baseline
 npm run eval:pdf-acceptance
+npm run eval:truthful-acceptance
 ```
 
 輸出：
@@ -30,6 +31,7 @@ npm run eval:pdf-acceptance
 - `.tmp/metrics/baseline.json`
 - 指標來源為 `system-self-check` 的 `truthful_completion_metrics`
 - PDF acceptance evaluator 會固定驗證 `50+` cases 的 `ingest -> retrieve -> answer` 連續鏈路
+- truthful acceptance gate (`scripts/truthful-completion-acceptance.mjs`) 會把 A 級門檻轉成可執行 pass/fail 與 exit code
 
 ### 1. Smoke Baseline
 
