@@ -1,0 +1,11 @@
+{
+  "id": "pdf_case_014",
+  "file_name": "anon-014.pdf",
+  "mime_type": "application/pdf",
+  "template": "text_operator",
+  "pages": 5,
+  "text": "Anonymous retention brief 014. Key token evidence-retention-014. Decision owner team-1.",
+  "query": "evidence-retention-014",
+  "expected_phrase": "evidence-retention-014",
+  "expect_extract_success": true
+}

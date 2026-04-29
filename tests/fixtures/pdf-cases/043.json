@@ -1,0 +1,11 @@
+{
+  "id": "pdf_case_043",
+  "file_name": "anon-043.pdf",
+  "mime_type": "application/pdf",
+  "template": "array_operator",
+  "pages": 4,
+  "text": "Anonymous sales brief 043. Key token evidence-sales-043. Decision owner team-2.",
+  "query": "evidence-sales-043",
+  "expected_phrase": "evidence-sales-043",
+  "expect_extract_success": true
+}

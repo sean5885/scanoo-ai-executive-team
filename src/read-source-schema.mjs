@@ -13,6 +13,8 @@ function normalizeSourceMetadata(metadata = {}) {
     source_type: cleanText(metadata.source_type || metadata.sourceType || ""),
     chunk_index: Number.isInteger(metadata.chunk_index) ? metadata.chunk_index : null,
     updated_at: cleanText(metadata.updated_at || metadata.updatedAt || ""),
+    extractor_version: cleanText(metadata.extractor_version || metadata.extractorVersion || ""),
+    page_count: Number.isInteger(metadata.page_count) ? metadata.page_count : null,
   };
 }
 

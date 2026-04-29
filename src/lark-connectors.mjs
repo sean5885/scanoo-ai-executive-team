@@ -60,6 +60,14 @@ export async function scanDriveTree(accessToken, folderToken, parentParts = [], 
     for (const item of items) {
       const currentParts = [...parentParts, item.name];
       const parentPath = buildParentPath(parentParts);
+      const itemName = normalizeText(item.name || "");
+      const itemMime = normalizeText(item.mime_type || item.mimeType || "");
+      const extension = itemName.includes(".")
+        ? itemName.split(".").pop().toLowerCase()
+        : "";
+      const resolvedType = item.type === "file" && (extension === "pdf" || itemMime === "application/pdf")
+        ? "pdf"
+        : item.type;
 
       collected.push({
         source_type: "drive",
@@ -72,7 +80,9 @@ export async function scanDriveTree(accessToken, folderToken, parentParts = [], 
         parent_path: parentPath,
         updated_at_remote: item.modified_time || item.created_time || null,
         revision: item.modified_time || item.created_time || null,
-        type: item.type,
+        type: resolvedType,
+        mime: itemMime || null,
+        ext: extension || null,
         parent_parts: [...parentParts],
         path_parts: currentParts,
       });
@@ -125,6 +135,28 @@ export async function fetchDocxPlainText(accessToken, documentId) {
   }
 
   return markdownToPlainText(markdownResponse.data?.content || "");
+}
+
+export async function fetchDriveFileBytes(accessToken, fileToken) {
+  accessToken = await resolveConnectorAuth(accessToken);
+  const response = await larkClient.drive.v1.file.download(
+    {
+      path: {
+        file_token: fileToken,
+      },
+    },
+    withToken(accessToken),
+  );
+  const stream = response?.getReadableStream?.();
+  if (!stream) {
+    throw new Error("Failed to download drive file stream");
+  }
+
+  const chunks = [];
+  for await (const chunk of stream) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
 }
 
 export async function listWikiSpaces(accessToken, pageToken) {

@@ -336,10 +336,14 @@ Current-truth docs for onboarding are:
   - when `scanoo-diagnose` still cannot read because the explicit user token is missing, the lane no longer falls through to the generic planner failure text: with hydrated doc refs / bounded evidence / readable auth context it now returns a weak-but-usable diagnose reply, and without that context it still returns an explicit-limitation diagnose reply that includes prompt-backed observations, candidate causes, and concrete next checks
   - if docs search still cannot resolve a document id, the lane now returns one bounded diagnose-contract missing-document reply instead of dropping to a generic fallback
   - when explicit Scanoo lane-primary fast-path does not return a bounded reply and runtime falls back to planner, the same turn no longer re-enters timeout-triggered lane fallback (`request_timeout -> lane fallback`) again
-  - attachment/modality ingress now has a minimal PDF recognition path:
+  - attachment/modality ingress + sync pipeline now has a minimal PDF extraction/index path:
     - `/Users/seanhan/Documents/Playground/src/message-intent-utils.mjs` adds `extractAttachmentObjects(...)` and extracts `file_key/file_token/name/mime/ext` from structured attachment payloads
     - `/Users/seanhan/Documents/Playground/src/modality-router.mjs` now classifies `pdf` and `pdf_multimodal` in addition to `text/image/multimodal`
     - image-only execution paths in `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` and `/Users/seanhan/Documents/Playground/src/agent-dispatcher.mjs` now avoid treating PDF modality as image analysis input
+    - `/Users/seanhan/Documents/Playground/src/lark-sync-service.mjs` now treats `docx|pdf` as text-extract candidates, and runs PDF extraction via `/Users/seanhan/Documents/Playground/src/pdf-extractor.mjs -> extract({ bytes, fileName, mimeType })`
+    - `/Users/seanhan/Documents/Playground/src/lark-connectors.mjs` now includes `fetchDriveFileBytes(...)` and drive-scan PDF type recognition (`type=file + .pdf|application/pdf -> type=pdf`)
+    - extraction failure is fail-soft per document (`status=index_failed`, `failure_reason`, `meta_json.extraction_status=failed`) and does not pretend indexed success
+    - indexed PDF metadata now carries `source_type=pdf`, `extractor_version`, and `page_count`; read-side source metadata preserves those fields for citation evidence
   - `user-response-normalizer.mjs` now only reads canonical `execution_result.data.answer / sources / limitations`
   - answer boundary now also runs a deterministic usage-layer intelligence pass:
     - emits `usage_layer.interpreted_as_continuation`, `usage_layer.interpreted_as_new_task`, `usage_layer.redundant_question_detected`, `usage_layer.owner_selection_feels_consistent`, `usage_layer.slot_suppressed_ask`, `usage_layer.retry_context_applied`, `usage_layer.response_continuity_score`, `usage_layer.usage_issue_codes`, and `usage_layer_summary` into planner working-memory observability
@@ -354,15 +358,16 @@ Current-truth docs for onboarding are:
     - when `verification.pass !== true`, frontend text is forced to `blocked/escalated` tone and cannot use completion phrasing
     - fail paths only render `目前狀態 + 可驗證證據 + 待確認/限制`
     - fake/partial/verifier-fail regressions are covered by `/Users/seanhan/Documents/Playground/tests/executive-orchestrator.test.mjs`
-  - parallel execution model remains unchanged:
-    - supporting-agent steps are still executed sequentially in-process
-    - no background worker mesh or true multi-agent parallel runtime is introduced
-    - decision metrics now expose `parallel_step_count/total_step_count` as observability (not runtime parallel dispatch)
+  - parallel execution model now has bounded in-process specialist parallelism:
+    - supporting-agent steps in `executeWorkItemsSequentially(...)` are dispatched with in-process parallel await, then merge-agent synthesis remains serial
+    - fail-soft is preserved: any supporting failure forces generalist merge fallback and cannot be represented as completed specialist evidence
+    - this is still not a background worker mesh or distributed multi-agent runtime
+    - execution journal now lands `parallel_step_count`, `total_step_count`, and `parallel_ratio`
   - `system-self-check.mjs` now lands truthful-completion metrics (`truthful_completion_metrics_v1`) with checked-in thresholds:
     - `pdf_task_success_rate = pdf_e2e_pass / pdf_e2e_total` (`>=0.9`)
     - `fake_completion_rate = fake_completion_count / important_task_total` (`<0.02`)
     - `verifier_coverage_rate = verifier_covered_count / important_task_total` (`=1.0`)
-    - `parallel_ratio = parallel_step_count / total_step_count` (`>=0.4`, observability ratio only)
+    - `parallel_ratio = parallel_step_count / total_step_count` (`>=0.4`)
     - `blocked_misreported_completed_count` (`=0`)
     - `documentation_consistency_rate` over required doc mirror paths (`=1.0`)
   - `release-check.mjs` now blocks on `truthful_completion_metrics.status=fail`; sample-insufficient `unknown` does not hard-block release
@@ -384,6 +389,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/tests/truly-missing-slot.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/modality-router.pdf.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/message-intent-utils.pdf.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/pdf-e2e.test.mjs`
 
 ### 4. Skill Runtime
 

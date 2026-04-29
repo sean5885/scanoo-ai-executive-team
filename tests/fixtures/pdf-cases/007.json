@@ -1,0 +1,11 @@
+{
+  "id": "pdf_case_007",
+  "file_name": "anon-007.pdf",
+  "mime_type": "application/pdf",
+  "template": "array_operator",
+  "pages": 3,
+  "text": "Anonymous launch brief 007. Key token evidence-launch-007. Decision owner team-1.",
+  "query": "evidence-launch-007",
+  "expected_phrase": "evidence-launch-007",
+  "expect_extract_success": true
+}

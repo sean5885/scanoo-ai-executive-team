@@ -153,7 +153,7 @@ test("buildExecutiveBrief drops JSON-like primary reply and leaked supporting su
   assert.doesNotMatch(text, /```json|\"ok\"|\"error\"|tool_error|\{\"answer\"/);
 });
 
-test("executeWorkItemsSequentially runs specialists in order and merges into one final response", async () => {
+test("executeWorkItemsSequentially runs supporting specialists in parallel and then merges into one final response", async () => {
   const calls = [];
   const result = await executeWorkItemsSequentially({
     accountId: "acct-1",
@@ -175,6 +175,11 @@ test("executeWorkItemsSequentially runs specialists in order and merges into one
   assert.equal(calls[2].supportingContext.includes("/product"), true);
   assert.equal(result.reply?.text, "generalist:請整理結論");
   assert.equal(result.supportingOutputs.length, 2);
+  assert.deepEqual(result.parallelSignals, {
+    total_step_count: 3,
+    parallel_step_count: 2,
+    parallel_ratio: 0.6667,
+  });
   assert.equal(result.finalWorkPlan[0].status, "completed");
   assert.equal(result.finalWorkPlan[2].agent_id, "generalist");
 });
@@ -200,6 +205,11 @@ test("executeWorkItemsSequentially preserves generalist fallback when a speciali
 
   assert.deepEqual(calls, ["consult", "generalist"]);
   assert.equal(result.fallbackUsed, true);
+  assert.deepEqual(result.parallelSignals, {
+    total_step_count: 2,
+    parallel_step_count: 0,
+    parallel_ratio: 0,
+  });
   assert.equal(result.reply?.text, "generalist:統一收斂");
   assert.equal(result.finalWorkPlan[0].status, "failed");
   assert.equal(result.finalWorkPlan[1].agent_id, "generalist");

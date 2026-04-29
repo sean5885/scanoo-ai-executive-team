@@ -1,0 +1,11 @@
+{
+  "id": "pdf_case_005",
+  "file_name": "anon-005.pdf",
+  "mime_type": "application/pdf",
+  "template": "array_operator",
+  "pages": 1,
+  "text": "Anonymous support brief 005. Key token evidence-support-005. Decision owner team-6.",
+  "query": "evidence-support-005",
+  "expected_phrase": "evidence-support-005",
+  "expect_extract_success": true
+}

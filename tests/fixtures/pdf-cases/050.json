@@ -1,0 +1,11 @@
+{
+  "id": "pdf_case_050",
+  "file_name": "anon-050.pdf",
+  "mime_type": "application/pdf",
+  "template": "empty_stream",
+  "pages": 3,
+  "text": "",
+  "query": "missing-token-050",
+  "expected_phrase": "",
+  "expect_extract_success": false
+}

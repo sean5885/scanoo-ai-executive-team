@@ -211,6 +211,20 @@ function deriveAssistantTurnText(task = {}) {
 }
 
 function computeParallelStepSignals(task = {}) {
+  const journalParallel = Number(task?.execution_journal?.parallel_step_count);
+  const journalTotal = Number(task?.execution_journal?.total_step_count);
+  if (
+    Number.isFinite(journalParallel)
+    && Number.isFinite(journalTotal)
+    && journalParallel >= 0
+    && journalTotal >= 0
+  ) {
+    return {
+      total: journalTotal,
+      parallel: Math.min(journalParallel, journalTotal),
+    };
+  }
+
   const workPlan = Array.isArray(task?.work_plan) ? task.work_plan : [];
   if (workPlan.length <= 1) {
     return { total: 0, parallel: 0 };

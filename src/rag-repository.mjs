@@ -983,6 +983,7 @@ export function searchChunks(accountId, matchQuery, limit) {
       c.external_key,
       d.file_token,
       d.node_id,
+      d.meta_json AS document_meta_json,
       bm25(lark_chunks_fts) AS rank
     FROM lark_chunks_fts
     JOIN lark_chunks c ON c.id = lark_chunks_fts.chunk_id
@@ -1016,6 +1017,7 @@ export function searchChunksBySubstring(accountId, rawQuery, limit) {
       c.external_key,
       d.file_token,
       d.node_id,
+      d.meta_json AS document_meta_json,
       0 AS rank
     FROM lark_chunks c
     JOIN lark_documents d ON d.id = c.document_id
@@ -1057,6 +1059,7 @@ export function searchChunksBySemantic(accountId, rawQuery, limit) {
       c.external_key,
       d.file_token,
       d.node_id,
+      d.meta_json AS document_meta_json,
       e.embedding_json
     FROM lark_chunk_embeddings e
     JOIN lark_chunks c ON c.id = e.chunk_id

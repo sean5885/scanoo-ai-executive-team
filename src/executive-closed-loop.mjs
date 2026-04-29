@@ -554,6 +554,17 @@ function normalizeRawEvidenceRecord(item = {}) {
   };
 }
 
+function normalizeNonNegativeNumber(value = null, digits = null) {
+  const normalized = Number(value);
+  if (!Number.isFinite(normalized) || normalized < 0) {
+    return null;
+  }
+  if (Number.isInteger(digits) && digits >= 0) {
+    return Number(normalized.toFixed(digits));
+  }
+  return normalized;
+}
+
 function buildRawExecutionEvidence({
   reply = null,
   supportingOutputs = [],
@@ -621,7 +632,21 @@ export function buildExecutionJournal({
   verifierVerdict = null,
   syntheticAgentHint = null,
   expectedOutputSchema = null,
+  parallelStepCount = null,
+  totalStepCount = null,
+  parallelRatio = null,
 } = {}) {
+  const normalizedParallelStepCount = normalizeNonNegativeNumber(parallelStepCount, 0);
+  const normalizedTotalStepCount = normalizeNonNegativeNumber(totalStepCount, 0);
+  const derivedParallelRatio = (
+    normalizedTotalStepCount > 0 && normalizedParallelStepCount != null
+      ? normalizedParallelStepCount / normalizedTotalStepCount
+      : null
+  );
+  const normalizedParallelRatio = normalizeNonNegativeNumber(
+    parallelRatio == null ? derivedParallelRatio : parallelRatio,
+    4,
+  );
   return {
     classified_intent: cleanText(classifiedIntent || ""),
     selected_action: cleanText(selectedAction || ""),
@@ -658,6 +683,9 @@ export function buildExecutionJournal({
     reply_text: cleanText(reply?.text || ""),
     structured_result: structuredResult,
     expected_output_schema: expectedOutputSchema,
+    parallel_step_count: normalizedParallelStepCount,
+    total_step_count: normalizedTotalStepCount,
+    parallel_ratio: normalizedParallelRatio,
   };
 }
 
@@ -672,6 +700,9 @@ function withVerifierVerdict(executionJournal = null, verifierVerdict = null) {
           execution_policy_reason: cleanText(verifierVerdict.execution_policy_reason || ""),
         }
       : null,
+    parallel_step_count: normalizeNonNegativeNumber(executionJournal?.parallel_step_count, 0),
+    total_step_count: normalizeNonNegativeNumber(executionJournal?.total_step_count, 0),
+    parallel_ratio: normalizeNonNegativeNumber(executionJournal?.parallel_ratio, 4),
   };
 }
 
@@ -876,6 +907,9 @@ export async function finalizeExecutiveTaskTurn({
     extraEvidence,
     fallbackUsed: routing?.fallback_used === true,
     toolRequired,
+    parallelStepCount: routing?.parallel_step_count,
+    totalStepCount: routing?.total_step_count,
+    parallelRatio: routing?.parallel_ratio,
     syntheticAgentHint: routing?.synthetic_agent_hint || null,
     expectedOutputSchema: { text: "string" },
   });

@@ -1,0 +1,11 @@
+{
+  "id": "pdf_case_002",
+  "file_name": "anon-002.pdf",
+  "mime_type": "application/pdf",
+  "template": "text_operator",
+  "pages": 3,
+  "text": "Anonymous okr brief 002. Key token evidence-okr-002. Decision owner team-3.",
+  "query": "evidence-okr-002",
+  "expected_phrase": "evidence-okr-002",
+  "expect_extract_success": true
+}

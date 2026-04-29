@@ -107,11 +107,12 @@ No remaining ranked closure order is defined in this file after Thread C.
 - whether OpenClaw is always available in production usage
 - the exact Lark app permissions currently granted in tenant console
 - the exact PDF read/extract API and permission boundary for tenant runtime:
-  - checked-in code confirms PDF attachment metadata extraction + modality classification (`pdf` / `pdf_multimodal`) and answer-citation boundary hardening.
-  - checked-in code does not prove one concrete production PDF OCR/read API call path, nor the tenant-side PDF scope grant status.
+  - checked-in code now confirms one minimal PDF extract/index path (`drive.v1.file.download` for drive `type=file` PDF + local `pdf-extractor.mjs`) plus source citation metadata (`source_type/extractor_version/page_count`).
+  - checked-in code still does not prove tenant-side PDF scope grant status across all deployment environments, nor whether non-drive-object PDF forms (for example wiki-node variants that are not drive `file`) are fully covered by the same runtime permission boundary.
   - Evidence:
     - `/Users/seanhan/Documents/Playground/src/message-intent-utils.mjs`
     - `/Users/seanhan/Documents/Playground/src/modality-router.mjs`
-    - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
-    - `/Users/seanhan/Documents/Playground/src/agent-dispatcher.mjs`
+    - `/Users/seanhan/Documents/Playground/src/lark-sync-service.mjs`
+    - `/Users/seanhan/Documents/Playground/src/lark-connectors.mjs`
+    - `/Users/seanhan/Documents/Playground/src/pdf-extractor.mjs`
 - the exact sandbox/live tenant allowlists and folder mapping currently active in deployed environment variables

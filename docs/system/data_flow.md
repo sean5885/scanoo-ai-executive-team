@@ -39,16 +39,31 @@ Current additive path:
 3. `/Users/seanhan/Documents/Playground/src/modality-router.mjs` classifies modality with PDF awareness:
    - `pdf`
    - `pdf_multimodal`
-4. current checked-in path has no direct PDF OCR/read API execution step; PDF is recognized for routing/modality boundary only.
-5. image-only execution paths now keep PDF out of image analysis dispatch:
+4. `/Users/seanhan/Documents/Playground/src/lark-sync-service.mjs` includes `pdf` in `canExtractText(...)` and routes extraction by type:
+   - `docx` -> `fetchDocxPlainText(...)`
+   - `pdf` -> `/Users/seanhan/Documents/Playground/src/lark-connectors.mjs -> fetchDriveFileBytes(...)` then `/Users/seanhan/Documents/Playground/src/pdf-extractor.mjs -> extract(...)`
+5. PDF extraction output is normalized to:
+   - `text`
+   - `page_count`
+   - `warnings`
+   - `extractor_version`
+6. extraction success path writes index/chunks and metadata:
+   - document/chunk `source_type=pdf`
+   - `meta_json.extractor_version`
+   - `meta_json.page_count`
+7. extraction failure is fail-soft per record:
+   - no throw-for-success masking
+   - document lifecycle is recorded as `status=index_failed` + `failure_reason`
+   - sync batch continues with remaining records
+8. image-only execution paths still keep PDF out of image analysis dispatch:
    - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
    - `/Users/seanhan/Documents/Playground/src/agent-dispatcher.mjs`
-6. when downstream answer rendering needs source citation, source lines are generated from canonical evidence objects via `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`, not free-form source strings
+9. when downstream answer rendering needs source citation, source lines are generated from canonical evidence objects via `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`, not free-form source strings; read-source metadata now preserves `source_type` / `extractor_version` / `page_count` evidence fields
 
 Current truth:
 
-- this is recognition/classification + citation-boundary hardening only
-- no checked-in PDF text-extraction/index-write path is added in this change
+- this is a minimal PDF extract/index/citation path (not OCR-complete, not full document intelligence pipeline)
+- primary extraction path currently depends on Drive file download capability (`drive.v1.file.download`) for `type=file` PDF objects
 - PDF permission/read-runtime boundary remains subject to existing controlled routes
 
 ## 0A. Autonomy Worker Failure Sink + Operator Incident Closure (Phase 2-3 additive)

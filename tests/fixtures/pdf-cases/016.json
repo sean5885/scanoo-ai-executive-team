@@ -1,0 +1,11 @@
+{
+  "id": "pdf_case_016",
+  "file_name": "anon-016.pdf",
+  "mime_type": "application/pdf",
+  "template": "text_operator",
+  "pages": 2,
+  "text": "Anonymous incident brief 016. Key token evidence-incident-016. Decision owner team-3.",
+  "query": "evidence-incident-016",
+  "expected_phrase": "evidence-incident-016",
+  "expect_extract_success": true
+}

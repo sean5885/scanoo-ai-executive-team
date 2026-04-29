@@ -1,0 +1,11 @@
+{
+  "id": "pdf_case_029",
+  "file_name": "anon-029.pdf",
+  "mime_type": "application/pdf",
+  "template": "array_operator",
+  "pages": 5,
+  "text": "Anonymous finance brief 029. Key token evidence-finance-029. Decision owner team-2.",
+  "query": "evidence-finance-029",
+  "expected_phrase": "evidence-finance-029",
+  "expect_extract_success": true
+}

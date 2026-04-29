@@ -1,0 +1,11 @@
+{
+  "id": "pdf_case_028",
+  "file_name": "anon-028.pdf",
+  "mime_type": "application/pdf",
+  "template": "text_operator",
+  "pages": 4,
+  "text": "Anonymous roadmap brief 028. Key token evidence-roadmap-028. Decision owner team-1.",
+  "query": "evidence-roadmap-028",
+  "expected_phrase": "evidence-roadmap-028",
+  "expect_extract_success": true
+}

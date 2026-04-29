@@ -1700,20 +1700,28 @@ export async function executeWorkItemsSequentially({
   const failedAgents = [];
   const executedSpecialists = [];
   const dispatchedActions = [];
+  const parallelSignals = {
+    total_step_count: normalizedPlan.length,
+    parallel_step_count: specialistItems.length > 1 ? specialistItems.length : 0,
+  };
+  parallelSignals.parallel_ratio = parallelSignals.total_step_count > 0
+    ? Number((parallelSignals.parallel_step_count / parallelSignals.total_step_count).toFixed(4))
+    : 0;
 
-  for (const item of specialistItems) {
+  const specialistResults = await Promise.all(specialistItems.map(async (item) => {
     const agent = getRegisteredAgent(item.agent_id);
     if (!agent) {
-      failedAgents.push({
-        agent_id: item.agent_id,
-        task: item.task,
-        error: "agent_not_found",
-      });
-      executedSpecialists.push({
-        ...item,
-        status: "failed",
-      });
-      continue;
+      return {
+        failed: {
+          agent_id: item.agent_id,
+          task: item.task,
+          error: "agent_not_found",
+        },
+        executed: {
+          ...item,
+          status: "failed",
+        },
+      };
     }
     try {
       const reply = await executeAgentFn({
@@ -1725,52 +1733,73 @@ export async function executeWorkItemsSequentially({
         logger,
       });
       const summary = cleanText(reply?.text || "");
-      dispatchedActions.push(...extractReplyDispatchedActions(reply));
+      const replyDispatchedActions = extractReplyDispatchedActions(reply);
       const boundary = classifyExecutiveReplyBoundary(reply?.text || "");
       if (!summary || looksLikeAgentFailureText(summary) || boundary.rejected) {
         logger.warn("executive_specialist_output_rejected", {
           agent_id: agent.id,
           reason: boundary.reason || "empty_or_failed_reply",
         });
-        failedAgents.push({
+        return {
+          failed: {
+            agent_id: agent.id,
+            task: item.task,
+            error: boundary.reason ? `rejected_${boundary.reason}` : "empty_or_failed_reply",
+          },
+          executed: {
+            ...item,
+            status: "failed",
+          },
+          dispatched: replyDispatchedActions,
+        };
+      }
+      return {
+        output: {
           agent_id: agent.id,
           task: item.task,
-          error: boundary.reason ? `rejected_${boundary.reason}` : "empty_or_failed_reply",
-        });
-        executedSpecialists.push({
+          summary: summarizeAgentText(summary, 520),
+          status: "completed",
+        },
+        executed: {
           ...item,
-          status: "failed",
-        });
-        continue;
-      }
-      const output = {
-        agent_id: agent.id,
-        task: item.task,
-        summary: summarizeAgentText(summary, 520),
-        status: "completed",
+          status: "completed",
+        },
+        dispatched: replyDispatchedActions,
       };
-      outputs.push(output);
-      executedSpecialists.push({
-        ...item,
-        status: "completed",
-      });
-      if (task?.id) {
-        await appendExecutiveAgentOutput(task.id, output);
-      }
     } catch (error) {
       logger.warn("executive_specialist_failed", {
         agent_id: agent.id,
         error: logger.compactError(error),
       });
-      failedAgents.push({
-        agent_id: agent.id,
-        task: item.task,
-        error: cleanText(error?.message || "") || "specialist_failed",
-      });
-      executedSpecialists.push({
-        ...item,
-        status: "failed",
-      });
+      return {
+        failed: {
+          agent_id: agent.id,
+          task: item.task,
+          error: cleanText(error?.message || "") || "specialist_failed",
+        },
+        executed: {
+          ...item,
+          status: "failed",
+        },
+      };
+    }
+  }));
+
+  for (const result of specialistResults) {
+    if (Array.isArray(result?.dispatched) && result.dispatched.length) {
+      dispatchedActions.push(...result.dispatched);
+    }
+    if (result?.failed) {
+      failedAgents.push(result.failed);
+    }
+    if (result?.executed) {
+      executedSpecialists.push(result.executed);
+    }
+    if (result?.output) {
+      outputs.push(result.output);
+      if (task?.id) {
+        await appendExecutiveAgentOutput(task.id, result.output);
+      }
     }
   }
 
@@ -1840,6 +1869,7 @@ export async function executeWorkItemsSequentially({
     failedAgents,
     fallbackUsed,
     dispatchedActions: normalizeDispatchedActions(dispatchedActions),
+    parallelSignals,
   };
 }
 
@@ -2103,6 +2133,9 @@ async function executeExecutiveTurnUnlocked({
       reason: decision.reason,
       dispatched_actions: execution.dispatchedActions,
       fallback_used: execution.fallbackUsed,
+      parallel_step_count: execution.parallelSignals?.parallel_step_count ?? null,
+      total_step_count: execution.parallelSignals?.total_step_count ?? null,
+      parallel_ratio: execution.parallelSignals?.parallel_ratio ?? null,
       synthetic_agent_hint: null,
     },
     logger,

@@ -1,0 +1,11 @@
+{
+  "id": "pdf_case_001",
+  "file_name": "anon-001.pdf",
+  "mime_type": "application/pdf",
+  "template": "array_operator",
+  "pages": 2,
+  "text": "Anonymous onboarding brief 001. Key token evidence-onboarding-001. Decision owner team-2.",
+  "query": "evidence-onboarding-001",
+  "expected_phrase": "evidence-onboarding-001",
+  "expect_extract_success": true
+}

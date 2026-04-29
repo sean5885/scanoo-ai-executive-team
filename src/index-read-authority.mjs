@@ -33,6 +33,36 @@ function normalizePositiveInteger(value, fallback) {
   return Number.isInteger(normalized) && normalized > 0 ? normalized : fallback;
 }
 
+function parseDocumentMeta(metaJson = null) {
+  if (!metaJson || typeof metaJson !== "string") {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(metaJson);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+
+function withDocumentMetadata(items = []) {
+  return (Array.isArray(items) ? items : []).map((item) => {
+    const documentMeta = parseDocumentMeta(item?.document_meta_json);
+    return {
+      ...item,
+      metadata: {
+        ...(item?.metadata && typeof item.metadata === "object" && !Array.isArray(item.metadata) ? item.metadata : {}),
+        source_type: item?.source_type || documentMeta.source_type || "",
+        extractor_version: documentMeta.extractor_version || "",
+        page_count: Number.isInteger(documentMeta.page_count) ? documentMeta.page_count : null,
+      },
+    };
+  });
+}
+
 export function searchKnowledgeBaseByIndexAuthority(accountId, query, limit = searchTopK) {
   const accountContext = getAccountContext(accountId);
   if (!accountContext) {
@@ -73,7 +103,7 @@ export function searchKnowledgeBaseByIndexAuthority(accountId, query, limit = se
   return {
     account: accountContext.account,
     items: buildReadSourceItems(
-      [...merged.values()].slice(0, resolvedLimit),
+      withDocumentMetadata([...merged.values()].slice(0, resolvedLimit)),
       { query },
     ),
   };

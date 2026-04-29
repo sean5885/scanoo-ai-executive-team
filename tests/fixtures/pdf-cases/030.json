@@ -1,0 +1,11 @@
+{
+  "id": "pdf_case_030",
+  "file_name": "anon-030.pdf",
+  "mime_type": "application/pdf",
+  "template": "text_operator",
+  "pages": 1,
+  "text": "Anonymous ops brief 030. Key token evidence-ops-030. Decision owner team-3.",
+  "query": "evidence-ops-030",
+  "expected_phrase": "evidence-ops-030",
+  "expect_extract_success": true
+}
