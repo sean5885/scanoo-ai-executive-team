@@ -470,6 +470,61 @@ test("release-check report blocks on usage-layer gate failures", () => {
   assertDecisionOsReadinessShape(report.decision_os_readiness);
 });
 
+test("release-check report surfaces truthful completion pdf acceptance hard-gate details", () => {
+  const selfCheckResult = {
+    ok: false,
+    system_summary: {
+      core_checks: "pass",
+      truthful_completion_status: "fail",
+    },
+    truthful_completion_metrics: {
+      status: "fail",
+      thresholds: {
+        pdf_min_case_count: 50,
+        pdf_success_rate_min: 0.9,
+      },
+      metrics: {
+        pdf_e2e_total: 49,
+        pdf_task_success_rate: 0.84,
+        pdf_acceptance_case_coverage_fail: true,
+        pdf_acceptance_success_rate_fail: true,
+      },
+    },
+    routing_summary: {
+      status: "pass",
+      compare: {
+        has_obvious_regression: false,
+      },
+    },
+    planner_summary: {
+      gate: "pass",
+      compare: {
+        has_obvious_regression: false,
+      },
+    },
+  };
+  const drilldown = buildReleaseCheckDrilldown({ selfCheckResult });
+  const report = buildReleaseCheckReport({
+    selfCheckResult,
+    drilldown,
+  });
+
+  assert.deepEqual(stripDecisionOsReadiness(report), {
+    overall_status: "fail",
+    blocking_checks: ["truthful_completion_failure"],
+    doc_boundary_regression: false,
+    suggested_next_step: "先看 truthful completion gate：src/system-self-check.mjs、src/pdf-acceptance-eval.mjs、src/executive-orchestrator.mjs、src/executive-verifier.mjs（PDF case coverage 49/50；PDF success rate 0.8400 < 0.9）；verification 不通過時不得用 completed 語氣。",
+    action_hint: "inspect truthful completion gate in executive-orchestrator and verifier coverage metrics",
+    failing_area: "runtime",
+    representative_fail_case: [
+      "pdf_acceptance_case_count:49/50",
+      "pdf_acceptance_success_rate:0.8400 target>=0.9",
+    ],
+    drilldown_source: ["release-check triage"],
+  });
+  assertDecisionOsReadinessShape(report.decision_os_readiness);
+});
+
 test("release-check drilldown derives write representative issues from self-check", () => {
   const drilldown = buildReleaseCheckDrilldown({
     selfCheckResult: {

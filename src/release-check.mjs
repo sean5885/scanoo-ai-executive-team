@@ -129,6 +129,41 @@ function buildUsageLayerRegressionNextStep(selfCheckResult = {}) {
   return `先跑 npm run eval:usage-layer；先把 FTHR 拉到 >= ${fthrTarget}% 且 Generic Rate 壓到 <= ${genericTarget}%（目前 FTHR ${fthrMetric}、Generic ${genericMetric}）。`;
 }
 
+function buildTruthfulCompletionRegressionNextStep(selfCheckResult = {}) {
+  const truthful = selfCheckResult?.truthful_completion_metrics || {};
+  const metrics = truthful?.metrics || {};
+  const thresholds = truthful?.thresholds || {};
+  const reasons = [];
+
+  if (metrics?.pdf_acceptance_case_coverage_fail === true) {
+    reasons.push(`PDF case coverage ${Number(metrics?.pdf_e2e_total || 0)}/${Number(thresholds?.pdf_min_case_count || 50)}`);
+  }
+  if (metrics?.pdf_acceptance_success_rate_fail === true) {
+    const rate = Number.isFinite(Number(metrics?.pdf_task_success_rate))
+      ? Number(metrics.pdf_task_success_rate).toFixed(4)
+      : "unknown";
+    const target = Number.isFinite(Number(thresholds?.pdf_success_rate_min))
+      ? Number(thresholds.pdf_success_rate_min).toFixed(1)
+      : "0.9";
+    reasons.push(`PDF success rate ${rate} < ${target}`);
+  }
+  if (metrics?.documentation_consistency_hard_gate_fail === true) {
+    const rate = Number.isFinite(Number(metrics?.documentation_consistency_rate))
+      ? Number(metrics.documentation_consistency_rate).toFixed(4)
+      : "unknown";
+    reasons.push(`doc consistency rate ${rate}`);
+  }
+  if (metrics?.verifier_coverage_rate != null && Number(metrics.verifier_coverage_rate) < 1) {
+    reasons.push(`verifier coverage ${Number(metrics.verifier_coverage_rate).toFixed(4)}`);
+  }
+  if (metrics?.fake_completion_rate != null && Number(metrics.fake_completion_rate) >= 0.02) {
+    reasons.push(`fake completion rate ${Number(metrics.fake_completion_rate).toFixed(4)}`);
+  }
+
+  const reasonLine = reasons.length > 0 ? `（${reasons.join("；")}）` : "";
+  return `先看 truthful completion gate：src/system-self-check.mjs、src/pdf-acceptance-eval.mjs、src/executive-orchestrator.mjs、src/executive-verifier.mjs${reasonLine}；verification 不通過時不得用 completed 語氣。`;
+}
+
 function buildRoutingRegressionNextStep(selfCheckResult = {}) {
   if (selfCheckResult?.routing_summary?.doc_boundary_regression === true) {
     return "先看 routing regression 的 doc-boundary pack：evals/routing-eval-set.mjs 的 doc-023a~023k；再看 src/message-intent-utils.mjs 與 src/lane-executor.mjs 的 intent guard。";
@@ -965,11 +1000,33 @@ export function buildReleaseCheckDrilldown({
     return buildUsageLayerDrilldown(selfCheckResult);
   }
   if (firstBlockingCheck === BLOCKING_TRUTHFUL_COMPLETION_FAILURE) {
+    const truthful = selfCheckResult?.truthful_completion_metrics || {};
+    const metrics = truthful?.metrics || {};
+    const thresholds = truthful?.thresholds || {};
+    const representativeFailCase = [];
+    if (metrics?.pdf_acceptance_case_coverage_fail === true) {
+      representativeFailCase.push(
+        `pdf_acceptance_case_count:${Number(metrics?.pdf_e2e_total || 0)}/${Number(thresholds?.pdf_min_case_count || 50)}`,
+      );
+    }
+    if (metrics?.pdf_acceptance_success_rate_fail === true) {
+      representativeFailCase.push(
+        `pdf_acceptance_success_rate:${Number.isFinite(Number(metrics?.pdf_task_success_rate)) ? Number(metrics.pdf_task_success_rate).toFixed(4) : "unknown"} target>=${Number.isFinite(Number(thresholds?.pdf_success_rate_min)) ? Number(thresholds.pdf_success_rate_min).toFixed(1) : "0.9"}`,
+      );
+    }
+    if (metrics?.documentation_consistency_hard_gate_fail === true) {
+      representativeFailCase.push(
+        `documentation_consistency_rate:${Number.isFinite(Number(metrics?.documentation_consistency_rate)) ? Number(metrics.documentation_consistency_rate).toFixed(4) : "unknown"}`,
+      );
+    }
+    if (representativeFailCase.length === 0) {
+      representativeFailCase.push(
+        "truthful_completion_metrics: verification fail paths still expose completed tone or missing verifier coverage",
+      );
+    }
     return {
       failing_area: FAILING_AREA_RUNTIME,
-      representative_fail_case: [
-        "truthful_completion_metrics: verification fail paths still expose completed tone or missing verifier coverage",
-      ],
+      representative_fail_case: representativeFailCase.slice(0, 2),
       drilldown_source: [RELEASE_CHECK_TRIAGE_SOURCE],
     };
   }
@@ -1044,7 +1101,7 @@ export function buildReleaseCheckReport({ selfCheckResult = {}, drilldown = null
     : firstBlockingCheck === BLOCKING_USAGE_LAYER_FAILURE
       ? buildUsageLayerRegressionNextStep(selfCheckResult)
     : firstBlockingCheck === BLOCKING_TRUTHFUL_COMPLETION_FAILURE
-      ? "先看 truthful completion gate：src/executive-orchestrator.mjs、src/executive-verifier.mjs、src/system-self-check.mjs；verification 不通過時不得用 completed 語氣。"
+      ? buildTruthfulCompletionRegressionNextStep(selfCheckResult)
     : firstBlockingCheck === BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE
       ? buildCompanyBrainRegressionNextStep(selfCheckResult)
     : firstBlockingCheck === BLOCKING_ROUTING_REGRESSION
