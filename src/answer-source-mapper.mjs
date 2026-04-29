@@ -179,14 +179,18 @@ function renderCanonicalSourceGroupLine(group = {}) {
   const reasons = normalizeList(group.snippets || []).slice(0, 2);
   const reason = reasons.join("；");
   const url = items.length === 1 ? getReadSourceUrl(items[0]) : "";
+  const page = items.length === 1 && Number.isInteger(items[0]?.metadata?.pdf_page)
+    ? items[0].metadata.pdf_page
+    : null;
+  const pageText = page ? `（第${page}頁）` : "";
 
   if (!label || !reason) {
     return "";
   }
   if (url) {
-    return `${label}：${reason} 連結：${url}`;
+    return `${label}${pageText}：${reason} 連結：${url}`;
   }
-  return `${label}：${reason}`;
+  return `${label}${pageText}：${reason}`;
 }
 
 export function mapCanonicalAnswerSourcesToLines(canonicalSources = [], { maxSources = 3 } = {}) {

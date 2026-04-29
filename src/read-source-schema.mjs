@@ -10,8 +10,12 @@ function normalizeSourceMetadata(metadata = {}) {
     document_id: cleanText(metadata.document_id || metadata.documentId || ""),
     title: cleanText(metadata.title || ""),
     url: cleanText(metadata.url || ""),
+    pdf_chunk_url: cleanText(metadata.pdf_chunk_url || metadata.pdfChunkUrl || ""),
     source_type: cleanText(metadata.source_type || metadata.sourceType || ""),
     chunk_index: Number.isInteger(metadata.chunk_index) ? metadata.chunk_index : null,
+    pdf_page: Number.isInteger(metadata.pdf_page) ? metadata.pdf_page : null,
+    page_start: Number.isInteger(metadata.page_start) ? metadata.page_start : null,
+    page_end: Number.isInteger(metadata.page_end) ? metadata.page_end : null,
     updated_at: cleanText(metadata.updated_at || metadata.updatedAt || ""),
   };
 }
@@ -73,7 +77,7 @@ export function getReadSourceTitle(item = {}) {
 }
 
 export function getReadSourceUrl(item = {}) {
-  return cleanText(item?.metadata?.url || "");
+  return cleanText(item?.metadata?.pdf_chunk_url || item?.metadata?.url || "");
 }
 
 export function getReadSourceSnippet(item = {}) {

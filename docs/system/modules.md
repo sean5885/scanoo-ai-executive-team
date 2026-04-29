@@ -348,9 +348,13 @@ Current-truth docs for onboarding are:
   - when `scanoo-diagnose` still cannot read because the explicit user token is missing, the lane no longer falls through to the generic planner failure text: with hydrated doc refs / bounded evidence / readable auth context it now returns a weak-but-usable diagnose reply, and without that context it still returns an explicit-limitation diagnose reply that includes prompt-backed observations, candidate causes, and concrete next checks
   - if docs search still cannot resolve a document id, the lane now returns one bounded diagnose-contract missing-document reply instead of dropping to a generic fallback
   - when explicit Scanoo lane-primary fast-path does not return a bounded reply and runtime falls back to planner, the same turn no longer re-enters timeout-triggered lane fallback (`request_timeout -> lane fallback`) again
-  - attachment/modality ingress now has a minimal PDF recognition path:
+  - attachment/modality ingress now has a bounded PDF extract/retrieve/citation path:
     - `/Users/seanhan/Documents/Playground/src/message-intent-utils.mjs` adds `extractAttachmentObjects(...)` and extracts `file_key/file_token/name/mime/ext` from structured attachment payloads
     - `/Users/seanhan/Documents/Playground/src/modality-router.mjs` now classifies `pdf` and `pdf_multimodal` in addition to `text/image/multimodal`
+    - `/Users/seanhan/Documents/Playground/src/pdf-extractor.mjs` extracts textual PDF stream content and supports OCR fallback hook when direct text is unavailable
+    - `/Users/seanhan/Documents/Playground/src/pdf-retriever.mjs` chunks extracted text and preserves page/source mapping (`pdf_page`, `pdf_chunk_url`)
+    - `/Users/seanhan/Documents/Playground/src/pdf-answer.mjs` builds PDF answer payloads that keep chunk/page citations
+    - `/Users/seanhan/Documents/Playground/src/read-source-schema.mjs` and `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs` now render page-aware citation lines (`第N頁`, `#page=N`)
     - image-only execution paths in `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` and `/Users/seanhan/Documents/Playground/src/agent-dispatcher.mjs` now avoid treating PDF modality as image analysis input
   - `user-response-normalizer.mjs` now only reads canonical `execution_result.data.answer / sources / limitations`
   - answer boundary now also runs a deterministic usage-layer intelligence pass:
@@ -397,6 +401,8 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/tests/truly-missing-slot.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/modality-router.pdf.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/message-intent-utils.pdf.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/pdf-extractor.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/pdf-retriever.test.mjs`
 
 ### 4. Skill Runtime
 

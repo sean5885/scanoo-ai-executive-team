@@ -187,6 +187,11 @@ These describe code structure and responsibility, not how many processes are run
 - `lark-sync-service.mjs`
   - scans authorized Lark content and writes normalized documents/chunks into SQLite
 
+- PDF extract/retrieve/answer helpers
+  - `/Users/seanhan/Documents/Playground/src/pdf-extractor.mjs`
+  - `/Users/seanhan/Documents/Playground/src/pdf-retriever.mjs`
+  - `/Users/seanhan/Documents/Playground/src/pdf-answer.mjs`
+
 - `answer-service.mjs`
   - performs hybrid retrieval and optionally calls an OpenAI-compatible model
 

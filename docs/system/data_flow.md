@@ -25,7 +25,7 @@ The OpenClaw plugin ingress is now a second bounded adjacent flow: tool calls fi
 2. executes the existing lane path through a synthetic lane event/scope
 3. returns a `plugin_native` forward decision so the plugin can continue on the existing direct document/message/calendar/task-style route without entering the internal planner/lane business flow
 
-## 0B. Attachment -> Extract -> Index -> Citation (PDF)
+## 0B. Attachment -> Extract -> Chunk -> Citation (PDF)
 
 Current additive path:
 
@@ -39,16 +39,23 @@ Current additive path:
 3. `/Users/seanhan/Documents/Playground/src/modality-router.mjs` classifies modality with PDF awareness:
    - `pdf`
    - `pdf_multimodal`
-4. current checked-in path has no direct PDF OCR/read API execution step; PDF is recognized for routing/modality boundary only.
+4. `/Users/seanhan/Documents/Playground/src/pdf-extractor.mjs` runs bounded PDF text extraction:
+   - parses literal text streams (`Tj/TJ`) from PDF bytes
+   - when text extraction is empty and caller provides `ocrRunner`, runs OCR fallback hook (`extraction_mode=ocr_fallback`)
+   - emits bounded extraction evidence (`pdf_text_extracted` / `pdf_text_extracted_via_ocr_fallback`)
 5. image-only execution paths now keep PDF out of image analysis dispatch:
    - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
    - `/Users/seanhan/Documents/Playground/src/agent-dispatcher.mjs`
-6. when downstream answer rendering needs source citation, source lines are generated from canonical evidence objects via `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`, not free-form source strings
+6. `/Users/seanhan/Documents/Playground/src/pdf-retriever.mjs` chunks extracted PDF text per page and preserves source mapping:
+   - chunk metadata includes `pdf_page`, `page_start`, `page_end`, `pdf_chunk_url=#page`
+7. `/Users/seanhan/Documents/Playground/src/pdf-answer.mjs` and `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs` render page-aware citations:
+   - citation lines include page marker (`第N頁`) and chunk URL (`#page=N`)
+   - source lines are generated from canonical evidence objects, not free-form source strings
 
 Current truth:
 
-- this is recognition/classification + citation-boundary hardening only
-- no checked-in PDF text-extraction/index-write path is added in this change
+- checked-in path now supports bounded PDF extract + OCR fallback hook + page-aware citation rendering
+- no checked-in tenant-side PDF write/index runtime path is introduced by this change
 - PDF permission/read-runtime boundary remains subject to existing controlled routes
 
 ## 0A. Autonomy Worker Failure Sink + Operator Incident Closure (Phase 2-3 additive)
