@@ -1139,6 +1139,7 @@ function buildExecutionDataUserResponse({
     answer: normalizeText(executionData.answer || ""),
     sources: normalizeUserFacingAnswerSources(executionData.sources, {
       maxSources: MAX_USER_FACING_SOURCES,
+      allowStringSources: true,
     }),
     limitations: normalizeUserResponseList(executionData.limitations),
   };

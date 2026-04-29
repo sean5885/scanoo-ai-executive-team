@@ -217,6 +217,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/execution/dispatch.mjs`
   - `/Users/seanhan/Documents/Playground/src/execution/recovery.mjs`
   - `/Users/seanhan/Documents/Playground/src/execution/formatter.mjs`
+  - `/Users/seanhan/Documents/Playground/src/execution/planned-user-input-runtime.mjs`
 - Current truth:
   - `GET /answer` no longer uses `answer-service.mjs` as its primary route
   - the checked-in official plugin entry now lands on `/Users/seanhan/Documents/Playground/src/lark-plugin-dispatch-adapter.mjs` first, not on scattered route decisions inside the plugin
@@ -229,6 +230,7 @@ Current-truth docs for onboarding are:
     - `src/evidence/index.mjs` enforces evidence schema and required-evidence checks before verifier delegation
     - `src/execution/{decision,dispatch,recovery,formatter}.mjs` are independent replaceable capability adapters consumed by `src/execution/index.mjs`
     - `executive-planner` consumes the execution-plane decision adapter and keeps existing selector behavior compatibility
+    - `src/execution/planned-user-input-runtime.mjs` now owns `executePlannedUserInput(...)` and `buildPlannedUserInputEnvelope(...)` runtime execution, while planner stays control-plane owner
   - that shared answer-edge helper now has one ingress adapter at `planner-user-input-edge`:
     - execution mode is resolved at ingress as one of `sync_authoritative`, `queue_shadow`, or `queue_authoritative` (skeleton, default-off)
     - mode resolution uses `PLANNER_AUTONOMY_INGRESS_ENABLED`, strict allowlist (`PLANNER_AUTONOMY_INGRESS_ALLOWLIST`, exact `session:|request:|trace:|handler:` match), and `PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED`

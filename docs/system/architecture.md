@@ -92,7 +92,11 @@ Use [deployment.md](/Users/seanhan/Documents/Playground/docs/system/deployment.m
     - `/Users/seanhan/Documents/Playground/src/execution/dispatch.mjs`
     - `/Users/seanhan/Documents/Playground/src/execution/recovery.mjs`
     - `/Users/seanhan/Documents/Playground/src/execution/formatter.mjs`
+    - `/Users/seanhan/Documents/Playground/src/execution/planned-user-input-runtime.mjs`
     - `/Users/seanhan/Documents/Playground/docs/system/module_contracts.md`
+  - current extraction status:
+    - `executive-planner.mjs` still owns control-plane lifecycle and decision policy
+    - `executePlannedUserInput(...)` and `buildPlannedUserInputEnvelope(...)` are delegated to `execution/planned-user-input-runtime.mjs` via injected dependencies
   - release/readiness doc-code consistency hard gate:
     - `/Users/seanhan/Documents/Playground/src/system-self-check.mjs`
     - checked-in contract now requires architecture/data-flow/module-contract docs to pass path + content checks before truthful-completion gate can pass

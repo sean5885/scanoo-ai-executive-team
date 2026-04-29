@@ -17,6 +17,7 @@ This document tracks the checked-in contract boundary for the planner three-plan
 - `/Users/seanhan/Documents/Playground/src/execution/dispatch.mjs`
 - `/Users/seanhan/Documents/Playground/src/execution/recovery.mjs`
 - `/Users/seanhan/Documents/Playground/src/execution/formatter.mjs`
+- `/Users/seanhan/Documents/Playground/src/execution/planned-user-input-runtime.mjs`
 
 ## Capability Contracts
 
@@ -34,6 +35,12 @@ Capability registry (`CAPABILITY_CONTRACT_REGISTRY`) currently defines:
 4. `formatter`
    - required evidence: `structured_output`, `summary_generated`
    - failure taxonomy: `contract_violation`, `runtime_exception`
+
+Execution-plane runtime split currently includes one checked-in extraction from the planner monolith:
+
+- `createPlannedUserInputExecutionRuntime(...)` in `/Users/seanhan/Documents/Playground/src/execution/planned-user-input-runtime.mjs`
+  - owns `executePlannedUserInput(...)` and `buildPlannedUserInputEnvelope(...)` execution runtime path
+  - keeps dependency-injected boundary with `executive-planner.mjs` (planner remains control-plane owner)
 
 ## Failure Taxonomy
 

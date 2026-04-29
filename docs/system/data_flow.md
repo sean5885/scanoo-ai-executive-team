@@ -262,6 +262,10 @@ Current public `/answer` path:
 6. otherwise `runPlannerUserInputEdge(...)` runs executive memory retrieval first (`session memory + approved memory` from `/Users/seanhan/Documents/Playground/src/executive-memory.mjs`), then calls `executePlannedUserInput(...)` with bounded internal `decisionMemory` context
 7. `executive-planner.mjs` resolves planner action or controlled failure
    - planner now mounts execution-plane capability adapters (`/Users/seanhan/Documents/Playground/src/execution/index.mjs` + `/Users/seanhan/Documents/Playground/src/execution/{decision,dispatch,recovery,formatter}.mjs`) backed by contract/evidence registries (`/Users/seanhan/Documents/Playground/src/contracts/index.mjs`, `/Users/seanhan/Documents/Playground/src/evidence/index.mjs`)
+   - planned-user-input runtime execution now delegates from planner into `/Users/seanhan/Documents/Playground/src/execution/planned-user-input-runtime.mjs` for:
+     - `executePlannedUserInput(...)`
+     - `buildPlannedUserInputEnvelope(...)`
+   - local readonly fallback now treats explicit-auth actions as hard boundary: when account context is absent, it returns `missing_user_access_token` instead of silently borrowing stored account context
    - evidence plane now validates evidence schema + capability required evidence as a machine gate before delegating to runtime verifier
    - before active current-step continuation, planner runs one deterministic execution-readiness gate from the same session working-memory execution plan state
    - readiness is fail-closed and checks slot/artifact/dependency/owner/recovery/plan validity on current step, returning `is_ready`, blocking diagnostics, and `recommended_action`

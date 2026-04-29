@@ -154,6 +154,7 @@ import { resolveToolContract, validateToolInvocation } from "./tool-layer-contra
 import { executeTool } from "./tool-execution-runtime.mjs";
 import { resolveToolResultContinuation } from "./tool-result-continuation.mjs";
 import { createExecutionPlaneFacade } from "./execution/index.mjs";
+import { createPlannedUserInputExecutionRuntime } from "./execution/planned-user-input-runtime.mjs";
 
 const executiveStartSignals = [
   "agent",
@@ -352,6 +353,36 @@ export function getPlannerExecutionPlaneMetadata() {
   };
 }
 
+const plannedUserInputExecutionRuntime = createPlannedUserInputExecutionRuntime({
+  cleanText,
+  derivePlannerAbortInfo,
+  normalizeDecisionAlternative,
+  resolvePlannerWorkingMemoryContinuation,
+  canUseWorkingMemoryAction,
+  buildPlannerWorkingMemoryContinuationParams,
+  validatePlannerUserInputDecision,
+  withUserInputDecisionExplanation,
+  planUserInputAction,
+  buildTaskLayerPlannerResult,
+  resolveRuntimeInfoFastPathDecision,
+  logPlannerWorkingMemoryTrace,
+  createPlannerVisibleTelemetryMonitor,
+  emitPlannerVisibleTelemetryForMonitor,
+  buildPlannerAbortResult,
+  buildPlannerAgentOutput,
+  normalizePlannerFormattedOutput,
+  extractPlannerFormattedOutput,
+  copyPlannerVisibleTelemetryContext,
+  resolveDeterministicPlannerFallbackSelection,
+  emitPlannerFailedAlert,
+  buildPlannerMultiStepOutput,
+  buildPlannerLastErrorRecord,
+  normalizePlannerPayload,
+  getPlannerDecisionRepresentativeAction,
+  normalizeDecisionReasoning,
+  defaultRequester: requestPlannerJson,
+});
+
 function emitPlannerFailedAlert({ text = "", reason = "", source = "planner" } = {}) {
   const textHint = cleanText(text);
   emitRateLimitedAlert({
@@ -432,9 +463,11 @@ async function attemptLocalPlannerReadonlyFallback({
     return buildLocalPlannerRuntimeInfoResult();
   }
 
-  const accountId = await resolvePlannerLocalFallbackAccountId(authContext);
-  if (!accountId) {
-    if (actionRequiresExplicitUserAuth(normalizedAction)) {
+  const requiresExplicitAuth = actionRequiresExplicitUserAuth(normalizedAction);
+  let accountId = "";
+  if (requiresExplicitAuth) {
+    accountId = cleanText(authContext?.account_id || authContext?.accountId || "");
+    if (!accountId) {
       return buildPlannerStoppedResult({
         action: normalizedAction,
         error: "missing_user_access_token",
@@ -447,7 +480,11 @@ async function attemptLocalPlannerReadonlyFallback({
         stopReason: "missing_user_access_token",
       });
     }
-    return null;
+  } else {
+    accountId = await resolvePlannerLocalFallbackAccountId(authContext);
+    if (!accountId) {
+      return null;
+    }
   }
 
   if (normalizedAction === "list_company_brain_docs") {
@@ -1107,14 +1144,23 @@ export function renderPlannerUserFacingReplyText({
   sources = [],
   limitations = [],
 } = {}) {
+  const stringSources = normalizePlannerUserFacingList(
+    (Array.isArray(sources) ? sources : []).filter(
+      (item) => typeof item === "string"
+        && /(?:^待跟進：|^已更新：|｜操作：)/u.test(cleanText(item)),
+    ),
+  );
   const objectSources = (Array.isArray(sources) ? sources : [])
     .filter((item) => item && typeof item === "object" && !Array.isArray(item));
   const normalizedSources = normalizePlannerUserFacingList(
-    mapCanonicalAnswerSourcesToLines(
-      buildCanonicalAnswerSources(objectSources),
-      { maxSources: 3 },
-    ),
-  );
+    [
+      ...stringSources,
+      ...mapCanonicalAnswerSourcesToLines(
+        buildCanonicalAnswerSources(objectSources),
+        { maxSources: 3 },
+      ),
+    ],
+  ).slice(0, 3);
   const normalizedLimitations = normalizePlannerUserFacingList(limitations);
 
   return [
@@ -11573,48 +11619,6 @@ function resolveRuntimeInfoFastPathDecision({
   };
 }
 
-function resolveWorkingMemorySeedDecision({
-  text = "",
-  taskType = "",
-  payload = {},
-  sessionKey = "",
-  logger = console,
-} = {}) {
-  const memoryContinuation = resolvePlannerWorkingMemoryContinuation({
-    userIntent: text,
-    taskType,
-    payload,
-    sessionKey,
-    logger,
-    stage: "executePlannedUserInput",
-  });
-  const selectedAction = cleanText(memoryContinuation?.selected_action || "");
-  if (!selectedAction || !canUseWorkingMemoryAction(selectedAction, { text })) {
-    return {
-      decision: null,
-      observability: memoryContinuation?.observability || null,
-    };
-  }
-  const workingMemorySnapshot = memoryContinuation?.observability?.memory_snapshot
-    && typeof memoryContinuation.observability.memory_snapshot === "object"
-    && !Array.isArray(memoryContinuation.observability.memory_snapshot)
-    ? memoryContinuation.observability.memory_snapshot
-    : null;
-  return {
-    decision: {
-      action: selectedAction,
-      params: buildPlannerWorkingMemoryContinuationParams({
-        action: selectedAction,
-        text,
-        payload,
-        workingMemory: workingMemorySnapshot,
-      }),
-      reason: cleanText(memoryContinuation?.reason || "") || "working_memory_reuse_action",
-    },
-    observability: memoryContinuation?.observability || null,
-  };
-}
-
 export async function executePlannedUserInput({
   text = "",
   requester = requestPlannerJson,
@@ -11639,479 +11643,34 @@ export async function executePlannedUserInput({
   runSkill = null,
   taskLayerRunner = runTaskLayer,
 } = {}) {
-  const preAbortInfo = derivePlannerAbortInfo({ signal });
-  if (preAbortInfo) {
-    return {
-      ok: false,
-      error: preAbortInfo.code,
-      execution_result: null,
-      formatted_output: null,
-      trace_id: null,
-      why: null,
-      alternative: normalizeDecisionAlternative(null),
-    };
-  }
-  if (typeof runSkill === "function" && typeof taskLayerRunner === "function") {
-    try {
-      const taskLayerResult = await taskLayerRunner(text, runSkill);
-      if (Array.isArray(taskLayerResult?.tasks) && taskLayerResult.tasks.length > 1) {
-        return buildTaskLayerPlannerResult(taskLayerResult);
-      }
-    } catch (error) {
-      logger?.warn?.("planner_task_layer_prepass_failed", {
-        error: cleanText(error?.message || "") || String(error),
-      });
-    }
-  }
-  const normalizedSessionKey = cleanText(sessionKey);
-  const memorySeedDecision = plannedDecision
-    || !normalizedSessionKey
-    ? { decision: null, observability: null }
-    : resolveWorkingMemorySeedDecision({
-        text,
-        taskType: "",
-        payload: {},
-        sessionKey: normalizedSessionKey,
-        logger,
-      });
-  const runtimeInfoFastPathDecision = plannedDecision
-    || memorySeedDecision.decision
-    || requester !== requestPlannerJson
-    ? null
-    : resolveRuntimeInfoFastPathDecision({
-        text,
-        logger,
-        sessionKey: normalizedSessionKey,
-      });
-  if (runtimeInfoFastPathDecision) {
-    logger?.info?.("planner_runtime_info_fast_path", {
-      action: runtimeInfoFastPathDecision.action,
-      reason: "deterministic_runtime_info_without_llm_plan",
-    });
-  }
-  const prePlannedDecision = plannedDecision || memorySeedDecision.decision;
-  const effectivePrePlannedDecision = prePlannedDecision || runtimeInfoFastPathDecision;
-  const decision = effectivePrePlannedDecision
-    ? (() => {
-        const validatedDecision = validatePlannerUserInputDecision(effectivePrePlannedDecision, { text });
-        if (validatedDecision?.ok !== true) {
-          return withUserInputDecisionExplanation(validatedDecision, { text });
-        }
-        return withUserInputDecisionExplanation(
-          Array.isArray(validatedDecision.steps)
-            ? { steps: validatedDecision.steps }
-            : {
-                action: validatedDecision.action,
-                params: validatedDecision.params,
-              },
-          { text },
-        );
-      })()
-    : await planUserInputAction({
-        text,
-        requester,
-        signal,
-        sessionKey,
-        decisionMemory,
-      });
-  const memorySeedObservability = memorySeedDecision?.observability
-    && typeof memorySeedDecision.observability === "object"
-    ? {
-        ...memorySeedDecision.observability,
-        memory_used_in_routing: Boolean(!plannedDecision && memorySeedDecision.decision && !decision?.error),
-      }
-    : null;
-  if (memorySeedObservability) {
-    logPlannerWorkingMemoryTrace({
-      logger,
-      memoryStage: "executePlannedUserInput_preplan",
-      sessionKey,
-      observability: memorySeedObservability,
-      selectedAction: memorySeedDecision?.decision?.action || null,
-      level: "debug",
-    });
-  }
-  const plannerVisibleMonitor = !decision?.error && !Array.isArray(decision?.steps)
-    ? createPlannerVisibleTelemetryMonitor({
-        text,
-        selectedAction: decision?.action,
-        decisionReason: decision?.why || "",
-        requestId,
-        telemetryAdapter,
-      })
-    : null;
-  emitPlannerVisibleTelemetryForMonitor({
-    monitor: plannerVisibleMonitor,
-    selectedAction: decision?.action,
+  return plannedUserInputExecutionRuntime.executePlannedUserInput({
+    text,
+    requester,
+    logger,
+    contentReader,
+    documentFetcher,
+    baseUrl,
+    toolFlowRunner,
+    multiStepRunner,
+    dispatcher,
+    plannedDecision,
+    resume_from_step,
+    previous_results,
+    max_retries,
+    retryable_error_types,
+    authContext,
+    signal,
+    sessionKey,
+    decisionMemory,
+    requestId,
+    telemetryAdapter,
+    runSkill,
+    taskLayerRunner,
   });
-  if (decision?.error) {
-    if (decision.error === "semantic_mismatch") {
-      let reroutedResult = null;
-      try {
-        reroutedResult = await toolFlowRunner({
-          userIntent: text,
-          payload: {},
-          logger,
-          contentReader,
-          baseUrl,
-          authContext,
-          signal,
-          sessionKey,
-          telemetryAdapter,
-        });
-      } catch (error) {
-        const abortedResult = buildPlannerAbortResult({
-          signal,
-          error,
-        });
-        if (abortedResult) {
-          reroutedResult = buildPlannerAgentOutput({
-            selectedAction: null,
-            executionResult: abortedResult,
-            formattedOutput: null,
-            traceId: abortedResult.trace_id || null,
-            routingReason: "semantic_mismatch_reroute_aborted",
-          });
-        } else {
-          throw error;
-        }
-      }
-
-      if (reroutedResult?.execution_result) {
-        logger?.info?.("planner_semantic_mismatch_reroute", {
-          original_action: cleanText(decision?.action || decision?.steps?.[0]?.action || "") || null,
-          rerouted_action: cleanText(reroutedResult?.selected_action || "") || null,
-          reroute_ok: reroutedResult?.execution_result?.ok === true,
-          reroute_error: cleanText(reroutedResult?.execution_result?.error || "") || null,
-          reroute_reason: cleanText(reroutedResult?.routing_reason || "") || null,
-          trace_id: reroutedResult?.trace_id || null,
-        });
-        return {
-          ...(() => {
-            const output = {
-              ok: reroutedResult?.execution_result?.ok === true,
-              action: cleanText(reroutedResult?.selected_action || "") || null,
-              params: null,
-              error: cleanText(reroutedResult?.execution_result?.error || "") || null,
-              execution_result: reroutedResult?.execution_result || null,
-              formatted_output: normalizePlannerFormattedOutput(
-                reroutedResult?.formatted_output || extractPlannerFormattedOutput(reroutedResult?.execution_result),
-              ),
-              synthetic_agent_hint: reroutedResult?.synthetic_agent_hint || null,
-              trace_id: reroutedResult?.trace_id || null,
-              why: "原始 decision 與這輪需求不一致，所以先改走 reroute。",
-              alternative: normalizeDecisionAlternative(decision?.alternative),
-            };
-            copyPlannerVisibleTelemetryContext(reroutedResult, output);
-            return output;
-          })(),
-        };
-      }
-    }
-
-    if (decision.error === "planner_failed") {
-      const deterministicFallback = resolveDeterministicPlannerFallbackSelection({
-        text,
-        logger,
-        sessionKey,
-      });
-      if (deterministicFallback?.selection?.selected_action) {
-        let reroutedResult;
-        try {
-          reroutedResult = await toolFlowRunner({
-            userIntent: text,
-            payload: deterministicFallback.payload || {},
-            logger,
-            contentReader,
-            baseUrl,
-            authContext,
-            forcedSelection: deterministicFallback.selection,
-            disableAutoRouting: true,
-            signal,
-            sessionKey,
-            requestId: plannerVisibleMonitor?.context?.request_id || requestId,
-            telemetryContext: plannerVisibleMonitor?.context || null,
-            telemetryAdapter,
-          });
-        } catch (error) {
-          const abortedResult = buildPlannerAbortResult({
-            action: deterministicFallback.selection.selected_action,
-            signal,
-            error,
-          });
-          if (abortedResult) {
-            reroutedResult = buildPlannerAgentOutput({
-              selectedAction: deterministicFallback.selection.selected_action,
-              executionResult: abortedResult,
-              traceId: abortedResult.trace_id || null,
-              routingReason: deterministicFallback.selection.routing_reason,
-              payload: deterministicFallback.payload || {},
-            });
-          } else {
-            throw error;
-          }
-        }
-
-        if (reroutedResult?.execution_result) {
-          const output = {
-            ok: reroutedResult?.execution_result?.ok === true,
-            action: cleanText(reroutedResult?.selected_action || deterministicFallback.selection.selected_action) || null,
-            params: deterministicFallback.payload || {},
-            error: cleanText(reroutedResult?.execution_result?.error || "") || null,
-            execution_result: reroutedResult?.execution_result || null,
-            formatted_output: normalizePlannerFormattedOutput(
-              reroutedResult?.formatted_output || extractPlannerFormattedOutput(reroutedResult?.execution_result),
-            ),
-            synthetic_agent_hint: reroutedResult?.synthetic_agent_hint || null,
-            trace_id: reroutedResult?.trace_id || null,
-            why: "strict planner decision 缺失時，改走 bounded deterministic read/runtime fallback。",
-            alternative: normalizeDecisionAlternative(decision?.alternative),
-          };
-          copyPlannerVisibleTelemetryContext(reroutedResult, output);
-          return output;
-        }
-      }
-      emitPlannerFailedAlert({
-        text,
-        reason: "invalid_planned_decision",
-        source: "execute_planned_user_input",
-      });
-    }
-    return {
-      ok: false,
-      ...decision,
-      execution_result: null,
-      formatted_output: null,
-      trace_id: null,
-    };
-  }
-
-  if (Array.isArray(decision.steps)) {
-    let runtimeResult;
-    try {
-      runtimeResult = await multiStepRunner({
-        steps: decision.steps,
-        logger,
-        requestText: text,
-        documentFetcher,
-        resume_from_step,
-        previous_results,
-        max_retries,
-        retryable_error_types,
-        authContext,
-        signal,
-        async dispatcher({ action, payload, requestText: stepRequestText, context }) {
-          return dispatcher({
-            action,
-            payload,
-            requestText: stepRequestText,
-            context,
-            logger,
-            baseUrl,
-            authContext,
-            signal,
-          });
-        },
-      });
-    } catch (error) {
-      const abortedResult = buildPlannerAbortResult({ signal, error });
-      if (abortedResult) {
-        runtimeResult = buildPlannerMultiStepOutput({
-          ok: false,
-          steps: decision.steps.map((step) => ({ action: step.action })),
-          results: [],
-          traceId: abortedResult.trace_id || null,
-          error: abortedResult.error,
-          stopped: true,
-          stoppedAtStep: null,
-          currentStepIndex: 0,
-          lastError: buildPlannerLastErrorRecord(abortedResult),
-          retryCount: 0,
-        });
-      } else {
-        throw error;
-      }
-    }
-
-    return {
-      ok: runtimeResult?.ok === true,
-      steps: decision.steps,
-      error: cleanText(runtimeResult?.error || "") || null,
-      execution_result: runtimeResult || null,
-      formatted_output: null,
-      trace_id: runtimeResult?.trace_id || null,
-      why: cleanText(decision?.why || "") || null,
-      alternative: normalizeDecisionAlternative(decision?.alternative),
-    };
-  }
-
-  let runtimeResult;
-  try {
-    runtimeResult = await toolFlowRunner({
-      userIntent: text,
-      payload: decision.params,
-      logger,
-      contentReader,
-      baseUrl,
-      authContext,
-      forcedSelection: {
-        selected_action: decision.action,
-        reason: "strict_user_input_planner",
-      },
-      disableAutoRouting: true,
-      signal,
-      sessionKey,
-      requestId: plannerVisibleMonitor?.context?.request_id || requestId,
-      telemetryContext: plannerVisibleMonitor?.context || null,
-      telemetryAdapter,
-    });
-  } catch (error) {
-    const abortedResult = buildPlannerAbortResult({
-      action: decision.action,
-      signal,
-      error,
-    });
-    if (abortedResult) {
-      runtimeResult = buildPlannerAgentOutput({
-        selectedAction: decision.action,
-        executionResult: abortedResult,
-        traceId: abortedResult.trace_id || null,
-        routingReason: "strict_user_input_planner",
-        payload: decision.params,
-      });
-    } else {
-      throw error;
-    }
-  }
-
-  const output = {
-    ok: runtimeResult?.execution_result?.ok === true,
-    action: decision.action,
-    params: decision.params,
-    error: cleanText(runtimeResult?.execution_result?.error || "") || null,
-    execution_result: runtimeResult?.execution_result || null,
-    formatted_output: normalizePlannerFormattedOutput(
-      runtimeResult?.formatted_output || extractPlannerFormattedOutput(runtimeResult?.execution_result),
-    ),
-    synthetic_agent_hint: runtimeResult?.synthetic_agent_hint || null,
-    trace_id: runtimeResult?.trace_id || null,
-    why: cleanText(decision?.why || "") || null,
-    alternative: normalizeDecisionAlternative(decision?.alternative),
-  };
-  copyPlannerVisibleTelemetryContext(runtimeResult, output);
-  return output;
 }
 
 export function buildPlannedUserInputEnvelope(result = {}) {
-  const chosenAction = cleanText(result.action || "") || getPlannerDecisionRepresentativeAction(result) || null;
-  const fallbackReason = cleanText(
-    result.reason
-    || result.execution_result?.data?.reason
-    || result.execution_result?.data?.stop_reason
-    || result.error
-    || "",
-  ) || null;
-  const reasoning = normalizeDecisionReasoning({
-    why: result?.why || "",
-    alternative: result?.alternative || null,
-  });
-  if (!result || typeof result !== "object") {
-    emitPlannerFailedAlert({
-      reason: "invalid_execution_result_shape",
-      source: "planned_user_input_envelope",
-    });
-    return {
-      ok: false,
-      error: "planner_failed",
-      formatted_output: null,
-      trace_id: null,
-      trace: {
-        chosen_action: null,
-        fallback_reason: "planner_failed",
-        reasoning,
-      },
-    };
-  }
-
-  if (result.error && !result.execution_result) {
-    if (cleanText(result.error || "") === "planner_failed") {
-      emitPlannerFailedAlert({
-        reason: cleanText(result.reason || "") || "planner_failed_without_execution_result",
-        source: "planned_user_input_envelope",
-      });
-    }
-    const envelope = {
-      ok: false,
-      error: cleanText(result.error || "") || "planner_failed",
-      ...(cleanText(result.action || "") ? { action: cleanText(result.action) } : {}),
-      params: normalizePlannerPayload(result.params),
-      ...(Array.isArray(result.steps)
-        ? {
-            steps: result.steps
-              .map((step) => ({
-                action: cleanText(step?.action || "") || null,
-                ...(step?.params && typeof step.params === "object" && !Array.isArray(step.params)
-                  ? { params: normalizePlannerPayload(step.params) }
-                  : {}),
-                ...(cleanText(step?.intent || "") ? { intent: cleanText(step.intent) } : {}),
-                ...(typeof step?.required === "boolean" ? { required: step.required } : {}),
-              }))
-              .filter((step) => step.action),
-          }
-        : {}),
-      ...(Number.isInteger(result.step_index) ? { step_index: result.step_index } : {}),
-      ...(Array.isArray(result.violations) ? { violations: result.violations } : {}),
-      ...(cleanText(result.reason || "") ? { reason: cleanText(result.reason) } : {}),
-      ...(cleanText(result.previous_user_text || "") ? { previous_user_text: cleanText(result.previous_user_text) } : {}),
-      ...(result.semantics ? { semantics: result.semantics } : {}),
-      why: reasoning.why,
-      alternative: reasoning.alternative,
-      formatted_output: null,
-      trace_id: result.trace_id || null,
-      trace: {
-        chosen_action: chosenAction,
-        fallback_reason: fallbackReason,
-        reasoning,
-      },
-    };
-    copyPlannerVisibleTelemetryContext(result, envelope);
-    return envelope;
-  }
-
-  const envelope = {
-    ok: result.ok === true,
-    action: cleanText(result.action || "") || null,
-    params: normalizePlannerPayload(result.params),
-    ...(Array.isArray(result.steps)
-      ? {
-          steps: result.steps
-            .map((step) => ({
-              action: cleanText(step?.action || "") || null,
-              ...(step?.params && typeof step.params === "object" && !Array.isArray(step.params)
-                ? { params: normalizePlannerPayload(step.params) }
-                : {}),
-              ...(cleanText(step?.intent || "") ? { intent: cleanText(step.intent) } : {}),
-              ...(typeof step?.required === "boolean" ? { required: step.required } : {}),
-            }))
-            .filter((step) => step.action),
-        }
-      : {}),
-    error: cleanText(result.error || "") || null,
-    execution_result: result.execution_result || null,
-    formatted_output: normalizePlannerFormattedOutput(
-      result.formatted_output || extractPlannerFormattedOutput(result.execution_result),
-    ),
-    why: reasoning.why,
-    alternative: reasoning.alternative,
-    trace_id: result.trace_id || null,
-    trace: {
-      chosen_action: chosenAction,
-      fallback_reason: fallbackReason,
-      reasoning,
-    },
-  };
-  copyPlannerVisibleTelemetryContext(result, envelope);
-  return envelope;
+  return plannedUserInputExecutionRuntime.buildPlannedUserInputEnvelope(result);
 }
 
 function buildExecutiveDecisionAlternative({
