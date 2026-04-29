@@ -22,6 +22,35 @@ const BASELINES = Object.freeze({
     "tests/executive-verifier.test.mjs",
     "tests/plane-skeleton.test.mjs",
   ],
+  pr05: [
+    "tests/system-self-check.test.mjs",
+    "tests/release-check.test.mjs",
+  ],
+  pr06: [
+    "tests/system-self-check.test.mjs",
+  ],
+  pr07: [
+    "tests/pdf-acceptance-eval.test.mjs",
+  ],
+  pr08: [
+    "tests/system-self-check.test.mjs",
+    "tests/pdf-acceptance-eval.test.mjs",
+  ],
+  pr09: [
+    "tests/release-check.test.mjs",
+  ],
+  pr10: [
+    "tests/system-self-check.test.mjs",
+    "tests/release-check.test.mjs",
+    "tests/pdf-acceptance-eval.test.mjs",
+  ],
+  pr11: [
+    "tests/system-self-check.test.mjs",
+    "tests/release-check.test.mjs",
+    "tests/pdf-acceptance-eval.test.mjs",
+    "tests/fake-completion-baseline.test.mjs",
+    "tests/e2e-pdf-baseline.test.mjs",
+  ],
 });
 
 function resolveRequestedBaselines(value = "") {
@@ -55,8 +84,16 @@ function runNodeTest(files = []) {
 }
 
 async function main() {
-  const requested = process.argv[2] || "all";
+  const wantsList = process.argv.includes("--list");
+  const wantsDryRun = process.argv.includes("--dry-run");
+  const requested = process.argv
+    .slice(2)
+    .find((value) => !String(value || "").startsWith("--")) || "all";
   const baselineNames = resolveRequestedBaselines(requested);
+  if (wantsList) {
+    console.log(Object.keys(BASELINES).join("\n"));
+    return;
+  }
   console.log(`Running migration baseline: ${baselineNames.join(", ")}`);
 
   for (const name of baselineNames) {
@@ -65,10 +102,16 @@ async function main() {
     for (const file of files) {
       console.log(`- ${file}`);
     }
-    await runNodeTest(files);
+    if (!wantsDryRun) {
+      await runNodeTest(files);
+    }
   }
 
-  console.log("\nMigration baseline complete.");
+  if (wantsDryRun) {
+    console.log("\nMigration baseline dry-run complete.");
+  } else {
+    console.log("\nMigration baseline complete.");
+  }
 }
 
 main().catch((error) => {

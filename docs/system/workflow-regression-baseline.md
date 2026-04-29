@@ -57,7 +57,7 @@ node --test \
 - doc_rewrite gate
 - cloud_doc gate
 
-### 1A. Migration Baseline (PR-00~PR-04)
+### 1A. Migration Baseline (PR-00~PR-11)
 
 用途：
 
@@ -77,6 +77,15 @@ node scripts/run-migration-baseline.mjs pr00
 node scripts/run-migration-baseline.mjs pr01,pr02
 node scripts/run-migration-baseline.mjs pr03
 node scripts/run-migration-baseline.mjs pr04
+node scripts/run-migration-baseline.mjs pr05
+node scripts/run-migration-baseline.mjs pr06
+node scripts/run-migration-baseline.mjs pr07
+node scripts/run-migration-baseline.mjs pr08
+node scripts/run-migration-baseline.mjs pr09
+node scripts/run-migration-baseline.mjs pr10
+node scripts/run-migration-baseline.mjs pr11
+node scripts/run-migration-baseline.mjs --list
+node scripts/run-migration-baseline.mjs pr11 --dry-run
 ```
 
 ### 2. Integration Baseline
