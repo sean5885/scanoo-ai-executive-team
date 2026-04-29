@@ -254,6 +254,7 @@ Current public `/answer` path:
    - worker completion still requires verifier gate pass; execute failure / verifier fail continue to `recovery_decision_v1` fail-soft handling
 6. otherwise `runPlannerUserInputEdge(...)` runs executive memory retrieval first (`session memory + approved memory` from `/Users/seanhan/Documents/Playground/src/executive-memory.mjs`), then calls `executePlannedUserInput(...)` with bounded internal `decisionMemory` context
 7. `executive-planner.mjs` resolves planner action or controlled failure
+   - planner now mounts an additive execution-plane selector facade (`/Users/seanhan/Documents/Playground/src/execution/index.mjs`) backed by contract/evidence skeleton registries (`/Users/seanhan/Documents/Playground/src/contracts/index.mjs`, `/Users/seanhan/Documents/Playground/src/evidence/index.mjs`); current selector behavior remains pass-through
    - before active current-step continuation, planner runs one deterministic execution-readiness gate from the same session working-memory execution plan state
    - readiness is fail-closed and checks slot/artifact/dependency/owner/recovery/plan validity on current step, returning `is_ready`, blocking diagnostics, and `recommended_action`
    - when `is_ready=false`, planner does not dispatch intended step action directly; it follows existing controlled paths (`ask_user` / `retry` / `reroute` / `rollback` / `skip` / fail-closed stop)

@@ -84,6 +84,10 @@ Use [deployment.md](/Users/seanhan/Documents/Playground/docs/system/deployment.m
   - `/Users/seanhan/Documents/Playground/src/executive-improvement.mjs`
   - `/Users/seanhan/Documents/Playground/src/executive-memory.mjs`
   - `/Users/seanhan/Documents/Playground/src/single-machine-runtime-coordination.mjs`
+  - additive planner plane scaffolds (contract/evidence/execution facade, no behavior change yet):
+    - `/Users/seanhan/Documents/Playground/src/contracts/index.mjs`
+    - `/Users/seanhan/Documents/Playground/src/evidence/index.mjs`
+    - `/Users/seanhan/Documents/Playground/src/execution/index.mjs`
 - sync orchestration
   - `/Users/seanhan/Documents/Playground/src/lark-sync-service.mjs`
 - comment suggestion workflow and poller

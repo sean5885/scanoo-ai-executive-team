@@ -210,6 +210,9 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/planner-ingress-contract.mjs`
   - `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
   - `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`
+  - `/Users/seanhan/Documents/Playground/src/contracts/index.mjs`
+  - `/Users/seanhan/Documents/Playground/src/evidence/index.mjs`
+  - `/Users/seanhan/Documents/Playground/src/execution/index.mjs`
 - Current truth:
   - `GET /answer` no longer uses `answer-service.mjs` as its primary route
   - the checked-in official plugin entry now lands on `/Users/seanhan/Documents/Playground/src/lark-plugin-dispatch-adapter.mjs` first, not on scattered route decisions inside the plugin
@@ -217,6 +220,7 @@ Current-truth docs for onboarding are:
   - plugin-native document/message/calendar/task-style tools are explicitly classified as `plugin_native` and do not enter the internal planner/lane business path
   - planner-backed `/answer` and plugin hybrid dispatch now arm one earlier bounded-fallback abort signal before the outer HTTP hard timeout, so planner/lane fail-soft recovery can answer first and the generic timeout stays the last resort
   - `/answer` and the `knowledge-assistant` lane now share one checked-in answer-edge helper instead of rebuilding `execute -> envelope -> normalize` separately
+  - planner-side control/execution/evidence split now has additive skeleton modules (`src/contracts|src/evidence|src/execution`) and `executive-planner` consumes the execution-plane selector facade as a compatibility wrapper; current behavior remains pass-through and contract-preserving
   - that shared answer-edge helper now has one ingress adapter at `planner-user-input-edge`:
     - execution mode is resolved at ingress as one of `sync_authoritative`, `queue_shadow`, or `queue_authoritative` (skeleton, default-off)
     - mode resolution uses `PLANNER_AUTONOMY_INGRESS_ENABLED`, strict allowlist (`PLANNER_AUTONOMY_INGRESS_ALLOWLIST`, exact `session:|request:|trace:|handler:` match), and `PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED`

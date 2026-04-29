@@ -153,6 +153,7 @@ import {
 import { resolveToolContract, validateToolInvocation } from "./tool-layer-contract.mjs";
 import { executeTool } from "./tool-execution-runtime.mjs";
 import { resolveToolResultContinuation } from "./tool-result-continuation.mjs";
+import { createExecutionPlaneFacade } from "./execution/index.mjs";
 
 const executiveStartSignals = [
   "agent",
@@ -335,6 +336,21 @@ const PLANNER_WORKING_MEMORY_NON_CRITICAL_STEP_TYPES = new Set([
 ]);
 const DEFAULT_PLANNER_PROMOTION_AUDIT_SESSION_KEY = "__default__";
 const plannerPromotionAuditStates = new Map();
+const plannerExecutionPlaneFacade = createExecutionPlaneFacade({
+  decisionSelector: (selectionInput = {}) => selectPlannerTool(selectionInput),
+});
+
+export function getPlannerExecutionPlaneMetadata() {
+  return {
+    version: plannerExecutionPlaneFacade.version,
+    capabilities: {
+      decision: plannerExecutionPlaneFacade.decision?.contract?.capability || null,
+      dispatch: plannerExecutionPlaneFacade.dispatch?.contract?.capability || null,
+      recovery: plannerExecutionPlaneFacade.recovery?.contract?.capability || null,
+      formatter: plannerExecutionPlaneFacade.formatter?.contract?.capability || null,
+    },
+  };
+}
 
 function emitPlannerFailedAlert({ text = "", reason = "", source = "planner" } = {}) {
   const textHint = cleanText(text);
