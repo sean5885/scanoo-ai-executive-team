@@ -21,6 +21,7 @@
     "test:executive:concurrency:stress": "node scripts/stress-executive-concurrency.mjs --rounds 20 --parallel 8 --test-concurrency 8",
     "test:real-user-usability": "node --test tests/real-user-usability-regression.test.mjs",
     "eval:long-task": "node scripts/evaluate-long-task-governance.mjs",
+    "eval:pdf-acceptance": "node scripts/pdf-acceptance-eval.mjs",
     "eval:usage-layer": "node evals/usage-layer/usage-layer-runner.mjs",
     "eval:usage-layer:registered-agent-family": "node evals/usage-layer/usage-layer-runner.mjs --pack registered-agent-family",
     "eval:usage-layer:workflow-timeout-governance": "node evals/usage-layer/usage-layer-runner.mjs --pack workflow-timeout-governance",
