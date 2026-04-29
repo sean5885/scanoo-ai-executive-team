@@ -152,3 +152,54 @@ test("overclaim language is blocked when search evidence is missing", () => {
   assert.equal(result.overclaim, true);
   assert.match(result.issues.join(" "), /overclaim/);
 });
+
+test("subtask artifact evidence gate blocks completion when any subtask evidence is unverifiable", () => {
+  const result = verifyTaskCompletion({
+    taskType: "search",
+    executionJournal: {
+      classified_intent: "search",
+      selected_action: "search_company_brain_docs",
+      dispatched_actions: [{ action: "search_company_brain_docs", status: "attempted" }],
+      raw_evidence: [
+        { type: EVIDENCE_TYPES.tool_output, summary: "retrieved_sources:1", source: "reply_metadata" },
+        { type: EVIDENCE_TYPES.summary_generated, summary: "reply_text_present", source: "reply_text" },
+      ],
+      subtask_artifacts: [
+        {
+          artifact_id: "consult:task-1",
+          agent_id: "consult",
+          task: "查證工具結果",
+          status: "failed",
+          required_evidence: ["tool_output"],
+          observed_evidence: ["summary_generated"],
+          missing_required_evidence: ["tool_output"],
+          verifiable: false,
+          error: "subtask_artifact_missing_evidence",
+        },
+      ],
+      merge_evidence_gate: {
+        pass: false,
+        total_subtasks: 1,
+        verifiable_subtasks: 0,
+        failing_subtasks: [
+          {
+            artifact_id: "consult:task-1",
+            agent_id: "consult",
+            task: "查證工具結果",
+            missing_required_evidence: ["tool_output"],
+          },
+        ],
+      },
+      fallback_used: false,
+      tool_required: false,
+      reply_text: "先給你初稿。",
+    },
+  });
+
+  assert.equal(result.pass, false);
+  assert.equal(result.required_evidence_present, false);
+  assert.equal(result.partial_completion, true);
+  assert.equal(result.execution_policy_state, "blocked");
+  assert.equal(result.execution_policy_reason, "subtask_evidence_missing");
+  assert.match(result.issues.join(" "), /subtask_evidence_missing/);
+});

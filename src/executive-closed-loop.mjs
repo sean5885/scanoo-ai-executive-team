@@ -554,11 +554,66 @@ function normalizeRawEvidenceRecord(item = {}) {
   };
 }
 
+function normalizeSubtaskArtifactRecord(item = {}) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) {
+    return null;
+  }
+  const artifactId = cleanText(item.artifact_id || "");
+  const agentId = cleanText(item.agent_id || "");
+  const task = cleanText(item.task || "");
+  if (!artifactId && !agentId && !task) {
+    return null;
+  }
+  return {
+    artifact_id: artifactId || null,
+    agent_id: agentId || null,
+    task: task || null,
+    role: cleanText(item.role || "") || null,
+    status: cleanText(item.status || "") || null,
+    required_evidence: Array.isArray(item.required_evidence)
+      ? item.required_evidence.map((value) => cleanText(value)).filter(Boolean)
+      : [],
+    observed_evidence: Array.isArray(item.observed_evidence)
+      ? item.observed_evidence.map((value) => cleanText(value)).filter(Boolean)
+      : [],
+    missing_required_evidence: Array.isArray(item.missing_required_evidence)
+      ? item.missing_required_evidence.map((value) => cleanText(value)).filter(Boolean)
+      : [],
+    verifiable: item.verifiable === true,
+    error: cleanText(item.error || "") || null,
+  };
+}
+
+function normalizeMergeEvidenceGateRecord(item = null) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) {
+    return null;
+  }
+  return {
+    pass: item.pass === true,
+    total_subtasks: Number.isInteger(item.total_subtasks) ? item.total_subtasks : 0,
+    verifiable_subtasks: Number.isInteger(item.verifiable_subtasks) ? item.verifiable_subtasks : 0,
+    failing_subtasks: Array.isArray(item.failing_subtasks)
+      ? item.failing_subtasks
+        .map((entry) => ({
+          artifact_id: cleanText(entry?.artifact_id || "") || null,
+          agent_id: cleanText(entry?.agent_id || "") || null,
+          task: cleanText(entry?.task || "") || null,
+          missing_required_evidence: Array.isArray(entry?.missing_required_evidence)
+            ? entry.missing_required_evidence.map((value) => cleanText(value)).filter(Boolean)
+            : [],
+          error: cleanText(entry?.error || "") || null,
+        }))
+      : [],
+  };
+}
+
 function buildRawExecutionEvidence({
   reply = null,
   supportingOutputs = [],
   structuredResult = null,
   extraEvidence = [],
+  subtaskArtifacts = [],
+  mergeEvidenceGate = null,
 } = {}) {
   const evidence = Array.isArray(extraEvidence)
     ? extraEvidence.map((item) => normalizeRawEvidenceRecord(item)).filter(Boolean)
@@ -604,6 +659,21 @@ function buildRawExecutionEvidence({
       summary: `supporting_agents:${supportingOutputs.length}`,
     });
   }
+  if (Array.isArray(subtaskArtifacts) && subtaskArtifacts.length) {
+    evidence.push({
+      type: EVIDENCE_TYPES.structured_output,
+      source: "subtask_artifacts",
+      summary: `subtask_artifacts:${subtaskArtifacts.length}`,
+    });
+  }
+  if (mergeEvidenceGate && typeof mergeEvidenceGate === "object" && mergeEvidenceGate.pass === false) {
+    evidence.push({
+      type: EVIDENCE_TYPES.structured_output,
+      source: "subtask_artifacts",
+      summary: `subtask_artifact_missing_evidence:${Array.isArray(mergeEvidenceGate.failing_subtasks) ? mergeEvidenceGate.failing_subtasks.length : 0}`,
+      status: "missing",
+    });
+  }
   return evidence;
 }
 
@@ -614,6 +684,7 @@ export function buildExecutionJournal({
   plannerSteps = [],
   reply = null,
   supportingOutputs = [],
+  subtaskArtifacts = [],
   structuredResult = null,
   extraEvidence = [],
   fallbackUsed = false,
@@ -621,6 +692,7 @@ export function buildExecutionJournal({
   verifierVerdict = null,
   syntheticAgentHint = null,
   expectedOutputSchema = null,
+  mergeEvidenceGate = null,
 } = {}) {
   return {
     classified_intent: cleanText(classifiedIntent || ""),
@@ -634,9 +706,15 @@ export function buildExecutionJournal({
     raw_evidence: buildRawExecutionEvidence({
       reply,
       supportingOutputs,
+      subtaskArtifacts,
       structuredResult,
       extraEvidence,
+      mergeEvidenceGate,
     }),
+    subtask_artifacts: (Array.isArray(subtaskArtifacts) ? subtaskArtifacts : [])
+      .map((item) => normalizeSubtaskArtifactRecord(item))
+      .filter(Boolean),
+    merge_evidence_gate: normalizeMergeEvidenceGateRecord(mergeEvidenceGate),
     fallback_used: fallbackUsed === true,
     tool_required: toolRequired === true,
     verifier_verdict: verifierVerdict && typeof verifierVerdict === "object"
@@ -849,6 +927,7 @@ export async function finalizeExecutiveTaskTurn({
   requestText = "",
   reply = null,
   supportingOutputs = [],
+  subtaskArtifacts = [],
   routing = {},
   structuredResult = null,
   extraEvidence = [],
@@ -872,10 +951,12 @@ export async function finalizeExecutiveTaskTurn({
     plannerSteps: plannerStepMetadata,
     reply,
     supportingOutputs,
+    subtaskArtifacts,
     structuredResult,
     extraEvidence,
     fallbackUsed: routing?.fallback_used === true,
     toolRequired,
+    mergeEvidenceGate: routing?.merge_evidence_gate || null,
     syntheticAgentHint: routing?.synthetic_agent_hint || null,
     expectedOutputSchema: { text: "string" },
   });

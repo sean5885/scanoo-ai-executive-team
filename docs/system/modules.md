@@ -367,6 +367,8 @@ Current-truth docs for onboarding are:
   - `renderPlannerUserFacingReplyText(...)` now enforces one fixed section order for public reply text: `答案 -> 來源 -> 待確認/限制`
   - source rendering at this boundary now only accepts canonical source objects and is mapped through `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`; arbitrary free-form source strings are not rendered as evidence
   - `executive-orchestrator.mjs` now has a truthful completion gate on final user-facing copy:
+    - supporting+merge collaboration now uses subtask artifact records (bounded `required_evidence/observed_evidence/missing_required_evidence/verifiable`) instead of role-prompt-only merge assumptions
+    - merge step has a pre-merge subtask evidence gate; if any subtask artifact is not verifiable, gate stays fail and completion wording is blocked
     - when `verification.pass !== true`, frontend text is forced to `blocked/escalated` tone and cannot use completion phrasing
     - when `verification.required_evidence_present=false`, frontend text must explicitly state `任務未完成`
     - fail paths only render `目前狀態 + 可驗證證據 + 待確認/限制`

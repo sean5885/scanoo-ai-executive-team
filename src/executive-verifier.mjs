@@ -99,6 +99,13 @@ function buildExecutionJournal({
       synthetic_agent_hint: executionJournal.synthetic_agent_hint && typeof executionJournal.synthetic_agent_hint === "object"
         ? executionJournal.synthetic_agent_hint
         : null,
+      subtask_artifacts: Array.isArray(executionJournal.subtask_artifacts)
+        ? executionJournal.subtask_artifacts
+        : [],
+      merge_evidence_gate:
+        executionJournal.merge_evidence_gate && typeof executionJournal.merge_evidence_gate === "object"
+          ? executionJournal.merge_evidence_gate
+          : null,
       reply_text: cleanText(
         executionJournal.reply_text
         || executionJournal.reply?.text
@@ -123,6 +130,8 @@ function buildExecutionJournal({
     fallback_used: false,
     tool_required: false,
     synthetic_agent_hint: null,
+    subtask_artifacts: [],
+    merge_evidence_gate: null,
     reply_text: cleanText(replyText),
     structured_result: structuredResult,
     expected_output_schema: expectedOutputSchema,
@@ -151,6 +160,10 @@ export function verifyTaskCompletion({
   const normalizedStructuredResult = journal.structured_result;
   const normalizedExpectedOutputSchema = journal.expected_output_schema;
   const dispatchedActions = Array.isArray(journal.dispatched_actions) ? journal.dispatched_actions : [];
+  const subtaskArtifacts = Array.isArray(journal.subtask_artifacts) ? journal.subtask_artifacts : [];
+  const mergeEvidenceGate = journal.merge_evidence_gate && typeof journal.merge_evidence_gate === "object"
+    ? journal.merge_evidence_gate
+    : null;
   const fallbackUsed = journal.fallback_used === true;
   const toolRequired = journal.tool_required === true;
 
@@ -222,6 +235,30 @@ export function verifyTaskCompletion({
     issues.push("tool_required_fallback_blocked");
     result.execution_policy_state = "blocked";
     result.execution_policy_reason = "tool_required_fallback_used";
+  }
+
+  if (mergeEvidenceGate && mergeEvidenceGate.pass === false) {
+    issues.push("subtask_evidence_missing");
+    result.required_evidence_present = false;
+    result.partial_completion = true;
+    if (result.execution_policy_state === "clear") {
+      result.execution_policy_state = "blocked";
+      result.execution_policy_reason = "subtask_evidence_missing";
+    }
+  } else if (subtaskArtifacts.length > 0) {
+    const unverifiableArtifacts = subtaskArtifacts.filter((item) =>
+      item?.verifiable !== true
+      || (Array.isArray(item?.missing_required_evidence) && item.missing_required_evidence.length > 0),
+    );
+    if (unverifiableArtifacts.length > 0) {
+      issues.push("subtask_evidence_missing");
+      result.required_evidence_present = false;
+      result.partial_completion = true;
+      if (result.execution_policy_state === "clear") {
+        result.execution_policy_state = "blocked";
+        result.execution_policy_reason = "subtask_evidence_missing";
+      }
+    }
   }
 
   if (taskType === "summarize" && !evidenceSet.has(EVIDENCE_TYPES.summary_generated)) {

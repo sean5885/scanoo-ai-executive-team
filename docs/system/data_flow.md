@@ -302,6 +302,9 @@ Current public `/answer` path:
 10. `answer-source-mapper.mjs` converts canonical source objects into bounded public `sources[]` lines
 11. `planner-user-input-edge.mjs` performs session-scoped working-memory v2 patch write-back only after a stable final boundary response is available
 12. `executive-orchestrator.mjs` enforces truthful completion gate on final user-facing copy:
+   - specialist collaboration is now artifact-driven before merge:
+     - each specialist/merge subtask emits a bounded artifact (`required_evidence`, `observed_evidence`, `missing_required_evidence`, `verifiable`)
+     - merge now runs a subtask evidence gate first; gate fail marks task non-completed
    - when `verification.pass !== true`, user-facing text is forced into blocked/escalated tone
    - when `verification.required_evidence_present === false`, user-facing text must explicitly declare `任務未完成` (hard boundary, not metadata-only)
    - fail path can only render `目前狀態 + 可驗證證據 + 待確認/限制`

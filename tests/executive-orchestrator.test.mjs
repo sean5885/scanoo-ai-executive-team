@@ -285,6 +285,35 @@ test("executeWorkItemsSequentially keeps ordinary JSON string literal on the nor
   assert.equal(result.reply?.text, "結論：已整合支援輸出。");
 });
 
+test("executeWorkItemsSequentially builds subtask artifacts and blocks merge evidence gate when required evidence is missing", async () => {
+  const result = await executeWorkItemsSequentially({
+    accountId: "acct-1",
+    requestText: "請收斂結果",
+    workPlan: [
+      { agent_id: "consult", task: "查證工具結果", role: "supporting", tool_required: true },
+      { agent_id: "generalist", task: "統一收斂", role: "primary" },
+    ],
+    async executeAgentFn({ agent }) {
+      if (agent.id === "consult") {
+        return { text: "我先給你初稿，尚未附上工具證據。" };
+      }
+      return { text: "結論：先標記為未完成。" };
+    },
+  });
+
+  assert.equal(Array.isArray(result.subtaskArtifacts), true);
+  assert.equal(result.subtaskArtifacts.length >= 2, true);
+  assert.equal(result.mergeEvidenceGate?.pass, false);
+  assert.equal(
+    result.subtaskArtifacts.some((item) =>
+      item.agent_id === "consult"
+      && item.verifiable === false
+      && Array.isArray(item.missing_required_evidence)
+      && item.missing_required_evidence.includes("tool_output")),
+    true,
+  );
+});
+
 test("executeExecutiveTurn slash-command no-match reply is natural language instead of raw JSON", async () => {
   const result = await executeExecutiveTurn({
     accountId: "acct-executive-1",

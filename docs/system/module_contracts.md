@@ -69,3 +69,13 @@ If any check fails:
 ## Front Boundary Rule
 
 When verifier/evidence gate indicates missing required evidence (`required_evidence_present=false`), user-facing reply must stay non-completed and explicitly use `任務未完成` wording.
+
+## Subtask Artifact Gate
+
+- checked-in collaboration merge now uses subtask artifacts before final synthesis:
+  - each subtask artifact carries `required_evidence`, `observed_evidence`, `missing_required_evidence`, `verifiable`
+  - merge gate (`merge_evidence_gate`) is `pass=true` only when all subtask artifacts are verifiable
+- verifier treats `merge_evidence_gate.pass=false` (or unverifiable subtask artifacts) as blocking:
+  - `required_evidence_present=false`
+  - `execution_policy_state=blocked` (when no higher-priority failure state already exists)
+  - issue code includes `subtask_evidence_missing`

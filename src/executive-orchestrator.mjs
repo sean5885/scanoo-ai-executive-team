@@ -118,6 +118,7 @@ const EXECUTIVE_MAX_ROLES = 3;
 const EXECUTIVE_MAX_SUPPORTING_ROLES = EXECUTIVE_MAX_ROLES - 1;
 const EXECUTIVE_MAX_KEY_POINTS = 5;
 const EXECUTIVE_DEFAULT_NEXT_STEP = "如果你要，我可以接著把這版整理成更具體的執行清單。";
+const SUBTASK_ARTIFACT_SCHEMA_VERSION = "subtask_artifact_v1";
 const EXECUTIVE_SOURCE_SECTION_PATTERN = /^來源\s*[:：]?$/i;
 const EXECUTIVE_CONCLUSION_HEADINGS = new Set([
   "結論",
@@ -590,6 +591,111 @@ function extractReplyDispatchedActions(reply = null) {
     || reply?.dispatched_actions
     || [],
   );
+}
+
+function uniqueEvidenceTypes(items = []) {
+  return [...new Set(
+    (Array.isArray(items) ? items : [])
+      .map((item) => cleanText(item || ""))
+      .filter(Boolean),
+  )];
+}
+
+function resolveSubtaskRequiredEvidence(item = {}) {
+  if (item?.tool_required === true) {
+    return ["tool_output"];
+  }
+  return ["summary_generated"];
+}
+
+function buildSubtaskArtifact({
+  item = {},
+  agentId = "",
+  summary = "",
+  reply = null,
+  dispatchedActions = [],
+  status = "pending",
+  error = "",
+} = {}) {
+  const requiredEvidence = resolveSubtaskRequiredEvidence(item);
+  const observedEvidence = [];
+  const normalizedSummary = cleanText(summary || "");
+  const retrievalCount = Number(reply?.metadata?.retrieval_count || 0);
+  const sourceTitles = Array.isArray(reply?.metadata?.source_titles)
+    ? reply.metadata.source_titles.map((value) => cleanText(value)).filter(Boolean)
+    : [];
+  const dispatchedCount = Array.isArray(dispatchedActions) ? dispatchedActions.length : 0;
+
+  if (normalizedSummary) {
+    observedEvidence.push("summary_generated");
+  }
+  if (retrievalCount > 0 || dispatchedCount > 0 || sourceTitles.length > 0) {
+    observedEvidence.push("tool_output");
+  }
+
+  const normalizedObservedEvidence = uniqueEvidenceTypes(observedEvidence);
+  const missingRequiredEvidence = requiredEvidence.filter((itemType) => !normalizedObservedEvidence.includes(itemType));
+  const verifiable = cleanText(status || "") === "completed" && missingRequiredEvidence.length === 0;
+
+  return {
+    schema_version: SUBTASK_ARTIFACT_SCHEMA_VERSION,
+    artifact_id: `${cleanText(agentId || "agent") || "agent"}:${Buffer.from(cleanText(item?.task || ""), "utf8").toString("base64").slice(0, 18) || "subtask"}`,
+    agent_id: cleanText(agentId || ""),
+    task: cleanText(item?.task || ""),
+    role: cleanText(item?.role || ""),
+    status: cleanText(status || "") || "pending",
+    required_evidence: requiredEvidence,
+    observed_evidence: normalizedObservedEvidence,
+    missing_required_evidence: missingRequiredEvidence,
+    verifiable,
+    error: cleanText(error || "") || null,
+    evidence_detail: {
+      retrieval_count: retrievalCount,
+      dispatched_action_count: dispatchedCount,
+      source_titles: sourceTitles.slice(0, 3),
+    },
+  };
+}
+
+function buildSubtaskEvidenceGate(subtaskArtifacts = []) {
+  const artifacts = Array.isArray(subtaskArtifacts) ? subtaskArtifacts : [];
+  const failingArtifacts = artifacts.filter((item) => item?.verifiable !== true);
+  return {
+    pass: failingArtifacts.length === 0,
+    total_subtasks: artifacts.length,
+    verifiable_subtasks: artifacts.length - failingArtifacts.length,
+    failing_subtasks: failingArtifacts.map((item) => ({
+      artifact_id: cleanText(item?.artifact_id || ""),
+      agent_id: cleanText(item?.agent_id || ""),
+      task: cleanText(item?.task || ""),
+      missing_required_evidence: Array.isArray(item?.missing_required_evidence)
+        ? item.missing_required_evidence
+        : [],
+      error: cleanText(item?.error || "") || null,
+    })),
+  };
+}
+
+function buildSubtaskEvidenceRecords(subtaskArtifacts = [], mergeEvidenceGate = null) {
+  const artifacts = Array.isArray(subtaskArtifacts) ? subtaskArtifacts : [];
+  const gate = mergeEvidenceGate && typeof mergeEvidenceGate === "object"
+    ? mergeEvidenceGate
+    : buildSubtaskEvidenceGate(artifacts);
+  const evidence = [{
+    type: "structured_output",
+    source: "subtask_artifacts",
+    summary: `subtask_artifacts:${artifacts.length}`,
+    status: gate.pass ? "present" : "incomplete",
+  }];
+  if (!gate.pass) {
+    evidence.push({
+      type: "structured_output",
+      source: "subtask_artifacts",
+      summary: `subtask_artifact_missing_evidence:${Array.isArray(gate.failing_subtasks) ? gate.failing_subtasks.length : 0}`,
+      status: "missing",
+    });
+  }
+  return evidence;
 }
 
 export function normalizeWorkPlan(task = null, decision = null, requestText = "") {
@@ -1707,10 +1813,19 @@ export async function executeWorkItemsSequentially({
   const failedAgents = [];
   const executedSpecialists = [];
   const dispatchedActions = [];
+  const subtaskArtifacts = [];
 
   for (const item of specialistItems) {
     const agent = getRegisteredAgent(item.agent_id);
     if (!agent) {
+      const artifact = buildSubtaskArtifact({
+        item,
+        agentId: item.agent_id,
+        summary: "",
+        status: "failed",
+        error: "agent_not_found",
+      });
+      subtaskArtifacts.push(artifact);
       failedAgents.push({
         agent_id: item.agent_id,
         task: item.task,
@@ -1732,12 +1847,27 @@ export async function executeWorkItemsSequentially({
         logger,
       });
       const summary = cleanText(reply?.text || "");
-      dispatchedActions.push(...extractReplyDispatchedActions(reply));
+      const replyDispatchedActions = extractReplyDispatchedActions(reply);
+      dispatchedActions.push(...replyDispatchedActions);
+      const artifact = buildSubtaskArtifact({
+        item,
+        agentId: agent.id,
+        summary,
+        reply,
+        dispatchedActions: replyDispatchedActions,
+        status: "completed",
+      });
       const boundary = classifyExecutiveReplyBoundary(reply?.text || "");
       if (!summary || looksLikeAgentFailureText(summary) || boundary.rejected) {
         logger.warn("executive_specialist_output_rejected", {
           agent_id: agent.id,
           reason: boundary.reason || "empty_or_failed_reply",
+        });
+        subtaskArtifacts.push({
+          ...artifact,
+          status: "failed",
+          verifiable: false,
+          error: boundary.reason ? `rejected_${boundary.reason}` : "empty_or_failed_reply",
         });
         failedAgents.push({
           agent_id: agent.id,
@@ -1750,13 +1880,32 @@ export async function executeWorkItemsSequentially({
         });
         continue;
       }
+      if (!artifact.verifiable) {
+        subtaskArtifacts.push({
+          ...artifact,
+          status: "failed",
+          error: "subtask_artifact_missing_evidence",
+        });
+        failedAgents.push({
+          agent_id: agent.id,
+          task: item.task,
+          error: "subtask_artifact_missing_evidence",
+        });
+        executedSpecialists.push({
+          ...item,
+          status: "failed",
+        });
+        continue;
+      }
       const output = {
         agent_id: agent.id,
         task: item.task,
         summary: summarizeAgentText(summary, 520),
         status: "completed",
+        artifact_id: artifact.artifact_id,
       };
       outputs.push(output);
+      subtaskArtifacts.push(artifact);
       executedSpecialists.push({
         ...item,
         status: "completed",
@@ -1765,6 +1914,13 @@ export async function executeWorkItemsSequentially({
         await appendExecutiveAgentOutput(task.id, output);
       }
     } catch (error) {
+      subtaskArtifacts.push(buildSubtaskArtifact({
+        item,
+        agentId: agent.id,
+        summary: "",
+        status: "failed",
+        error: cleanText(error?.message || "") || "specialist_failed",
+      }));
       logger.warn("executive_specialist_failed", {
         agent_id: agent.id,
         error: logger.compactError(error),
@@ -1803,11 +1959,31 @@ export async function executeWorkItemsSequentially({
         supportingContext: buildSupportingContext(outputs),
         logger,
       });
-      dispatchedActions.push(...extractReplyDispatchedActions(candidateReply));
+      const replyDispatchedActions = extractReplyDispatchedActions(candidateReply);
+      dispatchedActions.push(...replyDispatchedActions);
+      const mergeArtifact = buildSubtaskArtifact({
+        item: mergeItem,
+        agentId: agent.id,
+        summary: cleanText(candidateReply?.text || ""),
+        reply: candidateReply,
+        dispatchedActions: replyDispatchedActions,
+        status: "completed",
+      });
       const boundary = classifyExecutiveReplyBoundary(candidateReply?.text || "");
-      if (!cleanText(candidateReply?.text || "") || looksLikeAgentFailureText(candidateReply?.text || "") || boundary.rejected) {
+      if (!cleanText(candidateReply?.text || "") || looksLikeAgentFailureText(candidateReply?.text || "") || boundary.rejected || !mergeArtifact.verifiable) {
+        subtaskArtifacts.push({
+          ...mergeArtifact,
+          status: "failed",
+          verifiable: false,
+          error: boundary.rejected
+            ? `rejected_${boundary.reason || "merge_agent_failed"}`
+            : !mergeArtifact.verifiable
+              ? "subtask_artifact_missing_evidence"
+              : "merge_agent_failed",
+        });
         throw new Error("merge_agent_failed");
       }
+      subtaskArtifacts.push(mergeArtifact);
       mergeAgent = agent;
       reply = candidateReply;
       break;
@@ -1818,6 +1994,16 @@ export async function executeWorkItemsSequentially({
       });
     }
   }
+  if (!reply?.text) {
+    reply = {
+      text: "目前狀態：blocked。任務未完成：子任務 evidence gate 未通過，暫不合併最終答案。",
+      metadata: {
+        retrieval_count: 0,
+        source_titles: [],
+      },
+    };
+  }
+  const mergeEvidenceGate = buildSubtaskEvidenceGate(subtaskArtifacts);
 
   const finalWorkPlan = [];
   const finalSeen = new Set();
@@ -1843,6 +2029,8 @@ export async function executeWorkItemsSequentially({
     reply,
     mergeAgent: mergeAgent || getRegisteredAgent("generalist"),
     supportingOutputs: outputs,
+    subtaskArtifacts,
+    mergeEvidenceGate,
     finalWorkPlan,
     failedAgents,
     fallbackUsed,
@@ -2103,6 +2291,7 @@ async function executeExecutiveTurnUnlocked({
     requestText,
     reply,
     supportingOutputs: supportingOutputs.length ? supportingOutputs : task.agent_outputs || [],
+    subtaskArtifacts: execution.subtaskArtifacts || [],
     routing: {
       current_agent_id: effectiveMergeAgent.id,
       primary_agent_id: task.primary_agent_id,
@@ -2110,8 +2299,13 @@ async function executeExecutiveTurnUnlocked({
       reason: decision.reason,
       dispatched_actions: execution.dispatchedActions,
       fallback_used: execution.fallbackUsed,
+      merge_evidence_gate: execution.mergeEvidenceGate || null,
       synthetic_agent_hint: null,
     },
+    extraEvidence: buildSubtaskEvidenceRecords(
+      execution.subtaskArtifacts || [],
+      execution.mergeEvidenceGate || null,
+    ),
     logger,
   });
 
