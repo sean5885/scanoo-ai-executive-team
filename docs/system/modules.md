@@ -379,6 +379,7 @@ Current-truth docs for onboarding are:
     - decision metrics now expose `parallel_step_count/total_step_count` as observability (not runtime parallel dispatch)
   - `system-self-check.mjs` now lands truthful-completion metrics (`truthful_completion_metrics_v1`) with checked-in thresholds:
     - `pdf_task_success_rate = pdf_e2e_pass / pdf_e2e_total` (`>=0.9`)
+    - `pdf_e2e_total` minimum sample (`>=50`)
     - `fake_completion_rate = fake_completion_count / important_task_total` (`<0.02`)
     - `verifier_coverage_rate = verifier_covered_count / important_task_total` (`=1.0`)
     - `parallel_ratio = parallel_step_count / total_step_count` (`>=0.4`, observability ratio only)
@@ -387,6 +388,10 @@ Current-truth docs for onboarding are:
       - required docs now fixed to `architecture.md`, `data_flow.md`, `module_contracts.md`
       - each doc requires both path existence and content contract checks (not file-existence-only)
       - doc consistency failure is a hard truthful-completion fail and is not downgraded by sample-size `unknown`
+    - PDF acceptance now runs through checked-in deterministic evaluator (`src/pdf-acceptance-eval.mjs`):
+      - fixture count is `50+` (current default `55`)
+      - checks include `ingest -> retrieve -> answer` and page citation evidence
+      - fail conditions `pdf_e2e_total < 50` or `pdf_task_success_rate < 0.9` are hard-gate failures
   - `release-check.mjs` blocks on `truthful_completion_metrics.status=fail`; sample-insufficient `unknown` remains non-blocking only for non-hard-gate metrics
   - planner/read evidence is converted into public `sources[]` lines through canonical source mapping
 - Secondary implemented path:

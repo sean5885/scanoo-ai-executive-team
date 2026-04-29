@@ -22,12 +22,14 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 ```bash
 npm run metrics:baseline
+npm run eval:pdf-acceptance
 ```
 
 輸出：
 
 - `.tmp/metrics/baseline.json`
 - 指標來源為 `system-self-check` 的 `truthful_completion_metrics`
+- PDF acceptance evaluator 會固定驗證 `50+` cases 的 `ingest -> retrieve -> answer` 連續鏈路
 
 ### 1. Smoke Baseline
 

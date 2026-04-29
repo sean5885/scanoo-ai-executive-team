@@ -382,6 +382,32 @@ test("system self-check fails truthful completion when doc contracts are broken"
   assert.equal(result.ok, false);
 });
 
+test("system self-check fails truthful completion when PDF acceptance pack does not meet 50+ contract", async () => {
+  const archives = await seedSelfCheckArchives();
+  const result = await runSystemSelfCheck({
+    ...archives,
+    writeCheck: async () => STABLE_WRITE_SUMMARY,
+    usageLayerCheck: async () => STABLE_USAGE_LAYER_SUMMARY,
+    pdfAcceptanceCheck: async () => ({
+      version: "pdf_acceptance_eval_v1",
+      total_cases: 49,
+      pass_count: 49,
+      success_rate: 1,
+      sample_ready: false,
+      pass: false,
+      failed_case_ids: [],
+    }),
+  });
+
+  assert.equal(result.truthful_completion_metrics.status, "fail");
+  assert.equal(result.truthful_completion_metrics.metrics.pdf_e2e_total, 49);
+  assert.equal(result.truthful_completion_metrics.metrics.pdf_acceptance_case_coverage_fail, true);
+  assert.equal(result.truthful_completion_metrics.metrics.pdf_acceptance_hard_gate_fail, true);
+  assert.equal(result.system_summary.truthful_completion_status, "fail");
+  assert.equal(result.system_summary.review_priority, "truthful_completion");
+  assert.equal(result.ok, false);
+});
+
 test("system self-check marks doc-boundary routing regressions and points to intent guards", async () => {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "system-self-check-doc-boundary-"));
   const routingArchiveDir = path.join(baseDir, "routing");

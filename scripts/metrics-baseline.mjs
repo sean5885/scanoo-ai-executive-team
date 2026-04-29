@@ -39,6 +39,7 @@ function buildBaselinePayload(selfCheckResult = {}) {
     summary: truthful?.summary || "truthful completion metrics unavailable",
     thresholds: {
       pdf_success_rate_min: toNumberOrNull(thresholds.pdf_success_rate_min),
+      pdf_min_case_count: toNumberOrNull(thresholds.pdf_min_case_count),
       fake_completion_rate_max: toNumberOrNull(thresholds.fake_completion_rate_max),
       verifier_coverage_rate_min: toNumberOrNull(thresholds.verifier_coverage_rate_min),
       parallel_ratio_min: toNumberOrNull(thresholds.parallel_ratio_min),
@@ -50,6 +51,9 @@ function buildBaselinePayload(selfCheckResult = {}) {
       pdf_e2e_pass: toNumberOrNull(metrics.pdf_e2e_pass),
       pdf_e2e_total: toNumberOrNull(metrics.pdf_e2e_total),
       pdf_task_success_rate: toNumberOrNull(metrics.pdf_task_success_rate),
+      pdf_acceptance_case_coverage_fail: metrics.pdf_acceptance_case_coverage_fail === true,
+      pdf_acceptance_success_rate_fail: metrics.pdf_acceptance_success_rate_fail === true,
+      pdf_acceptance_hard_gate_fail: metrics.pdf_acceptance_hard_gate_fail === true,
       fake_completion_count: toNumberOrNull(metrics.fake_completion_count),
       fake_completion_rate: toNumberOrNull(metrics.fake_completion_rate),
       verifier_covered_count: toNumberOrNull(metrics.verifier_covered_count),

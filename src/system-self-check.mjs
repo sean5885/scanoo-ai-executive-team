@@ -114,6 +114,7 @@ const DECISION_OS_SCORE_WEIGHTS = {
 const TRUTHFUL_COMPLETION_METRICS_VERSION = "truthful_completion_metrics_v1";
 const TRUTHFUL_COMPLETION_THRESHOLDS = Object.freeze({
   pdf_success_rate_min: 0.9,
+  pdf_min_case_count: 50,
   fake_completion_rate_max: 0.02,
   verifier_coverage_rate_min: 1,
   parallel_ratio_min: 0.4,
@@ -396,7 +397,10 @@ function buildDocConsistencySignal({ resolveDocSyncPath = defaultResolveDocSyncP
   };
 }
 
-async function buildTruthfulCompletionMetricsSummary({ docSyncResolver = null } = {}) {
+async function buildTruthfulCompletionMetricsSummary({
+  docSyncResolver = null,
+  pdfAcceptanceCheck = null,
+} = {}) {
   let rawStore = null;
   try {
     rawStore = await readJsonFile(executiveTaskStateStorePath);
@@ -416,8 +420,25 @@ async function buildTruthfulCompletionMetricsSummary({ docSyncResolver = null } 
   const importantTaskTotal = importantTasks.length;
 
   const pdfTasks = importantTasks.filter((task) => looksLikePdfTask(task));
-  const pdfE2eTotal = pdfTasks.length;
-  const pdfE2ePass = pdfTasks.filter((task) => readLastVerification(task)?.pass === true).length;
+  const pdfE2eTotalFromStore = pdfTasks.length;
+  const pdfE2ePassFromStore = pdfTasks.filter((task) => readLastVerification(task)?.pass === true).length;
+  let pdfAcceptanceSummary = null;
+  try {
+    if (typeof pdfAcceptanceCheck === "function") {
+      pdfAcceptanceSummary = await pdfAcceptanceCheck();
+    } else {
+      const { runPdfAcceptanceEval } = await import("./pdf-acceptance-eval.mjs");
+      pdfAcceptanceSummary = await runPdfAcceptanceEval();
+    }
+  } catch {
+    pdfAcceptanceSummary = null;
+  }
+  const pdfE2eTotal = Number.isFinite(Number(pdfAcceptanceSummary?.total_cases))
+    ? Number(pdfAcceptanceSummary.total_cases)
+    : pdfE2eTotalFromStore;
+  const pdfE2ePass = Number.isFinite(Number(pdfAcceptanceSummary?.pass_count))
+    ? Number(pdfAcceptanceSummary.pass_count)
+    : pdfE2ePassFromStore;
 
   const verifierCoveredCount = importantTasks.filter((task) => Array.isArray(task?.verifications) && task.verifications.length > 0).length;
   const fakeCompletionCount = importantTasks.filter((task) => readLastVerification(task)?.fake_completion === true).length;
@@ -450,6 +471,10 @@ async function buildTruthfulCompletionMetricsSummary({ docSyncResolver = null } 
   const hasSufficientSample = importantTaskTotal >= 40 && pdfE2eTotal >= 1 && totalStepCount >= 10;
   const hasDocContractFailure = docConsistency.pass !== true
     || docConsistency.rate < TRUTHFUL_COMPLETION_THRESHOLDS.documentation_consistency_rate_min;
+  const hasPdfCaseCoverageFailure = pdfE2eTotal < TRUTHFUL_COMPLETION_THRESHOLDS.pdf_min_case_count;
+  const hasPdfSuccessThresholdFailure = pdfSuccessRate == null
+    || pdfSuccessRate < TRUTHFUL_COMPLETION_THRESHOLDS.pdf_success_rate_min;
+  const hasPdfAcceptanceFailure = hasPdfCaseCoverageFailure || hasPdfSuccessThresholdFailure;
 
   const metricChecks = [
     pdfSuccessRate == null || pdfSuccessRate >= TRUTHFUL_COMPLETION_THRESHOLDS.pdf_success_rate_min,
@@ -459,7 +484,7 @@ async function buildTruthfulCompletionMetricsSummary({ docSyncResolver = null } 
     blockedMisreportedCompleted <= TRUTHFUL_COMPLETION_THRESHOLDS.blocked_misreported_completed_max,
     docConsistency.rate >= TRUTHFUL_COMPLETION_THRESHOLDS.documentation_consistency_rate_min,
   ];
-  const status = hasDocContractFailure
+  const status = hasDocContractFailure || hasPdfAcceptanceFailure
     ? "fail"
     : !hasSufficientSample
       ? "unknown"
@@ -475,6 +500,8 @@ async function buildTruthfulCompletionMetricsSummary({ docSyncResolver = null } 
       : status === "fail"
         ? hasDocContractFailure
           ? "truthful completion metrics fail because documentation contracts are inconsistent"
+          : hasPdfAcceptanceFailure
+            ? "truthful completion metrics fail because PDF acceptance coverage or success rate is below contract"
           : "truthful completion metrics have threshold violations"
         : "truthful completion metrics sample is not large enough for strict gating",
     thresholds: TRUTHFUL_COMPLETION_THRESHOLDS,
@@ -493,6 +520,11 @@ async function buildTruthfulCompletionMetricsSummary({ docSyncResolver = null } 
       blocked_misreported_completed_count: blockedMisreportedCompleted,
       documentation_consistency_rate: docConsistency.rate,
       documentation_consistency: docConsistency,
+      pdf_acceptance: pdfAcceptanceSummary,
+      pdf_acceptance_min_case_count: TRUTHFUL_COMPLETION_THRESHOLDS.pdf_min_case_count,
+      pdf_acceptance_case_coverage_fail: hasPdfCaseCoverageFailure,
+      pdf_acceptance_success_rate_fail: hasPdfSuccessThresholdFailure,
+      pdf_acceptance_hard_gate_fail: hasPdfAcceptanceFailure,
       documentation_consistency_hard_gate_fail: hasDocContractFailure,
       sample_ready_for_gate: hasSufficientSample,
     },
@@ -1556,6 +1588,7 @@ export async function runSystemSelfCheck({
   usageLayerGateStage = "",
   memoryInfluenceCheck = null,
   docSyncResolver = null,
+  pdfAcceptanceCheck = null,
 } = {}) {
   const agents = listRegisteredAgents();
   const agentMap = new Map(agents.map((agent) => [agent.id, agent]));
@@ -1601,6 +1634,7 @@ export async function runSystemSelfCheck({
   ]);
   const truthfulCompletionMetrics = await buildTruthfulCompletionMetricsSummary({
     docSyncResolver,
+    pdfAcceptanceCheck,
   });
   const companyBrainSummary = runCompanyBrainLifecycleSelfCheck({
     getRouteContract,
