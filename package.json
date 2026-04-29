@@ -15,6 +15,7 @@
     "test:workflow:doc-rewrite": "node scripts/run-workflow-baseline.mjs doc-rewrite",
     "test:workflow:cloud-doc": "node scripts/run-workflow-baseline.mjs cloud-doc",
     "test:workflow:all": "node scripts/run-workflow-baseline.mjs all",
+    "test:migration:baseline": "node scripts/run-migration-baseline.mjs all",
     "metrics:baseline": "node scripts/metrics-baseline.mjs --out .tmp/metrics/baseline.json",
     "test:executive:concurrency:smoke": "node scripts/stress-executive-concurrency.mjs --rounds 10 --parallel 4 --test-concurrency 8 --quiet",
     "test:executive:concurrency:stress": "node scripts/stress-executive-concurrency.mjs --rounds 20 --parallel 8 --test-concurrency 8",

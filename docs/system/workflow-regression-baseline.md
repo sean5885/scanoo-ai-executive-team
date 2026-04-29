@@ -55,6 +55,28 @@ node --test \
 - doc_rewrite gate
 - cloud_doc gate
 
+### 1A. Migration Baseline (PR-00~PR-04)
+
+用途：
+
+- 在 control/execution/evidence 分階段遷移時，固定驗證每個 PR 階段的最小回歸面
+- 主要覆蓋 truthful completion gate、plane split、contract/evidence gate、PDF path、subtask artifact evidence gate
+
+命令：
+
+```bash
+npm run test:migration:baseline
+```
+
+可選：
+
+```bash
+node scripts/run-migration-baseline.mjs pr00
+node scripts/run-migration-baseline.mjs pr01,pr02
+node scripts/run-migration-baseline.mjs pr03
+node scripts/run-migration-baseline.mjs pr04
+```
+
 ### 2. Integration Baseline
 
 用途：
