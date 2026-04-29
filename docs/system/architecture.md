@@ -93,6 +93,9 @@ Use [deployment.md](/Users/seanhan/Documents/Playground/docs/system/deployment.m
     - `/Users/seanhan/Documents/Playground/src/execution/recovery.mjs`
     - `/Users/seanhan/Documents/Playground/src/execution/formatter.mjs`
     - `/Users/seanhan/Documents/Playground/docs/system/module_contracts.md`
+  - release/readiness doc-code consistency hard gate:
+    - `/Users/seanhan/Documents/Playground/src/system-self-check.mjs`
+    - checked-in contract now requires architecture/data-flow/module-contract docs to pass path + content checks before truthful-completion gate can pass
 - sync orchestration
   - `/Users/seanhan/Documents/Playground/src/lark-sync-service.mjs`
 - comment suggestion workflow and poller

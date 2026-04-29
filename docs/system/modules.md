@@ -383,8 +383,11 @@ Current-truth docs for onboarding are:
     - `verifier_coverage_rate = verifier_covered_count / important_task_total` (`=1.0`)
     - `parallel_ratio = parallel_step_count / total_step_count` (`>=0.4`, observability ratio only)
     - `blocked_misreported_completed_count` (`=0`)
-    - `documentation_consistency_rate` over required doc mirror paths (`=1.0`)
-  - `release-check.mjs` now blocks on `truthful_completion_metrics.status=fail`; sample-insufficient `unknown` does not hard-block release
+    - `documentation_consistency_rate` over required doc mirror contracts (`=1.0`)
+      - required docs now fixed to `architecture.md`, `data_flow.md`, `module_contracts.md`
+      - each doc requires both path existence and content contract checks (not file-existence-only)
+      - doc consistency failure is a hard truthful-completion fail and is not downgraded by sample-size `unknown`
+  - `release-check.mjs` blocks on `truthful_completion_metrics.status=fail`; sample-insufficient `unknown` remains non-blocking only for non-hard-gate metrics
   - planner/read evidence is converted into public `sources[]` lines through canonical source mapping
 - Secondary implemented path:
   - `/Users/seanhan/Documents/Playground/src/answer-service.mjs`

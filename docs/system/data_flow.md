@@ -311,6 +311,10 @@ Current public `/answer` path:
    - completed-tone wording is blocked in verifier-fail/fake-completion/partial-completion paths
 13. `renderPlannerUserFacingReplyText(...)` keeps fixed public order:
    - `答案 -> 來源 -> 待確認/限制`
+14. `system-self-check.mjs` enforces doc-code consistency contract as part of truthful-completion metrics:
+   - required docs: `docs/system/architecture.md`, `docs/system/data_flow.md`, `docs/system/module_contracts.md`
+   - each required doc is checked for both path existence and required content contracts (not file-existence-only)
+   - doc contract failure is a hard truthful-completion failure (`status=fail`) even when other truthful metrics are sample-gated
 
 Current truth:
 

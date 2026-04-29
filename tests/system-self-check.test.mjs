@@ -219,6 +219,40 @@ async function createUsageSummaryFixture(baseDir, summary = STABLE_USAGE_LAYER_S
   return fixturePath;
 }
 
+function createDocSyncResolver({
+  architecture = null,
+  dataFlow = null,
+  moduleContracts = null,
+} = {}) {
+  const resolverMap = new Map([
+    ["docs/system/architecture.md", architecture],
+    ["docs/system/data_flow.md", dataFlow],
+    ["docs/system/module_contracts.md", moduleContracts],
+  ]);
+  return (filePath) => {
+    if (!resolverMap.has(filePath)) {
+      return {
+        exists: false,
+        text: "",
+      };
+    }
+    const value = resolverMap.get(filePath);
+    if (typeof value === "string") {
+      return {
+        exists: true,
+        text: value,
+      };
+    }
+    if (value && typeof value === "object") {
+      return value;
+    }
+    return {
+      exists: false,
+      text: "",
+    };
+  };
+}
+
 test("system self-check returns unified routing and planner summaries", async () => {
   const archives = await seedSelfCheckArchives();
   const result = await runSystemSelfCheck({
@@ -281,6 +315,8 @@ test("system self-check returns unified routing and planner summaries", async ()
   assert.equal(typeof result.decision_os_observability.readiness_score?.score, "number");
   assert.equal(result.decision_os_observability.closed_loop_metrics?.routing_closed_loop?.status, "pass");
   assert.equal(result.decision_os_observability.closed_loop_metrics?.memory_influence?.status, "unknown");
+  assert.equal(result.truthful_completion_metrics.metrics.documentation_consistency.pass, true);
+  assert.equal(result.truthful_completion_metrics.metrics.documentation_consistency.failed_checks.length, 0);
   assert.match(result.self_check_archive.run_id, /^self-check-/);
 
   const manifest = readJson(path.join(archives.selfCheckArchiveDir, "manifest.json"));
@@ -312,6 +348,38 @@ test("system self-check returns unified routing and planner summaries", async ()
   assert.equal(snapshot.routing_summary.doc_boundary_regression, result.routing_summary.doc_boundary_regression);
   assert.equal(snapshot.planner_summary.gate, "pass");
   assert.equal(snapshot.decision_os_observability.version, "decision_os_observability_v1");
+});
+
+test("system self-check fails truthful completion when doc contracts are broken", async () => {
+  const archives = await seedSelfCheckArchives();
+  const result = await runSystemSelfCheck({
+    ...archives,
+    writeCheck: async () => STABLE_WRITE_SUMMARY,
+    usageLayerCheck: async () => STABLE_USAGE_LAYER_SUMMARY,
+    docSyncResolver: createDocSyncResolver({
+      architecture: [
+        "planner plane split scaffolds",
+        "src/contracts/index.mjs",
+        "docs/system/module_contracts.md",
+      ].join("\n"),
+      dataFlow: [
+        "Attachment -> Extract -> Chunk -> Citation (PDF)",
+        "src/pdf-extractor.mjs",
+        "src/pdf-answer.mjs",
+      ].join("\n"),
+      moduleContracts: "## Capability Contracts",
+    }),
+  });
+
+  assert.equal(result.truthful_completion_metrics.status, "fail");
+  assert.equal(result.truthful_completion_metrics.metrics.documentation_consistency_hard_gate_fail, true);
+  assert.equal(result.truthful_completion_metrics.metrics.documentation_consistency.pass, false);
+  assert.equal(result.truthful_completion_metrics.metrics.documentation_consistency.rate < 1, true);
+  assert.equal(result.truthful_completion_metrics.metrics.documentation_consistency.failed_checks.length > 0, true);
+  assert.equal(result.system_summary.truthful_completion_status, "fail");
+  assert.equal(result.system_summary.review_priority, "truthful_completion");
+  assert.equal(result.system_summary.safe_to_change, false);
+  assert.equal(result.ok, false);
 });
 
 test("system self-check marks doc-boundary routing regressions and points to intent guards", async () => {

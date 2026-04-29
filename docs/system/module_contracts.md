@@ -79,3 +79,22 @@ When verifier/evidence gate indicates missing required evidence (`required_evide
   - `required_evidence_present=false`
   - `execution_policy_state=blocked` (when no higher-priority failure state already exists)
   - issue code includes `subtask_evidence_missing`
+
+## Documentation Consistency Gate
+
+- `system-self-check` truthful-completion metrics now include a hard documentation contract gate.
+- required doc mirror paths are:
+  - `docs/system/architecture.md`
+  - `docs/system/data_flow.md`
+  - `docs/system/module_contracts.md`
+- checks enforce both:
+  - path exists
+  - required content contracts exist (not file-existence-only)
+- current content contracts include:
+  - architecture mirrors control/execution/evidence plane split and references replaceable execution modules (`decision/dispatch/recovery/formatter`)
+  - data-flow mirrors PDF ingest/retrieve/answer chain with OCR fallback and page citation markers (`#page`)
+  - module contracts include `Capability Contracts`, `Failure Taxonomy`, `Evidence Schema`, `Subtask Artifact Gate`
+- if any required path or content contract check fails:
+  - `truthful_completion_metrics.status=fail` (hard gate)
+  - release-check blocks as truthful completion failure
+  - this hard gate is independent from sample-size `unknown` handling for other truthful metrics

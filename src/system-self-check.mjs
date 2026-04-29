@@ -1,6 +1,6 @@
 import { listRegisteredAgents } from "./agent-registry.mjs";
 import { executiveTaskStateStorePath } from "./config.mjs";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import {
   buildControlSummary,
   buildDiagnosticsReportingSummary,
@@ -121,9 +121,86 @@ const TRUTHFUL_COMPLETION_THRESHOLDS = Object.freeze({
   documentation_consistency_rate_min: 1,
 });
 const REQUIRED_DOC_SYNC_PATHS = Object.freeze([
-  "docs/system/modules.md",
+  "docs/system/architecture.md",
   "docs/system/data_flow.md",
-  "docs/system/closed_loop.md",
+  "docs/system/module_contracts.md",
+]);
+const REQUIRED_DOC_SYNC_CONTENT_CONTRACTS = Object.freeze([
+  {
+    path: "docs/system/architecture.md",
+    checks: [
+      {
+        id: "control_execution_evidence_plane_reference",
+        description: "architecture must mirror control/execution/evidence plane module split",
+        pattern: /src\/contracts\/index\.mjs/i,
+      },
+      {
+        id: "execution_plane_replaceable_modules_reference",
+        description: "architecture must include replaceable execution modules (decision/dispatch/recovery/formatter)",
+        pattern: /src\/execution\/decision\.mjs[\s\S]*src\/execution\/dispatch\.mjs[\s\S]*src\/execution\/recovery\.mjs[\s\S]*src\/execution\/formatter\.mjs/i,
+      },
+      {
+        id: "module_contract_doc_reference",
+        description: "architecture must reference docs/system/module_contracts.md",
+        pattern: /docs\/system\/module_contracts\.md/i,
+      },
+    ],
+  },
+  {
+    path: "docs/system/data_flow.md",
+    checks: [
+      {
+        id: "pdf_extractor_reference",
+        description: "data-flow must mirror PDF ingestion via src/pdf-extractor.mjs",
+        pattern: /src\/pdf-extractor\.mjs/i,
+      },
+      {
+        id: "pdf_retriever_reference",
+        description: "data-flow must mirror PDF retrieval chunk mapping via src/pdf-retriever.mjs",
+        pattern: /src\/pdf-retriever\.mjs/i,
+      },
+      {
+        id: "pdf_answer_reference",
+        description: "data-flow must mirror PDF answer citation rendering via src/pdf-answer.mjs",
+        pattern: /src\/pdf-answer\.mjs/i,
+      },
+      {
+        id: "pdf_ocr_fallback_reference",
+        description: "data-flow must mention OCR fallback for scanned PDFs",
+        pattern: /ocr fallback/i,
+      },
+      {
+        id: "pdf_page_citation_reference",
+        description: "data-flow must mention page-aware citation markers (#page)",
+        pattern: /#page/i,
+      },
+    ],
+  },
+  {
+    path: "docs/system/module_contracts.md",
+    checks: [
+      {
+        id: "capability_contract_section",
+        description: "module contracts must include capability contract section",
+        pattern: /##\s*Capability Contracts/i,
+      },
+      {
+        id: "failure_taxonomy_section",
+        description: "module contracts must include failure taxonomy section",
+        pattern: /##\s*Failure Taxonomy/i,
+      },
+      {
+        id: "evidence_schema_section",
+        description: "module contracts must include evidence schema section",
+        pattern: /##\s*Evidence Schema/i,
+      },
+      {
+        id: "subtask_artifact_gate_section",
+        description: "module contracts must include subtask artifact gate boundary",
+        pattern: /Subtask Artifact Gate/i,
+      },
+    ],
+  },
 ]);
 
 function resolveUsageLayerGateStage(stage = "") {
@@ -220,19 +297,106 @@ function computeParallelStepSignals(task = {}) {
   return { total, parallel };
 }
 
-function buildDocConsistencySignal() {
-  const existingCount = REQUIRED_DOC_SYNC_PATHS.filter((filePath) => existsSync(filePath)).length;
+function defaultResolveDocSyncPath(filePath = "") {
+  if (!existsSync(filePath)) {
+    return { exists: false, text: "" };
+  }
+  try {
+    return {
+      exists: true,
+      text: readFileSync(filePath, "utf8"),
+    };
+  } catch (error) {
+    return {
+      exists: false,
+      text: "",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function resolveDocSyncRecord(filePath = "", resolveDocSyncPath = defaultResolveDocSyncPath) {
+  if (typeof resolveDocSyncPath !== "function") {
+    return defaultResolveDocSyncPath(filePath);
+  }
+  const resolved = resolveDocSyncPath(filePath);
+  if (typeof resolved === "string") {
+    return {
+      exists: true,
+      text: resolved,
+    };
+  }
+  if (!resolved || typeof resolved !== "object") {
+    return {
+      exists: false,
+      text: "",
+    };
+  }
   return {
-    checked_paths: REQUIRED_DOC_SYNC_PATHS,
-    found_path_count: existingCount,
-    total_path_count: REQUIRED_DOC_SYNC_PATHS.length,
-    rate: REQUIRED_DOC_SYNC_PATHS.length > 0
-      ? Number((existingCount / REQUIRED_DOC_SYNC_PATHS.length).toFixed(4))
-      : 1,
+    exists: resolved.exists === true || typeof resolved.text === "string",
+    text: typeof resolved.text === "string" ? resolved.text : "",
+    error: cleanText(resolved.error) || null,
   };
 }
 
-async function buildTruthfulCompletionMetricsSummary() {
+function buildDocConsistencySignal({ resolveDocSyncPath = defaultResolveDocSyncPath } = {}) {
+  const missingPaths = [];
+  const failedChecks = [];
+  let existingCount = 0;
+  let totalChecks = 0;
+  let passedChecks = 0;
+
+  for (const contract of REQUIRED_DOC_SYNC_CONTENT_CONTRACTS) {
+    const filePath = contract?.path || "";
+    const checks = Array.isArray(contract?.checks) ? contract.checks : [];
+    const resolved = resolveDocSyncRecord(filePath, resolveDocSyncPath);
+    if (resolved.exists) {
+      existingCount += 1;
+    } else {
+      missingPaths.push(filePath);
+    }
+    for (const check of checks) {
+      totalChecks += 1;
+      const pattern = check?.pattern instanceof RegExp ? check.pattern : null;
+      const matched = resolved.exists && pattern ? pattern.test(resolved.text) : false;
+      if (matched) {
+        passedChecks += 1;
+      } else {
+        failedChecks.push({
+          path: filePath,
+          check_id: cleanText(check?.id) || "unknown_check",
+          description: cleanText(check?.description) || "doc contract check failed",
+          missing_path: resolved.exists !== true,
+        });
+      }
+    }
+  }
+
+  const pathRate = REQUIRED_DOC_SYNC_PATHS.length > 0
+    ? Number((existingCount / REQUIRED_DOC_SYNC_PATHS.length).toFixed(4))
+    : 1;
+  const contentRate = totalChecks > 0
+    ? Number((passedChecks / totalChecks).toFixed(4))
+    : 1;
+  const rate = Number(Math.min(pathRate, contentRate).toFixed(4));
+
+  return {
+    checked_paths: REQUIRED_DOC_SYNC_PATHS,
+    checked_contract_paths: REQUIRED_DOC_SYNC_CONTENT_CONTRACTS.map((item) => item.path),
+    found_path_count: existingCount,
+    total_path_count: REQUIRED_DOC_SYNC_PATHS.length,
+    missing_paths: missingPaths,
+    required_check_count: totalChecks,
+    passed_check_count: passedChecks,
+    failed_checks: failedChecks,
+    path_rate: pathRate,
+    content_rate: contentRate,
+    pass: missingPaths.length === 0 && failedChecks.length === 0,
+    rate,
+  };
+}
+
+async function buildTruthfulCompletionMetricsSummary({ docSyncResolver = null } = {}) {
   let rawStore = null;
   try {
     rawStore = await readJsonFile(executiveTaskStateStorePath);
@@ -278,8 +442,14 @@ async function buildTruthfulCompletionMetricsSummary() {
   const fakeCompletionRate = safeRatio(fakeCompletionCount, importantTaskTotal);
   const verifierCoverageRate = safeRatio(verifierCoveredCount, importantTaskTotal);
   const parallelRatio = safeRatio(parallelStepCount, totalStepCount);
-  const docConsistency = buildDocConsistencySignal();
+  const docConsistency = buildDocConsistencySignal({
+    ...(typeof docSyncResolver === "function"
+      ? { resolveDocSyncPath: docSyncResolver }
+      : {}),
+  });
   const hasSufficientSample = importantTaskTotal >= 40 && pdfE2eTotal >= 1 && totalStepCount >= 10;
+  const hasDocContractFailure = docConsistency.pass !== true
+    || docConsistency.rate < TRUTHFUL_COMPLETION_THRESHOLDS.documentation_consistency_rate_min;
 
   const metricChecks = [
     pdfSuccessRate == null || pdfSuccessRate >= TRUTHFUL_COMPLETION_THRESHOLDS.pdf_success_rate_min,
@@ -289,8 +459,10 @@ async function buildTruthfulCompletionMetricsSummary() {
     blockedMisreportedCompleted <= TRUTHFUL_COMPLETION_THRESHOLDS.blocked_misreported_completed_max,
     docConsistency.rate >= TRUTHFUL_COMPLETION_THRESHOLDS.documentation_consistency_rate_min,
   ];
-  const status = !hasSufficientSample
-    ? "unknown"
+  const status = hasDocContractFailure
+    ? "fail"
+    : !hasSufficientSample
+      ? "unknown"
     : metricChecks.every(Boolean)
       ? "pass"
       : "fail";
@@ -301,7 +473,9 @@ async function buildTruthfulCompletionMetricsSummary() {
     summary: status === "pass"
       ? "truthful completion metrics pass"
       : status === "fail"
-        ? "truthful completion metrics have threshold violations"
+        ? hasDocContractFailure
+          ? "truthful completion metrics fail because documentation contracts are inconsistent"
+          : "truthful completion metrics have threshold violations"
         : "truthful completion metrics sample is not large enough for strict gating",
     thresholds: TRUTHFUL_COMPLETION_THRESHOLDS,
     metrics: {
@@ -319,6 +493,7 @@ async function buildTruthfulCompletionMetricsSummary() {
       blocked_misreported_completed_count: blockedMisreportedCompleted,
       documentation_consistency_rate: docConsistency.rate,
       documentation_consistency: docConsistency,
+      documentation_consistency_hard_gate_fail: hasDocContractFailure,
       sample_ready_for_gate: hasSufficientSample,
     },
   };
@@ -1380,6 +1555,7 @@ export async function runSystemSelfCheck({
   usageLayerCheck = runUsageLayerEvalSummary,
   usageLayerGateStage = "",
   memoryInfluenceCheck = null,
+  docSyncResolver = null,
 } = {}) {
   const agents = listRegisteredAgents();
   const agentMap = new Map(agents.map((agent) => [agent.id, agent]));
@@ -1423,7 +1599,9 @@ export async function runSystemSelfCheck({
     buildRoutingSummary({ routingArchiveDir }),
     resolveMemoryInfluenceSummary({ memoryInfluenceCheck }),
   ]);
-  const truthfulCompletionMetrics = await buildTruthfulCompletionMetricsSummary();
+  const truthfulCompletionMetrics = await buildTruthfulCompletionMetricsSummary({
+    docSyncResolver,
+  });
   const companyBrainSummary = runCompanyBrainLifecycleSelfCheck({
     getRouteContract,
   });
