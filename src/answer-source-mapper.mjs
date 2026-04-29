@@ -196,9 +196,15 @@ export function mapCanonicalAnswerSourcesToLines(canonicalSources = [], { maxSou
     .slice(0, maxSources);
 }
 
-export function normalizeUserFacingAnswerSources(items = [], { query = "", maxSources = 3 } = {}) {
+export function normalizeUserFacingAnswerSources(items = [], {
+  query = "",
+  maxSources = 3,
+  allowStringSources = false,
+} = {}) {
   const normalizedItems = Array.isArray(items) ? items : [];
-  const stringItems = normalizeList(normalizedItems.filter((item) => typeof item === "string"));
+  const stringItems = allowStringSources
+    ? normalizeList(normalizedItems.filter((item) => typeof item === "string"))
+    : [];
   const objectItems = normalizedItems.filter((item) => item && typeof item === "object" && !Array.isArray(item));
 
   const canonicalSources = buildCanonicalAnswerSources(objectItems, { query });

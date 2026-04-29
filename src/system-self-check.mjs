@@ -1,4 +1,6 @@
 import { listRegisteredAgents } from "./agent-registry.mjs";
+import { executiveTaskStateStorePath } from "./config.mjs";
+import { existsSync } from "node:fs";
 import {
   buildControlSummary,
   buildDiagnosticsReportingSummary,
@@ -27,6 +29,7 @@ import {
 import {
   archiveSystemSelfCheckSnapshot,
 } from "./system-self-check-history.mjs";
+import { readJsonFile } from "./token-store.mjs";
 
 const REQUIRED_AGENT_IDS = [
   "generalist",
@@ -108,6 +111,20 @@ const DECISION_OS_SCORE_WEIGHTS = {
   routing: 30,
   memory: 15,
 };
+const TRUTHFUL_COMPLETION_METRICS_VERSION = "truthful_completion_metrics_v1";
+const TRUTHFUL_COMPLETION_THRESHOLDS = Object.freeze({
+  pdf_success_rate_min: 0.9,
+  fake_completion_rate_max: 0.02,
+  verifier_coverage_rate_min: 1,
+  parallel_ratio_min: 0.4,
+  blocked_misreported_completed_max: 0,
+  documentation_consistency_rate_min: 1,
+});
+const REQUIRED_DOC_SYNC_PATHS = Object.freeze([
+  "docs/system/modules.md",
+  "docs/system/data_flow.md",
+  "docs/system/closed_loop.md",
+]);
 
 function resolveUsageLayerGateStage(stage = "") {
   const normalized = cleanText(stage || process.env.USAGE_LAYER_GATE_STAGE || "").toLowerCase();
@@ -148,6 +165,163 @@ function formatPercentMetric(value = null) {
     return null;
   }
   return `${Number(value).toFixed(2)}%`;
+}
+
+function safeRatio(numerator = 0, denominator = 0) {
+  const n = Number(numerator);
+  const d = Number(denominator);
+  if (!Number.isFinite(n) || !Number.isFinite(d) || d <= 0) {
+    return null;
+  }
+  return Number((n / d).toFixed(4));
+}
+
+function normalizeTaskListFromStore(store = {}) {
+  if (!store || typeof store !== "object") {
+    return [];
+  }
+  const taskMap = store.tasks && typeof store.tasks === "object" ? store.tasks : {};
+  return Object.values(taskMap).filter((item) => item && typeof item === "object" && !Array.isArray(item));
+}
+
+function readLastVerification(task = {}) {
+  const verifications = Array.isArray(task?.verifications) ? task.verifications : [];
+  return verifications.at(-1) || null;
+}
+
+function looksLikePdfTask(task = {}) {
+  const summary = cleanText([
+    task?.task_type,
+    task?.workflow,
+    task?.objective,
+    task?.execution_journal?.classified_intent,
+    task?.execution_journal?.selected_action,
+  ].filter(Boolean).join(" ")).toLowerCase();
+  return /\bpdf\b|\.pdf|附件|檔案|文件檔|文件档/.test(summary);
+}
+
+function hasCompletedTone(text = "") {
+  return /已完成|已處理完|已处理完|完成了|全部完成|已搞定/u.test(cleanText(text));
+}
+
+function deriveAssistantTurnText(task = {}) {
+  const turns = Array.isArray(task?.turns) ? task.turns : [];
+  const assistantTurn = [...turns].reverse().find((item) => cleanText(item?.role) === "assistant");
+  return cleanText(assistantTurn?.text || task?.execution_journal?.reply_text || "");
+}
+
+function computeParallelStepSignals(task = {}) {
+  const workPlan = Array.isArray(task?.work_plan) ? task.work_plan : [];
+  if (workPlan.length <= 1) {
+    return { total: 0, parallel: 0 };
+  }
+  const total = workPlan.length;
+  const parallel = workPlan.filter((item) => cleanText(item?.role || "").toLowerCase() !== "primary").length;
+  return { total, parallel };
+}
+
+function buildDocConsistencySignal() {
+  const existingCount = REQUIRED_DOC_SYNC_PATHS.filter((filePath) => existsSync(filePath)).length;
+  return {
+    checked_paths: REQUIRED_DOC_SYNC_PATHS,
+    found_path_count: existingCount,
+    total_path_count: REQUIRED_DOC_SYNC_PATHS.length,
+    rate: REQUIRED_DOC_SYNC_PATHS.length > 0
+      ? Number((existingCount / REQUIRED_DOC_SYNC_PATHS.length).toFixed(4))
+      : 1,
+  };
+}
+
+async function buildTruthfulCompletionMetricsSummary() {
+  let rawStore = null;
+  try {
+    rawStore = await readJsonFile(executiveTaskStateStorePath);
+  } catch (error) {
+    return {
+      version: TRUTHFUL_COMPLETION_METRICS_VERSION,
+      status: "unknown",
+      summary: "truthful completion metrics unavailable",
+      thresholds: TRUTHFUL_COMPLETION_THRESHOLDS,
+      error: error instanceof Error ? error.message : String(error),
+      metrics: {},
+    };
+  }
+
+  const tasks = normalizeTaskListFromStore(rawStore);
+  const importantTasks = tasks.filter((task) => cleanText(task?.task_type || task?.workflow || task?.objective));
+  const importantTaskTotal = importantTasks.length;
+
+  const pdfTasks = importantTasks.filter((task) => looksLikePdfTask(task));
+  const pdfE2eTotal = pdfTasks.length;
+  const pdfE2ePass = pdfTasks.filter((task) => readLastVerification(task)?.pass === true).length;
+
+  const verifierCoveredCount = importantTasks.filter((task) => Array.isArray(task?.verifications) && task.verifications.length > 0).length;
+  const fakeCompletionCount = importantTasks.filter((task) => readLastVerification(task)?.fake_completion === true).length;
+
+  let totalStepCount = 0;
+  let parallelStepCount = 0;
+  for (const task of importantTasks) {
+    const signals = computeParallelStepSignals(task);
+    totalStepCount += signals.total;
+    parallelStepCount += signals.parallel;
+  }
+
+  const blockedMisreportedCompleted = importantTasks.filter((task) => {
+    const status = cleanText(task?.status || task?.lifecycle_state || "").toLowerCase();
+    if (status !== "blocked" && status !== "escalated") {
+      return false;
+    }
+    return hasCompletedTone(deriveAssistantTurnText(task));
+  }).length;
+
+  const pdfSuccessRate = safeRatio(pdfE2ePass, pdfE2eTotal);
+  const fakeCompletionRate = safeRatio(fakeCompletionCount, importantTaskTotal);
+  const verifierCoverageRate = safeRatio(verifierCoveredCount, importantTaskTotal);
+  const parallelRatio = safeRatio(parallelStepCount, totalStepCount);
+  const docConsistency = buildDocConsistencySignal();
+  const hasSufficientSample = importantTaskTotal >= 40 && pdfE2eTotal >= 1 && totalStepCount >= 10;
+
+  const metricChecks = [
+    pdfSuccessRate == null || pdfSuccessRate >= TRUTHFUL_COMPLETION_THRESHOLDS.pdf_success_rate_min,
+    fakeCompletionRate == null || fakeCompletionRate < TRUTHFUL_COMPLETION_THRESHOLDS.fake_completion_rate_max,
+    verifierCoverageRate == null || verifierCoverageRate >= TRUTHFUL_COMPLETION_THRESHOLDS.verifier_coverage_rate_min,
+    parallelRatio == null || parallelRatio >= TRUTHFUL_COMPLETION_THRESHOLDS.parallel_ratio_min,
+    blockedMisreportedCompleted <= TRUTHFUL_COMPLETION_THRESHOLDS.blocked_misreported_completed_max,
+    docConsistency.rate >= TRUTHFUL_COMPLETION_THRESHOLDS.documentation_consistency_rate_min,
+  ];
+  const status = !hasSufficientSample
+    ? "unknown"
+    : metricChecks.every(Boolean)
+      ? "pass"
+      : "fail";
+
+  return {
+    version: TRUTHFUL_COMPLETION_METRICS_VERSION,
+    status,
+    summary: status === "pass"
+      ? "truthful completion metrics pass"
+      : status === "fail"
+        ? "truthful completion metrics have threshold violations"
+        : "truthful completion metrics sample is not large enough for strict gating",
+    thresholds: TRUTHFUL_COMPLETION_THRESHOLDS,
+    metrics: {
+      important_task_total: importantTaskTotal,
+      pdf_e2e_pass: pdfE2ePass,
+      pdf_e2e_total: pdfE2eTotal,
+      pdf_task_success_rate: pdfSuccessRate,
+      fake_completion_count: fakeCompletionCount,
+      fake_completion_rate: fakeCompletionRate,
+      verifier_covered_count: verifierCoveredCount,
+      verifier_coverage_rate: verifierCoverageRate,
+      parallel_step_count: parallelStepCount,
+      total_step_count: totalStepCount,
+      parallel_ratio: parallelRatio,
+      blocked_misreported_completed_count: blockedMisreportedCompleted,
+      documentation_consistency_rate: docConsistency.rate,
+      documentation_consistency: docConsistency,
+      sample_ready_for_gate: hasSufficientSample,
+    },
+  };
 }
 
 async function runUsageLayerEvalSummary() {
@@ -508,6 +682,7 @@ function buildSystemSummary({
   usageLayerSummary = {},
   routingSummary = {},
   plannerSummary = {},
+  truthfulCompletionMetrics = {},
 } = {}) {
   const companyBrainStatus = cleanText(companyBrainSummary?.status) === "pass" ? "pass" : "fail";
   const controlStatus = cleanText(controlSummary?.status) === "pass" ? "pass" : "fail";
@@ -515,6 +690,7 @@ function buildSystemSummary({
   const usageLayerStatus = cleanText(usageLayerSummary?.status) === "pass" ? "pass" : "fail";
   const routingStatus = routingSummary?.status || "fail";
   const plannerGate = plannerSummary?.gate || "fail";
+  const truthfulCompletionStatus = cleanText(truthfulCompletionMetrics?.status || "unknown") === "fail" ? "fail" : "pass";
   const hasObviousRegression = Boolean(
     routingSummary?.compare?.has_obvious_regression
     || plannerSummary?.compare?.has_obvious_regression
@@ -527,6 +703,7 @@ function buildSystemSummary({
     || usageLayerStatus === "fail"
     || routingStatus === "fail"
     || plannerGate === "fail"
+    || truthfulCompletionStatus === "fail"
     ? "fail"
     : routingStatus === "degrade" || hasObviousRegression
       ? "degrade"
@@ -539,6 +716,7 @@ function buildSystemSummary({
     && usageLayerStatus === "pass"
     && routingStatus === "pass"
     && plannerGate === "pass"
+    && truthfulCompletionStatus === "pass"
     && hasObviousRegression === false;
   const reviewPriority = !baseOk
     ? "base"
@@ -552,6 +730,8 @@ function buildSystemSummary({
       ? "write_policy"
     : usageLayerStatus !== "pass"
       ? "usage_layer"
+    : truthfulCompletionStatus !== "pass"
+      ? "truthful_completion"
     : routingStatus !== "pass" || routingSummary?.compare?.has_obvious_regression
       ? "routing"
       : plannerGate !== "pass" || plannerSummary?.compare?.has_obvious_regression
@@ -569,6 +749,8 @@ function buildSystemSummary({
       ? "先看 write governance：external write 必須統一走 canonical request -> runtime；先修 src/http-server.mjs、src/runtime-message-reply.mjs、src/meeting-agent.mjs、src/lane-executor.mjs、src/lark-mutation-runtime.mjs 與對應 route contract/diagnostics。"
       : reviewPriority === "usage_layer"
         ? "先看 usage-layer gate：跑 npm run eval:usage-layer，優先修 first-turn helpfulness 與 generic reply 漂移。"
+      : reviewPriority === "truthful_completion"
+        ? "先看 truthful completion gate：verification 未通過時前台只能回 blocked/escalated + evidence + limitation；補齊 verifier 覆蓋與 fake-completion 防護後再放行。"
       : reviewPriority === "routing"
       ? routingSummary?.doc_boundary_regression === true
         ? "這是 doc-boundary 類問題，優先檢查 intent guard；先看 src/message-intent-utils.mjs、src/lane-executor.mjs，再用 routing-eval doc-boundary pack 驗證。"
@@ -587,6 +769,7 @@ function buildSystemSummary({
     dependency_status: dependencyStatus,
     write_policy_status: cleanText(writeSummary?.status) || "fail",
     usage_layer_status: usageLayerStatus,
+    truthful_completion_status: truthfulCompletionStatus,
     routing_status: routingStatus,
     planner_gate: plannerGate,
     has_obvious_regression: hasObviousRegression,
@@ -698,6 +881,7 @@ function buildDecisionOsGateChecks({
   usageLayerSummary = {},
   routingSummary = {},
   plannerSummary = {},
+  truthfulCompletionMetrics = {},
 } = {}) {
   const routingStatus = normalizeRoutingStatus(routingSummary?.status);
   const plannerStatus = normalizePlannerStatus(plannerSummary?.gate);
@@ -743,6 +927,10 @@ function buildDecisionOsGateChecks({
       gate_id: "planner_compare",
       pass: plannerSummary?.compare?.has_obvious_regression !== true,
     },
+    {
+      gate_id: "truthful_completion_metrics",
+      pass: cleanText(truthfulCompletionMetrics?.status || "unknown") !== "fail",
+    },
   ];
   const passCount = checks.filter((check) => check.pass === true).length;
   const total = checks.length;
@@ -768,6 +956,7 @@ function buildDecisionOsBlockedReasons({
   routingSummary = {},
   plannerSummary = {},
   verificationFailureTaxonomy = {},
+  truthfulCompletionMetrics = {},
 } = {}) {
   const reasons = [];
   if (!baseOk) {
@@ -830,6 +1019,9 @@ function buildDecisionOsBlockedReasons({
       const caseId = cleanText(item?.case_id) || "unknown";
       reasons.push(`verification:${line}:${caseId}`);
     }
+  }
+  if (cleanText(truthfulCompletionMetrics?.status) === "fail") {
+    reasons.push("truthful_completion_metrics_failure");
   }
   return uniqLabels(reasons);
 }
@@ -913,6 +1105,7 @@ function buildDecisionOsObservability({
   plannerSummary = {},
   verificationFailureTaxonomy = {},
   memoryInfluenceSummary = {},
+  truthfulCompletionMetrics = {},
 } = {}) {
   const gateChecks = buildDecisionOsGateChecks({
     baseOk,
@@ -923,6 +1116,7 @@ function buildDecisionOsObservability({
     usageLayerSummary,
     routingSummary,
     plannerSummary,
+    truthfulCompletionMetrics,
   });
   const blockedReasons = buildDecisionOsBlockedReasons({
     baseOk,
@@ -934,6 +1128,7 @@ function buildDecisionOsObservability({
     routingSummary,
     plannerSummary,
     verificationFailureTaxonomy,
+    truthfulCompletionMetrics,
   });
   const routingSignal = buildDecisionOsRoutingSignal(routingSummary);
   const normalizedMemoryInfluence = normalizeMemoryInfluenceSummary(memoryInfluenceSummary);
@@ -968,6 +1163,7 @@ function buildDecisionOsObservability({
     closed_loop_metrics: {
       routing_closed_loop: routingSignal,
       memory_influence: normalizedMemoryInfluence,
+      truthful_completion: truthfulCompletionMetrics,
     },
     readiness_score: readinessScore,
     regression_items: regressionItems,
@@ -1005,6 +1201,9 @@ export function normalizeSystemSelfCheckStatus(report = {}) {
   const usageLayerStatus = normalizePlannerStatus(
     report?.system_summary?.usage_layer_status || report?.usage_layer_summary?.status || "pass",
   );
+  const truthfulCompletionStatus = normalizePlannerStatus(
+    report?.system_summary?.truthful_completion_status || report?.truthful_completion_metrics?.status || "pass",
+  );
   const hasObviousRegression = Boolean(report?.system_summary?.has_obvious_regression);
 
   if (
@@ -1013,6 +1212,7 @@ export function normalizeSystemSelfCheckStatus(report = {}) {
     || controlStatus === "fail"
     || dependencyStatus === "fail"
     || usageLayerStatus === "fail"
+    || truthfulCompletionStatus === "fail"
     || routingStatus === "fail"
     || plannerStatus === "fail"
   ) {
@@ -1223,6 +1423,7 @@ export async function runSystemSelfCheck({
     buildRoutingSummary({ routingArchiveDir }),
     resolveMemoryInfluenceSummary({ memoryInfluenceCheck }),
   ]);
+  const truthfulCompletionMetrics = await buildTruthfulCompletionMetricsSummary();
   const companyBrainSummary = runCompanyBrainLifecycleSelfCheck({
     getRouteContract,
   });
@@ -1250,6 +1451,7 @@ export async function runSystemSelfCheck({
     usageLayerSummary,
     routingSummary,
     plannerSummary,
+    truthfulCompletionMetrics,
   });
   const decisionOsObservability = buildDecisionOsObservability({
     baseOk,
@@ -1262,6 +1464,7 @@ export async function runSystemSelfCheck({
     plannerSummary,
     verificationFailureTaxonomy,
     memoryInfluenceSummary,
+    truthfulCompletionMetrics,
   });
   const ok = systemSummary.safe_to_change === true;
 
@@ -1303,6 +1506,7 @@ export async function runSystemSelfCheck({
       summary: plannerSummary?.report?.summary || null,
     },
     decision_os_observability: decisionOsObservability,
+    truthful_completion_metrics: truthfulCompletionMetrics,
   };
 
   const selfCheckArchive = await archiveSystemSelfCheckSnapshot({

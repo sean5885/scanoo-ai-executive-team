@@ -25,6 +25,32 @@ The OpenClaw plugin ingress is now a second bounded adjacent flow: tool calls fi
 2. executes the existing lane path through a synthetic lane event/scope
 3. returns a `plugin_native` forward decision so the plugin can continue on the existing direct document/message/calendar/task-style route without entering the internal planner/lane business flow
 
+## 0B. Attachment -> Extract -> Index -> Citation (PDF)
+
+Current additive path:
+
+1. inbound message structured content enters `/Users/seanhan/Documents/Playground/src/message-intent-utils.mjs`
+2. `extractAttachmentObjects(...)` extracts bounded attachment metadata:
+   - `file_key`
+   - `file_token`
+   - `name`
+   - `mime`
+   - `ext`
+3. `/Users/seanhan/Documents/Playground/src/modality-router.mjs` classifies modality with PDF awareness:
+   - `pdf`
+   - `pdf_multimodal`
+4. current checked-in path has no direct PDF OCR/read API execution step; PDF is recognized for routing/modality boundary only.
+5. image-only execution paths now keep PDF out of image analysis dispatch:
+   - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
+   - `/Users/seanhan/Documents/Playground/src/agent-dispatcher.mjs`
+6. when downstream answer rendering needs source citation, source lines are generated from canonical evidence objects via `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`, not free-form source strings
+
+Current truth:
+
+- this is recognition/classification + citation-boundary hardening only
+- no checked-in PDF text-extraction/index-write path is added in this change
+- PDF permission/read-runtime boundary remains subject to existing controlled routes
+
 ## 0A. Autonomy Worker Failure Sink + Operator Incident Closure (Phase 2-3 additive)
 
 Current additive path:
@@ -266,6 +292,12 @@ Current public `/answer` path:
    - `limitations`
 10. `answer-source-mapper.mjs` converts canonical source objects into bounded public `sources[]` lines
 11. `planner-user-input-edge.mjs` performs session-scoped working-memory v2 patch write-back only after a stable final boundary response is available
+12. `executive-orchestrator.mjs` enforces truthful completion gate on final user-facing copy:
+   - when `verification.pass !== true`, user-facing text is forced into blocked/escalated tone
+   - fail path can only render `目前狀態 + 可驗證證據 + 待確認/限制`
+   - completed-tone wording is blocked in verifier-fail/fake-completion/partial-completion paths
+13. `renderPlannerUserFacingReplyText(...)` keeps fixed public order:
+   - `答案 -> 來源 -> 待確認/限制`
 
 Current truth:
 

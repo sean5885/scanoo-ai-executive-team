@@ -61,6 +61,52 @@ function buildExecutiveUserFacingErrorText({
   return renderPlannerUserFacingReplyText(normalized);
 }
 
+function buildVerificationEvidenceSources(evidence = []) {
+  return (Array.isArray(evidence) ? evidence : [])
+    .map((item, index) => {
+      const summary = cleanText(item?.summary || "");
+      if (!summary) {
+        return null;
+      }
+      return {
+        id: `verification_evidence_${index + 1}`,
+        title: `verification/${cleanText(item?.type || "evidence") || "evidence"}`,
+        source_type: "verification_evidence",
+        reason: summary,
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 3);
+}
+
+function buildTruthfulCompletionGateReplyText({
+  finalized = null,
+} = {}) {
+  const verification = finalized?.verification && typeof finalized.verification === "object"
+    ? finalized.verification
+    : {};
+  const taskStatus = cleanText(finalized?.task?.status || "").toLowerCase();
+  const status = taskStatus === "escalated" || verification.fake_completion === true
+    ? "escalated"
+    : "blocked";
+  const issues = Array.isArray(verification.issues) ? verification.issues.map((item) => cleanText(item)).filter(Boolean) : [];
+  const evidenceSources = buildVerificationEvidenceSources(finalized?.evidence || []);
+  const limitations = [
+    issues.length > 0
+      ? `verification issues：${issues.join("、")}。`
+      : "verification 尚未通過。",
+    cleanText(verification.execution_policy_reason || "")
+      ? `待確認：${cleanText(verification.execution_policy_reason)}。`
+      : "待確認：請補齊缺失 evidence 或修正執行結果後再驗證一次。",
+  ];
+
+  return renderPlannerUserFacingReplyText({
+    answer: `目前狀態：${status}。verification.pass !== true，所以這輪不能用完成語氣回覆。`,
+    sources: evidenceSources,
+    limitations,
+  });
+}
+
 const EXECUTIVE_MAX_ROLES = 3;
 const EXECUTIVE_MAX_SUPPORTING_ROLES = EXECUTIVE_MAX_ROLES - 1;
 const EXECUTIVE_MAX_KEY_POINTS = 5;
@@ -1803,6 +1849,7 @@ async function executeExecutiveTurnUnlocked({
   scope,
   logger = noopLogger,
   planExecutiveTurnFn = planExecutiveTurn,
+  executeWorkItemsFn = executeWorkItemsSequentially,
 }) {
   const text = buildVisibleMessageText(event);
   const sessionKey = sessionKeyFromScope(scope, accountId);
@@ -2004,7 +2051,7 @@ async function executeExecutiveTurnUnlocked({
     agent_id: primaryAgentId,
   });
 
-  const execution = await executeWorkItemsSequentially({
+  const execution = await executeWorkItemsFn({
     accountId,
     scope,
     event,
@@ -2065,13 +2112,17 @@ async function executeExecutiveTurnUnlocked({
     ...reply,
     task_state: finalized?.task?.lifecycle_state || task.lifecycle_state,
     verification: finalized?.verification || null,
-    text: buildExecutiveBrief({
-      header,
-      workPlan: execution.finalWorkPlan,
-      primaryAgentId: effectiveMergeAgent.id,
-      supportingOutputs: supportingOutputs.length ? supportingOutputs : task.agent_outputs || [],
-      primaryReplyText: reply.text,
-    }),
+    text: finalized?.verification?.pass === true
+      ? buildExecutiveBrief({
+          header,
+          workPlan: execution.finalWorkPlan,
+          primaryAgentId: effectiveMergeAgent.id,
+          supportingOutputs: supportingOutputs.length ? supportingOutputs : task.agent_outputs || [],
+          primaryReplyText: reply.text,
+        })
+      : buildTruthfulCompletionGateReplyText({
+          finalized,
+        }),
   };
 }
 

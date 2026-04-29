@@ -40,6 +40,10 @@ import {
   toUserFacing as taskLayerResultToUserFacing,
 } from "./task-layer/task-to-answer.mjs";
 import {
+  buildCanonicalAnswerSources,
+  mapCanonicalAnswerSourcesToLines,
+} from "./answer-source-mapper.mjs";
+import {
   readPlannerWorkingMemoryForRouting,
   compactPlannerConversationMemory as compactPlannerConversationMemoryLayer,
   getPlannerConversationMemory as getPlannerConversationMemoryLayer,
@@ -1087,17 +1091,24 @@ export function renderPlannerUserFacingReplyText({
   sources = [],
   limitations = [],
 } = {}) {
-  const normalizedSources = normalizePlannerUserFacingList(sources);
+  const objectSources = (Array.isArray(sources) ? sources : [])
+    .filter((item) => item && typeof item === "object" && !Array.isArray(item));
+  const normalizedSources = normalizePlannerUserFacingList(
+    mapCanonicalAnswerSourcesToLines(
+      buildCanonicalAnswerSources(objectSources),
+      { maxSources: 3 },
+    ),
+  );
   const normalizedLimitations = normalizePlannerUserFacingList(limitations);
 
   return [
-    "結論",
+    "答案",
     cleanText(answer) || "目前沒有可直接交付的結果。",
     "",
-    "重點",
+    "來源",
     ...(normalizedSources.length > 0 ? normalizedSources.map((item) => `- ${item}`) : ["- 目前沒有足夠已驗證來源可補更多重點。"]),
     "",
-    "下一步",
+    "待確認/限制",
     ...(normalizedLimitations.length > 0 ? normalizedLimitations.map((item) => `- ${item}`) : ["- 目前沒有更具體的下一步。"]),
   ].join("\n");
 }

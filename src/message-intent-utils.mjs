@@ -27,6 +27,15 @@ const EXPLICIT_DOCUMENT_KEYS = new Set([
 ]);
 
 const CONTEXTUAL_DOCUMENT_KEYS = new Set(["token"]);
+const ATTACHMENT_CONTAINER_KEYS = new Set([
+  "file",
+  "files",
+  "attachment",
+  "attachments",
+  "file_list",
+  "attachments_list",
+  "resources",
+]);
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -304,6 +313,117 @@ function collectRawContent(input = {}) {
   );
 }
 
+function normalizeMimeLike(value = "") {
+  const text = cleanText(value).toLowerCase();
+  if (!text) {
+    return "";
+  }
+  if (text.includes("/") || text === "pdf") {
+    return text === "pdf" ? "application/pdf" : text;
+  }
+  return "";
+}
+
+function normalizeExtLike(value = "") {
+  const text = cleanText(value).toLowerCase().replace(/^\./, "");
+  return text;
+}
+
+function resolveExtFromName(name = "") {
+  const normalized = cleanText(name).toLowerCase();
+  if (!normalized) {
+    return "";
+  }
+  const match = normalized.match(/\.([a-z0-9]{1,12})(?:$|[?#])/i);
+  return match ? normalizeExtLike(match[1]) : "";
+}
+
+function normalizeAttachmentItem(value = {}) {
+  if (!isPlainObject(value)) {
+    return null;
+  }
+  const fileKey = cleanText(value.file_key || value.fileKey || "");
+  const fileToken = cleanText(value.file_token || value.fileToken || value.token || "");
+  const name = cleanText(
+    value.name
+    || value.file_name
+    || value.fileName
+    || value.title
+    || value.filename
+    || "",
+  );
+  const mime = normalizeMimeLike(
+    value.mime
+    || value.mime_type
+    || value.mimetype
+    || value.content_type
+    || value.type
+    || "",
+  );
+  const ext = normalizeExtLike(
+    value.ext
+    || value.extension
+    || resolveExtFromName(name)
+    || (mime === "application/pdf" ? "pdf" : ""),
+  );
+
+  if (!fileKey && !fileToken && !name) {
+    return null;
+  }
+
+  return {
+    file_key: fileKey || "",
+    file_token: fileToken || "",
+    name: name || "",
+    mime: mime || "",
+    ext: ext || "",
+  };
+}
+
+function collectAttachmentObjects(value, bucket = [], parentKey = "", inAttachmentContext = false) {
+  if (!value) {
+    return bucket;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectAttachmentObjects(item, bucket, parentKey, inAttachmentContext);
+    }
+    return bucket;
+  }
+
+  if (!isPlainObject(value)) {
+    return bucket;
+  }
+
+  const normalizedParentKey = cleanText(parentKey).toLowerCase();
+  const nextContext = inAttachmentContext || ATTACHMENT_CONTAINER_KEYS.has(normalizedParentKey);
+  const candidate = normalizeAttachmentItem(value);
+  if (candidate && (nextContext || candidate.file_key || candidate.file_token)) {
+    const dedupeKey = [
+      candidate.file_key,
+      candidate.file_token,
+      candidate.name,
+      candidate.mime,
+      candidate.ext,
+    ].join("::");
+    if (!bucket.some((item) => [
+      item.file_key,
+      item.file_token,
+      item.name,
+      item.mime,
+      item.ext,
+    ].join("::") === dedupeKey)) {
+      bucket.push(candidate);
+    }
+  }
+
+  for (const [key, nested] of Object.entries(value)) {
+    collectAttachmentObjects(nested, bucket, key, nextContext);
+  }
+  return bucket;
+}
+
 export function buildMessageText(input = {}) {
   const rawContent = collectRawContent(input);
   const parsedContent = safeParseJson(rawContent);
@@ -367,6 +487,17 @@ export function extractBitableReference(input = {}) {
   }
 
   return null;
+}
+
+export function extractAttachmentObjects(input = {}) {
+  const rawContent = collectRawContent(input);
+  const parsedContent = safeParseJson(rawContent);
+  const bucket = [];
+  if (parsedContent) {
+    collectAttachmentObjects(parsedContent, bucket);
+  }
+  collectAttachmentObjects(input, bucket);
+  return bucket;
 }
 
 export function collectRelatedMessageIds(input = {}) {

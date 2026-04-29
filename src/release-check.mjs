@@ -13,6 +13,7 @@ const BLOCKING_CONTROL_REGRESSION = "control_regression";
 const BLOCKING_DEPENDENCY_POLICY_FAILURE = "dependency_policy_failure";
 const BLOCKING_WRITE_POLICY_FAILURE = "write_policy_failure";
 const BLOCKING_USAGE_LAYER_FAILURE = "usage_layer_failure";
+const BLOCKING_TRUTHFUL_COMPLETION_FAILURE = "truthful_completion_failure";
 const BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE = "company_brain_lifecycle_failure";
 const BLOCKING_ROUTING_REGRESSION = "routing_regression";
 const BLOCKING_PLANNER_CONTRACT_FAILURE = "planner_contract_failure";
@@ -259,6 +260,9 @@ function buildReleaseCheckActionHint({
   if (firstBlockingCheck === BLOCKING_USAGE_LAYER_FAILURE) {
     return "run eval:usage-layer and improve first-turn helpfulness while reducing generic replies";
   }
+  if (firstBlockingCheck === BLOCKING_TRUTHFUL_COMPLETION_FAILURE) {
+    return "inspect truthful completion gate in executive-orchestrator and verifier coverage metrics";
+  }
   if (firstBlockingCheck === BLOCKING_PLANNER_CONTRACT_FAILURE) {
     return buildPlannerActionHint({ suggestedNextStep, drilldown });
   }
@@ -327,6 +331,10 @@ function buildReleaseRollbackCandidates(blockingChecks = []) {
     }
     if (blockingCheck === BLOCKING_USAGE_LAYER_FAILURE) {
       candidates.push("rollback latest prompt/routing changes that reduced usage-layer quality");
+      continue;
+    }
+    if (blockingCheck === BLOCKING_TRUTHFUL_COMPLETION_FAILURE) {
+      candidates.push("rollback recent completion-tone copy changes and restore verifier-gated blocked/escalated boundary");
       continue;
     }
     if (blockingCheck === BLOCKING_WRITE_POLICY_FAILURE) {
@@ -425,6 +433,18 @@ function buildDecisionOsReadiness({
           action_changed_by_memory_rate: null,
         },
       };
+  const truthfulCompletionSignal = decisionOsObservability?.closed_loop_metrics?.truthful_completion
+    && typeof decisionOsObservability.closed_loop_metrics.truthful_completion === "object"
+    ? decisionOsObservability.closed_loop_metrics.truthful_completion
+    : selfCheckResult?.truthful_completion_metrics && typeof selfCheckResult.truthful_completion_metrics === "object"
+      ? selfCheckResult.truthful_completion_metrics
+      : {
+          version: "truthful_completion_metrics_v1",
+          status: "unknown",
+          summary: "truthful completion signal unavailable",
+          metrics: {},
+          thresholds: {},
+        };
   const baseScore = toFiniteNumber(decisionOsObservability?.readiness_score?.score, null);
   const scoreBeforePenalty = baseScore == null ? roundNumber(gatePassRate * 100, 2) : baseScore;
   const blockingPenalty = Math.min(40, normalizedBlockingChecks.length * 8);
@@ -461,6 +481,7 @@ function buildDecisionOsReadiness({
     closed_loop_metrics: {
       routing_closed_loop: routingSignal,
       memory_influence: memoryInfluenceSignal,
+      truthful_completion: truthfulCompletionSignal,
     },
     regression_items: regressionItems,
     rollback_candidates: buildReleaseRollbackCandidates(normalizedBlockingChecks),
@@ -509,6 +530,17 @@ function hasBlockingUsageLayerIssue(selfCheckResult = {}) {
     return false;
   }
   return usageLayerStatus !== "pass";
+}
+
+function hasBlockingTruthfulCompletionIssue(selfCheckResult = {}) {
+  const status = cleanText(
+    selfCheckResult?.truthful_completion_metrics?.status
+    || selfCheckResult?.system_summary?.truthful_completion_status,
+  );
+  if (!status) {
+    return false;
+  }
+  return status === "fail";
 }
 
 function hasBlockingCompanyBrainIssue(selfCheckResult = {}) {
@@ -910,6 +942,7 @@ export function buildReleaseCheckDrilldown({
         ...(hasBlockingDependencyIssue(selfCheckResult) ? [BLOCKING_DEPENDENCY_POLICY_FAILURE] : []),
         ...(hasBlockingWritePolicyIssue(selfCheckResult) ? [BLOCKING_WRITE_POLICY_FAILURE] : []),
         ...(hasBlockingUsageLayerIssue(selfCheckResult) ? [BLOCKING_USAGE_LAYER_FAILURE] : []),
+        ...(hasBlockingTruthfulCompletionIssue(selfCheckResult) ? [BLOCKING_TRUTHFUL_COMPLETION_FAILURE] : []),
         ...(hasBlockingCompanyBrainIssue(selfCheckResult) ? [BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE] : []),
         ...(hasBlockingRoutingIssue(selfCheckResult) ? [BLOCKING_ROUTING_REGRESSION] : []),
         ...(hasBlockingPlannerIssue(selfCheckResult) ? [BLOCKING_PLANNER_CONTRACT_FAILURE] : []),
@@ -930,6 +963,15 @@ export function buildReleaseCheckDrilldown({
   }
   if (firstBlockingCheck === BLOCKING_USAGE_LAYER_FAILURE) {
     return buildUsageLayerDrilldown(selfCheckResult);
+  }
+  if (firstBlockingCheck === BLOCKING_TRUTHFUL_COMPLETION_FAILURE) {
+    return {
+      failing_area: FAILING_AREA_RUNTIME,
+      representative_fail_case: [
+        "truthful_completion_metrics: verification fail paths still expose completed tone or missing verifier coverage",
+      ],
+      drilldown_source: [RELEASE_CHECK_TRIAGE_SOURCE],
+    };
   }
   if (firstBlockingCheck === BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE) {
     return buildCompanyBrainDrilldown(selfCheckResult);
@@ -969,6 +1011,9 @@ export function buildReleaseCheckReport({ selfCheckResult = {}, drilldown = null
   if (hasBlockingUsageLayerIssue(selfCheckResult)) {
     blockingChecks.push(BLOCKING_USAGE_LAYER_FAILURE);
   }
+  if (hasBlockingTruthfulCompletionIssue(selfCheckResult)) {
+    blockingChecks.push(BLOCKING_TRUTHFUL_COMPLETION_FAILURE);
+  }
 
   if (hasBlockingCompanyBrainIssue(selfCheckResult)) {
     blockingChecks.push(BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE);
@@ -998,6 +1043,8 @@ export function buildReleaseCheckReport({ selfCheckResult = {}, drilldown = null
       ? buildWritePolicyRegressionNextStep(selfCheckResult)
     : firstBlockingCheck === BLOCKING_USAGE_LAYER_FAILURE
       ? buildUsageLayerRegressionNextStep(selfCheckResult)
+    : firstBlockingCheck === BLOCKING_TRUTHFUL_COMPLETION_FAILURE
+      ? "先看 truthful completion gate：src/executive-orchestrator.mjs、src/executive-verifier.mjs、src/system-self-check.mjs；verification 不通過時不得用 completed 語氣。"
     : firstBlockingCheck === BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE
       ? buildCompanyBrainRegressionNextStep(selfCheckResult)
     : firstBlockingCheck === BLOCKING_ROUTING_REGRESSION
@@ -1296,6 +1343,9 @@ export async function runReleaseCheck(options = {}) {
   }
   if (hasBlockingUsageLayerIssue(selfCheckResult)) {
     blockingChecks.push(BLOCKING_USAGE_LAYER_FAILURE);
+  }
+  if (hasBlockingTruthfulCompletionIssue(selfCheckResult)) {
+    blockingChecks.push(BLOCKING_TRUTHFUL_COMPLETION_FAILURE);
   }
   if (hasBlockingCompanyBrainIssue(selfCheckResult)) {
     blockingChecks.push(BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE);

@@ -516,3 +516,42 @@ test("cloud doc pending item follow-up resolves one file via mark_resolved", asy
     assert.match(refreshedReply.text, new RegExp(escapedRemainingTitle));
   }
 });
+
+test("cloud doc review cache hit with pending_items keeps sync path stable", async () => {
+  const account = upsertAccount({
+    open_id: `acct-review-cache-open-${Date.now()}`,
+    name: "acct-review-cache",
+  });
+  const sessionKey = `session-review-cache-${Date.now()}`;
+
+  seedIndexedDocument({
+    accountId: account.id,
+    suffix: "cache-workspace-guide",
+    title: "Workspace Guide",
+    rawText: "workspace guide generic onboarding",
+    parentPath: "/06_知識庫歸檔",
+  });
+  seedIndexedDocument({
+    accountId: account.id,
+    suffix: "cache-team-playbook",
+    title: "Team Playbook",
+    rawText: "team playbook shared process",
+    parentPath: "/06_知識庫歸檔",
+  });
+
+  const firstReply = await buildCloudOrganizationReviewReplyCached({
+    accountId: account.id,
+    sessionKey,
+    forceReReview: false,
+  });
+  assert.equal(typeof firstReply.text, "string");
+  assert.equal(Array.isArray(firstReply.pending_items), true);
+
+  const secondReply = await buildCloudOrganizationReviewReplyCached({
+    accountId: account.id,
+    sessionKey,
+    forceReReview: false,
+  });
+  assert.equal(typeof secondReply.text, "string");
+  assert.equal(Array.isArray(secondReply.pending_items), true);
+});

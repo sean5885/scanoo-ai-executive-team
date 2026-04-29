@@ -345,7 +345,7 @@ test("executeExecutiveTurn planner fallback-disabled reply is natural language a
   });
 
   assert.ok(result);
-  assert.match(result.text, /^結論/m);
+  assert.match(result.text, /^答案/m);
   assert.match(result.text, /安全結果|executive planner|系統錯誤/);
   assert.doesNotMatch(result.text, /FALLBACK_DISABLED|executive_planner_fallback_disabled|\"ok\"|\"error\"|\"details\"/);
   assert.equal(result.error, FALLBACK_DISABLED);
@@ -364,6 +364,168 @@ test("executeExecutiveTurn planner fallback-disabled reply is natural language a
       summary: "如需繼續，必須先提供更明確的 agent 指令或讓 planner 重新產生合法 JSON。",
     },
   });
+});
+
+test("truthful completion gate uses blocked tone when verifier fails", async () => {
+  const result = await executeExecutiveTurn({
+    accountId: "acct-executive-truthful-blocked",
+    scope: {
+      session_key: "session-executive-truthful-blocked",
+      trace_id: "trace-executive-truthful-blocked",
+    },
+    event: {
+      trace_id: "trace-executive-truthful-blocked",
+      message: {
+        chat_id: "chat-executive-truthful-blocked",
+        content: JSON.stringify({
+          text: "請多 agent 一起看這題",
+        }),
+      },
+    },
+    async planExecutiveTurnFn() {
+      return {
+        action: "start",
+        objective: "請幫我收斂這題",
+        primary_agent_id: "generalist",
+        next_agent_id: "generalist",
+        supporting_agent_ids: [],
+        reason: "test",
+        why: "test",
+        alternative: null,
+        pending_questions: [],
+        work_items: [
+          { agent_id: "generalist", task: "收斂", role: "primary", tool_required: true },
+        ],
+      };
+    },
+    async executeWorkItemsFn() {
+      return {
+        reply: { text: "先整理目前資訊。" },
+        mergeAgent: { id: "generalist" },
+        supportingOutputs: [],
+        finalWorkPlan: [
+          { agent_id: "generalist", task: "收斂", role: "primary", status: "completed", tool_required: true },
+        ],
+        failedAgents: [],
+        fallbackUsed: false,
+        dispatchedActions: [],
+      };
+    },
+  });
+
+  assert.equal(result?.verification?.pass, false);
+  assert.equal(result?.verification?.fake_completion, false);
+  assert.match(result?.text || "", /^答案/m);
+  assert.match(result?.text || "", /目前狀態：blocked/);
+  assert.doesNotMatch(result?.text || "", /已完成|已處理完/);
+});
+
+test("truthful completion gate uses escalated tone for fake_completion", async () => {
+  const result = await executeExecutiveTurn({
+    accountId: "acct-executive-truthful-escalated",
+    scope: {
+      session_key: "session-executive-truthful-escalated",
+      trace_id: "trace-executive-truthful-escalated",
+    },
+    event: {
+      trace_id: "trace-executive-truthful-escalated",
+      message: {
+        chat_id: "chat-executive-truthful-escalated",
+        content: JSON.stringify({
+          text: "請多 agent 一起看這題",
+        }),
+      },
+    },
+    async planExecutiveTurnFn() {
+      return {
+        action: "start",
+        objective: "請幫我收斂這題",
+        primary_agent_id: "generalist",
+        next_agent_id: "generalist",
+        supporting_agent_ids: [],
+        reason: "test",
+        why: "test",
+        alternative: null,
+        pending_questions: [],
+        work_items: [
+          { agent_id: "generalist", task: "收斂", role: "primary", tool_required: true },
+        ],
+      };
+    },
+    async executeWorkItemsFn() {
+      return {
+        reply: { text: "我已完成這輪整理。" },
+        mergeAgent: { id: "generalist" },
+        supportingOutputs: [],
+        finalWorkPlan: [
+          { agent_id: "generalist", task: "收斂", role: "primary", status: "completed", tool_required: true },
+        ],
+        failedAgents: [],
+        fallbackUsed: false,
+        dispatchedActions: [],
+      };
+    },
+  });
+
+  assert.equal(result?.verification?.pass, false);
+  assert.equal(result?.verification?.fake_completion, true);
+  assert.match(result?.text || "", /目前狀態：escalated/);
+  assert.doesNotMatch(result?.text || "", /已完成|已處理完/);
+});
+
+test("truthful completion gate handles partial_completion without completed tone", async () => {
+  const result = await executeExecutiveTurn({
+    accountId: "acct-executive-truthful-partial",
+    scope: {
+      session_key: "session-executive-truthful-partial",
+      trace_id: "trace-executive-truthful-partial",
+    },
+    event: {
+      trace_id: "trace-executive-truthful-partial",
+      message: {
+        chat_id: "chat-executive-truthful-partial",
+        content: JSON.stringify({
+          text: "請多 agent 一起看這題",
+        }),
+      },
+    },
+    async planExecutiveTurnFn() {
+      return {
+        action: "start",
+        objective: "請幫我收斂這題",
+        primary_agent_id: "generalist",
+        next_agent_id: "generalist",
+        supporting_agent_ids: [],
+        reason: "test",
+        why: "test",
+        alternative: null,
+        pending_questions: [],
+        work_items: [
+          { agent_id: "generalist", task: "收斂", role: "primary" },
+        ],
+      };
+    },
+    async executeWorkItemsFn() {
+      return {
+        reply: { text: "先給你一版草稿。" },
+        mergeAgent: { id: "generalist" },
+        supportingOutputs: [],
+        finalWorkPlan: [
+          { agent_id: "generalist", task: "收斂", role: "primary", status: "completed" },
+        ],
+        failedAgents: [],
+        fallbackUsed: false,
+        dispatchedActions: [],
+      };
+    },
+  });
+
+  assert.equal(result?.verification?.pass, false);
+  assert.equal(result?.verification?.partial_completion, true);
+  assert.match(result?.text || "", /^答案/m);
+  assert.match(result?.text || "", /^來源/m);
+  assert.match(result?.text || "", /^待確認\/限制/m);
+  assert.doesNotMatch(result?.text || "", /已完成|已處理完/);
 });
 
 test("workflow finalize fail-soft does not keep failed terminal state after verifier rejection", async () => {

@@ -50,6 +50,9 @@ function assertPublicAnswerShape(response = {}, text = "") {
   assert.equal(typeof response.answer, "string");
   assert.equal(Array.isArray(response.sources), true);
   assert.equal(Array.isArray(response.limitations), true);
+  assert.match(text, /^答案/m);
+  assert.match(text, /^來源/m);
+  assert.match(text, /^待確認\/限制/m);
   assert.doesNotMatch(JSON.stringify(response), /"(?:action|execution_result|payload|result|kind|trace|trace_id|side_effects)"/);
   assert.doesNotMatch(text, /execution_result|payload|side_effects|trace_id|skill_bridge|get_runtime_info|routing_no_match|business_error/);
 }

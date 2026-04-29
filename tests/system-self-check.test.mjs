@@ -237,6 +237,7 @@ test("system self-check returns unified routing and planner summaries", async ()
   assert.equal(result.system_summary.dependency_status, "pass");
   assert.equal(result.system_summary.write_policy_status, "pass");
   assert.equal(result.system_summary.usage_layer_status, "pass");
+  assert.equal(result.system_summary.truthful_completion_status, "pass");
   assert.equal(result.system_summary.routing_status, "pass");
   assert.equal(result.system_summary.planner_gate, "pass");
   assert.equal(result.system_summary.has_obvious_regression, false);
@@ -604,6 +605,7 @@ test("self-check CLI emits unified JSON report with --json", async () => {
     dependency_status: "pass",
     write_policy_status: "pass",
     usage_layer_status: "pass",
+    truthful_completion_status: "pass",
     routing_status: "pass",
     planner_gate: "pass",
     has_obvious_regression: false,

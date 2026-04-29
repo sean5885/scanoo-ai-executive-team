@@ -366,7 +366,7 @@ export async function executeRegisteredAgent({
   let imageContext = initialImageContext;
   if (!imageContext && event) {
     const modality = classifyInputModality(event);
-    if (modality.modality !== "text") {
+    if (modality.modality === "image" || modality.modality === "multimodal") {
       const imageAnalysis = await analyzeImageTask({
         task: requestText || modality.text || buildVisibleMessageText(event),
         textContext: buildVisibleMessageText(event),

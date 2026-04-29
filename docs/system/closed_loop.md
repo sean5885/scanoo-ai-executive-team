@@ -67,6 +67,11 @@ Implemented through:
 - `supportingOutputs` no longer count as `tool_output`, `reply.text` no longer counts as `structured_output`, and synthetic planner lane hints do not count as execution evidence
 - when `tool_required=true` and `dispatched_actions` is empty, verification cannot pass; no-dispatch paths fail or block instead of completing
 - when `tool_required=true` and execution fell back to a generalist/text-only path, verification cannot complete and must remain `blocked` or `failed`
+- frontend truthful gate is enforced at orchestrator boundary:
+  - when `verification.pass !== true`, user-facing reply is forced to blocked/escalated tone
+  - fail path only allows `目前狀態 + 可驗證證據 + 待確認/限制`
+  - completed-tone wording is forbidden on verifier-fail / fake-completion / partial-completion paths
+  - source lines at this boundary must come from canonical evidence mapping, not free-form source strings
 
 ### Reflection Loop
 
@@ -124,6 +129,8 @@ Implemented through:
 `completed` now requires evidence plus verifier pass.
 
 `verifying` fail 只允許回到 `executing`、`blocked` 或 `escalated`，不允許直接以失敗驗證結果宣稱完成。
+
+Public reply order is fixed to `答案 -> 來源 -> 待確認/限制`; verification fail cannot bypass this boundary by returning completion-style copy.
 
 ## Phase-1 Control Unification
 

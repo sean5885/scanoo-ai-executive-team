@@ -1029,16 +1029,16 @@ export async function buildCloudOrganizationReviewReply({
   replyBuilderName = "buildCloudOrganizationReviewReply",
 } = {}) {
   const cached = !forceReReview ? readCloudOrganizationReviewCache(accountId, sessionKey) : null;
-  const cachedPendingItems = Array.isArray(cached?.pending_items) ? cached.pending_items : [];
-  const shouldBypassCache = hasCloudOrganizationTestResidualPendingItems(cachedPendingItems);
+  const cachedPendingItemsSnapshot = Array.isArray(cached?.pending_items) ? cached.pending_items : [];
+  const shouldBypassCache = hasCloudOrganizationTestResidualPendingItems(cachedPendingItemsSnapshot);
   if (cached?.text && !shouldBypassCache) {
-    const cachedPendingItems = await syncCloudOrganizationPendingItems({
+    const syncedPendingItems = await syncCloudOrganizationPendingItems({
       sessionKey,
       sourceKind: forceReReview ? "cloud_doc_rereview" : "cloud_doc_review",
       sourceTitle: forceReReview ? "Cloud Doc Rereview" : "Cloud Doc Review",
       sourceSummary: cached.text,
       sourceMatchReason: forceReReview ? "重新複審待人工確認文件" : "待人工確認文件",
-      pendingItems: cachedPendingItems,
+      pendingItems: cachedPendingItemsSnapshot,
     });
     logCloudDocReplyTrace(logger, {
       replyBuilderName,
@@ -1049,7 +1049,7 @@ export async function buildCloudOrganizationReviewReply({
     });
     return {
       text: cached.text,
-      pending_items: cachedPendingItems,
+      pending_items: syncedPendingItems,
     };
   }
 

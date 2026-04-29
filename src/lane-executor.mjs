@@ -2847,7 +2847,7 @@ function buildImageAnalysisReply(analysis, { multimodal = false } = {}) {
 
 async function executeImageTaskReply({ event, logger = noopLogger }) {
   const modality = classifyInputModality(event);
-  if (modality.modality === "text") {
+  if (modality.modality !== "image" && modality.modality !== "multimodal") {
     return null;
   }
 

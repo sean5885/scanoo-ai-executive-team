@@ -57,10 +57,10 @@ test("chat reply renders only canonical execution_result.data fields without pla
   assert.equal(userResponse.ok, true);
   assert.match(userResponse.answer || "", /scanooo/);
   assert.equal(userResponse.sources.length, 1);
-  assert.match(text, /^結論/m);
-  assert.match(text, /^重點/m);
-  assert.match(text, /^下一步/m);
-  assert.match(text, /scanooo onboarding notes/);
+  assert.match(text, /^答案/m);
+  assert.match(text, /^來源/m);
+  assert.match(text, /^待確認\/限制/m);
+  assert.match(text, /目前沒有足夠已驗證來源/);
   assert.doesNotMatch(text, /trace|chosen_action|fallback_reason|kind|match_reason/);
   assert.doesNotMatch(text, /\/Users\/|Back to \[?README/);
 });
