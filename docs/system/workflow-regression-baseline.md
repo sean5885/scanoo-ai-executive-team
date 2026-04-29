@@ -12,6 +12,23 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 ## Baseline Tiers
 
+### 0. Truthful Completion Metrics Baseline
+
+用途：
+
+- 產生目前 truthful-completion 指標快照，作為後續分階段重構比對基線
+
+命令：
+
+```bash
+npm run metrics:baseline
+```
+
+輸出：
+
+- `.tmp/metrics/baseline.json`
+- 指標來源為 `system-self-check` 的 `truthful_completion_metrics`
+
 ### 1. Smoke Baseline
 
 用途：
