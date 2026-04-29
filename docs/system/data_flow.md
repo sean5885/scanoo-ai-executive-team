@@ -254,7 +254,8 @@ Current public `/answer` path:
    - worker completion still requires verifier gate pass; execute failure / verifier fail continue to `recovery_decision_v1` fail-soft handling
 6. otherwise `runPlannerUserInputEdge(...)` runs executive memory retrieval first (`session memory + approved memory` from `/Users/seanhan/Documents/Playground/src/executive-memory.mjs`), then calls `executePlannedUserInput(...)` with bounded internal `decisionMemory` context
 7. `executive-planner.mjs` resolves planner action or controlled failure
-   - planner now mounts an additive execution-plane selector facade (`/Users/seanhan/Documents/Playground/src/execution/index.mjs`) backed by contract/evidence skeleton registries (`/Users/seanhan/Documents/Playground/src/contracts/index.mjs`, `/Users/seanhan/Documents/Playground/src/evidence/index.mjs`); current selector behavior remains pass-through
+   - planner now mounts execution-plane capability adapters (`/Users/seanhan/Documents/Playground/src/execution/index.mjs` + `/Users/seanhan/Documents/Playground/src/execution/{decision,dispatch,recovery,formatter}.mjs`) backed by contract/evidence registries (`/Users/seanhan/Documents/Playground/src/contracts/index.mjs`, `/Users/seanhan/Documents/Playground/src/evidence/index.mjs`)
+   - evidence plane now validates evidence schema + capability required evidence as a machine gate before delegating to runtime verifier
    - before active current-step continuation, planner runs one deterministic execution-readiness gate from the same session working-memory execution plan state
    - readiness is fail-closed and checks slot/artifact/dependency/owner/recovery/plan validity on current step, returning `is_ready`, blocking diagnostics, and `recommended_action`
    - when `is_ready=false`, planner does not dispatch intended step action directly; it follows existing controlled paths (`ask_user` / `retry` / `reroute` / `rollback` / `skip` / fail-closed stop)
@@ -295,6 +296,7 @@ Current public `/answer` path:
 11. `planner-user-input-edge.mjs` performs session-scoped working-memory v2 patch write-back only after a stable final boundary response is available
 12. `executive-orchestrator.mjs` enforces truthful completion gate on final user-facing copy:
    - when `verification.pass !== true`, user-facing text is forced into blocked/escalated tone
+   - when `verification.required_evidence_present === false`, user-facing text must explicitly declare `任務未完成` (hard boundary, not metadata-only)
    - fail path can only render `目前狀態 + 可驗證證據 + 待確認/限制`
    - completed-tone wording is blocked in verifier-fail/fake-completion/partial-completion paths
 13. `renderPlannerUserFacingReplyText(...)` keeps fixed public order:

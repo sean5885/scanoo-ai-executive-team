@@ -50,6 +50,44 @@ export const EVIDENCE_SCHEMA_REGISTRY = Object.freeze({
   }),
 });
 
+export function isKnownFailureCode(errorCode = "") {
+  return FAILURE_TAXONOMY.includes(cleanText(errorCode || ""));
+}
+
+export function getEvidenceSchema(evidenceType = "") {
+  return EVIDENCE_SCHEMA_REGISTRY[cleanText(evidenceType || "")] || null;
+}
+
+export function getCapabilityRequiredEvidence(capability = "") {
+  const contract = getCapabilityContract(capability);
+  return Array.isArray(contract?.required_evidence) ? contract.required_evidence : [];
+}
+
+export function validateCapabilityRequiredEvidence({
+  capability = "",
+  observedEvidenceTypes = [],
+} = {}) {
+  const requiredEvidence = getCapabilityRequiredEvidence(capability);
+  if (!requiredEvidence.length) {
+    return {
+      pass: true,
+      required_evidence: [],
+      missing_required_evidence: [],
+    };
+  }
+  const observed = new Set(
+    (Array.isArray(observedEvidenceTypes) ? observedEvidenceTypes : [])
+      .map((item) => cleanText(item || ""))
+      .filter(Boolean),
+  );
+  const missing = requiredEvidence.filter((type) => !observed.has(type));
+  return {
+    pass: missing.length === 0,
+    required_evidence: requiredEvidence,
+    missing_required_evidence: missing,
+  };
+}
+
 export function getCapabilityContract(capability = "") {
   const key = cleanText(String(capability || "").toLowerCase());
   return CAPABILITY_CONTRACT_REGISTRY[key] || null;

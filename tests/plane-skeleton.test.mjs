@@ -26,6 +26,18 @@ test("contracts skeleton exposes capability contracts and taxonomy", () => {
   assert.ok(contracts.length >= 4);
   assert.equal(contractsModule.FAILURE_TAXONOMY.includes("contract_violation"), true);
   assert.equal(contractsModule.getCapabilityContract("decision")?.capability, "decision");
+  assert.equal(contractsModule.isKnownFailureCode("tool_error"), true);
+  assert.deepEqual(
+    contractsModule.validateCapabilityRequiredEvidence({
+      capability: "dispatch",
+      observedEvidenceTypes: ["structured_output"],
+    }),
+    {
+      pass: false,
+      required_evidence: ["tool_output"],
+      missing_required_evidence: ["tool_output"],
+    },
+  );
 });
 
 test("evidence skeleton normalizes evidence records", () => {
@@ -37,7 +49,13 @@ test("evidence skeleton normalizes evidence records", () => {
   ]);
 
   assert.deepEqual(collected, [{ type: "tool_output", summary: "ok" }]);
-  assert.equal(facade.verify({}).pass, null);
+  const verification = facade.verify({
+    capability: "dispatch",
+    evidence: [{ type: "structured_output", summary: "shape only" }],
+  });
+  assert.equal(verification.pass, false);
+  assert.equal(verification.required_evidence_present, false);
+  assert.deepEqual(verification.missing_required_evidence, ["tool_output"]);
 });
 
 test("execution skeleton delegates selector when injected", () => {
@@ -51,6 +69,11 @@ test("execution skeleton delegates selector when injected", () => {
   const selected = facade.decision.select({});
   assert.equal(selected.selected_action, "get_runtime_info");
   assert.equal(facade.decision.contract?.capability, "decision");
+  const evidenceVerdict = facade.verifyCapabilityEvidence({
+    capability: "dispatch",
+    evidenceItems: [{ type: "tool_output", summary: "bridge called" }],
+  });
+  assert.equal(evidenceVerdict.pass, null);
 });
 
 test("executive planner exposes execution plane scaffold metadata", () => {

@@ -213,6 +213,10 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/contracts/index.mjs`
   - `/Users/seanhan/Documents/Playground/src/evidence/index.mjs`
   - `/Users/seanhan/Documents/Playground/src/execution/index.mjs`
+  - `/Users/seanhan/Documents/Playground/src/execution/decision.mjs`
+  - `/Users/seanhan/Documents/Playground/src/execution/dispatch.mjs`
+  - `/Users/seanhan/Documents/Playground/src/execution/recovery.mjs`
+  - `/Users/seanhan/Documents/Playground/src/execution/formatter.mjs`
 - Current truth:
   - `GET /answer` no longer uses `answer-service.mjs` as its primary route
   - the checked-in official plugin entry now lands on `/Users/seanhan/Documents/Playground/src/lark-plugin-dispatch-adapter.mjs` first, not on scattered route decisions inside the plugin
@@ -220,7 +224,11 @@ Current-truth docs for onboarding are:
   - plugin-native document/message/calendar/task-style tools are explicitly classified as `plugin_native` and do not enter the internal planner/lane business path
   - planner-backed `/answer` and plugin hybrid dispatch now arm one earlier bounded-fallback abort signal before the outer HTTP hard timeout, so planner/lane fail-soft recovery can answer first and the generic timeout stays the last resort
   - `/answer` and the `knowledge-assistant` lane now share one checked-in answer-edge helper instead of rebuilding `execute -> envelope -> normalize` separately
-  - planner-side control/execution/evidence split now has additive skeleton modules (`src/contracts|src/evidence|src/execution`) and `executive-planner` consumes the execution-plane selector facade as a compatibility wrapper; current behavior remains pass-through and contract-preserving
+  - planner-side control/execution/evidence split now has replaceable capability modules:
+    - `src/contracts/index.mjs` owns capability contracts + failure taxonomy + evidence schema registry
+    - `src/evidence/index.mjs` enforces evidence schema and required-evidence checks before verifier delegation
+    - `src/execution/{decision,dispatch,recovery,formatter}.mjs` are independent replaceable capability adapters consumed by `src/execution/index.mjs`
+    - `executive-planner` consumes the execution-plane decision adapter and keeps existing selector behavior compatibility
   - that shared answer-edge helper now has one ingress adapter at `planner-user-input-edge`:
     - execution mode is resolved at ingress as one of `sync_authoritative`, `queue_shadow`, or `queue_authoritative` (skeleton, default-off)
     - mode resolution uses `PLANNER_AUTONOMY_INGRESS_ENABLED`, strict allowlist (`PLANNER_AUTONOMY_INGRESS_ALLOWLIST`, exact `session:|request:|trace:|handler:` match), and `PLANNER_AUTONOMY_QUEUE_AUTHORITATIVE_ENABLED`
@@ -356,6 +364,7 @@ Current-truth docs for onboarding are:
   - source rendering at this boundary now only accepts canonical source objects and is mapped through `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`; arbitrary free-form source strings are not rendered as evidence
   - `executive-orchestrator.mjs` now has a truthful completion gate on final user-facing copy:
     - when `verification.pass !== true`, frontend text is forced to `blocked/escalated` tone and cannot use completion phrasing
+    - when `verification.required_evidence_present=false`, frontend text must explicitly state `任務未完成`
     - fail paths only render `目前狀態 + 可驗證證據 + 待確認/限制`
     - fake/partial/verifier-fail regressions are covered by `/Users/seanhan/Documents/Playground/tests/executive-orchestrator.test.mjs`
   - parallel execution model remains unchanged:

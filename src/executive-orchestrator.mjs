@@ -91,17 +91,24 @@ function buildTruthfulCompletionGateReplyText({
     : "blocked";
   const issues = Array.isArray(verification.issues) ? verification.issues.map((item) => cleanText(item)).filter(Boolean) : [];
   const evidenceSources = buildVerificationEvidenceSources(finalized?.evidence || []);
+  const missingRequiredEvidence = verification.required_evidence_present === false;
+  const completionBoundaryLine = missingRequiredEvidence
+    ? "任務未完成：required_evidence 缺失，這輪結果不能宣稱 completed。"
+    : "任務未完成：verification 尚未通過，這輪結果不能宣稱 completed。";
   const limitations = [
     issues.length > 0
       ? `verification issues：${issues.join("、")}。`
       : "verification 尚未通過。",
+    missingRequiredEvidence
+      ? "required_evidence 檢查未通過。"
+      : "required_evidence 檢查待補充。",
     cleanText(verification.execution_policy_reason || "")
       ? `待確認：${cleanText(verification.execution_policy_reason)}。`
       : "待確認：請補齊缺失 evidence 或修正執行結果後再驗證一次。",
   ];
 
   return renderPlannerUserFacingReplyText({
-    answer: `目前狀態：${status}。verification.pass !== true，所以這輪不能用完成語氣回覆。`,
+    answer: `目前狀態：${status}。${completionBoundaryLine}`,
     sources: evidenceSources,
     limitations,
   });

@@ -417,6 +417,8 @@ test("truthful completion gate uses blocked tone when verifier fails", async () 
   assert.equal(result?.verification?.fake_completion, false);
   assert.match(result?.text || "", /^答案/m);
   assert.match(result?.text || "", /目前狀態：blocked/);
+  assert.match(result?.text || "", /任務未完成：required_evidence 缺失/);
+  assert.match(result?.text || "", /required_evidence 檢查未通過/);
   assert.doesNotMatch(result?.text || "", /已完成|已處理完/);
 });
 
