@@ -91,3 +91,40 @@ export function validateToolInvocation(action, args = {}) {
   }
   return { ok: true, contract, args: normalizedArgs };
 }
+
+function normalizeAllowedTools(allowedTools = []) {
+  return Array.isArray(allowedTools)
+    ? Array.from(new Set(allowedTools.map((item) => String(item || "").trim()).filter(Boolean)))
+    : [];
+}
+
+export function validateToolPermission(action, allowedTools = []) {
+  const normalizedAction = String(action || "").trim();
+  const normalizedAllowedTools = normalizeAllowedTools(allowedTools);
+  if (!normalizedAction || normalizedAllowedTools.length === 0) {
+    return {
+      ok: true,
+      reason: null,
+      allowed_tools: normalizedAllowedTools,
+    };
+  }
+
+  const contract = resolveToolContract(normalizedAction);
+  const capability = String(contract?.capability || "").trim();
+  const allowed = normalizedAllowedTools.includes(normalizedAction)
+    || (capability && normalizedAllowedTools.includes(capability));
+  if (allowed) {
+    return {
+      ok: true,
+      reason: null,
+      allowed_tools: normalizedAllowedTools,
+    };
+  }
+  return {
+    ok: false,
+    reason: "permission_denied",
+    action: normalizedAction,
+    capability: capability || null,
+    allowed_tools: normalizedAllowedTools,
+  };
+}

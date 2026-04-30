@@ -77,6 +77,17 @@ function hasExpectedType(value, expectedType = "") {
   }
 }
 
+function normalizeArtifactRecords(items = []) {
+  return Array.isArray(items)
+    ? items
+      .map((item) => ({
+        artifact_id: cleanText(item?.artifact_id || ""),
+        artifact_type: cleanText(item?.artifact_type || ""),
+      }))
+      .filter((item) => item.artifact_id || item.artifact_type)
+    : [];
+}
+
 function buildExecutionJournal({
   executionJournal = null,
   replyText = "",
@@ -153,6 +164,14 @@ export function verifyTaskCompletion({
   const dispatchedActions = Array.isArray(journal.dispatched_actions) ? journal.dispatched_actions : [];
   const fallbackUsed = journal.fallback_used === true;
   const toolRequired = journal.tool_required === true;
+  const artifacts = normalizeArtifactRecords(journal.artifacts);
+  const hasArtifactBackedEvidence = artifacts.some((item) => (
+    item.artifact_type === EVIDENCE_TYPES.structured_output
+    || item.artifact_type === EVIDENCE_TYPES.tool_output
+    || item.artifact_type === EVIDENCE_TYPES.file_updated
+  )) || evidenceSet.has(EVIDENCE_TYPES.structured_output)
+    || evidenceSet.has(EVIDENCE_TYPES.tool_output)
+    || evidenceSet.has(EVIDENCE_TYPES.file_updated);
 
   if (!normalizedReply && !normalizedStructuredResult) {
     issues.push("empty_output");
@@ -233,6 +252,22 @@ export function verifyTaskCompletion({
     if (!evidenceSet.has(EVIDENCE_TYPES.tool_output)) {
       issues.push("insufficient_evidence");
       result.required_evidence_present = false;
+    }
+  }
+
+  const requiresArtifactBackedCompletion = taskType === "search"
+    || taskType === "decision_support"
+    || taskType === "meeting_processing"
+    || taskType === "doc_rewrite"
+    || taskType === "cloud_doc"
+    || Boolean(normalizedExpectedOutputSchema && typeof normalizedExpectedOutputSchema === "object");
+  if (requiresArtifactBackedCompletion && !hasArtifactBackedEvidence) {
+    issues.push("artifact_missing");
+    result.required_evidence_present = false;
+    result.partial_completion = true;
+    if (result.execution_policy_state === "clear") {
+      result.execution_policy_state = "blocked";
+      result.execution_policy_reason = "artifact_backed_completion_required";
     }
   }
 

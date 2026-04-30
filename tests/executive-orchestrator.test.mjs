@@ -179,7 +179,7 @@ test("executeWorkItemsSequentially runs specialists in order and merges into one
   assert.equal(result.finalWorkPlan[2].agent_id, "generalist");
 });
 
-test("executeWorkItemsSequentially preserves generalist fallback when a specialist fails", async () => {
+test("executeWorkItemsSequentially blocks merge when specialist artifact is missing", async () => {
   const calls = [];
   const result = await executeWorkItemsSequentially({
     accountId: "acct-1",
@@ -198,11 +198,13 @@ test("executeWorkItemsSequentially preserves generalist fallback when a speciali
     },
   });
 
-  assert.deepEqual(calls, ["consult", "generalist"]);
+  assert.deepEqual(calls, ["consult"]);
   assert.equal(result.fallbackUsed, true);
-  assert.equal(result.reply?.text, "generalist:統一收斂");
+  assert.match(result.reply?.text || "", /merge 只能消費 artifacts/);
+  assert.equal(result.mergeArtifactGatePass, false);
+  assert.equal(result.missingMergeArtifactNodeIds.includes("consult"), true);
   assert.equal(result.finalWorkPlan[0].status, "failed");
-  assert.equal(result.finalWorkPlan[1].agent_id, "generalist");
+  assert.equal(result.finalWorkPlan[1].status, "blocked");
 });
 
 test("executeWorkItemsSequentially rejects raw and fenced JSON-like specialist replies", async () => {
@@ -230,10 +232,11 @@ test("executeWorkItemsSequentially rejects raw and fenced JSON-like specialist r
     result.failedAgents.map((item) => item.error),
     ["rejected_json_object", "rejected_json_object_fenced"],
   );
-  assert.equal(result.reply?.text, "結論：改由 /generalist 直接收斂。");
+  assert.match(result.reply?.text || "", /merge 只能消費 artifacts/);
+  assert.equal(result.mergeArtifactGatePass, false);
   assert.equal(result.finalWorkPlan[0].status, "failed");
   assert.equal(result.finalWorkPlan[1].status, "failed");
-  assert.equal(result.finalWorkPlan[2].status, "completed");
+  assert.equal(result.finalWorkPlan[2].status, "blocked");
 });
 
 test("executeWorkItemsSequentially rejects structured envelope merge reply and falls back to generalist", async () => {

@@ -9,6 +9,7 @@ import {
 import { buildLifecycleTransition } from "./executive-lifecycle.mjs";
 import { buildVisibleMessageText, cleanText } from "./message-intent-utils.mjs";
 import {
+  buildWorkGraphFromDecision,
   looksLikeExecutiveExit,
   looksLikeExecutiveStart,
   planExecutiveTurn,
@@ -28,6 +29,10 @@ import {
 import { resolveRecoveryDecisionV1 } from "./recovery-decision.mjs";
 import { runInSingleMachineRuntimeSession } from "./single-machine-runtime-coordination.mjs";
 import { normalizeUserResponse } from "./user-response-normalizer.mjs";
+import {
+  persistExecutiveWorkGraph,
+} from "./executive-work-graph.mjs";
+import { enqueueExecutiveWorkGraphJob } from "./task-runtime/autonomy-job-store.mjs";
 
 const noopLogger = {
   info() {},
@@ -663,6 +668,34 @@ export function buildSupportingContext(outputs = []) {
     lines.push(`/${item.agent_id}`);
     lines.push(`- 子任務：${item.task}`);
     lines.push(`- 輸出：${item.summary}`);
+  }
+  return lines.join("\n");
+}
+
+function buildSupportingContextFromArtifacts(artifacts = []) {
+  const grouped = new Map();
+  for (const artifact of Array.isArray(artifacts) ? artifacts : []) {
+    const nodeId = cleanText(artifact?.node_id || "");
+    if (!nodeId) {
+      continue;
+    }
+    if (!grouped.has(nodeId)) {
+      grouped.set(nodeId, []);
+    }
+    grouped.get(nodeId).push(artifact);
+  }
+  const lines = [];
+  for (const [nodeId, nodeArtifacts] of grouped.entries()) {
+    const structuredArtifact = nodeArtifacts.find((item) => cleanText(item?.artifact_type) === "structured_output") || nodeArtifacts[0];
+    const summaryText = cleanText(
+      structuredArtifact?.payload?.summary
+      || structuredArtifact?.payload?.text
+      || structuredArtifact?.payload?.answer
+      || "",
+    ) || `artifact_count:${nodeArtifacts.length}`;
+    lines.push(`/${nodeId}`);
+    lines.push(`- artifact: ${cleanText(structuredArtifact?.artifact_type || "structured_output") || "structured_output"}`);
+    lines.push(`- 輸出：${summarizeAgentText(summaryText, 520)}`);
   }
   return lines.join("\n");
 }
@@ -1697,6 +1730,7 @@ export async function executeWorkItemsSequentially({
     status: "pending",
   };
   const outputs = [];
+  const artifacts = [];
   const failedAgents = [];
   const executedSpecialists = [];
   const dispatchedActions = [];
@@ -1750,6 +1784,43 @@ export async function executeWorkItemsSequentially({
         status: "completed",
       };
       outputs.push(output);
+      const nodeArtifactBase = {
+        node_id: agent.id,
+        produced_by_task: item.task,
+      };
+      artifacts.push({
+        artifact_id: `artifact_${agent.id}_structured_${Date.now()}_${artifacts.length + 1}`,
+        node_id: agent.id,
+        artifact_type: "structured_output",
+        payload: {
+          ...nodeArtifactBase,
+          text: summary,
+          summary: output.summary,
+        },
+      });
+      const toolActions = extractReplyDispatchedActions(reply);
+      if (toolActions.length > 0) {
+        artifacts.push({
+          artifact_id: `artifact_${agent.id}_tool_${Date.now()}_${artifacts.length + 1}`,
+          node_id: agent.id,
+          artifact_type: "tool_output",
+          payload: {
+            ...nodeArtifactBase,
+            tool_actions: toolActions,
+          },
+        });
+      }
+      if (reply?.metadata?.file_updated === true || reply?.metadata?.apply_result?.ok === true) {
+        artifacts.push({
+          artifact_id: `artifact_${agent.id}_file_${Date.now()}_${artifacts.length + 1}`,
+          node_id: agent.id,
+          artifact_type: "file_updated",
+          payload: {
+            ...nodeArtifactBase,
+            file_updated: true,
+          },
+        });
+      }
       executedSpecialists.push({
         ...item,
         status: "completed",
@@ -1775,40 +1846,61 @@ export async function executeWorkItemsSequentially({
   }
 
   const fallbackUsed = failedAgents.length > 0;
+  const requiredMergeArtifactNodeIds = specialistItems
+    .map((item) => cleanText(item?.agent_id))
+    .filter(Boolean);
+  const missingMergeArtifactNodeIds = requiredMergeArtifactNodeIds.filter((agentId) => !artifacts.some((artifact) => (
+    cleanText(artifact?.node_id) === agentId
+    && cleanText(artifact?.artifact_type) === "structured_output"
+  )));
+  const mergeArtifactGatePass = missingMergeArtifactNodeIds.length === 0;
   const mergeCandidates = fallbackUsed
     ? ["generalist"]
     : [mergeItem.agent_id, "generalist"].filter((agentId, index, list) => agentId && list.indexOf(agentId) === index);
 
   let mergeAgent = null;
-  let reply = null;
-  for (const candidateId of mergeCandidates) {
-    const agent = getRegisteredAgent(candidateId);
-    if (!agent) {
-      continue;
-    }
-    try {
-      const candidateReply = await executeAgentFn({
-        accountId,
-        agent,
-        requestText: mergeItem.task || requestText,
-        scope,
-        event,
-        supportingContext: buildSupportingContext(outputs),
-        logger,
-      });
-      dispatchedActions.push(...extractReplyDispatchedActions(candidateReply));
-      const boundary = classifyExecutiveReplyBoundary(candidateReply?.text || "");
-      if (!cleanText(candidateReply?.text || "") || looksLikeAgentFailureText(candidateReply?.text || "") || boundary.rejected) {
-        throw new Error("merge_agent_failed");
+  let reply = mergeArtifactGatePass
+    ? null
+    : {
+      text: renderPlannerUserFacingReplyText({
+        answer: "目前狀態：blocked。merge 只能消費 artifacts，這輪缺少必要 artifact，禁止進入 completed。",
+        sources: [],
+        limitations: [
+          `缺少 artifact 節點：${missingMergeArtifactNodeIds.join("、") || "unknown"}`,
+          "請先補齊缺失節點的 structured_output / tool_output / file_updated 之一後再重試 merge。",
+        ],
+      }),
+    };
+  if (mergeArtifactGatePass) {
+    for (const candidateId of mergeCandidates) {
+      const agent = getRegisteredAgent(candidateId);
+      if (!agent) {
+        continue;
       }
-      mergeAgent = agent;
-      reply = candidateReply;
-      break;
-    } catch (error) {
-      logger.warn("executive_merge_agent_failed", {
-        agent_id: agent.id,
-        error: logger.compactError(error),
-      });
+      try {
+        const candidateReply = await executeAgentFn({
+          accountId,
+          agent,
+          requestText: mergeItem.task || requestText,
+          scope,
+          event,
+          supportingContext: buildSupportingContextFromArtifacts(artifacts),
+          logger,
+        });
+        dispatchedActions.push(...extractReplyDispatchedActions(candidateReply));
+        const boundary = classifyExecutiveReplyBoundary(candidateReply?.text || "");
+        if (!cleanText(candidateReply?.text || "") || looksLikeAgentFailureText(candidateReply?.text || "") || boundary.rejected) {
+          throw new Error("merge_agent_failed");
+        }
+        mergeAgent = agent;
+        reply = candidateReply;
+        break;
+      } catch (error) {
+        logger.warn("executive_merge_agent_failed", {
+          agent_id: agent.id,
+          error: logger.compactError(error),
+        });
+      }
     }
   }
 
@@ -1818,7 +1910,9 @@ export async function executeWorkItemsSequentially({
     agent_id: cleanText(mergeAgent?.id || mergeItem.agent_id || "generalist") || "generalist",
     task: mergeItem.task || requestText,
     role: "primary",
-    status: reply?.text ? "completed" : "failed",
+    status: mergeArtifactGatePass
+      ? (reply?.text ? "completed" : "failed")
+      : "blocked",
     ...(mergeItem.selected_action ? { selected_action: mergeItem.selected_action } : {}),
     ...(mergeItem.tool_required === true ? { tool_required: true } : {}),
   }]) {
@@ -1836,6 +1930,9 @@ export async function executeWorkItemsSequentially({
     reply,
     mergeAgent: mergeAgent || getRegisteredAgent("generalist"),
     supportingOutputs: outputs,
+    artifacts,
+    mergeArtifactGatePass,
+    missingMergeArtifactNodeIds,
     finalWorkPlan,
     failedAgents,
     fallbackUsed,
@@ -2043,6 +2140,50 @@ async function executeExecutiveTurnUnlocked({
     });
   }
 
+  const compiledWorkGraph = buildWorkGraphFromDecision({
+    decision: {
+      ...decision,
+      work_items: plannedWorkPlan,
+    },
+    taskId: task.id,
+    goal: decision.objective || task.objective || requestText,
+    requestText,
+    primaryAgentId,
+  });
+  if (compiledWorkGraph?.ok === true && compiledWorkGraph.graph) {
+    const persistedWorkGraph = persistExecutiveWorkGraph({
+      graph: compiledWorkGraph.graph,
+      status: "queued",
+    });
+    if (persistedWorkGraph?.ok === true) {
+      await updateExecutiveTask(task.id, {
+        meta: {
+          work_graph_id: compiledWorkGraph.graph.graph_id,
+          work_graph_schema_version: compiledWorkGraph.graph.schema_version,
+        },
+      });
+      enqueueExecutiveWorkGraphJob({
+        graphId: compiledWorkGraph.graph.graph_id,
+        taskId: task.id,
+        accountId,
+        sessionKey,
+        requestText,
+        traceId: cleanText(scope?.trace_id || event?.trace_id || task.trace_id || ""),
+        maxAttempts: 3,
+      });
+    } else {
+      logger.warn("executive_work_graph_persist_failed", {
+        task_id: task.id,
+        issues: persistedWorkGraph?.details?.issues || null,
+      });
+    }
+  } else {
+    logger.warn("executive_work_graph_compile_failed", {
+      task_id: task.id,
+      issues: compiledWorkGraph?.errors || null,
+    });
+  }
+
   task = await transitionTaskLifecycle(task, "executing", "starting_agent_execution");
 
   await appendExecutiveTaskTurn(task.id, {
@@ -2096,6 +2237,7 @@ async function executeExecutiveTurnUnlocked({
     requestText,
     reply,
     supportingOutputs: supportingOutputs.length ? supportingOutputs : task.agent_outputs || [],
+    artifacts: Array.isArray(execution.artifacts) ? execution.artifacts : [],
     routing: {
       current_agent_id: effectiveMergeAgent.id,
       primary_agent_id: task.primary_agent_id,

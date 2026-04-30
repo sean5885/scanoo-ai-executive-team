@@ -23,6 +23,7 @@ import {
   parseRegisteredAgentCommand,
   resolveRegisteredAgentFamilyRequest,
 } from "./agent-registry.mjs";
+import { buildWorkGraphFromDecision as compileWorkGraphFromDecision } from "./executive-work-graph.mjs";
 import {
   buildExplicitUserAuthHeaders,
   normalizeExplicitUserAuthContext,
@@ -12452,4 +12453,26 @@ export async function planExecutiveTurn({
     sessionKey,
   });
   return blockedDecision;
+}
+
+export function buildWorkGraphFromDecision({
+  decision = null,
+  taskId = "",
+  goal = "",
+  requestText = "",
+  primaryAgentId = "",
+  graphId = "",
+} = {}) {
+  const normalizedDecision = decision && typeof decision === "object" && !Array.isArray(decision)
+    ? decision
+    : {};
+  const workPlan = Array.isArray(normalizedDecision.work_items) ? normalizedDecision.work_items : [];
+  return compileWorkGraphFromDecision({
+    graphId,
+    taskId: cleanText(taskId) || cleanText(normalizedDecision.task_id || ""),
+    goal: cleanText(goal || normalizedDecision.objective || requestText || ""),
+    workPlan,
+    primaryAgentId: cleanText(primaryAgentId || normalizedDecision.primary_agent_id || normalizedDecision.next_agent_id || ""),
+    requestText,
+  });
 }

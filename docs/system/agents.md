@@ -210,6 +210,7 @@ What now exists in current code:
   - `/Users/seanhan/Documents/Playground/src/executive-task-state.mjs`
   - `/Users/seanhan/Documents/Playground/src/executive-orchestrator.mjs`
   - `/Users/seanhan/Documents/Playground/src/executive-closed-loop.mjs`
+  - `/Users/seanhan/Documents/Playground/src/executive-work-graph.mjs`
   - `/Users/seanhan/Documents/Playground/src/executive-lifecycle.mjs`
   - `/Users/seanhan/Documents/Playground/src/executive-verifier.mjs`
   - `/Users/seanhan/Documents/Playground/src/executive-reflection.mjs`
@@ -220,6 +221,8 @@ What now exists in current code:
   - let registered slash agents continue across multiple turns
   - allow planner-selected handoff between registered agents
   - let the planner attach a bounded work plan with at most three roles total (`1 primary + up to 2 supporting`)
+  - compile planner decisions into executable `work_graph` DAG contracts with schema validation (`graph/nodes/edges/merge_node_id`)
+  - persist node-level claim/lease/heartbeat/retry/deadletter/artifact records for queue execution
   - default simple single-intent requests to `/generalist`
   - unknown or unregistered specialist IDs are collapsed to `/generalist` by role-count trimming before execution
   - when supporting roles are absent after trimming, planner stays on single-owner synthesis
@@ -242,8 +245,8 @@ What now exists in current code:
     - `get_runtime_info`
   - route those tool calls through the existing `/agent/*` HTTP bridges instead of duplicating document/runtime logic
 - Boundaries:
-  - does not run an async worker queue
-  - does not run parallel supporting-agent execution; Thread103 baseline is sequential only
+  - queue runtime is additive and bounded to checked-in autonomy worker process; it is not a tenant-wide worker mesh
+  - planner still keeps sync path; queue execution does not bypass verifier/closed-loop gates
   - does not maintain a tenant-wide memory graph
   - does not yet auto-apply high-risk prompt/governance proposals without review
 

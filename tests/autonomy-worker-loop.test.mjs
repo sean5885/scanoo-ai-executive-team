@@ -8,9 +8,14 @@ const testDb = await createTestDbHarness();
 const { db } = testDb;
 const {
   ensureAutonomyJobTables,
+  enqueueExecutiveWorkGraphJob,
   enqueueAutonomyJobRecord,
   getAutonomyJobById,
 } = await import("../src/task-runtime/autonomy-job-store.mjs");
+const {
+  ensureExecutiveWorkGraphTables,
+  persistExecutiveWorkGraph,
+} = await import("../src/executive-work-graph.mjs");
 const { runAutonomyWorkerOnce } = await import("../src/worker/autonomy-worker-loop.mjs");
 
 function buildPlannerUserInputJobPayload({
@@ -44,7 +49,15 @@ test.after(() => {
 
 test.beforeEach(() => {
   ensureAutonomyJobTables();
+  ensureExecutiveWorkGraphTables();
   db.exec(`
+    DELETE FROM executive_deadletters;
+    DELETE FROM executive_artifacts;
+    DELETE FROM executive_node_leases;
+    DELETE FROM executive_node_attempts;
+    DELETE FROM executive_work_edges;
+    DELETE FROM executive_work_nodes;
+    DELETE FROM executive_work_graphs;
     DELETE FROM autonomy_job_attempts;
     DELETE FROM autonomy_jobs;
   `);
@@ -260,6 +273,71 @@ test("runAutonomyWorkerOnce routes planner_user_input_v1 execute failure through
   assert.equal(stored?.status, "failed");
   assert.equal(stored?.error?.error, "planner_execution_failed");
   assert.equal(typeof stored?.error?.recovery_decision?.reason, "string");
+});
+
+test("runAutonomyWorkerOnce handles executive_work_graph_v1 and fail-softs on deadletter", async () => {
+  const persisted = persistExecutiveWorkGraph({
+    graph: {
+      graph_id: "wg_worker_test",
+      task_id: "task_worker_test",
+      goal: "worker graph test",
+      merge_node_id: "n_merge",
+      nodes: [
+        {
+          node_id: "n1",
+          specialist_id: "missing_agent_for_test",
+          task: "will fail due to agent missing",
+          input_contract: { required_fields: ["request_text", "context_refs"] },
+          allowed_tools: [],
+          output_contract: {
+            type: "structured_output",
+            schema: { answer: "string", sources: "array", limitations: "array" },
+          },
+          retry_policy: { max_retries: 0, backoff_ms: [] },
+        },
+        {
+          node_id: "n_merge",
+          specialist_id: "generalist",
+          task: "merge",
+          input_contract: { required_fields: ["artifact_refs", "request_text"] },
+          allowed_tools: [],
+          output_contract: {
+            type: "structured_output",
+            schema: { answer: "string", sources: "array", limitations: "array" },
+          },
+          retry_policy: { max_retries: 0, backoff_ms: [] },
+        },
+      ],
+      edges: [
+        { from: "n1", to: "n_merge", dependency: "hard" },
+      ],
+    },
+  });
+  assert.equal(persisted?.ok, true);
+
+  const queued = enqueueExecutiveWorkGraphJob({
+    graphId: "wg_worker_test",
+    taskId: "task_worker_test",
+    requestText: "請執行 DAG",
+    traceId: "trace_worker_graph_fail",
+    maxAttempts: 1,
+  });
+  assert.equal(queued?.job_type, "executive_work_graph_v1");
+
+  const result = await runAutonomyWorkerOnce({
+    workerId: "worker-graph-fail",
+    enabled: true,
+    heartbeatIntervalMs: 60_000,
+  });
+
+  assert.equal(result?.ok, false);
+  assert.equal(result?.claimed, true);
+  assert.equal(result?.failed, true);
+  assert.equal(result?.job_id, queued.id);
+
+  const stored = getAutonomyJobById(queued.id);
+  assert.equal(stored?.status, "failed");
+  assert.equal(stored?.error?.error, "work_graph_blocked");
 });
 
 test("runAutonomyWorkerOnce routes planner_user_input_v1 verifier fail through fail-soft recovery", async () => {

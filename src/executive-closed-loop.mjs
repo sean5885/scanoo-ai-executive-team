@@ -559,6 +559,7 @@ function buildRawExecutionEvidence({
   supportingOutputs = [],
   structuredResult = null,
   extraEvidence = [],
+  artifacts = [],
 } = {}) {
   const evidence = Array.isArray(extraEvidence)
     ? extraEvidence.map((item) => normalizeRawEvidenceRecord(item)).filter(Boolean)
@@ -604,6 +605,25 @@ function buildRawExecutionEvidence({
       summary: `supporting_agents:${supportingOutputs.length}`,
     });
   }
+  if (Array.isArray(artifacts) && artifacts.length) {
+    for (const artifact of artifacts) {
+      const artifactType = cleanText(artifact?.artifact_type || "");
+      if (!VALID_EVIDENCE_TYPES.has(artifactType)) {
+        continue;
+      }
+      evidence.push({
+        type: artifactType,
+        source: "work_artifact",
+        summary: cleanText(
+          artifact?.payload?.summary
+          || artifact?.payload?.text
+          || artifact?.payload?.answer
+          || artifact?.artifact_id
+          || `${artifactType}_present`,
+        ) || `${artifactType}_present`,
+      });
+    }
+  }
   return evidence;
 }
 
@@ -614,6 +634,7 @@ export function buildExecutionJournal({
   plannerSteps = [],
   reply = null,
   supportingOutputs = [],
+  artifacts = [],
   structuredResult = null,
   extraEvidence = [],
   fallbackUsed = false,
@@ -636,7 +657,16 @@ export function buildExecutionJournal({
       supportingOutputs,
       structuredResult,
       extraEvidence,
+      artifacts,
     }),
+    artifacts: Array.isArray(artifacts)
+      ? artifacts
+          .map((item) => ({
+            artifact_id: cleanText(item?.artifact_id || ""),
+            artifact_type: cleanText(item?.artifact_type || ""),
+          }))
+          .filter((item) => item.artifact_id || item.artifact_type)
+      : [],
     fallback_used: fallbackUsed === true,
     tool_required: toolRequired === true,
     verifier_verdict: verifierVerdict && typeof verifierVerdict === "object"
@@ -849,6 +879,7 @@ export async function finalizeExecutiveTaskTurn({
   requestText = "",
   reply = null,
   supportingOutputs = [],
+  artifacts = [],
   routing = {},
   structuredResult = null,
   extraEvidence = [],
@@ -872,6 +903,7 @@ export async function finalizeExecutiveTaskTurn({
     plannerSteps: plannerStepMetadata,
     reply,
     supportingOutputs,
+    artifacts,
     structuredResult,
     extraEvidence,
     fallbackUsed: routing?.fallback_used === true,

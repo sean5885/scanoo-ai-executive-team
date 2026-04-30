@@ -1,12 +1,16 @@
 import { cleanText } from "../src/message-intent-utils.mjs";
 import {
   applyAutonomyIncidentDisposition,
+  listExecutiveWorkDeadletters,
   listAutonomyOpenIncidents,
+  replayExecutiveWorkDeadletter,
 } from "../src/task-runtime/autonomy-job-store.mjs";
 
 const COMMAND = Object.freeze({
   listOpen: "list-open",
   disposition: "disposition",
+  listDeadletters: "list-deadletters",
+  replayDeadletter: "replay-deadletter",
 });
 
 const ALLOWED_DISPOSITION_ACTION = new Set([
@@ -26,6 +30,8 @@ function printUsage() {
     "    --operator-id <id> \\",
     "    --request-id <id> \\",
     "    --expected-updated-at <iso8601>",
+    "  node scripts/autonomy-operator-cli.mjs list-deadletters [--graph-id <id>] [--limit <number>]",
+    "  node scripts/autonomy-operator-cli.mjs replay-deadletter --deadletter-id <id> --operator-id <id> [--reason <text>]",
   ].join("\n"));
 }
 
@@ -138,6 +144,56 @@ function runDisposition() {
   }
 }
 
+function runListDeadletters() {
+  const explicitLimit = getArgValue("--limit");
+  const positionalLimit = cleanText(process.argv[3]);
+  const graphId = cleanText(getArgValue("--graph-id"));
+  const limit = normalizePositiveInteger(explicitLimit || positionalLimit, 100);
+  const deadletters = listExecutiveWorkDeadletters({
+    graphId,
+    limit,
+  });
+  printJson({
+    ok: true,
+    command: COMMAND.listDeadletters,
+    graph_id: graphId || null,
+    total: deadletters.length,
+    deadletters,
+  });
+}
+
+function runReplayDeadletter() {
+  const deadletterId = cleanText(getArgValue("--deadletter-id"));
+  const operatorId = cleanText(getArgValue("--operator-id"));
+  const reason = cleanText(getArgValue("--reason"));
+  const missingFields = [];
+  if (!deadletterId) {
+    missingFields.push("deadletter_id");
+  }
+  if (!operatorId) {
+    missingFields.push("operator_id");
+  }
+  if (missingFields.length > 0) {
+    printJson({
+      ok: false,
+      error: "invalid_deadletter_replay_input",
+      missing_fields: missingFields,
+    });
+    process.exitCode = 1;
+    return;
+  }
+
+  const result = replayExecutiveWorkDeadletter({
+    deadletterId,
+    operatorId,
+    reason,
+  });
+  printJson(result);
+  if (!result?.ok) {
+    process.exitCode = 1;
+  }
+}
+
 function main() {
   const command = cleanText(process.argv[2]).toLowerCase();
   if (!command || command === "--help" || command === "-h") {
@@ -150,6 +206,14 @@ function main() {
   }
   if (command === COMMAND.disposition) {
     runDisposition();
+    return;
+  }
+  if (command === COMMAND.listDeadletters) {
+    runListDeadletters();
+    return;
+  }
+  if (command === COMMAND.replayDeadletter) {
+    runReplayDeadletter();
     return;
   }
   printUsage();

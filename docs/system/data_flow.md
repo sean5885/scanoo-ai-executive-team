@@ -252,8 +252,25 @@ Current public `/answer` path:
    - after any successful claim, worker schedules the next tick immediately (`0ms`) so queue drain speed follows execute time rather than fixed poll interval
    - worker execute stage is bounded by `AUTONOMY_EXECUTE_TIMEOUT_MS` (default 60s); timeout aborts in-flight execute signal, then fail-softs as runtime exception and does not mark completion
    - worker completion still requires verifier gate pass; execute failure / verifier fail continue to `recovery_decision_v1` fail-soft handling
+5B. additive autonomy worker execute path for `job_type=executive_work_graph_v1`:
+   - planner/orchestrator compiles one executable `work_graph` (`graph_id/task_id/goal/nodes/edges/merge_node_id`) and validates schema before persistence
+   - graph/node/edge/attempt/lease/artifact/deadletter rows are persisted in SQLite tables:
+     - `executive_work_graphs`
+     - `executive_work_nodes`
+     - `executive_work_edges`
+     - `executive_node_attempts`
+     - `executive_node_leases`
+     - `executive_artifacts`
+     - `executive_deadletters`
+   - scheduler marks dependency-ready nodes (`all hard deps succeeded`) as `queued`
+   - worker claims nodes through node-level transaction (`queued -> claimed -> running`), writes/extends lease heartbeat, and executes specialists
+   - specialist completion writes artifact rows (`structured_output|tool_output|file_updated`) and moves node to `succeeded`
+   - failures append attempt error/retry metadata; policy-controlled retries return node to `queued`; exhausted retries go `deadletter`
+   - merge node runs only after artifact completeness gate passes; missing required artifacts fail-softs to blocked/deadletter path and cannot produce completed authority
+   - deadletter replay is operator-driven (`replay_deadletter`) and re-queues the node for safe resume
 6. otherwise `runPlannerUserInputEdge(...)` runs executive memory retrieval first (`session memory + approved memory` from `/Users/seanhan/Documents/Playground/src/executive-memory.mjs`), then calls `executePlannedUserInput(...)` with bounded internal `decisionMemory` context
 7. `executive-planner.mjs` resolves planner action or controlled failure
+   - executive planner now exposes `buildWorkGraphFromDecision()` so `work_plan` can be compiled into executable DAG contracts; schema violations fail-closed before queue execution
    - before active current-step continuation, planner runs one deterministic execution-readiness gate from the same session working-memory execution plan state
    - readiness is fail-closed and checks slot/artifact/dependency/owner/recovery/plan validity on current step, returning `is_ready`, blocking diagnostics, and `recommended_action`
    - when `is_ready=false`, planner does not dispatch intended step action directly; it follows existing controlled paths (`ask_user` / `retry` / `reroute` / `rollback` / `skip` / fail-closed stop)

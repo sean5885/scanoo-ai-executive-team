@@ -114,6 +114,18 @@ test('executeTool keeps failure continuation contract when injected executor fai
   assert.equal(res.trace_id, 'trace_tool_exec_fail');
 });
 
+test('executeTool enforces allowed_tools permission gate', async () => {
+  const res = await executeTool('search_company_brain_docs', { q: 'scanoo' }, {
+    allowed_tools: ['get_runtime_info'],
+    tool_executor: async () => ({
+      ok: true,
+      data: { q: 'scanoo' },
+    }),
+  });
+  assert.equal(res.ok, false);
+  assert.equal(res.error, 'permission_denied');
+});
+
 test('validateToolInvocation accepts canonical q for search_company_brain_docs', () => {
   const check = validateToolInvocation('search_company_brain_docs', { q: 'lobster' });
   assert.equal(check.ok, true);

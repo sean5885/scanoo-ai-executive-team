@@ -374,6 +374,137 @@ function initializeDb(db) {
 
   CREATE INDEX IF NOT EXISTS idx_http_request_idempotency_lookup
   ON http_request_idempotency(account_id, method, pathname, updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS executive_work_graphs (
+    graph_id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    goal TEXT NOT NULL,
+    merge_node_id TEXT NOT NULL,
+    schema_version TEXT NOT NULL,
+    status TEXT NOT NULL,
+    graph_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    started_at TEXT,
+    completed_at TEXT,
+    failed_at TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS executive_work_nodes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    graph_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    specialist_id TEXT NOT NULL,
+    state TEXT NOT NULL,
+    input_contract_json TEXT,
+    allowed_tools_json TEXT,
+    output_contract_json TEXT,
+    retry_policy_json TEXT,
+    required_artifacts_json TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    max_retries INTEGER NOT NULL DEFAULT 0,
+    next_run_at TEXT,
+    last_error_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    started_at TEXT,
+    completed_at TEXT,
+    failed_at TEXT,
+    UNIQUE(graph_id, node_id),
+    FOREIGN KEY (graph_id) REFERENCES executive_work_graphs(graph_id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS executive_work_edges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    graph_id TEXT NOT NULL,
+    from_node_id TEXT NOT NULL,
+    to_node_id TEXT NOT NULL,
+    dependency TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (graph_id) REFERENCES executive_work_graphs(graph_id) ON DELETE CASCADE,
+    UNIQUE(graph_id, from_node_id, to_node_id, dependency)
+  );
+
+  CREATE TABLE IF NOT EXISTS executive_node_attempts (
+    id TEXT PRIMARY KEY,
+    graph_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    worker_id TEXT,
+    attempt INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    error_json TEXT,
+    retry_metadata_json TEXT,
+    started_at TEXT NOT NULL,
+    heartbeat_at TEXT,
+    completed_at TEXT,
+    failed_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (graph_id, node_id) REFERENCES executive_work_nodes(graph_id, node_id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS executive_node_leases (
+    graph_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    attempt_id TEXT NOT NULL,
+    worker_id TEXT NOT NULL,
+    lease_expires_at TEXT NOT NULL,
+    heartbeat_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (graph_id, node_id),
+    FOREIGN KEY (graph_id, node_id) REFERENCES executive_work_nodes(graph_id, node_id) ON DELETE CASCADE,
+    FOREIGN KEY (attempt_id) REFERENCES executive_node_attempts(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS executive_artifacts (
+    id TEXT PRIMARY KEY,
+    graph_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    attempt_id TEXT,
+    artifact_type TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    schema_version TEXT NOT NULL,
+    hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (graph_id, node_id) REFERENCES executive_work_nodes(graph_id, node_id) ON DELETE CASCADE,
+    FOREIGN KEY (attempt_id) REFERENCES executive_node_attempts(id) ON DELETE SET NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS executive_deadletters (
+    id TEXT PRIMARY KEY,
+    graph_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    attempt_id TEXT,
+    failure_class TEXT NOT NULL,
+    last_error TEXT,
+    next_manual_action TEXT,
+    replay_count INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'open',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    resolved_at TEXT,
+    FOREIGN KEY (graph_id, node_id) REFERENCES executive_work_nodes(graph_id, node_id) ON DELETE CASCADE,
+    FOREIGN KEY (attempt_id) REFERENCES executive_node_attempts(id) ON DELETE SET NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_executive_work_nodes_sched
+  ON executive_work_nodes(graph_id, state, next_run_at, updated_at);
+
+  CREATE INDEX IF NOT EXISTS idx_executive_work_edges_to_node
+  ON executive_work_edges(graph_id, to_node_id, dependency);
+
+  CREATE INDEX IF NOT EXISTS idx_executive_node_attempts_node
+  ON executive_node_attempts(graph_id, node_id, attempt DESC, created_at DESC);
+
+  CREATE INDEX IF NOT EXISTS idx_executive_node_leases_signal
+  ON executive_node_leases(graph_id, worker_id, lease_expires_at, heartbeat_at);
+
+  CREATE INDEX IF NOT EXISTS idx_executive_artifacts_node
+  ON executive_artifacts(graph_id, node_id, artifact_type, created_at DESC);
+
+  CREATE INDEX IF NOT EXISTS idx_executive_deadletters_open
+  ON executive_deadletters(graph_id, status, updated_at DESC);
 `);
 
   return db;

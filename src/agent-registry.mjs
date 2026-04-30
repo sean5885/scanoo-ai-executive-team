@@ -20,6 +20,19 @@ const DEFAULT_OUTPUT_SCHEMA = Object.freeze({
   agentId: "string",
 });
 
+const DEFAULT_GRAPH_INPUT_CONTRACT = Object.freeze({
+  required_fields: ["request_text", "context_refs"],
+});
+
+const DEFAULT_GRAPH_OUTPUT_CONTRACT = Object.freeze({
+  type: "structured_output",
+  schema: {
+    answer: "string",
+    sources: "array",
+    limitations: "array",
+  },
+});
+
 function createCoreAgent({
   id,
   slash = "",
@@ -54,6 +67,8 @@ function createCoreAgent({
       expected_output_schema: DEFAULT_OUTPUT_SCHEMA,
       downstream_consumer: downstreamConsumer,
       allowed_tools: allowedTools,
+      graph_input_contract: DEFAULT_GRAPH_INPUT_CONTRACT,
+      graph_output_contract: DEFAULT_GRAPH_OUTPUT_CONTRACT,
       fallback_behavior: fallbackBehavior,
       status,
     },
@@ -240,10 +255,21 @@ export function listAgentCapabilityMatrix() {
     input_schema: agent.contract?.expected_input_schema || DEFAULT_INPUT_SCHEMA,
     output_schema: agent.contract?.expected_output_schema || DEFAULT_OUTPUT_SCHEMA,
     allowed_tools: agent.contract?.allowed_tools || [],
+    graph_input_contract: agent.contract?.graph_input_contract || DEFAULT_GRAPH_INPUT_CONTRACT,
+    graph_output_contract: agent.contract?.graph_output_contract || DEFAULT_GRAPH_OUTPUT_CONTRACT,
     downstream_consumer: agent.contract?.downstream_consumer || "lark_reply",
     fallback_behavior: agent.contract?.fallback_behavior || "fail_closed",
     status: agent.contract?.status || "ready",
   }));
+}
+
+export function getAgentGraphContract(agentId = "") {
+  const agent = getRegisteredAgent(agentId);
+  return {
+    input_contract: agent?.contract?.graph_input_contract || DEFAULT_GRAPH_INPUT_CONTRACT,
+    allowed_tools: Array.isArray(agent?.contract?.allowed_tools) ? agent.contract.allowed_tools : [],
+    output_contract: agent?.contract?.graph_output_contract || DEFAULT_GRAPH_OUTPUT_CONTRACT,
+  };
 }
 
 export function getRegisteredAgent(agentId = "") {

@@ -1,4 +1,8 @@
-import { normalizeToolInvocationArgs, resolveToolContract } from './tool-layer-contract.mjs';
+import {
+  normalizeToolInvocationArgs,
+  resolveToolContract,
+  validateToolPermission,
+} from './tool-layer-contract.mjs';
 
 function normalizeText(value = '') {
   return String(value || '').trim();
@@ -67,6 +71,30 @@ export async function executeTool(action, args = {}, ctx = {}) {
   const contract = resolveToolContract(action);
   if (!contract) {
     return { ok: false, error: 'unknown_tool_action' };
+  }
+  const allowedTools = Array.isArray(ctx?.allowed_tools)
+    ? ctx.allowed_tools
+    : Array.isArray(ctx?.allowedTools)
+      ? ctx.allowedTools
+      : [];
+  const permission = validateToolPermission(action, allowedTools);
+  if (!permission.ok) {
+    return {
+      ok: false,
+      action,
+      error: 'permission_denied',
+      next: contract.on_failure_next || 'fallback',
+      trace_id: null,
+      dispatch_result: {
+        ok: false,
+        error: 'permission_denied',
+        reason: 'tool_not_allowed_for_node',
+        allowed_tools: permission.allowed_tools || [],
+      },
+      result: {
+        reason: 'tool_not_allowed_for_node',
+      },
+    };
   }
   const normalizedArgs = normalizeToolInvocationArgs(action, args);
 

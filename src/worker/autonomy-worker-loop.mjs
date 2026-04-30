@@ -1,6 +1,26 @@
 import { cleanText } from "../message-intent-utils.mjs";
+import { executeRegisteredAgent } from "../agent-dispatcher.mjs";
+import { getRegisteredAgent } from "../agent-registry.mjs";
 import { EVIDENCE_TYPES, verifyTaskCompletion } from "../executive-verifier.mjs";
 import { executePlannedUserInput } from "../executive-planner.mjs";
+import {
+  EXECUTIVE_ARTIFACT_TYPE,
+  EXECUTIVE_WORK_GRAPH_JOB_TYPE,
+  EXECUTIVE_WORK_NODE_STATE,
+  checkMergeArtifactCompleteness,
+  claimNextExecutableWorkNode,
+  completeExecutableWorkNode,
+  failExecutableWorkNode,
+  getExecutiveWorkGraph,
+  getExecutiveWorkGraphSummary,
+  heartbeatExecutableWorkNodeLease,
+  listExecutiveWorkArtifacts,
+  listExecutiveWorkNodes,
+  scheduleExecutableWorkNodes,
+  startExecutableWorkNodeExecution,
+  updateExecutiveWorkGraphStatus,
+  validateNodeInputContract,
+} from "../executive-work-graph.mjs";
 import { resolveRecoveryDecisionV1 } from "../recovery-decision.mjs";
 import { nowIso } from "../text-utils.mjs";
 import {
@@ -505,6 +525,514 @@ async function executePlannerUserInputAutonomyJob({
   });
 }
 
+function normalizeExecutiveWorkGraphPayload(job = null) {
+  const payload = normalizeAutonomyObject(job?.payload);
+  if (!payload) {
+    return null;
+  }
+  const schemaVersion = cleanText(payload.schema_version || "");
+  const graphId = cleanText(payload.graph_id || "");
+  if (!graphId || (schemaVersion && schemaVersion !== EXECUTIVE_WORK_GRAPH_JOB_TYPE)) {
+    return null;
+  }
+  return {
+    graph_id: graphId,
+    task_id: cleanText(payload.task_id || "") || null,
+    account_id: cleanText(payload.account_id || "") || null,
+    session_key: cleanText(payload.session_key || "") || null,
+    request_text: cleanText(payload.request_text || "") || null,
+  };
+}
+
+function indexGraphNodesById(graphRecord = null) {
+  const nodes = Array.isArray(graphRecord?.graph?.nodes) ? graphRecord.graph.nodes : [];
+  return new Map(
+    nodes
+      .map((node) => [cleanText(node?.node_id), node])
+      .filter(([nodeId]) => Boolean(nodeId)),
+  );
+}
+
+function extractReplyToolActions(reply = null) {
+  const metadataActions = Array.isArray(reply?.metadata?.dispatched_actions)
+    ? reply.metadata.dispatched_actions
+    : Array.isArray(reply?.dispatched_actions)
+      ? reply.dispatched_actions
+      : [];
+  return metadataActions
+    .map((item) => {
+      if (typeof item === "string") {
+        return cleanText(item);
+      }
+      if (!item || typeof item !== "object") {
+        return "";
+      }
+      return cleanText(item.action || item.name || item.tool || "");
+    })
+    .filter(Boolean);
+}
+
+function buildNodeArtifactsFromReply({
+  node = null,
+  reply = null,
+} = {}) {
+  const nodeId = cleanText(node?.node_id || "");
+  const summaryText = cleanText(reply?.text || "");
+  const artifacts = [];
+  if (summaryText) {
+    artifacts.push({
+      artifact_type: EXECUTIVE_ARTIFACT_TYPE.structured_output,
+      payload: {
+        node_id: nodeId || null,
+        specialist_id: cleanText(node?.specialist_id || "") || null,
+        text: summaryText,
+        answer: summaryText,
+        sources: [],
+        limitations: [],
+      },
+    });
+  }
+  const toolActions = extractReplyToolActions(reply);
+  if (toolActions.length > 0) {
+    artifacts.push({
+      artifact_type: EXECUTIVE_ARTIFACT_TYPE.tool_output,
+      payload: {
+        node_id: nodeId || null,
+        tool_actions: toolActions,
+      },
+    });
+  }
+  if (reply?.metadata?.file_updated === true || reply?.metadata?.apply_result?.ok === true) {
+    artifacts.push({
+      artifact_type: EXECUTIVE_ARTIFACT_TYPE.file_updated,
+      payload: {
+        node_id: nodeId || null,
+        file_updated: true,
+      },
+    });
+  }
+  return artifacts;
+}
+
+function validateNodeToolPermissions(node = null, reply = null) {
+  const allowedTools = Array.isArray(node?.allowed_tools) ? node.allowed_tools.map((item) => cleanText(item)).filter(Boolean) : [];
+  if (!allowedTools.length) {
+    return {
+      ok: true,
+      denied_tools: [],
+    };
+  }
+  const usedTools = extractReplyToolActions(reply);
+  const deniedTools = usedTools.filter((action) => !allowedTools.includes(action));
+  return {
+    ok: deniedTools.length === 0,
+    denied_tools: deniedTools,
+    used_tools: usedTools,
+  };
+}
+
+function buildMergeNodeFailSoftReply({
+  missing = [],
+} = {}) {
+  const missingNodeIds = (Array.isArray(missing) ? missing : [])
+    .map((item) => cleanText(item?.node_id || ""))
+    .filter(Boolean);
+  const limitation = missingNodeIds.length
+    ? `missing_artifacts:${missingNodeIds.join(",")}`
+    : "missing_artifacts:unknown";
+  return {
+    text: [
+      "答案",
+      "目前狀態：blocked。merge node 只允許消費 artifacts，這輪缺少必要 artifacts，不能標記 completed。",
+      "",
+      "來源",
+      "- artifact gate",
+      "",
+      "待確認/限制",
+      `- ${limitation}`,
+    ].join("\n"),
+  };
+}
+
+async function executeExecutiveWorkGraphNode({
+  accountId = "",
+  node = null,
+  graphRecord = null,
+  requestText = "",
+  logger = null,
+  scope = null,
+  event = null,
+} = {}) {
+  const normalizedNode = node && typeof node === "object" && !Array.isArray(node) ? node : null;
+  if (!normalizedNode) {
+    return {
+      ok: false,
+      error: "work_node_missing",
+      failure_class: "contract_violation",
+      retryable: false,
+    };
+  }
+
+  const mergeNodeId = cleanText(graphRecord?.merge_node_id || graphRecord?.graph?.merge_node_id || "");
+  const nodeId = cleanText(normalizedNode.node_id || "");
+  if (nodeId && mergeNodeId && nodeId === mergeNodeId) {
+    const mergeGate = checkMergeArtifactCompleteness({
+      graphId: cleanText(graphRecord?.graph_id || ""),
+      mergeNodeId,
+    });
+    if (!mergeGate.ok) {
+      return {
+        ok: false,
+        error: "merge_artifact_incomplete",
+        failure_class: "contract_violation",
+        retryable: false,
+        reason: "merge_node_artifact_gate_failed",
+        data: {
+          missing: mergeGate.missing,
+          reply: buildMergeNodeFailSoftReply({ missing: mergeGate.missing }),
+        },
+      };
+    }
+  }
+
+  const allArtifacts = listExecutiveWorkArtifacts({
+    graphId: cleanText(graphRecord?.graph_id || ""),
+  });
+  const nodeInputValidation = validateNodeInputContract({
+    node: normalizedNode,
+    payload: {
+      request_text: requestText,
+      context_refs: allArtifacts.map((artifact) => artifact.id),
+      artifact_refs: allArtifacts.map((artifact) => artifact.id),
+    },
+  });
+  if (!nodeInputValidation.ok) {
+    return {
+      ok: false,
+      error: "node_input_contract_violation",
+      failure_class: "contract_violation",
+      retryable: false,
+      reason: nodeInputValidation.error,
+      data: {
+        missing_fields: nodeInputValidation.missing_fields,
+      },
+    };
+  }
+
+  const agent = getRegisteredAgent(cleanText(normalizedNode.specialist_id || ""));
+  if (!agent) {
+    return {
+      ok: false,
+      error: "specialist_not_found",
+      failure_class: "not_found",
+      retryable: false,
+      reason: "specialist_not_registered",
+    };
+  }
+
+  const reply = await executeRegisteredAgent({
+    accountId,
+    agent,
+    requestText: cleanText(normalizedNode.task || requestText || graphRecord?.goal || ""),
+    scope: scope || {},
+    event: event || {},
+    logger: logger || noopLogger,
+  });
+
+  const replyText = cleanText(reply?.text || "");
+  if (!replyText) {
+    return {
+      ok: false,
+      error: "specialist_empty_output",
+      failure_class: "business_error",
+      retryable: true,
+      reason: "specialist_empty_output",
+    };
+  }
+
+  const permission = validateNodeToolPermissions(normalizedNode, reply);
+  if (!permission.ok) {
+    return {
+      ok: false,
+      error: "permission_denied",
+      failure_class: "permission_denied",
+      retryable: false,
+      reason: `tool_not_allowed:${permission.denied_tools.join(",") || "unknown"}`,
+      data: {
+        denied_tools: permission.denied_tools,
+        used_tools: permission.used_tools || [],
+        allowed_tools: Array.isArray(normalizedNode.allowed_tools) ? normalizedNode.allowed_tools : [],
+      },
+    };
+  }
+
+  return {
+    ok: true,
+    reply,
+    artifacts: buildNodeArtifactsFromReply({
+      node: normalizedNode,
+      reply,
+    }),
+  };
+}
+
+function readFinalMergeReplyFromArtifacts(graphId = "", mergeNodeId = "") {
+  const mergeArtifacts = listExecutiveWorkArtifacts({
+    graphId,
+    nodeId: mergeNodeId,
+  });
+  const structured = mergeArtifacts.find((artifact) => cleanText(artifact?.artifact_type) === EXECUTIVE_ARTIFACT_TYPE.structured_output);
+  const answer = cleanText(
+    structured?.payload?.answer
+    || structured?.payload?.text
+    || "",
+  );
+  return {
+    answer,
+    sources: [],
+    limitations: [],
+  };
+}
+
+async function executeExecutiveWorkGraphAutonomyJob({
+  job = null,
+  logger = null,
+} = {}) {
+  const payload = normalizeExecutiveWorkGraphPayload(job);
+  if (!payload) {
+    return {
+      ok: false,
+      error: "executive_work_graph_payload_invalid",
+      reason: "invalid_executive_work_graph_payload",
+      workflow: EXECUTIVE_WORK_GRAPH_JOB_TYPE,
+      retryable: false,
+    };
+  }
+
+  const graphRecord = getExecutiveWorkGraph(payload.graph_id);
+  if (!graphRecord?.graph_id) {
+    return {
+      ok: false,
+      error: "executive_work_graph_not_found",
+      reason: "graph_not_found",
+      workflow: EXECUTIVE_WORK_GRAPH_JOB_TYPE,
+      retryable: false,
+      failure_class: "not_found",
+    };
+  }
+
+  const nodeDefinitionMap = indexGraphNodesById(graphRecord);
+  const maxParallelNodes = 3;
+  let progressed = false;
+
+  for (let round = 0; round < 8; round += 1) {
+    scheduleExecutableWorkNodes(graphRecord.graph_id);
+    const claims = [];
+    for (let index = 0; index < maxParallelNodes; index += 1) {
+      const claim = claimNextExecutableWorkNode({
+        graphId: graphRecord.graph_id,
+        workerId: cleanText(job?.lease_owner || "autonomy-worker"),
+      });
+      if (!claim?.node?.node_id || !claim?.attempt?.id) {
+        break;
+      }
+      claims.push(claim);
+    }
+
+    if (!claims.length) {
+      break;
+    }
+    progressed = true;
+
+    const nodeRuns = claims.map(async (claim) => {
+      const nodeId = cleanText(claim?.node?.node_id || "");
+      const nodeDefinition = nodeDefinitionMap.get(nodeId) || claim.node;
+      const startResult = startExecutableWorkNodeExecution({
+        graphId: graphRecord.graph_id,
+        nodeId,
+        attemptId: cleanText(claim?.attempt?.id || ""),
+        workerId: cleanText(job?.lease_owner || ""),
+      });
+      if (startResult?.ok !== true) {
+        return {
+          ok: false,
+          claim,
+          error: startResult?.error || "node_start_failed",
+          failure_class: "runtime_exception",
+          retryable: true,
+          reason: "node_start_failed",
+        };
+      }
+
+      const heartbeat = heartbeatExecutableWorkNodeLease({
+        graphId: graphRecord.graph_id,
+        nodeId,
+        workerId: cleanText(job?.lease_owner || ""),
+      });
+      if (heartbeat?.ok !== true) {
+        return {
+          ok: false,
+          claim,
+          error: heartbeat?.error || "node_heartbeat_failed",
+          failure_class: "runtime_exception",
+          retryable: true,
+          reason: "node_heartbeat_failed",
+        };
+      }
+
+      try {
+        const result = await executeExecutiveWorkGraphNode({
+          accountId: payload.account_id || "",
+          node: nodeDefinition,
+          graphRecord,
+          requestText: payload.request_text || graphRecord.goal || "",
+          logger,
+          scope: {
+            session_key: payload.session_key || null,
+            trace_id: cleanText(job?.trace_id || "") || null,
+          },
+          event: {
+            trace_id: cleanText(job?.trace_id || "") || null,
+          },
+        });
+        return {
+          ...result,
+          claim,
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          claim,
+          error: cleanText(error?.message || "") || "node_execute_failed",
+          failure_class: "runtime_exception",
+          retryable: true,
+          reason: "node_execute_failed",
+        };
+      }
+    });
+
+    const nodeResults = await Promise.all(nodeRuns);
+    for (const nodeResult of nodeResults) {
+      const claim = nodeResult?.claim;
+      const nodeId = cleanText(claim?.node?.node_id || "");
+      const attemptId = cleanText(claim?.attempt?.id || "");
+      const workerId = cleanText(job?.lease_owner || "");
+      if (!nodeId || !attemptId || !workerId) {
+        continue;
+      }
+      if (nodeResult?.ok === true) {
+        completeExecutableWorkNode({
+          graphId: graphRecord.graph_id,
+          nodeId,
+          attemptId,
+          workerId,
+          artifacts: Array.isArray(nodeResult.artifacts) ? nodeResult.artifacts : [],
+          result: {
+            summary: cleanText(nodeResult?.reply?.text || "") || null,
+          },
+        });
+      } else {
+        failExecutableWorkNode({
+          graphId: graphRecord.graph_id,
+          nodeId,
+          attemptId,
+          workerId,
+          failureClass: cleanText(nodeResult?.failure_class || "") || "runtime_exception",
+          lastError: cleanText(nodeResult?.error || "") || "node_execution_failed",
+          nextManualAction: "inspect_node_and_resume",
+          retryPolicy: claim?.node?.retry_policy || null,
+        });
+      }
+    }
+  }
+
+  scheduleExecutableWorkNodes(graphRecord.graph_id);
+  const summary = getExecutiveWorkGraphSummary(graphRecord.graph_id);
+  if (!summary) {
+    return {
+      ok: false,
+      error: "executive_work_graph_summary_missing",
+      reason: "graph_summary_missing",
+      workflow: EXECUTIVE_WORK_GRAPH_JOB_TYPE,
+      retryable: false,
+    };
+  }
+
+  if (summary.terminal_state === "completed") {
+    updateExecutiveWorkGraphStatus({
+      graphId: graphRecord.graph_id,
+      status: "completed",
+    });
+    const finalReply = readFinalMergeReplyFromArtifacts(
+      graphRecord.graph_id,
+      cleanText(summary.merge_node_id || ""),
+    );
+    return {
+      ok: true,
+      job_type: EXECUTIVE_WORK_GRAPH_JOB_TYPE,
+      graph_id: graphRecord.graph_id,
+      trace_id: cleanText(job?.trace_id || "") || null,
+      reply_text: finalReply.answer || "",
+      structured_result: {
+        answer: finalReply.answer || "",
+        sources: finalReply.sources,
+        limitations: finalReply.limitations,
+      },
+      verifier_gate: {
+        task_type: "search",
+        evidence: [{
+          type: EVIDENCE_TYPES.structured_output,
+          summary: `work_graph_completed:${graphRecord.graph_id}`,
+        }],
+      },
+    };
+  }
+
+  if (summary.terminal_state === "deadletter" || summary.terminal_state === "blocked") {
+    updateExecutiveWorkGraphStatus({
+      graphId: graphRecord.graph_id,
+      status: summary.terminal_state,
+    });
+    return {
+      ok: false,
+      error: "work_graph_blocked",
+      reason: summary.terminal_state,
+      workflow: EXECUTIVE_WORK_GRAPH_JOB_TYPE,
+      retryable: false,
+      failure_class: summary.terminal_state === "deadletter" ? "tool_error" : "contract_violation",
+      data: {
+        counters: summary.counters,
+      },
+    };
+  }
+
+  if (!progressed) {
+    return {
+      ok: false,
+      error: "work_graph_no_progress",
+      reason: "graph_waiting_for_ready_nodes",
+      workflow: EXECUTIVE_WORK_GRAPH_JOB_TYPE,
+      retryable: true,
+      failure_class: "runtime_exception",
+      data: {
+        counters: summary.counters,
+      },
+    };
+  }
+
+  return {
+    ok: false,
+    error: "work_graph_incomplete",
+    reason: "graph_requires_additional_pass",
+    workflow: EXECUTIVE_WORK_GRAPH_JOB_TYPE,
+    retryable: true,
+    failure_class: "runtime_exception",
+    data: {
+      counters: summary.counters,
+    },
+  };
+}
+
 async function executeKnownAutonomyJob({
   job = null,
   logger = null,
@@ -517,6 +1045,13 @@ async function executeKnownAutonomyJob({
       job,
       logger,
       plannerExecutor,
+      signal,
+    });
+  }
+  if (normalizedJobType === EXECUTIVE_WORK_GRAPH_JOB_TYPE) {
+    return executeExecutiveWorkGraphAutonomyJob({
+      job,
+      logger,
       signal,
     });
   }

@@ -59,6 +59,18 @@ For this closure-planning pass:
     - mutation-runtime idempotency now uses scoped store keys (`idempotency_key + account/action/path/resource scope`) so different mutation flows with the same raw key do not collide.
     - regression coverage is aligned at `/Users/seanhan/Documents/Playground/tests/company-brain-review-approval.test.mjs`, `/Users/seanhan/Documents/Playground/tests/company-brain-lifecycle-contract.test.mjs`, and `/Users/seanhan/Documents/Playground/tests/mutation-runtime.test.mjs`.
     - this item is `resolved` for checked-in governance closure; it does not claim full HTTP/runtime idempotency unification.
+22. Executive `work_graph` rollout acceptance metrics are not yet fully closed as of 2026-04-30:
+    - checked-in code now provides DAG schema validation, node-level claim/lease/heartbeat/retry/deadletter, and artifact-gated merge paths.
+    - however, the required operator/observability acceptance set is still partial in checked-in runtime:
+      - no built-in wall-time baseline comparator proving `>=35%` parallel speedup against serial baseline
+      - no checked-in dashboard/CLI aggregate for `artifact_coverage` and `deadletter_replay_rate>=95%` as a single release gate report
+      - no full E2E benchmark pack yet proving `>=90%` DAG pass rate over failure/retry/lease-expiry matrix
+    - this item remains `open` for release-acceptance closure (implementation exists; KPI proof packaging still pending).
+    - Evidence:
+      - `/Users/seanhan/Documents/Playground/src/executive-work-graph.mjs`
+      - `/Users/seanhan/Documents/Playground/src/worker/autonomy-worker-loop.mjs`
+      - `/Users/seanhan/Documents/Playground/scripts/autonomy-operator-cli.mjs`
+      - `/Users/seanhan/Documents/Playground/tests/executive-work-graph.test.mjs`
 
 ## Ranked Closure Threads
 

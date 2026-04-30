@@ -11,6 +11,14 @@ import {
   DEFAULT_AUTONOMY_MAX_ATTEMPTS,
   normalizePositiveInteger,
 } from "./autonomy-job-types.mjs";
+import {
+  EXECUTIVE_WORK_GRAPH_JOB_TYPE,
+  claimNextExecutableWorkNode,
+  ensureExecutiveWorkGraphTables,
+  heartbeatExecutableWorkNodeLease,
+  listExecutiveDeadletters,
+  replayExecutiveDeadletter,
+} from "../executive-work-graph.mjs";
 
 let autonomyTablesReady = false;
 const AUTONOMY_OPEN_INCIDENT_SINK_STATE = new Set(["waiting_user", "escalated"]);
@@ -938,6 +946,87 @@ export function ensureAutonomyJobTables() {
   `);
 
   autonomyTablesReady = true;
+  ensureExecutiveWorkGraphTables();
+}
+
+export function enqueueExecutiveWorkGraphJob({
+  graphId = "",
+  taskId = "",
+  accountId = "",
+  sessionKey = "",
+  requestText = "",
+  traceId = "",
+  maxAttempts = 3,
+} = {}) {
+  const normalizedGraphId = cleanText(graphId);
+  if (!normalizedGraphId) {
+    return null;
+  }
+  return enqueueAutonomyJobRecord({
+    jobType: EXECUTIVE_WORK_GRAPH_JOB_TYPE,
+    traceId,
+    maxAttempts,
+    payload: {
+      schema_version: EXECUTIVE_WORK_GRAPH_JOB_TYPE,
+      graph_id: normalizedGraphId,
+      task_id: cleanText(taskId) || null,
+      account_id: cleanText(accountId) || null,
+      session_key: cleanText(sessionKey) || null,
+      request_text: cleanText(requestText) || null,
+    },
+  });
+}
+
+export function claimNextExecutiveWorkNode({
+  graphId = "",
+  workerId = "",
+  leaseMs = DEFAULT_AUTONOMY_LEASE_MS,
+} = {}) {
+  ensureExecutiveWorkGraphTables();
+  return claimNextExecutableWorkNode({
+    graphId,
+    workerId,
+    leaseMs,
+  });
+}
+
+export function heartbeatExecutiveWorkNode({
+  graphId = "",
+  nodeId = "",
+  workerId = "",
+  leaseMs = DEFAULT_AUTONOMY_LEASE_MS,
+} = {}) {
+  ensureExecutiveWorkGraphTables();
+  return heartbeatExecutableWorkNodeLease({
+    graphId,
+    nodeId,
+    workerId,
+    leaseMs,
+  });
+}
+
+export function listExecutiveWorkDeadletters({
+  graphId = "",
+  limit = 100,
+} = {}) {
+  ensureExecutiveWorkGraphTables();
+  return listExecutiveDeadletters({
+    graphId,
+    limit,
+  });
+}
+
+export function replayExecutiveWorkDeadletter({
+  deadletterId = "",
+  operatorId = "",
+  reason = "",
+} = {}) {
+  ensureExecutiveWorkGraphTables();
+  return replayExecutiveDeadletter({
+    deadletterId,
+    operatorId,
+    reason,
+  });
 }
 
 export function enqueueAutonomyJobRecord({

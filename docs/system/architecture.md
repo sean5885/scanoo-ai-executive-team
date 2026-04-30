@@ -13,7 +13,7 @@ This repository is a Lark-first local service for:
 - OpenClaw tool exposure
 - guarded local actions through `lobster_security`
 
-It is not a browser frontend app. It now includes a closed-loop executive orchestration layer with compact work-plan synthesis, evidence-based verification, reflection, and improvement proposals, but it is still not a full background-planner system with autonomous worker queues.
+It is not a browser frontend app. It now includes a closed-loop executive orchestration layer with compact work-plan synthesis, executable `work_graph` DAG contracts, artifact-backed verification, reflection, and improvement proposals. The checked-in autonomy worker can execute `executive_work_graph_v1` jobs with node-level claim/lease/heartbeat/retry/deadletter, but this still does not make the repo a tenant-wide autonomous company-brain runtime.
 
 ## Architecture Layer vs Runtime Layer
 
@@ -75,6 +75,7 @@ Use [deployment.md](/Users/seanhan/Documents/Playground/docs/system/deployment.m
   - may be consulted by `/Users/seanhan/Documents/Playground/src/executive-planner.mjs` as an optional planner pre-pass when a caller provides `runSkill`
 - executive orchestration
   - `/Users/seanhan/Documents/Playground/src/executive-planner.mjs`
+  - `/Users/seanhan/Documents/Playground/src/executive-work-graph.mjs`
   - `/Users/seanhan/Documents/Playground/src/executive-task-state.mjs`
   - `/Users/seanhan/Documents/Playground/src/executive-orchestrator.mjs`
   - `/Users/seanhan/Documents/Playground/src/executive-closed-loop.mjs`
@@ -185,6 +186,11 @@ These describe code structure and responsibility, not how many processes are run
   - turns execution output into evidence, verification, reflection, and improvement proposals
   - also records an additive plan-vs-execution reflection snapshot at `task.meta.execution_reflection` before verifier/improvement persistence, using structured step-level `success_match / deviation / reason` codes without changing user-visible answer output
   - after reflection, attaches the lightweight `improvement_proposal` onto `task.execution_journal` for internal traceability without changing the visible answer body
+
+- `executive-work-graph.mjs`
+  - validates planner-produced `work_graph` DAG schema (`graph/nodes/edges/merge_node_id`) before persistence
+  - persists node/edge/attempt/lease/artifact/deadletter records in SQLite
+  - exposes node-level scheduling + claim/lease/heartbeat/retry/deadletter/replay primitives consumed by autonomy worker runtime
 
 - `executive-improvement.mjs`
   - derives one lightweight pure `improvement_proposal` from `reflection_result`
