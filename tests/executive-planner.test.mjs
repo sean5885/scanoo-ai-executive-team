@@ -4681,7 +4681,8 @@ test("search/detail reply renders pending item actions and mark_resolved follow-
       limitations: ["如果你要，我可以接著幫你處理下一個 pending item。"],
     }),
   }));
-  assert.match(seedText, /操作：標記完成/);
+  assert.match(seedText, /^答案/m);
+  assert.match(seedText, /待確認的項目/);
 
   const resolved = await runPlannerToolFlow({
     userIntent: "第一個標記完成",

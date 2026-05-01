@@ -708,8 +708,8 @@ test("daily-status CLI compare-previous adds only the short why-worse line", asy
     "今天能不能安心開發：先不要",
     "今天能不能安心合併：先不要",
     "今天能不能安心發布：先不要",
-    "若不能，先看哪一條線：routing",
-    "下一步：run routing-eval and inspect doc fixtures",
+    "若不能，先看哪一條線：release",
+    "下一步：inspect blocking_checks and representative_fail_case",
   ].join("\n"));
 });
 
@@ -826,9 +826,9 @@ test("daily-status CLI json compare-snapshot adds changed_line and reason hint",
     routing_status: "fail",
     planner_status: "pass",
     release_status: "fail",
-    overall_recommendation: "check_routing_first",
-    changed_line: "routing",
-    change_reason_hint: "doc",
-    action_hint: "run routing-eval and inspect doc fixtures",
+    overall_recommendation: "check_release_first",
+    changed_line: "release",
+    change_reason_hint: null,
+    action_hint: "inspect blocking_checks and representative_fail_case",
   });
 });

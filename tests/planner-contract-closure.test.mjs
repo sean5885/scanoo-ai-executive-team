@@ -229,9 +229,9 @@ test("canonical planner envelope survives planner -> answer -> registered-agent 
   assert.equal(userResponse.ok, true);
   assert.equal(Array.isArray(userResponse.sources), true);
   assert.equal(Array.isArray(userResponse.limitations), true);
-  assert.match(result.text, /^結論/m);
-  assert.match(result.text, /^重點/m);
-  assert.match(result.text, /^下一步/m);
+  assert.match(result.text, /^答案/m);
+  assert.match(result.text, /^來源/m);
+  assert.match(result.text, /^待確認\/限制/m);
   assert.match(result.text, /Launch Checklist/);
   assert.doesNotMatch(result.text, /"action"|"execution_result"|"kind"|search_company_brain_docs/);
 });
