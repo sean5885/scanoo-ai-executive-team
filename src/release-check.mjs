@@ -1,4 +1,5 @@
 import path from "node:path";
+import { readFile } from "node:fs/promises";
 
 import { cleanText } from "./message-intent-utils.mjs";
 import { resolveControlDiagnosticsSnapshot } from "./control-diagnostics-history.mjs";
@@ -13,6 +14,8 @@ const BLOCKING_CONTROL_REGRESSION = "control_regression";
 const BLOCKING_DEPENDENCY_POLICY_FAILURE = "dependency_policy_failure";
 const BLOCKING_WRITE_POLICY_FAILURE = "write_policy_failure";
 const BLOCKING_USAGE_LAYER_FAILURE = "usage_layer_failure";
+const BLOCKING_CAPABILITY_GATE_FAILURE = "capability_gate_failure";
+const BLOCKING_EXPERIENCE_GATE_FAILURE = "experience_gate_failure";
 const BLOCKING_TRUTHFUL_COMPLETION_FAILURE = "truthful_completion_failure";
 const BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE = "company_brain_lifecycle_failure";
 const BLOCKING_ROUTING_REGRESSION = "routing_regression";
@@ -39,6 +42,17 @@ const RELEASE_STATUS_ORDER = {
   pass: 1,
 };
 const DECISION_OS_READINESS_VERSION = "decision_os_readiness_v1";
+const PRODUCTION_EVAL_LATEST_PATH = process.env.PRODUCTION_EVAL_REPORT_PATH || ".data/evals/production/latest.json";
+const CAPABILITY_GATE_THRESHOLDS = Object.freeze({
+  pdf_task_success_rate_min: 0.9,
+  evidence_coverage_rate_min: 1,
+  tool_permission_violation_count_max: 0,
+  blocked_misreported_completed_count_max: 0,
+});
+const EXPERIENCE_GATE_THRESHOLDS = Object.freeze({
+  task_success_rate_min: 0.85,
+  fake_completion_rate_max: 0.02,
+});
 
 function normalizeServiceModule(modulePath = "") {
   const normalized = cleanText(modulePath);
@@ -127,6 +141,14 @@ function buildUsageLayerRegressionNextStep(selfCheckResult = {}) {
     || (Number.isFinite(Number(metrics?.generic_rate_percent)) ? `${Number(metrics.generic_rate_percent).toFixed(2)}%` : "unknown");
 
   return `先跑 npm run eval:usage-layer；先把 FTHR 拉到 >= ${fthrTarget}% 且 Generic Rate 壓到 <= ${genericTarget}%（目前 FTHR ${fthrMetric}、Generic ${genericMetric}）。`;
+}
+
+function buildCapabilityGateFailureNextStep() {
+  return "先跑 node scripts/production-eval-runner.mjs；修正 PDF 成功率、evidence coverage 與 permission/block 邊界後再跑 npm run release-check:ci。";
+}
+
+function buildExperienceGateFailureNextStep() {
+  return "先跑 node scripts/production-eval-runner.mjs 與 npm run eval:usage-layer；把 task_success_rate 提升到 >= 0.85、fake_completion_rate 壓到 < 0.02，並確認 routing/planner 沒回歸。";
 }
 
 function buildRoutingRegressionNextStep(selfCheckResult = {}) {
@@ -260,6 +282,12 @@ function buildReleaseCheckActionHint({
   if (firstBlockingCheck === BLOCKING_USAGE_LAYER_FAILURE) {
     return "run eval:usage-layer and improve first-turn helpfulness while reducing generic replies";
   }
+  if (firstBlockingCheck === BLOCKING_CAPABILITY_GATE_FAILURE) {
+    return "run production-eval-runner and inspect capability gate metrics";
+  }
+  if (firstBlockingCheck === BLOCKING_EXPERIENCE_GATE_FAILURE) {
+    return "run production-eval-runner and inspect experience gate metrics";
+  }
   if (firstBlockingCheck === BLOCKING_TRUTHFUL_COMPLETION_FAILURE) {
     return "inspect truthful completion gate in executive-orchestrator and verifier coverage metrics";
   }
@@ -318,6 +346,124 @@ function roundNumber(value = 0, digits = 2) {
   return Number(numeric.toFixed(precision));
 }
 
+async function readProductionEvalReport() {
+  try {
+    const payload = JSON.parse(await readFile(PRODUCTION_EVAL_LATEST_PATH, "utf8"));
+    return {
+      available: true,
+      path: PRODUCTION_EVAL_LATEST_PATH,
+      report: payload,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      available: false,
+      path: PRODUCTION_EVAL_LATEST_PATH,
+      report: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function evaluateCapabilityGate({ selfCheckResult = {}, productionEval = {} } = {}) {
+  const report = productionEval?.report || {};
+  const counts = report?.counts || {};
+  const metrics = report?.metrics || {};
+  const sampleSize = report?.sample_size || {};
+  const sampleReady = Number(sampleSize?.total_tasks || 0) > 0;
+
+  const pdfTaskSuccessRate = toFiniteNumber(
+    metrics?.pdf_task_success_rate ?? report?.pdf_task_success_rate,
+    null,
+  );
+  const evidenceCoverageRate = toFiniteNumber(
+    metrics?.evidence_coverage_rate ?? report?.evidence_coverage_rate,
+    null,
+  );
+  const toolPermissionViolationCount = Number(counts?.tool_permission_violation_count || 0);
+  const blockedMisreportedCompletedCount = Number(
+    counts?.blocked_misreported_completed_count
+    ?? selfCheckResult?.truthful_completion_metrics?.metrics?.blocked_misreported_completed_count
+    ?? 0,
+  );
+
+  const reasons = [];
+  if (sampleReady && (pdfTaskSuccessRate == null || pdfTaskSuccessRate < CAPABILITY_GATE_THRESHOLDS.pdf_task_success_rate_min)) {
+    reasons.push("pdf_task_success_rate_below_threshold");
+  }
+  if (sampleReady && (evidenceCoverageRate == null || evidenceCoverageRate < CAPABILITY_GATE_THRESHOLDS.evidence_coverage_rate_min)) {
+    reasons.push("evidence_coverage_rate_below_threshold");
+  }
+  if (sampleReady && toolPermissionViolationCount > CAPABILITY_GATE_THRESHOLDS.tool_permission_violation_count_max) {
+    reasons.push("tool_permission_violation_detected");
+  }
+  if (sampleReady && blockedMisreportedCompletedCount > CAPABILITY_GATE_THRESHOLDS.blocked_misreported_completed_count_max) {
+    reasons.push("blocked_misreported_completed_detected");
+  }
+
+  return {
+    status: !sampleReady ? "unknown" : (reasons.length === 0 ? "pass" : "fail"),
+    reasons,
+    sample_ready: sampleReady,
+    thresholds: CAPABILITY_GATE_THRESHOLDS,
+    metrics: {
+      pdf_task_success_rate: pdfTaskSuccessRate,
+      evidence_coverage_rate: evidenceCoverageRate,
+      tool_permission_violation_count: toolPermissionViolationCount,
+      blocked_misreported_completed_count: blockedMisreportedCompletedCount,
+    },
+  };
+}
+
+function evaluateExperienceGate({ selfCheckResult = {}, productionEval = {} } = {}) {
+  const report = productionEval?.report || {};
+  const metrics = report?.metrics || {};
+  const sampleSize = report?.sample_size || {};
+  const sampleReady = Number(sampleSize?.total_tasks || 0) > 0;
+
+  const taskSuccessRate = toFiniteNumber(
+    metrics?.task_success_rate ?? report?.task_success_rate,
+    null,
+  );
+  const fakeCompletionRate = toFiniteNumber(
+    metrics?.fake_completion_rate ?? report?.fake_completion_rate,
+    null,
+  );
+  const usageLayerPass = cleanText(selfCheckResult?.usage_layer_summary?.status) === "pass";
+  const routingRegression = selfCheckResult?.routing_summary?.compare?.has_obvious_regression === true
+    || cleanText(selfCheckResult?.routing_summary?.status) !== "pass";
+  const plannerRegression = selfCheckResult?.planner_summary?.compare?.has_obvious_regression === true
+    || cleanText(selfCheckResult?.planner_summary?.gate) !== "pass";
+
+  const reasons = [];
+  if (sampleReady && (taskSuccessRate == null || taskSuccessRate < EXPERIENCE_GATE_THRESHOLDS.task_success_rate_min)) {
+    reasons.push("task_success_rate_below_threshold");
+  }
+  if (sampleReady && (fakeCompletionRate == null || fakeCompletionRate >= EXPERIENCE_GATE_THRESHOLDS.fake_completion_rate_max)) {
+    reasons.push("fake_completion_rate_above_threshold");
+  }
+  if (sampleReady && !usageLayerPass) {
+    reasons.push("usage_layer_gate_failure");
+  }
+  if (sampleReady && (routingRegression || plannerRegression)) {
+    reasons.push("routing_or_planner_regression_detected");
+  }
+
+  return {
+    status: !sampleReady ? "unknown" : (reasons.length === 0 ? "pass" : "fail"),
+    reasons,
+    sample_ready: sampleReady,
+    thresholds: EXPERIENCE_GATE_THRESHOLDS,
+    metrics: {
+      task_success_rate: taskSuccessRate,
+      fake_completion_rate: fakeCompletionRate,
+      usage_layer_pass: usageLayerPass,
+      routing_regression: routingRegression,
+      planner_regression: plannerRegression,
+    },
+  };
+}
+
 function buildReleaseRollbackCandidates(blockingChecks = []) {
   const candidates = [];
   for (const blockingCheck of normalizeBlockingChecks(blockingChecks)) {
@@ -331,6 +477,14 @@ function buildReleaseRollbackCandidates(blockingChecks = []) {
     }
     if (blockingCheck === BLOCKING_USAGE_LAYER_FAILURE) {
       candidates.push("rollback latest prompt/routing changes that reduced usage-layer quality");
+      continue;
+    }
+    if (blockingCheck === BLOCKING_CAPABILITY_GATE_FAILURE) {
+      candidates.push("rollback latest capability-path changes and freeze rollout until production eval capability gate recovers");
+      continue;
+    }
+    if (blockingCheck === BLOCKING_EXPERIENCE_GATE_FAILURE) {
+      candidates.push("rollback latest routing/prompt changes and recover task_success_rate + fake_completion_rate");
       continue;
     }
     if (blockingCheck === BLOCKING_TRUTHFUL_COMPLETION_FAILURE) {
@@ -927,11 +1081,37 @@ function buildUsageLayerDrilldown(selfCheckResult = {}) {
   };
 }
 
+function buildProductionEvalDrilldown({
+  productionEval = {},
+  gate = "capability",
+} = {}) {
+  const report = productionEval?.report || {};
+  const failedCases = Array.isArray(report?.failed_cases) ? report.failed_cases : [];
+  const representativeFailCase = failedCases.slice(0, 2).map((item) => (
+    `production_eval:${cleanText(item?.trace_id) || "unknown"}:${cleanText(item?.task_id) || "unknown"}:${cleanText(item?.node_id) || "unknown"}`
+  ));
+
+  if (!productionEval?.available) {
+    representativeFailCase.push("production_eval_report_unavailable");
+  }
+
+  return {
+    failing_area: FAILING_AREA_RUNTIME,
+    representative_fail_case: representativeFailCase.length > 0
+      ? representativeFailCase
+      : [`${gate}_gate_failed_without_failed_case_trace`],
+    drilldown_source: [RELEASE_CHECK_TRIAGE_SOURCE],
+  };
+}
+
 export function buildReleaseCheckDrilldown({
   selfCheckResult = {},
   controlSnapshot = null,
   latestRoutingSnapshot = null,
   plannerReport = null,
+  capabilityGate = null,
+  experienceGate = null,
+  productionEval = null,
   blockingChecks = null,
 } = {}) {
   const resolvedBlockingChecks = Array.isArray(blockingChecks)
@@ -942,6 +1122,8 @@ export function buildReleaseCheckDrilldown({
         ...(hasBlockingDependencyIssue(selfCheckResult) ? [BLOCKING_DEPENDENCY_POLICY_FAILURE] : []),
         ...(hasBlockingWritePolicyIssue(selfCheckResult) ? [BLOCKING_WRITE_POLICY_FAILURE] : []),
         ...(hasBlockingUsageLayerIssue(selfCheckResult) ? [BLOCKING_USAGE_LAYER_FAILURE] : []),
+        ...(capabilityGate?.status === "fail" ? [BLOCKING_CAPABILITY_GATE_FAILURE] : []),
+        ...(experienceGate?.status === "fail" ? [BLOCKING_EXPERIENCE_GATE_FAILURE] : []),
         ...(hasBlockingTruthfulCompletionIssue(selfCheckResult) ? [BLOCKING_TRUTHFUL_COMPLETION_FAILURE] : []),
         ...(hasBlockingCompanyBrainIssue(selfCheckResult) ? [BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE] : []),
         ...(hasBlockingRoutingIssue(selfCheckResult) ? [BLOCKING_ROUTING_REGRESSION] : []),
@@ -963,6 +1145,18 @@ export function buildReleaseCheckDrilldown({
   }
   if (firstBlockingCheck === BLOCKING_USAGE_LAYER_FAILURE) {
     return buildUsageLayerDrilldown(selfCheckResult);
+  }
+  if (firstBlockingCheck === BLOCKING_CAPABILITY_GATE_FAILURE) {
+    return buildProductionEvalDrilldown({
+      productionEval,
+      gate: "capability",
+    });
+  }
+  if (firstBlockingCheck === BLOCKING_EXPERIENCE_GATE_FAILURE) {
+    return buildProductionEvalDrilldown({
+      productionEval,
+      gate: "experience",
+    });
   }
   if (firstBlockingCheck === BLOCKING_TRUTHFUL_COMPLETION_FAILURE) {
     return {
@@ -989,7 +1183,13 @@ export function buildReleaseCheckDrilldown({
   };
 }
 
-export function buildReleaseCheckReport({ selfCheckResult = {}, drilldown = null } = {}) {
+export function buildReleaseCheckReport({
+  selfCheckResult = {},
+  drilldown = null,
+  capabilityGate = null,
+  experienceGate = null,
+  productionEval = null,
+} = {}) {
   const blockingChecks = [];
 
   if (cleanText(selfCheckResult?.system_summary?.core_checks) !== "pass") {
@@ -1010,6 +1210,12 @@ export function buildReleaseCheckReport({ selfCheckResult = {}, drilldown = null
 
   if (hasBlockingUsageLayerIssue(selfCheckResult)) {
     blockingChecks.push(BLOCKING_USAGE_LAYER_FAILURE);
+  }
+  if (capabilityGate?.status === "fail") {
+    blockingChecks.push(BLOCKING_CAPABILITY_GATE_FAILURE);
+  }
+  if (experienceGate?.status === "fail") {
+    blockingChecks.push(BLOCKING_EXPERIENCE_GATE_FAILURE);
   }
   if (hasBlockingTruthfulCompletionIssue(selfCheckResult)) {
     blockingChecks.push(BLOCKING_TRUTHFUL_COMPLETION_FAILURE);
@@ -1043,6 +1249,10 @@ export function buildReleaseCheckReport({ selfCheckResult = {}, drilldown = null
       ? buildWritePolicyRegressionNextStep(selfCheckResult)
     : firstBlockingCheck === BLOCKING_USAGE_LAYER_FAILURE
       ? buildUsageLayerRegressionNextStep(selfCheckResult)
+    : firstBlockingCheck === BLOCKING_CAPABILITY_GATE_FAILURE
+      ? buildCapabilityGateFailureNextStep()
+    : firstBlockingCheck === BLOCKING_EXPERIENCE_GATE_FAILURE
+      ? buildExperienceGateFailureNextStep()
     : firstBlockingCheck === BLOCKING_TRUTHFUL_COMPLETION_FAILURE
       ? "先看 truthful completion gate：src/executive-orchestrator.mjs、src/executive-verifier.mjs、src/system-self-check.mjs；verification 不通過時不得用 completed 語氣。"
     : firstBlockingCheck === BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE
@@ -1073,6 +1283,17 @@ export function buildReleaseCheckReport({ selfCheckResult = {}, drilldown = null
     overall_status: blockingChecks.length === 0 && selfCheckResult?.ok === true ? "pass" : "fail",
     blocking_checks: blockingChecks,
     doc_boundary_regression: docBoundaryRegression,
+    ...(capabilityGate ? { capability_gate: capabilityGate } : {}),
+    ...(experienceGate ? { experience_gate: experienceGate } : {}),
+    ...(productionEval
+      ? {
+          production_eval: {
+            path: productionEval?.path || PRODUCTION_EVAL_LATEST_PATH,
+            available: productionEval?.available === true,
+            ...(productionEval?.error ? { error: productionEval.error } : {}),
+          },
+        }
+      : {}),
     ...(selfCheckResult?.write_summary ? { write_governance: buildWriteGovernanceSummary(selfCheckResult) } : {}),
     suggested_next_step: suggestedNextStep,
     action_hint: actionHint,
@@ -1147,6 +1368,12 @@ function renderBlockingLineLabel(blockingCheck = "") {
   if (blockingCheck === BLOCKING_USAGE_LAYER_FAILURE) {
     return "usage-layer failure";
   }
+  if (blockingCheck === BLOCKING_CAPABILITY_GATE_FAILURE) {
+    return "capability gate failure";
+  }
+  if (blockingCheck === BLOCKING_EXPERIENCE_GATE_FAILURE) {
+    return "experience gate failure";
+  }
   if (blockingCheck === BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE) {
     return "company-brain lifecycle failure";
   }
@@ -1184,6 +1411,8 @@ export function renderReleaseCheckReport(report = {}) {
     ? "這是 doc-boundary 類問題，優先檢查 intent guard；"
     : "";
   const rolloutBasisSummary = report?.write_governance?.rollout_basis_summary || {};
+  const capabilityGate = report?.capability_gate || {};
+  const experienceGate = report?.experience_gate || {};
   const upgradeReady = Array.isArray(report?.write_governance?.upgrade_ready_routes)
     ? uniqValues(report.write_governance.upgrade_ready_routes.map((route) => cleanText(route?.action) || cleanText(route?.pathname)))
     : [];
@@ -1225,7 +1454,7 @@ export function renderReleaseCheckReport(report = {}) {
     ? `${Number(rolloutBasisSummary?.eligible_route_count || 0)}/${Number(rolloutBasisSummary?.candidate_route_count || 0)} ready`
     : "none";
 
-  return [
+  const lines = [
     `能否放心合併/發布：${canMergeOrRelease}`,
     `若不能，先修哪一條線：${renderBlockingLineLabel(firstBlockingLine)}`,
     `下一步：${docBoundaryNote}${actionHint}`,
@@ -1237,7 +1466,11 @@ export function renderReleaseCheckReport(report = {}) {
     `decision-os：score ${decisionOsScore == null ? "unknown" : decisionOsScore}/100 | level ${decisionOsLevel} | gate_pass_rate ${decisionOsGatePassRate}`,
     `decision-os blockers：${decisionOsBlockedReasons.length > 0 ? decisionOsBlockedReasons.join(",") : "none"}`,
     `decision-os rollback：${decisionOsRollbackCandidates.length > 0 ? decisionOsRollbackCandidates.join(" | ") : "none"}`,
-  ].join("\n");
+  ];
+  if (report?.capability_gate || report?.experience_gate) {
+    lines.splice(3, 0, `dual gate：capability ${cleanText(capabilityGate?.status) || "unknown"} | experience ${cleanText(experienceGate?.status) || "unknown"}`);
+  }
+  return lines.join("\n");
 }
 
 export function getReleaseCheckExitCode(report = {}) {
@@ -1292,6 +1525,16 @@ export async function runReleaseCheck(options = {}) {
   let latestControlSnapshot = null;
   let latestRoutingSnapshot = null;
   let plannerReport = null;
+  const productionEval = options?.productionEvalReport
+    ? {
+        available: true,
+        path: "in-memory",
+        report: options.productionEvalReport,
+        error: null,
+      }
+    : await readProductionEvalReport();
+  const capabilityGate = evaluateCapabilityGate({ selfCheckResult, productionEval });
+  const experienceGate = evaluateExperienceGate({ selfCheckResult, productionEval });
 
   try {
     latestControlSnapshot = await resolveControlDiagnosticsSnapshot({
@@ -1344,6 +1587,12 @@ export async function runReleaseCheck(options = {}) {
   if (hasBlockingUsageLayerIssue(selfCheckResult)) {
     blockingChecks.push(BLOCKING_USAGE_LAYER_FAILURE);
   }
+  if (capabilityGate.status === "fail") {
+    blockingChecks.push(BLOCKING_CAPABILITY_GATE_FAILURE);
+  }
+  if (experienceGate.status === "fail") {
+    blockingChecks.push(BLOCKING_EXPERIENCE_GATE_FAILURE);
+  }
   if (hasBlockingTruthfulCompletionIssue(selfCheckResult)) {
     blockingChecks.push(BLOCKING_TRUTHFUL_COMPLETION_FAILURE);
   }
@@ -1361,11 +1610,17 @@ export async function runReleaseCheck(options = {}) {
     controlSnapshot: latestControlSnapshot,
     latestRoutingSnapshot,
     plannerReport,
+    capabilityGate,
+    experienceGate,
+    productionEval,
     blockingChecks,
   });
   const report = buildReleaseCheckReport({
     selfCheckResult,
     drilldown,
+    capabilityGate,
+    experienceGate,
+    productionEval,
   });
   const releaseCheckArchive = await archiveReleaseCheckSnapshot({
     ...(options?.releaseCheckArchiveDir ? { baseDir: options.releaseCheckArchiveDir } : {}),

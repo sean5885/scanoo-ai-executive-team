@@ -156,6 +156,36 @@ function runFullTestGate() {
   };
 }
 
+function runProductionEvalGate() {
+  const commandPlan = {
+    label: "node scripts/production-eval-runner.mjs",
+    spec: parseCommandSpecFromEnv(
+      "RELEASE_CHECK_CI_PRODUCTION_EVAL_COMMAND_JSON",
+      { command: "node", args: ["scripts/production-eval-runner.mjs"] },
+    ),
+  };
+  const execution = runCommandSpec(commandPlan.spec);
+  if (!execution.ok) {
+    return {
+      ok: false,
+      failedCommandLabel: commandPlan.label,
+      failedCommand: renderCommandSpec(commandPlan.spec),
+      failedExitCode: execution.exitCode,
+      failedSignal: execution.signal,
+      stderr: execution.stderr,
+    };
+  }
+
+  return {
+    ok: true,
+    failedCommandLabel: null,
+    failedCommand: null,
+    failedExitCode: null,
+    failedSignal: null,
+    stderr: "",
+  };
+}
+
 if (process.argv.includes("--help")) {
   printUsage();
   process.exit(0);
@@ -165,6 +195,42 @@ const originalWrite = process.stdout.write.bind(process.stdout);
 process.stdout.write = (() => true);
 
 try {
+  const compareSnapshot = getArgValue("--compare-snapshot");
+  const comparePrevious = process.argv.includes("--compare-previous");
+  const selectors = [
+    Boolean(compareSnapshot),
+    comparePrevious,
+  ].filter(Boolean);
+  if (selectors.length > 1) {
+    throw new Error("Choose only one compare selector: --compare-previous or --compare-snapshot");
+  }
+  const compareMode = comparePrevious || compareSnapshot;
+  const shouldRunProductionEvalGate = !compareMode && process.env.RELEASE_CHECK_CI_SKIP_PRODUCTION_EVAL_GATE !== "1";
+
+  if (shouldRunProductionEvalGate) {
+    const productionEvalGateResult = runProductionEvalGate();
+    if (!productionEvalGateResult.ok) {
+      const stderrTail = String(productionEvalGateResult.stderr || "")
+        .trim()
+        .split("\n")
+        .slice(-8)
+        .join("\n");
+      if (stderrTail) {
+        console.error(`release-check ci production eval gate failed: ${productionEvalGateResult.failedCommand || "unknown command"}\n${stderrTail}`);
+      } else {
+        console.error(`release-check ci production eval gate failed: ${productionEvalGateResult.failedCommand || "unknown command"} (exit ${productionEvalGateResult.failedExitCode ?? "unknown"})`);
+      }
+      process.stdout.write = originalWrite;
+      console.log(JSON.stringify({
+        overall_status: "fail",
+        blocking_checks: ["capability_gate_failure"],
+        suggested_next_step: "production-eval-runner failed; fix production eval dataset/runner first.",
+        action_hint: "run production-eval-runner and inspect errors",
+      }, null, 2));
+      process.exit(1);
+    }
+  }
+
   let buildReleaseCheckCompareSummary;
   let applyFullTestGateFailureReport;
   let getReleaseCheckExitCode;
@@ -199,18 +265,6 @@ try {
     representative_fail_case: ["release-check execution failed"],
     drilldown_source: ["release-check triage"],
   };
-  const compareSnapshot = getArgValue("--compare-snapshot");
-  const comparePrevious = process.argv.includes("--compare-previous");
-  const selectors = [
-    Boolean(compareSnapshot),
-    comparePrevious,
-  ].filter(Boolean);
-
-  if (selectors.length > 1) {
-    throw new Error("Choose only one compare selector: --compare-previous or --compare-snapshot");
-  }
-
-  const compareMode = comparePrevious || compareSnapshot;
   const shouldRunFullTestGate = !compareMode && process.env.RELEASE_CHECK_CI_SKIP_FULL_TEST_GATE !== "1";
 
   let output = report;

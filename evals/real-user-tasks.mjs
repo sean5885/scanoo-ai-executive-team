@@ -1,3 +1,9 @@
+import {
+  productionLikeCases,
+  productionLikePackMap,
+  productionLikePacks,
+} from "./production-like/index.mjs";
+
 const GENERAL_ASSISTANT_REPLY = [
   "結論",
   "我可以先幫你把這件事接住。",
@@ -20,7 +26,7 @@ const MEETING_PERMISSION_REPLY = [
   "- 等你重新登入後，我就能直接幫你整理；如果你現在先貼內容，我也可以先幫你整理重點。",
 ].join("\n");
 
-export const tasks = [
+export const legacyConversationSnapshotTasks = [
   {
     id: "meeting-organize-basic",
     message: "幫我整理會議",
@@ -132,3 +138,19 @@ export const tasks = [
     },
   },
 ];
+
+export const realUserTaskPacks = Object.freeze({
+  legacy_conversation_snapshot: Object.freeze({
+    id: "legacy-conversation-snapshot",
+    description: "原始 real-user 對話快照回歸包",
+    cases: Object.freeze(legacyConversationSnapshotTasks),
+  }),
+  ...productionLikePackMap,
+});
+
+export {
+  productionLikeCases,
+  productionLikePacks,
+};
+
+export const tasks = legacyConversationSnapshotTasks;
