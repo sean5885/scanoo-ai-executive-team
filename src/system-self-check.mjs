@@ -125,6 +125,7 @@ const REQUIRED_DOC_SYNC_PATHS = Object.freeze([
   "docs/system/data_flow.md",
   "docs/system/closed_loop.md",
 ]);
+const PRODUCTION_EVAL_LATEST_PATH = process.env.PRODUCTION_EVAL_REPORT_PATH || ".data/evals/production/latest.json";
 
 function resolveUsageLayerGateStage(stage = "") {
   const normalized = cleanText(stage || process.env.USAGE_LAYER_GATE_STAGE || "").toLowerCase();
@@ -233,18 +234,20 @@ function buildDocConsistencySignal() {
 }
 
 async function buildTruthfulCompletionMetricsSummary() {
-  let rawStore = null;
+  let rawStore = {};
+  let taskStoreError = null;
   try {
     rawStore = await readJsonFile(executiveTaskStateStorePath);
   } catch (error) {
-    return {
-      version: TRUTHFUL_COMPLETION_METRICS_VERSION,
-      status: "unknown",
-      summary: "truthful completion metrics unavailable",
-      thresholds: TRUTHFUL_COMPLETION_THRESHOLDS,
-      error: error instanceof Error ? error.message : String(error),
-      metrics: {},
-    };
+    taskStoreError = error instanceof Error ? error.message : String(error);
+  }
+
+  let productionEval = null;
+  let productionEvalError = null;
+  try {
+    productionEval = await readJsonFile(PRODUCTION_EVAL_LATEST_PATH);
+  } catch (error) {
+    productionEvalError = error instanceof Error ? error.message : String(error);
   }
 
   const tasks = normalizeTaskListFromStore(rawStore);
@@ -279,21 +282,70 @@ async function buildTruthfulCompletionMetricsSummary() {
   const verifierCoverageRate = safeRatio(verifierCoveredCount, importantTaskTotal);
   const parallelRatio = safeRatio(parallelStepCount, totalStepCount);
   const docConsistency = buildDocConsistencySignal();
+
+  const productionMetrics = productionEval?.metrics && typeof productionEval.metrics === "object"
+    ? productionEval.metrics
+    : {};
+  const productionCounts = productionEval?.counts && typeof productionEval.counts === "object"
+    ? productionEval.counts
+    : {};
+  const productionSampleSize = productionEval?.sample_size && typeof productionEval.sample_size === "object"
+    ? productionEval.sample_size
+    : {};
+  const productionTaskTotal = Number(productionSampleSize.total_tasks || 0);
+  const productionImportantTotal = Number(
+    productionSampleSize.important_task_total
+    || productionTaskTotal,
+  );
+
+  const resolvedPdfSuccessRate = productionTaskTotal > 0
+    ? safeRatio(
+      productionCounts.pdf_passed_tasks,
+      productionCounts.pdf_task_total,
+    )
+    : pdfSuccessRate;
+  const resolvedFakeCompletionRate = productionTaskTotal > 0
+    ? safeRatio(
+      productionCounts.fake_completion_count,
+      productionImportantTotal,
+    )
+    : fakeCompletionRate;
+  const resolvedParallelRatio = productionTaskTotal > 0
+    ? safeRatio(productionCounts.serial_estimated_ms, productionCounts.wall_time_ms)
+    : parallelRatio;
+  const resolvedVerifierCoverageRate = productionTaskTotal > 0
+    ? safeRatio(
+      productionCounts.artifacts_present_required,
+      productionCounts.artifacts_required_total,
+    )
+    : verifierCoverageRate;
+  const resolvedBlockedMisreportedCompleted = productionTaskTotal > 0
+    ? Number(productionCounts.blocked_misreported_completed_count || 0)
+    : blockedMisreportedCompleted;
+
   const hasSufficientSample = importantTaskTotal >= 40 && pdfE2eTotal >= 1 && totalStepCount >= 10;
+  const hasSufficientProductionSample = productionTaskTotal >= 100;
+  const hasGateSample = hasSufficientProductionSample || hasSufficientSample;
 
   const metricChecks = [
-    pdfSuccessRate == null || pdfSuccessRate >= TRUTHFUL_COMPLETION_THRESHOLDS.pdf_success_rate_min,
-    fakeCompletionRate == null || fakeCompletionRate < TRUTHFUL_COMPLETION_THRESHOLDS.fake_completion_rate_max,
-    verifierCoverageRate == null || verifierCoverageRate >= TRUTHFUL_COMPLETION_THRESHOLDS.verifier_coverage_rate_min,
-    parallelRatio == null || parallelRatio >= TRUTHFUL_COMPLETION_THRESHOLDS.parallel_ratio_min,
-    blockedMisreportedCompleted <= TRUTHFUL_COMPLETION_THRESHOLDS.blocked_misreported_completed_max,
+    resolvedPdfSuccessRate == null || resolvedPdfSuccessRate >= TRUTHFUL_COMPLETION_THRESHOLDS.pdf_success_rate_min,
+    resolvedFakeCompletionRate == null || resolvedFakeCompletionRate < TRUTHFUL_COMPLETION_THRESHOLDS.fake_completion_rate_max,
+    resolvedVerifierCoverageRate == null || resolvedVerifierCoverageRate >= TRUTHFUL_COMPLETION_THRESHOLDS.verifier_coverage_rate_min,
+    resolvedParallelRatio == null || resolvedParallelRatio >= TRUTHFUL_COMPLETION_THRESHOLDS.parallel_ratio_min,
+    resolvedBlockedMisreportedCompleted <= TRUTHFUL_COMPLETION_THRESHOLDS.blocked_misreported_completed_max,
     docConsistency.rate >= TRUTHFUL_COMPLETION_THRESHOLDS.documentation_consistency_rate_min,
   ];
-  const status = !hasSufficientSample
+  const status = !hasGateSample
     ? "unknown"
     : metricChecks.every(Boolean)
       ? "pass"
       : "fail";
+
+  const source = hasSufficientProductionSample
+    ? "production_eval"
+    : hasSufficientSample
+      ? "task_store"
+      : "insufficient_sample";
 
   return {
     version: TRUTHFUL_COMPLETION_METRICS_VERSION,
@@ -304,6 +356,19 @@ async function buildTruthfulCompletionMetricsSummary() {
         ? "truthful completion metrics have threshold violations"
         : "truthful completion metrics sample is not large enough for strict gating",
     thresholds: TRUTHFUL_COMPLETION_THRESHOLDS,
+    source,
+    data_sources: {
+      task_store: {
+        path: executiveTaskStateStorePath,
+        available: taskStoreError == null,
+        ...(taskStoreError ? { error: taskStoreError } : {}),
+      },
+      production_eval: {
+        path: PRODUCTION_EVAL_LATEST_PATH,
+        available: productionEvalError == null && productionEval != null,
+        ...(productionEvalError ? { error: productionEvalError } : {}),
+      },
+    },
     metrics: {
       important_task_total: importantTaskTotal,
       pdf_e2e_pass: pdfE2ePass,
@@ -320,7 +385,25 @@ async function buildTruthfulCompletionMetricsSummary() {
       documentation_consistency_rate: docConsistency.rate,
       documentation_consistency: docConsistency,
       sample_ready_for_gate: hasSufficientSample,
+      production_sample_ready_for_gate: hasSufficientProductionSample,
+      production_task_total: productionTaskTotal,
+      production_metrics: {
+        task_success_rate: productionMetrics.task_success_rate ?? null,
+        fake_completion_rate: productionMetrics.fake_completion_rate ?? null,
+        evidence_coverage_rate: productionMetrics.evidence_coverage_rate ?? null,
+        agent_parallel_efficiency: productionMetrics.agent_parallel_efficiency ?? null,
+        pdf_task_success_rate: productionMetrics.pdf_task_success_rate ?? null,
+      },
+      gate_effective_metrics: {
+        source,
+        pdf_task_success_rate: resolvedPdfSuccessRate,
+        fake_completion_rate: resolvedFakeCompletionRate,
+        verifier_coverage_rate: resolvedVerifierCoverageRate,
+        parallel_ratio: resolvedParallelRatio,
+        blocked_misreported_completed_count: resolvedBlockedMisreportedCompleted,
+      },
     },
+    ...(taskStoreError ? { warning: "task_store_unavailable_but_production_metrics_may_still_be_available" } : {}),
   };
 }
 

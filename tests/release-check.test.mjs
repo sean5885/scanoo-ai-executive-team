@@ -7,6 +7,12 @@ import path from "node:path";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
+const originalProductionEvalReportPath = process.env.PRODUCTION_EVAL_REPORT_PATH;
+process.env.PRODUCTION_EVAL_REPORT_PATH = path.join(
+  os.tmpdir(),
+  `release-check-test-production-eval-missing-${Date.now()}.json`,
+);
+
 const testDb = await createTestDbHarness();
 const [
   {
@@ -37,6 +43,11 @@ const [
 ]);
 
 test.after(() => {
+  if (originalProductionEvalReportPath === undefined) {
+    delete process.env.PRODUCTION_EVAL_REPORT_PATH;
+  } else {
+    process.env.PRODUCTION_EVAL_REPORT_PATH = originalProductionEvalReportPath;
+  }
   testDb.close();
 });
 
@@ -252,7 +263,13 @@ function stripDecisionOsReadiness(report = {}) {
   if (!report || typeof report !== "object" || Array.isArray(report)) {
     return report;
   }
-  const { decision_os_readiness: _decisionOsReadiness, ...rest } = report;
+  const {
+    decision_os_readiness: _decisionOsReadiness,
+    capability_gate: _capabilityGate,
+    experience_gate: _experienceGate,
+    production_eval: _productionEval,
+    ...rest
+  } = report;
   return rest;
 }
 
