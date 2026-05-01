@@ -68,9 +68,21 @@ For this closure-planning pass:
     - this item remains `open` for release-acceptance closure (implementation exists; KPI proof packaging still pending).
     - Evidence:
       - `/Users/seanhan/Documents/Playground/src/executive-work-graph.mjs`
-      - `/Users/seanhan/Documents/Playground/src/worker/autonomy-worker-loop.mjs`
-      - `/Users/seanhan/Documents/Playground/scripts/autonomy-operator-cli.mjs`
-      - `/Users/seanhan/Documents/Playground/tests/executive-work-graph.test.mjs`
+    - `/Users/seanhan/Documents/Playground/src/worker/autonomy-worker-loop.mjs`
+    - `/Users/seanhan/Documents/Playground/scripts/autonomy-operator-cli.mjs`
+    - `/Users/seanhan/Documents/Playground/tests/executive-work-graph.test.mjs`
+23. Week 9/10 production-like quality gate packaging is now code-complete as of 2026-04-30, but rollout drill evidence remains open:
+    - checked-in code now includes:
+      - production-like eval packs (100 cases)
+      - `scripts/production-eval-runner.mjs`
+      - `scripts/quality-dashboard.mjs`
+      - dual gate in `src/release-check.mjs` (`capability_gate_failure`, `experience_gate_failure`)
+      - `scripts/release-check-ci.mjs` pre-step production eval gate
+      - gray/rollback runbook at `/Users/seanhan/Documents/Playground/docs/system/release_gray_rollback_runbook.md`
+    - however, no checked-in ops evidence currently proves:
+      - 5%/20%/50%/100% gray rollout rehearsal was executed end-to-end
+      - rollback incident + deadletter replay checklist was exercised on a real window
+    - this item remains `open` as an operations-evidence closure gap (runtime gates are implemented; rehearsal logs are not yet checked in).
 
 ## Ranked Closure Threads
 
