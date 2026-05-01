@@ -4,7 +4,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 本文件用來做目前 Lobster 系統的收口檢查。所有結論都以程式碼、設定、測試與已提交文檔為依據，不使用舊聊天上下文或推測補齊。
 
-Last verified in this repo on 2026-04-28.
+Last verified in this repo on 2026-04-30.
 
 本次額外驗證：
 
@@ -14,6 +14,38 @@ Last verified in this repo on 2026-04-28.
 - `npm run routing:closed-loop -- rerun`
 - `node scripts/memory-influence-gate.mjs --json`
 - `npm run release-check:ci`
+- `node scripts/production-eval-runner.mjs --json`
+- `node scripts/quality-dashboard.mjs`
+
+## 0A. Week 9/10 Quality Gate Baseline
+
+整體狀態：已落地（雙門檻 gate 可執行）
+
+- production-like eval pack 已擴充為 4 組、100 case：
+  - `pdf-single-doc`
+  - `pdf-cross-doc`
+  - `long-task`
+  - `multi-agent-collab`
+- `node scripts/production-eval-runner.mjs --json` 會固定輸出 `.data/evals/production/latest.json`，包含：
+  - `task_success_rate`
+  - `fake_completion_rate`
+  - `evidence_coverage_rate`
+  - `agent_parallel_efficiency`
+  - `failed_cases[] (trace_id/task_id/node_id)`
+- 目前實測樣本（2026-04-30）：
+  - `task_success_rate=0.89`
+  - `fake_completion_rate=0.01`
+  - `evidence_coverage_rate=1`
+  - `agent_parallel_efficiency=1.524`
+  - `pdf_task_success_rate=0.90`
+- `release-check` 已新增 dual gate：
+  - `capability_gate_failure`
+  - `experience_gate_failure`
+- `release-check:ci` 已改成先跑 production eval runner，再跑 release-check；任一 gate fail 即 exit 1。
+- quality dashboard 已新增：
+  - `node scripts/quality-dashboard.mjs`
+  - 輸出 `.data/dashboard/quality-latest.json`
+  - 讀取 self-check / control-diagnostics / production eval latest + trend + failed case drilldown。
 
 ## 0. WS-4 Observability And Readiness Gate
 
