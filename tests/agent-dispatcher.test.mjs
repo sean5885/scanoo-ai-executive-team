@@ -121,7 +121,7 @@ test("executeRegisteredAgent intercepts raw JSON string payload before it reache
     },
   });
 
-  assert.match(result.text, /^結論/m);
+  assert.match(result.text, /^答案/m);
   assert.match(result.text, /最缺 owner、deadline/);
   assert.doesNotMatch(result.text, /^{|```json|\"ok\"|\"answer\"|\"sources\"|\"limitations\"/);
 });
@@ -149,7 +149,7 @@ test("executeRegisteredAgent intercepts raw JSON object payload and keeps machin
     },
   });
 
-  assert.match(result.text, /^結論/m);
+  assert.match(result.text, /^答案/m);
   assert.match(result.text, /先補 owner 與驗收條件/);
   assert.doesNotMatch(result.text, /missing_fields|mock-structured-object|^{|\"details\"|\"context\"/);
   assert.deepEqual(result.details, {
@@ -212,7 +212,7 @@ test("executeRegisteredAgent intercepts fenced JSON error blob and preserves pro
     },
   });
 
-  assert.match(result.text, /^結論/m);
+  assert.match(result.text, /^答案/m);
   assert.match(result.text, /結構化錯誤結果|自然語言摘要/);
   assert.doesNotMatch(result.text, /```json|registered_agent_generation_failed|schema_invalid|\"error\"|\"details\"|\"context\"/);
   assert.equal(result.error, "registered_agent_generation_failed");
@@ -268,7 +268,7 @@ test("dispatchRegisteredAgentCommand no-match reply is natural language instead 
   });
 
   assert.ok(result);
-  assert.match(result.text, /^結論/m);
+  assert.match(result.text, /^答案/m);
   assert.match(result.text, /registered agent|slash 指令/);
   assert.doesNotMatch(result.text, /ROUTING_NO_MATCH|registered_agent_command_no_match|\"ok\"|\"error\"|\"details\"/);
 });

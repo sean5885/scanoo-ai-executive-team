@@ -92,7 +92,7 @@ test("personal DM explicit find-skill request enters planner and hits the bounde
   assert.equal(captured.length, 1);
   assert.equal(captured[0].intent, "skill_find_request");
   assert.equal(captured[0].query, "find-skills");
-  assert.match(reply.text, /^結論\n/);
+  assert.match(reply.text, /^答案\n/);
   assert.match(reply.text, /找到 1 個 skill/);
 });
 

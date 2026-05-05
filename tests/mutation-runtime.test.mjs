@@ -877,7 +877,7 @@ test("runMutation blocks cloud-doc apply after execute when apply evidence is mi
   assert.equal(result.ok, false);
   assert.equal(result.error, "mutation_verifier_blocked");
   assert.equal(result.data?.verifier?.phase, "post");
-  assert.equal(result.data?.verifier?.reason, "insufficient_evidence");
+  assert.equal(result.data?.verifier?.reason, "artifact_missing");
 });
 
 test("runMutation blocks company-brain apply before execute when lifecycle gate is not satisfied", async () => {
