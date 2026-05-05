@@ -339,6 +339,9 @@ Current-truth docs for onboarding are:
   - attachment/modality ingress now has a minimal PDF recognition path:
     - `/Users/seanhan/Documents/Playground/src/message-intent-utils.mjs` adds `extractAttachmentObjects(...)` and extracts `file_key/file_token/name/mime/ext` from structured attachment payloads
     - `/Users/seanhan/Documents/Playground/src/modality-router.mjs` now classifies `pdf` and `pdf_multimodal` in addition to `text/image/multimodal`
+    - `/Users/seanhan/Documents/Playground/src/pdf-read-service.mjs` provides concrete PDF read/parse flow (`url` / `file_token` / `file_key` / `local_path`) and bounded fail-soft reply shaping
+    - `/Users/seanhan/Documents/Playground/src/lark-connectors.mjs` now includes `downloadDriveFileBuffer(...)` for Lark Drive PDF bytes retrieval
+    - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` now has a dedicated `executePdfTaskReply(...)` branch that returns canonical `answer/sources/limitations` instead of falling through generic text lane
     - image-only execution paths in `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` and `/Users/seanhan/Documents/Playground/src/agent-dispatcher.mjs` now avoid treating PDF modality as image analysis input
   - `user-response-normalizer.mjs` now only reads canonical `execution_result.data.answer / sources / limitations`
   - answer boundary now also runs a deterministic usage-layer intelligence pass:
@@ -366,6 +369,12 @@ Current-truth docs for onboarding are:
     - `blocked_misreported_completed_count` (`=0`)
     - `documentation_consistency_rate` over required doc mirror paths (`=1.0`)
   - `release-check.mjs` now blocks on `truthful_completion_metrics.status=fail`; sample-insufficient `unknown` does not hard-block release
+  - `release-check.mjs` now reads live eval from `.data/evals/live/latest.json` and adds explicit gate ordering:
+    - `live_eval_required`
+    - `capability_gate_failure`
+    - `experience_gate_failure`
+    - `collab_gate_failure`
+  - collab gate runtime metrics now come from `/Users/seanhan/Documents/Playground/src/executive-live-metrics.mjs`; gate only enters pass/fail when sample basis is complete (`graph + deadletter + parallel`)
   - planner/read evidence is converted into public `sources[]` lines through canonical source mapping
 - Secondary implemented path:
   - `/Users/seanhan/Documents/Playground/src/answer-service.mjs`

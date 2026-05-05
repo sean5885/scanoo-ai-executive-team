@@ -4,7 +4,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 本文件用來做目前 Lobster 系統的收口檢查。所有結論都以程式碼、設定、測試與已提交文檔為依據，不使用舊聊天上下文或推測補齊。
 
-Last verified in this repo on 2026-04-30.
+Last verified in this repo on 2026-05-05.
 
 本次額外驗證：
 
@@ -14,38 +14,44 @@ Last verified in this repo on 2026-04-30.
 - `npm run routing:closed-loop -- rerun`
 - `node scripts/memory-influence-gate.mjs --json`
 - `npm run release-check:ci`
-- `node scripts/production-eval-runner.mjs --json`
+- `node scripts/live-eval-runner.mjs --json`
 - `node scripts/quality-dashboard.mjs`
 
-## 0A. Week 9/10 Quality Gate Baseline
+## 0A. Week 9/10 Quality Gate Baseline (Live Gate)
 
 整體狀態：已落地（雙門檻 gate 可執行）
 
-- production-like eval pack 已擴充為 4 組、100 case：
+- live eval pack 已固定為 4 類、20 case（每類 5 case）：
   - `pdf-single-doc`
   - `pdf-cross-doc`
   - `long-task`
   - `multi-agent-collab`
-- `node scripts/production-eval-runner.mjs --json` 會固定輸出 `.data/evals/production/latest.json`，包含：
+- `node scripts/live-eval-runner.mjs --json` 會固定輸出 `.data/evals/live/latest.json`，包含：
   - `task_success_rate`
   - `fake_completion_rate`
   - `evidence_coverage_rate`
   - `agent_parallel_efficiency`
   - `failed_cases[] (trace_id/task_id/node_id)`
-- 目前實測樣本（2026-04-30）：
-  - `task_success_rate=0.89`
-  - `fake_completion_rate=0.01`
+- 目前實測樣本（2026-05-05）：
+  - `task_success_rate=1`
+  - `fake_completion_rate=0`
   - `evidence_coverage_rate=1`
-  - `agent_parallel_efficiency=1.524`
-  - `pdf_task_success_rate=0.90`
+  - `agent_parallel_efficiency=1.4918`
+  - `pdf_task_success_rate=1`
 - `release-check` 已新增 dual gate：
+  - `live_eval_required`
   - `capability_gate_failure`
   - `experience_gate_failure`
-- `release-check:ci` 已改成先跑 production eval runner，再跑 release-check；任一 gate fail 即 exit 1。
+- `release-check:ci` 已改成先跑 live eval runner，再跑 release-check；任一 gate fail 即 exit 1。
+- `collab_gate` 已接入 `executive_live_metrics`，但只在樣本足夠時才會 hard fail：
+  - `sample_basis.has_graph_sample`
+  - `sample_basis.has_deadletter_sample`
+  - `sample_basis.has_parallel_sample`
+  - 三者同時為 `true` 才進入 `pass/fail` 判定，否則 `status=unknown`（不假裝通過，也不誤判失敗）。
 - quality dashboard 已新增：
   - `node scripts/quality-dashboard.mjs`
   - 輸出 `.data/dashboard/quality-latest.json`
-  - 讀取 self-check / control-diagnostics / production eval latest + trend + failed case drilldown。
+  - 讀取 self-check / control-diagnostics / live eval latest + trend + failed case drilldown。
 
 ## 0. WS-4 Observability And Readiness Gate
 
@@ -54,7 +60,7 @@ Last verified in this repo on 2026-04-30.
 - `check:self`：`ok=true`，`decision_os_observability` 已落地並輸出：
   - `readiness_score.score=92.5`
   - `readiness_score.level=ready`
-  - `gate_summary=10/10 passed`
+  - `gate_summary=11/11 passed`
   - `verification_fail_taxonomy.status=pass`
   - `closed_loop_metrics.routing_closed_loop.status=pass`
   - `closed_loop_metrics.memory_influence.status=unknown`（預設未注入 memory gate runner）

@@ -10,6 +10,8 @@ function getArgValue(flag = "") {
 
 const writeSummaryFixturePath = process.env.SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE || "";
 const usageSummaryFixturePath = process.env.SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE || "";
+const productionEvalFixturePath = process.env.RELEASE_CHECK_PRODUCTION_EVAL_FIXTURE || "";
+const executiveLiveMetricsFixturePath = process.env.RELEASE_CHECK_EXECUTIVE_LIVE_METRICS_FIXTURE || "";
 
 function printUsage() {
   console.log([
@@ -21,7 +23,12 @@ function printUsage() {
 }
 
 async function resolveRuntimeOverrides() {
-  if (!writeSummaryFixturePath && !usageSummaryFixturePath) {
+  if (
+    !writeSummaryFixturePath
+    && !usageSummaryFixturePath
+    && !productionEvalFixturePath
+    && !executiveLiveMetricsFixturePath
+  ) {
     return {};
   }
 
@@ -38,6 +45,14 @@ async function resolveRuntimeOverrides() {
     const raw = await readFile(usageSummaryFixturePath, "utf8");
     const summary = JSON.parse(raw);
     overrides.usageLayerCheck = async () => summary;
+  }
+  if (productionEvalFixturePath) {
+    const raw = await readFile(productionEvalFixturePath, "utf8");
+    overrides.productionEvalReport = JSON.parse(raw);
+  }
+  if (executiveLiveMetricsFixturePath) {
+    const raw = await readFile(executiveLiveMetricsFixturePath, "utf8");
+    overrides.executiveLiveMetrics = JSON.parse(raw);
   }
 
   return overrides;
@@ -156,12 +171,12 @@ function runFullTestGate() {
   };
 }
 
-function runProductionEvalGate() {
+function runLiveEvalGate() {
   const commandPlan = {
-    label: "node scripts/production-eval-runner.mjs",
+    label: "node scripts/live-eval-runner.mjs",
     spec: parseCommandSpecFromEnv(
-      "RELEASE_CHECK_CI_PRODUCTION_EVAL_COMMAND_JSON",
-      { command: "node", args: ["scripts/production-eval-runner.mjs"] },
+      "RELEASE_CHECK_CI_LIVE_EVAL_COMMAND_JSON",
+      { command: "node", args: ["scripts/live-eval-runner.mjs"] },
     ),
   };
   const execution = runCommandSpec(commandPlan.spec);
@@ -205,27 +220,27 @@ try {
     throw new Error("Choose only one compare selector: --compare-previous or --compare-snapshot");
   }
   const compareMode = comparePrevious || compareSnapshot;
-  const shouldRunProductionEvalGate = !compareMode && process.env.RELEASE_CHECK_CI_SKIP_PRODUCTION_EVAL_GATE !== "1";
+  const shouldRunLiveEvalGate = !compareMode && process.env.RELEASE_CHECK_CI_SKIP_LIVE_EVAL_GATE !== "1";
 
-  if (shouldRunProductionEvalGate) {
-    const productionEvalGateResult = runProductionEvalGate();
-    if (!productionEvalGateResult.ok) {
-      const stderrTail = String(productionEvalGateResult.stderr || "")
+  if (shouldRunLiveEvalGate) {
+    const liveEvalGateResult = runLiveEvalGate();
+    if (!liveEvalGateResult.ok) {
+      const stderrTail = String(liveEvalGateResult.stderr || "")
         .trim()
         .split("\n")
         .slice(-8)
         .join("\n");
       if (stderrTail) {
-        console.error(`release-check ci production eval gate failed: ${productionEvalGateResult.failedCommand || "unknown command"}\n${stderrTail}`);
+        console.error(`release-check ci live eval gate failed: ${liveEvalGateResult.failedCommand || "unknown command"}\n${stderrTail}`);
       } else {
-        console.error(`release-check ci production eval gate failed: ${productionEvalGateResult.failedCommand || "unknown command"} (exit ${productionEvalGateResult.failedExitCode ?? "unknown"})`);
+        console.error(`release-check ci live eval gate failed: ${liveEvalGateResult.failedCommand || "unknown command"} (exit ${liveEvalGateResult.failedExitCode ?? "unknown"})`);
       }
       process.stdout.write = originalWrite;
       console.log(JSON.stringify({
         overall_status: "fail",
-        blocking_checks: ["capability_gate_failure"],
-        suggested_next_step: "production-eval-runner failed; fix production eval dataset/runner first.",
-        action_hint: "run production-eval-runner and inspect errors",
+        blocking_checks: ["live_eval_required"],
+        suggested_next_step: "live-eval-runner failed; fix live evaluation dataset/runner first.",
+        action_hint: "run live-eval-runner and inspect errors",
       }, null, 2));
       process.exit(1);
     }

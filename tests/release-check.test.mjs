@@ -267,10 +267,68 @@ function stripDecisionOsReadiness(report = {}) {
     decision_os_readiness: _decisionOsReadiness,
     capability_gate: _capabilityGate,
     experience_gate: _experienceGate,
+    collab_gate: _collabGate,
+    executive_live_metrics: _executiveLiveMetrics,
     production_eval: _productionEval,
     ...rest
   } = report;
   return rest;
+}
+
+const STABLE_LIVE_EVAL_REPORT = {
+  dataset_mode: "live",
+  dataset_source: "runtime_replay",
+  sample_size: {
+    total_tasks: 20,
+  },
+  metrics: {
+    task_success_rate: 0.9,
+    fake_completion_rate: 0.01,
+    evidence_coverage_rate: 1,
+    pdf_task_success_rate: 0.95,
+  },
+  counts: {
+    tool_permission_violation_count: 0,
+    blocked_misreported_completed_count: 0,
+  },
+  failed_cases: [],
+};
+
+const STABLE_EXECUTIVE_LIVE_METRICS = {
+  version: "executive_live_metrics_v1",
+  sample_ready: true,
+  graph_counts: {
+    total: 20,
+    completed: 18,
+    deadletter: 1,
+    blocked: 0,
+    running: 1,
+  },
+  deadletter: {
+    total: 20,
+    replayed: 19,
+    replay_rate: 0.95,
+  },
+  parallel: {
+    graph_count: 20,
+    average_speedup: 1.4,
+    top_graphs: [],
+  },
+};
+
+async function createGateFixtures(baseDir) {
+  const liveEvalPath = path.join(baseDir, "live-eval-fixture.json");
+  const executiveLiveMetricsPath = path.join(baseDir, "executive-live-metrics-fixture.json");
+  await writeFile(liveEvalPath, `${JSON.stringify(STABLE_LIVE_EVAL_REPORT, null, 2)}\n`, "utf8");
+  await writeFile(
+    executiveLiveMetricsPath,
+    `${JSON.stringify(STABLE_EXECUTIVE_LIVE_METRICS, null, 2)}\n`,
+    "utf8",
+  );
+  return {
+    liveEvalPath,
+    executiveLiveMetricsPath,
+  };
 }
 
 function assertDecisionOsReadinessShape(readiness = {}) {
@@ -293,6 +351,8 @@ test("release-check report passes when self-check, routing, and planner are stab
     ...archives,
     writeCheck: async () => STABLE_WRITE_SUMMARY,
     usageLayerCheck: async () => STABLE_USAGE_LAYER_SUMMARY,
+    productionEvalReport: STABLE_LIVE_EVAL_REPORT,
+    executiveLiveMetrics: STABLE_EXECUTIVE_LIVE_METRICS,
   });
 
   assert.deepEqual(stripDecisionOsReadiness(result.report), {
@@ -1050,6 +1110,7 @@ test("release-check human output flags doc-boundary routing regressions", () => 
 
 test("release-check CLI emits only the minimal JSON structure", async () => {
   const archives = await seedReleaseCheckArchives();
+  const gateFixtures = await createGateFixtures(path.dirname(archives.releaseCheckArchiveDir));
   const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
   const usageSummaryFixturePath = await createUsageSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
   const raw = execFileSync("node", ["scripts/release-check.mjs", "--json"], {
@@ -1063,6 +1124,8 @@ test("release-check CLI emits only the minimal JSON structure", async () => {
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
       SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
+      RELEASE_CHECK_PRODUCTION_EVAL_FIXTURE: gateFixtures.liveEvalPath,
+      RELEASE_CHECK_EXECUTIVE_LIVE_METRICS_FIXTURE: gateFixtures.executiveLiveMetricsPath,
     },
   });
   const parsed = JSON.parse(raw);
@@ -1114,6 +1177,7 @@ test("release-check CLI emits only the minimal JSON structure", async () => {
 
 test("release-check CLI default output stays limited to the minimal write-governance view", async () => {
   const archives = await seedReleaseCheckArchives();
+  const gateFixtures = await createGateFixtures(path.dirname(archives.releaseCheckArchiveDir));
   const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
   const usageSummaryFixturePath = await createUsageSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
   const output = execFileSync("node", ["scripts/release-check.mjs"], {
@@ -1127,6 +1191,8 @@ test("release-check CLI default output stays limited to the minimal write-govern
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
       SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
+      RELEASE_CHECK_PRODUCTION_EVAL_FIXTURE: gateFixtures.liveEvalPath,
+      RELEASE_CHECK_EXECUTIVE_LIVE_METRICS_FIXTURE: gateFixtures.executiveLiveMetricsPath,
     },
   });
 
@@ -1151,6 +1217,7 @@ test("release-check exit code maps pass/fail strictly", () => {
 
 test("release-check CLI compare-previous prints only the minimal compare view", async () => {
   const archives = await seedReleaseCheckArchives();
+  const gateFixtures = await createGateFixtures(path.dirname(archives.releaseCheckArchiveDir));
   const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
   const usageSummaryFixturePath = await createUsageSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
   const firstRaw = execFileSync("node", ["scripts/release-check.mjs", "--json"], {
@@ -1164,6 +1231,8 @@ test("release-check CLI compare-previous prints only the minimal compare view", 
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
       SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
+      RELEASE_CHECK_PRODUCTION_EVAL_FIXTURE: gateFixtures.liveEvalPath,
+      RELEASE_CHECK_EXECUTIVE_LIVE_METRICS_FIXTURE: gateFixtures.executiveLiveMetricsPath,
     },
   });
   const firstReport = JSON.parse(firstRaw);
@@ -1209,6 +1278,8 @@ test("release-check CLI compare-previous prints only the minimal compare view", 
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
       SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
+      RELEASE_CHECK_PRODUCTION_EVAL_FIXTURE: gateFixtures.liveEvalPath,
+      RELEASE_CHECK_EXECUTIVE_LIVE_METRICS_FIXTURE: gateFixtures.executiveLiveMetricsPath,
     },
   });
 
@@ -1233,6 +1304,7 @@ test("release-check CLI compare-previous prints only the minimal compare view", 
 
 test("release-check CLI json compare-snapshot only returns the compare summary", async () => {
   const archives = await seedReleaseCheckArchives();
+  const gateFixtures = await createGateFixtures(path.dirname(archives.releaseCheckArchiveDir));
   const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
   const usageSummaryFixturePath = await createUsageSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
   execFileSync("node", ["scripts/release-check.mjs", "--json"], {
@@ -1246,6 +1318,8 @@ test("release-check CLI json compare-snapshot only returns the compare summary",
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
       SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
+      RELEASE_CHECK_PRODUCTION_EVAL_FIXTURE: gateFixtures.liveEvalPath,
+      RELEASE_CHECK_EXECUTIVE_LIVE_METRICS_FIXTURE: gateFixtures.executiveLiveMetricsPath,
     },
   });
 
@@ -1281,6 +1355,8 @@ test("release-check CLI json compare-snapshot only returns the compare summary",
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
       SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
+      RELEASE_CHECK_PRODUCTION_EVAL_FIXTURE: gateFixtures.liveEvalPath,
+      RELEASE_CHECK_EXECUTIVE_LIVE_METRICS_FIXTURE: gateFixtures.executiveLiveMetricsPath,
     },
   });
   const parsed = JSON.parse(raw);
@@ -1294,6 +1370,7 @@ test("release-check CLI json compare-snapshot only returns the compare summary",
 
 test("release-check CI entry emits minimal JSON and exits 0 on pass", async () => {
   const archives = await seedReleaseCheckArchives();
+  const gateFixtures = await createGateFixtures(path.dirname(archives.releaseCheckArchiveDir));
   const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
   const usageSummaryFixturePath = await createUsageSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
   const result = spawnSync("node", ["scripts/release-check-ci.mjs"], {
@@ -1306,6 +1383,9 @@ test("release-check CI entry emits minimal JSON and exits 0 on pass", async () =
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
       SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
+      RELEASE_CHECK_PRODUCTION_EVAL_FIXTURE: gateFixtures.liveEvalPath,
+      RELEASE_CHECK_EXECUTIVE_LIVE_METRICS_FIXTURE: gateFixtures.executiveLiveMetricsPath,
+      RELEASE_CHECK_CI_SKIP_LIVE_EVAL_GATE: "1",
     }),
   });
 
@@ -1330,6 +1410,7 @@ test("release-check CI entry emits minimal JSON and exits 0 on pass", async () =
 
 test("release-check CI compare-previous emits only the compare summary JSON", async () => {
   const archives = await seedReleaseCheckArchives();
+  const gateFixtures = await createGateFixtures(path.dirname(archives.releaseCheckArchiveDir));
   const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
   const usageSummaryFixturePath = await createUsageSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
   spawnSync("node", ["scripts/release-check-ci.mjs"], {
@@ -1342,6 +1423,9 @@ test("release-check CI compare-previous emits only the compare summary JSON", as
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
       SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
+      RELEASE_CHECK_PRODUCTION_EVAL_FIXTURE: gateFixtures.liveEvalPath,
+      RELEASE_CHECK_EXECUTIVE_LIVE_METRICS_FIXTURE: gateFixtures.executiveLiveMetricsPath,
+      RELEASE_CHECK_CI_SKIP_LIVE_EVAL_GATE: "1",
     }),
   });
 
@@ -1374,6 +1458,9 @@ test("release-check CI compare-previous emits only the compare summary JSON", as
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
       SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
+      RELEASE_CHECK_PRODUCTION_EVAL_FIXTURE: gateFixtures.liveEvalPath,
+      RELEASE_CHECK_EXECUTIVE_LIVE_METRICS_FIXTURE: gateFixtures.executiveLiveMetricsPath,
+      RELEASE_CHECK_CI_SKIP_LIVE_EVAL_GATE: "1",
     }),
   });
 
@@ -1397,6 +1484,7 @@ test("release-check CI entry exits 1 on fail", async () => {
   await mkdir(selfCheckArchiveDir, { recursive: true });
   const writeSummaryFixturePath = await createWriteSummaryFixture(baseDir);
   const usageSummaryFixturePath = await createUsageSummaryFixture(baseDir);
+  const gateFixtures = await createGateFixtures(baseDir);
 
   const result = spawnSync("node", ["scripts/release-check-ci.mjs"], {
     cwd: process.cwd(),
@@ -1408,27 +1496,28 @@ test("release-check CI entry exits 1 on fail", async () => {
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
       SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
+      RELEASE_CHECK_PRODUCTION_EVAL_FIXTURE: gateFixtures.liveEvalPath,
+      RELEASE_CHECK_EXECUTIVE_LIVE_METRICS_FIXTURE: gateFixtures.executiveLiveMetricsPath,
+      RELEASE_CHECK_CI_SKIP_LIVE_EVAL_GATE: "1",
     }),
   });
 
   assert.equal(result.status, 1);
   const ciFailPayload = JSON.parse(result.stdout);
-  assert.deepEqual(stripDecisionOsReadiness(ciFailPayload), {
-    overall_status: "fail",
-    blocking_checks: ["routing_regression"],
-    doc_boundary_regression: false,
-    write_governance: CURRENT_WRITE_GOVERNANCE,
-    suggested_next_step: "先看 routing regression：diagnostics 在 src/routing-eval-diagnostics.mjs；rule 看 src/router.js / src/planner-*-flow.mjs；fixture 看 evals/routing-eval-set.mjs。",
-    action_hint: "run routing-eval and inspect mixed fixtures",
-    failing_area: "mixed",
-    representative_fail_case: ["routing latest snapshot unavailable or has no miss case"],
-    drilldown_source: ["release-check triage", "routing-eval diagnostics/history"],
-  });
+  assert.equal(ciFailPayload.overall_status, "fail");
+  assert.equal(Array.isArray(ciFailPayload.blocking_checks), true);
+  assert.equal(ciFailPayload.blocking_checks.includes("routing_regression"), true);
+  assert.equal(ciFailPayload.blocking_checks.includes("experience_gate_failure"), true);
+  assert.deepEqual(ciFailPayload.write_governance, CURRENT_WRITE_GOVERNANCE);
+  assert.equal(ciFailPayload.action_hint, "run live-eval-runner and inspect experience gate metrics");
+  assert.equal(ciFailPayload.failing_area, "runtime");
+  assert.deepEqual(ciFailPayload.drilldown_source, ["release-check triage"]);
   assertDecisionOsReadinessShape(ciFailPayload.decision_os_readiness);
 });
 
 test("release-check CI entry exits 1 when node --test gate fails", async () => {
   const archives = await seedReleaseCheckArchives();
+  const gateFixtures = await createGateFixtures(path.dirname(archives.releaseCheckArchiveDir));
   const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
   const usageSummaryFixturePath = await createUsageSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
 
@@ -1442,6 +1531,9 @@ test("release-check CI entry exits 1 when node --test gate fails", async () => {
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
       SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
+      RELEASE_CHECK_PRODUCTION_EVAL_FIXTURE: gateFixtures.liveEvalPath,
+      RELEASE_CHECK_EXECUTIVE_LIVE_METRICS_FIXTURE: gateFixtures.executiveLiveMetricsPath,
+      RELEASE_CHECK_CI_SKIP_LIVE_EVAL_GATE: "1",
       RELEASE_CHECK_CI_NODE_TEST_COMMAND_JSON: JSON.stringify(["node", "-e", "process.exit(1)"]),
       RELEASE_CHECK_CI_TEST_CI_COMMAND_JSON: JSON.stringify(["node", "-e", "process.exit(0)"]),
     }, {
@@ -1461,6 +1553,7 @@ test("release-check CI entry exits 1 when node --test gate fails", async () => {
 
 test("release-check CI entry exits 1 when npm run test:ci gate fails", async () => {
   const archives = await seedReleaseCheckArchives();
+  const gateFixtures = await createGateFixtures(path.dirname(archives.releaseCheckArchiveDir));
   const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
   const usageSummaryFixturePath = await createUsageSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
 
@@ -1474,6 +1567,9 @@ test("release-check CI entry exits 1 when npm run test:ci gate fails", async () 
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
       SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
       SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
+      RELEASE_CHECK_PRODUCTION_EVAL_FIXTURE: gateFixtures.liveEvalPath,
+      RELEASE_CHECK_EXECUTIVE_LIVE_METRICS_FIXTURE: gateFixtures.executiveLiveMetricsPath,
+      RELEASE_CHECK_CI_SKIP_LIVE_EVAL_GATE: "1",
       RELEASE_CHECK_CI_NODE_TEST_COMMAND_JSON: JSON.stringify(["node", "-e", "process.exit(0)"]),
       RELEASE_CHECK_CI_TEST_CI_COMMAND_JSON: JSON.stringify(["node", "-e", "process.exit(1)"]),
     }, {

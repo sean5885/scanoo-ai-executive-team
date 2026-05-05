@@ -27,6 +27,23 @@ function wikiSpaceUrl(spaceId) {
   return spaceId ? `https://larksuite.com/wiki/space/${spaceId}` : null;
 }
 
+async function streamToBuffer(readable, maxBytes = 15 * 1024 * 1024) {
+  if (!readable || typeof readable.on !== "function") {
+    throw new Error("download_stream_unavailable");
+  }
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of readable) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += buffer.length;
+    if (total > maxBytes) {
+      throw new Error("download_stream_too_large");
+    }
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
 export async function listDriveFolderItems(accessToken, folderToken, pageToken) {
   accessToken = await resolveConnectorAuth(accessToken);
   const response = await larkClient.drive.v1.file.list(
@@ -125,6 +142,29 @@ export async function fetchDocxPlainText(accessToken, documentId) {
   }
 
   return markdownToPlainText(markdownResponse.data?.content || "");
+}
+
+export async function downloadDriveFileBuffer(accessToken, fileToken, {
+  maxBytes = 15 * 1024 * 1024,
+} = {}) {
+  accessToken = await resolveConnectorAuth(accessToken);
+  const download = await larkClient.drive.v1.file.download(
+    {
+      path: {
+        file_token: fileToken,
+      },
+    },
+    withToken(accessToken),
+  );
+  const stream = download?.getReadableStream?.();
+  const buffer = await streamToBuffer(stream, maxBytes);
+  return {
+    buffer,
+    headers: download?.headers && typeof download.headers === "object"
+      ? download.headers
+      : {},
+    content_type: download?.headers?.["content-type"] || download?.headers?.["Content-Type"] || null,
+  };
 }
 
 export async function listWikiSpaces(accessToken, pageToken) {

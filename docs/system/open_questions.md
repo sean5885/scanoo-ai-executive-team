@@ -71,13 +71,13 @@ For this closure-planning pass:
     - `/Users/seanhan/Documents/Playground/src/worker/autonomy-worker-loop.mjs`
     - `/Users/seanhan/Documents/Playground/scripts/autonomy-operator-cli.mjs`
     - `/Users/seanhan/Documents/Playground/tests/executive-work-graph.test.mjs`
-23. Week 9/10 production-like quality gate packaging is now code-complete as of 2026-04-30, but rollout drill evidence remains open:
+23. Week 9/10 live quality gate packaging is code-complete as of 2026-05-05, but rollout drill evidence remains open:
     - checked-in code now includes:
-      - production-like eval packs (100 cases)
-      - `scripts/production-eval-runner.mjs`
+      - live eval packs (`pdf-single-doc` / `pdf-cross-doc` / `long-task` / `multi-agent-collab`)
+      - `scripts/live-eval-runner.mjs`
       - `scripts/quality-dashboard.mjs`
-      - dual gate in `src/release-check.mjs` (`capability_gate_failure`, `experience_gate_failure`)
-      - `scripts/release-check-ci.mjs` pre-step production eval gate
+      - dual gate in `src/release-check.mjs` (`live_eval_required`, `capability_gate_failure`, `experience_gate_failure`)
+      - `scripts/release-check-ci.mjs` pre-step live eval gate
       - gray/rollback runbook at `/Users/seanhan/Documents/Playground/docs/system/release_gray_rollback_runbook.md`
     - however, no checked-in ops evidence currently proves:
       - 5%/20%/50%/100% gray rollout rehearsal was executed end-to-end
@@ -131,11 +131,13 @@ No remaining ranked closure order is defined in this file after Thread C.
 - whether OpenClaw is always available in production usage
 - the exact Lark app permissions currently granted in tenant console
 - the exact PDF read/extract API and permission boundary for tenant runtime:
-  - checked-in code confirms PDF attachment metadata extraction + modality classification (`pdf` / `pdf_multimodal`) and answer-citation boundary hardening.
-  - checked-in code does not prove one concrete production PDF OCR/read API call path, nor the tenant-side PDF scope grant status.
+  - checked-in code confirms PDF attachment metadata extraction + modality classification (`pdf` / `pdf_multimodal`) + runtime parse path (`src/pdf-read-service.mjs`) + Lark Drive download integration (`src/lark-connectors.mjs`).
+  - however, tenant-side scope grant / access-token availability remains deployment truth; repo code alone cannot prove every tenant has可用 PDF read permission。
   - Evidence:
     - `/Users/seanhan/Documents/Playground/src/message-intent-utils.mjs`
     - `/Users/seanhan/Documents/Playground/src/modality-router.mjs`
+    - `/Users/seanhan/Documents/Playground/src/pdf-read-service.mjs`
+    - `/Users/seanhan/Documents/Playground/src/lark-connectors.mjs`
     - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
     - `/Users/seanhan/Documents/Playground/src/agent-dispatcher.mjs`
 - the exact sandbox/live tenant allowlists and folder mapping currently active in deployed environment variables

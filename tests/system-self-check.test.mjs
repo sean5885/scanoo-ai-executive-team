@@ -7,6 +7,37 @@ import path from "node:path";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
+const originalProductionEvalReportPath = process.env.PRODUCTION_EVAL_REPORT_PATH;
+const selfCheckProductionEvalFixturePath = path.join(
+  os.tmpdir(),
+  `system-self-check-live-eval-${Date.now()}.json`,
+);
+writeFileSync(selfCheckProductionEvalFixturePath, `${JSON.stringify({
+  dataset_mode: "live",
+  dataset_source: "runtime_replay",
+  sample_size: {
+    total_tasks: 20,
+  },
+  metrics: {
+    task_success_rate: 0.9,
+    fake_completion_rate: 0.01,
+    evidence_coverage_rate: 1,
+    agent_parallel_efficiency: 1.5,
+    pdf_task_success_rate: 0.95,
+  },
+  counts: {
+    pdf_passed_tasks: 19,
+    pdf_task_total: 20,
+    fake_completion_count: 0,
+    serial_estimated_ms: 3000,
+    wall_time_ms: 2000,
+    artifacts_present_required: 40,
+    artifacts_required_total: 40,
+    blocked_misreported_completed_count: 0,
+  },
+})}\n`, "utf8");
+process.env.PRODUCTION_EVAL_REPORT_PATH = selfCheckProductionEvalFixturePath;
+
 const testDb = await createTestDbHarness();
 const [
   {
@@ -30,6 +61,11 @@ const [
 ]);
 
 test.after(() => {
+  if (originalProductionEvalReportPath === undefined) {
+    delete process.env.PRODUCTION_EVAL_REPORT_PATH;
+  } else {
+    process.env.PRODUCTION_EVAL_REPORT_PATH = originalProductionEvalReportPath;
+  }
   testDb.close();
 });
 

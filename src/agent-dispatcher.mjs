@@ -33,6 +33,7 @@ import { classifyInputModality } from "./modality-router.mjs";
 import { buildVisibleMessageText, cleanText } from "./message-intent-utils.mjs";
 import { callOpenClawTextGeneration } from "./openclaw-text-service.mjs";
 import { FALLBACK_DISABLED, ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
+import { readPdfTaskAndBuildReply } from "./pdf-read-service.mjs";
 import { normalizeUserResponse } from "./user-response-normalizer.mjs";
 
 const noopLogger = {
@@ -364,6 +365,7 @@ export async function executeRegisteredAgent({
   }
 
   let imageContext = initialImageContext;
+  let mergedSupportingContext = supportingContext;
   if (!imageContext && event) {
     const modality = classifyInputModality(event);
     if (modality.modality === "image" || modality.modality === "multimodal") {
@@ -375,6 +377,20 @@ export async function executeRegisteredAgent({
       if (imageAnalysis?.ok) {
         imageContext = buildStructuredImageContext(imageAnalysis);
       }
+    }
+    if ((modality.modality === "pdf" || modality.modality === "pdf_multimodal") && Array.isArray(modality.pdfInputs) && modality.pdfInputs.length > 0) {
+      const pdfContext = await readPdfTaskAndBuildReply({
+        pdfInputs: modality.pdfInputs,
+        question: requestText || modality.text || buildVisibleMessageText(event),
+      });
+      const contextBlock = [
+        "pdf_context",
+        `answer: ${cleanText(pdfContext?.answer) || "N/A"}`,
+        ...((Array.isArray(pdfContext?.sources) ? pdfContext.sources : []).slice(0, 3).map((item) => `source: ${cleanText(item)}`)),
+      ].join("\n");
+      mergedSupportingContext = [cleanText(supportingContext), contextBlock]
+        .filter(Boolean)
+        .join("\n\n");
     }
   }
 
@@ -406,7 +422,7 @@ export async function executeRegisteredAgent({
       text: [
         `${agent.label} 現在還沒有足夠的來源可以把這題答實。`,
         imageContext ? `我已先看過圖片內容：${trimTextForBudget(imageContext, 180)}` : null,
-        supportingContext ? "我也有收到其他角色的補充，但目前還缺可落地的知識來源。" : null,
+        mergedSupportingContext ? "我也有收到其他角色的補充，但目前還缺可落地的知識來源。" : null,
         `你如果補一兩個關鍵文檔、關鍵詞，或先同步資料，我就能直接接著整理。`,
       ].filter(Boolean).join("\n\n"),
       agentId: agent.id,
@@ -414,7 +430,7 @@ export async function executeRegisteredAgent({
         retrieval_count: 0,
         fallback_used: false,
         image_context_used: Boolean(imageContext),
-        supporting_context_used: Boolean(supportingContext),
+        supporting_context_used: Boolean(mergedSupportingContext),
         source_titles: [],
       },
     };
@@ -426,7 +442,7 @@ export async function executeRegisteredAgent({
     items,
     checkpoint,
     imageContext,
-    supportingContext,
+    supportingContext: mergedSupportingContext,
   });
   let answer = "";
   try {
@@ -470,7 +486,7 @@ export async function executeRegisteredAgent({
           retrieval_count: items.length,
           fallback_used: false,
           image_context_used: Boolean(imageContext),
-          supporting_context_used: Boolean(supportingContext),
+          supporting_context_used: Boolean(mergedSupportingContext),
           source_titles: items.slice(0, 4).map((item) => getReadSourceTitle(item) || item.id),
         },
       };
@@ -490,7 +506,7 @@ export async function executeRegisteredAgent({
       last_request: requestText,
       last_sources: items.slice(0, 3).map((item) => getReadSourceTitle(item) || item.id),
       last_image_context: imageContext ? "yes" : "no",
-      last_supporting_context: supportingContext ? "yes" : "no",
+      last_supporting_context: mergedSupportingContext ? "yes" : "no",
       last_governance_stage: promptInput.governance?.stage || "normal",
     },
   });
@@ -518,7 +534,7 @@ export async function executeRegisteredAgent({
         retrieval_count: items.length,
         fallback_used: false,
         image_context_used: Boolean(imageContext),
-        supporting_context_used: Boolean(supportingContext),
+        supporting_context_used: Boolean(mergedSupportingContext),
         source_titles: items.slice(0, 4).map((item) => getReadSourceTitle(item) || item.id),
       },
     };
@@ -532,7 +548,7 @@ export async function executeRegisteredAgent({
       retrieval_count: items.length,
       fallback_used: false,
       image_context_used: Boolean(imageContext),
-      supporting_context_used: Boolean(supportingContext),
+      supporting_context_used: Boolean(mergedSupportingContext),
       source_titles: items.slice(0, 4).map((item) => getReadSourceTitle(item) || item.id),
     },
   };

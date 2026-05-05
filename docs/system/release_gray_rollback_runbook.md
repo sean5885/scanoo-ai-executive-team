@@ -2,7 +2,7 @@
 
 Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
-Last verified in this repo on 2026-04-30.
+Last verified in this repo on 2026-05-05.
 
 ## Purpose
 
@@ -18,7 +18,7 @@ Last verified in this repo on 2026-04-30.
 每一輪灰度窗口開始前，固定執行：
 
 ```bash
-node scripts/production-eval-runner.mjs
+node scripts/live-eval-runner.mjs
 npm run release-check:ci
 node scripts/quality-dashboard.mjs
 ```
@@ -96,12 +96,12 @@ incident 至少包含：
 - `trigger_condition`
 - `failed_window`
 - `release_check_run_id`
-- `production_eval_run_id`
+- `live_eval_run_id`
 - `rollback_version`
 - `deadletter_replay_plan`
 
 ## Freeze/Resume Rule
 
 - freeze 後不得直接升下一階段。
-- 必須先完成 rollback、補證據、重新跑 `production-eval-runner` + `release-check:ci` + `quality-dashboard`。
+- 必須先完成 rollback、補證據、重新跑 `live-eval-runner` + `release-check:ci` + `quality-dashboard`。
 - 重新啟動時從 5% 重新開始。

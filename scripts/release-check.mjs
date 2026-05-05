@@ -1,6 +1,8 @@
 const wantsJson = process.argv.includes("--json");
 const writeSummaryFixturePath = process.env.SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE || "";
 const usageSummaryFixturePath = process.env.SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE || "";
+const productionEvalFixturePath = process.env.RELEASE_CHECK_PRODUCTION_EVAL_FIXTURE || "";
+const executiveLiveMetricsFixturePath = process.env.RELEASE_CHECK_EXECUTIVE_LIVE_METRICS_FIXTURE || "";
 
 function getArgValue(flag = "") {
   const index = process.argv.indexOf(flag);
@@ -35,7 +37,12 @@ function printUsage() {
 }
 
 async function resolveRuntimeOverrides() {
-  if (!writeSummaryFixturePath && !usageSummaryFixturePath) {
+  if (
+    !writeSummaryFixturePath
+    && !usageSummaryFixturePath
+    && !productionEvalFixturePath
+    && !executiveLiveMetricsFixturePath
+  ) {
     return {};
   }
 
@@ -52,6 +59,14 @@ async function resolveRuntimeOverrides() {
     const raw = await readFile(usageSummaryFixturePath, "utf8");
     const summary = JSON.parse(raw);
     overrides.usageLayerCheck = async () => summary;
+  }
+  if (productionEvalFixturePath) {
+    const raw = await readFile(productionEvalFixturePath, "utf8");
+    overrides.productionEvalReport = JSON.parse(raw);
+  }
+  if (executiveLiveMetricsFixturePath) {
+    const raw = await readFile(executiveLiveMetricsFixturePath, "utf8");
+    overrides.executiveLiveMetrics = JSON.parse(raw);
   }
 
   return overrides;

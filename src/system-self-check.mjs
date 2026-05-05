@@ -125,7 +125,8 @@ const REQUIRED_DOC_SYNC_PATHS = Object.freeze([
   "docs/system/data_flow.md",
   "docs/system/closed_loop.md",
 ]);
-const PRODUCTION_EVAL_LATEST_PATH = process.env.PRODUCTION_EVAL_REPORT_PATH || ".data/evals/production/latest.json";
+const PRODUCTION_EVAL_LATEST_PATH = process.env.PRODUCTION_EVAL_REPORT_PATH || ".data/evals/live/latest.json";
+const LIVE_EVAL_MIN_SAMPLE_SIZE = 10;
 
 function resolveUsageLayerGateStage(stage = "") {
   const normalized = cleanText(stage || process.env.USAGE_LAYER_GATE_STAGE || "").toLowerCase();
@@ -286,6 +287,8 @@ async function buildTruthfulCompletionMetricsSummary() {
   const productionMetrics = productionEval?.metrics && typeof productionEval.metrics === "object"
     ? productionEval.metrics
     : {};
+  const productionDatasetMode = cleanText(productionEval?.dataset_mode).toLowerCase();
+  const productionDatasetSource = cleanText(productionEval?.dataset_source);
   const productionCounts = productionEval?.counts && typeof productionEval.counts === "object"
     ? productionEval.counts
     : {};
@@ -324,7 +327,7 @@ async function buildTruthfulCompletionMetricsSummary() {
     : blockedMisreportedCompleted;
 
   const hasSufficientSample = importantTaskTotal >= 40 && pdfE2eTotal >= 1 && totalStepCount >= 10;
-  const hasSufficientProductionSample = productionTaskTotal >= 100;
+  const hasSufficientProductionSample = productionDatasetMode === "live" && productionTaskTotal >= LIVE_EVAL_MIN_SAMPLE_SIZE;
   const hasGateSample = hasSufficientProductionSample || hasSufficientSample;
 
   const metricChecks = [
@@ -387,6 +390,8 @@ async function buildTruthfulCompletionMetricsSummary() {
       sample_ready_for_gate: hasSufficientSample,
       production_sample_ready_for_gate: hasSufficientProductionSample,
       production_task_total: productionTaskTotal,
+      production_dataset_mode: productionDatasetMode || "unknown",
+      production_dataset_source: productionDatasetSource || null,
       production_metrics: {
         task_success_rate: productionMetrics.task_success_rate ?? null,
         fake_completion_rate: productionMetrics.fake_completion_rate ?? null,

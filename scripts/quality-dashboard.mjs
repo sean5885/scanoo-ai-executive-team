@@ -2,11 +2,12 @@ import path from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 
 import { runControlDiagnostics } from "../src/control-diagnostics.mjs";
+import { readExecutiveLiveMetrics } from "../src/executive-live-metrics.mjs";
 import { cleanText } from "../src/message-intent-utils.mjs";
 import { runSystemSelfCheck } from "../src/system-self-check.mjs";
 
-const PRODUCTION_LATEST_PATH = ".data/evals/production/latest.json";
-const PRODUCTION_HISTORY_MANIFEST_PATH = ".data/evals/production/history/manifest.json";
+const PRODUCTION_LATEST_PATH = process.env.PRODUCTION_EVAL_REPORT_PATH || ".data/evals/live/latest.json";
+const PRODUCTION_HISTORY_MANIFEST_PATH = ".data/evals/live/history/manifest.json";
 const DASHBOARD_OUTPUT_PATH = ".data/dashboard/quality-latest.json";
 
 function safeNumber(value = null) {
@@ -25,6 +26,8 @@ async function readProductionEvalLatest() {
   } catch (error) {
     return {
       available: false,
+      dataset_mode: "unknown",
+      dataset_source: null,
       error: error instanceof Error ? error.message : String(error),
       task_success_rate: null,
       fake_completion_rate: null,
@@ -55,7 +58,13 @@ async function readProductionTrend(maxCount = 10) {
   }));
 }
 
-function buildDashboardReport({ selfCheck = {}, controlDiagnostics = {}, productionEval = {}, productionTrend = [] } = {}) {
+function buildDashboardReport({
+  selfCheck = {},
+  controlDiagnostics = {},
+  productionEval = {},
+  productionTrend = [],
+  executiveLiveMetrics = {},
+} = {}) {
   const failedCases = Array.isArray(productionEval?.failed_cases) ? productionEval.failed_cases : [];
 
   return {
@@ -76,6 +85,8 @@ function buildDashboardReport({ selfCheck = {}, controlDiagnostics = {}, product
     },
     production_eval: {
       available: productionEval?.available !== false,
+      dataset_mode: cleanText(productionEval?.dataset_mode) || "unknown",
+      dataset_source: cleanText(productionEval?.dataset_source) || null,
       task_success_rate: safeNumber(productionEval?.task_success_rate),
       fake_completion_rate: safeNumber(productionEval?.fake_completion_rate),
       evidence_coverage_rate: safeNumber(productionEval?.evidence_coverage_rate),
@@ -86,6 +97,9 @@ function buildDashboardReport({ selfCheck = {}, controlDiagnostics = {}, product
       counts: productionEval?.counts || null,
       trend: productionTrend,
     },
+    executive_live_metrics: executiveLiveMetrics && typeof executiveLiveMetrics === "object"
+      ? executiveLiveMetrics
+      : null,
   };
 }
 
@@ -112,11 +126,12 @@ async function writeDashboardReport(report = {}) {
 
 async function main() {
   const wantsJson = process.argv.includes("--json");
-  const [selfCheck, controlDiagnostics, productionEval, productionTrend] = await Promise.all([
+  const [selfCheck, controlDiagnostics, productionEval, productionTrend, executiveLiveMetrics] = await Promise.all([
     runSystemSelfCheck(),
     runControlDiagnostics(),
     readProductionEvalLatest(),
     readProductionTrend(),
+    Promise.resolve(readExecutiveLiveMetrics()),
   ]);
 
   const dashboard = buildDashboardReport({
@@ -124,6 +139,7 @@ async function main() {
     controlDiagnostics,
     productionEval,
     productionTrend,
+    executiveLiveMetrics,
   });
   const outputPath = await writeDashboardReport(dashboard);
 

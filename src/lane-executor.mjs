@@ -113,6 +113,7 @@ import { executeLocalSkillTask } from "./local-skill-actions.mjs";
 import { normalizeUserResponse, renderUserResponseText } from "./user-response-normalizer.mjs";
 import { runCanonicalLarkMutation } from "./lark-mutation-runtime.mjs";
 import { planPersonalDMSkillIntent } from "./planner/personal-dm-skill-intent.mjs";
+import { readPdfTaskAndBuildReply } from "./pdf-read-service.mjs";
 
 function incomingText(event) {
   return buildVisibleMessageText(event);
@@ -2899,6 +2900,42 @@ async function executeImageTaskReply({ event, logger = noopLogger }) {
   });
 }
 
+async function executePdfTaskReply({ event, logger = noopLogger }) {
+  const modality = classifyInputModality(event);
+  if (modality.modality !== "pdf" && modality.modality !== "pdf_multimodal") {
+    return null;
+  }
+
+  const context = await resolveAuthContext(event, logger, { allowTenantFallback: true }).catch(() => null);
+  const pdfReply = await readPdfTaskAndBuildReply({
+    pdfInputs: modality.pdfInputs,
+    accessToken: context?.token?.access_token || context?.token || "",
+    question: modality.text || buildVisibleMessageText(event),
+  });
+
+  logger.info("pdf_task_routed", {
+    modality: modality.modality,
+    pdf_input_count: Array.isArray(modality.pdfInputs) ? modality.pdfInputs.length : 0,
+    ok: pdfReply?.read_result?.ok === true,
+    limitation_count: Array.isArray(pdfReply?.read_result?.limitations)
+      ? pdfReply.read_result.limitations.length
+      : 0,
+  });
+
+  return {
+    text: renderUserResponseText(normalizeUserResponse({
+      plannerEnvelope: null,
+      payload: {
+        answer: pdfReply.answer,
+        sources: pdfReply.sources,
+        limitations: pdfReply.limitations,
+      },
+      logger,
+      handlerName: "pdfTaskReplyBoundary",
+    })),
+  };
+}
+
 export function shouldFallbackImageTaskToTextLane({ modality = "", text = "", analysis = null, error = null } = {}) {
   if (modality !== "multimodal") {
     return false;
@@ -4622,6 +4659,10 @@ export async function executeCapabilityLane({
   }
 
   const imageReply = await executeImageTaskReply({ event, logger });
+  const pdfReply = await executePdfTaskReply({ event, logger });
+  if (pdfReply) {
+    return pdfReply;
+  }
   if (imageReply) {
     return imageReply;
   }
