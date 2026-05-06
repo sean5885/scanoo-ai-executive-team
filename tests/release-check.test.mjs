@@ -547,6 +547,69 @@ test("release-check report blocks on usage-layer gate failures", () => {
   assertDecisionOsReadinessShape(report.decision_os_readiness);
 });
 
+test("release-check blocks when collab sample is insufficient even if collab gate is unknown", () => {
+  const selfCheckResult = {
+    ok: true,
+    system_summary: {
+      core_checks: "pass",
+      company_brain_status: "pass",
+    },
+    control_summary: {
+      status: "pass",
+    },
+    routing_summary: {
+      status: "pass",
+      compare: {
+        has_obvious_regression: false,
+      },
+    },
+    planner_summary: {
+      gate: "pass",
+      compare: {
+        has_obvious_regression: false,
+      },
+    },
+  };
+  const collabGate = {
+    status: "unknown",
+    reasons: ["sample_insufficient"],
+    sample_ready: false,
+    metrics: {
+      deadletter_replay_rate: 0.9,
+      parallel_speedup: 1.1,
+      sample_missing_requirements: [
+        "graph_sample_insufficient",
+        "parallel_graph_sample_insufficient",
+      ],
+    },
+  };
+  const drilldown = buildReleaseCheckDrilldown({
+    selfCheckResult,
+    collabGate,
+  });
+  const report = buildReleaseCheckReport({
+    selfCheckResult,
+    drilldown,
+    collabGate,
+  });
+
+  assert.equal(report.collab_gate?.status, "unknown");
+  assert.deepEqual(stripDecisionOsReadiness(report), {
+    overall_status: "fail",
+    blocking_checks: ["sample_insufficient"],
+    doc_boundary_regression: false,
+    suggested_next_step: "先補齊 collab 證據樣本（graph/deadletter/parallel）到最低門檻，再重新跑 release gate。",
+    action_hint: "collect collab evidence samples (graph/deadletter/parallel) until minimum thresholds are met",
+    failing_area: "runtime",
+    representative_fail_case: [
+      "deadletter_replay_rate:0.9",
+      "parallel_speedup:1.1",
+    ],
+    drilldown_source: ["release-check triage"],
+  });
+  assertDecisionOsReadinessShape(report.decision_os_readiness);
+});
+
 test("release-check drilldown derives write representative issues from self-check", () => {
   const drilldown = buildReleaseCheckDrilldown({
     selfCheckResult: {

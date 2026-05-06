@@ -4,7 +4,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 本文件用來做目前 Lobster 系統的收口檢查。所有結論都以程式碼、設定、測試與已提交文檔為依據，不使用舊聊天上下文或推測補齊。
 
-Last verified in this repo on 2026-05-05.
+Last verified in this repo on 2026-05-06.
 
 本次額外驗證：
 
@@ -43,11 +43,11 @@ Last verified in this repo on 2026-05-05.
   - `capability_gate_failure`
   - `experience_gate_failure`
 - `release-check:ci` 已改成先跑 live eval runner，再跑 release-check；任一 gate fail 即 exit 1。
-- `collab_gate` 已接入 `executive_live_metrics`，但只在樣本足夠時才會 hard fail：
+- `collab_gate` 已接入 `executive_live_metrics`，並新增樣本就緒判斷：
   - `sample_basis.has_graph_sample`
   - `sample_basis.has_deadletter_sample`
   - `sample_basis.has_parallel_sample`
-  - 三者同時為 `true` 才進入 `pass/fail` 判定，否則 `status=unknown`（不假裝通過，也不誤判失敗）。
+  - 三者同時為 `true` 才進入 `pass/fail` 判定；未達門檻時 `status=unknown`，但 release gate 會以 `blocking_check=sample_insufficient` 阻擋 ready。
 - quality dashboard 已新增：
   - `node scripts/quality-dashboard.mjs`
   - 輸出 `.data/dashboard/quality-latest.json`
