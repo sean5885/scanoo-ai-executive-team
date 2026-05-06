@@ -2,7 +2,7 @@
 
 Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
-Last verified in this repo on 2026-05-05.
+Last verified in this repo on 2026-05-06.
 
 ## Purpose
 
@@ -21,12 +21,15 @@ Last verified in this repo on 2026-05-05.
 node scripts/live-eval-runner.mjs
 npm run release-check:ci
 node scripts/quality-dashboard.mjs
+node scripts/deadletter-replay-runner.mjs --json
 ```
 
 必要條件：
 
 - `release-check` 的 `capability_gate.status = pass`
 - `release-check` 的 `experience_gate.status = pass`
+- `release-check` 不可含 `blocking_checks=sample_insufficient`
+- `release-check` 的 `collab_gate.status = pass`（樣本達門檻後）
 - `overall_status = pass`
 
 ## Gate Thresholds

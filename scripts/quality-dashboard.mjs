@@ -100,11 +100,17 @@ function buildDashboardReport({
     executive_live_metrics: executiveLiveMetrics && typeof executiveLiveMetrics === "object"
       ? executiveLiveMetrics
       : null,
+    collab_sample_readiness: executiveLiveMetrics?.collab_sample_readiness || null,
   };
 }
 
 function renderCliSummary(report = {}) {
   const production = report?.production_eval || {};
+  const collabReadiness = report?.collab_sample_readiness || {};
+  const collabReady = collabReadiness?.sample_ready === true;
+  const collabMissing = Array.isArray(collabReadiness?.missing_requirements) && collabReadiness.missing_requirements.length
+    ? collabReadiness.missing_requirements.join(",")
+    : "none";
   return [
     "Quality Dashboard",
     `self-check: ${report?.self_check?.system_status || "fail"}`,
@@ -114,6 +120,8 @@ function renderCliSummary(report = {}) {
     `evidence_coverage_rate: ${production.evidence_coverage_rate ?? "null"}`,
     `agent_parallel_efficiency: ${production.agent_parallel_efficiency ?? "null"}`,
     `failed_cases: ${production.failed_case_count ?? 0}`,
+    `collab_sample_ready: ${collabReady ? "true" : "false"}`,
+    `collab_sample_missing: ${collabMissing}`,
   ].join("\n");
 }
 

@@ -368,7 +368,7 @@ Current-truth docs for onboarding are:
     - `parallel_ratio = parallel_step_count / total_step_count` (`>=0.4`, observability ratio only)
     - `blocked_misreported_completed_count` (`=0`)
     - `documentation_consistency_rate` over required doc mirror paths (`=1.0`)
-  - `release-check.mjs` now blocks on `truthful_completion_metrics.status=fail`; sample-insufficient `unknown` does not hard-block release
+  - `release-check.mjs` now blocks on `truthful_completion_metrics.status=fail`; when collab sample is insufficient, `collab_gate.status=unknown` is still surfaced as blocking check `sample_insufficient`
   - `release-check.mjs` now reads live eval from `.data/evals/live/latest.json` and adds explicit gate ordering:
     - `live_eval_required`
     - `capability_gate_failure`

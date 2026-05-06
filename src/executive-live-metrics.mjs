@@ -2,6 +2,12 @@ import db from "./db.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import { ensureExecutiveWorkGraphTables } from "./executive-work-graph.mjs";
 
+const DEFAULT_COLLAB_SAMPLE_THRESHOLDS = Object.freeze({
+  graph_min: 100,
+  deadletter_min: 20,
+  parallel_graph_min: 30,
+});
+
 function safeRatio(numerator = 0, denominator = 0, digits = 4) {
   const n = Number(numerator);
   const d = Number(denominator);
@@ -14,6 +20,71 @@ function safeRatio(numerator = 0, denominator = 0, digits = 4) {
 function parseIsoToMs(value = "") {
   const parsed = Date.parse(cleanText(value));
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizePositiveInteger(value = null, fallback = 0, {
+  min = 1,
+  max = Number.MAX_SAFE_INTEGER,
+} = {}) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function resolveSampleThresholds({
+  graphMin = null,
+  deadletterMin = null,
+  parallelGraphMin = null,
+} = {}) {
+  return {
+    graph_min: normalizePositiveInteger(
+      graphMin ?? process.env.EXECUTIVE_LIVE_METRICS_GRAPH_MIN_SAMPLE,
+      DEFAULT_COLLAB_SAMPLE_THRESHOLDS.graph_min,
+    ),
+    deadletter_min: normalizePositiveInteger(
+      deadletterMin ?? process.env.EXECUTIVE_LIVE_METRICS_DEADLETTER_MIN_SAMPLE,
+      DEFAULT_COLLAB_SAMPLE_THRESHOLDS.deadletter_min,
+    ),
+    parallel_graph_min: normalizePositiveInteger(
+      parallelGraphMin ?? process.env.EXECUTIVE_LIVE_METRICS_PARALLEL_GRAPH_MIN_SAMPLE,
+      DEFAULT_COLLAB_SAMPLE_THRESHOLDS.parallel_graph_min,
+    ),
+  };
+}
+
+function computePercentile(values = [], percentile = 0.5) {
+  const sorted = values
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value))
+    .sort((a, b) => a - b);
+  if (!sorted.length) {
+    return null;
+  }
+  const p = Math.min(1, Math.max(0, Number(percentile)));
+  const index = Math.floor((sorted.length - 1) * p);
+  return Number(sorted[index].toFixed(4));
+}
+
+function classifyGraphTaskType(goal = "", taskId = "") {
+  const text = `${cleanText(goal)} ${cleanText(taskId)}`.toLowerCase();
+  if (!text) {
+    return "unknown";
+  }
+  if (text.includes("pdf") && (text.includes("cross") || text.includes("跨文件"))) {
+    return "pdf_cross_doc";
+  }
+  if (text.includes("pdf")) {
+    return "pdf_single_doc";
+  }
+  if (text.includes("long-task") || text.includes("long task") || text.includes("長任務") || text.includes("长任务")) {
+    return "long_task";
+  }
+  if (text.includes("multi-agent") || text.includes("multi agent") || text.includes("協作") || text.includes("协作")) {
+    return "multi_agent";
+  }
+  return "general";
 }
 
 function summarizeSpeedupRows(rows = []) {
@@ -70,23 +141,128 @@ function summarizeSpeedupRows(rows = []) {
   const averageSpeedup = graphSpeedups.length
     ? Number((graphSpeedups.reduce((sum, item) => sum + Number(item.speedup || 0), 0) / graphSpeedups.length).toFixed(4))
     : null;
+  const p50Speedup = graphSpeedups.length
+    ? computePercentile(graphSpeedups.map((item) => item.speedup), 0.5)
+    : null;
+  const p90Speedup = graphSpeedups.length
+    ? computePercentile(graphSpeedups.map((item) => item.speedup), 0.9)
+    : null;
 
   return {
     graph_count: graphSpeedups.length,
     average_speedup: averageSpeedup,
+    p50_speedup: p50Speedup,
+    p90_speedup: p90Speedup,
     top_graphs: graphSpeedups
       .sort((a, b) => Number(b.speedup || 0) - Number(a.speedup || 0))
       .slice(0, 10),
   };
 }
 
-export function readExecutiveLiveMetrics({ lookbackHours = 24 * 14 } = {}) {
+function buildTaskTypeBuckets(graphRows = []) {
+  const buckets = {};
+  for (const row of graphRows) {
+    const type = classifyGraphTaskType(row?.goal, row?.task_id);
+    if (!buckets[type]) {
+      buckets[type] = {
+        total: 0,
+        completed: 0,
+        deadletter: 0,
+      };
+    }
+    const status = cleanText(row?.status);
+    buckets[type].total += 1;
+    if (status === "completed") {
+      buckets[type].completed += 1;
+    }
+    if (status === "deadletter") {
+      buckets[type].deadletter += 1;
+    }
+  }
+  return buckets;
+}
+
+function buildWindowStats({ lookbackHours = 0, graphRows = [], deadletterTotal = 0, parallelGraphCount = 0 } = {}) {
+  const nowMs = Date.now();
+  const windows = [24, 72, Number(lookbackHours || 0)].filter((value, index, arr) => value > 0 && arr.indexOf(value) === index);
+  const result = {};
+  for (const hours of windows) {
+    const cutoffMs = nowMs - (hours * 60 * 60 * 1000);
+    const windowGraphs = graphRows.filter((row) => {
+      const createdAtMs = parseIsoToMs(row?.created_at);
+      return createdAtMs != null && createdAtMs >= cutoffMs;
+    });
+    const completed = windowGraphs.filter((row) => cleanText(row?.status) === "completed").length;
+    const deadletter = windowGraphs.filter((row) => cleanText(row?.status) === "deadletter").length;
+    result[`last_${hours}h`] = {
+      graph_total: windowGraphs.length,
+      completed,
+      deadletter,
+      graph_success_rate: safeRatio(completed, windowGraphs.length),
+      observed_deadletter_total: deadletterTotal,
+      observed_parallel_graph_count: parallelGraphCount,
+    };
+  }
+  return result;
+}
+
+function buildSampleReadiness({
+  thresholds = DEFAULT_COLLAB_SAMPLE_THRESHOLDS,
+  graphTotal = 0,
+  deadletterTotal = 0,
+  parallelGraphCount = 0,
+} = {}) {
+  const missingRequirements = [];
+  const hasGraphSample = graphTotal >= Number(thresholds.graph_min || 0);
+  const hasDeadletterSample = deadletterTotal >= Number(thresholds.deadletter_min || 0);
+  const hasParallelSample = parallelGraphCount >= Number(thresholds.parallel_graph_min || 0);
+
+  if (!hasGraphSample) {
+    missingRequirements.push("graph_sample_insufficient");
+  }
+  if (!hasDeadletterSample) {
+    missingRequirements.push("deadletter_sample_insufficient");
+  }
+  if (!hasParallelSample) {
+    missingRequirements.push("parallel_graph_sample_insufficient");
+  }
+
+  return {
+    thresholds,
+    observed: {
+      graph_total: graphTotal,
+      deadletter_total: deadletterTotal,
+      parallel_graph_count: parallelGraphCount,
+    },
+    has_graph_sample: hasGraphSample,
+    has_deadletter_sample: hasDeadletterSample,
+    has_parallel_sample: hasParallelSample,
+    sample_ready: hasGraphSample && hasDeadletterSample && hasParallelSample,
+    missing_requirements: missingRequirements,
+  };
+}
+
+export function readExecutiveLiveMetrics({
+  lookbackHours = 24 * 14,
+  sampleThresholds = null,
+} = {}) {
   ensureExecutiveWorkGraphTables();
 
   const resolvedHours = Number.isFinite(Number(lookbackHours))
     ? Math.max(1, Math.min(24 * 90, Number(lookbackHours)))
     : 24 * 14;
   const cutoffIso = new Date(Date.now() - (resolvedHours * 60 * 60 * 1000)).toISOString();
+  const thresholds = resolveSampleThresholds({
+    graphMin: sampleThresholds?.graph_min,
+    deadletterMin: sampleThresholds?.deadletter_min,
+    parallelGraphMin: sampleThresholds?.parallel_graph_min,
+  });
+
+  const graphDetailRows = db.prepare(`
+    SELECT graph_id, task_id, goal, status, created_at
+    FROM executive_work_graphs
+    WHERE created_at >= @cutoff
+  `).all({ cutoff: cutoffIso });
 
   const graphRows = db.prepare(`
     SELECT status, COUNT(*) AS total
@@ -138,9 +314,12 @@ export function readExecutiveLiveMetrics({ lookbackHours = 24 * 14 } = {}) {
   `).all({ cutoff: cutoffIso });
 
   const speedupSummary = summarizeSpeedupRows(attemptRows);
-  const hasGraphSample = graphCounts.total >= 10;
-  const hasDeadletterSample = deadletterTotal >= 1;
-  const hasParallelSample = Number(speedupSummary.graph_count || 0) >= 1;
+  const collabSampleReadiness = buildSampleReadiness({
+    thresholds,
+    graphTotal: graphCounts.total,
+    deadletterTotal,
+    parallelGraphCount: Number(speedupSummary.graph_count || 0),
+  });
 
   return {
     version: "executive_live_metrics_v1",
@@ -154,11 +333,19 @@ export function readExecutiveLiveMetrics({ lookbackHours = 24 * 14 } = {}) {
       replay_rate: safeRatio(deadletterReplayed, deadletterTotal),
     },
     parallel: speedupSummary,
-    sample_ready: hasGraphSample && hasDeadletterSample && hasParallelSample,
+    task_type_buckets: buildTaskTypeBuckets(graphDetailRows),
+    window_stats: buildWindowStats({
+      lookbackHours: resolvedHours,
+      graphRows: graphDetailRows,
+      deadletterTotal,
+      parallelGraphCount: Number(speedupSummary.graph_count || 0),
+    }),
+    collab_sample_readiness: collabSampleReadiness,
+    sample_ready: collabSampleReadiness.sample_ready === true,
     sample_basis: {
-      has_graph_sample: hasGraphSample,
-      has_deadletter_sample: hasDeadletterSample,
-      has_parallel_sample: hasParallelSample,
+      has_graph_sample: collabSampleReadiness.has_graph_sample === true,
+      has_deadletter_sample: collabSampleReadiness.has_deadletter_sample === true,
+      has_parallel_sample: collabSampleReadiness.has_parallel_sample === true,
     },
   };
 }

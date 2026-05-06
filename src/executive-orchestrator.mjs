@@ -1,4 +1,5 @@
 import { executeRegisteredAgent } from "./agent-dispatcher.mjs";
+import { createHash } from "node:crypto";
 import { getRegisteredAgent, parseRegisteredAgentCommand } from "./agent-registry.mjs";
 import { runDocumentReviewTriageWorkflow } from "./document-review-triage-workflow.mjs";
 import {
@@ -112,6 +113,19 @@ function buildTruthfulCompletionGateReplyText({
   });
 }
 
+function isTruthyFlag(value = "") {
+  const normalized = cleanText(value).toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
+function normalizeSamplingPercent(rawValue = null) {
+  const parsed = Number.parseFloat(cleanText(rawValue));
+  if (!Number.isFinite(parsed)) {
+    return 100;
+  }
+  return Math.min(100, Math.max(0, parsed));
+}
+
 const EXECUTIVE_MAX_ROLES = 3;
 const EXECUTIVE_MAX_SUPPORTING_ROLES = EXECUTIVE_MAX_ROLES - 1;
 const EXECUTIVE_MAX_KEY_POINTS = 5;
@@ -183,9 +197,168 @@ const EXECUTIVE_NEXT_STEP_HEADINGS = new Set([
   "建議行動",
   "後續動作",
 ]);
+const EXECUTIVE_WORK_GRAPH_ROLLOUT_ENFORCE_ENV = "EXECUTIVE_WORK_GRAPH_ROLLOUT_ENFORCE";
+const EXECUTIVE_WORK_GRAPH_ALLOWLIST_ENV = "EXECUTIVE_WORK_GRAPH_ALLOWLIST";
+const EXECUTIVE_WORK_GRAPH_SAMPLING_PERCENT_ENV = "EXECUTIVE_WORK_GRAPH_SAMPLING_PERCENT";
+const EXECUTIVE_WORK_GRAPH_ALLOWLIST_SUBJECT_KEYS = new Set([
+  "session",
+  "request",
+  "trace",
+  "lane",
+  "account",
+]);
 
 function sessionKeyFromScope(scope = {}, accountId = "") {
   return cleanText(scope?.session_key || scope?.chat_id || accountId);
+}
+
+function buildWorkGraphRolloutAllowlist(allowlist = null) {
+  const raw = Array.isArray(allowlist)
+    ? allowlist.join(",")
+    : allowlist == null
+      ? process.env[EXECUTIVE_WORK_GRAPH_ALLOWLIST_ENV]
+      : allowlist;
+  const normalizedRaw = cleanText(raw);
+  if (!normalizedRaw) {
+    return [];
+  }
+  return normalizedRaw.split(",")
+    .map((entry) => cleanText(entry))
+    .filter(Boolean)
+    .map((entry) => {
+      const splitIndex = entry.indexOf(":");
+      if (splitIndex < 0) {
+        return {
+          subject: "session",
+          value: entry,
+        };
+      }
+      const subject = cleanText(entry.slice(0, splitIndex)).toLowerCase();
+      const value = cleanText(entry.slice(splitIndex + 1));
+      return {
+        subject: EXECUTIVE_WORK_GRAPH_ALLOWLIST_SUBJECT_KEYS.has(subject)
+          ? subject
+          : "session",
+        value,
+      };
+    })
+    .filter((entry) => entry.value);
+}
+
+function isWorkGraphRolloutAllowlistMatched({
+  allowlistEntries = [],
+  subjects = {},
+} = {}) {
+  if (!Array.isArray(allowlistEntries) || allowlistEntries.length === 0) {
+    return false;
+  }
+  return allowlistEntries.some((entry) => {
+    const expected = cleanText(subjects?.[entry.subject]);
+    return expected && expected === cleanText(entry.value);
+  });
+}
+
+function computeDeterministicSamplingScorePercent(seed = "") {
+  const normalizedSeed = cleanText(seed);
+  if (!normalizedSeed) {
+    return null;
+  }
+  const digest = createHash("sha256").update(normalizedSeed).digest();
+  const bucket = digest.readUInt32BE(0);
+  return (bucket / 0x100000000) * 100;
+}
+
+function resolveWorkGraphRolloutDecision({
+  accountId = "",
+  sessionKey = "",
+  requestId = "",
+  traceId = "",
+  lane = "",
+} = {}) {
+  const enforceRollout = isTruthyFlag(process.env[EXECUTIVE_WORK_GRAPH_ROLLOUT_ENFORCE_ENV]);
+  if (!enforceRollout) {
+    return {
+      accepted: true,
+      reason: "legacy_all",
+      enforce_rollout: false,
+      allowlist_matched: null,
+      sampling_percent: null,
+      sampling_subject: null,
+    };
+  }
+
+  const allowlistEntries = buildWorkGraphRolloutAllowlist();
+  const allowlistMatched = isWorkGraphRolloutAllowlistMatched({
+    allowlistEntries,
+    subjects: {
+      account: cleanText(accountId),
+      session: cleanText(sessionKey),
+      request: cleanText(requestId),
+      trace: cleanText(traceId),
+      lane: cleanText(lane),
+    },
+  });
+  if (!allowlistMatched) {
+    return {
+      accepted: false,
+      reason: "allowlist_miss",
+      enforce_rollout: true,
+      allowlist_matched: false,
+      sampling_percent: null,
+      sampling_subject: null,
+    };
+  }
+
+  const samplingPercent = normalizeSamplingPercent(process.env[EXECUTIVE_WORK_GRAPH_SAMPLING_PERCENT_ENV]);
+  const samplingSubject = cleanText(requestId)
+    ? "request"
+    : cleanText(traceId)
+      ? "trace"
+      : cleanText(sessionKey)
+        ? "session"
+        : cleanText(accountId)
+          ? "account"
+          : "none";
+  const samplingKey = cleanText(requestId) || cleanText(traceId) || cleanText(sessionKey) || cleanText(accountId);
+  if (samplingPercent <= 0) {
+    return {
+      accepted: false,
+      reason: "sampling_percent_zero",
+      enforce_rollout: true,
+      allowlist_matched: true,
+      sampling_percent: samplingPercent,
+      sampling_subject: samplingSubject,
+    };
+  }
+  if (samplingPercent >= 100) {
+    return {
+      accepted: true,
+      reason: null,
+      enforce_rollout: true,
+      allowlist_matched: true,
+      sampling_percent: samplingPercent,
+      sampling_subject: samplingSubject,
+    };
+  }
+  const scorePercent = computeDeterministicSamplingScorePercent(samplingKey);
+  if (scorePercent == null) {
+    return {
+      accepted: false,
+      reason: "sampling_key_missing",
+      enforce_rollout: true,
+      allowlist_matched: true,
+      sampling_percent: samplingPercent,
+      sampling_subject: samplingSubject,
+    };
+  }
+  return {
+    accepted: scorePercent < samplingPercent,
+    reason: scorePercent < samplingPercent ? null : "sampling_miss",
+    enforce_rollout: true,
+    allowlist_matched: true,
+    sampling_percent: samplingPercent,
+    sampling_subject: samplingSubject,
+  };
 }
 
 async function runWithSessionCoordination({
@@ -2151,6 +2324,27 @@ async function executeExecutiveTurnUnlocked({
     primaryAgentId,
   });
   if (compiledWorkGraph?.ok === true && compiledWorkGraph.graph) {
+    const workGraphTraceId = cleanText(scope?.trace_id || scope?.request_id || event?.trace_id || task.trace_id || "");
+    const workGraphRequestId = cleanText(scope?.request_id || scope?.trace_id || event?.request_id || "");
+    const workGraphRolloutDecision = resolveWorkGraphRolloutDecision({
+      accountId,
+      sessionKey,
+      requestId: workGraphRequestId,
+      traceId: workGraphTraceId,
+      lane: cleanText(scope?.capability_lane || ""),
+    });
+    logger.info("executive_work_graph_rollout_decision", {
+      task_id: task.id,
+      graph_id: compiledWorkGraph.graph.graph_id,
+      accepted: workGraphRolloutDecision.accepted === true,
+      reason: workGraphRolloutDecision.reason || null,
+      enforce_rollout: workGraphRolloutDecision.enforce_rollout === true,
+      allowlist_matched: workGraphRolloutDecision.allowlist_matched,
+      sampling_percent: Number.isFinite(Number(workGraphRolloutDecision.sampling_percent))
+        ? Number(workGraphRolloutDecision.sampling_percent)
+        : null,
+      sampling_subject: cleanText(workGraphRolloutDecision.sampling_subject || "") || null,
+    });
     const persistedWorkGraph = persistExecutiveWorkGraph({
       graph: compiledWorkGraph.graph,
       status: "queued",
@@ -2162,15 +2356,17 @@ async function executeExecutiveTurnUnlocked({
           work_graph_schema_version: compiledWorkGraph.graph.schema_version,
         },
       });
-      enqueueExecutiveWorkGraphJob({
-        graphId: compiledWorkGraph.graph.graph_id,
-        taskId: task.id,
-        accountId,
-        sessionKey,
-        requestText,
-        traceId: cleanText(scope?.trace_id || event?.trace_id || task.trace_id || ""),
-        maxAttempts: 3,
-      });
+      if (workGraphRolloutDecision.accepted === true) {
+        enqueueExecutiveWorkGraphJob({
+          graphId: compiledWorkGraph.graph.graph_id,
+          taskId: task.id,
+          accountId,
+          sessionKey,
+          requestText,
+          traceId: workGraphTraceId,
+          maxAttempts: 3,
+        });
+      }
     } else {
       logger.warn("executive_work_graph_persist_failed", {
         task_id: task.id,

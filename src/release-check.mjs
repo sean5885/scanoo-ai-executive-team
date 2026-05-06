@@ -15,6 +15,7 @@ const BLOCKING_CONTROL_REGRESSION = "control_regression";
 const BLOCKING_DEPENDENCY_POLICY_FAILURE = "dependency_policy_failure";
 const BLOCKING_WRITE_POLICY_FAILURE = "write_policy_failure";
 const BLOCKING_USAGE_LAYER_FAILURE = "usage_layer_failure";
+const BLOCKING_SAMPLE_INSUFFICIENT = "sample_insufficient";
 const BLOCKING_LIVE_EVAL_REQUIRED = "live_eval_required";
 const BLOCKING_CAPABILITY_GATE_FAILURE = "capability_gate_failure";
 const BLOCKING_EXPERIENCE_GATE_FAILURE = "experience_gate_failure";
@@ -167,6 +168,10 @@ function buildCollabGateFailureNextStep() {
   return "先看 executive live metrics：提高 deadletter replay rate 至 >= 0.95，並把平均 parallel speedup 提升到 >= 1.35。";
 }
 
+function buildSampleInsufficientNextStep() {
+  return "先補齊 collab 證據樣本（graph/deadletter/parallel）到最低門檻，再重新跑 release gate。";
+}
+
 function buildRoutingRegressionNextStep(selfCheckResult = {}) {
   if (selfCheckResult?.routing_summary?.doc_boundary_regression === true) {
     return "先看 routing regression 的 doc-boundary pack：evals/routing-eval-set.mjs 的 doc-023a~023k；再看 src/message-intent-utils.mjs 與 src/lane-executor.mjs 的 intent guard。";
@@ -297,6 +302,9 @@ function buildReleaseCheckActionHint({
   }
   if (firstBlockingCheck === BLOCKING_USAGE_LAYER_FAILURE) {
     return "run eval:usage-layer and improve first-turn helpfulness while reducing generic replies";
+  }
+  if (firstBlockingCheck === BLOCKING_SAMPLE_INSUFFICIENT) {
+    return "collect collab evidence samples (graph/deadletter/parallel) until minimum thresholds are met";
   }
   if (firstBlockingCheck === BLOCKING_LIVE_EVAL_REQUIRED) {
     return "run live-eval-runner and verify dataset_mode=live with enough samples";
@@ -516,8 +524,17 @@ function evaluateCollabGate({ executiveLiveMetrics = null, liveEvalSampleReady =
   const parallelSpeedup = toFiniteNumber(metrics?.parallel?.average_speedup, null);
   const metricSampleReady = metrics?.sample_ready === true;
   const sampleReady = liveEvalSampleReady === true && metricSampleReady;
+  const sampleReadiness = metrics?.collab_sample_readiness && typeof metrics.collab_sample_readiness === "object"
+    ? metrics.collab_sample_readiness
+    : null;
+  const sampleMissing = Array.isArray(sampleReadiness?.missing_requirements)
+    ? sampleReadiness.missing_requirements.map((item) => cleanText(item)).filter(Boolean)
+    : [];
 
   const reasons = [];
+  if (!sampleReady) {
+    reasons.push("sample_insufficient");
+  }
   if (sampleReady && (deadletterReplayRate == null || deadletterReplayRate < COLLAB_GATE_THRESHOLDS.deadletter_replay_rate_min)) {
     reasons.push("deadletter_replay_rate_below_threshold");
   }
@@ -534,6 +551,8 @@ function evaluateCollabGate({ executiveLiveMetrics = null, liveEvalSampleReady =
       deadletter_replay_rate: deadletterReplayRate,
       parallel_speedup: parallelSpeedup,
       graph_total: Number(metrics?.graph_counts?.total || 0),
+      sample_basis: metrics?.sample_basis || null,
+      sample_missing_requirements: sampleMissing,
     },
   };
 }
@@ -551,6 +570,10 @@ function buildReleaseRollbackCandidates(blockingChecks = []) {
     }
     if (blockingCheck === BLOCKING_USAGE_LAYER_FAILURE) {
       candidates.push("rollback latest prompt/routing changes that reduced usage-layer quality");
+      continue;
+    }
+    if (blockingCheck === BLOCKING_SAMPLE_INSUFFICIENT) {
+      candidates.push("hold release readiness until collab sample requirements are met");
       continue;
     }
     if (blockingCheck === BLOCKING_LIVE_EVAL_REQUIRED) {
@@ -1209,6 +1232,9 @@ function buildCollabGateDrilldown({ collabGate = null, executiveLiveMetrics = nu
   if (executiveLiveMetrics?.parallel?.top_graphs?.[0]?.graph_id) {
     representative.push(`top_parallel_graph:${cleanText(executiveLiveMetrics.parallel.top_graphs[0].graph_id)}`);
   }
+  if (Array.isArray(metrics?.sample_missing_requirements) && metrics.sample_missing_requirements.length > 0) {
+    representative.push(`sample_missing:${metrics.sample_missing_requirements.join("+")}`);
+  }
   return {
     failing_area: FAILING_AREA_RUNTIME,
     representative_fail_case: representative,
@@ -1242,6 +1268,7 @@ export function buildReleaseCheckDrilldown({
           : []),
         ...(capabilityGate?.status === "fail" ? [BLOCKING_CAPABILITY_GATE_FAILURE] : []),
         ...(experienceGate?.status === "fail" ? [BLOCKING_EXPERIENCE_GATE_FAILURE] : []),
+        ...(collabGate?.reasons?.includes("sample_insufficient") ? [BLOCKING_SAMPLE_INSUFFICIENT] : []),
         ...(collabGate?.status === "fail" ? [BLOCKING_COLLAB_GATE_FAILURE] : []),
         ...(hasBlockingTruthfulCompletionIssue(selfCheckResult) ? [BLOCKING_TRUTHFUL_COMPLETION_FAILURE] : []),
         ...(hasBlockingCompanyBrainIssue(selfCheckResult) ? [BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE] : []),
@@ -1278,6 +1305,12 @@ export function buildReleaseCheckDrilldown({
     return buildProductionEvalDrilldown({
       productionEval,
       gate: "experience",
+    });
+  }
+  if (firstBlockingCheck === BLOCKING_SAMPLE_INSUFFICIENT) {
+    return buildCollabGateDrilldown({
+      collabGate,
+      executiveLiveMetrics,
     });
   }
   if (firstBlockingCheck === BLOCKING_COLLAB_GATE_FAILURE) {
@@ -1350,6 +1383,9 @@ export function buildReleaseCheckReport({
   if (experienceGate?.status === "fail") {
     blockingChecks.push(BLOCKING_EXPERIENCE_GATE_FAILURE);
   }
+  if (collabGate?.reasons?.includes("sample_insufficient")) {
+    blockingChecks.push(BLOCKING_SAMPLE_INSUFFICIENT);
+  }
   if (collabGate?.status === "fail") {
     blockingChecks.push(BLOCKING_COLLAB_GATE_FAILURE);
   }
@@ -1391,6 +1427,8 @@ export function buildReleaseCheckReport({
       ? buildCapabilityGateFailureNextStep()
     : firstBlockingCheck === BLOCKING_EXPERIENCE_GATE_FAILURE
       ? buildExperienceGateFailureNextStep()
+    : firstBlockingCheck === BLOCKING_SAMPLE_INSUFFICIENT
+      ? buildSampleInsufficientNextStep()
     : firstBlockingCheck === BLOCKING_COLLAB_GATE_FAILURE
       ? buildCollabGateFailureNextStep()
     : firstBlockingCheck === BLOCKING_TRUTHFUL_COMPLETION_FAILURE
@@ -1518,6 +1556,9 @@ function renderBlockingLineLabel(blockingCheck = "") {
   }
   if (blockingCheck === BLOCKING_EXPERIENCE_GATE_FAILURE) {
     return "experience gate failure";
+  }
+  if (blockingCheck === BLOCKING_SAMPLE_INSUFFICIENT) {
+    return "collab sample insufficient";
   }
   if (blockingCheck === BLOCKING_COLLAB_GATE_FAILURE) {
     return "collab gate failure";
@@ -1752,6 +1793,9 @@ export async function runReleaseCheck(options = {}) {
   }
   if (experienceGate.status === "fail") {
     blockingChecks.push(BLOCKING_EXPERIENCE_GATE_FAILURE);
+  }
+  if (collabGate.reasons.includes("sample_insufficient")) {
+    blockingChecks.push(BLOCKING_SAMPLE_INSUFFICIENT);
   }
   if (collabGate.status === "fail") {
     blockingChecks.push(BLOCKING_COLLAB_GATE_FAILURE);

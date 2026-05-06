@@ -59,12 +59,16 @@ For this closure-planning pass:
     - mutation-runtime idempotency now uses scoped store keys (`idempotency_key + account/action/path/resource scope`) so different mutation flows with the same raw key do not collide.
     - regression coverage is aligned at `/Users/seanhan/Documents/Playground/tests/company-brain-review-approval.test.mjs`, `/Users/seanhan/Documents/Playground/tests/company-brain-lifecycle-contract.test.mjs`, and `/Users/seanhan/Documents/Playground/tests/mutation-runtime.test.mjs`.
     - this item is `resolved` for checked-in governance closure; it does not claim full HTTP/runtime idempotency unification.
-22. Executive `work_graph` rollout acceptance metrics are not yet fully closed as of 2026-04-30:
+22. Executive `work_graph` rollout acceptance metrics are still not fully closed as of 2026-05-06:
     - checked-in code now provides DAG schema validation, node-level claim/lease/heartbeat/retry/deadletter, and artifact-gated merge paths.
-    - however, the required operator/observability acceptance set is still partial in checked-in runtime:
-      - no built-in wall-time baseline comparator proving `>=35%` parallel speedup against serial baseline
-      - no checked-in dashboard/CLI aggregate for `artifact_coverage` and `deadletter_replay_rate>=95%` as a single release gate report
+    - checked-in observability has advanced:
+      - `src/executive-live-metrics.mjs` now exposes `parallel.average_speedup` plus `p50/p90` and `collab_sample_readiness`
+      - `scripts/quality-dashboard.mjs` now surfaces collab sample readiness / missing requirements
+      - `scripts/deadletter-replay-runner.mjs` now provides replay batch evidence and `replay_success_rate` report
+    - however, the required acceptance set is still partial:
+      - no single checked-in gate metric for `artifact_coverage` in release report
       - no full E2E benchmark pack yet proving `>=90%` DAG pass rate over failure/retry/lease-expiry matrix
+      - no checked-in real-traffic multi-window evidence proving stable `sample_basis=true` and sustained collab gate pass
     - this item remains `open` for release-acceptance closure (implementation exists; KPI proof packaging still pending).
     - Evidence:
       - `/Users/seanhan/Documents/Playground/src/executive-work-graph.mjs`
