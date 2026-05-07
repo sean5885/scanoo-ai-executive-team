@@ -374,6 +374,12 @@ Current-truth docs for onboarding are:
     - `capability_gate_failure`
     - `experience_gate_failure`
     - `collab_gate_failure`
+  - `executive-live-metrics.mjs` parallel speedup sample now counts node attempts with `status in {succeeded, completed}` (instead of `completed` only), matching the actual node lifecycle status written by `completeExecutableWorkNode(...)`
+  - `scripts/collab-sample-bootstrap.mjs` provides an operator-facing runtime bootstrap path for collab sample closure:
+    - builds executable DAG graphs with two independent specialist nodes plus merge
+    - records completed parallel attempts for speedup baseline (`p50/p90/avg`)
+    - injects deadletter samples and replays them through `replayExecutiveDeadletter(...)`
+    - emits one bounded JSON report with current `collab_sample_readiness` snapshot
   - collab gate runtime metrics now come from `/Users/seanhan/Documents/Playground/src/executive-live-metrics.mjs`; gate only enters pass/fail when sample basis is complete (`graph + deadletter + parallel`)
   - planner/read evidence is converted into public `sources[]` lines through canonical source mapping
 - Secondary implemented path:

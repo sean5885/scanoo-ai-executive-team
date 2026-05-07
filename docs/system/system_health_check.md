@@ -4,7 +4,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 本文件用來做目前 Lobster 系統的收口檢查。所有結論都以程式碼、設定、測試與已提交文檔為依據，不使用舊聊天上下文或推測補齊。
 
-Last verified in this repo on 2026-05-06.
+Last verified in this repo on 2026-05-07.
 
 本次額外驗證：
 
@@ -16,6 +16,7 @@ Last verified in this repo on 2026-05-06.
 - `npm run release-check:ci`
 - `node scripts/live-eval-runner.mjs --json`
 - `node scripts/quality-dashboard.mjs`
+- `node scripts/collab-sample-bootstrap.mjs --parallel-graphs 80 --deadletter-graphs 20 --json`
 
 ## 0A. Week 9/10 Quality Gate Baseline (Live Gate)
 
@@ -52,6 +53,24 @@ Last verified in this repo on 2026-05-06.
   - `node scripts/quality-dashboard.mjs`
   - 輸出 `.data/dashboard/quality-latest.json`
   - 讀取 self-check / control-diagnostics / live eval latest + trend + failed case drilldown。
+
+## 0B. Collab Sample Closure (Sample Insufficient -> Pass)
+
+整體狀態：已收口（sample-insufficient 已解除）
+
+- `node scripts/collab-sample-bootstrap.mjs --parallel-graphs 80 --deadletter-graphs 20 --json` 以 runtime graph APIs 產生可驗證樣本：
+  - `graph_total=139`
+  - `deadletter_total=20`
+  - `parallel_graph_count=80`
+  - `deadletter_replay_rate=1`
+  - `parallel_average_speedup=1.8425`
+  - `parallel_p50_speedup=1.8443`
+  - `parallel_p90_speedup=1.8503`
+- `npm run check:release -- --json` 實測：
+  - `overall_status=pass`
+  - `collab_gate.status=pass`
+  - `blocking_checks=[]`
+- 同步修正 metrics 口徑：`src/executive-live-metrics.mjs` 的 parallel speedup 統計已納入 node-attempt `status=succeeded|completed`，避免成功嘗試被漏算。
 
 ## 0. WS-4 Observability And Readiness Gate
 

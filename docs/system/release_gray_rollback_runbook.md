@@ -2,7 +2,7 @@
 
 Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
-Last verified in this repo on 2026-05-06.
+Last verified in this repo on 2026-05-07.
 
 ## Purpose
 
@@ -31,6 +31,14 @@ node scripts/deadletter-replay-runner.mjs --json
 - `release-check` 不可含 `blocking_checks=sample_insufficient`
 - `release-check` 的 `collab_gate.status = pass`（樣本達門檻後）
 - `overall_status = pass`
+
+若因 `blocking_checks=sample_insufficient` 被卡住，先補樣本再進灰度：
+
+```bash
+npm run eval:collab-bootstrap -- --parallel-graphs 80 --deadletter-graphs 20 --json
+node scripts/quality-dashboard.mjs --json
+npm run check:release -- --json
+```
 
 ## Gate Thresholds
 

@@ -310,7 +310,7 @@ export function readExecutiveLiveMetrics({
     FROM executive_node_attempts
     WHERE started_at >= @cutoff
       AND completed_at IS NOT NULL
-      AND status = 'completed'
+      AND status IN ('completed', 'succeeded')
   `).all({ cutoff: cutoffIso });
 
   const speedupSummary = summarizeSpeedupRows(attemptRows);
