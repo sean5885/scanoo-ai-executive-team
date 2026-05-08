@@ -992,7 +992,7 @@ function buildPlannerUserFacingAnswer({
     return "這次處理被中斷了，所以我先不回傳不完整結果。";
   }
   if (normalizedError === "fail_closed") {
-    return "這次我先停在 fail-closed 邊界，因為目前結果還不符合可安全交付的條件。";
+    return "這次我先停在安全邊界，因為目前結果還不符合可安全交付的條件。";
   }
   if (failureClass === "planner_failed") {
     return "這輪不是你問題不清楚，而是我這邊沒有順利排出安全可執行的步驟，所以先不亂做。";
@@ -1072,13 +1072,13 @@ function buildPlannerUserFacingLimitations({
   }
   if (normalizedError === "fail_closed") {
     return normalizePlannerUserFacingList([
-      "目前這條路徑停在受控 fail-closed 邊界，我不會把未驗證結果包裝成完成。",
+      "目前這條路徑停在受控安全邊界，我不會把未驗證結果包裝成完成。",
       "你可以直接重試同一句，或先拆成更小步驟（例如先查 runtime / 先搜文件）讓我逐步交付。",
     ]);
   }
   if (failureClass === "planner_failed") {
     return normalizePlannerUserFacingList([
-      "這輪卡在我這邊的規劃步驟，不代表你的需求本身一定不清楚。",
+      "這輪在可執行步驟前就中斷，不代表你的需求本身一定不清楚。",
       `你可以直接重試同一句；如果要更穩，${buildPlannerRetryHint(requestText)}`,
     ]);
   }
@@ -1103,14 +1103,14 @@ export function renderPlannerUserFacingReplyText({
   const normalizedLimitations = normalizePlannerUserFacingList(limitations);
 
   return [
-    "答案",
+    "答案（先解法）",
     cleanText(answer) || "目前沒有可直接交付的結果。",
     "",
-    "來源",
-    ...(normalizedSources.length > 0 ? normalizedSources.map((item) => `- ${item}`) : ["- 目前沒有足夠已驗證來源可補更多重點。"]),
+    "來源（依據）",
+    ...(normalizedSources.length > 0 ? normalizedSources.map((item) => `- ${item}`) : ["- 這輪沒有新增可引用來源（流程在產出前中斷）。"]),
     "",
-    "待確認/限制",
-    ...(normalizedLimitations.length > 0 ? normalizedLimitations.map((item) => `- ${item}`) : ["- 目前沒有更具體的下一步。"]),
+    "待確認/限制（下一步）",
+    ...(normalizedLimitations.length > 0 ? normalizedLimitations.map((item) => `- ${item}`) : ["- 你可以指定要先完成哪一段，我會從那一步立刻繼續。"]),
   ].join("\n");
 }
 

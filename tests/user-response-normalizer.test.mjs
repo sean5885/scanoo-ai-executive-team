@@ -60,7 +60,7 @@ test("chat reply renders only canonical execution_result.data fields without pla
   assert.match(text, /^答案/m);
   assert.match(text, /^來源/m);
   assert.match(text, /^待確認\/限制/m);
-  assert.match(text, /目前沒有足夠已驗證來源/);
+  assert.match(text, /沒有新增可引用來源/);
   assert.doesNotMatch(text, /trace|chosen_action|fallback_reason|kind|match_reason/);
   assert.doesNotMatch(text, /\/Users\/|Back to \[?README/);
 });

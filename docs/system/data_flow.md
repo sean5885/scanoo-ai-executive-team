@@ -314,7 +314,7 @@ Current public `/answer` path:
    - fail path can only render `目前狀態 + 可驗證證據 + 待確認/限制`
    - completed-tone wording is blocked in verifier-fail/fake-completion/partial-completion paths
 13. `renderPlannerUserFacingReplyText(...)` keeps fixed public order:
-   - `答案 -> 來源 -> 待確認/限制`
+   - `答案（先解法） -> 來源（依據） -> 待確認/限制（下一步）`
 
 Current truth:
 

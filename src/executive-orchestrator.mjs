@@ -2214,11 +2214,11 @@ async function executeExecutiveTurnUnlocked({
       };
       return {
         text: buildExecutiveUserFacingErrorText({
-          answer: "這輪 executive planner 暫時沒有產出可安全執行的決策，所以我先不直接顯示未整理的系統錯誤。",
+          answer: "這次我先停在安全邊界，因為這輪還沒拿到可直接交付的結果。",
           limitations: [
-            "內部錯誤原因與 decision context 已保留在程式層與 runtime/log，這裡先不直接暴露 raw JSON。",
+            "這輪沒有進到可驗證的執行結果，所以目前沒有可引用的新來源。",
             cleanText(decision?.alternative?.summary || "")
-              || "如果你要繼續，可以改用明確的 agent slash 指令，或把任務目標說得更具體一點後再試。",
+              || "你可以直接說要我先交付哪一段（例如三點重點、風險清單或下一步），我會沿同一個目標立刻重試。",
           ],
         }),
         error: failureEnvelope.error,

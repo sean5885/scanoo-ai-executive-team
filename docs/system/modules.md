@@ -351,7 +351,7 @@ Current-truth docs for onboarding are:
   - canonical user replies now degrade gracefully when only partial `sources / limitations` are present, instead of collapsing straight to a full-failure generic reply
   - when the planner result would otherwise degrade to a generic failure, `user-response-normalizer.mjs` now performs a minimal mixed-request decomposition for copy/image/send-style asks and upgrades the reply to partial success if a text-draft subtask is still doable
   - `renderUserResponseText(...)` renders an already-canonical `{ answer, sources, limitations }` object directly without re-normalizing legacy payload shapes
-  - `renderPlannerUserFacingReplyText(...)` now enforces one fixed section order for public reply text: `答案 -> 來源 -> 待確認/限制`
+  - `renderPlannerUserFacingReplyText(...)` now enforces one fixed section order for public reply text: `答案（先解法） -> 來源（依據） -> 待確認/限制（下一步）`
   - source rendering at this boundary now only accepts canonical source objects and is mapped through `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`; arbitrary free-form source strings are not rendered as evidence
   - `executive-orchestrator.mjs` now has a truthful completion gate on final user-facing copy:
     - when `verification.pass !== true`, frontend text is forced to `blocked/escalated` tone and cannot use completion phrasing

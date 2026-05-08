@@ -236,6 +236,7 @@ What now exists in current code:
     - direct answer first
     - normalized `結論 / 重點 / 下一步` structure
     - supporting-agent context absorbed into one single-voice final reply instead of separate visible agent blocks
+    - fail-soft wording kept user-facing (no raw planner/json/debug jargon in visible copy)
   - reject JSON-like specialist or merge replies before they are parsed as executive brief text, keeping structured blobs out of the visible single-voice answer
   - expose a minimal planner-callable tool registry for five agent-bridge actions:
     - `create_doc`

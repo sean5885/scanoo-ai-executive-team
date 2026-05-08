@@ -642,13 +642,13 @@ function buildMergeNodeFailSoftReply({
     : "missing_artifacts:unknown";
   return {
     text: [
-      "答案",
+      "答案（先解法）",
       "目前狀態：blocked。merge node 只允許消費 artifacts，這輪缺少必要 artifacts，不能標記 completed。",
       "",
-      "來源",
+      "來源（依據）",
       "- artifact gate",
       "",
-      "待確認/限制",
+      "待確認/限制（下一步）",
       `- ${limitation}`,
     ].join("\n"),
   };

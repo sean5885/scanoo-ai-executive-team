@@ -55,6 +55,7 @@ This is the grouped HTTP surface mirror for the current repo.
 - `/answer` now accepts both `q` and `query` query params for the same user intent text
 - the public `/answer` payload still does not expose raw planner errors, but the in-process normalized object now carries non-enumerable `failure_class` (legacy-compatible) plus `failure_class_v2` (`timeout` / `upstream_error` / `partial_data` / `user_input_missing`) for usage-layer eval / telemetry classification
 - fail-soft replies (`ok=false`) are normalized into a usable structure before public rendering: `answer` as summary, `sources` as what-we-got, and the last `limitations` item as executable CTA
+- fail-soft answer copy should stay user-facing: avoid exposing internal planner/JSON/debug wording in `answer` and default `sources/limitations`
 - timeout fail-soft replies now append `limitations[]` marker `timeout_layer=planner|tool|external_dependency` so runtime/test paths can distinguish where latency was consumed
 - when request-level timeout happens before planner returns, canonical timeout fallback now still runs task-decomposition normalization; multi-intent replies can still return `partial=true`, and image/publish capability-boundary replies can still surface explicit `blocked（capability_gap）` instead of generic timeout text
 - user-facing multi-intent fail-soft now marks unsupported image/publish steps explicitly as `blocked（capability_gap）`, and public payload includes enumerable `partial` for partial-success replies
