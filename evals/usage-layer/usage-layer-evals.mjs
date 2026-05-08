@@ -365,11 +365,17 @@ export const usageLayerEvals = [
   createUsageLayerEvalFromRouting({
     id: "usage-047",
     source_anchor: "routing-eval:doc-038",
+    expected_reply_mode: "fail_soft",
+    expected_success_type: "fail_soft",
+    expected_eval_outcome: "fail_closed",
     should_fail_if_generic: true,
   }),
   createUsageLayerEvalFromRouting({
     id: "usage-048",
     source_anchor: "routing-eval:doc-039",
+    expected_reply_mode: "fail_soft",
+    expected_success_type: "fail_soft",
+    expected_eval_outcome: "fail_closed",
     should_fail_if_generic: true,
   }),
   createManualUsageLayerEval({

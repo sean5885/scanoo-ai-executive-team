@@ -57,8 +57,10 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - `doc_editor` case 走既有 lane intro / preview boundary，不再被 planner answer edge 吞掉成 generic fallback
 - `cloud_doc_workflow` case 走已 checked-in 的本地 preview/review/why reply builder，避免把明顯 workflow case 錯送到 planner answer edge
 - personal-lane `partial_success / fail_closed` case 直接重用 checked-in normalizer boundary，不再讓 no-match 類 eval 取決於 planner waiting
+- `registered_agent` case 在 eval runner 內會用 `includeKnowledgeSubcommands=true` 解析 `/knowledge audit|conflicts|distill`，避免 route 命中後又在執行層被誤判成 `routing_no_match`
 - 重用既有 routing resolver 取 `lane / planner_action / agent_or_tool`
 - `tool_omission` 判定會優先看是否已命中 checked-in controlled executor；對 `doc_editor` / `meeting_workflow` / `cloud_doc_workflow` 這類非 planner-owner lane，不再把 runner 自己沒走到 owner surface 誤算成 omission
+- 對 auth-required 的 deictic doc follow-up（例如「這份文件在講什麼」「打開這份給我看」），在無 token 的本地 eval baseline 以 `fail_soft/fail_closed` 為預期，不把 permission boundary 誤算成 routing 失敗
 - 用簡單 heuristic 統計 `FTHR / WRR / TOR / GRR / UCR`
 - `RDR` 目前先保留 TODO，僅把 reply discipline case log 出來
 

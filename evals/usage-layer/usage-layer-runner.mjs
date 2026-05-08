@@ -954,7 +954,9 @@ async function runDocEditorEvalCase(testCase = {}, route = {}) {
 }
 
 async function runRegisteredAgentEvalCase(testCase = {}, route = {}) {
-  const command = parseRegisteredAgentCommand(testCase.user_text);
+  const command = parseRegisteredAgentCommand(testCase.user_text, {
+    includeKnowledgeSubcommands: true,
+  });
   if (!command?.agent) {
     return {
       plannerEnvelope: {

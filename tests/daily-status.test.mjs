@@ -103,6 +103,69 @@ async function seedDailyStatusArchives() {
   };
 }
 
+const DAILY_STATUS_STABLE_LIVE_EVAL_REPORT = {
+  version: "live_eval_v1",
+  dataset_mode: "live",
+  sample_size: {
+    total_tasks: 20,
+    important_task_total: 20,
+    pdf_task_total: 10,
+  },
+  task_success_rate: 1,
+  fake_completion_rate: 0,
+  metrics: {
+    task_success_rate: 1,
+    fake_completion_rate: 0,
+    evidence_coverage_rate: 1,
+    pdf_task_success_rate: 1,
+  },
+  counts: {
+    tool_permission_violation_count: 0,
+    blocked_misreported_completed_count: 0,
+  },
+  flags: {
+    usage_layer_pass: true,
+    routing_planner_regression: false,
+  },
+};
+
+const DAILY_STATUS_STABLE_EXECUTIVE_LIVE_METRICS = {
+  deadletter: {
+    replay_rate: 1,
+  },
+  parallel: {
+    average_speedup: 1.5,
+  },
+  graph_counts: {
+    total: 140,
+  },
+  sample_ready: true,
+  sample_basis: {
+    has_graph_sample: true,
+    has_deadletter_sample: true,
+    has_parallel_sample: true,
+  },
+  collab_sample_readiness: {
+    sample_ready: true,
+    missing_requirements: [],
+  },
+};
+
+async function createDailyStatusGateFixtureEnv(baseDir = "") {
+  const liveEvalPath = path.join(baseDir, "daily-status-live-eval-fixture.json");
+  const executiveLiveMetricsPath = path.join(baseDir, "daily-status-executive-live-metrics-fixture.json");
+  await writeFile(liveEvalPath, `${JSON.stringify(DAILY_STATUS_STABLE_LIVE_EVAL_REPORT, null, 2)}\n`, "utf8");
+  await writeFile(
+    executiveLiveMetricsPath,
+    `${JSON.stringify(DAILY_STATUS_STABLE_EXECUTIVE_LIVE_METRICS, null, 2)}\n`,
+    "utf8",
+  );
+  return {
+    RELEASE_CHECK_PRODUCTION_EVAL_FIXTURE: liveEvalPath,
+    RELEASE_CHECK_EXECUTIVE_LIVE_METRICS_FIXTURE: executiveLiveMetricsPath,
+  };
+}
+
 function buildTrendSelfCheckReport({
   routingStatus = "pass",
   plannerStatus = "pass",
@@ -513,11 +576,13 @@ test("daily-status trend summary reports worsening trend and the most changed li
 
 test("daily-status CLI renders the bounded human summary", async () => {
   const archives = await seedDailyStatusArchives();
+  const gateFixtureEnv = await createDailyStatusGateFixtureEnv(path.dirname(archives.releaseCheckArchiveDir));
   const output = execFileSync("node", ["scripts/daily-status.mjs"], {
     cwd: process.cwd(),
     encoding: "utf8",
     env: {
       ...process.env,
+      ...gateFixtureEnv,
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
@@ -535,11 +600,13 @@ test("daily-status CLI renders the bounded human summary", async () => {
 
 test("daily-status CLI emits the minimal json report with --json", async () => {
   const archives = await seedDailyStatusArchives();
+  const gateFixtureEnv = await createDailyStatusGateFixtureEnv(path.dirname(archives.releaseCheckArchiveDir));
   const raw = execFileSync("node", ["scripts/daily-status.mjs", "--json"], {
     cwd: process.cwd(),
     encoding: "utf8",
     env: {
       ...process.env,
+      ...gateFixtureEnv,
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
@@ -614,11 +681,13 @@ test("daily-status CLI trend json returns the minimal trend_summary", async () =
 
 test("daily-status CLI compare-previous adds only the short why-worse line", async () => {
   const archives = await seedDailyStatusArchives();
+  const gateFixtureEnv = await createDailyStatusGateFixtureEnv(path.dirname(archives.releaseCheckArchiveDir));
   execFileSync("node", ["scripts/daily-status.mjs", "--json"], {
     cwd: process.cwd(),
     encoding: "utf8",
     env: {
       ...process.env,
+      ...gateFixtureEnv,
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
@@ -696,6 +765,7 @@ test("daily-status CLI compare-previous adds only the short why-worse line", asy
     encoding: "utf8",
     env: {
       ...process.env,
+      ...gateFixtureEnv,
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
@@ -715,11 +785,13 @@ test("daily-status CLI compare-previous adds only the short why-worse line", asy
 
 test("daily-status CLI json compare-snapshot adds changed_line and reason hint", async () => {
   const archives = await seedDailyStatusArchives();
+  const gateFixtureEnv = await createDailyStatusGateFixtureEnv(path.dirname(archives.releaseCheckArchiveDir));
   execFileSync("node", ["scripts/daily-status.mjs", "--json"], {
     cwd: process.cwd(),
     encoding: "utf8",
     env: {
       ...process.env,
+      ...gateFixtureEnv,
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
@@ -814,6 +886,7 @@ test("daily-status CLI json compare-snapshot adds changed_line and reason hint",
     encoding: "utf8",
     env: {
       ...process.env,
+      ...gateFixtureEnv,
       ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
       PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
       SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,

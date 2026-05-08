@@ -1,5 +1,9 @@
 const wantsJson = process.argv.includes("--json");
 const wantsTrend = process.argv.includes("--trend");
+const writeSummaryFixturePath = process.env.SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE || "";
+const usageSummaryFixturePath = process.env.SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE || "";
+const productionEvalFixturePath = process.env.RELEASE_CHECK_PRODUCTION_EVAL_FIXTURE || "";
+const executiveLiveMetricsFixturePath = process.env.RELEASE_CHECK_EXECUTIVE_LIVE_METRICS_FIXTURE || "";
 
 function getArgValue(flag = "") {
   const index = process.argv.indexOf(flag);
@@ -19,6 +23,44 @@ function printUsage() {
     "  npm run daily-status -- --compare-snapshot <run-id|path>",
     "  npm run daily-status -- --json",
   ].join("\n"));
+}
+
+async function resolveReleaseCheckOverrides() {
+  if (
+    !writeSummaryFixturePath
+    && !usageSummaryFixturePath
+    && !productionEvalFixturePath
+    && !executiveLiveMetricsFixturePath
+  ) {
+    return {};
+  }
+
+  const { readFile } = await import("node:fs/promises");
+  const overrides = {};
+
+  if (writeSummaryFixturePath) {
+    const raw = await readFile(writeSummaryFixturePath, "utf8");
+    const summary = JSON.parse(raw);
+    overrides.writeCheck = async () => summary;
+  }
+
+  if (usageSummaryFixturePath) {
+    const raw = await readFile(usageSummaryFixturePath, "utf8");
+    const summary = JSON.parse(raw);
+    overrides.usageLayerCheck = async () => summary;
+  }
+
+  if (productionEvalFixturePath) {
+    const raw = await readFile(productionEvalFixturePath, "utf8");
+    overrides.productionEvalReport = JSON.parse(raw);
+  }
+
+  if (executiveLiveMetricsFixturePath) {
+    const raw = await readFile(executiveLiveMetricsFixturePath, "utf8");
+    overrides.executiveLiveMetrics = JSON.parse(raw);
+  }
+
+  return overrides;
 }
 
 if (process.argv.includes("--help")) {
@@ -100,7 +142,21 @@ try {
         resolvePreviousReleaseCheckSnapshot,
         resolveReleaseCheckSnapshot,
       } = await import("../src/release-check-history.mjs"));
-      result = await runReleaseCheck();
+      result = await runReleaseCheck({
+        ...(process.env.ROUTING_DIAGNOSTICS_ARCHIVE_DIR
+          ? { routingArchiveDir: process.env.ROUTING_DIAGNOSTICS_ARCHIVE_DIR }
+          : {}),
+        ...(process.env.PLANNER_DIAGNOSTICS_ARCHIVE_DIR
+          ? { plannerArchiveDir: process.env.PLANNER_DIAGNOSTICS_ARCHIVE_DIR }
+          : {}),
+        ...(process.env.SYSTEM_SELF_CHECK_ARCHIVE_DIR
+          ? { selfCheckArchiveDir: process.env.SYSTEM_SELF_CHECK_ARCHIVE_DIR }
+          : {}),
+        ...(process.env.RELEASE_CHECK_ARCHIVE_DIR
+          ? { releaseCheckArchiveDir: process.env.RELEASE_CHECK_ARCHIVE_DIR }
+          : {}),
+        ...(await resolveReleaseCheckOverrides()),
+      });
     } finally {
       process.stdout.write = originalWrite;
     }
