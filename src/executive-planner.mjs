@@ -155,19 +155,12 @@ import { resolveToolContract, validateToolInvocation } from "./tool-layer-contra
 import { executeTool } from "./tool-execution-runtime.mjs";
 import { resolveToolResultContinuation } from "./tool-result-continuation.mjs";
 
-const executiveStartSignals = [
-  "角色",
-  "角度",
+const executiveStartStrongSignals = [
   "handoff",
   "交給",
-  "協作",
-  "一起看",
-  "拆解",
   "重新分配",
   "第二次分配",
   "第二次分派",
-  "決策",
-  "統一",
   "多 agent",
   "一起評估",
   "一起评估",
@@ -175,6 +168,19 @@ const executiveStartSignals = [
   "各个 agent",
   "分別看",
   "分别看",
+];
+
+const executiveStartSoftSignals = [
+  "角色",
+  "角度",
+  "協作",
+  "协作",
+  "一起看",
+  "拆解",
+  "決策",
+  "决策",
+  "統一",
+  "统一",
   "一起學習",
   "一起学习",
 ];
@@ -9384,7 +9390,20 @@ export function looksLikeExecutiveStart(text = "") {
   if (cleanText(explicitAgentRequest?.agent?.id || "")) {
     return true;
   }
-  return hasAny(normalized, executiveStartSignals);
+  if (hasAny(normalized, executiveStartStrongSignals)) {
+    return true;
+  }
+  const softSignalHitCount = executiveStartSoftSignals
+    .reduce((count, signal) => (normalized.includes(signal) ? count + 1 : count), 0);
+  if (softSignalHitCount === 0) {
+    return false;
+  }
+  if (softSignalHitCount >= 2 && /(請|请|幫|帮|需要|要|一起|麻煩|麻烦)/i.test(normalized)) {
+    return true;
+  }
+  const hasMultiAgentContext = /(agent|多 agent|各個 agent|各个 agent|分工|分配|分派|handoff|交給|交给)/i
+    .test(normalized);
+  return hasMultiAgentContext && softSignalHitCount >= 1;
 }
 
 function heuristicPlanExecutiveTurn(text = "", activeTask = null) {

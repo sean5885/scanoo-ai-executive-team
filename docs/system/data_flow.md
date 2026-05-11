@@ -444,6 +444,8 @@ Current truth:
   - `【建議下一步】`
 - both wrapper briefs stay lane-local and do not change planner ingress or the public response shape
 - lane executor now has one deterministic agent-status fast-path for direct standby-count asks (for example "現在我有幾個agent在待命"), returning checked-in registry count + active owner + standby preview without entering executive planner fallback
+- personal-lane summary routing now requires topic+action pairs in `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` (calendar/task/dialogue); standalone generic words like only `整理`/`總結` no longer trigger summary routes by themselves
+- executive start detection now stays explicit-first in `/Users/seanhan/Documents/Playground/src/executive-planner.mjs`: slash/agent requests trigger directly, while soft cues (`決策`/`協作`/`拆解` etc.) require either multi-agent context or multi-signal directive context to reduce single-word misfire
 - for explicit plugin capability handoff (`requested_capability=scanoo_compare|scanoo_diagnose`), `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` now runs one lane-primary fast-path before planner:
   - `scanoo_compare`: force one mirror evidence search pass first
   - `scanoo_diagnose`: force one document resolve + official read attempt first
