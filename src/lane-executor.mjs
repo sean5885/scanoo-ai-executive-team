@@ -1705,6 +1705,40 @@ const meetingSummarySignals = [
   "会议记录",
 ];
 
+const CALENDAR_TOPIC_PATTERN = /(日程|行程|calendar|會議|会议|schedule)/i;
+const CALENDAR_ACTION_PATTERN = /(看|查|列|顯示|显示|整理|總結|总结|摘要|有哪些|有什麼|有什么|幫我看|帮我看|提醒我|today|tomorrow|this week|今天|明天|本週|本周)/i;
+const TASK_TOPIC_PATTERN = /(任務|任务|待辦|待办|task|todo)/i;
+const TASK_ACTION_PATTERN = /(看|查|列|顯示|显示|整理|總結|总结|摘要|有哪些|有什麼|有什么|幫我看|帮我看|狀態|状态|完成|未完成|today|this week|今天|本週|本周)/i;
+const CONVERSATION_TOPIC_PATTERN = /(對話|对话|聊天|訊息|消息|conversation|chat)/i;
+const CONVERSATION_ACTION_PATTERN = /(整理|總結|总结|摘要|重點|重点|回顧|回顾|歸納|归纳|summary|summarize)/i;
+
+function looksLikeCalendarSummaryRequest(text = "") {
+  const normalized = cleanText(text);
+  if (!normalized || !CALENDAR_TOPIC_PATTERN.test(normalized)) {
+    return false;
+  }
+  return CALENDAR_ACTION_PATTERN.test(normalized);
+}
+
+function looksLikeTasksSummaryRequest(text = "") {
+  const normalized = cleanText(text);
+  if (!normalized || !TASK_TOPIC_PATTERN.test(normalized)) {
+    return false;
+  }
+  return TASK_ACTION_PATTERN.test(normalized);
+}
+
+function looksLikeRecentConversationSummaryRequest(text = "") {
+  const normalized = cleanText(text);
+  if (!normalized) {
+    return false;
+  }
+  if (hasAny(normalized, recentConversationSummarySignals)) {
+    return true;
+  }
+  return CONVERSATION_TOPIC_PATTERN.test(normalized) && CONVERSATION_ACTION_PATTERN.test(normalized);
+}
+
 function looksLikeExplicitDocOrKnowledgeRoutingRequest(text = "") {
   const normalized = cleanText(text);
   if (!normalized) {
@@ -1932,7 +1966,7 @@ export function resolveLaneExecutionPlan({ event, scope } = {}) {
         chosenAction: "draft_group_reply",
       });
     }
-    if (hasAny(text, [...recentConversationSummarySignals, "總結", "总结", "整理"])) {
+    if (looksLikeRecentConversationSummaryRequest(text)) {
       return buildLaneTrace({
         scope,
         chosenAction: "summarize_recent_dialogue",
@@ -1952,21 +1986,21 @@ export function resolveLaneExecutionPlan({ event, scope } = {}) {
     });
   }
 
-  if (hasAny(text, ["日程", "行程", "calendar", "會議", "会议"])) {
+  if (looksLikeCalendarSummaryRequest(text)) {
     return buildLaneTrace({
       scope,
       chosenAction: "calendar_summary",
     });
   }
 
-  if (hasAny(text, ["任務", "task", "待辦", "todo"])) {
+  if (looksLikeTasksSummaryRequest(text)) {
     return buildLaneTrace({
       scope,
       chosenAction: "tasks_summary",
     });
   }
 
-  if (hasAny(text, recentConversationSummarySignals)) {
+  if (looksLikeRecentConversationSummaryRequest(text)) {
     return buildLaneTrace({
       scope,
       chosenAction: "summarize_recent_dialogue",
@@ -4588,7 +4622,7 @@ async function executePersonalAssistant({ event, scope, logger = noopLogger }) {
     });
   }
 
-  if (hasAny(text, ["日程", "行程", "calendar", "會議", "会议"])) {
+  if (looksLikeCalendarSummaryRequest(text)) {
     const calendar = await getPrimaryCalendar(context.token);
     const events = await listCalendarEvents(context.token, calendar.calendar_id, {
       startTime: startOfDayUnix().toString(),
@@ -4600,7 +4634,7 @@ async function executePersonalAssistant({ event, scope, logger = noopLogger }) {
     };
   }
 
-  if (hasAny(text, ["任務", "task", "待辦", "todo"])) {
+  if (looksLikeTasksSummaryRequest(text)) {
     const tasks = await listTasks(context.token, {});
     const items = (tasks.items || []).slice(0, 5).map((item) => `- ${item.summary || "(未命名任務)"}`).join("\n") || "- 目前沒有抓到任務";
     return {

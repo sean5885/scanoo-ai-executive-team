@@ -78,3 +78,15 @@ test("executive fallback only applies after non-executive workflow matches miss"
   assert.equal(decision.guard.executive_fallback_eligible, false);
   assert.equal(decision.guard.same_scope, false);
 });
+
+test("single generic wording does not trigger explicit executive ownership", () => {
+  const decision = decideIntent({
+    text: "先幫我做決策整理",
+    lane: "personal-assistant",
+    activeTask: null,
+  });
+
+  assert.equal(decision.decision, "lane_default");
+  assert.equal(decision.final_owner, "personal-assistant");
+  assert.equal(decision.guard.explicit_executive_intent, false);
+});

@@ -85,7 +85,11 @@ test("looksLikeExecutiveStart recognizes slash and executive-team requests", () 
   assert.equal(looksLikeExecutiveStart("/generalist 幫我整理決策"), true);
   assert.equal(looksLikeExecutiveStart("先請各個 agent 一起拆解這個任務"), true);
   assert.equal(looksLikeExecutiveStart("請 consult agent 做方案比較"), true);
+  assert.equal(looksLikeExecutiveStart("用 agent 協作拆解這個決策"), true);
+  assert.equal(looksLikeExecutiveStart("這個需要高層決策，請一起協作"), true);
   assert.equal(looksLikeExecutiveStart("現在我有幾個agent在待命"), false);
+  assert.equal(looksLikeExecutiveStart("先幫我做決策整理"), false);
+  assert.equal(looksLikeExecutiveStart("把這份內容拆解一下"), false);
   assert.equal(looksLikeExecutiveStart("幫我看今天日程"), false);
 });
 
