@@ -2195,6 +2195,10 @@ async function executeExecutiveTurnUnlocked({
   } else {
     decision = await planExecutiveTurnFn({ text, activeTask, logger, sessionKey });
     if (decision?.error === FALLBACK_DISABLED) {
+      const normalizedAlternativeSummary = cleanText(decision?.alternative?.summary || "");
+      const userFacingAlternativeSummary = /(json|planner|agent\s*指令|fallback|合法)/i.test(normalizedAlternativeSummary)
+        ? ""
+        : normalizedAlternativeSummary;
       const failureEnvelope = {
         ok: false,
         error: FALLBACK_DISABLED,
@@ -2217,7 +2221,7 @@ async function executeExecutiveTurnUnlocked({
           answer: "這次我先停在安全邊界，因為這輪還沒拿到可直接交付的結果。",
           limitations: [
             "這輪沒有進到可驗證的執行結果，所以目前沒有可引用的新來源。",
-            cleanText(decision?.alternative?.summary || "")
+            userFacingAlternativeSummary
               || "你可以直接說要我先交付哪一段（例如三點重點、風險清單或下一步），我會沿同一個目標立刻重試。",
           ],
         }),

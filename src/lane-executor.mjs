@@ -114,6 +114,7 @@ import { normalizeUserResponse, renderUserResponseText } from "./user-response-n
 import { runCanonicalLarkMutation } from "./lark-mutation-runtime.mjs";
 import { planPersonalDMSkillIntent } from "./planner/personal-dm-skill-intent.mjs";
 import { readPdfTaskAndBuildReply } from "./pdf-read-service.mjs";
+import { listRegisteredAgents } from "./agent-registry.mjs";
 
 function incomingText(event) {
   return buildVisibleMessageText(event);
@@ -177,6 +178,108 @@ export {
 
 function hasAny(text, keywords) {
   return keywords.some((keyword) => text.includes(keyword));
+}
+
+const AGENT_STANDBY_COUNT_HINT_PATTERN = /(幾個|几个|多少|數量|数量|count|how many)/i;
+const AGENT_STANDBY_STATE_HINT_PATTERN = /(待命|可用|在線|在线|standby|available)/i;
+
+export function looksLikeAgentStandbyStatusRequest(text = "") {
+  const normalized = cleanText(String(text || "").toLowerCase());
+  if (!normalized || !normalized.includes("agent")) {
+    return false;
+  }
+  if (!AGENT_STANDBY_COUNT_HINT_PATTERN.test(normalized) || !AGENT_STANDBY_STATE_HINT_PATTERN.test(normalized)) {
+    return false;
+  }
+  return true;
+}
+
+function collectAssignedExecutiveAgentIds(activeTask = null, registeredAgentIdSet = new Set()) {
+  if (!activeTask || activeTask.status !== "active") {
+    return [];
+  }
+  const assigned = new Set();
+  const push = (value = "") => {
+    const id = cleanText(value || "");
+    if (!id) {
+      return;
+    }
+    if (registeredAgentIdSet.size > 0 && !registeredAgentIdSet.has(id)) {
+      return;
+    }
+    assigned.add(id);
+  };
+
+  push(activeTask.primary_agent_id);
+  push(activeTask.current_agent_id);
+  for (const id of Array.isArray(activeTask.supporting_agent_ids) ? activeTask.supporting_agent_ids : []) {
+    push(id);
+  }
+  for (const item of Array.isArray(activeTask.work_plan) ? activeTask.work_plan : []) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    const status = cleanText(item.status || "");
+    if (status && !["pending", "running", "blocked", "completed"].includes(status)) {
+      continue;
+    }
+    push(item.agent_id || item.agent);
+  }
+  return [...assigned];
+}
+
+export function buildAgentStandbyStatusReply({
+  activeTask = null,
+  registeredAgents = null,
+} = {}) {
+  const registered = Array.isArray(registeredAgents)
+    ? registeredAgents
+    : listRegisteredAgents();
+  const agentIds = [...new Set(
+    registered
+      .map((item) => cleanText(item?.id || ""))
+      .filter(Boolean),
+  )];
+
+  if (agentIds.length === 0) {
+    return {
+      text: [
+        "結論",
+        "目前我沒有讀到可用的 agent registry，所以暫時無法計算待命數量。",
+        "",
+        "重點",
+        "- 這輪 registry 回傳為空。",
+        "",
+        "下一步",
+        "- 你可以先指定要交給哪個 agent，我會直接從那個 owner 開始處理。",
+      ].join("\n"),
+    };
+  }
+
+  const assignedIds = collectAssignedExecutiveAgentIds(activeTask, new Set(agentIds));
+  const assignedSet = new Set(assignedIds);
+  const standbyIds = agentIds.filter((id) => !assignedSet.has(id));
+  const activeTaskId = cleanText(activeTask?.id || "");
+  const currentOwner = cleanText(activeTask?.current_agent_id || activeTask?.primary_agent_id || "");
+  const standbyPreview = standbyIds.slice(0, 6).map((id) => `/${id}`).join("、");
+
+  return {
+    text: [
+      "結論",
+      activeTask?.status === "active"
+        ? `目前可用 agent 共 ${agentIds.length} 個；這個 session 估算待命 ${standbyIds.length} 個。`
+        : `目前可用 agent 共 ${agentIds.length} 個；目前沒有 active executive task，先視為都在待命。`,
+      "",
+      "重點",
+      activeTask?.status === "active"
+        ? `- active task：${activeTaskId || "未命名 task"}；目前主責 ${currentOwner ? `/${currentOwner}` : "未命名 agent"}。`
+        : "- 目前沒有 active executive task 在執行中。",
+      `- 待命名單（前 ${Math.min(6, standbyIds.length)} 個）：${standbyPreview || "（目前沒有可判定的待命名單）"}`,
+      "",
+      "下一步",
+      "- 如果你要，我可以直接指定一個待命 agent 接手，或先幫你拆成 2-agent 協作計畫。",
+    ].join("\n"),
+  };
 }
 
 const SCANOO_COMPARE_BRIEF = `
@@ -4616,6 +4719,11 @@ export async function executeCapabilityLane({
   const activeExecutiveTask = agentContext?.account?.id && sessionKey
     ? await getActiveExecutiveTask(agentContext.account.id, sessionKey)
     : null;
+  if (looksLikeAgentStandbyStatusRequest(normalizedText)) {
+    return buildAgentStandbyStatusReply({
+      activeTask: activeExecutiveTask,
+    });
+  }
   const activeWorkflowMode = agentContext?.account?.id
     ? readSessionWorkflowMode(agentContext.account.id, sessionKey)
     : null;

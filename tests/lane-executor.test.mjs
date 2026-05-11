@@ -25,6 +25,8 @@ const {
   resolveLaneExecutionPlan,
   resolveScanooLanePreTimeoutPlan,
   resolveReferencedDocumentId,
+  looksLikeAgentStandbyStatusRequest,
+  buildAgentStandbyStatusReply,
   shouldFallbackScanooCompareToDocsSearch,
   shouldFallbackScanooDiagnoseToOfficialRead,
   shouldPreferActiveExecutiveTask,
@@ -88,6 +90,33 @@ test("meeting capture status query is recognized", () => {
   assert.equal(looksLikeMeetingCaptureStatusQuery("請問在持續記錄中嗎"), true);
   assert.equal(looksLikeMeetingCaptureStatusQuery("還在錄嗎"), true);
   assert.equal(looksLikeMeetingCaptureStatusQuery("好的"), false);
+});
+
+test("agent standby status query is recognized without triggering collaboration intent", () => {
+  assert.equal(looksLikeAgentStandbyStatusRequest("現在我有幾個agent在待命"), true);
+  assert.equal(looksLikeAgentStandbyStatusRequest("先請各個 agent 一起拆解這個任務"), false);
+});
+
+test("buildAgentStandbyStatusReply returns concrete standby count and active owner", () => {
+  const reply = buildAgentStandbyStatusReply({
+    activeTask: {
+      id: "task-standby-1",
+      status: "active",
+      primary_agent_id: "generalist",
+      current_agent_id: "generalist",
+      supporting_agent_ids: ["consult"],
+    },
+    registeredAgents: [
+      { id: "generalist" },
+      { id: "consult" },
+      { id: "product" },
+      { id: "tech" },
+    ],
+  });
+
+  assert.match(reply.text || "", /可用 agent 共 4 個/);
+  assert.match(reply.text || "", /待命 2 個/);
+  assert.match(reply.text || "", /主責 \/generalist/);
 });
 
 test("visible message text excludes raw json payload duplication", () => {

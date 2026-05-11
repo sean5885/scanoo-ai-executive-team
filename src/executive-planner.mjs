@@ -156,7 +156,6 @@ import { executeTool } from "./tool-execution-runtime.mjs";
 import { resolveToolResultContinuation } from "./tool-result-continuation.mjs";
 
 const executiveStartSignals = [
-  "agent",
   "角色",
   "角度",
   "handoff",
@@ -169,6 +168,9 @@ const executiveStartSignals = [
   "第二次分派",
   "決策",
   "統一",
+  "多 agent",
+  "一起評估",
+  "一起评估",
   "各個 agent",
   "各个 agent",
   "分別看",
@@ -9373,6 +9375,13 @@ export function looksLikeExecutiveStart(text = "") {
     return true;
   }
   if (parseRegisteredAgentCommand(normalized)) {
+    return true;
+  }
+  const explicitAgentRequest = resolveRegisteredAgentFamilyRequest(text, {
+    includeSlashCommand: true,
+    includePersonaStyleMention: true,
+  });
+  if (cleanText(explicitAgentRequest?.agent?.id || "")) {
     return true;
   }
   return hasAny(normalized, executiveStartSignals);

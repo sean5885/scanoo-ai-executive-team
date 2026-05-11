@@ -443,6 +443,7 @@ Current truth:
   - `【不確定性】`
   - `【建議下一步】`
 - both wrapper briefs stay lane-local and do not change planner ingress or the public response shape
+- lane executor now has one deterministic agent-status fast-path for direct standby-count asks (for example "現在我有幾個agent在待命"), returning checked-in registry count + active owner + standby preview without entering executive planner fallback
 - for explicit plugin capability handoff (`requested_capability=scanoo_compare|scanoo_diagnose`), `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` now runs one lane-primary fast-path before planner:
   - `scanoo_compare`: force one mirror evidence search pass first
   - `scanoo_diagnose`: force one document resolve + official read attempt first
