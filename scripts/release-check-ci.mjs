@@ -12,6 +12,7 @@ const writeSummaryFixturePath = process.env.SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXT
 const usageSummaryFixturePath = process.env.SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE || "";
 const productionEvalFixturePath = process.env.RELEASE_CHECK_PRODUCTION_EVAL_FIXTURE || "";
 const executiveLiveMetricsFixturePath = process.env.RELEASE_CHECK_EXECUTIVE_LIVE_METRICS_FIXTURE || "";
+const memoryInfluenceFixturePath = process.env.RELEASE_CHECK_MEMORY_INFLUENCE_FIXTURE || "";
 
 function printUsage() {
   console.log([
@@ -23,11 +24,21 @@ function printUsage() {
 }
 
 async function resolveRuntimeOverrides() {
+  const compareMode = process.argv.includes("--compare-previous") || Boolean(getArgValue("--compare-snapshot"));
+  const skipMemoryInfluenceGate = process.env.RELEASE_CHECK_CI_SKIP_MEMORY_INFLUENCE_GATE === "1";
+  const enableMemoryInfluenceGate = !compareMode
+    && !skipMemoryInfluenceGate
+    && process.env.RELEASE_CHECK_CI_ENABLE_MEMORY_INFLUENCE_GATE !== "0";
+  const requireMemoryInfluenceGate = enableMemoryInfluenceGate
+    && process.env.RELEASE_CHECK_CI_REQUIRE_MEMORY_INFLUENCE_GATE !== "0";
   if (
     !writeSummaryFixturePath
     && !usageSummaryFixturePath
     && !productionEvalFixturePath
     && !executiveLiveMetricsFixturePath
+    && !memoryInfluenceFixturePath
+    && !enableMemoryInfluenceGate
+    && !requireMemoryInfluenceGate
   ) {
     return {};
   }
@@ -53,6 +64,19 @@ async function resolveRuntimeOverrides() {
   if (executiveLiveMetricsFixturePath) {
     const raw = await readFile(executiveLiveMetricsFixturePath, "utf8");
     overrides.executiveLiveMetrics = JSON.parse(raw);
+  }
+  if (memoryInfluenceFixturePath) {
+    const raw = await readFile(memoryInfluenceFixturePath, "utf8");
+    const summary = JSON.parse(raw);
+    overrides.memoryInfluenceCheck = async () => summary;
+  } else if (enableMemoryInfluenceGate || requireMemoryInfluenceGate) {
+    overrides.memoryInfluenceCheck = async () => {
+      const { buildMemoryInfluenceReport } = await import("../src/memory-influence-gate.mjs");
+      return buildMemoryInfluenceReport();
+    };
+  }
+  if (requireMemoryInfluenceGate) {
+    overrides.memoryInfluenceGateRequired = true;
   }
 
   return overrides;

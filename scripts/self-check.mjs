@@ -1,6 +1,7 @@
 const wantsJson = process.argv.includes("--json");
 const writeSummaryFixturePath = process.env.SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE || "";
 const usageSummaryFixturePath = process.env.SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE || "";
+const memoryInfluenceFixturePath = process.env.SYSTEM_SELF_CHECK_MEMORY_INFLUENCE_FIXTURE || "";
 
 function getArgValue(flag = "") {
   const index = process.argv.indexOf(flag);
@@ -28,6 +29,7 @@ function printUsage() {
   console.log([
     "Usage:",
     "  npm run self-check",
+    "  npm run self-check -- --memory-influence-gate",
     "  npm run self-check -- --compare-previous",
     "  npm run self-check -- --compare-snapshot <run-id|path>",
     "  npm run self-check -- --json",
@@ -35,7 +37,9 @@ function printUsage() {
 }
 
 async function resolveRuntimeOverrides() {
-  if (!writeSummaryFixturePath && !usageSummaryFixturePath) {
+  const enableMemoryInfluenceGate = process.argv.includes("--memory-influence-gate")
+    || process.env.SYSTEM_SELF_CHECK_ENABLE_MEMORY_INFLUENCE_GATE === "1";
+  if (!writeSummaryFixturePath && !usageSummaryFixturePath && !memoryInfluenceFixturePath && !enableMemoryInfluenceGate) {
     return {};
   }
 
@@ -52,6 +56,24 @@ async function resolveRuntimeOverrides() {
     const raw = await readFile(usageSummaryFixturePath, "utf8");
     const summary = JSON.parse(raw);
     overrides.usageLayerCheck = async () => summary;
+  }
+  if (memoryInfluenceFixturePath) {
+    const raw = await readFile(memoryInfluenceFixturePath, "utf8");
+    const summary = JSON.parse(raw);
+    overrides.memoryInfluenceCheck = async () => summary;
+  } else if (enableMemoryInfluenceGate) {
+    const caseCount = Number.parseInt(getArgValue("--memory-gate-cases") || "", 10);
+    const memoryHitRateMin = Number.parseFloat(getArgValue("--memory-hit-rate-min") || "");
+    const actionChangedRateMin = Number.parseFloat(getArgValue("--action-changed-rate-min") || "");
+    const gateConfig = {
+      ...(Number.isFinite(caseCount) && caseCount > 0 ? { caseCount } : {}),
+      ...(Number.isFinite(memoryHitRateMin) ? { memoryHitRateMin } : {}),
+      ...(Number.isFinite(actionChangedRateMin) ? { actionChangedRateMin } : {}),
+    };
+    overrides.memoryInfluenceCheck = async () => {
+      const { buildMemoryInfluenceReport } = await import("../src/memory-influence-gate.mjs");
+      return buildMemoryInfluenceReport(gateConfig);
+    };
   }
 
   return overrides;

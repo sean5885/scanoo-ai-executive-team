@@ -374,6 +374,9 @@ Current-truth docs for onboarding are:
     - `capability_gate_failure`
     - `experience_gate_failure`
     - `collab_gate_failure`
+  - `src/memory-influence-gate.mjs` is now the shared memory-influence gate runtime (the CLI wrapper `scripts/memory-influence-gate.mjs` reuses it), and `scripts/self-check.mjs` / `scripts/release-check.mjs` can inject this gate through `--memory-influence-gate` or fixture/env overrides.
+  - `release-check.mjs` now supports a required memory gate (`memoryInfluenceGateRequired=true`); when enabled and `closed_loop_metrics.memory_influence.status != pass`, release is blocked with `memory_influence_gate_failure`.
+  - `scripts/release-check-ci.mjs` now enables required memory-influence gate by default (non-compare mode); test/compare pipelines can explicitly disable it with `RELEASE_CHECK_CI_SKIP_MEMORY_INFLUENCE_GATE=1`.
   - `executive-live-metrics.mjs` parallel speedup sample now counts node attempts with `status in {succeeded, completed}` (instead of `completed` only), matching the actual node lifecycle status written by `completeExecutableWorkNode(...)`
   - `scripts/collab-sample-bootstrap.mjs` provides an operator-facing runtime bootstrap path for collab sample closure:
     - builds executable DAG graphs with two independent specialist nodes plus merge

@@ -579,6 +579,30 @@ test("system self-check surfaces planner create_doc governance mismatches", asyn
   assert.match(result.planner_summary.guidance, /source、owner、intent、type/);
 });
 
+test("system self-check reports memory influence pass when memory gate is injected", async () => {
+  const archives = await seedSelfCheckArchives();
+  const result = await runSystemSelfCheck({
+    ...archives,
+    writeCheck: async () => STABLE_WRITE_SUMMARY,
+    usageLayerCheck: async () => STABLE_USAGE_LAYER_SUMMARY,
+    memoryInfluenceCheck: async () => ({
+      gate: "pass",
+      metrics: {
+        memory_hit_rate: 1,
+        action_changed_by_memory_rate: 1,
+      },
+      thresholds: {
+        memory_hit_rate_min: 0.8,
+        action_changed_by_memory_rate_min: 0.5,
+      },
+    }),
+  });
+
+  assert.equal(result.decision_os_observability.closed_loop_metrics?.memory_influence?.status, "pass");
+  assert.equal(result.decision_os_observability.closed_loop_metrics?.memory_influence?.metrics?.memory_hit_rate, 1);
+  assert.equal(result.decision_os_observability.closed_loop_metrics?.memory_influence?.metrics?.action_changed_by_memory_rate, 1);
+});
+
 test("self-check CLI renders concise guidance by default", async () => {
   const archives = await seedSelfCheckArchives();
   const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.selfCheckArchiveDir));

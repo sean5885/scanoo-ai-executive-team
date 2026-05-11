@@ -20,6 +20,7 @@ const BLOCKING_LIVE_EVAL_REQUIRED = "live_eval_required";
 const BLOCKING_CAPABILITY_GATE_FAILURE = "capability_gate_failure";
 const BLOCKING_EXPERIENCE_GATE_FAILURE = "experience_gate_failure";
 const BLOCKING_COLLAB_GATE_FAILURE = "collab_gate_failure";
+const BLOCKING_MEMORY_INFLUENCE_GATE_FAILURE = "memory_influence_gate_failure";
 const BLOCKING_TRUTHFUL_COMPLETION_FAILURE = "truthful_completion_failure";
 const BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE = "company_brain_lifecycle_failure";
 const BLOCKING_ROUTING_REGRESSION = "routing_regression";
@@ -166,6 +167,10 @@ function buildLiveEvalRequiredNextStep() {
 
 function buildCollabGateFailureNextStep() {
   return "先看 executive live metrics：提高 deadletter replay rate 至 >= 0.95，並把平均 parallel speedup 提升到 >= 1.35。";
+}
+
+function buildMemoryInfluenceGateFailureNextStep() {
+  return "先跑 node scripts/memory-influence-gate.mjs --json；把 memory_hit_rate 拉到 >= 0.8、action_changed_by_memory_rate 拉到 >= 0.5，再重跑 release gate。";
 }
 
 function buildSampleInsufficientNextStep() {
@@ -317,6 +322,9 @@ function buildReleaseCheckActionHint({
   }
   if (firstBlockingCheck === BLOCKING_COLLAB_GATE_FAILURE) {
     return "inspect executive live metrics for deadletter replay and parallel speedup";
+  }
+  if (firstBlockingCheck === BLOCKING_MEMORY_INFLUENCE_GATE_FAILURE) {
+    return "run memory-influence-gate and inspect memory influence metrics/evidence";
   }
   if (firstBlockingCheck === BLOCKING_TRUTHFUL_COMPLETION_FAILURE) {
     return "inspect truthful completion gate in executive-orchestrator and verifier coverage metrics";
@@ -592,6 +600,10 @@ function buildReleaseRollbackCandidates(blockingChecks = []) {
       candidates.push("rollback latest work-graph/worker orchestration changes until deadletter replay and parallel speedup recover");
       continue;
     }
+    if (blockingCheck === BLOCKING_MEMORY_INFLUENCE_GATE_FAILURE) {
+      candidates.push("rollback latest memory retrieval/routing changes until memory influence gate recovers");
+      continue;
+    }
     if (blockingCheck === BLOCKING_TRUTHFUL_COMPLETION_FAILURE) {
       candidates.push("rollback recent completion-tone copy changes and restore verifier-gated blocked/escalated boundary");
       continue;
@@ -789,6 +801,16 @@ function hasBlockingUsageLayerIssue(selfCheckResult = {}) {
     return false;
   }
   return usageLayerStatus !== "pass";
+}
+
+function hasBlockingMemoryInfluenceGateIssue(selfCheckResult = {}, { required = false } = {}) {
+  if (required !== true) {
+    return false;
+  }
+  const memoryStatus = cleanText(
+    selfCheckResult?.decision_os_observability?.closed_loop_metrics?.memory_influence?.status,
+  );
+  return memoryStatus !== "pass";
 }
 
 function hasBlockingTruthfulCompletionIssue(selfCheckResult = {}) {
@@ -1242,6 +1264,21 @@ function buildCollabGateDrilldown({ collabGate = null, executiveLiveMetrics = nu
   };
 }
 
+function buildMemoryInfluenceDrilldown(selfCheckResult = {}) {
+  const summary = selfCheckResult?.decision_os_observability?.closed_loop_metrics?.memory_influence || {};
+  const metrics = summary?.metrics || {};
+  const thresholds = summary?.thresholds || {};
+  return {
+    failing_area: FAILING_AREA_RUNTIME,
+    representative_fail_case: [
+      `memory_status:${cleanText(summary?.status) || "unknown"}`,
+      `memory_hit_rate:${metrics?.memory_hit_rate ?? "null"} target>=${thresholds?.memory_hit_rate_min ?? "null"}`,
+      `action_changed_by_memory_rate:${metrics?.action_changed_by_memory_rate ?? "null"} target>=${thresholds?.action_changed_by_memory_rate_min ?? "null"}`,
+    ],
+    drilldown_source: [RELEASE_CHECK_TRIAGE_SOURCE],
+  };
+}
+
 export function buildReleaseCheckDrilldown({
   selfCheckResult = {},
   controlSnapshot = null,
@@ -1253,6 +1290,7 @@ export function buildReleaseCheckDrilldown({
   productionEval = null,
   executiveLiveMetrics = null,
   blockingChecks = null,
+  memoryInfluenceGateRequired = false,
 } = {}) {
   const resolvedBlockingChecks = Array.isArray(blockingChecks)
     ? blockingChecks
@@ -1270,6 +1308,9 @@ export function buildReleaseCheckDrilldown({
         ...(experienceGate?.status === "fail" ? [BLOCKING_EXPERIENCE_GATE_FAILURE] : []),
         ...(collabGate?.reasons?.includes("sample_insufficient") ? [BLOCKING_SAMPLE_INSUFFICIENT] : []),
         ...(collabGate?.status === "fail" ? [BLOCKING_COLLAB_GATE_FAILURE] : []),
+        ...(hasBlockingMemoryInfluenceGateIssue(selfCheckResult, { required: memoryInfluenceGateRequired })
+          ? [BLOCKING_MEMORY_INFLUENCE_GATE_FAILURE]
+          : []),
         ...(hasBlockingTruthfulCompletionIssue(selfCheckResult) ? [BLOCKING_TRUTHFUL_COMPLETION_FAILURE] : []),
         ...(hasBlockingCompanyBrainIssue(selfCheckResult) ? [BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE] : []),
         ...(hasBlockingRoutingIssue(selfCheckResult) ? [BLOCKING_ROUTING_REGRESSION] : []),
@@ -1319,6 +1360,9 @@ export function buildReleaseCheckDrilldown({
       executiveLiveMetrics,
     });
   }
+  if (firstBlockingCheck === BLOCKING_MEMORY_INFLUENCE_GATE_FAILURE) {
+    return buildMemoryInfluenceDrilldown(selfCheckResult);
+  }
   if (firstBlockingCheck === BLOCKING_TRUTHFUL_COMPLETION_FAILURE) {
     return {
       failing_area: FAILING_AREA_RUNTIME,
@@ -1352,6 +1396,7 @@ export function buildReleaseCheckReport({
   collabGate = null,
   productionEval = null,
   executiveLiveMetrics = null,
+  memoryInfluenceGateRequired = false,
 } = {}) {
   const blockingChecks = [];
 
@@ -1388,6 +1433,9 @@ export function buildReleaseCheckReport({
   }
   if (collabGate?.status === "fail") {
     blockingChecks.push(BLOCKING_COLLAB_GATE_FAILURE);
+  }
+  if (hasBlockingMemoryInfluenceGateIssue(selfCheckResult, { required: memoryInfluenceGateRequired })) {
+    blockingChecks.push(BLOCKING_MEMORY_INFLUENCE_GATE_FAILURE);
   }
   if (hasBlockingTruthfulCompletionIssue(selfCheckResult)) {
     blockingChecks.push(BLOCKING_TRUTHFUL_COMPLETION_FAILURE);
@@ -1431,6 +1479,8 @@ export function buildReleaseCheckReport({
       ? buildSampleInsufficientNextStep()
     : firstBlockingCheck === BLOCKING_COLLAB_GATE_FAILURE
       ? buildCollabGateFailureNextStep()
+    : firstBlockingCheck === BLOCKING_MEMORY_INFLUENCE_GATE_FAILURE
+      ? buildMemoryInfluenceGateFailureNextStep()
     : firstBlockingCheck === BLOCKING_TRUTHFUL_COMPLETION_FAILURE
       ? "先看 truthful completion gate：src/executive-orchestrator.mjs、src/executive-verifier.mjs、src/system-self-check.mjs；verification 不通過時不得用 completed 語氣。"
     : firstBlockingCheck === BLOCKING_COMPANY_BRAIN_LIFECYCLE_FAILURE
@@ -1562,6 +1612,9 @@ function renderBlockingLineLabel(blockingCheck = "") {
   }
   if (blockingCheck === BLOCKING_COLLAB_GATE_FAILURE) {
     return "collab gate failure";
+  }
+  if (blockingCheck === BLOCKING_MEMORY_INFLUENCE_GATE_FAILURE) {
+    return "memory influence gate failure";
   }
   if (blockingCheck === BLOCKING_TRUTHFUL_COMPLETION_FAILURE) {
     return "truthful completion failure";
@@ -1714,6 +1767,7 @@ export function buildReleaseCheckCompareSummary({
 
 export async function runReleaseCheck(options = {}) {
   const selfCheckResult = await runSystemSelfCheck(options);
+  const memoryInfluenceGateRequired = options?.memoryInfluenceGateRequired === true;
   const executiveLiveMetrics = options?.executiveLiveMetrics
     || readExecutiveLiveMetrics();
   let latestControlSnapshot = null;
@@ -1800,6 +1854,9 @@ export async function runReleaseCheck(options = {}) {
   if (collabGate.status === "fail") {
     blockingChecks.push(BLOCKING_COLLAB_GATE_FAILURE);
   }
+  if (hasBlockingMemoryInfluenceGateIssue(selfCheckResult, { required: memoryInfluenceGateRequired })) {
+    blockingChecks.push(BLOCKING_MEMORY_INFLUENCE_GATE_FAILURE);
+  }
   if (hasBlockingTruthfulCompletionIssue(selfCheckResult)) {
     blockingChecks.push(BLOCKING_TRUTHFUL_COMPLETION_FAILURE);
   }
@@ -1823,6 +1880,7 @@ export async function runReleaseCheck(options = {}) {
     productionEval,
     executiveLiveMetrics,
     blockingChecks,
+    memoryInfluenceGateRequired,
   });
   const report = buildReleaseCheckReport({
     selfCheckResult,
@@ -1832,6 +1890,7 @@ export async function runReleaseCheck(options = {}) {
     collabGate,
     productionEval,
     executiveLiveMetrics,
+    memoryInfluenceGateRequired,
   });
   const releaseCheckArchive = await archiveReleaseCheckSnapshot({
     ...(options?.releaseCheckArchiveDir ? { baseDir: options.releaseCheckArchiveDir } : {}),

@@ -4,7 +4,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 
 本文件用來做目前 Lobster 系統的收口檢查。所有結論都以程式碼、設定、測試與已提交文檔為依據，不使用舊聊天上下文或推測補齊。
 
-Last verified in this repo on 2026-05-07.
+Last verified in this repo on 2026-05-11.
 
 本次額外驗證：
 
@@ -45,6 +45,7 @@ Last verified in this repo on 2026-05-07.
   - `capability_gate_failure`
   - `experience_gate_failure`
 - `release-check:ci` 已改成先跑 live eval runner，再跑 release-check；任一 gate fail 即 exit 1。
+- `release-check:ci` 現在預設會注入 memory influence gate，且以 `memoryInfluenceGateRequired=true` 阻擋 release（`memory_influence_gate_failure`）；若只做 compare/測試可用 `RELEASE_CHECK_CI_SKIP_MEMORY_INFLUENCE_GATE=1`。
 - `collab_gate` 已接入 `executive_live_metrics`，並新增樣本就緒判斷：
   - `sample_basis.has_graph_sample`
   - `sample_basis.has_deadletter_sample`
@@ -87,7 +88,7 @@ Last verified in this repo on 2026-05-07.
   - `gate_summary=11/11 passed`
   - `verification_fail_taxonomy.status=pass`
   - `closed_loop_metrics.routing_closed_loop.status=pass`
-  - `closed_loop_metrics.memory_influence.status=unknown`（預設未注入 memory gate runner）
+  - `closed_loop_metrics.memory_influence.status=unknown`（`check:self` 預設未注入；可用 `npm run check:self -- --memory-influence-gate --json` 或 `SYSTEM_SELF_CHECK_ENABLE_MEMORY_INFLUENCE_GATE=1` 啟用）
 - `check:release` / `release-check:ci`：`overall_status=pass`，`decision_os_readiness` 已落地並輸出：
   - `final_score=92.5`
   - `readiness_level=ready`

@@ -19,6 +19,7 @@ Last verified in this repo on 2026-05-07.
 
 ```bash
 node scripts/live-eval-runner.mjs
+node scripts/memory-influence-gate.mjs --json
 node scripts/real-traffic-evidence.mjs --json
 npm run release-check:ci
 node scripts/quality-dashboard.mjs
@@ -33,6 +34,7 @@ node scripts/deadletter-replay-runner.mjs --json
 - `release-check` 的 `collab_gate.status = pass`（樣本達門檻後）
 - `overall_status = pass`
 - `real-traffic-evidence` 的 `overall_status = pass`（24h/72h/336h 視窗都達門檻）
+- `release-check` 不可含 `blocking_checks=memory_influence_gate_failure`
 
 若因 `blocking_checks=sample_insufficient` 被卡住，先補樣本再進灰度：
 
