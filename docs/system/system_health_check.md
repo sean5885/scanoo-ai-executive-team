@@ -15,6 +15,7 @@ Last verified in this repo on 2026-05-07.
 - `node scripts/memory-influence-gate.mjs --json`
 - `npm run release-check:ci`
 - `node scripts/live-eval-runner.mjs --json`
+- `node scripts/real-traffic-evidence.mjs --json`
 - `node scripts/quality-dashboard.mjs`
 - `node scripts/collab-sample-bootstrap.mjs --parallel-graphs 80 --deadletter-graphs 20 --json`
 
@@ -52,7 +53,11 @@ Last verified in this repo on 2026-05-07.
 - quality dashboard 已新增：
   - `node scripts/quality-dashboard.mjs`
   - 輸出 `.data/dashboard/quality-latest.json`
-  - 讀取 self-check / control-diagnostics / live eval latest + trend + failed case drilldown。
+  - 讀取 self-check / control-diagnostics / live eval latest + trend + failed case drilldown / real-traffic evidence。
+- real-traffic evidence 已新增：
+  - `node scripts/real-traffic-evidence.mjs --json`
+  - 輸出 `.data/evals/live/real-traffic-evidence-latest.json`
+  - 以 24h/72h/336h 視窗檢查真實流量 history 是否持續達到 capability+experience 最低門檻。
 
 ## 0B. Collab Sample Closure (Sample Insufficient -> Pass)
 

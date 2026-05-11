@@ -21,6 +21,7 @@
     "eval:long-task": "node scripts/evaluate-long-task-governance.mjs",
     "eval:production": "node scripts/production-eval-runner.mjs",
     "eval:live": "node scripts/live-eval-runner.mjs",
+    "eval:real-traffic-evidence": "node scripts/real-traffic-evidence.mjs",
     "eval:deadletter-replay": "node scripts/deadletter-replay-runner.mjs",
     "eval:collab-bootstrap": "node scripts/collab-sample-bootstrap.mjs",
     "eval:usage-layer": "node evals/usage-layer/usage-layer-runner.mjs",
