@@ -22,6 +22,7 @@ node scripts/live-eval-runner.mjs
 node scripts/memory-influence-gate.mjs --json
 node scripts/real-traffic-evidence.mjs --json
 npm run release-check:ci
+node scripts/collab-acceptance-pack.mjs --json
 node scripts/quality-dashboard.mjs
 node scripts/deadletter-replay-runner.mjs --json
 ```
@@ -32,6 +33,7 @@ node scripts/deadletter-replay-runner.mjs --json
 - `release-check` 的 `experience_gate.status = pass`
 - `release-check` 不可含 `blocking_checks=sample_insufficient`
 - `release-check` 的 `collab_gate.status = pass`（樣本達門檻後）
+- `release-check` 的 `collab_gate.metrics.artifact_coverage_rate >= 0.9`
 - `overall_status = pass`
 - `real-traffic-evidence` 的 `overall_status = pass`（24h/72h/336h 視窗都達門檻）
 - `release-check` 不可含 `blocking_checks=memory_influence_gate_failure`
@@ -59,6 +61,12 @@ npm run check:release -- --json
 - `fake_completion_rate < 0.02`
 - usage-layer 既有 gate = `pass`
 - routing/planner regression = `false`
+
+### Collab gate (hard when sample-ready)
+
+- `deadletter_replay_rate >= 0.95`
+- `parallel_speedup >= 1.35`
+- `artifact_coverage_rate >= 0.90`
 
 ## Gray Rollout Stages
 

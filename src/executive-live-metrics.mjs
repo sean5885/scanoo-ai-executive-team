@@ -242,6 +242,128 @@ function buildSampleReadiness({
   };
 }
 
+function normalizeRequiredArtifactTypes(requiredArtifacts = []) {
+  if (!Array.isArray(requiredArtifacts)) {
+    return [];
+  }
+  return requiredArtifacts
+    .map((item) => {
+      if (typeof item === "string") {
+        return cleanText(item);
+      }
+      if (item && typeof item === "object") {
+        return cleanText(item?.artifact_type || item?.type || item?.name);
+      }
+      return "";
+    })
+    .filter(Boolean);
+}
+
+function parseJsonArray(value = "[]") {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  try {
+    const parsed = JSON.parse(String(value || "[]"));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function buildArtifactCoverageSummary({
+  nodeRows = [],
+  artifactRows = [],
+} = {}) {
+  const artifactTypeMap = new Map();
+  for (const row of artifactRows) {
+    const graphId = cleanText(row?.graph_id);
+    const nodeId = cleanText(row?.node_id);
+    const artifactType = cleanText(row?.artifact_type);
+    if (!graphId || !nodeId || !artifactType) {
+      continue;
+    }
+    const key = `${graphId}::${nodeId}`;
+    if (!artifactTypeMap.has(key)) {
+      artifactTypeMap.set(key, new Set());
+    }
+    artifactTypeMap.get(key).add(artifactType);
+  }
+
+  const missingNodes = [];
+  const missingTypeCounts = new Map();
+  const graphStats = new Map();
+
+  let requiredNodeCount = 0;
+  let coveredNodeCount = 0;
+
+  for (const row of nodeRows) {
+    const graphId = cleanText(row?.graph_id);
+    const nodeId = cleanText(row?.node_id);
+    const state = cleanText(row?.state);
+    if (!graphId || !nodeId || (state !== "succeeded" && state !== "completed")) {
+      continue;
+    }
+    const requiredArtifacts = normalizeRequiredArtifactTypes(parseJsonArray(row?.required_artifacts_json));
+    if (requiredArtifacts.length === 0) {
+      continue;
+    }
+
+    requiredNodeCount += 1;
+    const key = `${graphId}::${nodeId}`;
+    const availableTypes = artifactTypeMap.get(key) || new Set();
+    const missing = requiredArtifacts.filter((type) => !availableTypes.has(type));
+    const covered = missing.length === 0;
+    if (covered) {
+      coveredNodeCount += 1;
+    } else {
+      for (const artifactType of missing) {
+        missingTypeCounts.set(artifactType, Number(missingTypeCounts.get(artifactType) || 0) + 1);
+      }
+      if (missingNodes.length < 20) {
+        missingNodes.push({
+          graph_id: graphId,
+          node_id: nodeId,
+          missing_required_artifacts: missing,
+        });
+      }
+    }
+
+    if (!graphStats.has(graphId)) {
+      graphStats.set(graphId, {
+        required: 0,
+        covered: 0,
+      });
+    }
+    const stat = graphStats.get(graphId);
+    stat.required += 1;
+    if (covered) {
+      stat.covered += 1;
+    }
+  }
+
+  const graphsWithRequiredNodes = Array.from(graphStats.values());
+  const graphWithRequiredNodeCount = graphsWithRequiredNodes.length;
+  const graphWithFullCoverageCount = graphsWithRequiredNodes.filter((item) => item.required > 0 && item.required === item.covered).length;
+
+  return {
+    required_node_count: requiredNodeCount,
+    covered_node_count: coveredNodeCount,
+    coverage_rate: safeRatio(coveredNodeCount, requiredNodeCount),
+    graph_with_required_node_count: graphWithRequiredNodeCount,
+    graph_with_full_coverage_count: graphWithFullCoverageCount,
+    graph_coverage_rate: safeRatio(graphWithFullCoverageCount, graphWithRequiredNodeCount),
+    missing_required_artifact_count: missingNodes.length,
+    missing_required_artifact_by_type: Array.from(missingTypeCounts.entries())
+      .map(([artifactType, count]) => ({
+        artifact_type: artifactType,
+        count,
+      }))
+      .sort((a, b) => Number(b.count || 0) - Number(a.count || 0)),
+    missing_nodes: missingNodes,
+  };
+}
+
 export function readExecutiveLiveMetrics({
   lookbackHours = 24 * 14,
   sampleThresholds = null,
@@ -312,8 +434,23 @@ export function readExecutiveLiveMetrics({
       AND completed_at IS NOT NULL
       AND status IN ('completed', 'succeeded')
   `).all({ cutoff: cutoffIso });
+  const nodeArtifactRows = db.prepare(`
+    SELECT graph_id, node_id, state, required_artifacts_json
+    FROM executive_work_nodes
+    WHERE created_at >= @cutoff
+  `).all({ cutoff: cutoffIso });
+  const artifactTypeRows = db.prepare(`
+    SELECT graph_id, node_id, artifact_type, COUNT(*) AS total
+    FROM executive_artifacts
+    WHERE created_at >= @cutoff
+    GROUP BY graph_id, node_id, artifact_type
+  `).all({ cutoff: cutoffIso });
 
   const speedupSummary = summarizeSpeedupRows(attemptRows);
+  const artifactCoverage = buildArtifactCoverageSummary({
+    nodeRows: nodeArtifactRows,
+    artifactRows: artifactTypeRows,
+  });
   const collabSampleReadiness = buildSampleReadiness({
     thresholds,
     graphTotal: graphCounts.total,
@@ -333,6 +470,7 @@ export function readExecutiveLiveMetrics({
       replay_rate: safeRatio(deadletterReplayed, deadletterTotal),
     },
     parallel: speedupSummary,
+    artifact_coverage: artifactCoverage,
     task_type_buckets: buildTaskTypeBuckets(graphDetailRows),
     window_stats: buildWindowStats({
       lookbackHours: resolvedHours,

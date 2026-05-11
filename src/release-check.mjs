@@ -62,6 +62,7 @@ const EXPERIENCE_GATE_THRESHOLDS = Object.freeze({
 const COLLAB_GATE_THRESHOLDS = Object.freeze({
   deadletter_replay_rate_min: 0.95,
   parallel_speedup_min: 1.35,
+  artifact_coverage_rate_min: 0.9,
 });
 
 function normalizeServiceModule(modulePath = "") {
@@ -166,7 +167,7 @@ function buildLiveEvalRequiredNextStep() {
 }
 
 function buildCollabGateFailureNextStep() {
-  return "先看 executive live metrics：提高 deadletter replay rate 至 >= 0.95，並把平均 parallel speedup 提升到 >= 1.35。";
+  return "先看 executive live metrics：提高 deadletter replay rate 至 >= 0.95、平均 parallel speedup 至 >= 1.35，並把 artifact_coverage_rate 拉到 >= 0.9。";
 }
 
 function buildMemoryInfluenceGateFailureNextStep() {
@@ -530,6 +531,7 @@ function evaluateCollabGate({ executiveLiveMetrics = null, liveEvalSampleReady =
     : {};
   const deadletterReplayRate = toFiniteNumber(metrics?.deadletter?.replay_rate, null);
   const parallelSpeedup = toFiniteNumber(metrics?.parallel?.average_speedup, null);
+  const artifactCoverageRate = toFiniteNumber(metrics?.artifact_coverage?.coverage_rate, null);
   const metricSampleReady = metrics?.sample_ready === true;
   const sampleReady = liveEvalSampleReady === true && metricSampleReady;
   const sampleReadiness = metrics?.collab_sample_readiness && typeof metrics.collab_sample_readiness === "object"
@@ -549,6 +551,12 @@ function evaluateCollabGate({ executiveLiveMetrics = null, liveEvalSampleReady =
   if (sampleReady && (parallelSpeedup == null || parallelSpeedup < COLLAB_GATE_THRESHOLDS.parallel_speedup_min)) {
     reasons.push("parallel_speedup_below_threshold");
   }
+  if (
+    sampleReady
+    && (artifactCoverageRate == null || artifactCoverageRate < COLLAB_GATE_THRESHOLDS.artifact_coverage_rate_min)
+  ) {
+    reasons.push("artifact_coverage_rate_below_threshold");
+  }
 
   return {
     status: !sampleReady ? "unknown" : (reasons.length === 0 ? "pass" : "fail"),
@@ -558,6 +566,8 @@ function evaluateCollabGate({ executiveLiveMetrics = null, liveEvalSampleReady =
     metrics: {
       deadletter_replay_rate: deadletterReplayRate,
       parallel_speedup: parallelSpeedup,
+      artifact_coverage_rate: artifactCoverageRate,
+      artifact_coverage_required_nodes: Number(metrics?.artifact_coverage?.required_node_count || 0),
       graph_total: Number(metrics?.graph_counts?.total || 0),
       sample_basis: metrics?.sample_basis || null,
       sample_missing_requirements: sampleMissing,
@@ -1250,6 +1260,7 @@ function buildCollabGateDrilldown({ collabGate = null, executiveLiveMetrics = nu
   const representative = [
     `deadletter_replay_rate:${metrics.deadletter_replay_rate ?? "null"}`,
     `parallel_speedup:${metrics.parallel_speedup ?? "null"}`,
+    `artifact_coverage_rate:${metrics.artifact_coverage_rate ?? "null"}`,
   ];
   if (executiveLiveMetrics?.parallel?.top_graphs?.[0]?.graph_id) {
     representative.push(`top_parallel_graph:${cleanText(executiveLiveMetrics.parallel.top_graphs[0].graph_id)}`);

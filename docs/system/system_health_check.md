@@ -16,6 +16,7 @@ Last verified in this repo on 2026-05-11.
 - `npm run release-check:ci`
 - `node scripts/live-eval-runner.mjs --json`
 - `node scripts/real-traffic-evidence.mjs --json`
+- `node scripts/collab-acceptance-pack.mjs --json`
 - `node scripts/quality-dashboard.mjs`
 - `node scripts/collab-sample-bootstrap.mjs --parallel-graphs 80 --deadletter-graphs 20 --json`
 
@@ -51,10 +52,14 @@ Last verified in this repo on 2026-05-11.
   - `sample_basis.has_deadletter_sample`
   - `sample_basis.has_parallel_sample`
   - 三者同時為 `true` 才進入 `pass/fail` 判定；未達門檻時 `status=unknown`，但 release gate 會以 `blocking_check=sample_insufficient` 阻擋 ready。
+  - 樣本就緒後，`collab_gate` 也會檢查 `artifact_coverage_rate >= 0.9`，不達標時輸出 `artifact_coverage_rate_below_threshold`。
 - quality dashboard 已新增：
   - `node scripts/quality-dashboard.mjs`
   - 輸出 `.data/dashboard/quality-latest.json`
-  - 讀取 self-check / control-diagnostics / live eval latest + trend + failed case drilldown / real-traffic evidence。
+  - 讀取 self-check / control-diagnostics / live eval latest + trend + failed case drilldown / collab artifact coverage / real-traffic evidence。
+- collab acceptance pack 已新增：
+  - `node scripts/collab-acceptance-pack.mjs --json`
+  - 輸出 `.data/evals/collab-acceptance/latest.json` 與 history manifest，收斂 release/collab/memory/real-traffic gate 作為單一 go/no-go 證據包。
 - real-traffic evidence 已新增：
   - `node scripts/real-traffic-evidence.mjs --json`
   - 輸出 `.data/evals/live/real-traffic-evidence-latest.json`
