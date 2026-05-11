@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { runControlDiagnostics } from "../src/control-diagnostics.mjs";
 import { readExecutiveLiveMetrics } from "../src/executive-live-metrics.mjs";
 import { cleanText } from "../src/message-intent-utils.mjs";
+import { readRealTrafficEvidenceLatest } from "../src/real-traffic-evidence.mjs";
 import { runSystemSelfCheck } from "../src/system-self-check.mjs";
 
 const PRODUCTION_LATEST_PATH = process.env.PRODUCTION_EVAL_REPORT_PATH || ".data/evals/live/latest.json";
@@ -64,6 +65,7 @@ function buildDashboardReport({
   productionEval = {},
   productionTrend = [],
   executiveLiveMetrics = {},
+  realTrafficEvidence = null,
 } = {}) {
   const failedCases = Array.isArray(productionEval?.failed_cases) ? productionEval.failed_cases : [];
 
@@ -101,6 +103,9 @@ function buildDashboardReport({
       ? executiveLiveMetrics
       : null,
     collab_sample_readiness: executiveLiveMetrics?.collab_sample_readiness || null,
+    real_traffic_evidence: realTrafficEvidence && typeof realTrafficEvidence === "object"
+      ? realTrafficEvidence
+      : null,
   };
 }
 
@@ -111,6 +116,7 @@ function renderCliSummary(report = {}) {
   const collabMissing = Array.isArray(collabReadiness?.missing_requirements) && collabReadiness.missing_requirements.length
     ? collabReadiness.missing_requirements.join(",")
     : "none";
+  const realTrafficEvidence = report?.real_traffic_evidence || {};
   return [
     "Quality Dashboard",
     `self-check: ${report?.self_check?.system_status || "fail"}`,
@@ -122,6 +128,8 @@ function renderCliSummary(report = {}) {
     `failed_cases: ${production.failed_case_count ?? 0}`,
     `collab_sample_ready: ${collabReady ? "true" : "false"}`,
     `collab_sample_missing: ${collabMissing}`,
+    `real_traffic_status: ${cleanText(realTrafficEvidence?.overall_status) || "unknown"}`,
+    `real_traffic_blocking: ${Array.isArray(realTrafficEvidence?.blocking_reasons) && realTrafficEvidence.blocking_reasons.length > 0 ? realTrafficEvidence.blocking_reasons.join(",") : "none"}`,
   ].join("\n");
 }
 
@@ -134,12 +142,13 @@ async function writeDashboardReport(report = {}) {
 
 async function main() {
   const wantsJson = process.argv.includes("--json");
-  const [selfCheck, controlDiagnostics, productionEval, productionTrend, executiveLiveMetrics] = await Promise.all([
+  const [selfCheck, controlDiagnostics, productionEval, productionTrend, executiveLiveMetrics, realTrafficEvidence] = await Promise.all([
     runSystemSelfCheck(),
     runControlDiagnostics(),
     readProductionEvalLatest(),
     readProductionTrend(),
     Promise.resolve(readExecutiveLiveMetrics()),
+    readRealTrafficEvidenceLatest(),
   ]);
 
   const dashboard = buildDashboardReport({
@@ -148,6 +157,7 @@ async function main() {
     productionEval,
     productionTrend,
     executiveLiveMetrics,
+    realTrafficEvidence,
   });
   const outputPath = await writeDashboardReport(dashboard);
 
