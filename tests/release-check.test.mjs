@@ -256,6 +256,7 @@ function withReleaseCheckCiEnv(env = {}, { skipFullTestGate = true } = {}) {
     ...process.env,
     ...env,
     ...(skipFullTestGate ? { RELEASE_CHECK_CI_SKIP_FULL_TEST_GATE: "1" } : {}),
+    RELEASE_CHECK_CI_SKIP_MEMORY_INFLUENCE_GATE: env.RELEASE_CHECK_CI_SKIP_MEMORY_INFLUENCE_GATE || "1",
   };
 }
 
@@ -316,19 +317,54 @@ const STABLE_EXECUTIVE_LIVE_METRICS = {
   },
 };
 
+const STABLE_MEMORY_INFLUENCE_REPORT = {
+  gate_version: "memory_influence_gate_v1",
+  ok: true,
+  gate: "pass",
+  summary: "memory influence gate passes",
+  thresholds: {
+    memory_hit_rate_min: 0.8,
+    action_changed_by_memory_rate_min: 0.5,
+  },
+  metrics: {
+    memory_hit_rate: 1,
+    action_changed_by_memory_rate: 1,
+  },
+  action_level_evidence: [
+    {
+      case_id: "memory_influence_case_1",
+      memory_retrieval_hit: true,
+      action_changed_by_memory: true,
+    },
+  ],
+};
+
 async function createGateFixtures(baseDir) {
   const liveEvalPath = path.join(baseDir, "live-eval-fixture.json");
   const executiveLiveMetricsPath = path.join(baseDir, "executive-live-metrics-fixture.json");
+  const memoryInfluencePath = path.join(baseDir, "memory-influence-fixture.json");
   await writeFile(liveEvalPath, `${JSON.stringify(STABLE_LIVE_EVAL_REPORT, null, 2)}\n`, "utf8");
   await writeFile(
     executiveLiveMetricsPath,
     `${JSON.stringify(STABLE_EXECUTIVE_LIVE_METRICS, null, 2)}\n`,
     "utf8",
   );
+  await writeFile(
+    memoryInfluencePath,
+    `${JSON.stringify(STABLE_MEMORY_INFLUENCE_REPORT, null, 2)}\n`,
+    "utf8",
+  );
   return {
     liveEvalPath,
     executiveLiveMetricsPath,
+    memoryInfluencePath,
   };
+}
+
+async function createMemoryInfluenceFixture(baseDir, summary = STABLE_MEMORY_INFLUENCE_REPORT) {
+  const fixturePath = path.join(baseDir, `memory-influence-fixture-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`);
+  await writeFile(fixturePath, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
+  return fixturePath;
 }
 
 function assertDecisionOsReadinessShape(readiness = {}) {
@@ -604,6 +640,103 @@ test("release-check blocks when collab sample is insufficient even if collab gat
     representative_fail_case: [
       "deadletter_replay_rate:0.9",
       "parallel_speedup:1.1",
+    ],
+    drilldown_source: ["release-check triage"],
+  });
+  assertDecisionOsReadinessShape(report.decision_os_readiness);
+});
+
+test("release-check blocks when memory influence gate is required and memory signal is not pass", () => {
+  const selfCheckResult = {
+    ok: true,
+    system_summary: {
+      core_checks: "pass",
+      company_brain_status: "pass",
+    },
+    control_summary: {
+      status: "pass",
+    },
+    routing_summary: {
+      status: "pass",
+      compare: {
+        has_obvious_regression: false,
+      },
+    },
+    planner_summary: {
+      gate: "pass",
+      compare: {
+        has_obvious_regression: false,
+      },
+    },
+    usage_layer_summary: {
+      status: "pass",
+    },
+    decision_os_observability: {
+      closed_loop_metrics: {
+        memory_influence: {
+          status: "fail",
+          metrics: {
+            memory_hit_rate: 0.5,
+            action_changed_by_memory_rate: 0.2,
+          },
+          thresholds: {
+            memory_hit_rate_min: 0.8,
+            action_changed_by_memory_rate_min: 0.5,
+          },
+        },
+      },
+    },
+  };
+  const capabilityGate = {
+    status: "pass",
+    reasons: [],
+    sample_ready: true,
+    metrics: {},
+  };
+  const experienceGate = {
+    status: "pass",
+    reasons: [],
+    sample_ready: true,
+    metrics: {},
+  };
+  const collabGate = {
+    status: "pass",
+    reasons: [],
+    sample_ready: true,
+    metrics: {
+      deadletter_replay_rate: 0.98,
+      parallel_speedup: 1.6,
+      sample_missing_requirements: [],
+    },
+  };
+  const drilldown = {
+    failing_area: "runtime",
+    representative_fail_case: [
+      "memory_status:fail",
+      "memory_hit_rate:0.5 target>=0.8",
+      "action_changed_by_memory_rate:0.2 target>=0.5",
+    ],
+    drilldown_source: ["release-check triage"],
+  };
+  const report = buildReleaseCheckReport({
+    selfCheckResult,
+    drilldown,
+    capabilityGate,
+    experienceGate,
+    collabGate,
+    memoryInfluenceGateRequired: true,
+  });
+
+  assert.deepEqual(stripDecisionOsReadiness(report), {
+    overall_status: "fail",
+    blocking_checks: ["memory_influence_gate_failure"],
+    doc_boundary_regression: false,
+    suggested_next_step: "先跑 node scripts/memory-influence-gate.mjs --json；把 memory_hit_rate 拉到 >= 0.8、action_changed_by_memory_rate 拉到 >= 0.5，再重跑 release gate。",
+    action_hint: "run memory-influence-gate and inspect memory influence metrics/evidence",
+    failing_area: "runtime",
+    representative_fail_case: [
+      "memory_status:fail",
+      "memory_hit_rate:0.5 target>=0.8",
     ],
     drilldown_source: ["release-check triage"],
   });
@@ -1469,6 +1602,47 @@ test("release-check CI entry emits minimal JSON and exits 0 on pass", async () =
 
   const manifest = readJson(path.join(archives.releaseCheckArchiveDir, "manifest.json"));
   assert.match(manifest.latest_run_id, /^release-check-/);
+});
+
+test("release-check CI blocks when memory influence gate is required and fails", async () => {
+  const archives = await seedReleaseCheckArchives();
+  const gateFixtures = await createGateFixtures(path.dirname(archives.releaseCheckArchiveDir));
+  const failingMemoryFixture = await createMemoryInfluenceFixture(path.dirname(archives.releaseCheckArchiveDir), {
+    ...STABLE_MEMORY_INFLUENCE_REPORT,
+    ok: false,
+    gate: "fail",
+    summary: "memory influence gate fails",
+    metrics: {
+      memory_hit_rate: 0.4,
+      action_changed_by_memory_rate: 0.2,
+    },
+  });
+  const writeSummaryFixturePath = await createWriteSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
+  const usageSummaryFixturePath = await createUsageSummaryFixture(path.dirname(archives.releaseCheckArchiveDir));
+  const result = spawnSync("node", ["scripts/release-check-ci.mjs"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: withReleaseCheckCiEnv({
+      RELEASE_CHECK_ARCHIVE_DIR: archives.releaseCheckArchiveDir,
+      ROUTING_DIAGNOSTICS_ARCHIVE_DIR: archives.routingArchiveDir,
+      PLANNER_DIAGNOSTICS_ARCHIVE_DIR: archives.plannerArchiveDir,
+      SYSTEM_SELF_CHECK_ARCHIVE_DIR: archives.selfCheckArchiveDir,
+      SYSTEM_SELF_CHECK_WRITE_SUMMARY_FIXTURE: writeSummaryFixturePath,
+      SYSTEM_SELF_CHECK_USAGE_SUMMARY_FIXTURE: usageSummaryFixturePath,
+      RELEASE_CHECK_PRODUCTION_EVAL_FIXTURE: gateFixtures.liveEvalPath,
+      RELEASE_CHECK_EXECUTIVE_LIVE_METRICS_FIXTURE: gateFixtures.executiveLiveMetricsPath,
+      RELEASE_CHECK_MEMORY_INFLUENCE_FIXTURE: failingMemoryFixture,
+      RELEASE_CHECK_CI_SKIP_LIVE_EVAL_GATE: "1",
+      RELEASE_CHECK_CI_SKIP_MEMORY_INFLUENCE_GATE: "0",
+      RELEASE_CHECK_CI_REQUIRE_MEMORY_INFLUENCE_GATE: "1",
+    }),
+  });
+
+  assert.equal(result.status, 1);
+  const payload = JSON.parse(result.stdout);
+  assert.deepEqual(payload.blocking_checks, ["memory_influence_gate_failure"]);
+  assert.equal(payload.action_hint, "run memory-influence-gate and inspect memory influence metrics/evidence");
+  assert.match(payload.suggested_next_step, /memory-influence-gate/);
 });
 
 test("release-check CI compare-previous emits only the compare summary JSON", async () => {
