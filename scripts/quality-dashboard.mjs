@@ -103,6 +103,7 @@ function buildDashboardReport({
       ? executiveLiveMetrics
       : null,
     collab_sample_readiness: executiveLiveMetrics?.collab_sample_readiness || null,
+    collab_artifact_coverage: executiveLiveMetrics?.artifact_coverage || null,
     real_traffic_evidence: realTrafficEvidence && typeof realTrafficEvidence === "object"
       ? realTrafficEvidence
       : null,
@@ -116,6 +117,7 @@ function renderCliSummary(report = {}) {
   const collabMissing = Array.isArray(collabReadiness?.missing_requirements) && collabReadiness.missing_requirements.length
     ? collabReadiness.missing_requirements.join(",")
     : "none";
+  const artifactCoverage = report?.collab_artifact_coverage || {};
   const realTrafficEvidence = report?.real_traffic_evidence || {};
   return [
     "Quality Dashboard",
@@ -128,6 +130,8 @@ function renderCliSummary(report = {}) {
     `failed_cases: ${production.failed_case_count ?? 0}`,
     `collab_sample_ready: ${collabReady ? "true" : "false"}`,
     `collab_sample_missing: ${collabMissing}`,
+    `collab_artifact_coverage_rate: ${artifactCoverage?.coverage_rate ?? "null"}`,
+    `collab_artifact_required_nodes: ${artifactCoverage?.required_node_count ?? 0}`,
     `real_traffic_status: ${cleanText(realTrafficEvidence?.overall_status) || "unknown"}`,
     `real_traffic_blocking: ${Array.isArray(realTrafficEvidence?.blocking_reasons) && realTrafficEvidence.blocking_reasons.length > 0 ? realTrafficEvidence.blocking_reasons.join(",") : "none"}`,
   ].join("\n");

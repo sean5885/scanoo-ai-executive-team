@@ -63,11 +63,14 @@ For this closure-planning pass:
     - checked-in code now provides DAG schema validation, node-level claim/lease/heartbeat/retry/deadletter, and artifact-gated merge paths.
     - checked-in observability has advanced:
       - `src/executive-live-metrics.mjs` now exposes `parallel.average_speedup` plus `p50/p90` and `collab_sample_readiness`
+      - `src/executive-live-metrics.mjs` now exposes `artifact_coverage` summary and `coverage_rate`
+      - `src/release-check.mjs` collab gate now evaluates `artifact_coverage_rate` with explicit threshold failure reason
       - `scripts/quality-dashboard.mjs` now surfaces collab sample readiness / missing requirements
+      - `scripts/collab-acceptance-pack.mjs` now emits a single acceptance evidence envelope for release/collab/memory/real-traffic gates
       - `scripts/deadletter-replay-runner.mjs` now provides replay batch evidence and `replay_success_rate` report
       - `scripts/collab-sample-bootstrap.mjs` now provides one runtime bootstrap path that can close `sample_insufficient` by producing graph/deadletter/parallel evidence in the checked-in DB
     - however, the required acceptance set is still partial:
-      - no single checked-in gate metric for `artifact_coverage` in release report
+      - `artifact_coverage` gate metric is now checked-in (`executive_live_metrics.artifact_coverage` + `release-check collab_gate` threshold), but sustained production-window proof is still pending
       - no full E2E benchmark pack yet proving `>=90%` DAG pass rate over failure/retry/lease-expiry matrix
       - no checked-in real-traffic multi-window evidence proving stable `sample_basis=true` and sustained collab gate pass
     - this item remains `open` for release-acceptance closure (implementation exists; KPI proof packaging still pending).

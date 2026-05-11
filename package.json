@@ -24,6 +24,7 @@
     "eval:real-traffic-evidence": "node scripts/real-traffic-evidence.mjs",
     "eval:deadletter-replay": "node scripts/deadletter-replay-runner.mjs",
     "eval:collab-bootstrap": "node scripts/collab-sample-bootstrap.mjs",
+    "eval:collab-acceptance": "node scripts/collab-acceptance-pack.mjs",
     "eval:usage-layer": "node evals/usage-layer/usage-layer-runner.mjs",
     "eval:usage-layer:registered-agent-family": "node evals/usage-layer/usage-layer-runner.mjs --pack registered-agent-family",
     "eval:usage-layer:workflow-timeout-governance": "node evals/usage-layer/usage-layer-runner.mjs --pack workflow-timeout-governance",

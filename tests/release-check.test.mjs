@@ -315,6 +315,17 @@ const STABLE_EXECUTIVE_LIVE_METRICS = {
     average_speedup: 1.4,
     top_graphs: [],
   },
+  artifact_coverage: {
+    required_node_count: 20,
+    covered_node_count: 20,
+    coverage_rate: 1,
+    graph_with_required_node_count: 20,
+    graph_with_full_coverage_count: 20,
+    graph_coverage_rate: 1,
+    missing_required_artifact_count: 0,
+    missing_required_artifact_by_type: [],
+    missing_nodes: [],
+  },
 };
 
 const STABLE_MEMORY_INFLUENCE_REPORT = {
@@ -644,6 +655,29 @@ test("release-check blocks when collab sample is insufficient even if collab gat
     drilldown_source: ["release-check triage"],
   });
   assertDecisionOsReadinessShape(report.decision_os_readiness);
+});
+
+test("release-check blocks when collab artifact coverage is below threshold", async () => {
+  const archives = await seedReleaseCheckArchives();
+  const result = await runReleaseCheck({
+    ...archives,
+    writeCheck: async () => STABLE_WRITE_SUMMARY,
+    usageLayerCheck: async () => STABLE_USAGE_LAYER_SUMMARY,
+    productionEvalReport: STABLE_LIVE_EVAL_REPORT,
+    executiveLiveMetrics: {
+      ...STABLE_EXECUTIVE_LIVE_METRICS,
+      artifact_coverage: {
+        ...STABLE_EXECUTIVE_LIVE_METRICS.artifact_coverage,
+        coverage_rate: 0.5,
+        covered_node_count: 10,
+      },
+    },
+  });
+
+  assert.equal(result.report.overall_status, "fail");
+  assert.equal(result.report.blocking_checks.includes("collab_gate_failure"), true);
+  assert.equal(result.report.collab_gate?.status, "fail");
+  assert.equal(result.report.collab_gate?.metrics?.artifact_coverage_rate, 0.5);
 });
 
 test("release-check blocks when memory influence gate is required and memory signal is not pass", () => {
