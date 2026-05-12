@@ -2589,7 +2589,44 @@ async function resolveAuthContext(event, logger = noopLogger, { allowTenantFallb
   };
 }
 
-async function resolvePlannerExplicitAuthContext({ event, scope, accountId, logger = noopLogger } = {}) {
+async function resolvePlannerStoredExplicitAuth({
+  accountId = "",
+  logger = noopLogger,
+  getValidUserTokenFn = getValidUserToken,
+} = {}) {
+  const normalizedAccountId = cleanText(accountId);
+  if (!normalizedAccountId) {
+    return null;
+  }
+  try {
+    const token = await getValidUserTokenFn(normalizedAccountId);
+    const accessToken = cleanText(token?.access_token || "");
+    if (!accessToken) {
+      return null;
+    }
+    return {
+      account_id: normalizedAccountId,
+      access_token: accessToken,
+      source: "stored_user_token",
+    };
+  } catch (error) {
+    logger.warn("planner_explicit_auth_stored_token_unavailable", {
+      account_id: formatIdentifierHint(normalizedAccountId),
+      error: logger.compactError(error),
+    });
+    return null;
+  }
+}
+
+export async function resolvePlannerExplicitAuthContext({
+  event,
+  scope,
+  accountId,
+  logger = noopLogger,
+  setResolvedSessionExplicitAuthFn = setResolvedSessionExplicitAuth,
+  getResolvedSessionExplicitAuthFn = getResolvedSessionExplicitAuth,
+  getValidUserTokenFn = getValidUserToken,
+} = {}) {
   const sessionKey = cleanText(scope?.session_key || "");
   const authFromEvent = buildExplicitUserAuthContext({
     event,
@@ -2597,28 +2634,44 @@ async function resolvePlannerExplicitAuthContext({ event, scope, accountId, logg
   });
 
   if (sessionKey && authFromEvent?.access_token) {
-    await setResolvedSessionExplicitAuth(sessionKey, authFromEvent);
+    await setResolvedSessionExplicitAuthFn(sessionKey, authFromEvent);
     return authFromEvent;
   }
 
   const persistedAuth = sessionKey
-    ? await getResolvedSessionExplicitAuth(sessionKey)
+    ? await getResolvedSessionExplicitAuthFn(sessionKey)
     : null;
   const mergedAuth = buildExplicitUserAuthContext({
     event,
     accountId,
     persistedAuth,
   });
-
-  if (!mergedAuth?.access_token) {
-    logger.warn("planner_explicit_auth_missing", {
-      session_key: sessionKey || null,
-      account_id: formatIdentifierHint(accountId),
-    });
-    return null;
+  if (mergedAuth?.access_token) {
+    return mergedAuth;
   }
 
-  return mergedAuth;
+  const storedAuth = await resolvePlannerStoredExplicitAuth({
+    accountId: cleanText(mergedAuth?.account_id || accountId || ""),
+    logger,
+    getValidUserTokenFn,
+  });
+  if (storedAuth?.access_token) {
+    if (sessionKey) {
+      await setResolvedSessionExplicitAuthFn(sessionKey, storedAuth);
+    }
+    logger.info("planner_explicit_auth_promoted_from_stored_user_token", {
+      session_key: sessionKey || null,
+      account_id: formatIdentifierHint(storedAuth.account_id),
+      source: storedAuth.source,
+    });
+    return storedAuth;
+  }
+
+  logger.warn("planner_explicit_auth_missing", {
+    session_key: sessionKey || null,
+    account_id: formatIdentifierHint(accountId),
+  });
+  return null;
 }
 
 async function executeKnowledgeAssistant({

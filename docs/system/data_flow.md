@@ -381,6 +381,7 @@ Current truth:
   - `usage_layer.usage_issue_codes`
   - `usage_layer_summary`
 - when the same usage-layer pass detects continuation/retry/reroute continuity gaps, `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs` now prepends one bounded contextual source line (for example slot-fill resume, retry resume, reroute handoff) instead of resetting reply tone as a fresh task
+- usage-layer quality-gate execution (`/Users/seanhan/Documents/Playground/evals/usage-layer/usage-layer-runner.mjs`) now uses deterministic cloud-doc workflow fixtures by default (unless `USAGE_LAYER_EVAL_CLOUD_DOC_REAL_RUNTIME=1`), auto-shapes forced knowledge-search payloads with `q=user_text`, and suppresses controlled fail-closed/partial-success failure-class issue flags so eval drift tracks unexpected UX regressions rather than known auth/governance boundaries
 - planner JSON requests now attempt to prepend one optional file-backed action system prompt (`/Users/seanhan/Documents/Playground/src/prompts/action-system-prompt.txt`) before the existing planner system prompt; when the file is missing/unreadable this step fail-soft skips and keeps the prior prompt path
 
 ### Secondary Retrieval-Answer Helper
@@ -466,6 +467,7 @@ Current truth:
 - `scanoo_optimize` still has no dedicated checked-in lane, so it remains a bounded fallback and still records a concrete `fallback_reason` instead of silently collapsing into one generic lane label
 - the dispatch layer records `request_text / source / session_id / thread_id / requested_capability / capability_source / route_target / mapped_lane / lane_mapping_source / chosen_lane / chosen_skill / fallback_reason / final_status`
 - when `plugin_context` is present, the lane handoff event now keeps bounded `explicit_auth`, `document_refs`, `compare_objects`, and structured `route_request.body` context so downstream lane/planner recovery can still see the same compare/doc evidence instead of flattening everything to raw text only
+- for planner-backed lane execution in `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`, explicit auth resolution order is now: event explicit auth -> session-persisted explicit auth -> same-account stored valid user token (`getValidUserToken`) promoted into session explicit auth (`source=stored_user_token`); this preserves the auth-required boundary while reducing repeated `missing_user_access_token` failures when the session event payload temporarily omits user token fields
 - `GET /answer` and plugin hybrid dispatch now also arm one early fallback abort signal ahead of the outer HTTP hard timeout; planner/lane code gets that earlier `request_timeout` first so bounded fail-soft replies can return before the final generic timeout guard fires
 
 ## 4. Adjacent Workflows

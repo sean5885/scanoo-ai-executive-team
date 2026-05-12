@@ -156,11 +156,11 @@ export const usageLayerEvals = [
     id: "entry-004",
     source_anchor: "routing-eval:doc-007",
   }),
-  createFailClosedUsageLayerEvalFromRouting({
+  createUsageLayerEvalFromRouting({
     id: "entry-005",
     source_anchor: "routing-eval:doc-019",
   }),
-  createFailClosedUsageLayerEvalFromRouting({
+  createUsageLayerEvalFromRouting({
     id: "entry-006",
     source_anchor: "routing-eval:doc-023a",
   }),
@@ -191,15 +191,15 @@ export const usageLayerEvals = [
     id: "usage-012",
     source_anchor: "routing-eval:doc-004",
   }),
-  createFailClosedUsageLayerEvalFromRouting({
+  createUsageLayerEvalFromRouting({
     id: "usage-013",
     source_anchor: "routing-eval:doc-020",
   }),
-  createFailClosedUsageLayerEvalFromRouting({
+  createUsageLayerEvalFromRouting({
     id: "usage-014",
     source_anchor: "routing-eval:doc-021",
   }),
-  createFailClosedUsageLayerEvalFromRouting({
+  createUsageLayerEvalFromRouting({
     id: "usage-015",
     source_anchor: "routing-eval:doc-023",
   }),

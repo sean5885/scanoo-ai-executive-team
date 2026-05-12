@@ -23,6 +23,7 @@ const {
   maybeBuildScanooDiagnoseOfficialReadFallback,
   maybeBuildScanooCompareDocsSearchFallback,
   resolveLaneExecutionPlan,
+  resolvePlannerExplicitAuthContext,
   resolveScanooLanePreTimeoutPlan,
   resolveReferencedDocumentId,
   looksLikeAgentStandbyStatusRequest,
@@ -36,6 +37,89 @@ import { buildVisibleMessageText } from "../src/message-intent-utils.mjs";
 
 test.after(() => {
   testDb.close();
+});
+
+test("resolvePlannerExplicitAuthContext promotes stored user token into explicit auth when event token is missing", async () => {
+  const persisted = [];
+  const result = await resolvePlannerExplicitAuthContext({
+    event: {
+      message: {
+        chat_id: "chat-explicit-auth-fallback",
+      },
+    },
+    scope: {
+      session_key: "thread:explicit-auth-fallback",
+    },
+    accountId: "ou_fallback_auth",
+    logger: {
+      info() {},
+      warn() {},
+      compactError(error) {
+        return error instanceof Error ? error.message : String(error);
+      },
+    },
+    async setResolvedSessionExplicitAuthFn(sessionKey, auth) {
+      persisted.push({ sessionKey, auth });
+    },
+    async getResolvedSessionExplicitAuthFn() {
+      return null;
+    },
+    async getValidUserTokenFn(accountId) {
+      return {
+        account_id: accountId,
+        access_token: "u_access_token_from_store",
+      };
+    },
+  });
+
+  assert.deepEqual(result, {
+    account_id: "ou_fallback_auth",
+    access_token: "u_access_token_from_store",
+    source: "stored_user_token",
+  });
+  assert.equal(persisted.length, 1);
+  assert.equal(persisted[0].sessionKey, "thread:explicit-auth-fallback");
+  assert.deepEqual(persisted[0].auth, result);
+});
+
+test("resolvePlannerExplicitAuthContext keeps persisted explicit auth before reading stored token", async () => {
+  let storedTokenCalls = 0;
+  const result = await resolvePlannerExplicitAuthContext({
+    event: {
+      message: {
+        chat_id: "chat-explicit-auth-persisted",
+      },
+    },
+    scope: {
+      session_key: "thread:explicit-auth-persisted",
+    },
+    accountId: "ou_persisted_auth",
+    logger: {
+      info() {},
+      warn() {},
+      compactError(error) {
+        return error instanceof Error ? error.message : String(error);
+      },
+    },
+    async getResolvedSessionExplicitAuthFn() {
+      return {
+        account_id: "ou_persisted_auth",
+        access_token: "u_access_token_from_session",
+        source: "session_user_access_token",
+      };
+    },
+    async getValidUserTokenFn() {
+      storedTokenCalls += 1;
+      return null;
+    },
+  });
+
+  assert.deepEqual(result, {
+    account_id: "ou_persisted_auth",
+    access_token: "u_access_token_from_session",
+    source: "session_user_access_token",
+  });
+  assert.equal(storedTokenCalls, 0);
 });
 
 test("pickCalendarMeetingEvent prefers the currently active meeting with meeting_url", () => {
