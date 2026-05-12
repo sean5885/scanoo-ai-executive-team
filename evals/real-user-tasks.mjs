@@ -4,28 +4,6 @@ import {
   productionLikePacks,
 } from "./production-like/index.mjs";
 
-const GENERAL_ASSISTANT_REPLY = [
-  "結論",
-  "我可以先幫你把這件事接住。",
-  "",
-  "重點",
-  "- 你可以直接說要我整理什麼、查什麼，或幫你起草什麼內容。",
-  "",
-  "下一步",
-  "- 如果你願意，我可以先從這段對話、今天的日程、最近待辦，或一份文件開始。",
-].join("\n");
-
-const MEETING_PERMISSION_REPLY = [
-  "結論",
-  "要整理最近對話，我現在還拿不到你的個人對話存取權限。",
-  "",
-  "重點",
-  "- 所以我這輪先沒辦法直接讀你的私聊歷史來整理。",
-  "",
-  "下一步",
-  "- 等你重新登入後，我就能直接幫你整理；如果你現在先貼內容，我也可以先幫你整理重點。",
-].join("\n");
-
 export const legacyConversationSnapshotTasks = [
   {
     id: "meeting-organize-basic",
@@ -34,8 +12,7 @@ export const legacyConversationSnapshotTasks = [
     expected: {
       capability_lane: "personal-assistant",
       chosen_action: "summarize_recent_dialogue",
-      reply_snapshot: MEETING_PERMISSION_REPLY,
-      help_markers: ["先貼內容", "幫你整理重點"],
+      must_include: ["拿不到你的個人對話存取權限", "先貼內容", "幫你整理重點"],
     },
   },
   {
@@ -45,8 +22,7 @@ export const legacyConversationSnapshotTasks = [
     expected: {
       capability_lane: "personal-assistant",
       chosen_action: "summarize_recent_dialogue",
-      reply_snapshot: MEETING_PERMISSION_REPLY,
-      help_markers: ["重新登入後", "幫你整理重點"],
+      must_include: ["重新登入後", "幫你整理重點"],
     },
   },
   {
@@ -56,8 +32,8 @@ export const legacyConversationSnapshotTasks = [
     expected: {
       capability_lane: "personal-assistant",
       chosen_action: "general_assistant_action",
-      reply_snapshot: GENERAL_ASSISTANT_REPLY,
-      help_markers: ["接住", "幫你起草"],
+      must_include: ["風險盤點", "需求/範圍風險", "高/中/低風險分級"],
+      disallow_generic_template: true,
     },
   },
   {
@@ -67,8 +43,7 @@ export const legacyConversationSnapshotTasks = [
     expected: {
       capability_lane: "personal-assistant",
       chosen_action: "general_assistant_action",
-      reply_snapshot: GENERAL_ASSISTANT_REPLY,
-      help_markers: ["接住", "幫你起草"],
+      must_include: ["你好，我在", "不用先切模式"],
     },
   },
   {
@@ -78,8 +53,8 @@ export const legacyConversationSnapshotTasks = [
     expected: {
       capability_lane: "personal-assistant",
       chosen_action: "general_assistant_action",
-      reply_snapshot: GENERAL_ASSISTANT_REPLY,
-      help_markers: ["接住", "今天的日程"],
+      must_include: ["最能解鎖後續進度", "今天先做 3 件"],
+      disallow_generic_template: true,
     },
   },
   {
@@ -89,8 +64,7 @@ export const legacyConversationSnapshotTasks = [
     expected: {
       capability_lane: "personal-assistant",
       chosen_action: "general_assistant_action",
-      reply_snapshot: GENERAL_ASSISTANT_REPLY,
-      help_markers: ["整理什麼", "一份文件開始"],
+      must_include: ["我可以先幫你把這件事接住", "你可以直接說要我整理什麼"],
     },
   },
   {
@@ -100,8 +74,8 @@ export const legacyConversationSnapshotTasks = [
     expected: {
       capability_lane: "personal-assistant",
       chosen_action: "general_assistant_action",
-      reply_snapshot: GENERAL_ASSISTANT_REPLY,
-      help_markers: ["起草什麼內容", "這件事接住"],
+      must_include: ["文案骨架", "目標受眾", "平台（FB/Email/官網）"],
+      disallow_generic_template: true,
     },
   },
   {
@@ -111,8 +85,8 @@ export const legacyConversationSnapshotTasks = [
     expected: {
       capability_lane: "personal-assistant",
       chosen_action: "general_assistant_action",
-      reply_snapshot: GENERAL_ASSISTANT_REPLY,
-      help_markers: ["查什麼", "最近待辦"],
+      must_include: ["目標 -> 路徑 -> 節點", "可執行節點"],
+      disallow_generic_template: true,
     },
   },
   {
@@ -122,8 +96,8 @@ export const legacyConversationSnapshotTasks = [
     expected: {
       capability_lane: "personal-assistant",
       chosen_action: "general_assistant_action",
-      reply_snapshot: GENERAL_ASSISTANT_REPLY,
-      help_markers: ["今天的日程", "最近待辦"],
+      must_include: ["最能解鎖後續進度", "今天先做 3 件"],
+      disallow_generic_template: true,
     },
   },
   {
@@ -133,8 +107,8 @@ export const legacyConversationSnapshotTasks = [
     expected: {
       capability_lane: "personal-assistant",
       chosen_action: "general_assistant_action",
-      reply_snapshot: GENERAL_ASSISTANT_REPLY,
-      help_markers: ["查什麼", "起草什麼內容"],
+      must_include: ["風險盤點", "需求/範圍風險", "高/中/低風險分級"],
+      disallow_generic_template: true,
     },
   },
 ];

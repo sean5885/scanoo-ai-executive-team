@@ -445,6 +445,8 @@ Current truth:
 - both wrapper briefs stay lane-local and do not change planner ingress or the public response shape
 - lane executor now has one deterministic agent-status fast-path for direct standby-count asks (for example "現在我有幾個agent在待命"), returning checked-in registry count + active owner + standby preview without entering executive planner fallback
 - personal-lane summary routing now requires topic+action pairs in `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` (calendar/task/dialogue); standalone generic words like only `整理`/`總結` no longer trigger summary routes by themselves
+- personal-lane `general_assistant_action` reply path in `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` now serves direct actionable scaffolds for common asks (risk, prioritization, execution push, copy draft) before using the generic fallback template, so DM turns are less likely to collapse into one canned response
+- the same personal-lane scaffolds now extract one bounded subject from user text and inject it into the reply, so output stays contextual without widening public response shape
 - executive start detection now stays explicit-first in `/Users/seanhan/Documents/Playground/src/executive-planner.mjs`: slash/agent requests trigger directly, while soft cues (`決策`/`協作`/`拆解` etc.) require either multi-agent context or multi-signal directive context to reduce single-word misfire
 - for explicit plugin capability handoff (`requested_capability=scanoo_compare|scanoo_diagnose`), `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` now runs one lane-primary fast-path before planner:
   - `scanoo_compare`: force one mirror evidence search pass first
@@ -629,6 +631,7 @@ Current path:
 2. `/Users/seanhan/Documents/Playground/src/binding-runtime.mjs` resolves the chat as direct-message scope
 3. `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` keeps the request in `personal-assistant`
 4. only when the personal lane would otherwise fall to `general_assistant_action`, the checked-in helper now runs `/Users/seanhan/Documents/Playground/src/planner/personal-dm-skill-intent.mjs`
+4A. greeting/closing-only DM turns are excluded from that classifier pre-pass and stay on direct assistant greeting/ack replies to avoid unnecessary classifier latency and accidental style drift
 5. the MiniMax text path classifies the DM into exactly one of:
    - `skill_find_request`
    - `skill_install_request`
@@ -654,7 +657,7 @@ Current truth:
   - remote install is limited to `openai/skills` `skills/.curated`
   - install writes only to `~/.codex/skills`
   - no arbitrary command surface, no arbitrary path writes, no package-manager install path
-- `not_skill_task` keeps the old personal-lane behavior unchanged; it does not bypass the existing fallback / tenant-token / meeting / cloud-doc precedence
+- `not_skill_task` keeps the existing lane precedence (tenant-token / meeting / cloud-doc / fallback) unchanged, but the reply layer now prefers direct actionable scaffolds for common asks (risk / prioritization / execution push / copy draft) before generic fallback copy
 - `find-skills` remains an agent skill/spec in the Codex environment; this runtime path does not directly execute that skill as a generic task owner
 - this minimal version covers controlled skill find / install / verify and should not be described as a generic write-capable planner execution surface
 
