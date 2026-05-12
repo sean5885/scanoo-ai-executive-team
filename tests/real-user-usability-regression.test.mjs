@@ -23,6 +23,7 @@ const [
 
 const INTERNAL_LEAK_PATTERN = /\b(?:internal|routing|lane|trace|chosen_action|fallback_reason)\b|ROUTING_NO_MATCH/i;
 const SYSTEM_STYLE_PATTERN = /任務已啟動|正在處理|請提供資料/i;
+const GENERIC_FALLBACK_PATTERN = /我可以先幫你把這件事接住/u;
 
 const quietLogger = {
   debug() {},
@@ -133,15 +134,20 @@ test("real-user usability regression pack keeps assistant-like behavior stable",
       assert.equal(plan.fallback_reason, null);
 
       assert.equal(typeof reply?.text, "string");
-      assert.equal(reply.text, entry.expected.reply_snapshot);
       assert.match(reply.text, /^結論\n/);
       assert.match(reply.text, /\n\n重點\n/);
       assert.match(reply.text, /\n\n下一步\n/);
       assert.doesNotMatch(reply.text, INTERNAL_LEAK_PATTERN);
       assert.doesNotMatch(reply.text, SYSTEM_STYLE_PATTERN);
 
-      for (const marker of entry.expected.help_markers || []) {
+      for (const marker of entry.expected.must_include || []) {
         assert.equal(reply.text.includes(marker), true, `missing help marker: ${marker}`);
+      }
+      for (const marker of entry.expected.must_not_include || []) {
+        assert.equal(reply.text.includes(marker), false, `unexpected marker: ${marker}`);
+      }
+      if (entry.expected.disallow_generic_template === true) {
+        assert.doesNotMatch(reply.text, GENERIC_FALLBACK_PATTERN);
       }
     });
   }

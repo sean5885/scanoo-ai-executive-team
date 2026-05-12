@@ -1758,11 +1758,19 @@ function looksLikeMeetingSummaryRequest(text = "") {
 }
 
 function looksLikeGreeting(text = "") {
-  return /^(你好|哈囉|哈啰|hello|hi|hey)\b/i.test(cleanText(text));
+  const normalized = cleanText(text);
+  if (!normalized) {
+    return false;
+  }
+  return /(?:^|[\s{":,])(你好|哈囉|哈啰|hello|hi|hey)(?:\b|$)/i.test(normalized);
 }
 
 function looksLikeClosingAck(text = "") {
-  return /^(謝謝|谢谢|感謝|感谢|收到|知道了|好喔|好的|ok|okay)\b/i.test(cleanText(text));
+  const normalized = cleanText(text);
+  if (!normalized) {
+    return false;
+  }
+  return /(?:^|[\s{":,])(謝謝|谢谢|感謝|感谢|收到|知道了|好喔|好的|ok|okay)(?:\b|$)/i.test(normalized);
 }
 
 function looksLikeUnsupportedReminderRequest(text = "") {
@@ -1878,6 +1886,138 @@ function buildLanePermissionDeniedReply() {
   };
 }
 
+function looksLikeRiskAssessmentRequest(text = "") {
+  const normalized = cleanText(text);
+  if (!normalized) {
+    return false;
+  }
+  if (!/(風險|风险|風險點|风险点|踩雷|陷阱|坑|risk)/i.test(normalized)) {
+    return false;
+  }
+  return /(方案|提案|計畫|计划|策略|方向|功能|專案|项目|這個|这个|哪|什麼|什么|分析|評估|评估|三點|3點)/i.test(normalized);
+}
+
+function looksLikePrioritizationRequest(text = "") {
+  const normalized = cleanText(text);
+  if (!normalized) {
+    return false;
+  }
+  if (!/(先做|先處理|先处理|優先|优先|排序|排程|排期|先做什麼|先做什么|first step|priorit)/i.test(normalized)) {
+    return false;
+  }
+  return /(今天|今日|這週|这周|本週|本周|現在|现在|接下來|接下来|比較好|比较好)/i.test(normalized);
+}
+
+function looksLikeExecutionPushRequest(text = "") {
+  const normalized = cleanText(text);
+  if (!normalized) {
+    return false;
+  }
+  return /(怎麼推|怎么推|如何推|怎麼落地|怎么落地|如何落地|接下來怎麼做|接下来怎么做|下一步怎麼做|下一步怎么做|推進|推进)/i
+    .test(normalized);
+}
+
+function looksLikeCopyDraftRequest(text = "") {
+  const normalized = cleanText(text);
+  if (!normalized) {
+    return false;
+  }
+  return /(文案|貼文|贴文|caption|copywriting|copy|起草|草稿|寫一版|写一版|幫我寫|帮我写|draft)/i
+    .test(normalized);
+}
+
+function extractGeneralAssistantFocusTopic(text = "") {
+  const normalized = cleanText(text);
+  if (!normalized) {
+    return "";
+  }
+  let subject = normalized
+    .replace(/[\{\}"'`]/g, " ")
+    .replace(/(?:幫我|帮我|請|请|先|可以|能不能|可不可以|一下|這個|这个|針對|针对|關於|关于)/g, " ")
+    .replace(/(?:風險|风险|優先|优先|排序|排程|排期|怎麼推|怎么推|下一步|文案|草稿|起草|copy|draft)/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!subject) {
+    return "";
+  }
+  if (subject.length > 18) {
+    subject = subject.slice(0, 18);
+  }
+  return subject;
+}
+
+function buildRiskAssessmentReply(text = "") {
+  const topic = extractGeneralAssistantFocusTopic(text) || "這個方案";
+  return {
+    text: [
+      "結論",
+      `可以，先給你一版「${topic}」可直接用的風險盤點。`,
+      "",
+      "重點",
+      `- 需求/範圍風險：${topic} 的目標若不夠明確，容易邊做邊改，導致返工。`,
+      "- 執行風險：關鍵依賴（人、資料、權限）若晚到，時程會被動延遲。",
+      "- 交付風險：缺少驗收標準時，容易做到「有產出」但不算「可交付」。",
+      "",
+      "下一步",
+      "- 你把目標、期限、owner 貼給我，我可以在這三點上直接幫你做高/中/低風險分級與對策表。",
+    ].join("\n"),
+  };
+}
+
+function buildPrioritizationReply(text = "") {
+  const topic = extractGeneralAssistantFocusTopic(text) || "目前這批任務";
+  return {
+    text: [
+      "結論",
+      `先做「${topic} 裡最能解鎖後續進度」的那一件。`,
+      "",
+      "重點",
+      "- 先挑 1 件 high-impact 且可在今天完成的任務，確保有可見進展。",
+      "- 第二件做風險前置（例如補資料、確認依賴、對齊驗收），避免後面卡死。",
+      "- 其餘任務先暫緩，避免同時開太多線造成切換成本。",
+      "",
+      "下一步",
+      "- 你把目前待辦貼上來，我幫你直接排出「今天先做 3 件」與每件預估時間。",
+    ].join("\n"),
+  };
+}
+
+function buildExecutionPushReply(text = "") {
+  const topic = extractGeneralAssistantFocusTopic(text) || "這件事";
+  return {
+    text: [
+      "結論",
+      `可以，先用「目標 -> 路徑 -> 節點」三步推進「${topic}」，避免空轉。`,
+      "",
+      "重點",
+      "- 先把本輪唯一目標寫成一句話，避免同時追多個方向。",
+      "- 拆成 2-3 個可驗證節點，每個節點都要有完成判準。",
+      "- 每個節點先處理最大阻塞，再交付最小可用版本。",
+      "",
+      "下一步",
+      "- 你丟目前目標給我，我直接幫你拆成可執行節點與對應 owner/期限。",
+    ].join("\n"),
+  };
+}
+
+function buildCopyDraftReply(text = "") {
+  const topic = extractGeneralAssistantFocusTopic(text) || "這個主題";
+  return {
+    text: [
+      "結論",
+      `可以，我先給你一版「${topic}」可直接改的文案骨架。`,
+      "",
+      "重點",
+      "- 開場：先說痛點與情境，讓受眾知道這件事和他有關。",
+      "- 主體：給 2-3 個最有感的價值點，避免堆功能列表。",
+      "- 收尾：用單一 CTA，明確告訴對方下一步要做什麼。",
+      "",
+      "下一步",
+      "- 回我目標受眾、語氣（專業/口語）和平台（FB/Email/官網），我直接產出一版完整稿。",
+    ].join("\n"),
+  };
+}
+
 function buildGeneralAssistantReply(text = "") {
   if (looksLikeGreeting(text)) {
     return {
@@ -1907,6 +2047,22 @@ function buildGeneralAssistantReply(text = "") {
         "- 你可以叫我整理內容、看日程、列待辦，或讀一份文件。",
       ].join("\n"),
     };
+  }
+
+  if (looksLikeRiskAssessmentRequest(text)) {
+    return buildRiskAssessmentReply(text);
+  }
+
+  if (looksLikePrioritizationRequest(text)) {
+    return buildPrioritizationReply(text);
+  }
+
+  if (looksLikeExecutionPushRequest(text)) {
+    return buildExecutionPushReply(text);
+  }
+
+  if (looksLikeCopyDraftRequest(text)) {
+    return buildCopyDraftReply(text);
   }
 
   return {
@@ -4196,6 +4352,9 @@ export async function maybeExecutePersonalDMSkillTask({
 
   const text = normalizeMessageText(event);
   if (!cleanText(text)) {
+    return null;
+  }
+  if (looksLikeGreeting(text) || looksLikeClosingAck(text)) {
     return null;
   }
 

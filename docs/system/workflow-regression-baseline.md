@@ -381,7 +381,10 @@ npm run test:real-user-usability
   - 回覆必須維持 assistant-style，而不是 system-style
   - 不可外漏 `internal` / `routing` / `lane` / `trace`
   - partial path 仍需有可交付內容
-- deterministic reply snapshots：`tests/real-user-usability-regression.test.mjs`
+- semantic reply assertions（no fixed literal snapshot）：
+  - section shape must stay `結論 -> 重點 -> 下一步`
+  - each case must include expected help markers
+  - targeted cases can require `disallow_generic_template=true` to block fallback-style canned copy
 
 ## Test Harness Note
 
