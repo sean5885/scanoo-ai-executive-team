@@ -81,6 +81,30 @@ test("reply-chain 跟進訊息會切到 doc-editor lane", () => {
   assert.equal(lane.capability_lane, "doc-editor");
 });
 
+test("PDF file card 不會因附件 file_token 被誤判成 doc-editor lane", () => {
+  const lane = resolveCapabilityLane(
+    { chat_type: "p2p" },
+    {
+      message: {
+        msg_type: "file",
+        content: JSON.stringify({
+          attachments: [
+            {
+              file_token: "file_v3_00abc123",
+              file_key: "boxbc123",
+              name: "Scanoo_珍煮丹_KA_v6_管理過程.pdf",
+              mime_type: "application/pdf",
+              ext: "pdf",
+            },
+          ],
+        }),
+      },
+    },
+  );
+
+  assert.equal(lane.capability_lane, "personal-assistant");
+});
+
 test("一般群聊整理需求仍維持 group-shared-assistant", () => {
   const lane = resolveCapabilityLane(
     { chat_type: "group" },

@@ -53,6 +53,18 @@ function summarizeRawApiResponse(value = null) {
   };
 }
 
+function buildLaneReplyIdempotencyKey({
+  event = null,
+  reply = {},
+  requestId = "",
+} = {}) {
+  const messageId = cleanText(event?.message?.message_id);
+  const chatId = cleanText(event?.message?.chat_id);
+  const mode = cleanText(reply?.replyMode) || "text";
+  const baseKey = messageId || `${chatId || "unknown_chat"}:${cleanText(requestId) || "unknown_request"}`;
+  return cleanText(`lane_reply:${baseKey}:${mode}`);
+}
+
 function buildReplyLogFields({
   requestId = "",
   traceId = null,
@@ -62,6 +74,7 @@ function buildReplyLogFields({
   receiveId = "",
   receiveIdType = "chat_id",
   targetMessageId = "",
+  idempotencyKey = "",
 } = {}) {
   const message = event?.message || {};
   return {
@@ -78,6 +91,7 @@ function buildReplyLogFields({
     upper_message_id: cleanText(message.upper_message_id) || null,
     thread_id: cleanText(message.thread_id) || null,
     reply_mode: cleanText(reply?.replyMode) || "text",
+    idempotency_key: cleanText(idempotencyKey) || null,
     auth_mode: cleanText(auth?.tokenType) || null,
     token_source: cleanText(auth?.source) || null,
     account_id: cleanText(auth?.accountId) || null,
@@ -163,6 +177,11 @@ export async function sendLaneReply({
   const eventLogger = normalizeLogger(logger);
   const requestId = createRequestId("reply");
   const auth = await resolveReplyAuth({ reply, event });
+  const idempotencyKey = buildLaneReplyIdempotencyKey({
+    event,
+    reply,
+    requestId,
+  });
   const baseFields = buildReplyLogFields({
     requestId,
     traceId,
@@ -172,6 +191,7 @@ export async function sendLaneReply({
     receiveId: chatId,
     receiveIdType: "chat_id",
     targetMessageId: messageId,
+    idempotencyKey,
   });
   eventLogger.info("reply_send_attempted", baseFields);
 
@@ -187,6 +207,7 @@ export async function sendLaneReply({
         replyInThread: true,
         cardTitle: reply.cardTitle || null,
         cardPayload: reply.cardPayload || null,
+        idempotencyKey,
       })
     : await executeMessageSend({
         pathname: "/runtime/index/lane-reply",
@@ -199,6 +220,7 @@ export async function sendLaneReply({
         content: text,
         cardTitle: reply.cardTitle || null,
         cardPayload: reply.cardPayload || null,
+        idempotencyKey,
       });
 
   const evidence = execution?.result?.__send_evidence || execution?.meta?.journal?.error_details || null;

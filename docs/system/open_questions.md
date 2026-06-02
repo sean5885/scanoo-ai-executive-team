@@ -140,6 +140,7 @@ No remaining ranked closure order is defined in this file after Thread C.
 - the exact Lark app permissions currently granted in tenant console
 - the exact PDF read/extract API and permission boundary for tenant runtime:
   - checked-in code confirms PDF attachment metadata extraction + modality classification (`pdf` / `pdf_multimodal`) + runtime parse path (`src/pdf-read-service.mjs`) + Lark Drive download integration (`src/lark-connectors.mjs`).
+  - checked-in runtime now enforces user-auth-only read for message resource download and fail-soft guidance when scope/auth is missing (`im:message.p2p_msg:get_as_user`, `im:message.group_msg:get_as_user`, `/oauth/lark/login`), and no longer retries that path with tenant token.
   - however, tenant-side scope grant / access-token availability remains deployment truth; repo code alone cannot prove every tenant has可用 PDF read permission。
   - Evidence:
     - `/Users/seanhan/Documents/Playground/src/message-intent-utils.mjs`

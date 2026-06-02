@@ -43,7 +43,16 @@ Current additive path:
 5. image-only execution paths now keep PDF out of image analysis dispatch:
    - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
    - `/Users/seanhan/Documents/Playground/src/agent-dispatcher.mjs`
-6. when downstream answer rendering needs source citation, source lines are generated from canonical evidence objects via `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`, not free-form source strings
+6. image follow-up continuity now has a bounded staged context path:
+   - pure `msg_type=image` uploads can stage one 5-minute image context keyed by `chat_id + sender_open_id`
+   - text follow-up asks (for example `告訴我這是什麼`) can reuse that staged image context without re-upload
+7. Lark message-image reads are user-auth only on this lane:
+   - no tenant fallback is used for message-image download
+   - missing auth returns fail-soft reauth guidance instead of hard-failing the event
+8. image analysis call path now fail-softs provider/input errors:
+   - per-image fetch failures and provider call failures are normalized into `ok=false` reasons
+   - image-lane exceptions do not intentionally bubble to top-level `event_processing_failed` generic crash replies
+9. when downstream answer rendering needs source citation, source lines are generated from canonical evidence objects via `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`, not free-form source strings
 
 Current truth:
 

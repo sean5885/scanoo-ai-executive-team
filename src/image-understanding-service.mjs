@@ -109,6 +109,14 @@ function normalizeMimeType(value = "") {
   return "application/octet-stream";
 }
 
+function normalizeReasonSegment(value = "", maxLength = 120) {
+  const normalized = normalizeText(String(value || "")).replace(/\s+/g, "_");
+  if (!normalized) {
+    return "";
+  }
+  return normalized.slice(0, maxLength);
+}
+
 async function fetchRemoteImagePart(url = "") {
   const response = await fetch(url);
   if (!response.ok) {
@@ -126,22 +134,33 @@ async function fetchRemoteImagePart(url = "") {
 
 async function buildGeminiImageParts({ imageInputs = [], accessToken = "", tokenType = "user" } = {}) {
   const parts = [];
+  const failures = [];
   for (const input of Array.isArray(imageInputs) ? imageInputs : []) {
-    if (input?.kind === "url" && normalizeText(input.value)) {
-      parts.push(await fetchRemoteImagePart(input.value));
-      continue;
-    }
-    if (input?.kind === "lark_image_key" && normalizeText(input.value) && accessToken) {
-      const downloaded = await downloadMessageImage(accessToken, input.value, tokenType);
-      parts.push({
-        inlineData: {
-          mimeType: normalizeMimeType(downloaded.mime_type),
-          data: downloaded.bytes.toString("base64"),
-        },
+    try {
+      if (input?.kind === "url" && normalizeText(input.value)) {
+        parts.push(await fetchRemoteImagePart(input.value));
+        continue;
+      }
+      if (input?.kind === "lark_image_key" && normalizeText(input.value) && accessToken) {
+        const downloaded = await downloadMessageImage(accessToken, input.value, tokenType);
+        parts.push({
+          inlineData: {
+            mimeType: normalizeMimeType(downloaded.mime_type),
+            data: downloaded.bytes.toString("base64"),
+          },
+        });
+      }
+    } catch (error) {
+      failures.push({
+        kind: normalizeText(input?.kind || ""),
+        reason: normalizeReasonSegment(error instanceof Error ? error.message : String(error)),
       });
     }
   }
-  return parts;
+  return {
+    parts,
+    failures,
+  };
 }
 
 function extractGeminiText(data = {}) {
@@ -269,37 +288,61 @@ export async function analyzeImageTask({
     };
   }
 
-  const imageParts = await buildGeminiImageParts({
+  const imageBuild = await buildGeminiImageParts({
     imageInputs,
     accessToken,
     tokenType,
   });
+  const imageParts = Array.isArray(imageBuild?.parts) ? imageBuild.parts : [];
+  const imageFailures = Array.isArray(imageBuild?.failures) ? imageBuild.failures : [];
 
   if (!imageParts.length) {
+    const firstFailure = imageFailures[0];
     return {
       ok: false,
       provider: imageUnderstandingProvider,
-      reason: "missing_accessible_images",
+      reason: firstFailure?.reason
+        ? `image_input_unavailable:${firstFailure.reason}`
+        : "missing_accessible_images",
       image_count: imageInputs.length,
+      input_failure_count: imageFailures.length,
     };
   }
 
-  const raw = await callNanoBanana({
-    task,
-    textContext,
-    imageParts,
-  });
+  let raw = null;
+  try {
+    raw = await callNanoBanana({
+      task,
+      textContext,
+      imageParts,
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      provider: imageUnderstandingProvider,
+      reason: normalizeReasonSegment(error instanceof Error ? error.message : String(error))
+        || "image_understanding_call_failed",
+      image_count: imageInputs.length,
+      input_failure_count: imageFailures.length,
+    };
+  }
   const normalized = normalizeImageUnderstandingPayload(raw);
-  const textSummary = await synthesizeWithTextModel({
-    task,
-    imageResult: normalized,
-  });
+  let textSummary = "";
+  try {
+    textSummary = await synthesizeWithTextModel({
+      task,
+      imageResult: normalized,
+    });
+  } catch {
+    textSummary = "";
+  }
 
   return {
     ok: true,
     provider: imageUnderstandingProvider,
     model: imageUnderstandingModel,
     image_count: imageInputs.length,
+    input_failure_count: imageFailures.length,
     ...normalized,
     text_summary: textSummary,
   };

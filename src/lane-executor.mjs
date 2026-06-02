@@ -29,6 +29,7 @@ import {
 } from "./read-runtime.mjs";
 import {
   extractBitableReference,
+  extractAttachmentObjects,
   buildMessageText,
   buildVisibleMessageText,
   cleanText,
@@ -464,6 +465,30 @@ function uniqueStrings(items = []) {
     seen.add(normalized);
     return true;
   });
+}
+
+function collectAttachmentTokenSet(input = {}) {
+  const tokens = new Set();
+  const attachments = extractAttachmentObjects(input);
+  for (const attachment of attachments) {
+    const fileToken = cleanText(attachment?.file_token);
+    const fileKey = cleanText(attachment?.file_key);
+    if (fileToken) {
+      tokens.add(fileToken);
+    }
+    if (fileKey) {
+      tokens.add(fileKey);
+    }
+  }
+  return tokens;
+}
+
+function isAttachmentTokenCandidate(input = {}, candidate = "") {
+  const token = cleanText(candidate);
+  if (!token) {
+    return false;
+  }
+  return collectAttachmentTokenSet(input).has(token);
 }
 
 function collectScanooDocumentRefSearchQueries(documentRef = {}) {
@@ -2403,7 +2428,7 @@ async function resolveReferencedDocumentId(event, accessToken, logger = noopLogg
   searchDocs = searchCompanyBrainDocsFromRuntime,
 } = {}) {
   const directDocumentId = extractDocumentId(event);
-  if (directDocumentId) {
+  if (directDocumentId && !isAttachmentTokenCandidate(event, directDocumentId)) {
     logger.info("doc_resolution_hit", {
       source: "current_message",
       document_id: formatIdentifierHint(directDocumentId),
@@ -2412,6 +2437,12 @@ async function resolveReferencedDocumentId(event, accessToken, logger = noopLogg
       documentId: directDocumentId,
       source: "current_message",
     };
+  }
+  if (directDocumentId) {
+    logger.info("doc_resolution_attachment_token_ignored", {
+      source: "current_message",
+      token: formatIdentifierHint(directDocumentId),
+    });
   }
 
   const pluginContextDocumentRefs = collectPluginContextDocumentRefs(event);
@@ -2435,7 +2466,7 @@ async function resolveReferencedDocumentId(event, accessToken, logger = noopLogg
     try {
       const related = await getMessage(accessToken, relatedMessageId);
       const relatedDocumentId = extractDocumentId({ message: related });
-      if (relatedDocumentId) {
+      if (relatedDocumentId && !isAttachmentTokenCandidate({ message: related }, relatedDocumentId)) {
         logger.info("doc_resolution_hit", {
           source: "referenced_message",
           document_id: formatIdentifierHint(relatedDocumentId),
@@ -2446,6 +2477,13 @@ async function resolveReferencedDocumentId(event, accessToken, logger = noopLogg
           source: "referenced_message",
           referencedMessageId: relatedMessageId,
         };
+      }
+      if (relatedDocumentId) {
+        logger.info("doc_resolution_attachment_token_ignored", {
+          source: "referenced_message",
+          token: formatIdentifierHint(relatedDocumentId),
+          referenced_message_id: formatIdentifierHint(relatedMessageId),
+        });
       }
     } catch {
       logger.warn("doc_resolution_related_message_failed", {
@@ -3192,28 +3230,398 @@ function buildImageAnalysisReply(analysis, { multimodal = false } = {}) {
   };
 }
 
+function looksLikeImageContextualFollowUp(text = "") {
+  const normalized = cleanText(String(text || "").toLowerCase());
+  if (!normalized) {
+    return false;
+  }
+  const signals = [
+    "這是什麼",
+    "这是什么",
+    "告訴我",
+    "告诉我",
+    "幫我看",
+    "帮我看",
+    "重點",
+    "重点",
+    "摘要",
+    "總結",
+    "总结",
+    "解讀",
+    "解读",
+    "說明",
+    "说明",
+    "看圖",
+    "看图",
+    "圖上",
+    "图上",
+  ].map((item) => item.toLowerCase());
+  return signals.some((signal) => normalized.includes(signal));
+}
+
+const RECENT_IMAGE_FOLLOW_UP_CONTEXT_TTL_MS = 5 * 60 * 1000;
+const recentImageFollowUpContextStore = new Map();
+
+function buildRecentImageFollowUpContextKey(event = null) {
+  const chatId = cleanText(event?.message?.chat_id || event?.chat_id || "");
+  const senderOpenId = cleanText(
+    event?.sender_open_id
+    || event?.sender?.sender_id?.open_id
+    || event?.sender?.open_id
+    || "",
+  );
+  if (!chatId || !senderOpenId) {
+    return "";
+  }
+  return `${chatId}::${senderOpenId}`;
+}
+
+function rememberRecentImageFollowUpContext({
+  event = null,
+  imageInputs = [],
+  messageId = "",
+} = {}) {
+  const key = buildRecentImageFollowUpContextKey(event);
+  if (!key || !Array.isArray(imageInputs) || imageInputs.length === 0) {
+    return null;
+  }
+  const entry = {
+    imageInputs: [...imageInputs],
+    messageId: cleanText(messageId || event?.message?.message_id || ""),
+    updatedAtMs: Date.now(),
+  };
+  recentImageFollowUpContextStore.set(key, entry);
+  return entry;
+}
+
+function readRecentImageFollowUpContext(event = null) {
+  const key = buildRecentImageFollowUpContextKey(event);
+  if (!key) {
+    return null;
+  }
+  const entry = recentImageFollowUpContextStore.get(key);
+  if (!entry) {
+    return null;
+  }
+  if ((Date.now() - Number(entry.updatedAtMs || 0)) > RECENT_IMAGE_FOLLOW_UP_CONTEXT_TTL_MS) {
+    recentImageFollowUpContextStore.delete(key);
+    return null;
+  }
+  return {
+    imageInputs: Array.isArray(entry.imageInputs) ? [...entry.imageInputs] : [],
+    messageId: cleanText(entry.messageId || ""),
+  };
+}
+
+export function shouldStageImageUploadForFollowUp({
+  modality = "",
+  followUpText = "",
+  imageInputCount = 0,
+} = {}) {
+  return cleanText(modality).toLowerCase() === "image"
+    && cleanText(followUpText) === ""
+    && Number(imageInputCount) > 0;
+}
+
+function looksLikePdfDeepReadFollowUp(text = "") {
+  const normalized = cleanText(String(text || "").toLowerCase());
+  if (!normalized) {
+    return false;
+  }
+  const signals = [
+    "深讀",
+    "深读",
+    "細讀",
+    "细读",
+    "逐頁",
+    "逐页",
+    "再讀",
+    "再读",
+    "看細一點",
+    "看细一点",
+    "詳細解讀",
+    "详细解读",
+  ].map((item) => item.toLowerCase());
+  return signals.some((signal) => normalized.includes(signal));
+}
+
+export function looksLikePdfContextualFollowUp(text = "") {
+  const normalized = cleanText(String(text || "").toLowerCase());
+  if (!normalized) {
+    return false;
+  }
+  if (looksLikePdfDeepReadFollowUp(normalized)) {
+    return true;
+  }
+  const signals = [
+    "這是什麼",
+    "这是什么",
+    "告訴我",
+    "告诉我",
+    "幫我看",
+    "帮我看",
+    "重點",
+    "重点",
+    "摘要",
+    "總結",
+    "总结",
+    "解讀",
+    "解读",
+    "說明",
+    "说明",
+  ].map((item) => item.toLowerCase());
+  return signals.some((signal) => normalized.includes(signal));
+}
+
+const RECENT_PDF_FOLLOW_UP_CONTEXT_TTL_MS = 5 * 60 * 1000;
+const recentPdfFollowUpContextStore = new Map();
+
+function buildRecentPdfFollowUpContextKey(event = null) {
+  const chatId = cleanText(event?.message?.chat_id || event?.chat_id || "");
+  const senderOpenId = cleanText(
+    event?.sender_open_id
+    || event?.sender?.sender_id?.open_id
+    || event?.sender?.open_id
+    || "",
+  );
+  if (!chatId || !senderOpenId) {
+    return "";
+  }
+  return `${chatId}::${senderOpenId}`;
+}
+
+function rememberRecentPdfFollowUpContext({
+  event = null,
+  pdfInputs = [],
+  messageId = "",
+} = {}) {
+  const key = buildRecentPdfFollowUpContextKey(event);
+  if (!key || !Array.isArray(pdfInputs) || pdfInputs.length === 0) {
+    return null;
+  }
+  const entry = {
+    pdfInputs: [...pdfInputs],
+    messageId: cleanText(messageId || event?.message?.message_id || ""),
+    updatedAtMs: Date.now(),
+  };
+  recentPdfFollowUpContextStore.set(key, entry);
+  return entry;
+}
+
+function readRecentPdfFollowUpContext(event = null) {
+  const key = buildRecentPdfFollowUpContextKey(event);
+  if (!key) {
+    return null;
+  }
+  const entry = recentPdfFollowUpContextStore.get(key);
+  if (!entry) {
+    return null;
+  }
+  if ((Date.now() - Number(entry.updatedAtMs || 0)) > RECENT_PDF_FOLLOW_UP_CONTEXT_TTL_MS) {
+    recentPdfFollowUpContextStore.delete(key);
+    return null;
+  }
+  return {
+    pdfInputs: Array.isArray(entry.pdfInputs) ? [...entry.pdfInputs] : [],
+    messageId: cleanText(entry.messageId || ""),
+  };
+}
+
+export function shouldStagePdfUploadForFollowUp({
+  modality = "",
+  followUpText = "",
+  pdfInputCount = 0,
+} = {}) {
+  return cleanText(modality).toLowerCase() === "pdf"
+    && cleanText(followUpText) === ""
+    && Number(pdfInputCount) > 0;
+}
+
+export function shouldBypassSessionScopedPersonalShortcut({ event = null, normalizedText = "" } = {}) {
+  const modality = classifyInputModality(event || {});
+  if (["pdf", "pdf_multimodal", "image", "multimodal"].includes(modality.modality)) {
+    return true;
+  }
+  const text = cleanText(normalizedText || modality.text || "");
+  if (looksLikeImageContextualFollowUp(text) && readRecentImageFollowUpContext(event)?.imageInputs?.length) {
+    return true;
+  }
+  return looksLikePdfDeepReadFollowUp(text);
+}
+
+function extractPdfInputsFromFileMessageItem(item = null) {
+  if (!item || cleanText(item?.msg_type).toLowerCase() !== "file") {
+    return [];
+  }
+  const parsed = safeParseJson(cleanText(item?.content));
+  const attachmentObjects = extractAttachmentObjects({
+    content: cleanText(item?.content),
+    msg_type: cleanText(item?.msg_type),
+    parsed,
+  });
+  const refs = [];
+  for (const attachment of attachmentObjects) {
+    const name = cleanText(attachment?.name);
+    const mime = cleanText(attachment?.mime).toLowerCase();
+    const ext = cleanText(attachment?.ext).toLowerCase();
+    const isPdf = mime === "application/pdf" || ext === "pdf" || /\.pdf$/i.test(name);
+    if (!isPdf) {
+      continue;
+    }
+    const fileKey = cleanText(attachment?.file_key);
+    const fileToken = cleanText(attachment?.file_token);
+    if (fileKey) {
+      refs.push({
+        kind: "lark_file_key",
+        value: fileKey,
+        name,
+        mime: mime || "application/pdf",
+        ext: ext || "pdf",
+      });
+    }
+    if (fileToken) {
+      refs.push({
+        kind: "lark_file_token",
+        value: fileToken,
+        name,
+        mime: mime || "application/pdf",
+        ext: ext || "pdf",
+      });
+    }
+  }
+  return refs;
+}
+
+async function resolveRecentPdfFollowUpContext({
+  event,
+  accessToken = "",
+  logger = noopLogger,
+} = {}) {
+  const chatId = cleanText(event?.message?.chat_id);
+  if (!chatId || !cleanText(accessToken)) {
+    return null;
+  }
+  try {
+    const recent = await listMessages(accessToken, chatId, {
+      containerIdType: "chat",
+      pageSize: 16,
+    });
+    for (const item of Array.isArray(recent?.items) ? recent.items : []) {
+      const refs = extractPdfInputsFromFileMessageItem(item);
+      if (!refs.length) {
+        continue;
+      }
+      return {
+        pdfInputs: refs,
+        messageId: cleanText(item?.message_id),
+      };
+    }
+  } catch (error) {
+    logger.warn("pdf_follow_up_context_failed", {
+      error: logger.compactError(error),
+      chat_id: formatIdentifierHint(chatId),
+    });
+  }
+  return null;
+}
+
 async function executeImageTaskReply({ event, logger = noopLogger }) {
   const modality = classifyInputModality(event);
-  if (modality.modality !== "image" && modality.modality !== "multimodal") {
+  const eventMsgType = cleanText(event?.msg_type || event?.message?.msg_type || "").toLowerCase();
+  const explicitEventText = cleanText(
+    event?.text
+    || event?.message?.text
+    || event?.event?.message_text
+    || "",
+  );
+  const followUpText = eventMsgType === "image"
+    ? explicitEventText
+    : cleanText(event?.message_text || explicitEventText || modality.text || "");
+  let imageInputs = Array.isArray(modality.imageInputs) ? [...modality.imageInputs] : [];
+  let sourceMessageId = cleanText(event?.message?.message_id);
+  const shouldStageUpload = shouldStageImageUploadForFollowUp({
+    modality: modality.modality,
+    followUpText,
+    imageInputCount: imageInputs.length,
+  });
+  const stagedImageContext = (modality.modality === "text" && imageInputs.length === 0)
+    ? readRecentImageFollowUpContext(event)
+    : null;
+  const shouldUseStagedImageContext = modality.modality === "text"
+    && imageInputs.length === 0
+    && stagedImageContext?.imageInputs?.length
+    && looksLikeImageContextualFollowUp(followUpText);
+
+  if (shouldUseStagedImageContext) {
+    imageInputs = stagedImageContext.imageInputs;
+    sourceMessageId = cleanText(stagedImageContext.messageId || sourceMessageId);
+  }
+
+  if (!imageInputs.length && modality.modality !== "image" && modality.modality !== "multimodal") {
     return null;
   }
 
-  const context = await resolveAuthContext(event, logger, { allowTenantFallback: true }).catch(() => null);
-  let analysis;
+  if (shouldStageUpload) {
+    rememberRecentImageFollowUpContext({
+      event,
+      imageInputs,
+      messageId: sourceMessageId,
+    });
+    return {
+      text: [
+        "結論",
+        "我已收到這張圖片，先幫你把上下文接住。",
+        "",
+        "重點",
+        "- 你可以直接回覆「告訴我這是什麼」或指定要我看哪個區塊。",
+        "",
+        "下一步",
+        "- 你下一句描述目標後，我會接著做圖片理解與重點整理。",
+      ].join("\n"),
+    };
+  }
+
+  if (imageInputs.length) {
+    rememberRecentImageFollowUpContext({
+      event,
+      imageInputs,
+      messageId: sourceMessageId,
+    });
+  }
+
+  const context = await resolveAuthContext(event, logger, { allowTenantFallback: false }).catch(() => null);
+  const accessToken = cleanText(context?.token?.access_token || context?.token || "");
+  const hasLarkImageKeyInput = imageInputs.some((input) => cleanText(input?.kind) === "lark_image_key");
+  if (hasLarkImageKeyInput && !accessToken) {
+    return {
+      text: [
+        "結論",
+        "我有接到圖片分析任務，但目前缺少可驗證的使用者授權，這輪無法安全讀取訊息圖片。",
+        "",
+        "重點",
+        "- 圖片已先暫存在同一會話上下文。",
+        "",
+        "下一步",
+        "- 請先完成 /oauth/lark/login 後重試。",
+      ].join("\n"),
+    };
+  }
+
+  let analysis = null;
   try {
     analysis = await runLoggedStep(
       logger,
       "image_analysis",
       {
-        modality: modality.modality,
-        image_count: modality.imageInputs.length,
+        modality: shouldUseStagedImageContext ? "image_staged_follow_up" : modality.modality,
+        image_count: imageInputs.length,
       },
       () =>
         analyzeImageTask({
-          task: modality.text,
+          task: followUpText || modality.text,
           textContext: buildVisibleMessageText(event),
-          imageInputs: modality.imageInputs,
-          accessToken: context?.token?.access_token || "",
+          imageInputs,
+          accessToken,
           tokenType: context?.tokenKind || "user",
         }),
     );
@@ -3226,11 +3634,16 @@ async function executeImageTaskReply({ event, logger = noopLogger }) {
       });
       return null;
     }
-    throw error;
+    analysis = {
+      ok: false,
+      provider: "nano_banana",
+      reason: `image_analysis_exception:${cleanText(error instanceof Error ? error.message : String(error)) || "unknown"}`,
+      image_count: imageInputs.length,
+    };
   }
   logger.info("image_task_routed", {
-    modality: modality.modality,
-    image_count: modality.imageInputs.length,
+    modality: shouldUseStagedImageContext ? "image_staged_follow_up" : modality.modality,
+    image_count: imageInputs.length,
     provider: analysis?.provider || "none",
     ok: Boolean(analysis?.ok),
   });
@@ -3242,26 +3655,162 @@ async function executeImageTaskReply({ event, logger = noopLogger }) {
     return null;
   }
   return buildImageAnalysisReply(analysis, {
-    multimodal: modality.modality === "multimodal",
+    multimodal: modality.modality === "multimodal" || shouldUseStagedImageContext,
   });
 }
 
 async function executePdfTaskReply({ event, logger = noopLogger }) {
   const modality = classifyInputModality(event);
-  if (modality.modality !== "pdf" && modality.modality !== "pdf_multimodal") {
+  const context = await resolveAuthContext(event, logger, { allowTenantFallback: false }).catch((error) => {
+    logger.warn("pdf_task_auth_context_failed", {
+      error: logger.compactError(error),
+    });
+    return null;
+  });
+  const accessToken = cleanText(context?.token?.access_token || context?.token || "");
+  let pdfInputs = Array.isArray(modality.pdfInputs) ? [...modality.pdfInputs] : [];
+  let sourceMessageId = cleanText(event?.message?.message_id);
+  const eventMsgType = cleanText(event?.msg_type || event?.message?.msg_type || "").toLowerCase();
+  const explicitEventText = cleanText(
+    event?.text
+    || event?.message?.text
+    || event?.event?.message_text
+    || "",
+  );
+  const followUpText = eventMsgType === "file"
+    ? explicitEventText
+    : cleanText(event?.message_text || explicitEventText || modality.text || "");
+  const shouldStageUpload = shouldStagePdfUploadForFollowUp({
+    modality: modality.modality,
+    followUpText,
+    pdfInputCount: pdfInputs.length,
+  });
+
+  const isDeepReadFollowUp = modality.modality === "text"
+    && looksLikePdfDeepReadFollowUp(followUpText);
+  const needsFollowUpRecovery = !pdfInputs.length
+    && modality.modality === "text"
+    && looksLikePdfDeepReadFollowUp(followUpText);
+  const stagedPdfContext = (modality.modality === "text" && !pdfInputs.length)
+    ? readRecentPdfFollowUpContext(event)
+    : null;
+  const shouldUseStagedPdfContext = modality.modality === "text"
+    && !pdfInputs.length
+    && stagedPdfContext?.pdfInputs?.length
+    && looksLikePdfContextualFollowUp(followUpText);
+
+  if (isDeepReadFollowUp && !accessToken) {
+    return {
+      text: renderUserResponseText(normalizeUserResponse({
+        plannerEnvelope: null,
+        payload: {
+          answer: "我有收到 PDF 深讀追問，但目前缺少可驗證的使用者授權，這輪不能安全讀檔。",
+          sources: [],
+          limitations: [
+            "請先完成 /oauth/lark/login 的使用者授權，讓系統拿到可讀取私訊附件的 user token。",
+            "請確認 Lark app 已開啟 im:message.p2p_msg:get_as_user（若是群組也要 im:message.group_msg:get_as_user）。",
+          ],
+        },
+        logger,
+        handlerName: "pdfTaskAuthBoundary",
+      })),
+    };
+  }
+
+  if (needsFollowUpRecovery) {
+    const recovered = stagedPdfContext?.pdfInputs?.length
+      ? stagedPdfContext
+      : await resolveRecentPdfFollowUpContext({
+        event,
+        accessToken,
+        logger,
+      });
+    if (recovered?.pdfInputs?.length) {
+      pdfInputs = recovered.pdfInputs;
+      sourceMessageId = cleanText(recovered.messageId || sourceMessageId);
+    }
+  }
+
+  if (shouldUseStagedPdfContext) {
+    pdfInputs = stagedPdfContext.pdfInputs;
+    sourceMessageId = cleanText(stagedPdfContext.messageId || sourceMessageId);
+  }
+
+  if (isDeepReadFollowUp && !pdfInputs.length) {
+    return {
+      text: renderUserResponseText(normalizeUserResponse({
+        plannerEnvelope: null,
+        payload: {
+          answer: "我有接到你要「深讀」的追問，但這輪沒有抓到上一份 PDF 附件參考。",
+          sources: [],
+          limitations: [
+            "請直接回覆在同一則 PDF 檔案訊息下，或重傳一次 PDF 後再說「請深讀」。",
+            "若你剛完成 OAuth 發版，請再重試一次，讓新授權 token 生效到本輪對話。",
+          ],
+        },
+        logger,
+        handlerName: "pdfFollowUpContextBoundary",
+      })),
+    };
+  }
+
+  if (!pdfInputs.length && modality.modality !== "pdf" && modality.modality !== "pdf_multimodal") {
     return null;
   }
 
-  const context = await resolveAuthContext(event, logger, { allowTenantFallback: true }).catch(() => null);
+  if (shouldStageUpload) {
+    rememberRecentPdfFollowUpContext({
+      event,
+      pdfInputs,
+      messageId: sourceMessageId,
+    });
+    return {
+      text: renderUserResponseText(normalizeUserResponse({
+        plannerEnvelope: null,
+        payload: {
+          answer: "我已收到 PDF 檔案，先幫你接住上下文。",
+          sources: [],
+          limitations: [
+            "你可以直接回覆「請深讀」或指定要我整理的段落/頁面，我會接續這份檔案處理。",
+          ],
+        },
+        logger,
+        handlerName: "pdfUploadStageBoundary",
+      })),
+    };
+  }
+
+  if (!accessToken) {
+    return {
+      text: renderUserResponseText(normalizeUserResponse({
+        plannerEnvelope: null,
+        payload: {
+          answer: "我有收到 PDF 深讀需求，但目前缺少可驗證的使用者授權，這輪不能安全讀檔。",
+          sources: [],
+          limitations: [
+            "請先完成 /oauth/lark/login 的使用者授權，讓系統拿到可讀取私訊附件的 user token。",
+            "請確認 Lark app 已開啟 im:message.p2p_msg:get_as_user（若是群組也要 im:message.group_msg:get_as_user）。",
+          ],
+        },
+        logger,
+        handlerName: "pdfTaskAuthBoundary",
+      })),
+    };
+  }
+
+  const explicitQuestion = cleanText(event?.message_text || event?.text || "");
   const pdfReply = await readPdfTaskAndBuildReply({
-    pdfInputs: modality.pdfInputs,
-    accessToken: context?.token?.access_token || context?.token || "",
-    question: modality.text || buildVisibleMessageText(event),
+    pdfInputs,
+    accessToken,
+    messageId: sourceMessageId,
+    question: explicitQuestion,
   });
 
   logger.info("pdf_task_routed", {
-    modality: modality.modality,
-    pdf_input_count: Array.isArray(modality.pdfInputs) ? modality.pdfInputs.length : 0,
+    modality: shouldUseStagedPdfContext
+      ? "pdf_staged_follow_up"
+      : (needsFollowUpRecovery ? "pdf_follow_up" : modality.modality),
+    pdf_input_count: Array.isArray(pdfInputs) ? pdfInputs.length : 0,
     ok: pdfReply?.read_result?.ok === true,
     limitation_count: Array.isArray(pdfReply?.read_result?.limitations)
       ? pdfReply.read_result.limitations.length
@@ -4793,12 +5342,20 @@ async function executePersonalAssistant({ event, scope, logger = noopLogger }) {
     return reply;
   }
 
-  const personalDMSkillTaskReply = await maybeExecutePersonalDMSkillTask({
-    event,
-    scope,
-    logger,
-    traceId: cleanText(scope?.trace_id || event?.trace_id || ""),
-  });
+  let personalDMSkillTaskReply = null;
+  try {
+    personalDMSkillTaskReply = await maybeExecutePersonalDMSkillTask({
+      event,
+      scope,
+      logger,
+      traceId: cleanText(scope?.trace_id || event?.trace_id || ""),
+    });
+  } catch (error) {
+    logger.warn("personal_dm_skill_fail_soft", {
+      reason: "skill_task_exception",
+      error: logger.compactError(error),
+    });
+  }
   if (personalDMSkillTaskReply) {
     return personalDMSkillTaskReply;
   }
@@ -5007,6 +5564,7 @@ export async function executeCapabilityLane({
   if (
     expectedOwner === "personal-assistant"
     && routingDecision.precedence_source === "same_session_same_workflow_same_scope"
+    && !shouldBypassSessionScopedPersonalShortcut({ event, normalizedText })
   ) {
     assertRoutingDecisionOwner({ expected: expectedOwner, actual: "personal-assistant" });
     return executePersonalAssistant({ event, scope, logger });

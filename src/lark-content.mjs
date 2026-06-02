@@ -1462,6 +1462,12 @@ export async function getMessage(accessToken, messageId) {
     "Failed to get Lark message",
   );
 
+  if (Array.isArray(data?.items) && data.items.length > 0) {
+    return normalizeMessageItem(data.items[0]);
+  }
+  if (data?.message && typeof data.message === "object") {
+    return normalizeMessageItem(data.message);
+  }
   return normalizeMessageItem(data);
 }
 

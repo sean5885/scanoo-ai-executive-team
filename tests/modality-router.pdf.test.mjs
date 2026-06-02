@@ -69,3 +69,38 @@ test("classifyInputModality returns pdf_multimodal when PDF and text coexist", (
   assert.equal(result.imageInputs.length, 0);
 });
 
+test("classifyInputModality does not treat non-PDF file cards as pdf modality", () => {
+  const result = classifyInputModality({
+    text: "讀一下 告訴我重點",
+    message: {
+      msg_type: "file",
+      content: JSON.stringify({
+        attachments: [
+          {
+            file_token: "file_token_pptx_1",
+            name: "Scanoo_珍煮丹_KA_v6_管理過程.pptx",
+            mime_type: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            ext: "pptx",
+          },
+        ],
+      }),
+    },
+  });
+
+  assert.equal(result.modality, "text");
+  assert.equal(result.pdfInputs.length, 0);
+});
+
+test("classifyInputModality extracts text fallback from message.content for text messages", () => {
+  const result = classifyInputModality({
+    message: {
+      msg_type: "text",
+      content: JSON.stringify({
+        text: "請深讀 告訴我這是什麼",
+      }),
+    },
+  });
+
+  assert.equal(result.modality, "text");
+  assert.equal(result.text, "請深讀 告訴我這是什麼");
+});

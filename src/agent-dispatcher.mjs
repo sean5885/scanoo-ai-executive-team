@@ -381,12 +381,22 @@ export async function executeRegisteredAgent({
     if ((modality.modality === "pdf" || modality.modality === "pdf_multimodal") && Array.isArray(modality.pdfInputs) && modality.pdfInputs.length > 0) {
       const pdfContext = await readPdfTaskAndBuildReply({
         pdfInputs: modality.pdfInputs,
+        messageId: cleanText(event?.message?.message_id),
         question: requestText || modality.text || buildVisibleMessageText(event),
       });
       const contextBlock = [
         "pdf_context",
         `answer: ${cleanText(pdfContext?.answer) || "N/A"}`,
-        ...((Array.isArray(pdfContext?.sources) ? pdfContext.sources : []).slice(0, 3).map((item) => `source: ${cleanText(item)}`)),
+        ...((Array.isArray(pdfContext?.sources) ? pdfContext.sources : [])
+          .slice(0, 3)
+          .map((item) => {
+            if (typeof item === "string") {
+              return `source: ${cleanText(item)}`;
+            }
+            const title = cleanText(item?.metadata?.title || item?.id || "");
+            const snippet = cleanText(item?.snippet || "");
+            return `source: ${title}${snippet ? `｜${snippet}` : ""}`;
+          })),
       ].join("\n");
       mergedSupportingContext = [cleanText(supportingContext), contextBlock]
         .filter(Boolean)

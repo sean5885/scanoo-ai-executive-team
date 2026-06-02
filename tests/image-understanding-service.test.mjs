@@ -92,3 +92,27 @@ test("analyzeImageTask uses Gemini generateContent payload for nano banana", asy
     globalThis.fetch = originalFetch;
   }
 });
+
+test("analyzeImageTask fails soft when image input cannot be fetched", async () => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (url) => {
+    if (String(url) === "https://example.com/missing.png") {
+      return new Response("not found", { status: 404 });
+    }
+    throw new Error("unexpected_call");
+  };
+
+  try {
+    const result = await analyzeImageTask({
+      task: "請辨識這張圖",
+      imageInputs: [{ kind: "url", value: "https://example.com/missing.png" }],
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(result.reason || "", /image_input_unavailable:image_fetch_failed:404/);
+    assert.equal(result.image_count, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

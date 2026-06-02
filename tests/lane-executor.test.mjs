@@ -32,6 +32,10 @@ const {
   shouldFallbackScanooDiagnoseToOfficialRead,
   shouldPreferActiveExecutiveTask,
   shouldFallbackImageTaskToTextLane,
+  shouldBypassSessionScopedPersonalShortcut,
+  looksLikePdfContextualFollowUp,
+  shouldStageImageUploadForFollowUp,
+  shouldStagePdfUploadForFollowUp,
 } = await import("../src/lane-executor.mjs");
 import { buildVisibleMessageText } from "../src/message-intent-utils.mjs";
 
@@ -278,6 +282,70 @@ test("cloud organization why-follow-up is recognized", () => {
 test("cloud organization active-mode follow-up remains in second-pass workflow", () => {
   assert.equal(looksLikeCloudOrganizationRequest("好的，現在請告訴我還有什麼內容是需要我二次做確認的"), false);
   assert.equal(looksLikeCloudOrganizationReviewRequest("好的，現在請告訴我還有什麼內容是需要我二次做確認的"), true);
+});
+
+test("session-scoped personal shortcut is bypassed for deep-read follow-up text", () => {
+  const bypass = shouldBypassSessionScopedPersonalShortcut({
+    event: {
+      message_text: "請深讀 告訴我這是什麼",
+    },
+    normalizedText: "請深讀 告訴我這是什麼",
+  });
+  assert.equal(bypass, true);
+});
+
+test("session-scoped personal shortcut is not bypassed for plain text", () => {
+  const bypass = shouldBypassSessionScopedPersonalShortcut({
+    event: {
+      message_text: "今天先聊天",
+    },
+    normalizedText: "今天先聊天",
+  });
+  assert.equal(bypass, false);
+});
+
+test("pdf file upload is staged for follow-up when no inline text is provided", () => {
+  const staged = shouldStagePdfUploadForFollowUp({
+    modality: "pdf",
+    followUpText: "",
+    pdfInputCount: 1,
+  });
+  assert.equal(staged, true);
+});
+
+test("pdf upload with inline text is not staged for follow-up", () => {
+  const staged = shouldStagePdfUploadForFollowUp({
+    modality: "pdf_multimodal",
+    followUpText: "請直接整理重點",
+    pdfInputCount: 1,
+  });
+  assert.equal(staged, false);
+});
+
+test("image upload is staged for follow-up when no inline text is provided", () => {
+  const staged = shouldStageImageUploadForFollowUp({
+    modality: "image",
+    followUpText: "",
+    imageInputCount: 1,
+  });
+  assert.equal(staged, true);
+});
+
+test("image upload with inline text is not staged for follow-up", () => {
+  const staged = shouldStageImageUploadForFollowUp({
+    modality: "multimodal",
+    followUpText: "請告訴我這是什麼",
+    imageInputCount: 1,
+  });
+  assert.equal(staged, false);
+});
+
+test("pdf contextual follow-up detects generic explain request", () => {
+  assert.equal(looksLikePdfContextualFollowUp("請告訴我 這是什麼"), true);
+});
+
+test("pdf contextual follow-up does not hijack unrelated chat", () => {
+  assert.equal(looksLikePdfContextualFollowUp("今天先聊天"), false);
 });
 
 test("missing final_owner throws immediately", () => {
@@ -703,6 +771,44 @@ test("resolveReferencedDocumentId 能從 plugin-dispatch handoff 的 document_re
       event === "doc_resolution_hit"
       && /current_message|plugin_context_document_refs/.test(String(payload?.source || ""))
       && payload?.document_id
+    )),
+    true,
+  );
+});
+
+test("resolveReferencedDocumentId ignores attachment file token from file cards", async () => {
+  const logs = [];
+  const result = await resolveReferencedDocumentId(
+    {
+      message: {
+        msg_type: "file",
+        content: JSON.stringify({
+          attachments: [
+            {
+              file_token: "file_token_pptx_ignored_1",
+              name: "Scanoo_珍煮丹_KA_v6_管理過程.pptx",
+              mime_type: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+              ext: "pptx",
+            },
+          ],
+        }),
+      },
+    },
+    "user-token",
+    {
+      info(event, payload) {
+        logs.push([event, payload]);
+      },
+      warn() {},
+    },
+  );
+
+  assert.equal(result.documentId, "");
+  assert.equal(result.source, "none");
+  assert.equal(
+    logs.some(([event, payload]) => (
+      event === "doc_resolution_attachment_token_ignored"
+      && payload?.source === "current_message"
     )),
     true,
   );

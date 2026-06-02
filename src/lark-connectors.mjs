@@ -1,5 +1,5 @@
 import * as Lark from "@larksuiteoapi/node-sdk";
-import { baseConfig } from "./config.mjs";
+import { apiBaseUrl, baseConfig } from "./config.mjs";
 import { resolveLarkRequestAuth } from "./lark-request-auth.mjs";
 import { buildParentPath, markdownToPlainText, normalizeText } from "./text-utils.mjs";
 
@@ -13,6 +13,56 @@ function withToken(accessToken) {
 async function resolveConnectorAuth(accessToken) {
   const auth = await resolveLarkRequestAuth(accessToken);
   return auth.accessToken;
+}
+
+function normalizeErrorSegment(value, maxLength = 160) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) {
+    return "";
+  }
+  return text.slice(0, maxLength);
+}
+
+function sleep(ms = 0) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+}
+
+async function parseFetchErrorDetail(response) {
+  const status = Number(response?.status || 0) || 0;
+  const fallback = { status, code: null, msg: "" };
+  let bodyText = "";
+  try {
+    bodyText = await response.text();
+  } catch {
+    return fallback;
+  }
+
+  if (!bodyText) {
+    return fallback;
+  }
+
+  try {
+    const parsed = JSON.parse(bodyText);
+    return {
+      status,
+      code: Number.isFinite(Number(parsed?.code)) ? Number(parsed.code) : null,
+      msg: normalizeErrorSegment(parsed?.msg || parsed?.message || ""),
+    };
+  } catch {
+    return {
+      status,
+      code: null,
+      msg: normalizeErrorSegment(bodyText),
+    };
+  }
+}
+
+function shouldRetryMessageResourceFetch(detail = {}) {
+  const status = Number(detail?.status || 0) || 0;
+  if (status === 429) {
+    return true;
+  }
+  return status >= 500 && status <= 599;
 }
 
 function safeUrl(url, fallback) {
@@ -165,6 +215,57 @@ export async function downloadDriveFileBuffer(accessToken, fileToken, {
       : {},
     content_type: download?.headers?.["content-type"] || download?.headers?.["Content-Type"] || null,
   };
+}
+
+export async function downloadMessageFileResourceBuffer(accessToken, messageId, fileKey, {
+  maxBytes = 15 * 1024 * 1024,
+  maxAttempts = 3,
+  retryDelayMs = 700,
+} = {}) {
+  const url = `${apiBaseUrl}/open-apis/im/v1/messages/${encodeURIComponent(messageId)}/resources/${encodeURIComponent(fileKey)}?type=file`;
+  const primaryAccessToken = await resolveConnectorAuth(accessToken);
+  const attempts = Math.max(1, Number.parseInt(String(maxAttempts), 10) || 1);
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const response = await fetch(
+      url,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${primaryAccessToken}`,
+        },
+      },
+    );
+
+    if (!response.ok) {
+      const primaryErrorDetail = await parseFetchErrorDetail(response);
+      const shouldRetry = attempt < attempts && shouldRetryMessageResourceFetch(primaryErrorDetail);
+      if (shouldRetry) {
+        await sleep(retryDelayMs * attempt);
+        continue;
+      }
+      throw new Error([
+        "message_file_resource_fetch_failed",
+        `status=${primaryErrorDetail.status || 0}`,
+        `attempt=${attempt}/${attempts}`,
+        primaryErrorDetail.code !== null ? `code=${primaryErrorDetail.code}` : "",
+        primaryErrorDetail.msg ? `msg=${primaryErrorDetail.msg}` : "",
+      ].filter(Boolean).join(":"));
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length > maxBytes) {
+      throw new Error("download_stream_too_large");
+    }
+
+    return {
+      buffer,
+      content_type: response.headers.get("content-type") || null,
+      headers: {
+        "content-type": response.headers.get("content-type") || null,
+      },
+    };
+  }
+  throw new Error("message_file_resource_fetch_failed");
 }
 
 export async function listWikiSpaces(accessToken, pageToken) {

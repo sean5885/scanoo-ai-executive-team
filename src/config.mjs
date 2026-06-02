@@ -82,7 +82,7 @@ export const meetingConfirmPath =
   process.env.MEETING_CONFIRM_PATH || "/meeting/confirm";
 export const oauthScopes =
   process.env.LARK_OAUTH_SCOPES ||
-  "offline_access drive:drive docs:document.content:read docx:document:create docx:document:readonly docx:document:write_only wiki:wiki:readonly im:message:send_as_bot im:message:readonly im:chat im:message.group_msg im:message.p2p_msg:readonly";
+  "offline_access drive:drive docs:document.content:read docx:document:create docx:document:readonly docx:document:write_only wiki:wiki:readonly im:message:send_as_bot im:message:readonly im:chat im:message.group_msg im:message.p2p_msg:readonly im:message.group_msg:get_as_user im:message.p2p_msg:get_as_user";
 export const tokenEncryptionSecret = process.env.LARK_TOKEN_ENCRYPTION_SECRET || "";
 export const oauthAuthorizeUrl = `${apiBaseUrl}/open-apis/authen/v1/authorize`;
 export const oauthTokenStorePath =
@@ -113,6 +113,10 @@ export const larkWriteBudgetHardLimit = Number.parseInt(
 );
 export const larkWriteBudgetDuplicateWindowMs = Number.parseInt(
   process.env.LARK_WRITE_BUDGET_DUPLICATE_WINDOW_MS || String(30 * 60 * 1000),
+  10,
+);
+export const pdfReadMaxBytes = Number.parseInt(
+  process.env.PDF_READ_MAX_BYTES || String(30 * 1024 * 1024),
   10,
 );
 export const larkWriteBudgetHardWhitelist = String(process.env.LARK_WRITE_BUDGET_HARD_WHITELIST || "")

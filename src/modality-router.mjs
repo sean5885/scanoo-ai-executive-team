@@ -1,4 +1,9 @@
-import { cleanText, extractAttachmentObjects, safeParseJson } from "./message-intent-utils.mjs";
+import {
+  buildVisibleMessageText,
+  cleanText,
+  extractAttachmentObjects,
+  safeParseJson,
+} from "./message-intent-utils.mjs";
 
 const imageSignalKeys = new Set([
   "image",
@@ -268,13 +273,26 @@ export function extractPdfInputs(input = {}) {
 }
 
 export function classifyInputModality(input = {}) {
+  const msgType = cleanText(
+    input.msg_type || input.message?.msg_type || input.event?.message?.msg_type || "",
+  ).toLowerCase();
+  const directText = cleanText(
+    input.text
+    || input.message_text
+    || input.message?.text
+    || input.event?.message_text
+    || "",
+  );
+  const visibleFallbackText = (directText || (msgType && !["text", "post"].includes(msgType)))
+    ? ""
+    : cleanText(buildVisibleMessageText(input));
   const text = cleanText(
-    input.text || input.message_text || input.message?.text || input.event?.message_text || "",
+    directText || visibleFallbackText || "",
   );
   const imageInputs = extractImageInputs(input);
   const pdfInputs = extractPdfInputs(input);
   const hasImages = imageInputs.length > 0 || cleanText(input.msg_type || input.message?.msg_type).toLowerCase() === "image";
-  const hasPdf = pdfInputs.length > 0 || cleanText(input.msg_type || input.message?.msg_type).toLowerCase() === "file";
+  const hasPdf = pdfInputs.length > 0;
   const wantsImageTask = looksLikeImageTask(text);
   const wantsPdfTask = looksLikePdfTask(text);
 

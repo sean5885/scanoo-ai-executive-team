@@ -1,6 +1,7 @@
 import {
   collectRelatedMessageIds,
   detectDocBoundaryIntent,
+  extractAttachmentObjects,
   extractDocumentId,
   normalizeMessageText,
 } from "./message-intent-utils.mjs";
@@ -8,6 +9,22 @@ import { resolvePlannerKnowledgeAssistantIngress } from "./planner-ingress-contr
 
 function hasAny(text, keywords) {
   return keywords.some((keyword) => text.includes(keyword));
+}
+
+function collectAttachmentTokenSet(input = {}) {
+  const tokens = new Set();
+  const attachments = extractAttachmentObjects(input);
+  for (const attachment of attachments) {
+    const fileToken = String(attachment?.file_token || "").trim();
+    const fileKey = String(attachment?.file_key || "").trim();
+    if (fileToken) {
+      tokens.add(fileToken);
+    }
+    if (fileKey) {
+      tokens.add(fileKey);
+    }
+  }
+  return tokens;
 }
 
 const conversationSummaryKeywords = [
@@ -28,7 +45,11 @@ const conversationSummaryKeywords = [
 export function resolveCapabilityLane(scope, input = {}) {
   const text = normalizeMessageText(input);
   const docBoundaryIntent = detectDocBoundaryIntent(text);
-  const hasDirectDocumentReference = Boolean(extractDocumentId(input));
+  const directDocumentId = extractDocumentId(input);
+  const attachmentTokens = collectAttachmentTokenSet(input);
+  const hasDirectDocumentReference =
+    Boolean(directDocumentId)
+    && !attachmentTokens.has(String(directDocumentId || "").trim());
   const hasReplyChain = collectRelatedMessageIds(input).length > 0;
 
   const docEditActionKeywords = [
