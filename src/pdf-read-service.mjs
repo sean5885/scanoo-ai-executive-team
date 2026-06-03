@@ -1,8 +1,9 @@
 import pdfParse from "pdf-parse";
 import { readFile } from "node:fs/promises";
 
-import { pdfReadMaxBytes } from "./config.mjs";
+import { llmApiKey, pdfReadMaxBytes } from "./config.mjs";
 import { downloadDriveFileBuffer, downloadMessageFileResourceBuffer } from "./lark-connectors.mjs";
+import { generateText } from "./llm/generate-text.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 import { normalizeText } from "./text-utils.mjs";
 
@@ -11,6 +12,9 @@ const DEFAULT_MAX_BYTES = Number.isFinite(Number(pdfReadMaxBytes)) && Number(pdf
   : 15 * 1024 * 1024;
 const DEFAULT_MAX_TEXT_CHARS = 24_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 25_000;
+const PDF_MODEL_CONTEXT_MAX_CHARS = 12_000;
+const PDF_MODEL_DOC_MAX_CHARS = 4_000;
+const PDF_MODEL_LIMITATION_MAX_ITEMS = 4;
 const SUPPORTED_PDF_INPUT_KINDS = new Set([
   "url",
   "local_path",
@@ -322,6 +326,108 @@ function buildPdfSourceObjects(files = [], { maxSources = 3 } = {}) {
   return result;
 }
 
+function extractJsonObject(text = "") {
+  const normalized = String(text || "").trim();
+  const start = normalized.indexOf("{");
+  const end = normalized.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error("pdf_model_missing_json_object");
+  }
+  return JSON.parse(normalized.slice(start, end + 1));
+}
+
+function normalizeStringList(values = [], { maxItems = PDF_MODEL_LIMITATION_MAX_ITEMS, maxItemChars = 140 } = {}) {
+  const result = [];
+  for (const value of Array.isArray(values) ? values : []) {
+    const normalized = cleanText(String(value || "")).slice(0, maxItemChars);
+    if (!normalized || result.includes(normalized)) {
+      continue;
+    }
+    result.push(normalized);
+    if (result.length >= maxItems) {
+      break;
+    }
+  }
+  return result;
+}
+
+function shouldAttemptModelBackedPdfInterpretation({ question = "", files = [], allowModelInterpretation = false } = {}) {
+  return Boolean(allowModelInterpretation)
+    && Boolean(cleanText(question))
+    && Array.isArray(files)
+    && files.length > 0;
+}
+
+function buildPdfInterpretationPrompt({ files = [], question = "" } = {}) {
+  const normalizedQuestion = cleanText(question);
+  const documentSections = [];
+  let remainingChars = PDF_MODEL_CONTEXT_MAX_CHARS;
+
+  for (const [index, file] of (Array.isArray(files) ? files : []).entries()) {
+    if (remainingChars <= 0) {
+      break;
+    }
+    const title = cleanText(file?.source?.source_label || file?.input?.name || `PDF ${index + 1}`);
+    const pageCount = Number(file?.page_count || 0);
+    const text = cleanText(file?.text || "").slice(0, Math.min(PDF_MODEL_DOC_MAX_CHARS, remainingChars));
+    if (!text) {
+      continue;
+    }
+    const block = [
+      `文件 ${index + 1}：${title}`,
+      pageCount > 0 ? `頁數：${pageCount}` : null,
+      "已抽取文本：",
+      text,
+    ].filter(Boolean).join("\n");
+    documentSections.push(block);
+    remainingChars -= block.length;
+  }
+
+  return [
+    "任務：根據已抽取的 PDF 文本，直接回答使用者問題。",
+    "硬性規則：",
+    "- 只能使用下面提供的已抽取文本，不可假設未抽取頁面、圖片或附件內容。",
+    "- 若證據不足，answer 必須明說「依目前已抽取片段」且避免過度結論。",
+    "- 不要虛構頁碼、章節名稱、權限、網址或聯絡資訊。",
+    "- 只輸出單一合法 JSON object，不要 Markdown、不要 code fence、不要前後文。",
+    '輸出格式：{"answer":"...","limitations":["..."]}',
+    "",
+    `使用者問題：${normalizedQuestion}`,
+    "",
+    "可用文本：",
+    documentSections.join("\n\n"),
+  ].join("\n");
+}
+
+async function buildModelBackedPdfInterpretation({
+  files = [],
+  question = "",
+  generateTextFn = generateText,
+} = {}) {
+  const systemPrompt = [
+    "你是嚴格的 PDF 閱讀助手。",
+    "先直接回答問題，再補一句到三句必要解讀。",
+    "不能把未抽取內容說成已讀過。",
+  ].join(" ");
+  const prompt = buildPdfInterpretationPrompt({ files, question });
+  const rawText = await generateTextFn({
+    systemPrompt,
+    prompt,
+    sessionIdSuffix: "pdf-deep-read",
+    temperature: 0.1,
+    topP: 0.75,
+  });
+  const payload = extractJsonObject(rawText);
+  const answer = cleanText(payload?.answer || "");
+  if (!answer) {
+    throw new Error("pdf_model_answer_missing");
+  }
+  return {
+    answer,
+    limitations: normalizeStringList(payload?.limitations),
+  };
+}
+
 export async function readPdfInputs({
   pdfInputs = [],
   accessToken = "",
@@ -407,6 +513,7 @@ export async function readPdfInputs({
 export function buildPdfResponseFromReadResult({
   readResult = null,
   question = "",
+  modelInterpretation = null,
 } = {}) {
   const normalizedQuestion = cleanText(question);
   if (!readResult || readResult.ok !== true) {
@@ -425,22 +532,35 @@ export function buildPdfResponseFromReadResult({
   const answerHeader = normalizedQuestion
     ? `我已先讀取 ${files.length} 份 PDF，並依你的問題整理可驗證重點。`
     : `我已先讀取 ${files.length} 份 PDF，以下是目前可驗證的內容重點。`;
-  const answer = highlights.length
-    ? [
-        answerHeader,
-        "",
-        ...highlights.slice(0, 3).map((line, index) => `${index + 1}. ${line}`),
-      ].join("\n")
-    : answerHeader;
+  const answer = cleanText(modelInterpretation?.answer || "")
+    || (
+      highlights.length
+        ? [
+            answerHeader,
+            "",
+            ...highlights.slice(0, 3).map((line, index) => `${index + 1}. ${line}`),
+          ].join("\n")
+        : answerHeader
+    );
 
   const sourceObjects = buildPdfSourceObjects(files, { maxSources: 3 });
 
+  const modelLimitations = normalizeStringList(modelInterpretation?.limitations);
   const limitations = Array.isArray(readResult.limitations) && readResult.limitations.length
-    ? [
+    ? normalizeStringList([
         ...readResult.limitations,
+        ...modelLimitations,
         "如果你要更完整答案，我可以再針對指定章節做二次抽取。",
-      ]
-    : ["目前只先抽取前段文本，尚未做逐頁深讀。"];
+      ], { maxItems: 5 })
+    : normalizeStringList(
+      (modelInterpretation?.answer || modelLimitations.length)
+        ? [
+            ...modelLimitations,
+            "本次解讀仍只基於目前已抽取的文本片段，還不是完整逐頁審閱。",
+          ]
+        : ["目前只先抽取前段文本，尚未做逐頁深讀。"],
+      { maxItems: 5 },
+    );
 
   return {
     answer,
@@ -454,17 +574,53 @@ export async function readPdfTaskAndBuildReply({
   accessToken = "",
   messageId = "",
   question = "",
+  allowModelInterpretation = Boolean(llmApiKey),
+  generateTextFn = generateText,
+  resolvePdfBufferFromInputFn = resolvePdfBufferFromInput,
+  extractPdfTextFromBufferFn = extractPdfTextFromBuffer,
 } = {}) {
   const readResult = await readPdfInputs({
     pdfInputs,
     accessToken,
     messageId,
+    resolvePdfBufferFromInputFn,
+    extractPdfTextFromBufferFn,
   });
+  let modelInterpretation = null;
+  let modelStatus = "not_attempted";
+  if (readResult?.ok === true && shouldAttemptModelBackedPdfInterpretation({
+    question,
+    files: readResult.files,
+    allowModelInterpretation,
+  })) {
+    try {
+      modelInterpretation = await buildModelBackedPdfInterpretation({
+        files: readResult.files,
+        question,
+        generateTextFn,
+      });
+      modelStatus = "used_model";
+    } catch (error) {
+      modelStatus = "model_failed";
+      modelInterpretation = {
+        answer: "",
+        limitations: ["這輪主模型解讀未完成，先退回可驗證的抽取內容。"],
+        error: cleanText(error instanceof Error ? error.message : String(error)),
+      };
+    }
+  } else if (cleanText(question)) {
+    modelStatus = allowModelInterpretation ? "question_without_readable_text" : "model_unavailable";
+  }
   return {
     ...buildPdfResponseFromReadResult({
       readResult,
       question,
+      modelInterpretation,
     }),
     read_result: readResult,
+    model_interpretation: {
+      status: modelStatus,
+      error: cleanText(modelInterpretation?.error || ""),
+    },
   };
 }

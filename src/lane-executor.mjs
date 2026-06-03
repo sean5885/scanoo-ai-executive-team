@@ -4059,7 +4059,7 @@ async function executePdfTaskReply({ event, logger = noopLogger }) {
     };
   }
 
-  const explicitQuestion = cleanText(event?.message_text || event?.text || "");
+  const explicitQuestion = cleanText(followUpText || event?.message_text || event?.text || "");
   const pdfReply = await readPdfTaskAndBuildReply({
     pdfInputs,
     accessToken,
@@ -4073,6 +4073,8 @@ async function executePdfTaskReply({ event, logger = noopLogger }) {
       : (needsFollowUpRecovery ? "pdf_follow_up" : modality.modality),
     pdf_input_count: Array.isArray(pdfInputs) ? pdfInputs.length : 0,
     ok: pdfReply?.read_result?.ok === true,
+    model_interpretation_status: cleanText(pdfReply?.model_interpretation?.status || "unknown"),
+    model_interpretation_error: cleanText(pdfReply?.model_interpretation?.error || ""),
     limitation_count: Array.isArray(pdfReply?.read_result?.limitations)
       ? pdfReply.read_result.limitations.length
       : 0,

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { readPdfInputs } from "../src/pdf-read-service.mjs";
+import { readPdfInputs, readPdfTaskAndBuildReply } from "../src/pdf-read-service.mjs";
 
 test("readPdfInputs ignores unsupported file_name kind and returns input_missing when no readable refs", async () => {
   let resolveCalls = 0;
@@ -138,4 +138,103 @@ test("readPdfInputs converts message-resource 502 into upstream guidance", async
   assert.equal(result.ok, false);
   assert.equal(result.error, "pdf_read_failed");
   assert.match(result.limitations[0], /回傳 502|upstream/);
+});
+
+test("readPdfTaskAndBuildReply uses model-backed interpretation when question and model are available", async () => {
+  let generateCalls = 0;
+  const result = await readPdfTaskAndBuildReply({
+    pdfInputs: [
+      { kind: "local_path", value: "/tmp/demo.pdf", name: "Scanoo 一頁式操作手冊.pdf" },
+    ],
+    question: "幫我解讀一下這個",
+    allowModelInterpretation: true,
+    resolvePdfBufferFromInputFn: async (input) => ({
+      buffer: Buffer.from("dummy pdf bytes"),
+      source: {
+        source_type: "local_path",
+        source_id: input.value,
+        source_label: input.name,
+      },
+    }),
+    extractPdfTextFromBufferFn: async () => ({
+      text: "這份文件是 Scanoo 後台操作手冊，說明完整後台使用方式、功能截圖與角色權限。",
+      page_count: 12,
+      metadata: null,
+    }),
+    generateTextFn: async () => {
+      generateCalls += 1;
+      return JSON.stringify({
+        answer: "依目前已抽取片段，這是一份 Scanoo 後台操作手冊，主要用途是帶你快速理解各功能與角色權限。",
+        limitations: ["目前解讀仍只覆蓋已抽取文本，還不是逐頁核對。"],
+      });
+    },
+  });
+
+  assert.equal(generateCalls, 1);
+  assert.equal(result.model_interpretation.status, "used_model");
+  assert.match(result.answer, /Scanoo 後台操作手冊/);
+  assert.equal(result.sources.length, 1);
+  assert.match(result.limitations.join("\n"), /逐頁|抽取文本/);
+});
+
+test("readPdfTaskAndBuildReply falls back honestly when model interpretation fails", async () => {
+  const result = await readPdfTaskAndBuildReply({
+    pdfInputs: [
+      { kind: "local_path", value: "/tmp/demo.pdf", name: "Scanoo 一頁式操作手冊.pdf" },
+    ],
+    question: "幫我解讀一下這個",
+    allowModelInterpretation: true,
+    resolvePdfBufferFromInputFn: async (input) => ({
+      buffer: Buffer.from("dummy pdf bytes"),
+      source: {
+        source_type: "local_path",
+        source_id: input.value,
+        source_label: input.name,
+      },
+    }),
+    extractPdfTextFromBufferFn: async () => ({
+      text: "第一重點。第二重點。第三重點。",
+      page_count: 3,
+      metadata: null,
+    }),
+    generateTextFn: async () => {
+      throw new Error("provider_quota_exhausted");
+    },
+  });
+
+  assert.equal(result.model_interpretation.status, "model_failed");
+  assert.match(result.answer, /我已先讀取 1 份 PDF/);
+  assert.match(result.limitations.join("\n"), /主模型解讀未完成/);
+});
+
+test("readPdfTaskAndBuildReply skips model interpretation when unavailable", async () => {
+  let generateCalls = 0;
+  const result = await readPdfTaskAndBuildReply({
+    pdfInputs: [
+      { kind: "local_path", value: "/tmp/demo.pdf", name: "Scanoo 一頁式操作手冊.pdf" },
+    ],
+    question: "幫我解讀一下這個",
+    allowModelInterpretation: false,
+    resolvePdfBufferFromInputFn: async (input) => ({
+      buffer: Buffer.from("dummy pdf bytes"),
+      source: {
+        source_type: "local_path",
+        source_id: input.value,
+        source_label: input.name,
+      },
+    }),
+    extractPdfTextFromBufferFn: async () => ({
+      text: "第一重點。第二重點。第三重點。",
+      page_count: 3,
+      metadata: null,
+    }),
+    generateTextFn: async () => {
+      generateCalls += 1;
+      return "{}";
+    },
+  });
+
+  assert.equal(generateCalls, 0);
+  assert.equal(result.model_interpretation.status, "model_unavailable");
+  assert.match(result.answer, /我已先讀取 1 份 PDF/);
 });

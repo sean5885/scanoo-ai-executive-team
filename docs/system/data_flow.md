@@ -39,25 +39,37 @@ Current additive path:
 3. `/Users/seanhan/Documents/Playground/src/modality-router.mjs` classifies modality with PDF awareness:
    - `pdf`
    - `pdf_multimodal`
-4. current checked-in path has no direct PDF OCR/read API execution step; PDF is recognized for routing/modality boundary only.
-5. image-only execution paths now keep PDF out of image analysis dispatch:
+4. `/Users/seanhan/Documents/Playground/src/lane-executor.mjs -> executePdfTaskReply(...)` is the checked-in PDF execution lane:
+   - `msg_type=file` PDF uploads with no text stage one short-lived follow-up context (5 minutes, keyed by `chat_id + sender_open_id`)
+   - text follow-up asks such as `請深讀` / `幫我解讀一下這個` can recover that staged PDF context or recent file-card context before execution
+   - the lane requires verified user auth for message-resource PDF reads and fail-softs with explicit reauth/scope guidance when auth is missing
+5. `/Users/seanhan/Documents/Playground/src/pdf-read-service.mjs` performs bounded PDF read/parse:
+   - supports `url`, `local_path`, `file_token`, `file_key`
+   - prioritizes `file_key -> file_token -> url -> local_path`
+   - downloads `file_key` via Lark message-resource path with `message_id`
+   - extracts text through `pdf-parse`, normalizes preview text, and emits canonical source objects for the reply boundary
+6. when the user question is interpretive and a primary text-model key is available, the same PDF reader now calls `/Users/seanhan/Documents/Playground/src/llm/generate-text.mjs` with a strict single-JSON-object contract over the extracted PDF text:
+   - generation may enrich the `answer` field only
+   - `sources` remain deterministic extracted-snippet evidence
+   - on model failure, the lane explicitly falls back to extractive PDF output and adds one bounded `主模型解讀未完成` limitation
+7. image-only execution paths now keep PDF out of image analysis dispatch:
    - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
    - `/Users/seanhan/Documents/Playground/src/agent-dispatcher.mjs`
-6. image follow-up continuity now has a bounded staged context path:
+8. image follow-up continuity now has a bounded staged context path:
    - pure `msg_type=image` uploads can stage one 5-minute image context keyed by `chat_id + sender_open_id`
    - text follow-up asks (for example `告訴我這是什麼`) can reuse that staged image context without re-upload
-7. Lark message-image reads are user-auth only on this lane:
+9. Lark message-image reads are user-auth only on this lane:
    - no tenant fallback is used for message-image download
    - missing auth returns fail-soft reauth guidance instead of hard-failing the event
-8. image analysis call path now fail-softs provider/input errors:
+10. image analysis call path now fail-softs provider/input errors:
    - per-image fetch failures and provider call failures are normalized into `ok=false` reasons
    - image-lane exceptions do not intentionally bubble to top-level `event_processing_failed` generic crash replies
-9. when downstream answer rendering needs source citation, source lines are generated from canonical evidence objects via `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`, not free-form source strings
+11. when downstream answer rendering needs source citation, source lines are generated from canonical evidence objects via `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`, not free-form source strings
 
 Current truth:
 
-- this is recognition/classification + citation-boundary hardening only
-- no checked-in PDF text-extraction/index-write path is added in this change
+- PDF now has a checked-in read/parse + bounded answer path, but not a write/index path
+- model-backed PDF interpretation is additive on top of extracted text only; it is not OCR, not page-image reasoning, and not proof of full-document review
 - PDF permission/read-runtime boundary remains subject to existing controlled routes
 
 ## 0A. Autonomy Worker Failure Sink + Operator Incident Closure (Phase 2-3 additive)
@@ -650,7 +662,7 @@ Current path:
    - `skill_verify_request`
    - `not_skill_task`
 7. only the three explicit skill intents may continue into `/Users/seanhan/Documents/Playground/src/local-skill-actions.mjs`
-8. when the pre-pass returns `not_skill_task`, the same DM turn now goes to `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs -> executePlannedUserInput(...)` instead of falling back to the personal-lane canned/general template path
+8. when the pre-pass returns `not_skill_task`, the same DM turn stays inside `/Users/seanhan/Documents/Playground/src/lane-executor.mjs -> executePersonalAssistant(...)`; the shared text-generation helper may answer directly through the primary text model, otherwise the lane falls back to bounded personal-assistant scaffolds
 9. the bounded skill action returns canonical `answer / sources / limitations`
 10. `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs` renders the final text reply
 11. `/Users/seanhan/Documents/Playground/src/runtime-message-reply.mjs` sends the reply through the existing guarded Lark mutation path
