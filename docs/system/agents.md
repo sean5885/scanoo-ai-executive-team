@@ -150,7 +150,9 @@ What now exists in current code:
   - route image-only and image+text requests through the image-understanding adapter before normal text-lane handling
   - also intercept `/meeting` as a command workflow before default lane replies
   - preflight shared Bitable links so the bot can inspect base/table structure without asking the user to copy tokens manually
-  - keep `personal-assistant` fail-soft with a deterministic general-assistant catch-all instead of dropping benign direct messages into no-match
+  - keep `personal-assistant` fail-soft, but direct-message turns that would otherwise degrade to `general_assistant_action` now hand off to the shared planner/model answer edge first when the primary text-model credential is available; deterministic personal catch-all remains only as a bounded residual path
+  - when that primary credential is absent, the residual personal catch-all no longer waits on the OpenClaw text-generation path before answering
+  - the same lane now records DM path/health trace events and can temporarily open a local cooldown circuit when repeated planner-first failures prove the model path is currently unhealthy
   - treat "整理會議" style wording as summary work before calendar lookup when the request is clearly asking for整理/摘要
   - keep fallback copy user-facing and avoid exposing routing/runtime/log wording in chat replies
 - Input:

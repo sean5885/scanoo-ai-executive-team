@@ -79,6 +79,57 @@ function normalizePlannerDecision(raw = {}, fallbackText = "") {
   };
 }
 
+export function heuristicallyPlanPersonalDMSkillIntent(text = "") {
+  const normalizedText = cleanText(text).toLowerCase();
+  const explicitSkillQuery = extractExplicitSkillQueryHint(text);
+  const hasSkillCue = /(skill|技能|能力)/i.test(normalizedText);
+  const hasFindCue = /(找|搜尋|搜索|列出|有哪些|推薦|推荐|discover|find|list)/i.test(normalizedText);
+  const hasInstallCue = /(安裝|安装|裝上|装上|install|加入)/i.test(normalizedText);
+  const hasVerifyCue = /(驗證|验证|確認|确认|檢查|检查|測試|测试|verify|check|test)/i.test(normalizedText);
+
+  if (hasSkillCue && hasInstallCue) {
+    return {
+      ok: true,
+      model: minimaxTextModel,
+      is_delegated_task: true,
+      intent: "skill_install_request",
+      skill_query: cleanText(explicitSkillQuery || normalizedText),
+      reason: "heuristic_skill_install_request",
+    };
+  }
+
+  if (hasSkillCue && hasVerifyCue) {
+    return {
+      ok: true,
+      model: minimaxTextModel,
+      is_delegated_task: true,
+      intent: "skill_verify_request",
+      skill_query: cleanText(explicitSkillQuery || normalizedText),
+      reason: "heuristic_skill_verify_request",
+    };
+  }
+
+  if (hasSkillCue && hasFindCue) {
+    return {
+      ok: true,
+      model: minimaxTextModel,
+      is_delegated_task: true,
+      intent: "skill_find_request",
+      skill_query: cleanText(explicitSkillQuery || normalizedText),
+      reason: "heuristic_skill_find_request",
+    };
+  }
+
+  return {
+    ok: true,
+    model: minimaxTextModel,
+    is_delegated_task: false,
+    intent: "not_skill_task",
+    skill_query: "",
+    reason: "heuristic_not_skill_task",
+  };
+}
+
 export async function planPersonalDMSkillIntent({
   text = "",
   generateText = defaultGenerateText,
@@ -135,17 +186,12 @@ export async function planPersonalDMSkillIntent({
     });
     return decision;
   } catch (error) {
+    const heuristicDecision = heuristicallyPlanPersonalDMSkillIntent(normalizedText);
     logger?.warn?.("personal_dm_skill_intent_failed_closed", {
       model: minimaxTextModel,
       error: cleanText(error?.code || error?.message) || "classification_failed",
+      fallback_reason: heuristicDecision.reason,
     });
-    return {
-      ok: true,
-      model: minimaxTextModel,
-      is_delegated_task: false,
-      intent: "not_skill_task",
-      skill_query: "",
-      reason: "classifier_failed_closed",
-    };
+    return heuristicDecision;
   }
 }

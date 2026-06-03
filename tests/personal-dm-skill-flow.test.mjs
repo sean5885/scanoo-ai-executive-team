@@ -92,7 +92,7 @@ test("personal DM explicit find-skill request enters planner and hits the bounde
   assert.equal(captured.length, 1);
   assert.equal(captured[0].intent, "skill_find_request");
   assert.equal(captured[0].query, "find-skills");
-  assert.match(reply.text, /^答案\n/);
+  assert.match(reply.text, /^答案（先解法）\n/);
   assert.match(reply.text, /找到 1 個 skill/);
 });
 
@@ -174,6 +174,39 @@ test("general chat or non-skill DM keeps the original general assistant fallback
   });
 
   assert.equal(reply, null);
+});
+
+test("personal p2p scope still accepts bounded skill-task detection", async () => {
+  const captured = [];
+  const reply = await maybeExecutePersonalDMSkillTask({
+    event: createDmEvent("幫我找 find-skills skill"),
+    scope: {
+      ...createDmScope(),
+      chat_type: "p2p",
+    },
+    intentPlanner: async () => ({
+      ok: true,
+      is_delegated_task: true,
+      intent: "skill_find_request",
+      skill_query: "find-skills",
+      reason: "explicit_find",
+    }),
+    skillActionExecutor: async (input) => {
+      captured.push(input);
+      return {
+        ok: true,
+        action: "find_local_skill",
+        public_reply: {
+          answer: "找到 1 個 skill。",
+          sources: ["`find-skills`：可安裝"],
+          limitations: ["目前只搜尋受控本機 skill 目錄。"],
+        },
+      };
+    },
+  });
+
+  assert.equal(captured.length, 1);
+  assert.match(reply.text, /找到 1 個 skill/);
 });
 
 test("skill action failure stays user-facing readable without leaking raw internal error details", async () => {

@@ -6,6 +6,7 @@ import {
   llmOpenClawTimeoutMs,
 } from "./config.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
+import { getOpenClawExecutionEnv } from "./openclaw-runtime-config.mjs";
 
 const execFile = promisify(execFileCb);
 const OPENCLAW_LOCK_RETRY_MAX = 3;
@@ -119,6 +120,7 @@ export async function callOpenClawTextGeneration({
         cwd: process.cwd(),
         timeout: timeoutMs + 3000,
         maxBuffer: 1024 * 1024 * 8,
+        env: getOpenClawExecutionEnv(),
       };
 
       if (abortSignal) {

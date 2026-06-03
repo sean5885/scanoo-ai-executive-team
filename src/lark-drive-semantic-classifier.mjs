@@ -13,6 +13,7 @@ import {
   semanticClassifierPromptMaxTokens,
   semanticClassifierJsonRetryMax,
 } from "./config.mjs";
+import { getOpenClawExecutionEnv } from "./openclaw-runtime-config.mjs";
 import { normalizeText } from "./text-utils.mjs";
 
 const execFile = promisify(execFileCb);
@@ -293,6 +294,7 @@ async function callViaOpenClaw(prompt, { signal = null } = {}) {
       cwd: process.cwd(),
       timeout: REQUEST_TIMEOUT_MS + 3000,
       maxBuffer: 1024 * 1024 * 8,
+      env: getOpenClawExecutionEnv(),
       ...(abortSignal ? { signal: abortSignal } : {}),
     },
   );
@@ -449,7 +451,7 @@ export function getSemanticClassifierInfo() {
   return {
     available: semanticClassifierAvailable(),
     provider: PROVIDER,
-    model: `minimax/${llmModel} via OpenClaw`,
+    model: `${llmModel} via OpenClaw`,
     cache_path: CACHE_PATH,
     host: os.hostname(),
     max_items_per_run: MAX_ITEMS_PER_RUN,

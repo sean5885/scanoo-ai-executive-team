@@ -70,7 +70,7 @@ import {
 } from "./cloud-doc-organization-workflow.mjs";
 import { decideIntent } from "./control-kernel.mjs";
 import { ensureCloudDocWorkflowTask } from "./executive-orchestrator.mjs";
-import { formatIdentifierHint } from "./runtime-observability.mjs";
+import { emitRateLimitedAlert, formatIdentifierHint } from "./runtime-observability.mjs";
 import { ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
 import { looksLikePlannerIngressRequest } from "./planner-ingress-contract.mjs";
 import {
@@ -99,7 +99,7 @@ import {
   startMeetingCaptureSession,
   stopMeetingCaptureSession,
 } from "./meeting-capture-store.mjs";
-import { meetingDocFolderToken, meetingTranscriptPromptMaxChars } from "./config.mjs";
+import { llmApiKey, meetingDocFolderToken, meetingTranscriptPromptMaxChars } from "./config.mjs";
 import {
   getAccountPreference,
   setAccountPreference,
@@ -116,6 +116,7 @@ import { runCanonicalLarkMutation } from "./lark-mutation-runtime.mjs";
 import { planPersonalDMSkillIntent } from "./planner/personal-dm-skill-intent.mjs";
 import { readPdfTaskAndBuildReply } from "./pdf-read-service.mjs";
 import { listRegisteredAgents } from "./agent-registry.mjs";
+import { generateText } from "./llm/generate-text.mjs";
 
 function incomingText(event) {
   return buildVisibleMessageText(event);
@@ -1951,12 +1952,21 @@ function looksLikeCopyDraftRequest(text = "") {
     .test(normalized);
 }
 
+function looksLikeVagueIdeationRequest(text = "") {
+  const normalized = cleanText(text);
+  if (!normalized) {
+    return false;
+  }
+  return /(幫我|帮我|請|请).{0,4}(想一下|想想|想法|點子|点子)/i.test(normalized);
+}
+
 function extractGeneralAssistantFocusTopic(text = "") {
   const normalized = cleanText(text);
   if (!normalized) {
     return "";
   }
   let subject = normalized
+    .replace(/\b(?:text|content)\b\s*:?/gi, " ")
     .replace(/[\{\}"'`]/g, " ")
     .replace(/(?:幫我|帮我|請|请|先|可以|能不能|可不可以|一下|這個|这个|針對|针对|關於|关于)/g, " ")
     .replace(/(?:風險|风险|優先|优先|排序|排程|排期|怎麼推|怎么推|下一步|文案|草稿|起草|copy|draft)/gi, " ")
@@ -2102,6 +2112,240 @@ function buildGeneralAssistantReply(text = "") {
       "- 如果你願意，我可以先從這段對話、今天的日程、最近待辦，或一份文件開始。",
     ].join("\n"),
   };
+}
+
+async function maybeBuildModelBackedGeneralAssistantReply(text = "") {
+  const normalized = cleanText(text);
+  if (!normalized || looksLikeGreeting(normalized) || looksLikeClosingAck(normalized)) {
+    return null;
+  }
+  if (
+    normalized.length < 10
+    || looksLikeRiskAssessmentRequest(normalized)
+    || looksLikePrioritizationRequest(normalized)
+    || looksLikeExecutionPushRequest(normalized)
+    || looksLikeCopyDraftRequest(normalized)
+    || looksLikeVagueIdeationRequest(normalized)
+  ) {
+    return null;
+  }
+  if (!hasPrimaryPlannerTextModelAvailable()) {
+    return null;
+  }
+
+  try {
+    const rawText = await generateText({
+      systemPrompt: [
+        "你是 Lobster 的 personal assistant。",
+        "先直接回答，不要只回『我可以幫你』。",
+        "不能假裝已讀文件、已查資料、已執行工具。",
+        "若缺少文件、資料或權限，只能誠實說明限制並給下一步。",
+        "固定輸出三段：結論、重點、下一步。",
+        "保持簡潔、可執行、像高階助理。",
+      ].join("\n"),
+      prompt: normalized,
+      sessionIdSuffix: "personal-assistant-general-reply",
+      temperature: 0.1,
+    });
+    const reply = cleanText(rawText);
+    if (!reply) {
+      return null;
+    }
+    return { text: reply };
+  } catch {
+    return null;
+  }
+}
+
+export function shouldEscalatePersonalLaneToKnowledge(lanePlan = {}) {
+  return cleanText(lanePlan?.fallback_reason || "") === "semantic_mismatch_document_request_in_personal_lane";
+}
+
+function isDirectMessageScope(scope = {}) {
+  const chatType = cleanText(scope?.chat_type || "");
+  return chatType === "dm" || chatType === "p2p";
+}
+
+function looksLikeExplicitSkillTaskRequest(text = "") {
+  const normalized = cleanText(text);
+  if (!normalized) {
+    return false;
+  }
+  const hasSkillCue = /(skill|技能|能力)/i.test(normalized);
+  if (!hasSkillCue) {
+    return false;
+  }
+  return /(找|搜尋|搜索|列出|有哪些|推薦|推荐|discover|find|list|安裝|安装|裝上|装上|install|加入|驗證|验证|確認|确认|檢查|检查|測試|测试|verify|check|test)/i
+    .test(normalized);
+}
+
+function hasPrimaryPlannerTextModelAvailable() {
+  return Boolean(cleanText(llmApiKey || ""));
+}
+
+const PERSONAL_DM_PLANNER_FAILURE_THRESHOLD = 2;
+const PERSONAL_DM_PLANNER_COOLDOWN_MS = 5 * 60 * 1000;
+const PERSONAL_DM_PLANNER_UNHEALTHY_ERROR_CODES = new Set([
+  "planner_failed",
+  "request_timeout",
+  "request_cancelled",
+  "runtime_exception",
+  "tool_executor_missing",
+]);
+const personalDMPlannerHealthState = {
+  consecutiveFailures: 0,
+  cooldownUntil: 0,
+  lastError: null,
+  lastStatus: "unknown",
+  lastFailureAt: 0,
+  lastSuccessAt: 0,
+};
+
+export function resetPersonalDMPlannerHealthForTests() {
+  personalDMPlannerHealthState.consecutiveFailures = 0;
+  personalDMPlannerHealthState.cooldownUntil = 0;
+  personalDMPlannerHealthState.lastError = null;
+  personalDMPlannerHealthState.lastStatus = "unknown";
+  personalDMPlannerHealthState.lastFailureAt = 0;
+  personalDMPlannerHealthState.lastSuccessAt = 0;
+}
+
+export function readPersonalDMPlannerHealth({
+  now = Date.now(),
+  primaryModelAvailable = hasPrimaryPlannerTextModelAvailable(),
+} = {}) {
+  if (!primaryModelAvailable) {
+    return {
+      available: false,
+      status: "unavailable",
+      reason_code: "primary_text_model_missing",
+      consecutive_failures: personalDMPlannerHealthState.consecutiveFailures,
+      cooldown_until: personalDMPlannerHealthState.cooldownUntil || null,
+      last_error: personalDMPlannerHealthState.lastError,
+    };
+  }
+  if (personalDMPlannerHealthState.cooldownUntil > now) {
+    return {
+      available: false,
+      status: "cooldown",
+      reason_code: "planner_first_recent_failures",
+      consecutive_failures: personalDMPlannerHealthState.consecutiveFailures,
+      cooldown_until: personalDMPlannerHealthState.cooldownUntil,
+      last_error: personalDMPlannerHealthState.lastError,
+    };
+  }
+  return {
+    available: true,
+    status: personalDMPlannerHealthState.lastStatus === "healthy" ? "healthy" : "ready",
+    reason_code: personalDMPlannerHealthState.lastStatus === "healthy"
+      ? "planner_first_recent_success"
+      : "planner_first_ready",
+    consecutive_failures: personalDMPlannerHealthState.consecutiveFailures,
+    cooldown_until: null,
+    last_error: personalDMPlannerHealthState.lastError,
+  };
+}
+
+export function notePersonalDMPlannerHealth({
+  ok = false,
+  errorCode = "",
+  now = Date.now(),
+  logger = noopLogger,
+  primaryModelAvailable = hasPrimaryPlannerTextModelAvailable(),
+} = {}) {
+  const normalizedErrorCode = cleanText(errorCode) || null;
+  if (ok) {
+    personalDMPlannerHealthState.consecutiveFailures = 0;
+    personalDMPlannerHealthState.cooldownUntil = 0;
+    personalDMPlannerHealthState.lastError = null;
+    personalDMPlannerHealthState.lastStatus = "healthy";
+    personalDMPlannerHealthState.lastSuccessAt = now;
+    return readPersonalDMPlannerHealth({ now, primaryModelAvailable });
+  }
+
+  if (!normalizedErrorCode || !PERSONAL_DM_PLANNER_UNHEALTHY_ERROR_CODES.has(normalizedErrorCode)) {
+    personalDMPlannerHealthState.lastStatus = "healthy";
+    return readPersonalDMPlannerHealth({ now, primaryModelAvailable });
+  }
+
+  personalDMPlannerHealthState.consecutiveFailures += 1;
+  personalDMPlannerHealthState.lastError = normalizedErrorCode;
+  personalDMPlannerHealthState.lastFailureAt = now;
+  personalDMPlannerHealthState.lastStatus = "degraded";
+
+  if (personalDMPlannerHealthState.consecutiveFailures >= PERSONAL_DM_PLANNER_FAILURE_THRESHOLD) {
+    personalDMPlannerHealthState.cooldownUntil = now + PERSONAL_DM_PLANNER_COOLDOWN_MS;
+    personalDMPlannerHealthState.lastStatus = "cooldown";
+    emitRateLimitedAlert({
+      code: "personal_dm_planner_first_cooldown",
+      scope: "lane_executor",
+      message: "Personal DM planner-first temporarily disabled after repeated planner failures.",
+      details: {
+        reason: normalizedErrorCode,
+        cooldown_until: new Date(personalDMPlannerHealthState.cooldownUntil).toISOString(),
+      },
+    });
+    logger.info("personal_dm_planner_health_state", {
+      status: "cooldown",
+      reason_code: normalizedErrorCode,
+      consecutive_failures: personalDMPlannerHealthState.consecutiveFailures,
+      cooldown_until: personalDMPlannerHealthState.cooldownUntil,
+    });
+  }
+
+  return readPersonalDMPlannerHealth({ now, primaryModelAvailable });
+}
+
+export function shouldUsePlannerFirstPersonalDM({
+  event,
+  scope,
+  routingDecision = null,
+  lanePlan = null,
+  plannerAvailable = hasPrimaryPlannerTextModelAvailable(),
+  plannerHealth = null,
+} = {}) {
+  const normalizedPlannerHealth = plannerHealth && typeof plannerHealth === "object"
+    ? plannerHealth
+    : {
+      available: plannerAvailable === true,
+      status: plannerAvailable === true ? "healthy" : "unavailable",
+      reason_code: plannerAvailable === true ? "planner_first_ready" : "primary_text_model_missing",
+    };
+
+  if (normalizedPlannerHealth.available !== true) {
+    return false;
+  }
+  if (cleanText(normalizedPlannerHealth.status || "") === "cooldown") {
+    return false;
+  }
+  if (cleanText(scope?.capability_lane || "personal-assistant") !== "personal-assistant") {
+    return false;
+  }
+  if (!isDirectMessageScope(scope)) {
+    return false;
+  }
+
+  const finalOwner = cleanText(routingDecision?.final_owner || "personal-assistant") || "personal-assistant";
+  if (finalOwner !== "personal-assistant") {
+    return false;
+  }
+
+  const text = normalizeMessageText(event);
+  if (!cleanText(text)) {
+    return false;
+  }
+  if (looksLikeGreeting(text) || looksLikeClosingAck(text)) {
+    return false;
+  }
+  if (looksLikeDeleteMeetingDocRequest(text) || looksLikeChatOnlyFailurePreference(text)) {
+    return false;
+  }
+  if (resolveCloudOrganizationAction({ text }) !== "none") {
+    return false;
+  }
+
+  const resolvedLanePlan = lanePlan || resolveLaneExecutionPlan({ event, scope });
+  return cleanText(resolvedLanePlan?.chosen_action || "") === "general_assistant_action";
 }
 
 export function resolveLaneExecutionPlan({ event, scope } = {}) {
@@ -2933,6 +3177,7 @@ async function executePlannerBackedLane({
   maybeBuildScanooDiagnoseOfficialReadFallbackFn = maybeBuildScanooDiagnoseOfficialReadFallback,
   resolveReferencedDocumentIdFn = resolveReferencedDocumentId,
   renderUserResponseTextFn = renderUserResponseText,
+  onPlannerEdgeResolved = null,
 } = {}) {
   const lanePlan = resolveLaneExecutionPlan({ event, scope });
   logger.info("lane_execution_planned", lanePlan);
@@ -2996,6 +3241,22 @@ async function executePlannerBackedLane({
       return attachLaneTrace(envelope, { scope });
     },
   });
+  if (typeof onPlannerEdgeResolved === "function") {
+    try {
+      await onPlannerEdgeResolved({
+        plannedResult,
+        plannerEnvelope,
+        userResponse,
+        lane,
+        scope,
+      });
+    } catch (error) {
+      logger.warn("planner_edge_health_observer_failed", {
+        error: logger.compactError(error),
+        lane,
+      });
+    }
+  }
   const laneAbortInfo = resolveLaneAbortInfo({ signal: plannerSignal });
   plannerSignalContext.clear();
   if (userResponse.ok === false) {
@@ -4943,7 +5204,7 @@ export async function maybeExecutePersonalDMSkillTask({
   if (cleanText(scope?.capability_lane || "personal-assistant") !== "personal-assistant") {
     return null;
   }
-  if (cleanText(scope?.chat_type || "") !== "dm") {
+  if (!isDirectMessageScope(scope)) {
     return null;
   }
 
@@ -4957,6 +5218,9 @@ export async function maybeExecutePersonalDMSkillTask({
     return null;
   }
   if (looksLikeGreeting(text) || looksLikeClosingAck(text)) {
+    return null;
+  }
+  if (!looksLikeExplicitSkillTaskRequest(text)) {
     return null;
   }
 
@@ -5029,6 +5293,24 @@ async function executePersonalAssistant({ event, scope, logger = noopLogger }) {
     text,
     activeWorkflowMode,
   });
+
+  if (shouldEscalatePersonalLaneToKnowledge(lanePlan)) {
+    logger.info("personal_lane_escalated_to_knowledge_assistant", {
+      session_key: cleanText(sessionKey) || null,
+      reason: cleanText(lanePlan?.fallback_reason || "") || null,
+    });
+    return executeKnowledgeAssistant({
+      event,
+      scope: {
+        ...scope,
+        capability_lane: "knowledge-assistant",
+        lane_label: "知識助手",
+        lane_reason: "personal_lane_semantic_escalation",
+      },
+      logger,
+      traceId: cleanText(scope?.trace_id || event?.trace_id || ""),
+    });
+  }
   if (cloudOrganizationAction !== "none" || activeCloudDocTask?.id || activeWorkflowMode === CLOUD_DOC_ORGANIZATION_MODE) {
     logger.info("cloud_doc_follow_up_route", {
       workflow_hit: CLOUD_DOC_WORKFLOW,
@@ -5435,10 +5717,71 @@ async function executePersonalAssistant({ event, scope, logger = noopLogger }) {
   }
 
   if (lanePlan.chosen_action === "general_assistant_action") {
-    return buildGeneralAssistantReply(text);
+    const generatedReply = await maybeBuildModelBackedGeneralAssistantReply(text);
+    if (isDirectMessageScope(scope)) {
+      logger.info("personal_dm_path_selected", {
+        selected_path: generatedReply ? "model_first" : "personal_fallback",
+        lane_action: "general_assistant_action",
+        fallback_reason: generatedReply ? null : "planner_first_not_active",
+      });
+    }
+    return generatedReply || buildGeneralAssistantReply(text);
   }
 
-  return buildGeneralAssistantReply(text);
+  if (isDirectMessageScope(scope)) {
+    logger.info("personal_dm_path_selected", {
+      selected_path: "personal_fallback",
+      lane_action: cleanText(lanePlan?.chosen_action || "") || null,
+      fallback_reason: cleanText(lanePlan?.fallback_reason || "") || null,
+    });
+  }
+  const generatedReply = await maybeBuildModelBackedGeneralAssistantReply(text);
+  return generatedReply || buildGeneralAssistantReply(text);
+}
+
+async function executePlannerFirstDirectMessage({
+  event,
+  scope,
+  logger = noopLogger,
+  traceId = null,
+  signal = null,
+  requestSignal = null,
+  requestTimeoutMs = null,
+  runPlannerUserInputEdgeFn = runPlannerUserInputEdge,
+} = {}) {
+  return executePlannerBackedLane({
+    event,
+    scope: {
+      ...scope,
+      capability_lane: "knowledge-assistant",
+      lane_label: "知識助手",
+      lane_reason: "personal_dm_planner_first_ingress",
+      planner_ingress_surface: "personal_dm_model_first",
+    },
+    logger,
+    traceId,
+    signal,
+    requestSignal,
+    requestTimeoutMs,
+    handlerName: "executePlannerFirstDirectMessage",
+    runPlannerUserInputEdgeFn,
+    onPlannerEdgeResolved: async ({ plannedResult, userResponse }) => {
+      const errorCode = cleanText(plannedResult?.error || plannedResult?.execution_result?.error || "") || null;
+      const healthy = userResponse?.ok === true || (errorCode && !PERSONAL_DM_PLANNER_UNHEALTHY_ERROR_CODES.has(errorCode));
+      const health = notePersonalDMPlannerHealth({
+        ok: healthy,
+        errorCode,
+        logger,
+      });
+      logger.info("personal_dm_planner_health_observed", {
+        status: health.status,
+        available: health.available,
+        reason_code: health.reason_code,
+        consecutive_failures: health.consecutive_failures,
+        last_error: health.last_error,
+      });
+    },
+  });
 }
 
 async function executeGroupSharedAssistant({ event, scope, logger = noopLogger }) {
@@ -5489,6 +5832,7 @@ export async function executeCapabilityLane({
   signal = null,
   requestSignal = null,
   requestTimeoutMs = null,
+  runPlannerUserInputEdgeFn = runPlannerUserInputEdge,
 }) {
   let meetingReply = null;
   try {
@@ -5582,6 +5926,66 @@ export async function executeCapabilityLane({
   const bitableReply = await executeBitableLinkRequest({ event, scope, logger });
   if (bitableReply) {
     return bitableReply;
+  }
+
+  const lanePlan = resolveLaneExecutionPlan({ event, scope });
+  const plannerHealth = readPersonalDMPlannerHealth();
+  if (lane === "personal-assistant" && isDirectMessageScope(scope)) {
+    logger.info("personal_dm_path_decision", {
+      lane_action: cleanText(lanePlan?.chosen_action || "") || null,
+      planner_health_status: plannerHealth.status,
+      planner_health_reason: plannerHealth.reason_code,
+      planner_available: plannerHealth.available === true,
+    });
+  }
+  if (
+    lane === "personal-assistant"
+    && isDirectMessageScope(scope)
+    && cleanText(lanePlan?.chosen_action || "") === "general_assistant_action"
+  ) {
+    return executePersonalAssistant({ event, scope, logger });
+  }
+  if (shouldUsePlannerFirstPersonalDM({
+    event,
+    scope,
+    routingDecision,
+    lanePlan,
+    plannerHealth,
+  })) {
+    const personalDMSkillReply = await maybeExecutePersonalDMSkillTask({
+      event,
+      scope,
+      logger,
+      traceId,
+    });
+    if (personalDMSkillReply) {
+      logger.info("personal_dm_path_selected", {
+        selected_path: "skill_task",
+        lane_action: cleanText(lanePlan?.chosen_action || "") || null,
+      });
+      return personalDMSkillReply;
+    }
+    logger.info("personal_dm_planner_first_ingress", {
+      session_key: sessionKey || null,
+      chosen_action: cleanText(lanePlan?.chosen_action || "") || null,
+      precedence_source: cleanText(routingDecision?.precedence_source || "") || null,
+    });
+    logger.info("personal_dm_path_selected", {
+      selected_path: "planner_first",
+      lane_action: cleanText(lanePlan?.chosen_action || "") || null,
+      planner_health_status: plannerHealth.status,
+      planner_health_reason: plannerHealth.reason_code,
+    });
+    return executePlannerFirstDirectMessage({
+      event,
+      scope,
+      logger,
+      traceId,
+      signal,
+      requestSignal,
+      requestTimeoutMs,
+      runPlannerUserInputEdgeFn,
+    });
   }
 
   if (lane === "knowledge-assistant") {

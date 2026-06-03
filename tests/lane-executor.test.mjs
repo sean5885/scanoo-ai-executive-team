@@ -26,6 +26,11 @@ const {
   resolvePlannerExplicitAuthContext,
   resolveScanooLanePreTimeoutPlan,
   resolveReferencedDocumentId,
+  readPersonalDMPlannerHealth,
+  resetPersonalDMPlannerHealthForTests,
+  notePersonalDMPlannerHealth,
+  shouldEscalatePersonalLaneToKnowledge,
+  shouldUsePlannerFirstPersonalDM,
   looksLikeAgentStandbyStatusRequest,
   buildAgentStandbyStatusReply,
   shouldFallbackScanooCompareToDocsSearch,
@@ -1706,6 +1711,142 @@ test("lane execution plan keeps runtime-info queries out of personal lane", () =
 
   assert.equal(plan.chosen_action, null);
   assert.equal(plan.fallback_reason, "semantic_mismatch_document_request_in_personal_lane");
+});
+
+test("personal lane semantic mismatch escalates to knowledge assistant", () => {
+  assert.equal(shouldEscalatePersonalLaneToKnowledge({
+    fallback_reason: "semantic_mismatch_document_request_in_personal_lane",
+  }), true);
+  assert.equal(shouldEscalatePersonalLaneToKnowledge({
+    fallback_reason: "routing_no_match",
+  }), false);
+});
+
+test("planner-first personal DM only activates for substantive direct-message general turns", () => {
+  const event = {
+    message: {
+      content: JSON.stringify({
+        text: "這個方案風險在哪裡，先給我三點",
+      }),
+    },
+  };
+  const scope = {
+    capability_lane: "personal-assistant",
+    chat_type: "p2p",
+  };
+  const lanePlan = resolveLaneExecutionPlan({ event, scope });
+
+  assert.equal(shouldUsePlannerFirstPersonalDM({
+    event,
+    scope,
+    lanePlan,
+    routingDecision: {
+      final_owner: "personal-assistant",
+      precedence_source: "lane_default",
+    },
+    plannerAvailable: true,
+  }), true);
+
+  assert.equal(shouldUsePlannerFirstPersonalDM({
+    event: {
+      message: {
+        content: JSON.stringify({
+          text: "你好",
+        }),
+      },
+    },
+    scope,
+    routingDecision: {
+      final_owner: "personal-assistant",
+      precedence_source: "lane_default",
+    },
+    plannerAvailable: true,
+  }), false);
+
+  assert.equal(shouldUsePlannerFirstPersonalDM({
+    event,
+    scope: {
+      ...scope,
+      chat_type: "group",
+    },
+    routingDecision: {
+      final_owner: "personal-assistant",
+      precedence_source: "lane_default",
+    },
+    plannerAvailable: true,
+  }), false);
+
+  assert.equal(shouldUsePlannerFirstPersonalDM({
+    event,
+    scope,
+    routingDecision: {
+      final_owner: "executive",
+      precedence_source: "same_session_same_workflow",
+    },
+    plannerAvailable: true,
+  }), false);
+
+  assert.equal(shouldUsePlannerFirstPersonalDM({
+    event,
+    scope,
+    lanePlan,
+    routingDecision: {
+      final_owner: "personal-assistant",
+      precedence_source: "lane_default",
+    },
+    plannerAvailable: false,
+  }), false);
+});
+
+test("personal DM planner health enters cooldown after repeated planner failures", () => {
+  resetPersonalDMPlannerHealthForTests();
+  const baseNow = 1_700_000_000_000;
+
+  assert.equal(readPersonalDMPlannerHealth({
+    now: baseNow,
+    primaryModelAvailable: true,
+  }).status, "ready");
+
+  const first = notePersonalDMPlannerHealth({
+    ok: false,
+    errorCode: "planner_failed",
+    now: baseNow,
+    logger: { info() {} },
+    primaryModelAvailable: true,
+  });
+  assert.equal(first.status, "ready");
+
+  const second = notePersonalDMPlannerHealth({
+    ok: false,
+    errorCode: "request_timeout",
+    now: baseNow + 1,
+    logger: { info() {} },
+    primaryModelAvailable: true,
+  });
+  assert.equal(second.status, "cooldown");
+
+  assert.equal(shouldUsePlannerFirstPersonalDM({
+    event: {
+      message: {
+        content: JSON.stringify({ text: "這個方案風險在哪裡" }),
+      },
+    },
+    scope: {
+      capability_lane: "personal-assistant",
+      chat_type: "p2p",
+    },
+    routingDecision: {
+      final_owner: "personal-assistant",
+      precedence_source: "lane_default",
+    },
+    plannerHealth: {
+      available: false,
+      status: "cooldown",
+      reason_code: "planner_first_recent_failures",
+    },
+  }), false);
+
+  resetPersonalDMPlannerHealthForTests();
 });
 
 test("lane execution plan treats meeting summary requests as summary work instead of calendar lookup", () => {

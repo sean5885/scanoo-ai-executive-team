@@ -153,6 +153,7 @@ Key values:
 
 - OpenClaw runtime
   - used for semantic classification and plugin execution
+  - the checked-in text/classifier callers now generate a repo-local sanitized runtime config at `.data/openclaw-runtime/openclaw.json` before invoking the CLI, so local execution no longer depends directly on a valid `channels.feishu` user-global config or on the user-global default agent model choice
 
 - Python `lobster_security`
   - local subprocess boundary
@@ -168,8 +169,14 @@ Key values:
 
 - external state
   - Lark documents, chats, calendars, tasks, bitables, sheets
-  - external LLM provider
+- external LLM provider
   - external OpenClaw runtime configuration
+
+Current checked-in local text-model default:
+
+- base URL: `https://api.deepseek.com`
+- model: `deepseek-v4-pro`
+- auth aliases accepted by `/Users/seanhan/Documents/Playground/src/config.mjs`: `LLM_API_KEY`, `DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, `MINIMAX_API_KEY`, `KIMI_API_KEY`
 
 The important distinction is:
 

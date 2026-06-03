@@ -99,7 +99,7 @@ No ranked closure thread remains from this pass.
 Thread C is now closed in checked-in code:
 
 - `/Users/seanhan/Documents/Playground/src/planner-ingress-contract.mjs` is the shared planner ingress rule for document-summary / company-brain / knowledge / runtime-info reads
-- `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs` is the shared `/answer` and `knowledge-assistant` answer edge
+- `/Users/seanhan/Documents/Playground/src/planner-user-input-edge.mjs` is the shared `/answer` and planner-first answer edge for `knowledge-assistant` plus text-only direct-message `personal-assistant` general turns
 - `/Users/seanhan/Documents/Playground/src/planner-runtime-info-flow.mjs` now reuses the same runtime-info predicate as lane admission
 - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` now uses that same ingress contract to keep personal-lane planner mismatches fail-soft and explicit
 

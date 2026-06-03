@@ -165,10 +165,22 @@ export const chunkTargetSize = Number.parseInt(process.env.RAG_CHUNK_TARGET_SIZE
 export const chunkOverlapSize = Number.parseInt(process.env.RAG_CHUNK_OVERLAP || "180", 10);
 export const searchTopK = Number.parseInt(process.env.RAG_SEARCH_TOP_K || "6", 10);
 export const llmBaseUrl =
-  (process.env.LLM_BASE_URL || process.env.OPENAI_API_BASE || process.env.OPENAI_BASE_URL || "https://api2.codexcn.com/v1").replace(/\/$/, "");
-export const llmApiKey = process.env.LLM_API_KEY || "";
+  (
+    process.env.LLM_BASE_URL
+    || process.env.DEEPSEEK_BASE_URL
+    || process.env.OPENAI_API_BASE
+    || process.env.OPENAI_BASE_URL
+    || "https://api.deepseek.com"
+  ).replace(/\/$/, "");
+export const llmApiKey =
+  process.env.LLM_API_KEY
+  || process.env.DEEPSEEK_API_KEY
+  || process.env.OPENAI_API_KEY
+  || process.env.MINIMAX_API_KEY
+  || process.env.KIMI_API_KEY
+  || "";
 export const minimaxTextModel =
-  String(process.env.MINIMAX_TEXT_MODEL || process.env.LLM_MODEL || "MiniMax-M2.7").trim() || "MiniMax-M2.7";
+  String(process.env.MINIMAX_TEXT_MODEL || process.env.DEEPSEEK_TEXT_MODEL || process.env.LLM_MODEL || "deepseek-v4-pro").trim() || "deepseek-v4-pro";
 export const llmModel = minimaxTextModel;
 export const llmOpenClawAgentId =
   String(process.env.LLM_OPENCLAW_AGENT || "lobster-backend").trim() || "lobster-backend";
