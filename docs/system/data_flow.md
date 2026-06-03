@@ -42,6 +42,7 @@ Current additive path:
 4. `/Users/seanhan/Documents/Playground/src/lane-executor.mjs -> executePdfTaskReply(...)` is the checked-in PDF execution lane:
    - `msg_type=file` PDF uploads with no text stage one short-lived follow-up context (5 minutes, keyed by `chat_id + sender_open_id`)
    - text follow-up asks such as `請深讀` / `幫我解讀一下這個` can recover that staged PDF context or recent file-card context before execution
+   - if the follow-up text itself contains the word `PDF` but the current turn still has zero real attachment refs, runtime now still treats it as a recent-context recovery candidate instead of mistaking it for a self-contained PDF modality turn
    - the lane requires verified user auth for message-resource PDF reads and fail-softs with explicit reauth/scope guidance when auth is missing
 5. `/Users/seanhan/Documents/Playground/src/pdf-read-service.mjs` performs bounded PDF read/parse:
    - supports `url`, `local_path`, `file_token`, `file_key`

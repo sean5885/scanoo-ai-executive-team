@@ -39,6 +39,7 @@ const {
   shouldFallbackImageTaskToTextLane,
   shouldBypassSessionScopedPersonalShortcut,
   looksLikePdfContextualFollowUp,
+  shouldRecoverRecentPdfFollowUpContext,
   shouldStageImageUploadForFollowUp,
   shouldStagePdfUploadForFollowUp,
 } = await import("../src/lane-executor.mjs");
@@ -351,6 +352,39 @@ test("pdf contextual follow-up detects generic explain request", () => {
 
 test("pdf contextual follow-up does not hijack unrelated chat", () => {
   assert.equal(looksLikePdfContextualFollowUp("今天先聊天"), false);
+});
+
+test("pdf recent-context recovery applies to generic explain follow-up text", () => {
+  assert.equal(
+    shouldRecoverRecentPdfFollowUpContext({
+      modality: "text",
+      followUpText: "幫我解讀一下這個",
+      pdfInputCount: 0,
+    }),
+    true,
+  );
+});
+
+test("pdf recent-context recovery still applies when text mentions PDF but has no attachment refs", () => {
+  assert.equal(
+    shouldRecoverRecentPdfFollowUpContext({
+      modality: "pdf",
+      followUpText: "請深讀，幫我解讀一下這個 PDF",
+      pdfInputCount: 0,
+    }),
+    true,
+  );
+});
+
+test("pdf recent-context recovery stays off when current turn already has attachment refs", () => {
+  assert.equal(
+    shouldRecoverRecentPdfFollowUpContext({
+      modality: "pdf",
+      followUpText: "請深讀",
+      pdfInputCount: 1,
+    }),
+    false,
+  );
 });
 
 test("missing final_owner throws immediately", () => {

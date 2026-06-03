@@ -3698,6 +3698,21 @@ export function shouldStagePdfUploadForFollowUp({
     && Number(pdfInputCount) > 0;
 }
 
+export function shouldRecoverRecentPdfFollowUpContext({
+  modality = "",
+  followUpText = "",
+  pdfInputCount = 0,
+} = {}) {
+  if (Number(pdfInputCount) > 0) {
+    return false;
+  }
+  const normalizedModality = cleanText(modality).toLowerCase();
+  if (!["text", "pdf"].includes(normalizedModality)) {
+    return false;
+  }
+  return looksLikePdfContextualFollowUp(followUpText);
+}
+
 export function shouldBypassSessionScopedPersonalShortcut({ event = null, normalizedText = "" } = {}) {
   const modality = classifyInputModality(event || {});
   if (["pdf", "pdf_multimodal", "image", "multimodal"].includes(modality.modality)) {
@@ -3947,15 +3962,18 @@ async function executePdfTaskReply({ event, logger = noopLogger }) {
     pdfInputCount: pdfInputs.length,
   });
 
-  const isDeepReadFollowUp = modality.modality === "text"
+  const shouldRecoverRecentPdfContext = shouldRecoverRecentPdfFollowUpContext({
+    modality: modality.modality,
+    followUpText,
+    pdfInputCount: pdfInputs.length,
+  });
+  const isDeepReadFollowUp = shouldRecoverRecentPdfContext
     && looksLikePdfDeepReadFollowUp(followUpText);
-  const needsFollowUpRecovery = !pdfInputs.length
-    && modality.modality === "text"
-    && looksLikePdfDeepReadFollowUp(followUpText);
-  const stagedPdfContext = (modality.modality === "text" && !pdfInputs.length)
+  const needsFollowUpRecovery = shouldRecoverRecentPdfContext;
+  const stagedPdfContext = (shouldRecoverRecentPdfContext && !pdfInputs.length)
     ? readRecentPdfFollowUpContext(event)
     : null;
-  const shouldUseStagedPdfContext = modality.modality === "text"
+  const shouldUseStagedPdfContext = shouldRecoverRecentPdfContext
     && !pdfInputs.length
     && stagedPdfContext?.pdfInputs?.length
     && looksLikePdfContextualFollowUp(followUpText);
