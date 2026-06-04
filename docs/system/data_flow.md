@@ -40,10 +40,11 @@ Current additive path:
    - `pdf`
    - `pdf_multimodal`
 4. `/Users/seanhan/Documents/Playground/src/lane-executor.mjs -> executePdfTaskReply(...)` is the checked-in PDF execution lane:
-   - `msg_type=file` PDF uploads with no text stage one short-lived follow-up context (5 minutes, keyed by `chat_id + sender_open_id`)
+   - `msg_type=file` PDF uploads always stage one short-lived follow-up context (5 minutes, keyed by `chat_id + sender_open_id`) before any heavy read attempt, even when the file-card event carries filename-like text
    - text follow-up asks such as `請深讀` / `幫我解讀一下這個` can recover that staged PDF context or recent file-card context before execution
    - if the follow-up text itself contains the word `PDF` but the current turn still has zero real attachment refs, runtime now still treats it as a recent-context recovery candidate instead of mistaking it for a self-contained PDF modality turn
    - the lane requires verified user auth for message-resource PDF reads and fail-softs with explicit reauth/scope guidance when auth is missing
+   - transient attachment download failures (`502/503/504/429/upstream/timeout`) now keep the staged PDF context in a local `pending_retry` state so the next short retry ask can reuse the same attachment refs instead of forcing a re-upload immediately
 5. `/Users/seanhan/Documents/Playground/src/pdf-read-service.mjs` performs bounded PDF read/parse:
    - supports `url`, `local_path`, `file_token`, `file_key`
    - prioritizes `file_key -> file_token -> url -> local_path`
@@ -681,6 +682,7 @@ Current path:
 13. the bounded skill action returns canonical `answer / sources / limitations`
 14. `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs` renders the final text reply
 15. `/Users/seanhan/Documents/Playground/src/runtime-message-reply.mjs` sends the reply through the existing guarded Lark mutation path
+16. after a successful send, the same reply runtime now suppresses one short-window duplicate when the same DM sender in the same chat would otherwise receive identical reply text again; this is a local UX guardrail, not a write-authority replacement
 
 Current truth:
 

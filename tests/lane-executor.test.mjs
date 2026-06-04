@@ -40,6 +40,7 @@ const {
   shouldFallbackImageTaskToTextLane,
   shouldBypassSessionScopedPersonalShortcut,
   shouldAttemptModelFirstDMIngress,
+  shouldKeepPdfFollowUpPending,
   looksLikePdfContextualFollowUp,
   shouldRecoverRecentPdfFollowUpContext,
   shouldStageImageUploadForFollowUp,
@@ -315,15 +316,27 @@ test("session-scoped personal shortcut is not bypassed for plain text", () => {
 test("pdf file upload is staged for follow-up when no inline text is provided", () => {
   const staged = shouldStagePdfUploadForFollowUp({
     modality: "pdf",
+    eventMsgType: "file",
     followUpText: "",
     pdfInputCount: 1,
   });
   assert.equal(staged, true);
 });
 
-test("pdf upload with inline text is not staged for follow-up", () => {
+test("pdf file upload stays staged even when file-card text is present", () => {
+  const staged = shouldStagePdfUploadForFollowUp({
+    modality: "pdf",
+    eventMsgType: "file",
+    followUpText: "Scanoo_商家後台使用手冊_v3.0.pptx(1).pdf",
+    pdfInputCount: 1,
+  });
+  assert.equal(staged, true);
+});
+
+test("pdf upload with inline text is not auto-staged outside file events", () => {
   const staged = shouldStagePdfUploadForFollowUp({
     modality: "pdf_multimodal",
+    eventMsgType: "text",
     followUpText: "請直接整理重點",
     pdfInputCount: 1,
   });
@@ -387,6 +400,19 @@ test("pdf recent-context recovery stays off when current turn already has attach
     }),
     false,
   );
+});
+
+test("transient pdf read failures stay pending for follow-up retry", () => {
+  assert.equal(shouldKeepPdfFollowUpPending({
+    ok: false,
+    error: "pdf_read_failed",
+    limitations: ["Scanoo.pdf：Lark 訊息附件服務目前回傳 502（upstream 連線中斷）。"],
+  }), true);
+  assert.equal(shouldKeepPdfFollowUpPending({
+    ok: false,
+    error: "pdf_read_failed",
+    limitations: ["Scanoo.pdf：缺少訊息附件讀取權限。"],
+  }), false);
 });
 
 test("model-first DM ingress is eligible for substantive direct-message attachment continuation", () => {

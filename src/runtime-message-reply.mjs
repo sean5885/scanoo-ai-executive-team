@@ -10,6 +10,9 @@ import {
 } from "./lark-user-auth.mjs";
 import { createRequestId, formatIdentifierHint } from "./runtime-observability.mjs";
 
+const RECENT_REPLY_SUPPRESSION_WINDOW_MS = 20 * 1000;
+const recentReplySuppressionStore = new Map();
+
 function cleanText(value) {
   return String(value || "").trim();
 }
@@ -106,6 +109,32 @@ function buildReplySendFailureError(message = "reply_send_failed", details = {})
   return error;
 }
 
+function buildRecentReplySuppressionKey({
+  event = null,
+  reply = {},
+} = {}) {
+  const chatId = cleanText(event?.message?.chat_id);
+  const senderOpenId = cleanText(event?.sender?.sender_id?.open_id || event?.message?.sender_open_id);
+  const mode = cleanText(reply?.replyMode) || "text";
+  const text = cleanText(reply?.text).replace(/\s+/g, " ").slice(0, 280);
+  if (!chatId || !senderOpenId || !mode || !text) {
+    return "";
+  }
+  return `${chatId}::${senderOpenId}::${mode}::${text}`;
+}
+
+function sweepRecentReplySuppression(now = Date.now()) {
+  for (const [key, expiresAt] of recentReplySuppressionStore.entries()) {
+    if (Number(expiresAt || 0) <= now) {
+      recentReplySuppressionStore.delete(key);
+    }
+  }
+}
+
+export function resetRecentReplySuppressionForTests() {
+  recentReplySuppressionStore.clear();
+}
+
 export async function resolveRuntimeReplyAuth({
   reply = {},
   event = null,
@@ -163,6 +192,7 @@ export async function sendLaneReply({
   resolveReplyAuth = resolveRuntimeReplyAuth,
   executeMessageSend = executeCanonicalLarkMessageSend,
   executeMessageReply = executeCanonicalLarkMessageReply,
+  nowMs = Date.now(),
 } = {}) {
   const chatId = cleanText(event?.message?.chat_id);
   const messageId = cleanText(event?.message?.message_id);
@@ -176,6 +206,25 @@ export async function sendLaneReply({
 
   const eventLogger = normalizeLogger(logger);
   const requestId = createRequestId("reply");
+  const replySuppressionKey = buildRecentReplySuppressionKey({ event, reply });
+  sweepRecentReplySuppression(nowMs);
+  if (replySuppressionKey) {
+    const existingExpiry = recentReplySuppressionStore.get(replySuppressionKey);
+    if (Number(existingExpiry || 0) > nowMs) {
+      eventLogger.info("reply_send_suppressed", {
+        request_id: requestId,
+        trace_id: cleanText(traceId) || null,
+        event_id: messageId || null,
+        chat_id: chatId || null,
+        suppression_reason: "duplicate_reply_within_window",
+      });
+      return {
+        request_id: requestId,
+        suppressed: true,
+        reason: "duplicate_reply_within_window",
+      };
+    }
+  }
   const auth = await resolveReplyAuth({ reply, event });
   const idempotencyKey = buildLaneReplyIdempotencyKey({
     event,
@@ -266,6 +315,12 @@ export async function sendLaneReply({
     api_http_status: Number.isFinite(Number(evidence?.http_status)) ? Number(evidence.http_status) : null,
     api_raw_response: rawApiResponse,
   });
+  if (replySuppressionKey) {
+    recentReplySuppressionStore.set(
+      replySuppressionKey,
+      nowMs + RECENT_REPLY_SUPPRESSION_WINDOW_MS,
+    );
+  }
 
   return {
     request_id: requestId,

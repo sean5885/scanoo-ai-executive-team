@@ -3846,6 +3846,8 @@ function rememberRecentPdfFollowUpContext({
   event = null,
   pdfInputs = [],
   messageId = "",
+  downloadState = "",
+  lastFailure = "",
 } = {}) {
   const key = buildRecentPdfFollowUpContextKey(event);
   if (!key || !Array.isArray(pdfInputs) || pdfInputs.length === 0) {
@@ -3854,6 +3856,8 @@ function rememberRecentPdfFollowUpContext({
   const entry = {
     pdfInputs: [...pdfInputs],
     messageId: cleanText(messageId || event?.message?.message_id || ""),
+    downloadState: cleanText(downloadState || ""),
+    lastFailure: cleanText(lastFailure || ""),
     updatedAtMs: Date.now(),
   };
   recentPdfFollowUpContextStore.set(key, entry);
@@ -3876,17 +3880,40 @@ function readRecentPdfFollowUpContext(event = null) {
   return {
     pdfInputs: Array.isArray(entry.pdfInputs) ? [...entry.pdfInputs] : [],
     messageId: cleanText(entry.messageId || ""),
+    downloadState: cleanText(entry.downloadState || ""),
+    lastFailure: cleanText(entry.lastFailure || ""),
   };
 }
 
 export function shouldStagePdfUploadForFollowUp({
   modality = "",
+  eventMsgType = "",
   followUpText = "",
   pdfInputCount = 0,
 } = {}) {
+  if (Number(pdfInputCount) <= 0) {
+    return false;
+  }
+  if (cleanText(eventMsgType).toLowerCase() === "file") {
+    return true;
+  }
   return cleanText(modality).toLowerCase() === "pdf"
-    && cleanText(followUpText) === ""
-    && Number(pdfInputCount) > 0;
+    && cleanText(followUpText) === "";
+}
+
+export function shouldKeepPdfFollowUpPending(readResult = null) {
+  if (!readResult || readResult.ok === true || cleanText(readResult.error) !== "pdf_read_failed") {
+    return false;
+  }
+  const combined = (Array.isArray(readResult.limitations) ? readResult.limitations : [])
+    .map((item) => cleanText(item))
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+  if (!combined) {
+    return false;
+  }
+  return /(502|503|504|429|upstream|連線中斷|连接中断|timeout|逾時|超時|稍後重試|稍后重试)/i.test(combined);
 }
 
 export function shouldRecoverRecentPdfFollowUpContext({
@@ -4149,6 +4176,7 @@ async function executePdfTaskReply({ event, logger = noopLogger, forceRecentCont
     : cleanText(event?.message_text || explicitEventText || modality.text || "");
   const shouldStageUpload = shouldStagePdfUploadForFollowUp({
     modality: modality.modality,
+    eventMsgType,
     followUpText,
     pdfInputCount: pdfInputs.length,
   });
@@ -4233,6 +4261,7 @@ async function executePdfTaskReply({ event, logger = noopLogger, forceRecentCont
       event,
       pdfInputs,
       messageId: sourceMessageId,
+      downloadState: "staged",
     });
     return {
       text: renderUserResponseText(normalizeUserResponse({
@@ -4275,6 +4304,31 @@ async function executePdfTaskReply({ event, logger = noopLogger, forceRecentCont
     messageId: sourceMessageId,
     question: explicitQuestion,
   });
+
+  if (shouldKeepPdfFollowUpPending(pdfReply?.read_result)) {
+    rememberRecentPdfFollowUpContext({
+      event,
+      pdfInputs,
+      messageId: sourceMessageId,
+      downloadState: "pending_retry",
+      lastFailure: Array.isArray(pdfReply?.read_result?.limitations) ? pdfReply.read_result.limitations[0] : "",
+    });
+    return {
+      text: renderUserResponseText(normalizeUserResponse({
+        plannerEnvelope: null,
+        payload: {
+          answer: "我已收到這份 PDF，也保留了附件上下文；這輪卡在 Lark 附件下載暫時失敗，所以先不假裝已讀完。",
+          sources: [],
+          limitations: [
+            ...((Array.isArray(pdfReply?.read_result?.limitations) ? pdfReply.read_result.limitations : []).slice(0, 2)),
+            "你可以稍後直接回覆「再試一次」或重傳同一份 PDF，我會沿用這份附件上下文接續處理。",
+          ],
+        },
+        logger,
+        handlerName: "pdfPendingRetryBoundary",
+      })),
+    };
+  }
 
   logger.info("pdf_task_routed", {
     modality: shouldUseStagedPdfContext

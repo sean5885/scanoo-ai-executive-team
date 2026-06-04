@@ -5,11 +5,16 @@ import { createTestDbHarness } from "./utils/test-db-factory.mjs";
 
 const testDb = await createTestDbHarness();
 const {
+  resetRecentReplySuppressionForTests,
   sendLaneReply,
 } = await import("../src/runtime-message-reply.mjs");
 
 test.after(() => {
   testDb.close();
+});
+
+test.beforeEach(() => {
+  resetRecentReplySuppressionForTests();
 });
 
 function createLoggerCalls() {
@@ -280,4 +285,84 @@ test("sendLaneReply rejects responses whose target chat does not match the reque
   assert.equal(calls[1].payload.error, "target_mismatch");
   assert.equal(calls[1].payload.result_chat_id, "oc_chat_actual");
   assert.equal(calls.some((entry) => entry.event === "reply_send_succeeded"), false);
+});
+
+test("sendLaneReply suppresses identical recent replies in the same DM window", async () => {
+  const { calls, logger } = createLoggerCalls();
+  const captured = [];
+  const authResolver = async () => ({
+    accountId: "acct_dup_1",
+    accessToken: { accessToken: "tenant-token", tokenType: "tenant" },
+    tokenType: "tenant",
+    source: "tenant_bot_token",
+  });
+  const sendStub = async (input) => {
+    captured.push(input);
+    const index = captured.length;
+    return {
+      ok: true,
+      result: attachSendEvidence({
+        message_id: `om_reply_dup_${index}`,
+        chat_id: "oc_chat_dup_1",
+        msg_type: "text",
+      }, {
+        http_status: 200,
+        raw_response: {
+          code: 0,
+          data: {
+            message_id: `om_reply_dup_${index}`,
+            chat_id: "oc_chat_dup_1",
+            msg_type: "text",
+          },
+        },
+      }),
+    };
+  };
+
+  const first = await sendLaneReply({
+    event: {
+      sender: {
+        sender_id: {
+          open_id: "ou_user_dup_1",
+        },
+      },
+      message: {
+        chat_id: "oc_chat_dup_1",
+        message_id: "om_event_dup_1",
+      },
+    },
+    reply: {
+      text: "我已收到 PDF 檔案，先幫你接住上下文。",
+    },
+    logger,
+    nowMs: 1000,
+    resolveReplyAuth: authResolver,
+    executeMessageSend: sendStub,
+  });
+
+  const second = await sendLaneReply({
+    event: {
+      sender: {
+        sender_id: {
+          open_id: "ou_user_dup_1",
+        },
+      },
+      message: {
+        chat_id: "oc_chat_dup_1",
+        message_id: "om_event_dup_2",
+      },
+    },
+    reply: {
+      text: "我已收到 PDF 檔案，先幫你接住上下文。",
+    },
+    logger,
+    nowMs: 1500,
+    resolveReplyAuth: authResolver,
+    executeMessageSend: sendStub,
+  });
+
+  assert.equal(first?.suppressed, undefined);
+  assert.equal(second?.suppressed, true);
+  assert.equal(captured.length, 1);
+  assert.equal(calls.some((entry) => entry.event === "reply_send_suppressed"), true);
 });
