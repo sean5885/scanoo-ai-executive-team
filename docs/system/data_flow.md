@@ -337,6 +337,7 @@ Current public `/answer` path:
    - completed-tone wording is blocked in verifier-fail/fake-completion/partial-completion paths
 13. `renderPlannerUserFacingReplyText(...)` keeps fixed public order:
    - `答案（先解法） -> 來源（依據） -> 待確認/限制（下一步）`
+   - final source rendering preserves both canonical source objects and already-normalized source strings from upstream answer shaping; it no longer drops evidence lines merely because they were normalized earlier in the pipeline
 
 Current truth:
 
@@ -654,19 +655,32 @@ Current path:
 1. inbound `im.message.receive_v1` event enters `/Users/seanhan/Documents/Playground/src/index.mjs`
 2. `/Users/seanhan/Documents/Playground/src/binding-runtime.mjs` resolves the chat as direct-message scope
 3. `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` still resolves the lane as `personal-assistant`, but text-only direct-message turns no longer stay on that deterministic lane by default
-4. after meeting / workflow / modality / write-intent fast-path checks, any direct-message turn whose personal-lane plan would otherwise be `general_assistant_action` now stays on `/Users/seanhan/Documents/Playground/src/lane-executor.mjs -> executePersonalAssistant(...)`, where the shared text-generation helper answers directly through the primary text model when available; this avoids the planner answer edge over-fitting generic strategy asks into document/company-brain lookup
-5. before that planner-first handoff, the runtime still gives one bounded local pre-pass to `/Users/seanhan/Documents/Playground/src/planner/personal-dm-skill-intent.mjs`, but only after a cheap lexical gate confirms the DM explicitly looks like `find/install/verify skill`
-5A. greeting/closing-only DM turns are excluded from that classifier pre-pass and stay on direct assistant greeting/ack replies to avoid unnecessary planner/classifier latency and style drift
-6. the MiniMax text path classifies the DM into exactly one of:
+4. after meeting / workflow fast-path checks, the DM entrypoint now gives one model-first ingress pass in `/Users/seanhan/Documents/Playground/src/lane-executor.mjs -> planModelFirstDMIngress(...)` before same-session shortcutting or deterministic attachment heuristics
+5. that ingress only activates when:
+   - scope is direct-message
+   - the primary text model is available
+   - the currently expected owner is still `personal-assistant` or `knowledge-assistant`
+   - no explicit workflow mode / active workflow task is already steering the turn
+6. the ingress model emits one bounded route decision:
+   - `pdf_task`
+   - `image_task`
+   - `knowledge_assistant`
+   - `personal_assistant`
+   - `respect_existing_lane`
+7. when the ingress picks `pdf_task` / `image_task`, the lane forces recent attachment-context recovery even for short natural follow-ups such as `請全部讀完`, instead of requiring the local keyword gate to match first
+8. after that ingress override, direct-message turns whose personal-lane plan would otherwise be `general_assistant_action` stay on `/Users/seanhan/Documents/Playground/src/lane-executor.mjs -> executePersonalAssistant(...)`, where the shared text-generation helper answers directly through the primary text model when available; this avoids the planner answer edge over-fitting generic strategy asks into document/company-brain lookup
+9. before that personal direct-answer path, the runtime still gives one bounded local pre-pass to `/Users/seanhan/Documents/Playground/src/planner/personal-dm-skill-intent.mjs`, but only after a cheap lexical gate confirms the DM explicitly looks like `find/install/verify skill`
+9A. greeting/closing-only DM turns are excluded from that classifier pre-pass and stay on direct assistant greeting/ack replies to avoid unnecessary planner/classifier latency and style drift
+10. the MiniMax text path classifies the DM into exactly one of:
    - `skill_find_request`
    - `skill_install_request`
    - `skill_verify_request`
    - `not_skill_task`
-7. only the three explicit skill intents may continue into `/Users/seanhan/Documents/Playground/src/local-skill-actions.mjs`
-8. when the pre-pass returns `not_skill_task`, the same DM turn stays inside `/Users/seanhan/Documents/Playground/src/lane-executor.mjs -> executePersonalAssistant(...)`; the shared text-generation helper may answer directly through the primary text model, otherwise the lane falls back to bounded personal-assistant scaffolds
-9. the bounded skill action returns canonical `answer / sources / limitations`
-10. `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs` renders the final text reply
-11. `/Users/seanhan/Documents/Playground/src/runtime-message-reply.mjs` sends the reply through the existing guarded Lark mutation path
+11. only the three explicit skill intents may continue into `/Users/seanhan/Documents/Playground/src/local-skill-actions.mjs`
+12. when the pre-pass returns `not_skill_task`, the same DM turn stays inside `/Users/seanhan/Documents/Playground/src/lane-executor.mjs -> executePersonalAssistant(...)`; the shared text-generation helper may answer directly through the primary text model, otherwise the lane falls back to bounded personal-assistant scaffolds
+13. the bounded skill action returns canonical `answer / sources / limitations`
+14. `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs` renders the final text reply
+15. `/Users/seanhan/Documents/Playground/src/runtime-message-reply.mjs` sends the reply through the existing guarded Lark mutation path
 
 Current truth:
 
@@ -683,8 +697,9 @@ Current truth:
   - install writes only to `~/.codex/skills`
   - no arbitrary command surface, no arbitrary path writes, no package-manager install path
 - `not_skill_task` keeps the existing hard boundaries (meeting / cloud-doc / modality / guarded write intents) unchanged, and generic direct-message turns now prefer the personal direct-model reply path over the old deterministic personal-lane catch-all
+- the same direct-message path now also has one model-first ingress override before deterministic attachment heuristics, so short follow-ups like `請全部讀完` can be routed back into recent PDF/image context even when local phrase matching would otherwise miss
 - when the primary text-model credential is absent, `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` now also skips the slow personal-lane OpenClaw text-generation attempt for `general_assistant_action`; the residual deterministic scaffold remains immediate instead of waiting on model timeout
-- the same DM entrypoint now emits local trace events `personal_dm_path_decision`, `personal_dm_path_selected`, and `personal_dm_planner_health_observed`, so request traces can distinguish `model_first` vs `skill_task` vs `personal_fallback` (and still record any future planner-first experiments) without pretending existing control diagnostics already cover conversation quality
+- the same DM entrypoint now emits local trace events `personal_dm_path_decision`, `personal_dm_path_selected`, `personal_dm_planner_health_observed`, and `model_first_dm_ingress_selected`, so request traces can distinguish attachment-ingress override vs direct-model reply vs skill_task vs fallback without pretending existing control diagnostics already cover conversation quality
 - `find-skills` remains an agent skill/spec in the Codex environment; this runtime path does not directly execute that skill as a generic task owner
 - this minimal version covers controlled skill find / install / verify and should not be described as a generic write-capable planner execution surface
 

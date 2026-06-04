@@ -40,10 +40,7 @@ import {
   normalizeTaskLayerResult,
   toUserFacing as taskLayerResultToUserFacing,
 } from "./task-layer/task-to-answer.mjs";
-import {
-  buildCanonicalAnswerSources,
-  mapCanonicalAnswerSourcesToLines,
-} from "./answer-source-mapper.mjs";
+import { normalizeUserFacingAnswerSources } from "./answer-source-mapper.mjs";
 import {
   readPlannerWorkingMemoryForRouting,
   compactPlannerConversationMemory as compactPlannerConversationMemoryLayer,
@@ -1100,13 +1097,11 @@ export function renderPlannerUserFacingReplyText({
   sources = [],
   limitations = [],
 } = {}) {
-  const objectSources = (Array.isArray(sources) ? sources : [])
-    .filter((item) => item && typeof item === "object" && !Array.isArray(item));
   const normalizedSources = normalizePlannerUserFacingList(
-    mapCanonicalAnswerSourcesToLines(
-      buildCanonicalAnswerSources(objectSources),
-      { maxSources: 3 },
-    ),
+    normalizeUserFacingAnswerSources(sources, {
+      maxSources: 3,
+      allowStringSources: true,
+    }),
   );
   const normalizedLimitations = normalizePlannerUserFacingList(limitations);
 

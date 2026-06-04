@@ -2157,6 +2157,42 @@ async function maybeBuildModelBackedGeneralAssistantReply(text = "") {
   }
 }
 
+function extractJsonObjectFromModelText(text = "") {
+  const normalized = String(text || "").trim();
+  const start = normalized.indexOf("{");
+  const end = normalized.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error("model_first_dm_ingress_missing_json_object");
+  }
+  return JSON.parse(normalized.slice(start, end + 1));
+}
+
+function looksLikeAttachmentContinuationRequest(text = "") {
+  const normalized = cleanText(String(text || "").toLowerCase());
+  if (!normalized) {
+    return false;
+  }
+  return [
+    "全部讀完",
+    "全部读完",
+    "完整讀完",
+    "完整读完",
+    "把整份看完",
+    "把整份读完",
+    "讀完它",
+    "读完它",
+    "看完它",
+    "全部看完",
+    "整份看完",
+    "繼續讀",
+    "继续读",
+    "繼續看",
+    "继续看",
+    "把剩下的看完",
+    "把剩下的读完",
+  ].some((signal) => normalized.includes(signal.toLowerCase()));
+}
+
 export function shouldEscalatePersonalLaneToKnowledge(lanePlan = {}) {
   return cleanText(lanePlan?.fallback_reason || "") === "semantic_mismatch_document_request_in_personal_lane";
 }
@@ -2164,6 +2200,161 @@ export function shouldEscalatePersonalLaneToKnowledge(lanePlan = {}) {
 function isDirectMessageScope(scope = {}) {
   const chatType = cleanText(scope?.chat_type || "");
   return chatType === "dm" || chatType === "p2p";
+}
+
+export function shouldAttemptModelFirstDMIngress({
+  event = null,
+  scope = null,
+  expectedOwner = "",
+  activeWorkflowMode = "",
+  activeTask = null,
+  plannerAvailable = hasPrimaryPlannerTextModelAvailable(),
+} = {}) {
+  if (!plannerAvailable) {
+    return false;
+  }
+  if (!isDirectMessageScope(scope)) {
+    return false;
+  }
+  if (!["personal-assistant", "knowledge-assistant"].includes(cleanText(expectedOwner || ""))) {
+    return false;
+  }
+  const text = cleanText(incomingText(event));
+  if (!text || looksLikeGreeting(text) || looksLikeClosingAck(text)) {
+    return false;
+  }
+  if (text.startsWith("/")) {
+    return false;
+  }
+  if (cleanText(activeWorkflowMode)) {
+    return false;
+  }
+  if (cleanText(activeTask?.workflow || "")) {
+    return false;
+  }
+  if (looksLikeDeleteMeetingDocRequest(text) || looksLikeChatOnlyFailurePreference(text)) {
+    return false;
+  }
+  return true;
+}
+
+function normalizeModelFirstDMIngressRoute(value = "") {
+  const normalized = cleanText(value).toLowerCase();
+  if ([
+    "pdf_task",
+    "image_task",
+    "knowledge_assistant",
+    "personal_assistant",
+    "respect_existing_lane",
+  ].includes(normalized)) {
+    return normalized;
+  }
+  return "respect_existing_lane";
+}
+
+function buildModelFirstDMIngressPrompt({
+  text = "",
+  scope = null,
+  expectedOwner = "",
+  modality = null,
+  hasStagedRecentPdf = false,
+  hasStagedRecentImage = false,
+  canLookupRecentPdfMessage = false,
+  canLookupRecentImageMessage = false,
+} = {}) {
+  const normalizedText = cleanText(text);
+  const normalizedModality = cleanText(modality?.modality || "text") || "text";
+  const currentPdfCount = Array.isArray(modality?.pdfInputs) ? modality.pdfInputs.length : 0;
+  const currentImageCount = Array.isArray(modality?.imageInputs) ? modality.imageInputs.length : 0;
+  const continuationHint = looksLikeAttachmentContinuationRequest(normalizedText);
+
+  return [
+    "你是 Lobster 的 direct-message ingress router。",
+    "任務：決定這一輪應該先走哪條執行路徑，再由下游真正執行。",
+    "只輸出單一合法 JSON object，不要 Markdown、不要 code fence、不要前後文。",
+    '格式：{"route":"pdf_task|image_task|knowledge_assistant|personal_assistant|respect_existing_lane","needs_recent_context":true,"reason":"..."}',
+    "判斷規則：",
+    "- 若這句明顯是在延續上一份 PDF/檔案，優先 route=pdf_task。",
+    "- 若這句明顯是在延續上一張圖片，優先 route=image_task。",
+    "- 若使用者是短句延續（例如：請全部讀完、幫我解讀一下這個、繼續看、看完它）且系統可查最近附件上下文，優先選對應附件 route，不要退回一般知識查詢。",
+    "- 只有明確在查 company-brain/文件知識/搜尋時才選 knowledge_assistant。",
+    "- 一般聊天、策略、整理、草稿、說明，選 personal_assistant。",
+    "- 若既有 lane 已明確正確且不需要改變，再選 respect_existing_lane。",
+    "",
+    `user_text: ${normalizedText}`,
+    `current_scope_lane: ${cleanText(scope?.capability_lane || "") || "unknown"}`,
+    `expected_owner: ${cleanText(expectedOwner || "") || "unknown"}`,
+    `current_modality: ${normalizedModality}`,
+    `current_pdf_input_count: ${currentPdfCount}`,
+    `current_image_input_count: ${currentImageCount}`,
+    `has_staged_recent_pdf: ${hasStagedRecentPdf ? "true" : "false"}`,
+    `has_staged_recent_image: ${hasStagedRecentImage ? "true" : "false"}`,
+    `can_lookup_recent_pdf_message: ${canLookupRecentPdfMessage ? "true" : "false"}`,
+    `can_lookup_recent_image_message: ${canLookupRecentImageMessage ? "true" : "false"}`,
+    `continuation_hint: ${continuationHint ? "true" : "false"}`,
+  ].join("\n");
+}
+
+export async function planModelFirstDMIngress({
+  event = null,
+  scope = null,
+  expectedOwner = "",
+  activeWorkflowMode = "",
+  activeTask = null,
+  logger = noopLogger,
+  generateTextFn = generateText,
+  plannerAvailable = hasPrimaryPlannerTextModelAvailable(),
+  recentPdfContextReader = readRecentPdfFollowUpContext,
+  recentImageContextReader = readRecentImageFollowUpContext,
+} = {}) {
+  if (!shouldAttemptModelFirstDMIngress({
+    event,
+    scope,
+    expectedOwner,
+    activeWorkflowMode,
+    activeTask,
+    plannerAvailable,
+  })) {
+    return null;
+  }
+
+  const text = cleanText(incomingText(event));
+  const modality = classifyInputModality(event || {});
+  const stagedRecentPdf = recentPdfContextReader(event);
+  const stagedRecentImage = recentImageContextReader(event);
+  const canLookupRecentMessages = Boolean(cleanText(event?.message?.chat_id));
+  try {
+    const rawText = await generateTextFn({
+      systemPrompt: [
+        "你是嚴格的 direct-message ingress router。",
+        "你負責先判斷這輪是附件延續、知識查詢、還是一般助理對話。",
+        "你不能假裝已讀文件，只能做 route 決策。",
+      ].join("\n"),
+      prompt: buildModelFirstDMIngressPrompt({
+        text,
+        scope,
+        expectedOwner,
+        modality,
+        hasStagedRecentPdf: Boolean(stagedRecentPdf?.pdfInputs?.length),
+        hasStagedRecentImage: Boolean(stagedRecentImage?.imageInputs?.length),
+        canLookupRecentPdfMessage: canLookupRecentMessages,
+        canLookupRecentImageMessage: canLookupRecentMessages,
+      }),
+      sessionIdSuffix: "model-first-dm-ingress",
+      temperature: 0.1,
+    });
+    const payload = extractJsonObjectFromModelText(rawText);
+    return {
+      route: normalizeModelFirstDMIngressRoute(payload?.route || ""),
+      needs_recent_context: payload?.needs_recent_context !== false,
+      reason: cleanText(payload?.reason || ""),
+    };
+  } catch (error) {
+    logger.warn("model_first_dm_ingress_failed", {
+      error: logger.compactError(error),
+    });
+    return null;
+  }
 }
 
 function looksLikeExplicitSkillTaskRequest(text = "") {
@@ -3801,7 +3992,7 @@ async function resolveRecentPdfFollowUpContext({
   return null;
 }
 
-async function executeImageTaskReply({ event, logger = noopLogger }) {
+async function executeImageTaskReply({ event, logger = noopLogger, forceRecentContext = false }) {
   const modality = classifyInputModality(event);
   const eventMsgType = cleanText(event?.msg_type || event?.message?.msg_type || "").toLowerCase();
   const explicitEventText = cleanText(
@@ -3820,20 +4011,20 @@ async function executeImageTaskReply({ event, logger = noopLogger }) {
     followUpText,
     imageInputCount: imageInputs.length,
   });
-  const stagedImageContext = (modality.modality === "text" && imageInputs.length === 0)
+  const stagedImageContext = ((modality.modality === "text" || forceRecentContext) && imageInputs.length === 0)
     ? readRecentImageFollowUpContext(event)
     : null;
-  const shouldUseStagedImageContext = modality.modality === "text"
+  const shouldUseStagedImageContext = (modality.modality === "text" || forceRecentContext)
     && imageInputs.length === 0
     && stagedImageContext?.imageInputs?.length
-    && looksLikeImageContextualFollowUp(followUpText);
+    && (forceRecentContext || looksLikeImageContextualFollowUp(followUpText));
 
   if (shouldUseStagedImageContext) {
     imageInputs = stagedImageContext.imageInputs;
     sourceMessageId = cleanText(stagedImageContext.messageId || sourceMessageId);
   }
 
-  if (!imageInputs.length && modality.modality !== "image" && modality.modality !== "multimodal") {
+  if (!imageInputs.length && modality.modality !== "image" && modality.modality !== "multimodal" && !forceRecentContext) {
     return null;
   }
 
@@ -3935,7 +4126,7 @@ async function executeImageTaskReply({ event, logger = noopLogger }) {
   });
 }
 
-async function executePdfTaskReply({ event, logger = noopLogger }) {
+async function executePdfTaskReply({ event, logger = noopLogger, forceRecentContext = false }) {
   const modality = classifyInputModality(event);
   const context = await resolveAuthContext(event, logger, { allowTenantFallback: false }).catch((error) => {
     logger.warn("pdf_task_auth_context_failed", {
@@ -3962,7 +4153,7 @@ async function executePdfTaskReply({ event, logger = noopLogger }) {
     pdfInputCount: pdfInputs.length,
   });
 
-  const shouldRecoverRecentPdfContext = shouldRecoverRecentPdfFollowUpContext({
+  const shouldRecoverRecentPdfContext = forceRecentContext || shouldRecoverRecentPdfFollowUpContext({
     modality: modality.modality,
     followUpText,
     pdfInputCount: pdfInputs.length,
@@ -3978,12 +4169,12 @@ async function executePdfTaskReply({ event, logger = noopLogger }) {
     && stagedPdfContext?.pdfInputs?.length
     && looksLikePdfContextualFollowUp(followUpText);
 
-  if (isDeepReadFollowUp && !accessToken) {
+  if ((isDeepReadFollowUp || forceRecentContext) && !accessToken) {
     return {
       text: renderUserResponseText(normalizeUserResponse({
         plannerEnvelope: null,
         payload: {
-          answer: "我有收到 PDF 深讀追問，但目前缺少可驗證的使用者授權，這輪不能安全讀檔。",
+          answer: "我有收到延續上一份 PDF 的追問，但目前缺少可驗證的使用者授權，這輪不能安全讀檔。",
           sources: [],
           limitations: [
             "請先完成 /oauth/lark/login 的使用者授權，讓系統拿到可讀取私訊附件的 user token。",
@@ -4015,15 +4206,15 @@ async function executePdfTaskReply({ event, logger = noopLogger }) {
     sourceMessageId = cleanText(stagedPdfContext.messageId || sourceMessageId);
   }
 
-  if (isDeepReadFollowUp && !pdfInputs.length) {
+  if ((isDeepReadFollowUp || forceRecentContext) && !pdfInputs.length) {
     return {
       text: renderUserResponseText(normalizeUserResponse({
         plannerEnvelope: null,
         payload: {
-          answer: "我有接到你要「深讀」的追問，但這輪沒有抓到上一份 PDF 附件參考。",
+          answer: "我有接到你延續上一份 PDF 的追問，但這輪沒有抓到可用的 PDF 附件參考。",
           sources: [],
           limitations: [
-            "請直接回覆在同一則 PDF 檔案訊息下，或重傳一次 PDF 後再說「請深讀」。",
+            "請直接回覆在同一則 PDF 檔案訊息下，或重傳一次 PDF 後再說「請深讀」/「請全部讀完」。",
             "若你剛完成 OAuth 發版，請再重試一次，讓新授權 token 生效到本輪對話。",
           ],
         },
@@ -4033,7 +4224,7 @@ async function executePdfTaskReply({ event, logger = noopLogger }) {
     };
   }
 
-  if (!pdfInputs.length && modality.modality !== "pdf" && modality.modality !== "pdf_multimodal") {
+  if (!pdfInputs.length && modality.modality !== "pdf" && modality.modality !== "pdf_multimodal" && !forceRecentContext) {
     return null;
   }
 
@@ -5853,6 +6044,7 @@ export async function executeCapabilityLane({
   requestSignal = null,
   requestTimeoutMs = null,
   runPlannerUserInputEdgeFn = runPlannerUserInputEdge,
+  planModelFirstDMIngressFn = planModelFirstDMIngress,
 }) {
   let meetingReply = null;
   try {
@@ -5907,6 +6099,68 @@ export async function executeCapabilityLane({
   });
   logger.info("control_kernel_decision", routingDecision);
   const expectedOwner = assertRoutingDecisionFinalOwner(routingDecision);
+  const modelFirstIngressDecision = await planModelFirstDMIngressFn({
+    event,
+    scope,
+    expectedOwner,
+    activeWorkflowMode,
+    activeTask: activeExecutiveTask,
+    logger,
+  });
+  if (modelFirstIngressDecision) {
+    logger.info("model_first_dm_ingress_selected", {
+      route: cleanText(modelFirstIngressDecision.route || "") || "respect_existing_lane",
+      needs_recent_context: modelFirstIngressDecision.needs_recent_context === true,
+      reason: cleanText(modelFirstIngressDecision.reason || "") || null,
+      expected_owner: expectedOwner,
+    });
+    if (modelFirstIngressDecision.route === "pdf_task") {
+      const pdfReply = await executePdfTaskReply({
+        event,
+        logger,
+        forceRecentContext: modelFirstIngressDecision.needs_recent_context === true,
+      });
+      if (pdfReply) {
+        return pdfReply;
+      }
+    }
+    if (modelFirstIngressDecision.route === "image_task") {
+      const imageReply = await executeImageTaskReply({
+        event,
+        logger,
+        forceRecentContext: modelFirstIngressDecision.needs_recent_context === true,
+      });
+      if (imageReply) {
+        return imageReply;
+      }
+    }
+    if (modelFirstIngressDecision.route === "knowledge_assistant") {
+      return executeKnowledgeAssistant({
+        event,
+        scope: {
+          ...scope,
+          capability_lane: "knowledge-assistant",
+          lane_label: "知識助手",
+          lane_reason: "model_first_dm_ingress",
+        },
+        logger,
+        traceId,
+        signal,
+      });
+    }
+    if (modelFirstIngressDecision.route === "personal_assistant") {
+      return executePersonalAssistant({
+        event,
+        scope: {
+          ...scope,
+          capability_lane: "personal-assistant",
+          lane_label: "個人助理",
+          lane_reason: "model_first_dm_ingress",
+        },
+        logger,
+      });
+    }
+  }
 
   if (agentContext?.account?.id && expectedOwner === "executive") {
     assertRoutingDecisionOwner({ expected: expectedOwner, actual: "executive" });

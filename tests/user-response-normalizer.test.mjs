@@ -60,9 +60,39 @@ test("chat reply renders only canonical execution_result.data fields without pla
   assert.match(text, /^答案/m);
   assert.match(text, /^來源/m);
   assert.match(text, /^待確認\/限制/m);
-  assert.match(text, /沒有新增可引用來源/);
+  assert.match(text, /scanooo onboarding notes：文件內容直接命中「scanooo」。/);
   assert.doesNotMatch(text, /trace|chosen_action|fallback_reason|kind|match_reason/);
   assert.doesNotMatch(text, /\/Users\/|Back to \[?README/);
+});
+
+test("normalizeUserResponse and renderUserResponseText preserve canonical string sources end-to-end", () => {
+  const normalized = normalizeUserResponse({
+    payload: {
+      ok: true,
+      answer: "這是整理後的回答。",
+      sources: ["demo.pdf：第一段。第二段。第三段。"],
+      limitations: ["目前仍只基於已抽出的文字片段。"],
+    },
+  });
+  const text = renderUserResponseText(normalized);
+
+  assert.deepEqual(normalized.sources, ["demo.pdf：第一段。第二段。第三段。"]);
+  assert.equal(normalized.ok, true);
+  assert.match(text, /來源（依據）/);
+  assert.match(text, /demo\.pdf：第一段。第二段。第三段。/);
+  assert.doesNotMatch(text, /沒有新增可引用來源/);
+});
+
+test("renderUserResponseText also preserves direct canonical string sources without re-normalizing them away", () => {
+  const text = renderUserResponseText({
+    ok: true,
+    answer: "這是整理後的回答。",
+    sources: ["demo.pdf：第一段。第二段。第三段。"],
+    limitations: ["目前仍只基於已抽出的文字片段。"],
+  });
+
+  assert.match(text, /demo\.pdf：第一段。第二段。第三段。/);
+  assert.doesNotMatch(text, /沒有新增可引用來源/);
 });
 
 test("flat execution payload is no longer normalized into answer fields", () => {

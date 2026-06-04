@@ -22,6 +22,7 @@ const {
   pickCalendarMeetingEvent,
   maybeBuildScanooDiagnoseOfficialReadFallback,
   maybeBuildScanooCompareDocsSearchFallback,
+  planModelFirstDMIngress,
   resolveLaneExecutionPlan,
   resolvePlannerExplicitAuthContext,
   resolveScanooLanePreTimeoutPlan,
@@ -38,6 +39,7 @@ const {
   shouldPreferActiveExecutiveTask,
   shouldFallbackImageTaskToTextLane,
   shouldBypassSessionScopedPersonalShortcut,
+  shouldAttemptModelFirstDMIngress,
   looksLikePdfContextualFollowUp,
   shouldRecoverRecentPdfFollowUpContext,
   shouldStageImageUploadForFollowUp,
@@ -385,6 +387,90 @@ test("pdf recent-context recovery stays off when current turn already has attach
     }),
     false,
   );
+});
+
+test("model-first DM ingress is eligible for substantive direct-message attachment continuation", () => {
+  assert.equal(
+    shouldAttemptModelFirstDMIngress({
+      event: {
+        message_text: "請全部讀完",
+        message: {
+          chat_id: "oc_dm_model_first_1",
+        },
+      },
+      scope: {
+        chat_type: "dm",
+        capability_lane: "knowledge-assistant",
+      },
+      expectedOwner: "knowledge-assistant",
+      activeWorkflowMode: "",
+      activeTask: null,
+      plannerAvailable: true,
+    }),
+    true,
+  );
+});
+
+test("model-first DM ingress stays off while explicit workflow mode is active", () => {
+  assert.equal(
+    shouldAttemptModelFirstDMIngress({
+      event: {
+        message_text: "請全部讀完",
+        message: {
+          chat_id: "oc_dm_model_first_2",
+        },
+      },
+      scope: {
+        chat_type: "dm",
+        capability_lane: "knowledge-assistant",
+      },
+      expectedOwner: "knowledge-assistant",
+      activeWorkflowMode: "cloud_doc_organization",
+      activeTask: null,
+      plannerAvailable: true,
+    }),
+    false,
+  );
+});
+
+test("planModelFirstDMIngress can route short PDF continuation text into pdf_task", async () => {
+  const decision = await planModelFirstDMIngress({
+    event: {
+      message_text: "請全部讀完",
+      message: {
+        chat_id: "oc_dm_model_first_3",
+        content: JSON.stringify({ text: "請全部讀完" }),
+      },
+    },
+    scope: {
+      chat_type: "dm",
+      capability_lane: "knowledge-assistant",
+    },
+    expectedOwner: "knowledge-assistant",
+    activeWorkflowMode: "",
+    activeTask: null,
+    plannerAvailable: true,
+    recentPdfContextReader: () => null,
+    recentImageContextReader: () => null,
+    generateTextFn: async () => JSON.stringify({
+      route: "pdf_task",
+      needs_recent_context: true,
+      reason: "short_pdf_continuation_after_recent_attachment",
+    }),
+    logger: {
+      info() {},
+      warn() {},
+      compactError(error) {
+        return error instanceof Error ? error.message : String(error);
+      },
+    },
+  });
+
+  assert.deepEqual(decision, {
+    route: "pdf_task",
+    needs_recent_context: true,
+    reason: "short_pdf_continuation_after_recent_attachment",
+  });
 });
 
 test("missing final_owner throws immediately", () => {

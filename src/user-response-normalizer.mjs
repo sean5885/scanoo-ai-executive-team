@@ -1459,6 +1459,7 @@ export function normalizeUserResponse({
           answer: normalizeText(failureReply.answer || "") || "這次沒有拿到可以直接交付的安全結果。",
           sources: normalizeUserFacingAnswerSources(failureReply.sources, {
             maxSources: MAX_USER_FACING_SOURCES,
+            allowStringSources: true,
           }),
           limitations: normalizeUserResponseList(failureReply.limitations),
         }
@@ -1521,6 +1522,7 @@ export function normalizeUserResponse({
         answer: normalizeText(objectPayload.answer || ""),
         sources: normalizeUserFacingAnswerSources(objectPayload.sources, {
           maxSources: MAX_USER_FACING_SOURCES,
+          allowStringSources: true,
         }),
         limitations: normalizeUserResponseList(objectPayload.limitations),
       },
