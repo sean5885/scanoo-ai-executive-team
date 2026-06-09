@@ -136,6 +136,7 @@ Behavior:
 - resolve one capability lane from peer scope plus message intent
 - persist latest session touch to local state
 - when the event carries `user_access_token`, also persist a session-scoped explicit auth snapshot so later planner/doc turns can survive async boundaries and service restart without silently falling back to unrelated stored auth
+- the same session store now also supports one bounded `active_attachment_context` snapshot (currently used by the PDF follow-up lane) so short follow-up asks can rehydrate the latest attachment refs after process restart instead of depending only on in-memory staged context
 
 ### Inspection API
 

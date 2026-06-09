@@ -499,6 +499,55 @@ test("planModelFirstDMIngress can route short PDF continuation text into pdf_tas
   });
 });
 
+test("planModelFirstDMIngress accepts async recent PDF context readers", async () => {
+  const decision = await planModelFirstDMIngress({
+    event: {
+      message_text: "請全部讀完",
+      message: {
+        chat_id: "oc_dm_model_first_async",
+        chat_type: "p2p",
+        content: JSON.stringify({ text: "請全部讀完" }),
+      },
+      sender: {
+        sender_id: {
+          open_id: "ou_dm_model_first_async",
+        },
+      },
+    },
+    scope: {
+      chat_type: "dm",
+      capability_lane: "personal-assistant",
+    },
+    expectedOwner: "personal-assistant",
+    activeWorkflowMode: "",
+    activeTask: null,
+    plannerAvailable: true,
+    recentPdfContextReader: async () => ({
+      pdfInputs: [{ kind: "file_key", value: "file_v3_async_pdf", name: "demo.pdf" }],
+      messageId: "om_async_pdf",
+    }),
+    recentImageContextReader: () => null,
+    generateTextFn: async () => JSON.stringify({
+      route: "pdf_task",
+      needs_recent_context: true,
+      reason: "async_recent_pdf_context",
+    }),
+    logger: {
+      info() {},
+      warn() {},
+      compactError(error) {
+        return error instanceof Error ? error.message : String(error);
+      },
+    },
+  });
+
+  assert.deepEqual(decision, {
+    route: "pdf_task",
+    needs_recent_context: true,
+    reason: "async_recent_pdf_context",
+  });
+});
+
 test("missing final_owner throws immediately", () => {
   assert.throws(
     () => assertRoutingDecisionFinalOwner({}),

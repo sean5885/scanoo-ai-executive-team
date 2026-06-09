@@ -106,9 +106,12 @@ import {
 } from "./rag-repository.mjs";
 import { getActiveExecutiveTask } from "./executive-task-state.mjs";
 import {
+  getResolvedSessionActiveAttachmentContext,
   getResolvedSessionExplicitAuth,
+  setResolvedSessionActiveAttachmentContext,
   setResolvedSessionExplicitAuth,
 } from "./session-scope-store.mjs";
+import { resolveLarkBindingRuntime } from "./binding-runtime.mjs";
 import { runPlannerUserInputEdge } from "./planner-user-input-edge.mjs";
 import { executeLocalSkillTask } from "./local-skill-actions.mjs";
 import { normalizeUserResponse, renderUserResponseText } from "./user-response-normalizer.mjs";
@@ -2320,8 +2323,8 @@ export async function planModelFirstDMIngress({
 
   const text = cleanText(incomingText(event));
   const modality = classifyInputModality(event || {});
-  const stagedRecentPdf = recentPdfContextReader(event);
-  const stagedRecentImage = recentImageContextReader(event);
+  const stagedRecentPdf = await Promise.resolve(recentPdfContextReader(event));
+  const stagedRecentImage = await Promise.resolve(recentImageContextReader(event));
   const canLookupRecentMessages = Boolean(cleanText(event?.message?.chat_id));
   try {
     const rawText = await generateTextFn({
@@ -3842,6 +3845,14 @@ function buildRecentPdfFollowUpContextKey(event = null) {
   return `${chatId}::${senderOpenId}`;
 }
 
+function resolveSessionKeyFromEvent(event = null) {
+  try {
+    return cleanText(resolveLarkBindingRuntime(event || {})?.session_key || "");
+  } catch {
+    return "";
+  }
+}
+
 function rememberRecentPdfFollowUpContext({
   event = null,
   pdfInputs = [],
@@ -3882,6 +3893,67 @@ function readRecentPdfFollowUpContext(event = null) {
     messageId: cleanText(entry.messageId || ""),
     downloadState: cleanText(entry.downloadState || ""),
     lastFailure: cleanText(entry.lastFailure || ""),
+  };
+}
+
+async function persistSessionAttachmentContext({
+  event = null,
+  kind = "",
+  refs = [],
+  messageId = "",
+  downloadState = "",
+  lastFailure = "",
+  updatedAtMs = Date.now(),
+} = {}) {
+  const sessionKey = resolveSessionKeyFromEvent(event);
+  if (!sessionKey) {
+    return null;
+  }
+  return setResolvedSessionActiveAttachmentContext(sessionKey, {
+    kind,
+    refs,
+    message_id: cleanText(messageId || ""),
+    download_state: cleanText(downloadState || ""),
+    last_failure: cleanText(lastFailure || ""),
+    updated_at_ms: updatedAtMs,
+  }).catch(() => null);
+}
+
+async function readPersistedSessionAttachmentContext(event = null, { kind = "" } = {}) {
+  const sessionKey = resolveSessionKeyFromEvent(event);
+  if (!sessionKey) {
+    return null;
+  }
+  return getResolvedSessionActiveAttachmentContext(sessionKey, { kind }).catch(() => null);
+}
+
+async function readActivePdfFollowUpContext(event = null) {
+  const inMemory = readRecentPdfFollowUpContext(event);
+  if (inMemory?.pdfInputs?.length) {
+    return inMemory;
+  }
+  const persisted = await readPersistedSessionAttachmentContext(event, { kind: "pdf" });
+  if (!persisted?.refs?.length) {
+    return null;
+  }
+  const updatedAtMs = Number.isFinite(Number(persisted.updated_at_ms))
+    ? Number(persisted.updated_at_ms)
+    : Date.now();
+  if ((Date.now() - updatedAtMs) > RECENT_PDF_FOLLOW_UP_CONTEXT_TTL_MS) {
+    return null;
+  }
+  rememberRecentPdfFollowUpContext({
+    event,
+    pdfInputs: persisted.refs,
+    messageId: persisted.message_id,
+    downloadState: persisted.download_state,
+    lastFailure: persisted.last_failure,
+  });
+  return {
+    pdfInputs: [...persisted.refs],
+    messageId: cleanText(persisted.message_id || ""),
+    downloadState: cleanText(persisted.download_state || ""),
+    lastFailure: cleanText(persisted.last_failure || ""),
   };
 }
 
@@ -4190,7 +4262,7 @@ async function executePdfTaskReply({ event, logger = noopLogger, forceRecentCont
     && looksLikePdfDeepReadFollowUp(followUpText);
   const needsFollowUpRecovery = shouldRecoverRecentPdfContext;
   const stagedPdfContext = (shouldRecoverRecentPdfContext && !pdfInputs.length)
-    ? readRecentPdfFollowUpContext(event)
+    ? await readActivePdfFollowUpContext(event)
     : null;
   const shouldUseStagedPdfContext = shouldRecoverRecentPdfContext
     && !pdfInputs.length
@@ -4257,11 +4329,19 @@ async function executePdfTaskReply({ event, logger = noopLogger, forceRecentCont
   }
 
   if (shouldStageUpload) {
-    rememberRecentPdfFollowUpContext({
+    const stagedEntry = rememberRecentPdfFollowUpContext({
       event,
       pdfInputs,
       messageId: sourceMessageId,
       downloadState: "staged",
+    });
+    await persistSessionAttachmentContext({
+      event,
+      kind: "pdf",
+      refs: pdfInputs,
+      messageId: sourceMessageId,
+      downloadState: "staged",
+      updatedAtMs: Number(stagedEntry?.updatedAtMs || Date.now()),
     });
     return {
       text: renderUserResponseText(normalizeUserResponse({
@@ -4306,12 +4386,21 @@ async function executePdfTaskReply({ event, logger = noopLogger, forceRecentCont
   });
 
   if (shouldKeepPdfFollowUpPending(pdfReply?.read_result)) {
-    rememberRecentPdfFollowUpContext({
+    const pendingEntry = rememberRecentPdfFollowUpContext({
       event,
       pdfInputs,
       messageId: sourceMessageId,
       downloadState: "pending_retry",
       lastFailure: Array.isArray(pdfReply?.read_result?.limitations) ? pdfReply.read_result.limitations[0] : "",
+    });
+    await persistSessionAttachmentContext({
+      event,
+      kind: "pdf",
+      refs: pdfInputs,
+      messageId: sourceMessageId,
+      downloadState: "pending_retry",
+      lastFailure: Array.isArray(pdfReply?.read_result?.limitations) ? pdfReply.read_result.limitations[0] : "",
+      updatedAtMs: Number(pendingEntry?.updatedAtMs || Date.now()),
     });
     return {
       text: renderUserResponseText(normalizeUserResponse({
@@ -4341,6 +4430,14 @@ async function executePdfTaskReply({ event, logger = noopLogger, forceRecentCont
     limitation_count: Array.isArray(pdfReply?.read_result?.limitations)
       ? pdfReply.read_result.limitations.length
       : 0,
+  });
+  await persistSessionAttachmentContext({
+    event,
+    kind: "pdf",
+    refs: pdfInputs,
+    messageId: sourceMessageId,
+    downloadState: "ready",
+    updatedAtMs: Date.now(),
   });
 
   return {

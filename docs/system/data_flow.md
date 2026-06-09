@@ -45,6 +45,7 @@ Current additive path:
    - if the follow-up text itself contains the word `PDF` but the current turn still has zero real attachment refs, runtime now still treats it as a recent-context recovery candidate instead of mistaking it for a self-contained PDF modality turn
    - the lane requires verified user auth for message-resource PDF reads and fail-softs with explicit reauth/scope guidance when auth is missing
    - transient attachment download failures (`502/503/504/429/upstream/timeout`) now keep the staged PDF context in a local `pending_retry` state so the next short retry ask can reuse the same attachment refs instead of forcing a re-upload immediately
+   - that same PDF context is now mirrored into `/Users/seanhan/Documents/Playground/src/session-scope-store.mjs` as session-scoped `active_attachment_context`, so recovery can survive local process restart and not rely only on the in-memory 5-minute map
 5. `/Users/seanhan/Documents/Playground/src/pdf-read-service.mjs` performs bounded PDF read/parse:
    - supports `url`, `local_path`, `file_token`, `file_key`
    - prioritizes `file_key -> file_token -> url -> local_path`

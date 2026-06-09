@@ -108,6 +108,52 @@ test("session explicit auth keeps authority write even when legacy mirror persis
   assert.equal(result.memory?.data?.value?.access_token, "token-session-fail");
 });
 
+test("session attachment context writes authority first and keeps legacy mirror for follow-up recovery", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "session-attachment-context-"));
+  const storePath = path.join(tempDir, "lark-session-scopes.json");
+  const script = `
+    const {
+      setResolvedSessionActiveAttachmentContext,
+      getResolvedSessionActiveAttachmentContext,
+    } = await import(${JSON.stringify(sessionScopeStoreUrl)});
+    const authority = await import(${JSON.stringify(authorityUrl)});
+    delete globalThis.__company_brain_memory__;
+
+    const written = await setResolvedSessionActiveAttachmentContext("session-attachment-1", {
+      kind: "pdf",
+      refs: [{ kind: "file_key", value: "file_v3_pdf_1", name: "demo.pdf", mime: "application/pdf", ext: "pdf" }],
+      message_id: "om_attachment_1",
+      download_state: "pending_retry",
+      last_failure: "message_file_resource_fetch_failed:status=502",
+      updated_at_ms: 1717400000000,
+    });
+    const memory = authority.readMemory({ key: "session_attachment_context:session-attachment-1" });
+    const fs = await import("node:fs/promises");
+    const persisted = JSON.parse(await fs.readFile(${JSON.stringify(storePath)}, "utf8"));
+
+    delete globalThis.__company_brain_memory__;
+    const fallback = await getResolvedSessionActiveAttachmentContext("session-attachment-1", { kind: "pdf" });
+
+    console.log(JSON.stringify({
+      written,
+      memory,
+      persisted: persisted.sessions["session-attachment-1"]?.active_attachment_context || null,
+      fallback,
+    }));
+  `;
+
+  const result = runScenario(script, {
+    LARK_SESSION_SCOPE_STORE: storePath,
+  });
+
+  assert.equal(result.written?.kind, "pdf");
+  assert.equal(result.written?.download_state, "pending_retry");
+  assert.equal(result.memory?.ok, true);
+  assert.equal(result.memory?.data?.value?.refs?.[0]?.value, "file_v3_pdf_1");
+  assert.equal(result.persisted?.message_id, "om_attachment_1");
+  assert.equal(result.fallback?.last_failure, "message_file_resource_fetch_failed:status=502");
+});
+
 test("executive split-brain writes reach authority before legacy json mirrors", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "executive-memory-authority-fail-"));
   const blockedSessionStore = path.join(tempDir, "blocked-session-store");
