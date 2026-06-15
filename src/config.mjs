@@ -119,6 +119,10 @@ export const pdfReadMaxBytes = Number.parseInt(
   process.env.PDF_READ_MAX_BYTES || String(30 * 1024 * 1024),
   10,
 );
+export const officeReadMaxBytes = Number.parseInt(
+  process.env.OFFICE_READ_MAX_BYTES || String(30 * 1024 * 1024),
+  10,
+);
 export const larkWriteBudgetHardWhitelist = String(process.env.LARK_WRITE_BUDGET_HARD_WHITELIST || "")
   .split(",")
   .map((value) => value.trim())

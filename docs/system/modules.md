@@ -56,6 +56,7 @@ Current-truth docs for onboarding are:
   - `/Users/seanhan/Documents/Playground/src/long-connection-lifecycle-monitor.mjs`
   - `/Users/seanhan/Documents/Playground/src/single-machine-runtime-coordination.mjs`
   - `/Users/seanhan/Documents/Playground/src/runtime-observability.mjs`
+  - `/Users/seanhan/Documents/Playground/src/bp-export-service.mjs`
 - What they do now:
   - start the HTTP service and the Lark long-connection listener
   - accept the checked-in official plugin ingress on `POST /agent/lark-plugin/dispatch`
@@ -69,6 +70,7 @@ Current-truth docs for onboarding are:
   - mark inbound long-connection message callbacks as ingress activity before lane dispatch, so watchdog idle decisions track real callback traffic
   - send long-connection bot replies only through the mutation runtime, and only treat the send as successful when the Lark message response returns a concrete `message_id`; the runtime reply helper now emits `reply_send_attempted`, `reply_send_succeeded`, `reply_send_failed`, and bounded `reply_send_suppressed` when the same DM reply text would otherwise be sent twice inside one short local window
   - `/Users/seanhan/Documents/Playground/src/session-scope-store.mjs` now persists not only session explicit auth but also a bounded session-scoped `active_attachment_context` snapshot for follow-up lanes that need to rehydrate the latest attachment refs after restart
+  - `POST /api/bp/generate` now provides one local BP artifact pack path that does not depend on Lark write permissions: it generates a structured BP plus `json / md / docx / pdf / pptx` files under `.data/exports/bp`
 - Evidence:
   - `/Users/seanhan/Documents/Playground/tests/http-server.route-success.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/http-server.trace.test.mjs`
@@ -189,6 +191,24 @@ Current-truth docs for onboarding are:
 - Evidence:
   - `/Users/seanhan/Documents/Playground/tests/read-runtime.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/company-brain-query.test.mjs`
+  - `/Users/seanhan/Documents/Playground/tests/http-server.route-success.test.mjs`
+
+### 2A. Local BP Export Path
+
+- Implemented:
+  - `/Users/seanhan/Documents/Playground/src/bp-export-service.mjs`
+- Current truth:
+  - uses the shared text-model generation path to turn a brief into one normalized business-plan JSON payload
+  - writes the normalized BP into local artifact files:
+    - `.json`
+    - `.md`
+    - `.docx`
+    - `.pdf`
+    - `.pptx`
+  - output is local-only under `.data/exports/bp`
+  - this path is not a new Lark write route and does not bypass existing doc/write governance
+- Evidence:
+  - `/Users/seanhan/Documents/Playground/tests/bp-export-service.test.mjs`
   - `/Users/seanhan/Documents/Playground/tests/http-server.route-success.test.mjs`
 
 ### 3. Answer Path
@@ -351,39 +371,61 @@ Current-truth docs for onboarding are:
   - when `scanoo-diagnose` still cannot read because the explicit user token is missing, the lane no longer falls through to the generic planner failure text: with hydrated doc refs / bounded evidence / readable auth context it now returns a weak-but-usable diagnose reply, and without that context it still returns an explicit-limitation diagnose reply that includes prompt-backed observations, candidate causes, and concrete next checks
   - if docs search still cannot resolve a document id, the lane now returns one bounded diagnose-contract missing-document reply instead of dropping to a generic fallback
   - when explicit Scanoo lane-primary fast-path does not return a bounded reply and runtime falls back to planner, the same turn no longer re-enters timeout-triggered lane fallback (`request_timeout -> lane fallback`) again
-  - attachment/modality ingress now has a minimal PDF recognition path:
+  - attachment/modality ingress now has a minimal PDF + office-file recognition path:
     - `/Users/seanhan/Documents/Playground/src/message-intent-utils.mjs` adds `extractAttachmentObjects(...)` and extracts `file_key/file_token/name/mime/ext` from structured attachment payloads
-    - `/Users/seanhan/Documents/Playground/src/modality-router.mjs` now classifies `pdf` and `pdf_multimodal` in addition to `text/image/multimodal`; `msg_type=file` alone no longer auto-promotes to PDF modality without concrete `.pdf`/mime evidence
+    - `/Users/seanhan/Documents/Playground/src/modality-router.mjs` now classifies `pdf` / `pdf_multimodal` and `office` / `office_multimodal` in addition to `text/image/multimodal`; `msg_type=file` alone no longer auto-promotes to PDF modality without concrete `.pdf`/mime evidence, and common `docx/xlsx/pptx` family attachments now route to the office read lane instead of falling through plain text
     - text extraction in `/Users/seanhan/Documents/Playground/src/modality-router.mjs` now has one explicit fallback to visible message text parsed from `message.content`, so text-only follow-up commands (for example `請深讀`) are not dropped when raw `message_text` fields are absent in long-connection payloads
     - `/Users/seanhan/Documents/Playground/src/pdf-read-service.mjs` provides concrete PDF read/parse flow (`url` / `file_token` / `file_key` / `local_path`) and bounded fail-soft reply shaping
+    - `/Users/seanhan/Documents/Playground/src/office-file-read-service.mjs` provides concrete office read/parse flow (`url` / `file_token` / `file_key` / `local_path`) and bounded fail-soft reply shaping for checked-in Word / Excel / PowerPoint families
     - PDF user-facing payload from that reader now emits canonical source objects (instead of free-form source strings) so `answer-source-mapper` can preserve evidence lines at the public boundary
+    - office user-facing payload from that reader also emits canonical source objects, so `answer-source-mapper` can preserve evidence lines at the public boundary without adding a new public response shape
     - PDF answer text now includes direct extracted highlights (top snippets) in the `答案` section to reduce "read-ok but no concrete content" turns
+    - office answer text now includes direct extracted highlights from sheets / paragraphs / slides in the same `答案` section shape, so Excel / Word / PPT follow-ups can answer before the user rephrases the request
     - PDF text preview normalization now strips control characters before snippet generation, reducing parse noise in user-facing highlights/sources
+    - office text extraction now supports:
+      - Word via raw text extraction over `docx/docm` family attachments
+      - Excel via bounded sheet-row preview over `xls/xlsx/xlsm` family attachments
+      - PowerPoint via bounded slide-text preview over `ppt/pptx/pptm` family attachments
     - when the user asks an interpretive PDF follow-up (for example `幫我解讀一下這個`, `請深讀`, `這份在說什麼`) and the primary text model key is available, the same reader now calls `/Users/seanhan/Documents/Playground/src/llm/generate-text.mjs` with a strict JSON contract over the extracted PDF text; user-facing `sources` still stay anchored to deterministic extracted snippets, and if model generation fails the lane explicitly falls back to extractive PDF output with one bounded `主模型解讀未完成` limitation instead of pretending it already did a deep read
+    - when the user asks an interpretive office follow-up (for example `告訴我這是什麼`, `整理重點`, `幫我看一下`) and the primary text model key is available, the office reader also calls that same bounded JSON contract over extracted office text; user-facing `sources` still stay deterministic, and model failure still fail-softs back to extractive output
     - text-only PDF follow-up asks (for example `請做深讀`, `幫我解讀一下這個`, `請全部讀完`) now attempt recent-message PDF context recovery in `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`, so the lane can continue reading the latest file-card PDF without requiring users to re-send attachment cards
+    - text-only office follow-up asks (for example `告訴我這是什麼`, `整理重點`) now attempt recent-message office context recovery in that same lane executor, so the lane can continue reading the latest Word / Excel / PPT file card without requiring users to re-send attachment cards
     - that same recovery path now also stays active when the follow-up text itself mentions `PDF` but the current turn still has zero real attachment refs; this prevents pseudo-`pdf` modality text from blocking recent-message recovery before the model can see the previous file-card context
     - the new model-first DM ingress may also force that PDF/image recent-context recovery path even when local follow-up heuristics are too narrow; this is the checked-in first step toward model-first attachment continuation rather than pure keyword continuation
     - direct-message `msg_type=file` upload events for PDF now always stage one short-lived follow-up context (5-minute in-memory window keyed by `chat_id + sender_open_id`) before heavy read attempts, even if the file-card event carries filename-like text; text follow-ups (for example `請深讀`) consume that staged context first, which prevents upload-turn immediate read failures from racing ahead of the actual user ask
+    - direct-message `msg_type=file` upload events for office files now also stage one short-lived follow-up context before heavy read attempts, so an uploaded `xlsx/docx/pptx` can be followed by a separate `告訴我這是什麼` / `整理重點`
     - staged PDF follow-up matching now also includes bounded generic explain/summary phrasings (for example `請告訴我這是什麼`, `幫我看重點`), not only explicit `深讀`; meanwhile file-card embedded filename text is excluded from follow-up text detection on `msg_type=file` so uploads are still staged instead of being misclassified as inline multimodal asks
+    - staged office follow-up matching uses the same bounded generic explain/summary phrasings and keeps file-card filename text from being mistaken as an inline ask
     - when a staged/recovered PDF follow-up still fails on transient attachment download errors (`502/503/504/429/upstream/timeout`), `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` now keeps that recent attachment context in `pending_retry` state and returns a bounded retry-oriented reply instead of discarding the PDF context after the first failed read
+    - staged/recovered office follow-ups use that same `pending_retry` behavior on transient attachment download errors
     - the PDF follow-up lane now mirrors that staged/pending/ready attachment context into `/Users/seanhan/Documents/Playground/src/session-scope-store.mjs`, so short retry asks can recover the latest PDF refs even after local runtime restart; the in-memory map remains the fast path, and the session-store snapshot is the hydration fallback
+    - the office follow-up lane mirrors staged/pending/ready office attachment context into the same session-scope snapshot (`kind=office`) with the same restart-survival behavior
     - the same PDF reader now hard-filters unsupported reference kinds (for example `file_name`) and prioritizes `file_key` first, then `file_token`, then generic URLs before bounded read attempts, preventing file-card metadata entries from consuming the `maxFiles` budget ahead of real downloadable refs
+    - the office reader applies the same hard filter and priority order, so filename/ext metadata alone is not treated as a readable attachment ref
     - `file_key` from message file cards is now resolved through the Lark message-resource download path (`im messages resources`) with `message_id`, instead of forcing Drive download on keys that are not Drive `file_token`
     - message-resource download now stays on user-auth-only path for PDF file cards: `/Users/seanhan/Documents/Playground/src/lark-connectors.mjs` no longer retries `im messages resources` with tenant/bot token, so missing `im:message.*:get_as_user` scope is surfaced deterministically instead of producing mixed tenant retry noise
+    - office attachment reads reuse that same user-auth-only message-resource boundary; there is still no tenant fallback on the checked-in file-read lane
     - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` PDF lane now requires a verified user token boundary (no tenant fallback on read path); when missing auth, it returns one bounded fail-soft reply with explicit reauth + scope guidance (`/oauth/lark/login`, `im:message.p2p_msg:get_as_user`, `im:message.group_msg:get_as_user`)
+    - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` office lane now applies that same verified user token boundary and fail-soft guidance
     - `/Users/seanhan/Documents/Playground/src/pdf-read-service.mjs` now normalizes raw connector/runtime failures into bounded user-facing limitation messages (permission missing, auth missing, oversized file, message-resource missing, drive fallback failed) instead of exposing long raw upstream error chains directly to users
+    - `/Users/seanhan/Documents/Playground/src/office-file-read-service.mjs` now normalizes the same raw connector/runtime failures into bounded user-facing limitation messages for office attachments
     - default PDF read byte budget is now configurable via `PDF_READ_MAX_BYTES` and defaults to `30MB` in `/Users/seanhan/Documents/Playground/src/config.mjs`, so common 20MB-class proposal PDFs do not fail purely on the previous 15MB hard cap
+    - default office read byte budget is now configurable via `OFFICE_READ_MAX_BYTES` and defaults to `30MB` in that same config module
     - `file_key`/`lark_file_key` references now stay on the message-resource channel only (`im/v1/messages/:message_id/resources/:file_key?type=file`); runtime no longer treats those keys as Drive file tokens because checked-in behavior shows Drive download on message file keys returns deterministic `404`
     - `/Users/seanhan/Documents/Playground/src/lark-connectors.mjs` now applies bounded retry for message-resource download on retriable upstream statuses (`5xx` / `429`) before surfacing fail-soft limits, reducing immediate hard-fail on transient attachment gateway interruptions
     - `/Users/seanhan/Documents/Playground/src/lark-connectors.mjs` now includes `downloadDriveFileBuffer(...)` for Lark Drive PDF bytes retrieval
     - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` now has a dedicated `executePdfTaskReply(...)` branch that returns canonical `answer/sources/limitations` instead of falling through generic text lane, and its route log now records whether the reply actually used the primary model (`model_interpretation_status=used_model`) or had to fail-soft back to extractive PDF output
-    - even when control-kernel route continuity proposes `same_session_same_workflow_same_scope -> personal-assistant`, `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` now bypasses that shortcut for PDF/image modality and text-only PDF deep-read follow-up signals (for example `請深讀`), so file-reading turns are not swallowed by generic personal-assistant fallback
+    - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` also has a dedicated `executeOfficeTaskReply(...)` branch that returns that same canonical `answer/sources/limitations` shape for Word / Excel / PowerPoint attachments
+    - even when control-kernel route continuity proposes `same_session_same_workflow_same_scope -> personal-assistant`, `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` now bypasses that shortcut for PDF/office/image modality and text-only attachment follow-up signals, so file-reading turns are not swallowed by generic personal-assistant fallback
     - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` document-resolution now ignores attachment `file_token/file_key` candidates when resolving `document_id` for doc-editor reads, preventing file-card tokens from being misused as live-doc ids
     - `/Users/seanhan/Documents/Playground/src/capability-lane.mjs` no longer treats attachment `file_token/file_key` as direct doc-edit references, so plain PDF/file cards do not get hard-routed into `doc-editor` before modality handling
     - image-only execution paths in `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` and `/Users/seanhan/Documents/Playground/src/agent-dispatcher.mjs` now avoid treating PDF modality as image analysis input
     - image lane now keeps one short-lived (5-minute) follow-up context for direct-message image uploads keyed by `chat_id + sender_open_id`; text-only follow-up asks such as `告訴我這是什麼` can consume the staged image refs without requiring users to re-upload
     - image lane now requires verified user auth for Lark message-image reads (no tenant-token fallback for that read path); when auth is missing, it returns bounded reauth guidance instead of throwing
+    - when image follow-up runtime still has the source `message_id`, `/Users/seanhan/Documents/Playground/src/lark-content.mjs -> downloadMessageImage(...)` now prefers `im/v1/messages/:message_id/resources/:image_key?type=image` for user-sent chat images, and only falls back to `im/v1/images/:image_key?type=message` for app-upload-compatible cases
     - `/Users/seanhan/Documents/Playground/src/image-understanding-service.mjs` now fail-softs per-image fetch/model failures into `ok=false` reasoning (`image_input_unavailable:*` / provider-call failure) so image analysis exceptions no longer bubble into top-level `event_processing_failed` generic fallback replies
+    - the same image service now uses `/Users/seanhan/Documents/Playground/src/llm/generate-text.mjs` for final text synthesis, matching the checked-in PDF/office pattern of `extract/vision -> structured evidence -> shared DeepSeek text helper`
+    - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs -> buildImageAnalysisReply(...)` now prefers the text-model (`DeepSeek`) `text_summary` as the final user-facing image answer whenever that synthesis exists; raw provider names are no longer surfaced by default on failure replies
   - `user-response-normalizer.mjs` now only reads canonical `execution_result.data.answer / sources / limitations`
   - answer boundary now also runs a deterministic usage-layer intelligence pass:
     - emits `usage_layer.interpreted_as_continuation`, `usage_layer.interpreted_as_new_task`, `usage_layer.redundant_question_detected`, `usage_layer.owner_selection_feels_consistent`, `usage_layer.slot_suppressed_ask`, `usage_layer.retry_context_applied`, `usage_layer.response_continuity_score`, `usage_layer.usage_issue_codes`, and `usage_layer_summary` into planner working-memory observability

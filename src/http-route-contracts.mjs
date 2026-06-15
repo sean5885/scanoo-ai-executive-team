@@ -41,6 +41,7 @@ const EXACT_METHODS = new Map([
   ["/api/wiki/organize/preview", ["POST"]],
   ["/api/wiki/organize/apply", ["POST"]],
   ["/api/doc/read", ["GET"]],
+  ["/api/bp/generate", ["POST"]],
   ["/api/doc/create", ["POST"]],
   ["/api/doc/update", ["POST"]],
   ["/api/doc/comments", ["GET"]],

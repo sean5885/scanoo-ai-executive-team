@@ -278,6 +278,43 @@ async function restoreFile(filePath, content) {
   await fs.writeFile(filePath, content, "utf8");
 }
 
+test("POST /api/bp/generate returns generated artifact summary", async (t) => {
+  const { server } = await startTestServer(t, {
+    generateBusinessPlanArtifacts: async () => ({
+      brief: "test brief",
+      plan: {
+        company_name: "Scanoo",
+        title: "Scanoo 商業計畫書",
+        slides: [{ title: "市場痛點", bullets: ["痛點 1"], speaker_notes: "" }],
+      },
+      artifacts: {
+        export_dir: "/tmp/bp/scanoo",
+        json_path: "/tmp/bp/scanoo/scanoo.json",
+        markdown_path: "/tmp/bp/scanoo/scanoo.md",
+        docx_path: "/tmp/bp/scanoo/scanoo.docx",
+        pdf_path: "/tmp/bp/scanoo/scanoo.pdf",
+        pptx_path: "/tmp/bp/scanoo/scanoo.pptx",
+      },
+    }),
+  });
+  const port = server.address().port;
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/bp/generate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      brief: "請幫我整理一份 Scanoo 的 BP",
+      company_name: "Scanoo",
+    }),
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.action, "bp_generate");
+  assert.equal(body.data.plan.title, "Scanoo 商業計畫書");
+  assert.equal(body.data.artifacts.pptx_path.endsWith(".pptx"), true);
+});
+
 function stripTrace(payload) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return payload;

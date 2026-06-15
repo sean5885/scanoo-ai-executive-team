@@ -373,6 +373,7 @@ export async function executeRegisteredAgent({
         task: requestText || modality.text || buildVisibleMessageText(event),
         textContext: buildVisibleMessageText(event),
         imageInputs: modality.imageInputs,
+        messageId: cleanText(event?.message?.message_id),
       });
       if (imageAnalysis?.ok) {
         imageContext = buildStructuredImageContext(imageAnalysis);

@@ -34,15 +34,20 @@ const {
   shouldUsePlannerFirstPersonalDM,
   looksLikeAgentStandbyStatusRequest,
   buildAgentStandbyStatusReply,
+  buildImageAnalysisReply,
   shouldFallbackScanooCompareToDocsSearch,
   shouldFallbackScanooDiagnoseToOfficialRead,
   shouldPreferActiveExecutiveTask,
   shouldFallbackImageTaskToTextLane,
   shouldBypassSessionScopedPersonalShortcut,
   shouldAttemptModelFirstDMIngress,
+  shouldKeepOfficeFollowUpPending,
   shouldKeepPdfFollowUpPending,
+  looksLikeOfficeContextualFollowUp,
   looksLikePdfContextualFollowUp,
+  shouldRecoverRecentOfficeFollowUpContext,
   shouldRecoverRecentPdfFollowUpContext,
+  shouldStageOfficeUploadForFollowUp,
   shouldStageImageUploadForFollowUp,
   shouldStagePdfUploadForFollowUp,
 } = await import("../src/lane-executor.mjs");
@@ -216,6 +221,35 @@ test("buildAgentStandbyStatusReply returns concrete standby count and active own
   assert.match(reply.text || "", /主責 \/generalist/);
 });
 
+test("buildImageAnalysisReply prefers DeepSeek text summary when available", () => {
+  const reply = buildImageAnalysisReply({
+    ok: true,
+    provider: "nano_banana",
+    model: "gemini-2.5-flash-image",
+    text_summary: "這張圖主要在講市集招商流程，核心訊息是讓攤位更容易被看見、互動並成交。",
+    scene_summary: "招商海報與手機畫面",
+    detected_objects: ["phone", "poster"],
+    key_entities: ["市集", "招商"],
+    visible_text: "被看見 被探索 被互動 被成交",
+    extracted_notes: ["同樣是辦市集，為什麼有些市集攤位永遠秒殺？"],
+    confidence: 0.91,
+  });
+
+  assert.match(reply.text || "", /核心訊息是讓攤位更容易被看見、互動並成交/);
+  assert.doesNotMatch(reply.text || "", /圖片供應商/);
+});
+
+test("buildImageAnalysisReply hides raw provider details on image download failure", () => {
+  const reply = buildImageAnalysisReply({
+    ok: false,
+    provider: "nano_banana",
+    reason: "image_input_unavailable:Failed_to_download_Lark_image:_400",
+  });
+
+  assert.match(reply.text || "", /卡在 Lark 私有圖片下載/);
+  assert.doesNotMatch(reply.text || "", /nano_banana/);
+});
+
 test("visible message text excludes raw json payload duplication", () => {
   const text = buildVisibleMessageText({
     text: "好的",
@@ -343,6 +377,16 @@ test("pdf upload with inline text is not auto-staged outside file events", () =>
   assert.equal(staged, false);
 });
 
+test("office file upload is staged for follow-up inside file events", () => {
+  const staged = shouldStageOfficeUploadForFollowUp({
+    modality: "office",
+    eventMsgType: "file",
+    followUpText: "媒體聯播價格表.xlsx",
+    officeInputCount: 1,
+  });
+  assert.equal(staged, true);
+});
+
 test("image upload is staged for follow-up when no inline text is provided", () => {
   const staged = shouldStageImageUploadForFollowUp({
     modality: "image",
@@ -365,6 +409,10 @@ test("pdf contextual follow-up detects generic explain request", () => {
   assert.equal(looksLikePdfContextualFollowUp("請告訴我 這是什麼"), true);
 });
 
+test("office contextual follow-up detects generic explain request", () => {
+  assert.equal(looksLikeOfficeContextualFollowUp("請告訴我 這是什麼"), true);
+});
+
 test("pdf contextual follow-up does not hijack unrelated chat", () => {
   assert.equal(looksLikePdfContextualFollowUp("今天先聊天"), false);
 });
@@ -375,6 +423,17 @@ test("pdf recent-context recovery applies to generic explain follow-up text", ()
       modality: "text",
       followUpText: "幫我解讀一下這個",
       pdfInputCount: 0,
+    }),
+    true,
+  );
+});
+
+test("office recent-context recovery applies to generic explain follow-up text", () => {
+  assert.equal(
+    shouldRecoverRecentOfficeFollowUpContext({
+      modality: "text",
+      followUpText: "幫我看這是什麼",
+      officeInputCount: 0,
     }),
     true,
   );
@@ -412,6 +471,19 @@ test("transient pdf read failures stay pending for follow-up retry", () => {
     ok: false,
     error: "pdf_read_failed",
     limitations: ["Scanoo.pdf：缺少訊息附件讀取權限。"],
+  }), false);
+});
+
+test("transient office read failures stay pending for follow-up retry", () => {
+  assert.equal(shouldKeepOfficeFollowUpPending({
+    ok: false,
+    error: "office_read_failed",
+    limitations: ["Pricing.xlsx：Lark 訊息附件服務目前回傳 502（upstream 連線中斷）。"],
+  }), true);
+  assert.equal(shouldKeepOfficeFollowUpPending({
+    ok: false,
+    error: "office_read_failed",
+    limitations: ["Pricing.xlsx：缺少訊息附件讀取權限。"],
   }), false);
 });
 

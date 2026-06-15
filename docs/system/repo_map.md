@@ -110,6 +110,7 @@ This file explains which directories are part of the current runtime, which are 
 - `/Users/seanhan/Documents/Playground/src/index.mjs`
 - `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`
 - `/Users/seanhan/Documents/Playground/src/lark-plugin-dispatch-adapter.mjs`
+- `/Users/seanhan/Documents/Playground/src/bp-export-service.mjs`
 
 ### Read Surface
 

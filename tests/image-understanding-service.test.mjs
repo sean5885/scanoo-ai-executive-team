@@ -40,6 +40,29 @@ test("analyzeImageTask uses Gemini generateContent payload for nano banana", asy
       });
     }
 
+    if (String(url).includes("/chat/completions")) {
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  answer: "這是一張白板與會議截圖，主題是 OKR。",
+                  limitations: ["依目前已抽取的結構化結果整理。"],
+                }),
+              },
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        },
+      );
+    }
+
     assert.match(String(url), /models\/.+:generateContent$/);
     assert.equal(options.headers["x-goog-api-key"].length > 0, true);
     const body = JSON.parse(options.body);
@@ -87,7 +110,13 @@ test("analyzeImageTask uses Gemini generateContent payload for nano banana", asy
     assert.equal(result.ok, true);
     assert.equal(result.provider, "nano_banana");
     assert.equal(result.scene_summary, "白板與會議截圖");
-    assert.equal(calls.length, 2);
+    assert.equal(calls[0].url, "https://example.com/test.png");
+    assert.match(calls[1].url, /models\/.+:generateContent$/);
+    if (calls[2]) {
+      assert.match(calls[2].url, /\/chat\/completions$/);
+      assert.equal(result.text_summary, "這是一張白板與會議截圖，主題是 OKR。");
+      assert.deepEqual(result.synthesis_limitations, ["依目前已抽取的結構化結果整理。"]);
+    }
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -112,6 +141,69 @@ test("analyzeImageTask fails soft when image input cannot be fetched", async () 
     assert.equal(result.ok, false);
     assert.match(result.reason || "", /image_input_unavailable:image_fetch_failed:404/);
     assert.equal(result.image_count, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("analyzeImageTask downloads Lark message images through message resource when messageId is available", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    if (String(url).includes("/open-apis/im/v1/messages/om_test_image_1/resources/img_v3_test_key?type=image")) {
+      return new Response(Buffer.from("fake-image"), {
+        status: 200,
+        headers: {
+          "content-type": "image/png",
+        },
+      });
+    }
+
+    assert.match(String(url), /models\/.+:generateContent$/);
+    return new Response(
+      JSON.stringify({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    detected_objects: ["slide"],
+                    scene_summary: "簡報截圖",
+                    visible_text: "Growth",
+                    key_entities: ["Growth"],
+                    confidence: 0.88,
+                    extracted_notes: ["主要講成長路徑"],
+                  }),
+                },
+              ],
+            },
+          },
+        ],
+      }),
+      {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      },
+    );
+  };
+
+  try {
+    const result = await analyzeImageTask({
+      task: "幫我看一下主要講的是什麼",
+      imageInputs: [{ kind: "lark_image_key", value: "img_v3_test_key" }],
+      accessToken: "u_test_access_token",
+      tokenType: "user",
+      messageId: "om_test_image_1",
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.scene_summary, "簡報截圖");
+    assert.match(calls[0].url, /\/messages\/om_test_image_1\/resources\/img_v3_test_key\?type=image$/);
   } finally {
     globalThis.fetch = originalFetch;
   }

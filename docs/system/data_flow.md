@@ -25,7 +25,7 @@ The OpenClaw plugin ingress is now a second bounded adjacent flow: tool calls fi
 2. executes the existing lane path through a synthetic lane event/scope
 3. returns a `plugin_native` forward decision so the plugin can continue on the existing direct document/message/calendar/task-style route without entering the internal planner/lane business flow
 
-## 0B. Attachment -> Extract -> Index -> Citation (PDF)
+## 0B. Attachment -> Extract -> Answer (PDF)
 
 Current additive path:
 
@@ -64,16 +64,79 @@ Current additive path:
 9. Lark message-image reads are user-auth only on this lane:
    - no tenant fallback is used for message-image download
    - missing auth returns fail-soft reauth guidance instead of hard-failing the event
+   - when staged/current image context still carries the source `message_id`, runtime downloads user-sent chat images through `im/v1/messages/:message_id/resources/:image_key?type=image`; `im/v1/images/:image_key?type=message` remains fallback only for app-upload-compatible cases
 10. image analysis call path now fail-softs provider/input errors:
    - per-image fetch failures and provider call failures are normalized into `ok=false` reasons
    - image-lane exceptions do not intentionally bubble to top-level `event_processing_failed` generic crash replies
-11. when downstream answer rendering needs source citation, source lines are generated from canonical evidence objects via `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`, not free-form source strings
+11. final image answer synthesis now follows the same text-model route as PDF/office:
+   - image/vision extraction still happens first
+   - final user-facing answer is synthesized through `/Users/seanhan/Documents/Playground/src/llm/generate-text.mjs`
+   - this keeps image, PDF, and office interpretation on one shared DeepSeek-style text path after evidence extraction
+12. when downstream answer rendering needs source citation, source lines are generated from canonical evidence objects via `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`, not free-form source strings
 
 Current truth:
 
 - PDF now has a checked-in read/parse + bounded answer path, but not a write/index path
 - model-backed PDF interpretation is additive on top of extracted text only; it is not OCR, not page-image reasoning, and not proof of full-document review
 - PDF permission/read-runtime boundary remains subject to existing controlled routes
+
+## 0C. Attachment -> Extract -> Answer (Office Files)
+
+Current additive path:
+
+1. inbound message structured content still enters `/Users/seanhan/Documents/Playground/src/message-intent-utils.mjs`
+2. the same bounded attachment metadata (`file_key/file_token/name/mime/ext`) is reused by `/Users/seanhan/Documents/Playground/src/modality-router.mjs`
+3. `/Users/seanhan/Documents/Playground/src/modality-router.mjs` now also classifies read-only office attachment modality:
+   - `office`
+   - `office_multimodal`
+   - current checked-in office kinds are inferred from attachment `mime/ext/name`
+4. `/Users/seanhan/Documents/Playground/src/lane-executor.mjs -> executeOfficeTaskReply(...)` is the checked-in office execution lane:
+   - `msg_type=file` Word / Excel / PowerPoint uploads stage one short-lived follow-up context (5 minutes, keyed by `chat_id + sender_open_id`) before any heavy read attempt
+   - generic follow-up asks such as `告訴我這是什麼` / `整理重點` / `幫我看一下` can recover that staged office context or recent file-card context before execution
+   - the lane requires verified user auth for message-resource attachment reads and fail-softs with explicit reauth/scope guidance when auth is missing
+   - transient attachment download failures (`502/503/504/429/upstream/timeout`) keep the staged office context in local `pending_retry` state so the next short retry ask can reuse the same attachment refs
+   - that same office context is mirrored into `/Users/seanhan/Documents/Playground/src/session-scope-store.mjs` as session-scoped `active_attachment_context`
+5. `/Users/seanhan/Documents/Playground/src/office-file-read-service.mjs` performs bounded office read/parse:
+   - supports `url`, `local_path`, `file_token`, `file_key`
+   - prioritizes `file_key -> file_token -> url -> local_path`
+   - downloads `file_key` via Lark message-resource path with `message_id`
+   - extracts text from:
+     - Word (`docx/docm` family)
+     - Excel (`xls/xlsx/xlsm` family)
+     - PowerPoint (`ppt/pptx/pptm` family)
+   - emits canonical source objects for the reply boundary
+6. when the user question is interpretive and a primary text-model key is available, the same office reader now calls `/Users/seanhan/Documents/Playground/src/llm/generate-text.mjs` with a strict single-JSON-object contract over the extracted office text:
+   - generation may enrich the `answer` field only
+   - `sources` remain deterministic extracted-snippet evidence
+   - on model failure, the lane explicitly falls back to extractive office output and adds one bounded `主模型解讀未完成` limitation
+
+Current truth:
+
+- office attachments now have a checked-in read/parse + bounded answer path for common Word / Excel / PowerPoint formats, but not a write/index path
+- model-backed office interpretation is additive on top of extracted text only; it is not chart reasoning, OCR, visual slide review, or proof of full workbook/document/page review
+- office permission/read-runtime boundary remains subject to the same controlled Lark attachment routes as PDF
+
+## 0D. Brief -> BP Artifact Pack
+
+Current additive path:
+
+1. request enters `POST /api/bp/generate`
+2. `/Users/seanhan/Documents/Playground/src/http-server.mjs -> handleBusinessPlanGenerate(...)` validates `brief`
+3. `/Users/seanhan/Documents/Playground/src/bp-export-service.mjs` sends the brief through the shared text-model path with a strict single-JSON-object contract
+4. the BP payload is normalized into stable sections plus a bounded slide list
+5. the same normalized BP is materialized into local artifacts under `.data/exports/bp`:
+   - `.json`
+   - `.md`
+   - `.docx`
+   - `.pdf`
+   - `.pptx`
+6. the HTTP route returns artifact paths plus the structured plan payload
+
+Current truth:
+
+- this is a local export path, not a Lark write path
+- it depends on the shared text-model generation boundary for structure, then uses local file writers for each artifact type
+- current BP output is designed for fast delivery packs, not branded-template slide production or Google-Docs-native publishing
 
 ## 0A. Autonomy Worker Failure Sink + Operator Incident Closure (Phase 2-3 additive)
 

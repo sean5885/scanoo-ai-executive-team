@@ -101,6 +101,7 @@ Important boundary:
 | Route | Method | Current role | Status |
 | --- | --- | --- | --- |
 | `/api/doc/read` | `GET` | live document read | implemented |
+| `/api/bp/generate` | `POST` | local business-plan artifact pack generation (`json / md / docx / pdf / pptx`) | implemented |
 | `/api/doc/create` | `POST` | preview-first document create, then confirmed write | implemented |
 | `/agent/docs/create` | `POST` | planner-facing wrapper over document create | implemented |
 | `/api/doc/update` | `POST` | append or confirmed replace/heading-targeted update | implemented |
@@ -116,6 +117,7 @@ Current write truth:
 
 - preview and confirmation are route-level user experience surfaces
 - final external mutation still routes through `lark-mutation-runtime -> mutation-runtime -> execute-lark-write`
+- `POST /api/bp/generate` is not part of the external Lark write path; it stays local-only and writes artifact files under `.data/exports/bp`
 - heading-targeted update exists at preview/planning level, but doc write materialization is still bounded by the current doc update adapter
 - `POST /api/doc/create` and `POST /api/doc/lifecycle/retry` now keep verified company-brain ingest/review sync inside the request lifecycle; if that internal sync fails, the route does not return full success
 - `POST /api/doc/update` now treats the follow-up company-brain review sync as part of the route success boundary; if review sync fails at runtime or returns `success=false`, the route returns an error instead of `ok=true`

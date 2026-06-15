@@ -117,6 +117,7 @@ import { executeLocalSkillTask } from "./local-skill-actions.mjs";
 import { normalizeUserResponse, renderUserResponseText } from "./user-response-normalizer.mjs";
 import { runCanonicalLarkMutation } from "./lark-mutation-runtime.mjs";
 import { planPersonalDMSkillIntent } from "./planner/personal-dm-skill-intent.mjs";
+import { readOfficeTaskAndBuildReply } from "./office-file-read-service.mjs";
 import { readPdfTaskAndBuildReply } from "./pdf-read-service.mjs";
 import { listRegisteredAgents } from "./agent-registry.mjs";
 import { generateText } from "./llm/generate-text.mjs";
@@ -3642,7 +3643,30 @@ async function executeBitableLinkRequest({ event, scope, logger = noopLogger }) 
   };
 }
 
-function buildImageAnalysisReply(analysis, { multimodal = false } = {}) {
+function summarizeImageFailureReason(reason = "") {
+  const normalized = cleanText(reason);
+  if (!normalized) {
+    return "這輪沒有拿到可用的圖片分析結果。";
+  }
+  if (normalized.includes("image_input_unavailable:Failed_to_download_Lark_image:_400")) {
+    return "系統已接到圖片任務，但這輪卡在 Lark 私有圖片下載。";
+  }
+  if (normalized.includes("image_input_unavailable:image_fetch_failed:404")) {
+    return "系統已接到圖片任務，但提供的圖片連結目前抓不到內容。";
+  }
+  if (normalized.includes("missing_nano_banana_config")) {
+    return "系統已接到圖片任務，但視覺抽取服務目前沒有完成設定。";
+  }
+  if (normalized.includes("unsupported_image_provider")) {
+    return "系統已接到圖片任務，但目前的圖片理解 provider 不支援這條路徑。";
+  }
+  if (normalized.includes("image_analysis_exception")) {
+    return "系統已接到圖片任務，但圖片分析流程這輪沒有順利完成。";
+  }
+  return `系統已接到圖片任務，但這輪失敗原因是：${normalized}`;
+}
+
+export function buildImageAnalysisReply(analysis, { multimodal = false } = {}) {
   if (!analysis?.ok) {
     return {
       text: [
@@ -3650,28 +3674,27 @@ function buildImageAnalysisReply(analysis, { multimodal = false } = {}) {
         multimodal ? "我已先把這條圖文任務分流到圖片理解路徑，但目前還沒有拿到可用的圖片分析結果。" : "我已把這條圖片任務分流到圖片理解路徑，但目前還沒有拿到可用的圖片分析結果。",
         "",
         "重點",
-        `- 圖片供應商：${analysis?.provider || "待確認"}`,
-        `- 原因：${analysis?.reason || "待確認"}`,
+        `- ${summarizeImageFailureReason(analysis?.reason)}`,
         "",
         "下一步",
-        "- 請提供可直接存取的圖片 URL，或補齊 Nano Banana 設定後再重試。",
+        "- 若是 Lark 私有圖片，請直接在同一個對話重試一次；若是外部圖片，請提供可直接存取的圖片 URL。",
       ].join("\n"),
     };
   }
 
   const lines = [
     "結論",
-    multimodal && analysis.text_summary
+    analysis.text_summary
       ? analysis.text_summary
       : analysis.scene_summary || "我已完成圖片結構化理解。",
     "",
     "重點",
-    `- 圖片供應商：${analysis.provider}${analysis.model ? ` (${analysis.model})` : ""}`,
     analysis.detected_objects?.length ? `- detected_objects：${analysis.detected_objects.join("、")}` : null,
     analysis.key_entities?.length ? `- key_entities：${analysis.key_entities.join("、")}` : null,
     analysis.visible_text ? `- visible_text：${analysis.visible_text}` : null,
     analysis.extracted_notes?.length ? `- extracted_notes：${analysis.extracted_notes.join("、")}` : null,
     analysis.confidence != null ? `- confidence：${analysis.confidence}` : null,
+    analysis.synthesis_limitations?.length ? `- limitations：${analysis.synthesis_limitations.join("；")}` : null,
   ].filter(Boolean);
 
   if (!multimodal) {
@@ -3828,8 +3851,42 @@ export function looksLikePdfContextualFollowUp(text = "") {
   return signals.some((signal) => normalized.includes(signal));
 }
 
+export function looksLikeOfficeContextualFollowUp(text = "") {
+  const normalized = cleanText(String(text || "").toLowerCase());
+  if (!normalized) {
+    return false;
+  }
+  const signals = [
+    "這是什麼",
+    "这是什么",
+    "告訴我",
+    "告诉我",
+    "幫我看",
+    "帮我看",
+    "讀一下",
+    "读一下",
+    "看一下",
+    "重點",
+    "重点",
+    "摘要",
+    "總結",
+    "总结",
+    "解讀",
+    "解读",
+    "說明",
+    "说明",
+    "表格",
+    "簡報",
+    "简报",
+    "文件",
+  ].map((item) => item.toLowerCase());
+  return signals.some((signal) => normalized.includes(signal));
+}
+
 const RECENT_PDF_FOLLOW_UP_CONTEXT_TTL_MS = 5 * 60 * 1000;
 const recentPdfFollowUpContextStore = new Map();
+const RECENT_OFFICE_FOLLOW_UP_CONTEXT_TTL_MS = 5 * 60 * 1000;
+const recentOfficeFollowUpContextStore = new Map();
 
 function buildRecentPdfFollowUpContextKey(event = null) {
   const chatId = cleanText(event?.message?.chat_id || event?.chat_id || "");
@@ -3890,6 +3947,49 @@ function readRecentPdfFollowUpContext(event = null) {
   }
   return {
     pdfInputs: Array.isArray(entry.pdfInputs) ? [...entry.pdfInputs] : [],
+    messageId: cleanText(entry.messageId || ""),
+    downloadState: cleanText(entry.downloadState || ""),
+    lastFailure: cleanText(entry.lastFailure || ""),
+  };
+}
+
+function rememberRecentOfficeFollowUpContext({
+  event = null,
+  officeInputs = [],
+  messageId = "",
+  downloadState = "",
+  lastFailure = "",
+} = {}) {
+  const key = buildRecentPdfFollowUpContextKey(event);
+  if (!key || !Array.isArray(officeInputs) || officeInputs.length === 0) {
+    return null;
+  }
+  const entry = {
+    officeInputs: [...officeInputs],
+    messageId: cleanText(messageId || event?.message?.message_id || ""),
+    downloadState: cleanText(downloadState || ""),
+    lastFailure: cleanText(lastFailure || ""),
+    updatedAtMs: Date.now(),
+  };
+  recentOfficeFollowUpContextStore.set(key, entry);
+  return entry;
+}
+
+function readRecentOfficeFollowUpContext(event = null) {
+  const key = buildRecentPdfFollowUpContextKey(event);
+  if (!key) {
+    return null;
+  }
+  const entry = recentOfficeFollowUpContextStore.get(key);
+  if (!entry) {
+    return null;
+  }
+  if ((Date.now() - Number(entry.updatedAtMs || 0)) > RECENT_OFFICE_FOLLOW_UP_CONTEXT_TTL_MS) {
+    recentOfficeFollowUpContextStore.delete(key);
+    return null;
+  }
+  return {
+    officeInputs: Array.isArray(entry.officeInputs) ? [...entry.officeInputs] : [],
     messageId: cleanText(entry.messageId || ""),
     downloadState: cleanText(entry.downloadState || ""),
     lastFailure: cleanText(entry.lastFailure || ""),
@@ -3957,6 +4057,36 @@ async function readActivePdfFollowUpContext(event = null) {
   };
 }
 
+async function readActiveOfficeFollowUpContext(event = null) {
+  const inMemory = readRecentOfficeFollowUpContext(event);
+  if (inMemory?.officeInputs?.length) {
+    return inMemory;
+  }
+  const persisted = await readPersistedSessionAttachmentContext(event, { kind: "office" });
+  if (!persisted?.refs?.length) {
+    return null;
+  }
+  const updatedAtMs = Number.isFinite(Number(persisted.updated_at_ms))
+    ? Number(persisted.updated_at_ms)
+    : Date.now();
+  if ((Date.now() - updatedAtMs) > RECENT_OFFICE_FOLLOW_UP_CONTEXT_TTL_MS) {
+    return null;
+  }
+  rememberRecentOfficeFollowUpContext({
+    event,
+    officeInputs: persisted.refs,
+    messageId: persisted.message_id,
+    downloadState: persisted.download_state,
+    lastFailure: persisted.last_failure,
+  });
+  return {
+    officeInputs: [...persisted.refs],
+    messageId: cleanText(persisted.message_id || ""),
+    downloadState: cleanText(persisted.download_state || ""),
+    lastFailure: cleanText(persisted.last_failure || ""),
+  };
+}
+
 export function shouldStagePdfUploadForFollowUp({
   modality = "",
   eventMsgType = "",
@@ -4003,13 +4133,62 @@ export function shouldRecoverRecentPdfFollowUpContext({
   return looksLikePdfContextualFollowUp(followUpText);
 }
 
+export function shouldStageOfficeUploadForFollowUp({
+  modality = "",
+  eventMsgType = "",
+  followUpText = "",
+  officeInputCount = 0,
+} = {}) {
+  if (Number(officeInputCount) <= 0) {
+    return false;
+  }
+  if (cleanText(eventMsgType).toLowerCase() === "file") {
+    return true;
+  }
+  return cleanText(modality).toLowerCase() === "office"
+    && cleanText(followUpText) === "";
+}
+
+export function shouldKeepOfficeFollowUpPending(readResult = null) {
+  if (!readResult || readResult.ok === true || cleanText(readResult.error) !== "office_read_failed") {
+    return false;
+  }
+  const combined = (Array.isArray(readResult.limitations) ? readResult.limitations : [])
+    .map((item) => cleanText(item))
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+  if (!combined) {
+    return false;
+  }
+  return /(502|503|504|429|upstream|連線中斷|连接中断|timeout|逾時|超時|稍後重試|稍后重试)/i.test(combined);
+}
+
+export function shouldRecoverRecentOfficeFollowUpContext({
+  modality = "",
+  followUpText = "",
+  officeInputCount = 0,
+} = {}) {
+  if (Number(officeInputCount) > 0) {
+    return false;
+  }
+  const normalizedModality = cleanText(modality).toLowerCase();
+  if (!["text", "office"].includes(normalizedModality)) {
+    return false;
+  }
+  return looksLikeOfficeContextualFollowUp(followUpText);
+}
+
 export function shouldBypassSessionScopedPersonalShortcut({ event = null, normalizedText = "" } = {}) {
   const modality = classifyInputModality(event || {});
-  if (["pdf", "pdf_multimodal", "image", "multimodal"].includes(modality.modality)) {
+  if (["pdf", "pdf_multimodal", "office", "office_multimodal", "image", "multimodal"].includes(modality.modality)) {
     return true;
   }
   const text = cleanText(normalizedText || modality.text || "");
   if (looksLikeImageContextualFollowUp(text) && readRecentImageFollowUpContext(event)?.imageInputs?.length) {
+    return true;
+  }
+  if (looksLikeOfficeContextualFollowUp(text) && readRecentOfficeFollowUpContext(event)?.officeInputs?.length) {
     return true;
   }
   return looksLikePdfDeepReadFollowUp(text);
@@ -4058,6 +4237,60 @@ function extractPdfInputsFromFileMessageItem(item = null) {
   return refs;
 }
 
+function extractOfficeInputsFromFileMessageItem(item = null) {
+  if (!item || cleanText(item?.msg_type).toLowerCase() !== "file") {
+    return [];
+  }
+  const parsed = safeParseJson(cleanText(item?.content));
+  const attachmentObjects = extractAttachmentObjects({
+    content: cleanText(item?.content),
+    msg_type: cleanText(item?.msg_type),
+    parsed,
+  });
+  const refs = [];
+  for (const attachment of attachmentObjects) {
+    const name = cleanText(attachment?.name);
+    const mime = cleanText(attachment?.mime).toLowerCase();
+    const ext = cleanText(attachment?.ext).toLowerCase();
+    const isDocument = ["doc", "docx", "docm", "dotx", "dotm"].includes(ext) || /wordprocessingml|msword/.test(mime);
+    const isSpreadsheet = ["xls", "xlsx", "xlsm", "xltx", "xltm"].includes(ext) || /spreadsheetml|excel|sheet/.test(mime);
+    const isPresentation = ["ppt", "pptx", "pptm", "potx", "potm"].includes(ext) || /presentationml|powerpoint/.test(mime);
+    const fileKind = isDocument
+      ? "document"
+      : isSpreadsheet
+        ? "spreadsheet"
+        : isPresentation
+          ? "presentation"
+          : "";
+    if (!fileKind || ext === "pdf") {
+      continue;
+    }
+    const fileKey = cleanText(attachment?.file_key);
+    const fileToken = cleanText(attachment?.file_token);
+    if (fileKey) {
+      refs.push({
+        kind: "lark_file_key",
+        value: fileKey,
+        name,
+        mime,
+        ext,
+        fileKind,
+      });
+    }
+    if (fileToken) {
+      refs.push({
+        kind: "lark_file_token",
+        value: fileToken,
+        name,
+        mime,
+        ext,
+        fileKind,
+      });
+    }
+  }
+  return refs;
+}
+
 async function resolveRecentPdfFollowUpContext({
   event,
   accessToken = "",
@@ -4084,6 +4317,39 @@ async function resolveRecentPdfFollowUpContext({
     }
   } catch (error) {
     logger.warn("pdf_follow_up_context_failed", {
+      error: logger.compactError(error),
+      chat_id: formatIdentifierHint(chatId),
+    });
+  }
+  return null;
+}
+
+async function resolveRecentOfficeFollowUpContext({
+  event,
+  accessToken = "",
+  logger = noopLogger,
+} = {}) {
+  const chatId = cleanText(event?.message?.chat_id);
+  if (!chatId || !cleanText(accessToken)) {
+    return null;
+  }
+  try {
+    const recent = await listMessages(accessToken, chatId, {
+      containerIdType: "chat",
+      pageSize: 16,
+    });
+    for (const item of Array.isArray(recent?.items) ? recent.items : []) {
+      const refs = extractOfficeInputsFromFileMessageItem(item);
+      if (!refs.length) {
+        continue;
+      }
+      return {
+        officeInputs: refs,
+        messageId: cleanText(item?.message_id),
+      };
+    }
+  } catch (error) {
+    logger.warn("office_follow_up_context_failed", {
       error: logger.compactError(error),
       chat_id: formatIdentifierHint(chatId),
     });
@@ -4189,6 +4455,7 @@ async function executeImageTaskReply({ event, logger = noopLogger, forceRecentCo
           imageInputs,
           accessToken,
           tokenType: context?.tokenKind || "user",
+          messageId: sourceMessageId,
         }),
     );
   } catch (error) {
@@ -4223,6 +4490,231 @@ async function executeImageTaskReply({ event, logger = noopLogger, forceRecentCo
   return buildImageAnalysisReply(analysis, {
     multimodal: modality.modality === "multimodal" || shouldUseStagedImageContext,
   });
+}
+
+async function executeOfficeTaskReply({ event, logger = noopLogger, forceRecentContext = false }) {
+  const modality = classifyInputModality(event);
+  const context = await resolveAuthContext(event, logger, { allowTenantFallback: false }).catch((error) => {
+    logger.warn("office_task_auth_context_failed", {
+      error: logger.compactError(error),
+    });
+    return null;
+  });
+  const accessToken = cleanText(context?.token?.access_token || context?.token || "");
+  let officeInputs = Array.isArray(modality.officeInputs) ? [...modality.officeInputs] : [];
+  let sourceMessageId = cleanText(event?.message?.message_id);
+  const eventMsgType = cleanText(event?.msg_type || event?.message?.msg_type || "").toLowerCase();
+  const explicitEventText = cleanText(
+    event?.text
+    || event?.message?.text
+    || event?.event?.message_text
+    || "",
+  );
+  const followUpText = eventMsgType === "file"
+    ? explicitEventText
+    : cleanText(event?.message_text || explicitEventText || modality.text || "");
+  const shouldStageUpload = shouldStageOfficeUploadForFollowUp({
+    modality: modality.modality,
+    eventMsgType,
+    followUpText,
+    officeInputCount: officeInputs.length,
+  });
+
+  const shouldRecoverRecentOfficeContext = forceRecentContext || shouldRecoverRecentOfficeFollowUpContext({
+    modality: modality.modality,
+    followUpText,
+    officeInputCount: officeInputs.length,
+  });
+  const needsFollowUpRecovery = shouldRecoverRecentOfficeContext;
+  const stagedOfficeContext = (shouldRecoverRecentOfficeContext && !officeInputs.length)
+    ? await readActiveOfficeFollowUpContext(event)
+    : null;
+  const shouldUseStagedOfficeContext = shouldRecoverRecentOfficeContext
+    && !officeInputs.length
+    && stagedOfficeContext?.officeInputs?.length
+    && looksLikeOfficeContextualFollowUp(followUpText);
+
+  if ((shouldRecoverRecentOfficeContext || forceRecentContext) && !accessToken) {
+    return {
+      text: renderUserResponseText(normalizeUserResponse({
+        plannerEnvelope: null,
+        payload: {
+          answer: "我有收到延續上一份辦公檔的追問，但目前缺少可驗證的使用者授權，這輪不能安全讀檔。",
+          sources: [],
+          limitations: [
+            "請先完成 /oauth/lark/login 的使用者授權，讓系統拿到可讀取私訊附件的 user token。",
+            "請確認 Lark app 已開啟 im:message.p2p_msg:get_as_user（若是群組也要 im:message.group_msg:get_as_user）。",
+          ],
+        },
+        logger,
+        handlerName: "officeTaskAuthBoundary",
+      })),
+    };
+  }
+
+  if (needsFollowUpRecovery) {
+    const recovered = stagedOfficeContext?.officeInputs?.length
+      ? stagedOfficeContext
+      : await resolveRecentOfficeFollowUpContext({
+        event,
+        accessToken,
+        logger,
+      });
+    if (recovered?.officeInputs?.length) {
+      officeInputs = recovered.officeInputs;
+      sourceMessageId = cleanText(recovered.messageId || sourceMessageId);
+    }
+  }
+
+  if (shouldUseStagedOfficeContext) {
+    officeInputs = stagedOfficeContext.officeInputs;
+    sourceMessageId = cleanText(stagedOfficeContext.messageId || sourceMessageId);
+  }
+
+  if ((shouldRecoverRecentOfficeContext || forceRecentContext) && !officeInputs.length) {
+    return {
+      text: renderUserResponseText(normalizeUserResponse({
+        plannerEnvelope: null,
+        payload: {
+          answer: "我有接到你延續上一份辦公檔的追問，但這輪沒有抓到可用的附件參考。",
+          sources: [],
+          limitations: [
+            "請直接回覆在同一則檔案訊息下，或重傳一次 Word / Excel / PowerPoint 後再說要我整理什麼。",
+            "若你剛完成 OAuth 發版，請再重試一次，讓新授權 token 生效到本輪對話。",
+          ],
+        },
+        logger,
+        handlerName: "officeFollowUpContextBoundary",
+      })),
+    };
+  }
+
+  if (!officeInputs.length && modality.modality !== "office" && modality.modality !== "office_multimodal" && !forceRecentContext) {
+    return null;
+  }
+
+  if (shouldStageUpload) {
+    const stagedEntry = rememberRecentOfficeFollowUpContext({
+      event,
+      officeInputs,
+      messageId: sourceMessageId,
+      downloadState: "staged",
+    });
+    await persistSessionAttachmentContext({
+      event,
+      kind: "office",
+      refs: officeInputs,
+      messageId: sourceMessageId,
+      downloadState: "staged",
+      updatedAtMs: Number(stagedEntry?.updatedAtMs || Date.now()),
+    });
+    return {
+      text: renderUserResponseText(normalizeUserResponse({
+        plannerEnvelope: null,
+        payload: {
+          answer: "我已收到辦公檔，先幫你接住上下文。",
+          sources: [],
+          limitations: [
+            "你可以直接回覆「告訴我這是什麼」、「整理重點」或指定工作表 / 段落 / 投影片，我會接續這份檔案處理。",
+          ],
+        },
+        logger,
+        handlerName: "officeUploadStageBoundary",
+      })),
+    };
+  }
+
+  if (!accessToken) {
+    return {
+      text: renderUserResponseText(normalizeUserResponse({
+        plannerEnvelope: null,
+        payload: {
+          answer: "我有收到辦公檔閱讀需求，但目前缺少可驗證的使用者授權，這輪不能安全讀檔。",
+          sources: [],
+          limitations: [
+            "請先完成 /oauth/lark/login 的使用者授權，讓系統拿到可讀取私訊附件的 user token。",
+            "請確認 Lark app 已開啟 im:message.p2p_msg:get_as_user（若是群組也要 im:message.group_msg:get_as_user）。",
+          ],
+        },
+        logger,
+        handlerName: "officeTaskAuthBoundary",
+      })),
+    };
+  }
+
+  const explicitQuestion = cleanText(followUpText || event?.message_text || event?.text || "");
+  const officeReply = await readOfficeTaskAndBuildReply({
+    officeInputs,
+    accessToken,
+    messageId: sourceMessageId,
+    question: explicitQuestion,
+  });
+
+  if (shouldKeepOfficeFollowUpPending(officeReply?.read_result)) {
+    const pendingEntry = rememberRecentOfficeFollowUpContext({
+      event,
+      officeInputs,
+      messageId: sourceMessageId,
+      downloadState: "pending_retry",
+      lastFailure: Array.isArray(officeReply?.read_result?.limitations) ? officeReply.read_result.limitations[0] : "",
+    });
+    await persistSessionAttachmentContext({
+      event,
+      kind: "office",
+      refs: officeInputs,
+      messageId: sourceMessageId,
+      downloadState: "pending_retry",
+      lastFailure: Array.isArray(officeReply?.read_result?.limitations) ? officeReply.read_result.limitations[0] : "",
+      updatedAtMs: Number(pendingEntry?.updatedAtMs || Date.now()),
+    });
+    return {
+      text: renderUserResponseText(normalizeUserResponse({
+        plannerEnvelope: null,
+        payload: {
+          answer: "我已收到這份辦公檔，也保留了附件上下文；這輪卡在 Lark 附件下載暫時失敗，所以先不假裝已讀完。",
+          sources: [],
+          limitations: [
+            ...((Array.isArray(officeReply?.read_result?.limitations) ? officeReply.read_result.limitations : []).slice(0, 2)),
+            "你可以稍後直接回覆「再試一次」或重傳同一份檔案，我會沿用這份附件上下文接續處理。",
+          ],
+        },
+        logger,
+        handlerName: "officePendingRetryBoundary",
+      })),
+    };
+  }
+
+  logger.info("office_task_routed", {
+    modality: shouldUseStagedOfficeContext
+      ? "office_staged_follow_up"
+      : (needsFollowUpRecovery ? "office_follow_up" : modality.modality),
+    office_input_count: Array.isArray(officeInputs) ? officeInputs.length : 0,
+    ok: officeReply?.read_result?.ok === true,
+    model_interpretation_status: cleanText(officeReply?.model_interpretation?.status || "unknown"),
+    model_interpretation_error: cleanText(officeReply?.model_interpretation?.error || ""),
+    limitation_count: Array.isArray(officeReply?.read_result?.limitations)
+      ? officeReply.read_result.limitations.length
+      : 0,
+  });
+  await persistSessionAttachmentContext({
+    event,
+    kind: "office",
+    refs: officeInputs,
+    messageId: sourceMessageId,
+    downloadState: "ready",
+  });
+  return {
+    text: renderUserResponseText(normalizeUserResponse({
+      plannerEnvelope: null,
+      payload: {
+        answer: officeReply.answer,
+        sources: officeReply.sources,
+        limitations: officeReply.limitations,
+      },
+      logger,
+      handlerName: "officeTaskReplyBoundary",
+    })),
+  };
 }
 
 async function executePdfTaskReply({ event, logger = noopLogger, forceRecentContext = false }) {
@@ -5435,6 +5927,7 @@ async function captureMeetingEntryIfActive({ event, scope, logger = noopLogger }
       task: text,
       textContext: buildVisibleMessageText(event),
       imageInputs: modality.imageInputs,
+      messageId: cleanText(event?.message?.message_id),
     });
     const imageContext = imageAnalysis?.ok
       ? buildStructuredImageContext(imageAnalysis)
@@ -6339,8 +6832,12 @@ export async function executeCapabilityLane({
     return executePersonalAssistant({ event, scope, logger });
   }
 
+  const officeReply = await executeOfficeTaskReply({ event, logger });
   const imageReply = await executeImageTaskReply({ event, logger });
   const pdfReply = await executePdfTaskReply({ event, logger });
+  if (officeReply) {
+    return officeReply;
+  }
   if (pdfReply) {
     return pdfReply;
   }

@@ -97,6 +97,7 @@ import {
   updateTaskComment,
 } from "./lark-content.mjs";
 import { searchKnowledgeBase } from "./answer-service.mjs";
+import { generateBusinessPlanArtifacts } from "./bp-export-service.mjs";
 import {
   applyApprovedCompanyBrainKnowledgeAction,
   approvalTransitionCompanyBrainDocAction,
@@ -4483,6 +4484,64 @@ async function handleRuntimeInfo(res, requestUrl, body, logger = noopHttpLogger)
       ok: false,
       action: "get_runtime_info",
       error: err,
+    }));
+  }
+}
+
+async function handleBusinessPlanGenerate(res, requestUrl, body, logger = noopHttpLogger) {
+  const brief = cleanText(body?.brief || body?.prompt || body?.idea || "");
+  if (!brief) {
+    jsonResponse(res, 400, buildExecutionEnvelope({
+      ok: false,
+      action: "bp_generate",
+      error: "bp_brief_missing",
+      data: {
+        reason: "bp_brief_missing",
+        message: "Provide `brief` to generate a business plan pack.",
+      },
+    }));
+    return;
+  }
+
+  try {
+    logger.info("bp_generate_started", {
+      brief_chars: brief.length,
+      company_name: cleanText(body?.company_name || body?.companyName || "") || null,
+    });
+    const result = await getHttpService("generateBusinessPlanArtifacts", generateBusinessPlanArtifacts)({
+      brief,
+      companyName: body?.company_name || body?.companyName || "",
+      audience: body?.audience || "",
+      goal: body?.goal || "",
+      tone: body?.tone || "",
+      language: body?.language || "zh-TW",
+      outputDir: body?.output_dir || "",
+      fileBaseName: body?.file_basename || body?.fileBaseName || "",
+      signal: res.__abort_signal || null,
+    });
+
+    logger.info("bp_generate_completed", {
+      title: result?.plan?.title || null,
+      export_dir: result?.artifacts?.export_dir || null,
+      slide_count: Array.isArray(result?.plan?.slides) ? result.plan.slides.length : 0,
+    });
+
+    jsonResponse(res, 200, buildExecutionEnvelope({
+      ok: true,
+      action: "bp_generate",
+      data: result,
+    }));
+  } catch (error) {
+    logger.error("bp_generate_failed", {
+      error: logger.compactError?.(error) || { message: error?.message || "bp_generate_failed" },
+    });
+    jsonResponse(res, 500, buildExecutionEnvelope({
+      ok: false,
+      action: "bp_generate",
+      error,
+      data: {
+        reason: cleanText(error?.message || "bp_generate_failed"),
+      },
     }));
   }
 }
@@ -9338,6 +9397,13 @@ export function startHttpServer({
 
       if (requestUrl.pathname === "/api/doc/read" && req.method === "GET") {
         await handleDocumentRead(res, requestUrl, body);
+        return;
+      }
+
+      if (requestUrl.pathname === "/api/bp/generate" && req.method === "POST") {
+        await runHttpRoute(requestLogger, "bp_generate", (routeLogger) =>
+          handleBusinessPlanGenerate(res, requestUrl, body, routeLogger)
+        );
         return;
       }
 

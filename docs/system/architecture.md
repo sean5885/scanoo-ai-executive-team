@@ -97,6 +97,11 @@ Use [deployment.md](/Users/seanhan/Documents/Playground/docs/system/deployment.m
   - `/Users/seanhan/Documents/Playground/src/lark-content.mjs`
 - Lark tree scanning connectors
   - `/Users/seanhan/Documents/Playground/src/lark-connectors.mjs`
+- bounded attachment readers
+  - `/Users/seanhan/Documents/Playground/src/pdf-read-service.mjs`
+  - `/Users/seanhan/Documents/Playground/src/office-file-read-service.mjs`
+- local business-plan export service
+  - `/Users/seanhan/Documents/Playground/src/bp-export-service.mjs`
 - drive/wiki organization and semantic classification
   - `/Users/seanhan/Documents/Playground/src/lark-drive-organizer.mjs`
   - `/Users/seanhan/Documents/Playground/src/lark-wiki-organizer.mjs`
@@ -164,10 +169,17 @@ These describe code structure and responsibility, not how many processes are run
 
 - `session-scope-store.mjs`
   - persists latest session scope touches for inspection and future agent routing
+  - also persists one bounded `active_attachment_context` snapshot (`pdf` / `image` / `office`) so short attachment follow-ups can survive local process restart
 
 - `lane-executor.mjs`
   - turns capability lanes into real execution strategies instead of lane intro only
   - returns either text replies or card replies
+  - now also owns the checked-in attachment-read follow-up lanes for `pdf`, `office`, and `image` continuity
+
+- `bp-export-service.mjs`
+  - generates one structured BP payload through the shared text-model path
+  - materializes the same BP into local `json / md / docx / pdf / pptx` artifacts under `.data/exports/bp`
+  - stays local-only and does not create a new external Lark write surface
 
 - `doc-preview-cards.mjs` and `comment-watch-store.mjs`
   - turn rewrite proposals into human-readable cards
@@ -181,6 +193,10 @@ These describe code structure and responsibility, not how many processes are run
 
 - `answer-service.mjs`
   - performs hybrid retrieval and optionally calls an OpenAI-compatible model
+
+- `pdf-read-service.mjs` and `office-file-read-service.mjs`
+  - provide bounded attachment text extraction plus optional model-backed interpretation over extracted text only
+  - current checked-in office path covers read-only `docx/docm`, `xlsx/xls/xlsm`, and `pptx/pptm`-family attachments; it is not a write/index pipeline
 
 - `executive-closed-loop.mjs`
   - turns execution output into evidence, verification, reflection, and improvement proposals

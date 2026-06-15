@@ -8,13 +8,9 @@ import {
   imageUnderstandingModel,
   imageUnderstandingProvider,
   imageUnderstandingPromptMaxTokens,
-  llmApiKey,
-  llmBaseUrl,
-  llmModel,
-  llmTemperature,
-  llmTopP,
 } from "./config.mjs";
 import { compactListItems, governPromptSections, trimTextForBudget } from "./agent-token-governance.mjs";
+import { generateText } from "./llm/generate-text.mjs";
 import { downloadMessageImage } from "./lark-content.mjs";
 import { normalizeText } from "./text-utils.mjs";
 
@@ -117,6 +113,21 @@ function normalizeReasonSegment(value = "", maxLength = 120) {
   return normalized.slice(0, maxLength);
 }
 
+function normalizeStringList(values = [], { maxItems = 4, maxItemChars = 140 } = {}) {
+  const result = [];
+  for (const value of Array.isArray(values) ? values : []) {
+    const normalized = normalizeText(String(value || "")).slice(0, maxItemChars);
+    if (!normalized || result.includes(normalized)) {
+      continue;
+    }
+    result.push(normalized);
+    if (result.length >= maxItems) {
+      break;
+    }
+  }
+  return result;
+}
+
 async function fetchRemoteImagePart(url = "") {
   const response = await fetch(url);
   if (!response.ok) {
@@ -132,7 +143,7 @@ async function fetchRemoteImagePart(url = "") {
   };
 }
 
-async function buildGeminiImageParts({ imageInputs = [], accessToken = "", tokenType = "user" } = {}) {
+async function buildGeminiImageParts({ imageInputs = [], accessToken = "", tokenType = "user", messageId = "" } = {}) {
   const parts = [];
   const failures = [];
   for (const input of Array.isArray(imageInputs) ? imageInputs : []) {
@@ -142,7 +153,9 @@ async function buildGeminiImageParts({ imageInputs = [], accessToken = "", token
         continue;
       }
       if (input?.kind === "lark_image_key" && normalizeText(input.value) && accessToken) {
-        const downloaded = await downloadMessageImage(accessToken, input.value, tokenType);
+        const downloaded = await downloadMessageImage(accessToken, input.value, tokenType, {
+          messageId,
+        });
         parts.push({
           inlineData: {
             mimeType: normalizeMimeType(downloaded.mime_type),
@@ -213,40 +226,46 @@ async function callNanoBanana({ task = "", textContext = "", imageParts = [] } =
 }
 
 async function synthesizeWithTextModel({ task = "", imageResult = null } = {}) {
-  if (!llmApiKey || !imageResult) {
-    return "";
+  if (!imageResult) {
+    return {
+      answer: "",
+      limitations: [],
+    };
   }
-  const response = await fetch(`${llmBaseUrl}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${llmApiKey}`,
-    },
-    body: JSON.stringify({
-      model: llmModel,
-      temperature: llmTemperature,
-      top_p: llmTopP,
-      messages: [
-        {
-          role: "system",
-          content: "你是文本整合助手。只根據結構化圖片結果回答，輸出短結論與短重點，不要重複整段欄位。",
-        },
-        {
-          role: "user",
-          content: [
-            `任務：${task || "請整理這個圖片任務"}`,
-            "結構化圖片結果：",
-            JSON.stringify(imageResult),
-          ].join("\n"),
-        },
-      ],
-    }),
+  const rawText = await generateText({
+    systemPrompt: [
+      "你是嚴格的圖片理解整合助手。",
+      "只能根據已抽取的結構化圖片結果回答。",
+      "先回答使用者問題，再補一句到三句必要解讀。",
+      "不能把未看見的圖片細節說成已確認。",
+      "只輸出單一合法 JSON object。",
+    ].join(" "),
+    prompt: [
+      "任務：根據已抽取的圖片理解結果，直接回答使用者問題。",
+      "硬性規則：",
+      "- 只能使用下面提供的結構化結果，不可假設圖片中還有未抽取的元素。",
+      "- 若證據不足，answer 必須明說「依目前已抽取結果」。",
+      "- 不要輸出 Markdown、不要 code fence、不要前後文。",
+      '輸出格式：{"answer":"...","limitations":["..."]}',
+      "",
+      `使用者問題：${trimTextForBudget(task || "請整理這個圖片任務", 320)}`,
+      "",
+      "結構化圖片結果：",
+      JSON.stringify(imageResult),
+    ].join("\n"),
+    sessionIdSuffix: "image-summary",
+    temperature: 0.1,
+    topP: 0.75,
   });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error?.message || `multimodal_text_synthesis_failed:${response.status}`);
+  const payload = extractJsonPayload(rawText);
+  const answer = trimTextForBudget(payload?.answer || "", imageUnderstandingMaxResultChars);
+  if (!answer) {
+    throw new Error("multimodal_text_synthesis_missing_answer");
   }
-  return trimTextForBudget(data.choices?.[0]?.message?.content || "", imageUnderstandingMaxResultChars);
+  return {
+    answer,
+    limitations: normalizeStringList(payload?.limitations),
+  };
 }
 
 export function buildStructuredImageContext(result = {}) {
@@ -269,6 +288,7 @@ export async function analyzeImageTask({
   imageInputs = [],
   accessToken = "",
   tokenType = "user",
+  messageId = "",
 } = {}) {
   if (imageUnderstandingProvider !== "nano_banana") {
     return {
@@ -292,6 +312,7 @@ export async function analyzeImageTask({
     imageInputs,
     accessToken,
     tokenType,
+    messageId,
   });
   const imageParts = Array.isArray(imageBuild?.parts) ? imageBuild.parts : [];
   const imageFailures = Array.isArray(imageBuild?.failures) ? imageBuild.failures : [];
@@ -328,13 +349,17 @@ export async function analyzeImageTask({
   }
   const normalized = normalizeImageUnderstandingPayload(raw);
   let textSummary = "";
+  let synthesisLimitations = [];
   try {
-    textSummary = await synthesizeWithTextModel({
+    const synthesized = await synthesizeWithTextModel({
       task,
       imageResult: normalized,
     });
+    textSummary = normalizeText(synthesized?.answer || "");
+    synthesisLimitations = Array.isArray(synthesized?.limitations) ? synthesized.limitations : [];
   } catch {
     textSummary = "";
+    synthesisLimitations = [];
   }
 
   return {
@@ -345,5 +370,6 @@ export async function analyzeImageTask({
     input_failure_count: imageFailures.length,
     ...normalized,
     text_summary: textSummary,
+    synthesis_limitations: synthesisLimitations,
   };
 }

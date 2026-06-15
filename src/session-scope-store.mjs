@@ -93,7 +93,7 @@ function buildResolvedSessionAttachmentContext(context = null) {
     return null;
   }
   const kind = typeof context.kind === "string" ? context.kind.trim().toLowerCase() : "";
-  if (!["pdf", "image"].includes(kind)) {
+  if (!["pdf", "image", "office"].includes(kind)) {
     return null;
   }
   const refs = sanitizeAttachmentRefs(context.refs);

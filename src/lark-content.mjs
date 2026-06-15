@@ -1471,17 +1471,34 @@ export async function getMessage(accessToken, messageId) {
   return normalizeMessageItem(data);
 }
 
-export async function downloadMessageImage(accessToken, imageKey, tokenType = "user") {
+export async function downloadMessageImage(accessToken, imageKey, tokenType = "user", { messageId = "" } = {}) {
   ({ accessToken, tokenType } = await resolveContentAuth(accessToken, tokenType));
-  const response = await fetch(
-    `${apiBaseUrl}/open-apis/im/v1/images/${encodeURIComponent(imageKey)}?type=message`,
-    {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
+
+  let response = null;
+  const normalizedMessageId = String(messageId || "").trim();
+  if (normalizedMessageId) {
+    response = await fetch(
+      `${apiBaseUrl}/open-apis/im/v1/messages/${encodeURIComponent(normalizedMessageId)}/resources/${encodeURIComponent(imageKey)}?type=image`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
       },
-    },
-  );
+    );
+  }
+
+  if (!response || !response.ok) {
+    response = await fetch(
+      `${apiBaseUrl}/open-apis/im/v1/images/${encodeURIComponent(imageKey)}?type=message`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      },
+    );
+  }
 
   if (!response.ok) {
     throw new Error(`Failed to download Lark image: ${response.status}`);
@@ -1491,6 +1508,7 @@ export async function downloadMessageImage(accessToken, imageKey, tokenType = "u
   const buffer = Buffer.from(await response.arrayBuffer());
   return {
     image_key: imageKey,
+    message_id: normalizedMessageId || null,
     mime_type: contentType.split(";")[0].trim() || "application/octet-stream",
     bytes: buffer,
     token_type: tokenType,
