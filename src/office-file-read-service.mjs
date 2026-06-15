@@ -579,6 +579,16 @@ function shouldAttemptModelBackedOfficeInterpretation({ question = "", files = [
     && files.length > 0;
 }
 
+function looksLikeOfficeContentValidationQuestion(question = "") {
+  const normalized = cleanText(question);
+  if (!normalized) {
+    return false;
+  }
+  return /(這個|這份|這頁|這張|內容|上面|剛剛|前面|這裡|這段).{0,12}(對嗎|正確嗎|有沒有問題|有沒有看錯|是不是這樣|是不是對的|是對的嗎)/.test(normalized)
+    || /(幫我看一下|幫我確認一下|幫我核對一下).{0,12}(對嗎|正確嗎|有沒有問題|是不是對的|是對的嗎)/.test(normalized)
+    || /(我有沒有看錯|是不是我理解錯了|是不是我看錯了)/.test(normalized);
+}
+
 function buildOfficeInterpretationPrompt({ files = [], question = "" } = {}) {
   const normalizedQuestion = cleanText(question);
   const documentSections = [];
@@ -610,6 +620,9 @@ function buildOfficeInterpretationPrompt({ files = [], question = "" } = {}) {
     "- 只能使用下面提供的已抽取文本，不可假設未抽取頁面、圖表、備註或附件內容。",
     "- 若證據不足，answer 必須明說「依目前已抽取片段」且避免過度結論。",
     "- 不要虛構工作表、投影片頁碼、章節名稱、權限、網址或聯絡資訊。",
+    looksLikeOfficeContentValidationQuestion(normalizedQuestion)
+      ? "- 若問題像是「這個內容對嗎／我有沒有看錯」，優先判斷『目前整理出的重點是否與已抽取文本一致』，不要把它誤答成外部市場真偽查核。"
+      : null,
     "- 只輸出單一合法 JSON object，不要 Markdown、不要 code fence、不要前後文。",
     '輸出格式：{"answer":"...","limitations":["..."]}',
     "",

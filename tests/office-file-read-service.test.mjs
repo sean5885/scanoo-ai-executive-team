@@ -165,3 +165,37 @@ test("readOfficeTaskAndBuildReply falls back honestly when model interpretation 
   assert.match(result.answer, /我已先讀取 1 份 Word 文件/);
   assert.match(result.limitations.join("\n"), /主模型解讀未完成/);
 });
+
+test("readOfficeTaskAndBuildReply guides validation questions toward extracted-text consistency instead of market truth", async () => {
+  let capturedPrompt = "";
+  const result = await readOfficeTaskAndBuildReply({
+    officeInputs: [
+      { kind: "local_path", value: "/tmp/demo.xlsx", name: "媒體聯播價格表.xlsx", ext: "xlsx", fileKind: "spreadsheet" },
+    ],
+    question: "幫我看一下這個內容是對的嗎",
+    allowModelInterpretation: true,
+    resolveOfficeBufferFromInputFn: async (input) => ({
+      buffer: Buffer.from("dummy office bytes"),
+      source: {
+        source_type: "local_path",
+        source_id: input.value,
+        source_label: input.name,
+      },
+    }),
+    extractOfficeFileFromBufferFn: async () => ({
+      text: "工作表：Pricing\n方案 | 單價 | 備註\n聯播方案 | 20000 | 含 banner",
+      metadata: { file_kind: "spreadsheet" },
+    }),
+    generateTextFn: async ({ prompt }) => {
+      capturedPrompt = prompt;
+      return JSON.stringify({
+        answer: "依目前已抽取片段，你前面整理成『媒體聯播價格表，列出方案、單價與備註』這個理解方向是對的。",
+        limitations: ["仍只核對到目前抽取片段，還不是整份工作簿逐表覆核。"],
+      });
+    },
+  });
+
+  assert.match(capturedPrompt, /優先判斷.*與已抽取文本一致/);
+  assert.match(result.answer, /理解方向是對的/);
+  assert.equal(result.model_interpretation.status, "used_model");
+});

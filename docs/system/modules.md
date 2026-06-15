@@ -388,8 +388,9 @@ Current-truth docs for onboarding are:
       - PowerPoint via bounded slide-text preview over `ppt/pptx/pptm` family attachments
     - when the user asks an interpretive PDF follow-up (for example `幫我解讀一下這個`, `請深讀`, `這份在說什麼`) and the primary text model key is available, the same reader now calls `/Users/seanhan/Documents/Playground/src/llm/generate-text.mjs` with a strict JSON contract over the extracted PDF text; user-facing `sources` still stay anchored to deterministic extracted snippets, and if model generation fails the lane explicitly falls back to extractive PDF output with one bounded `主模型解讀未完成` limitation instead of pretending it already did a deep read
     - when the user asks an interpretive office follow-up (for example `告訴我這是什麼`, `整理重點`, `幫我看一下`) and the primary text model key is available, the office reader also calls that same bounded JSON contract over extracted office text; user-facing `sources` still stay deterministic, and model failure still fail-softs back to extractive output
+    - validation-style office asks (for example `這個內容對嗎`, `我有沒有看錯`) are now guided to verify whether the current summary matches the extracted office text, instead of being misinterpreted as a request for external market-truth verification
     - text-only PDF follow-up asks (for example `請做深讀`, `幫我解讀一下這個`, `請全部讀完`) now attempt recent-message PDF context recovery in `/Users/seanhan/Documents/Playground/src/lane-executor.mjs`, so the lane can continue reading the latest file-card PDF without requiring users to re-send attachment cards
-    - text-only office follow-up asks (for example `告訴我這是什麼`, `整理重點`) now attempt recent-message office context recovery in that same lane executor, so the lane can continue reading the latest Word / Excel / PPT file card without requiring users to re-send attachment cards
+    - text-only office follow-up asks (for example `告訴我這是什麼`, `整理重點`, `幫我看一下這個內容是對的嗎`) now attempt recent-message office context recovery in that same lane executor, so the lane can continue reading the latest Word / Excel / PPT file card without requiring users to re-send attachment cards
     - that same recovery path now also stays active when the follow-up text itself mentions `PDF` but the current turn still has zero real attachment refs; this prevents pseudo-`pdf` modality text from blocking recent-message recovery before the model can see the previous file-card context
     - the new model-first DM ingress may also force that PDF/image recent-context recovery path even when local follow-up heuristics are too narrow; this is the checked-in first step toward model-first attachment continuation rather than pure keyword continuation
     - direct-message `msg_type=file` upload events for PDF now always stage one short-lived follow-up context (5-minute in-memory window keyed by `chat_id + sender_open_id`) before heavy read attempts, even if the file-card event carries filename-like text; text follow-ups (for example `請深讀`) consume that staged context first, which prevents upload-turn immediate read failures from racing ahead of the actual user ask
@@ -442,8 +443,9 @@ Current-truth docs for onboarding are:
   - that same public renderer now preserves both canonical source objects and already-normalized source strings, so evidence lines produced earlier in the answer pipeline are not dropped at the final text boundary
   - source rendering at this boundary now only accepts canonical source objects and is mapped through `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`; arbitrary free-form source strings are not rendered as evidence
   - `executive-orchestrator.mjs` now has a truthful completion gate on final user-facing copy:
-    - when `verification.pass !== true`, frontend text is forced to `blocked/escalated` tone and cannot use completion phrasing
-    - fail paths only render `目前狀態 + 可驗證證據 + 待確認/限制`
+    - when verification does not pass, frontend text is forced into an unfinished tone and cannot use completion phrasing
+    - fail paths preserve any safe draft answer preview when available, but strip raw verifier jargon / issue codes / execution-policy internals from the public message
+    - public fail-soft text stays within `答案（先解法） + 可驗證證據 + 待確認/限制`
     - fake/partial/verifier-fail regressions are covered by `/Users/seanhan/Documents/Playground/tests/executive-orchestrator.test.mjs`
   - parallel execution model remains unchanged:
     - supporting-agent steps are still executed sequentially in-process

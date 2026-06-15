@@ -418,8 +418,10 @@ test("truthful completion gate uses blocked tone when verifier fails", async () 
 
   assert.equal(result?.verification?.pass, false);
   assert.equal(result?.verification?.fake_completion, false);
-  assert.match(result?.text || "", /^答案/m);
-  assert.match(result?.text || "", /目前狀態：blocked/);
+  assert.match(result?.text || "", /^答案（先解法）/m);
+  assert.match(result?.text || "", /先整理目前資訊|初步內容/);
+  assert.match(result?.text || "", /這輪輸出的必要格式還沒收齊|這輪還沒通過最後驗證/);
+  assert.doesNotMatch(result?.text || "", /verification\.pass !== true|schema_invalid|missing_proposal|artifact_backed_completion_required/);
   assert.doesNotMatch(result?.text || "", /已完成|已處理完/);
 });
 
@@ -472,7 +474,9 @@ test("truthful completion gate uses escalated tone for fake_completion", async (
 
   assert.equal(result?.verification?.pass, false);
   assert.equal(result?.verification?.fake_completion, true);
-  assert.match(result?.text || "", /目前狀態：escalated/);
+  assert.match(result?.text || "", /^答案（先解法）/m);
+  assert.match(result?.text || "", /我先整理到一版初步內容/);
+  assert.doesNotMatch(result?.text || "", /verification\.pass !== true|schema_invalid|missing_proposal|artifact_backed_completion_required/);
   assert.doesNotMatch(result?.text || "", /已完成|已處理完/);
 });
 
@@ -528,6 +532,8 @@ test("truthful completion gate handles partial_completion without completed tone
   assert.match(result?.text || "", /^答案/m);
   assert.match(result?.text || "", /^來源/m);
   assert.match(result?.text || "", /^待確認\/限制/m);
+  assert.match(result?.text || "", /先給你一版草稿/);
+  assert.doesNotMatch(result?.text || "", /verification\.pass !== true|schema_invalid|missing_proposal/);
   assert.doesNotMatch(result?.text || "", /已完成|已處理完/);
 });
 

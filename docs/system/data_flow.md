@@ -92,7 +92,8 @@ Current additive path:
    - current checked-in office kinds are inferred from attachment `mime/ext/name`
 4. `/Users/seanhan/Documents/Playground/src/lane-executor.mjs -> executeOfficeTaskReply(...)` is the checked-in office execution lane:
    - `msg_type=file` Word / Excel / PowerPoint uploads stage one short-lived follow-up context (5 minutes, keyed by `chat_id + sender_open_id`) before any heavy read attempt
-   - generic follow-up asks such as `告訴我這是什麼` / `整理重點` / `幫我看一下` can recover that staged office context or recent file-card context before execution
+   - generic follow-up asks such as `告訴我這是什麼` / `整理重點` / `幫我看一下` / `這個內容對嗎` can recover that staged office context or recent file-card context before execution
+   - for non-explicit executive starts, office follow-up recovery is attempted before the executive route, so attachment-reading turns are not swallowed by executive fail-soft copy
    - the lane requires verified user auth for message-resource attachment reads and fail-softs with explicit reauth/scope guidance when auth is missing
    - transient attachment download failures (`502/503/504/429/upstream/timeout`) keep the staged office context in local `pending_retry` state so the next short retry ask can reuse the same attachment refs
    - that same office context is mirrored into `/Users/seanhan/Documents/Playground/src/session-scope-store.mjs` as session-scoped `active_attachment_context`
@@ -108,6 +109,7 @@ Current additive path:
 6. when the user question is interpretive and a primary text-model key is available, the same office reader now calls `/Users/seanhan/Documents/Playground/src/llm/generate-text.mjs` with a strict single-JSON-object contract over the extracted office text:
    - generation may enrich the `answer` field only
    - `sources` remain deterministic extracted-snippet evidence
+   - validation-style asks such as `這個內容對嗎` / `我有沒有看錯` are biased toward checking whether the current summary matches extracted text, not toward external truth-audit claims
    - on model failure, the lane explicitly falls back to extractive office output and adds one bounded `主模型解讀未完成` limitation
 
 Current truth:
@@ -397,8 +399,9 @@ Current public `/answer` path:
 10. `answer-source-mapper.mjs` converts canonical source objects into bounded public `sources[]` lines
 11. `planner-user-input-edge.mjs` performs session-scoped working-memory v2 patch write-back only after a stable final boundary response is available
 12. `executive-orchestrator.mjs` enforces truthful completion gate on final user-facing copy:
-   - when `verification.pass !== true`, user-facing text is forced into blocked/escalated tone
-   - fail path can only render `目前狀態 + 可驗證證據 + 待確認/限制`
+   - when verification does not pass, user-facing text is forced into unfinished tone
+   - fail path can only render `答案（先解法） + 可驗證證據 + 待確認/限制`
+   - raw verifier expressions (`verification.pass !== true`, issue codes such as `schema_invalid`, execution-policy reason ids) are not exposed at the public boundary
    - completed-tone wording is blocked in verifier-fail/fake-completion/partial-completion paths
 13. `renderPlannerUserFacingReplyText(...)` keeps fixed public order:
    - `答案（先解法） -> 來源（依據） -> 待確認/限制（下一步）`

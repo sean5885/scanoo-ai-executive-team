@@ -70,13 +70,13 @@ function buildExecutiveUserFacingErrorText({
 function buildVerificationEvidenceSources(evidence = []) {
   return (Array.isArray(evidence) ? evidence : [])
     .map((item, index) => {
-      const summary = cleanText(item?.summary || "");
+      const summary = summarizeVerificationEvidenceSummary(item?.summary || "");
       if (!summary) {
         return null;
       }
       return {
         id: `verification_evidence_${index + 1}`,
-        title: `verification/${cleanText(item?.type || "evidence") || "evidence"}`,
+        title: "可驗證證據",
         source_type: "verification_evidence",
         reason: summary,
       };
@@ -85,8 +85,104 @@ function buildVerificationEvidenceSources(evidence = []) {
     .slice(0, 3);
 }
 
+function summarizeVerificationEvidenceSummary(value = "") {
+  const summary = cleanText(value);
+  if (!summary) {
+    return "";
+  }
+  const retrievedSourcesMatch = summary.match(/^retrieved_sources:(\d+)$/i);
+  if (retrievedSourcesMatch) {
+    return `本輪已取回 ${retrievedSourcesMatch[1]} 筆可引用來源。`;
+  }
+  if (/^reply_text_present$/i.test(summary)) {
+    return "本輪已產出一版文字回覆。";
+  }
+  if (/^structured_result_present$/i.test(summary)) {
+    return "本輪已產出一版結構化結果。";
+  }
+  const actionItemsMatch = summary.match(/^action_items:(\d+)$/i);
+  if (actionItemsMatch) {
+    return `本輪已整理 ${actionItemsMatch[1]} 個行動項目。`;
+  }
+  const proposalsMatch = summary.match(/^knowledge_proposals:(\d+)$/i);
+  if (proposalsMatch) {
+    return `本輪已整理 ${proposalsMatch[1]} 筆知識提案。`;
+  }
+  const supportingAgentsMatch = summary.match(/^supporting_agents:(\d+)$/i);
+  if (supportingAgentsMatch) {
+    return `本輪已彙整 ${supportingAgentsMatch[1]} 個支援 agent 的輸出。`;
+  }
+  return summary;
+}
+
+function mapVerificationIssueToUserFacingText(issue = "") {
+  const normalized = cleanText(issue).toLowerCase();
+  if (normalized === "schema_invalid") {
+    return "這輪輸出的必要格式還沒收齊。";
+  }
+  if (normalized === "missing_proposal") {
+    return "這輪缺少應該一起交付的提案欄位。";
+  }
+  if (normalized === "partial_completion") {
+    return "這輪只有部分內容可先交付，還不是完整完成。";
+  }
+  if (normalized === "fake_completion") {
+    return "目前缺少足夠證據支撐最終完成判定。";
+  }
+  return "";
+}
+
+function mapExecutionPolicyReasonToUserFacingText(reason = "") {
+  const normalized = cleanText(reason).toLowerCase();
+  if (normalized === "artifact_backed_completion_required") {
+    return "這輪還缺少能支撐完成判定的交付證據。";
+  }
+  if (normalized === "tool_required_fallback_used") {
+    return "這輪走了保守 fallback，還缺少必要工具執行證據。";
+  }
+  if (normalized === "verification_failed") {
+    return "這輪還沒通過最後檢查。";
+  }
+  return "";
+}
+
+function extractUserFacingAnswerPreview(text = "") {
+  const normalized = String(text || "").replace(/\r/g, "").trim();
+  if (!normalized) {
+    return "";
+  }
+  const answerSectionMatch = normalized.match(/答案（先解法）\n([\s\S]*?)(?:\n\n來源（依據）|\n來源（依據）|$)/);
+  if (answerSectionMatch?.[1]) {
+    return cleanText(answerSectionMatch[1]);
+  }
+  const lines = normalized
+    .split("\n")
+    .map((line) => cleanText(line))
+    .filter(Boolean)
+    .filter((line) => !/^(答案（先解法）|來源（依據）|待確認\/限制（下一步）|結論|重點|下一步|來源)$/i.test(line))
+    .filter((line) => !/^[-•]/.test(line));
+  return cleanText(lines[0] || "");
+}
+
+function resolveReplyPreviewFromFinalized(finalized = null) {
+  return extractUserFacingAnswerPreview(
+    finalized?.task?.execution_journal?.reply_text
+    || finalized?.task?.execution_journal?.reply?.text
+    || "",
+  );
+}
+
+function looksLikeCompletedClaim(text = "") {
+  const normalized = cleanText(text);
+  if (!normalized) {
+    return false;
+  }
+  return /(已完成|已處理完|已經完成|已全部完成)/.test(normalized);
+}
+
 function buildTruthfulCompletionGateReplyText({
   finalized = null,
+  draftAnswerPreview = "",
 } = {}) {
   const verification = finalized?.verification && typeof finalized.verification === "object"
     ? finalized.verification
@@ -97,17 +193,26 @@ function buildTruthfulCompletionGateReplyText({
     : "blocked";
   const issues = Array.isArray(verification.issues) ? verification.issues.map((item) => cleanText(item)).filter(Boolean) : [];
   const evidenceSources = buildVerificationEvidenceSources(finalized?.evidence || []);
+  const replyPreview = resolveReplyPreviewFromFinalized(finalized)
+    || extractUserFacingAnswerPreview(draftAnswerPreview);
+  const safeReplyPreview = verification.fake_completion === true && looksLikeCompletedClaim(replyPreview)
+    ? ""
+    : replyPreview;
+  const issueHints = issues
+    .map((item) => mapVerificationIssueToUserFacingText(item))
+    .filter(Boolean);
+  const executionPolicyHint = mapExecutionPolicyReasonToUserFacingText(verification.execution_policy_reason || "");
   const limitations = [
-    issues.length > 0
-      ? `verification issues：${issues.join("、")}。`
-      : "verification 尚未通過。",
-    cleanText(verification.execution_policy_reason || "")
-      ? `待確認：${cleanText(verification.execution_policy_reason)}。`
-      : "待確認：請補齊缺失 evidence 或修正執行結果後再驗證一次。",
+    ...(issueHints.length > 0 ? issueHints : ["這輪還沒通過最後驗證，所以我先把它當成初步版本。"]),
+    executionPolicyHint || "如果你要，我可以直接沿著這版內容繼續補齊缺的證據或重整成可交付版本。",
   ];
 
   return renderPlannerUserFacingReplyText({
-    answer: `目前狀態：${status}。verification.pass !== true，所以這輪不能用完成語氣回覆。`,
+    answer: safeReplyPreview || (
+      status === "escalated"
+        ? "這輪我先整理到一版初步內容，但目前還不能把它當成最終完成版。"
+        : "這輪我先整理到一版初步內容，但還需要再核一次才能當成最終答案。"
+    ),
     sources: evidenceSources,
     limitations,
   });
@@ -2463,8 +2568,9 @@ async function executeExecutiveTurnUnlocked({
           primaryReplyText: reply.text,
         })
       : buildTruthfulCompletionGateReplyText({
-          finalized,
-        }),
+        finalized,
+        draftAnswerPreview: reply.text,
+      }),
   };
 }
 

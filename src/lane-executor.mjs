@@ -1,6 +1,7 @@
 import { generateDocumentCommentSuggestionCard } from "./comment-suggestion-workflow.mjs";
 import {
   buildPlannerPendingItemActionResult,
+  looksLikeExecutiveStart,
 } from "./executive-planner.mjs";
 import {
   ensureMeetingWorkflowTask,
@@ -6806,6 +6807,13 @@ export async function executeCapabilityLane({
     }
   }
 
+  if (!looksLikeExecutiveStart(normalizedText)) {
+    const officeReply = await executeOfficeTaskReply({ event, logger });
+    if (officeReply) {
+      return officeReply;
+    }
+  }
+
   if (agentContext?.account?.id && expectedOwner === "executive") {
     assertRoutingDecisionOwner({ expected: expectedOwner, actual: "executive" });
     const executiveReply = await executeExecutiveTurn({
@@ -6832,12 +6840,8 @@ export async function executeCapabilityLane({
     return executePersonalAssistant({ event, scope, logger });
   }
 
-  const officeReply = await executeOfficeTaskReply({ event, logger });
   const imageReply = await executeImageTaskReply({ event, logger });
   const pdfReply = await executePdfTaskReply({ event, logger });
-  if (officeReply) {
-    return officeReply;
-  }
   if (pdfReply) {
     return pdfReply;
   }
