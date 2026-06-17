@@ -737,10 +737,12 @@ Current path:
    - `respect_existing_lane`
 7. when the ingress picks `pdf_task` / `image_task`, the lane forces recent attachment-context recovery even for short natural follow-ups such as `請全部讀完`, instead of requiring the local keyword gate to match first
 8. long pasted-text critique/editing asks (for example `告訴我這是什麼，有什麼需要修改的地方`) are deterministically forced back to `personal_assistant` before the ingress router model is queried, so these turns do not drift into planner/knowledge lookup
-9. after that ingress override, direct-message turns whose personal-lane plan would otherwise be `general_assistant_action` stay on `/Users/seanhan/Documents/Playground/src/lane-executor.mjs -> executePersonalAssistant(...)`, where the shared text-generation helper answers directly through the primary text model when available; this avoids the planner answer edge over-fitting generic strategy asks into document/company-brain lookup
-10. before that personal direct-answer path, the runtime still gives one bounded local pre-pass to `/Users/seanhan/Documents/Playground/src/planner/personal-dm-skill-intent.mjs`, but only after a cheap lexical gate confirms the DM explicitly looks like `find/install/verify skill`
-10A. greeting/closing-only DM turns are excluded from that classifier pre-pass and stay on direct assistant greeting/ack replies to avoid unnecessary planner/classifier latency and style drift
-11. the MiniMax text path classifies the DM into exactly one of:
+9. even when model-first ingress tentatively proposes `knowledge_assistant`, the runtime now clamps that route back to `personal_assistant` unless the text was already an explicit doc/knowledge-routing ask or the expected owner was already `knowledge-assistant`
+10. after that ingress override, direct-message turns whose personal-lane plan would otherwise be `general_assistant_action` stay on `/Users/seanhan/Documents/Playground/src/lane-executor.mjs -> executePersonalAssistant(...)`, where the shared text-generation helper now attempts the primary text model first for essentially all non-empty text turns (except greeting / closing ack residuals) whenever the primary credential is available; local strategy / prioritization / execution-push / copy-draft templates remain only as fail-soft fallback when generation fails
+11. before that personal direct-answer path, the runtime still gives one bounded local pre-pass to `/Users/seanhan/Documents/Playground/src/planner/personal-dm-skill-intent.mjs`, but only after a cheap lexical gate confirms the DM explicitly looks like `find/install/verify skill`
+11A. greeting/closing-only DM turns are excluded from that classifier pre-pass and stay on direct assistant greeting/ack replies to avoid unnecessary planner/classifier latency and style drift
+12. the older planner-first personal-DM branch is now effectively disabled for generic DM quality recovery; checked-in text-first behavior comes from `executePersonalAssistant(...)` + the shared text model instead of planner fallback
+13. the MiniMax text path classifies the DM into exactly one of:
    - `skill_find_request`
    - `skill_install_request`
    - `skill_verify_request`

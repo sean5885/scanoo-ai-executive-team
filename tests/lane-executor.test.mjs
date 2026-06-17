@@ -22,6 +22,7 @@ const {
   pickCalendarMeetingEvent,
   maybeBuildScanooDiagnoseOfficialReadFallback,
   maybeBuildScanooCompareDocsSearchFallback,
+  maybeBuildModelBackedGeneralAssistantReply,
   planModelFirstDMIngress,
   resolveLaneExecutionPlan,
   resolvePlannerExplicitAuthContext,
@@ -569,6 +570,29 @@ test("planModelFirstDMIngress can route short PDF continuation text into pdf_tas
     needs_recent_context: true,
     reason: "short_pdf_continuation_after_recent_attachment",
   });
+});
+
+test("maybeBuildModelBackedGeneralAssistantReply still uses the primary text model for execution-push asks", async () => {
+  let called = 0;
+  const reply = await maybeBuildModelBackedGeneralAssistantReply("告訴我這段內容接下來要怎麼推進", {
+    generateTextFn: async () => {
+      called += 1;
+      return [
+        "結論",
+        "先把目標收斂成一個本輪驗證重點。",
+        "",
+        "重點",
+        "- 先補成功判準。",
+        "- 再按 owner 拆下一步。",
+        "",
+        "下一步",
+        "- 你把原文貼全，我幫你直接改。",
+      ].join("\n");
+    },
+  });
+
+  assert.equal(called, 1);
+  assert.match(reply?.text || "", /先把目標收斂成一個本輪驗證重點/);
 });
 
 test("planModelFirstDMIngress keeps longform text critique on personal_assistant without asking router model", async () => {
@@ -2042,7 +2066,7 @@ test("personal lane semantic mismatch escalates to knowledge assistant", () => {
   }), false);
 });
 
-test("planner-first personal DM only activates for substantive direct-message general turns", () => {
+test("planner-first personal DM stays disabled so direct-message text can prefer direct replies", () => {
   const event = {
     message: {
       content: JSON.stringify({
@@ -2065,7 +2089,7 @@ test("planner-first personal DM only activates for substantive direct-message ge
       precedence_source: "lane_default",
     },
     plannerAvailable: true,
-  }), true);
+  }), false);
 
   assert.equal(shouldUsePlannerFirstPersonalDM({
     event: {

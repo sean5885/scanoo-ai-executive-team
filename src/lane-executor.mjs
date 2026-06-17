@@ -2119,19 +2119,11 @@ function buildGeneralAssistantReply(text = "") {
   };
 }
 
-async function maybeBuildModelBackedGeneralAssistantReply(text = "") {
+export async function maybeBuildModelBackedGeneralAssistantReply(text = "", {
+  generateTextFn = generateText,
+} = {}) {
   const normalized = cleanText(text);
   if (!normalized || looksLikeGreeting(normalized) || looksLikeClosingAck(normalized)) {
-    return null;
-  }
-  if (
-    normalized.length < 10
-    || looksLikeRiskAssessmentRequest(normalized)
-    || looksLikePrioritizationRequest(normalized)
-    || looksLikeExecutionPushRequest(normalized)
-    || looksLikeCopyDraftRequest(normalized)
-    || looksLikeVagueIdeationRequest(normalized)
-  ) {
     return null;
   }
   if (!hasPrimaryPlannerTextModelAvailable()) {
@@ -2139,7 +2131,7 @@ async function maybeBuildModelBackedGeneralAssistantReply(text = "") {
   }
 
   try {
-    const rawText = await generateText({
+    const rawText = await generateTextFn({
       systemPrompt: [
         "你是 Lobster 的 personal assistant。",
         "先直接回答，不要只回『我可以幫你』。",
@@ -2524,48 +2516,7 @@ export function shouldUsePlannerFirstPersonalDM({
   plannerAvailable = hasPrimaryPlannerTextModelAvailable(),
   plannerHealth = null,
 } = {}) {
-  const normalizedPlannerHealth = plannerHealth && typeof plannerHealth === "object"
-    ? plannerHealth
-    : {
-      available: plannerAvailable === true,
-      status: plannerAvailable === true ? "healthy" : "unavailable",
-      reason_code: plannerAvailable === true ? "planner_first_ready" : "primary_text_model_missing",
-    };
-
-  if (normalizedPlannerHealth.available !== true) {
-    return false;
-  }
-  if (cleanText(normalizedPlannerHealth.status || "") === "cooldown") {
-    return false;
-  }
-  if (cleanText(scope?.capability_lane || "personal-assistant") !== "personal-assistant") {
-    return false;
-  }
-  if (!isDirectMessageScope(scope)) {
-    return false;
-  }
-
-  const finalOwner = cleanText(routingDecision?.final_owner || "personal-assistant") || "personal-assistant";
-  if (finalOwner !== "personal-assistant") {
-    return false;
-  }
-
-  const text = normalizeMessageText(event);
-  if (!cleanText(text)) {
-    return false;
-  }
-  if (looksLikeGreeting(text) || looksLikeClosingAck(text)) {
-    return false;
-  }
-  if (looksLikeDeleteMeetingDocRequest(text) || looksLikeChatOnlyFailurePreference(text)) {
-    return false;
-  }
-  if (resolveCloudOrganizationAction({ text }) !== "none") {
-    return false;
-  }
-
-  const resolvedLanePlan = lanePlan || resolveLaneExecutionPlan({ event, scope });
-  return cleanText(resolvedLanePlan?.chosen_action || "") === "general_assistant_action";
+  return false;
 }
 
 export function resolveLaneExecutionPlan({ event, scope } = {}) {
@@ -6804,6 +6755,21 @@ export async function executeCapabilityLane({
       }
     }
     if (modelFirstIngressDecision.route === "knowledge_assistant") {
+      if (
+        expectedOwner !== "knowledge-assistant"
+        && !looksLikeExplicitDocOrKnowledgeRoutingRequest(normalizedText)
+      ) {
+        return executePersonalAssistant({
+          event,
+          scope: {
+            ...scope,
+            capability_lane: "personal-assistant",
+            lane_label: "個人助理",
+            lane_reason: "model_first_dm_ingress_clamped_to_personal",
+          },
+          logger,
+        });
+      }
       return executeKnowledgeAssistant({
         event,
         scope: {
