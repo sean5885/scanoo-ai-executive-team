@@ -2198,6 +2198,23 @@ function looksLikeAttachmentContinuationRequest(text = "") {
   ].some((signal) => normalized.includes(signal.toLowerCase()));
 }
 
+function looksLikeLongformTextCritiqueRequest(text = "") {
+  const normalized = cleanText(String(text || ""));
+  if (!normalized) {
+    return false;
+  }
+  const nonEmptyLines = normalized
+    .split(/\n+/)
+    .map((line) => cleanText(line))
+    .filter(Boolean);
+  const looksLongform = normalized.length >= 220 || nonEmptyLines.length >= 6;
+  if (!looksLongform) {
+    return false;
+  }
+  return /(有什麼需要修改的地方|有什么需要修改的地方|哪裡需要修改|哪里需要修改|怎麼修改|怎么修改|怎麼改|怎么改|要改什麼|要改什么|幫我修改|帮我修改|幫我優化|帮我优化|幫我潤色|帮我润色|給我修改建議|给我修改建议|告訴我這是什麼|告诉我这是什么)/i
+    .test(normalized);
+}
+
 export function shouldEscalatePersonalLaneToKnowledge(lanePlan = {}) {
   return cleanText(lanePlan?.fallback_reason || "") === "semantic_mismatch_document_request_in_personal_lane";
 }
@@ -2328,6 +2345,13 @@ export async function planModelFirstDMIngress({
   const stagedRecentPdf = await Promise.resolve(recentPdfContextReader(event));
   const stagedRecentImage = await Promise.resolve(recentImageContextReader(event));
   const canLookupRecentMessages = Boolean(cleanText(event?.message?.chat_id));
+  if (looksLikeLongformTextCritiqueRequest(text)) {
+    return {
+      route: "personal_assistant",
+      needs_recent_context: false,
+      reason: "longform_text_critique_stays_on_personal_assistant",
+    };
+  }
   try {
     const rawText = await generateTextFn({
       systemPrompt: [

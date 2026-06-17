@@ -43,6 +43,7 @@ const DELIVERY_KNOWLEDGE_THEME_PATTERN = /(交付|onboarding|導入|导入|\bsop
 const DELIVERY_KNOWLEDGE_CUE_PATTERN = /(查(?:一下|詢|询)?|搜尋|搜索|找|整理|流程|步驟|步骤|在哪(?:裡|里)?|內容|内容|講給我聽|讲给我听|怎麼做|怎么做|寫了什麼|写了什么)/i;
 const DEICTIC_DOC_REFERENCE_PATTERN = /(這份文件|这份文件|那份文件|這個文件|这个文件|那個文件|那个文件|這份|这份|那份|這個|这个|那個|那个)/i;
 const DEICTIC_DOC_DETAIL_CUE_PATTERN = /(在講什麼|在讲什么|寫了什麼|写了什么|內容|内容|打開|打开|讀|读|看|看看|給我看|给我看)/i;
+const DIRECT_TEXT_CRITIQUE_PATTERN = /(有什麼需要修改的地方|有什么需要修改的地方|哪裡需要修改|哪里需要修改|怎麼修改|怎么修改|怎麼改|怎么改|要改什麼|要改什么|幫我修改|帮我修改|幫我優化|帮我优化|幫我潤色|帮我润色|給我修改建議|给我修改建议)/i;
 
 function hasAny(text, keywords = []) {
   return keywords.some((keyword) => text.includes(keyword));
@@ -53,6 +54,33 @@ function normalizePlannerIngressText(input = {}) {
     return cleanText(String(input || "").toLowerCase());
   }
   return cleanText(normalizeMessageText(input).toLowerCase());
+}
+
+function readPlannerIngressRawText(input = {}) {
+  if (typeof input === "string") {
+    return cleanText(String(input || ""));
+  }
+  return cleanText(normalizeMessageText(input));
+}
+
+function looksLikeLongformPastedText(input = {}) {
+  const rawText = readPlannerIngressRawText(input);
+  if (!rawText) {
+    return false;
+  }
+  const nonEmptyLines = rawText
+    .split(/\n+/)
+    .map((line) => cleanText(line))
+    .filter(Boolean);
+  return rawText.length >= 220 || nonEmptyLines.length >= 6;
+}
+
+function looksLikeDirectTextCritiqueIntent(input = {}) {
+  const text = normalizePlannerIngressText(input);
+  if (!text) {
+    return false;
+  }
+  return DIRECT_TEXT_CRITIQUE_PATTERN.test(text);
 }
 
 export function looksLikePlannerRuntimeInfoIntent(input = {}) {
@@ -86,7 +114,21 @@ export function resolvePlannerKnowledgeAssistantIngress(input = {}) {
   }
 
   const docBoundaryIntent = detectDocBoundaryIntent(text);
+  const longformPastedText = looksLikeLongformPastedText(input);
+  const directTextCritiqueIntent = looksLikeDirectTextCritiqueIntent(input);
+
+  if (
+    (longformPastedText || directTextCritiqueIntent)
+    && !docBoundaryIntent.mentions_company_brain
+    && !looksLikePlannerRuntimeInfoIntent(text)
+  ) {
+    return null;
+  }
+
   if (docBoundaryIntent.wants_document_summary) {
+    if (longformPastedText || directTextCritiqueIntent) {
+      return null;
+    }
     return {
       capability_lane: "knowledge-assistant",
       lane_label: "知識助手",
@@ -114,6 +156,9 @@ export function resolvePlannerKnowledgeAssistantIngress(input = {}) {
   }
 
   if (looksLikePlannerDeliveryKnowledgeIntent(text)) {
+    if (longformPastedText || directTextCritiqueIntent) {
+      return null;
+    }
     return {
       capability_lane: "knowledge-assistant",
       lane_label: "知識助手",
@@ -123,6 +168,9 @@ export function resolvePlannerKnowledgeAssistantIngress(input = {}) {
   }
 
   if (looksLikePlannerDeicticDocDetailIntent(text)) {
+    if (longformPastedText || directTextCritiqueIntent) {
+      return null;
+    }
     return {
       capability_lane: "knowledge-assistant",
       lane_label: "知識助手",
@@ -132,6 +180,9 @@ export function resolvePlannerKnowledgeAssistantIngress(input = {}) {
   }
 
   if (hasAny(text, KNOWLEDGE_KEYWORDS)) {
+    if (longformPastedText || directTextCritiqueIntent) {
+      return null;
+    }
     return {
       capability_lane: "knowledge-assistant",
       lane_label: "知識助手",

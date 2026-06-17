@@ -226,6 +226,29 @@ test("PRD 驗收條件問句不會被 delivery knowledge ingress 誤吸進 knowl
   assert.equal(lane.lane_reason, "direct_message_default_lane");
 });
 
+test("長貼文修改需求不會被 delivery/doc knowledge ingress 誤吸進 knowledge-assistant", () => {
+  const lane = resolveCapabilityLane(
+    { chat_type: "p2p" },
+    {
+      message: {
+        content: JSON.stringify({
+          text: [
+            "O3｜建立可複製的交付與商業推進機制（COO）",
+            "KR1｜完成試點交付並通過驗收：完成 ≥3 家連鎖試點導入，並通過客戶業務部門驗收",
+            "KR2｜建立可複製交付流程：完成交付 SOP 與驗收清單",
+            "KR3｜建立成交導向資源調度機制：以成交可能性為準則進行資源排序",
+            "這個 O 主要關注三件事：第一，試點導入是否順利完成並通過驗收；第二，交付流程與 Pipeline 管理是否已經標準化；第三，商業推進是否有明確節奏、分工與資源支持。",
+            "告訴我這是什麼，有什麼需要修改的地方",
+          ].join("\n"),
+        }),
+      },
+    },
+  );
+
+  assert.equal(lane.capability_lane, "personal-assistant");
+  assert.equal(lane.lane_reason, "direct_message_default_lane");
+});
+
 test("最近對話總結需求不會被誤導到 knowledge-assistant", () => {
   const lane = resolveCapabilityLane(
     { chat_type: "p2p" },
