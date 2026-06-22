@@ -745,6 +745,10 @@ Current path:
    - only when the text looks like a same-thread follow-up rather than a doc/knowledge/calendar/task request
    - runtime reads up to a few recent DM turns through `listMessages(...)`, excludes the current message itself, and injects that bounded context into the primary text-model prompt
    - this continuity is for resolving `這個 / 上面 / 剛剛` references only; it does not claim external lookup, file read, or tool execution
+10B. same-session executive continuity now has one checked-in clamp:
+   - when a session still has an active `executive` task, but the new turn is phrased like a deictic critique/review ask (for example `這個有沒有問題`, `幫我做壓力測試`, `幫我挑問題`)
+   - `/Users/seanhan/Documents/Playground/src/control-kernel.mjs` now releases that turn back to the `personal-assistant` lane instead of letting the active executive task keep ownership
+   - goal: keep critique/review-style DM follow-ups on the recent-dialogue-aware personal path instead of over-sticky executive fail-soft replies
 11. before that personal direct-answer path, the runtime still gives one bounded local pre-pass to `/Users/seanhan/Documents/Playground/src/planner/personal-dm-skill-intent.mjs`, but only after a cheap lexical gate confirms the DM explicitly looks like `find/install/verify skill`
 11A. greeting/closing-only DM turns are excluded from that classifier pre-pass and stay on direct assistant greeting/ack replies to avoid unnecessary planner/classifier latency and style drift
 12. the older planner-first personal-DM branch is now effectively disabled for generic DM quality recovery; checked-in text-first behavior comes from `executePersonalAssistant(...)` + the shared text model instead of planner fallback

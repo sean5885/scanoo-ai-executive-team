@@ -1603,6 +1603,38 @@ export async function buildControlSummary() {
         file: FILES.controlKernel,
       });
     })(),
+    (() => {
+      const actual = decideIntent({
+        text: "請告訴我這個有沒有什麼問題，幫我做壓力測試",
+        lane: "personal-assistant",
+        activeTask: {
+          id: "task-executive-deictic-review",
+          workflow: "executive",
+          status: "active",
+        },
+      });
+      const ok = actual.decision === "lane_default"
+        && actual.precedence_source === "lane_default"
+        && actual.final_owner === "personal-assistant"
+        && actual.guard.executive_fallback_eligible === false;
+      return normalizeScenarioResult({
+        name: "deictic_critique_follow_up_does_not_get_stuck_on_executive",
+        ok,
+        expected: {
+          decision: "lane_default",
+          precedence_source: "lane_default",
+          final_owner: "personal-assistant",
+          executive_fallback_eligible: false,
+        },
+        actual: {
+          decision: actual.decision,
+          precedence_source: actual.precedence_source,
+          final_owner: actual.final_owner,
+          executive_fallback_eligible: actual.guard.executive_fallback_eligible,
+        },
+        file: FILES.controlKernel,
+      });
+    })(),
   ];
 
   const integrationPoints = [

@@ -90,3 +90,20 @@ test("single generic wording does not trigger explicit executive ownership", () 
   assert.equal(decision.final_owner, "personal-assistant");
   assert.equal(decision.guard.explicit_executive_intent, false);
 });
+
+test("deictic critique follow-up does not stay stuck on active executive task", () => {
+  const decision = decideIntent({
+    text: "請告訴我這個有沒有什麼問題，幫我做壓力測試",
+    lane: "personal-assistant",
+    activeTask: {
+      id: "task-executive-critique",
+      workflow: "executive",
+      status: "active",
+    },
+  });
+
+  assert.equal(decision.decision, "lane_default");
+  assert.equal(decision.precedence_source, "lane_default");
+  assert.equal(decision.final_owner, "personal-assistant");
+  assert.equal(decision.guard.executive_fallback_eligible, false);
+});

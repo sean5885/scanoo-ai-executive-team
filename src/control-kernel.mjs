@@ -9,7 +9,20 @@ import {
 } from "./executive-planner.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
 
+const PERSONAL_DEICTIC_REVIEW_FOLLOW_UP_PATTERN = /(這個|这个|這段|这段|這份|这份|上面|前面|剛剛|刚刚|上一段|上一條|上一条|上一則|上一则|上述|這裡|这里|這版|这版|延續|延续|接著|接着|繼續|继续)/i;
+const PERSONAL_DEICTIC_REVIEW_ACTION_PATTERN = /(有沒有問題|有没有问题|對嗎|对吗|哪裡不對|哪里不对|哪裡要改|哪里要改|幫我看|帮我看|幫我改|帮我改|壓力測試|压力测试|挑問題|挑问题|風險|风险|還缺什麼|还缺什么|主要講的是什麼|主要讲的是什么|重點是什麼|重点是什么|有什麼需要修改的地方|有什么需要修改的地方|怎麼修改|怎么修改|告訴我這是什麼|告诉我这是什么)/i;
+
+function looksLikePersonalDeicticReviewFollowUp(text = "") {
+  const normalized = cleanText(text);
+  if (!normalized) {
+    return false;
+  }
+  return PERSONAL_DEICTIC_REVIEW_FOLLOW_UP_PATTERN.test(normalized)
+    && PERSONAL_DEICTIC_REVIEW_ACTION_PATTERN.test(normalized);
+}
+
 function preferActiveExecutiveTask({
+  text = "",
   activeTask = null,
   lane = "",
   wantsCloudOrganizationFollowUp = false,
@@ -22,6 +35,9 @@ function preferActiveExecutiveTask({
     return true;
   }
   if (workflow !== "executive") {
+    return false;
+  }
+  if (lane === "personal-assistant" && looksLikePersonalDeicticReviewFollowUp(text)) {
     return false;
   }
   if (wantsCloudOrganizationFollowUp && lane === "personal-assistant") {
@@ -77,6 +93,7 @@ export function decideIntent({
   const sameSession = Boolean(activeTask?.id);
   const cloudDocSameScope = matchesCloudDocWorkflowScope(activeTask, cloudDocScopeKey);
   const executiveFallbackEligible = preferActiveExecutiveTask({
+    text: normalizedText,
     activeTask,
     lane: normalizedLane,
     wantsCloudOrganizationFollowUp,
