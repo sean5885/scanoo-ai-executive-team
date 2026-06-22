@@ -107,3 +107,53 @@ test("deictic critique follow-up does not stay stuck on active executive task", 
   assert.equal(decision.final_owner, "personal-assistant");
   assert.equal(decision.guard.executive_fallback_eligible, false);
 });
+
+test("generic same-session wording no longer keeps executive ownership by default", () => {
+  const decision = decideIntent({
+    text: "幫我看一下這個內容是不是對的",
+    lane: "personal-assistant",
+    activeTask: {
+      id: "task-executive-generic",
+      workflow: "executive",
+      status: "active",
+    },
+  });
+
+  assert.equal(decision.decision, "lane_default");
+  assert.equal(decision.final_owner, "personal-assistant");
+  assert.equal(decision.guard.executive_fallback_eligible, false);
+});
+
+test("active executive task still keeps true progress-style follow-up ownership", () => {
+  const decision = decideIntent({
+    text: "幫我整理一下目前進度",
+    lane: "personal-assistant",
+    activeTask: {
+      id: "task-executive-progress",
+      workflow: "executive",
+      status: "active",
+    },
+  });
+
+  assert.equal(decision.decision, "continue_active_workflow");
+  assert.equal(decision.precedence_source, "same_session_same_workflow");
+  assert.equal(decision.final_owner, "executive");
+  assert.equal(decision.guard.executive_fallback_eligible, true);
+});
+
+test("active executive task with pending questions still keeps ownership for plain answers", () => {
+  const decision = decideIntent({
+    text: "先用宗教場域當第一個試點",
+    lane: "personal-assistant",
+    activeTask: {
+      id: "task-executive-pending-question",
+      workflow: "executive",
+      status: "active",
+      pending_questions: ["第一個試點場景要選哪個？"],
+    },
+  });
+
+  assert.equal(decision.decision, "continue_active_workflow");
+  assert.equal(decision.final_owner, "executive");
+  assert.equal(decision.guard.executive_fallback_eligible, true);
+});

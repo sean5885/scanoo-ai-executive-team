@@ -11,6 +11,7 @@ import { cleanText } from "./message-intent-utils.mjs";
 
 const PERSONAL_DEICTIC_REVIEW_FOLLOW_UP_PATTERN = /(這個|这个|這段|这段|這份|这份|上面|前面|剛剛|刚刚|上一段|上一條|上一条|上一則|上一则|上述|這裡|这里|這版|这版|延續|延续|接著|接着|繼續|继续)/i;
 const PERSONAL_DEICTIC_REVIEW_ACTION_PATTERN = /(有沒有問題|有没有问题|對嗎|对吗|哪裡不對|哪里不对|哪裡要改|哪里要改|幫我看|帮我看|幫我改|帮我改|壓力測試|压力测试|挑問題|挑问题|風險|风险|還缺什麼|还缺什么|主要講的是什麼|主要讲的是什么|重點是什麼|重点是什么|有什麼需要修改的地方|有什么需要修改的地方|怎麼修改|怎么修改|告訴我這是什麼|告诉我这是什么)/i;
+const EXECUTIVE_CONTINUATION_FOLLOW_UP_PATTERN = /(目前進度|当前进度|現在進度|现在进度|進度如何|进度如何|卡在哪|卡在哪裡|卡在哪里|阻塞|blocked|下一步|接下來|接下来|繼續做|继续做|接著做|接着做|往下做|往下推进|推進|推进|排程|排期|優先順序|优先顺序|里程碑|里程|milestone|owner|負責人|负责人|期限|deadline|驗收|验收|資源|资源|拆解|收斂|收敛|OKR|okr|KPI|kpi)/i;
 
 function looksLikePersonalDeicticReviewFollowUp(text = "") {
   const normalized = cleanText(text);
@@ -19,6 +20,17 @@ function looksLikePersonalDeicticReviewFollowUp(text = "") {
   }
   return PERSONAL_DEICTIC_REVIEW_FOLLOW_UP_PATTERN.test(normalized)
     && PERSONAL_DEICTIC_REVIEW_ACTION_PATTERN.test(normalized);
+}
+
+function shouldKeepExecutiveContinuation(text = "", activeTask = null) {
+  const normalized = cleanText(text);
+  if (!normalized) {
+    return false;
+  }
+  if (Array.isArray(activeTask?.pending_questions) && activeTask.pending_questions.length > 0) {
+    return true;
+  }
+  return EXECUTIVE_CONTINUATION_FOLLOW_UP_PATTERN.test(normalized);
 }
 
 function preferActiveExecutiveTask({
@@ -38,6 +50,9 @@ function preferActiveExecutiveTask({
     return false;
   }
   if (lane === "personal-assistant" && looksLikePersonalDeicticReviewFollowUp(text)) {
+    return false;
+  }
+  if (lane === "personal-assistant" && !shouldKeepExecutiveContinuation(text, activeTask)) {
     return false;
   }
   if (wantsCloudOrganizationFollowUp && lane === "personal-assistant") {

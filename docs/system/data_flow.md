@@ -749,6 +749,10 @@ Current path:
    - when a session still has an active `executive` task, but the new turn is phrased like a deictic critique/review ask (for example `這個有沒有問題`, `幫我做壓力測試`, `幫我挑問題`)
    - `/Users/seanhan/Documents/Playground/src/control-kernel.mjs` now releases that turn back to the `personal-assistant` lane instead of letting the active executive task keep ownership
    - goal: keep critique/review-style DM follow-ups on the recent-dialogue-aware personal path instead of over-sticky executive fail-soft replies
+10C. same-session `executive` continuity is no longer sticky by default for all plain follow-ups:
+   - `/Users/seanhan/Documents/Playground/src/control-kernel.mjs` now keeps `executive` ownership only when the new turn still looks like true executive continuation (for example progress / next-step / owner / deadline / milestone / resource / rollout style asks), or when the active task still carries `pending_questions`
+   - generic same-session content-review wording such as `幫我看一下這個內容是不是對的` now falls back to `personal-assistant`
+   - goal: reduce old executive-owner residue so ordinary DM review/critique requests can keep using the newer recent-dialogue + text-model path
 11. before that personal direct-answer path, the runtime still gives one bounded local pre-pass to `/Users/seanhan/Documents/Playground/src/planner/personal-dm-skill-intent.mjs`, but only after a cheap lexical gate confirms the DM explicitly looks like `find/install/verify skill`
 11A. greeting/closing-only DM turns are excluded from that classifier pre-pass and stay on direct assistant greeting/ack replies to avoid unnecessary planner/classifier latency and style drift
 12. the older planner-first personal-DM branch is now effectively disabled for generic DM quality recovery; checked-in text-first behavior comes from `executePersonalAssistant(...)` + the shared text model instead of planner fallback

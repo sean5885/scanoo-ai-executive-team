@@ -1635,6 +1635,38 @@ export async function buildControlSummary() {
         file: FILES.controlKernel,
       });
     })(),
+    (() => {
+      const actual = decideIntent({
+        text: "幫我看一下這個內容是不是對的",
+        lane: "personal-assistant",
+        activeTask: {
+          id: "task-executive-generic-review",
+          workflow: "executive",
+          status: "active",
+        },
+      });
+      const ok = actual.decision === "lane_default"
+        && actual.precedence_source === "lane_default"
+        && actual.final_owner === "personal-assistant"
+        && actual.guard.executive_fallback_eligible === false;
+      return normalizeScenarioResult({
+        name: "generic_same_session_review_does_not_auto_stick_to_executive",
+        ok,
+        expected: {
+          decision: "lane_default",
+          precedence_source: "lane_default",
+          final_owner: "personal-assistant",
+          executive_fallback_eligible: false,
+        },
+        actual: {
+          decision: actual.decision,
+          precedence_source: actual.precedence_source,
+          final_owner: actual.final_owner,
+          executive_fallback_eligible: actual.guard.executive_fallback_eligible,
+        },
+        file: FILES.controlKernel,
+      });
+    })(),
   ];
 
   const integrationPoints = [

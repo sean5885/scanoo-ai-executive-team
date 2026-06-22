@@ -142,6 +142,10 @@ Public reply order is fixed to `答案 -> 來源 -> 待確認/限制`; verificat
 - `src/control-kernel.mjs` 現在收斂 `lane-executor.mjs` 的 follow-up owner 決策，輸出固定 `decision / matched_task_id / precedence_source / routing_reason / guard / final_owner`。
 - `executive-orchestrator.mjs` 不再用 direct status patch 把 task 標成 `completed`；完成只能經 `executive-closed-loop.mjs` 的 verifier gate。
 - `lane-executor.mjs` 現在先呼叫 `decideIntent(...)`，依 `final_owner` 決定 follow-up 應回 `executive`、`doc-editor` 或既有 lane；同 scope 的 cloud-doc 才能延續原 workflow，否則回既有 lane 決策。
+- `workflow="executive"` 的 same-session continuity 現在也不再預設吞掉所有 plain follow-up：
+  - 只有像進度 / 下一步 / owner / deadline / milestone / rollout / resource 這類真正延續任務推進的語句，才會留在 `executive`
+  - active task 若仍帶 `pending_questions`，則 plain answer 仍會優先延續同一個 `executive` task
+  - 一般內容檢查 / critique wording 會回到 `personal-assistant`，避免舊 executive owner residue 影響 DM 體感
 - meeting / doc rewrite / cloud-doc 已接到最小 workflow-state machine；其他 workflow 仍待後續整合。
 
 ## Single-Machine Runtime Coordination Closure
