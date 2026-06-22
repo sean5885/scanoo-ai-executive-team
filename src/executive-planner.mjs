@@ -18,9 +18,11 @@ import {
   trimTextForBudget,
 } from "./agent-token-governance.mjs";
 import {
+  canonicalizeRegisteredAgentId,
   getRegisteredAgent,
   listRegisteredAgents,
   parseRegisteredAgentCommand,
+  resolveKnownRegisteredAgentId,
   resolveRegisteredAgentFamilyRequest,
 } from "./agent-registry.mjs";
 import { buildWorkGraphFromDecision as compileWorkGraphFromDecision } from "./executive-work-graph.mjs";
@@ -502,8 +504,8 @@ function uniqueRegisteredAgentIds(agentIds = [], maxItems = EXECUTIVE_MAX_ROLES)
   const result = [];
   const seen = new Set();
   for (const item of Array.isArray(agentIds) ? agentIds : []) {
-    const agentId = cleanText(item);
-    if (!agentId || !getRegisteredAgent(agentId) || seen.has(agentId)) {
+    const agentId = resolveKnownRegisteredAgentId(item);
+    if (!agentId || seen.has(agentId)) {
       continue;
     }
     seen.add(agentId);
@@ -549,7 +551,7 @@ function buildSingleAgentWorkItems({
   objective = "",
   existingWorkItems = [],
 } = {}) {
-  const normalizedPrimaryAgentId = cleanText(primaryAgentId) || "generalist";
+  const normalizedPrimaryAgentId = resolveKnownRegisteredAgentId(primaryAgentId) || "generalist";
   const keptItems = limitExecutiveWorkItems(existingWorkItems, {
     allowedAgentIds: [normalizedPrimaryAgentId],
     maxItems: 1,
@@ -593,9 +595,7 @@ function buildSingleAgentWorkItems({
 }
 
 function trimExecutiveDecisionRoleCounts(decision = {}) {
-  const primaryAgentId = getRegisteredAgent(cleanText(decision.primary_agent_id || ""))
-    ? cleanText(decision.primary_agent_id)
-    : "generalist";
+  const primaryAgentId = resolveKnownRegisteredAgentId(decision.primary_agent_id) || "generalist";
   const supportingAgentIds = uniqueRegisteredAgentIds(
     (Array.isArray(decision.supporting_agent_ids) ? decision.supporting_agent_ids : [])
       .map((item) => cleanText(item))
@@ -607,9 +607,7 @@ function trimExecutiveDecisionRoleCounts(decision = {}) {
   return {
     ...decision,
     primary_agent_id: primaryAgentId,
-    next_agent_id: getRegisteredAgent(cleanText(decision.next_agent_id || ""))
-      ? cleanText(decision.next_agent_id)
-      : primaryAgentId,
+    next_agent_id: resolveKnownRegisteredAgentId(decision.next_agent_id) || primaryAgentId,
     supporting_agent_ids: supportingAgentIds,
     work_items: limitExecutiveWorkItems(decision.work_items, {
       allowedAgentIds,
@@ -670,7 +668,7 @@ function hasUnknownAgentReference(text = "") {
   const matches = normalized.match(/\/([a-z0-9_-]+)/gi) || [];
   return matches.some((token) => {
     const agentId = cleanText(token.replace(/^\//, ""));
-    return agentId && !getRegisteredAgent(agentId);
+    return agentId && !canonicalizeRegisteredAgentId(agentId);
   });
 }
 
@@ -698,7 +696,7 @@ function applyDeterministicExecutiveAgentSelection(decision = {}, fallbackText =
         includeSlashCommand: true,
       })
     : null;
-  const explicitAgentId = cleanText(explicitAgentRequest?.agent?.id || "");
+  const explicitAgentId = canonicalizeRegisteredAgentId(explicitAgentRequest?.agent?.id || "");
   const hasSelectionOverride = Boolean(explicitAgentId && explicitAgentId !== "generalist");
 
   if (activeTask?.id && !hasSelectionOverride) {
@@ -771,13 +769,13 @@ function buildCollaborativeWorkItems({ primaryAgentId = "", supportingAgentIds =
   const seen = new Set();
 
   function push(agentId, task, role = "") {
-    const normalizedAgentId = cleanText(agentId);
+    const normalizedAgentId = resolveKnownRegisteredAgentId(agentId);
     const normalizedTask = cleanText(task);
     if (
       !normalizedAgentId
       || !normalizedTask
       || seen.has(normalizedAgentId)
-      || !getRegisteredAgent(normalizedAgentId)
+      || !normalizedAgentId
     ) {
       return;
     }
@@ -12194,12 +12192,12 @@ function buildExecutiveDecisionWhy({
 function normalizePlannerDecision(decision = {}, fallbackText = "", activeTask = null) {
   const primaryAgentId = cleanText(decision.primary_agent_id || decision.primary_agent || "");
   const nextAgentId = cleanText(decision.next_agent_id || decision.next_agent || primaryAgentId);
-  const normalizedPrimaryAgentId = getRegisteredAgent(primaryAgentId) ? primaryAgentId : "generalist";
+  const normalizedPrimaryAgentId = resolveKnownRegisteredAgentId(primaryAgentId) || "generalist";
   const supportingAgentIds = [];
   const supportingSeen = new Set([normalizedPrimaryAgentId]);
   for (const item of Array.isArray(decision.supporting_agent_ids) ? decision.supporting_agent_ids : []) {
-    const agentId = cleanText(item);
-    if (!agentId || supportingSeen.has(agentId) || !getRegisteredAgent(agentId)) {
+    const agentId = resolveKnownRegisteredAgentId(item);
+    if (!agentId || supportingSeen.has(agentId)) {
       continue;
     }
     supportingSeen.add(agentId);
@@ -12212,7 +12210,7 @@ function normalizePlannerDecision(decision = {}, fallbackText = "", activeTask =
   const workItemSeen = new Set();
   for (const item of Array.isArray(decision.work_items) ? decision.work_items : []) {
     const requestedAgentId = cleanText(item?.agent_id || item?.agent || "");
-    const normalizedAgentId = getRegisteredAgent(requestedAgentId) ? requestedAgentId : normalizedPrimaryAgentId;
+    const normalizedAgentId = resolveKnownRegisteredAgentId(requestedAgentId) || normalizedPrimaryAgentId;
     const task = cleanText(item?.task || "");
     if (!task || workItemSeen.has(normalizedAgentId)) {
       continue;
@@ -12232,7 +12230,7 @@ function normalizePlannerDecision(decision = {}, fallbackText = "", activeTask =
     action: cleanText(decision.action || "continue") || "continue",
     objective: cleanText(decision.objective || fallbackText),
     primary_agent_id: normalizedPrimaryAgentId,
-    next_agent_id: getRegisteredAgent(nextAgentId) ? nextAgentId : getRegisteredAgent(primaryAgentId) ? primaryAgentId : "generalist",
+    next_agent_id: resolveKnownRegisteredAgentId(nextAgentId) || normalizedPrimaryAgentId,
     supporting_agent_ids: supportingAgentIds,
     reason: cleanText(decision.reason || ""),
     pending_questions: Array.isArray(decision.pending_questions)

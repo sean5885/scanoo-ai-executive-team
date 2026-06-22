@@ -1,5 +1,6 @@
 import { cleanText } from "./message-intent-utils.mjs";
 import { ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
+import { legacyPersonaAgentConfigs, legacyPersonaAgentIds } from "./legacy-agent-personas.mjs";
 
 const BASE_AGENT_RULES = [
   "優先引用檢索到的 Lark 文件與知識片段。",
@@ -106,87 +107,9 @@ export const agentRegistry = Object.freeze({
     outputContract: "輸出 answer -> sources -> limitations 固定順序。",
     allowedTools: ["company_brain_list", "company_brain_search", "company_brain_detail"],
   }),
-  ceo: createCoreAgent({
-    id: "ceo",
-    slash: "/ceo",
-    kind: "persona",
-    label: "CEO Agent",
-    role: "你是 /ceo agent，負責高層決策整合、優先級判斷、風險與資源權衡。",
-    goal: "給出高優先級、決策可用的結論，不要只做摘要。",
-    outputContract: "輸出四段：決策建議 / 判斷依據 / 主要風險 / 建議下一步。",
-  }),
-  product: createCoreAgent({
-    id: "product",
-    slash: "/product",
-    kind: "persona",
-    label: "Product Agent",
-    role: "你是 /product agent，負責產品問題拆解、使用者價值與優先級判斷。",
-    goal: "把需求整理成產品觀點下的問題、機會、範圍與取捨。",
-    outputContract: "輸出四段：核心問題 / 使用者價值 / 建議方向 / 待確認。",
-  }),
-  prd: createCoreAgent({
-    id: "prd",
-    slash: "/prd",
-    kind: "persona",
-    label: "PRD Agent",
-    role: "你是 /prd agent，負責把需求整理成簡潔 PRD 片段。",
-    goal: "用模板化方式產出需求背景、目標、範圍、驗收與風險。",
-    outputContract: "輸出固定欄位：背景、目標、範圍、非目標、驗收、風險、待確認。",
-  }),
-  cmo: createCoreAgent({
-    id: "cmo",
-    slash: "/cmo",
-    kind: "persona",
-    label: "CMO Agent",
-    role: "你是 /cmo agent，負責市場定位、訊息、內容與成長建議。",
-    goal: "把素材整理成可執行的市場/品牌/增長結論。",
-    outputContract: "輸出四段：受眾 / 訊息 / 動作建議 / 風險。",
-  }),
-  consult: createCoreAgent({
-    id: "consult",
-    slash: "/consult",
-    kind: "persona",
-    label: "Consult Agent",
-    role: "你是 /consult agent，負責結構化診斷、問題拆解與方案比較。",
-    goal: "先定義問題，再做方案比較與建議。",
-    outputContract: "輸出四段：問題定義 / 觀察 / 方案比較 / 建議。",
-  }),
-  cdo: createCoreAgent({
-    id: "cdo",
-    slash: "/cdo",
-    kind: "persona",
-    label: "CDO Agent",
-    role: "你是 /cdo agent，負責資料、營運流程、數位治理與指標設計。",
-    goal: "把文件與知識整理成資料治理、流程治理或度量建議。",
-    outputContract: "輸出四段：治理目標 / 現況缺口 / 建議指標或流程 / 下一步。",
-  }),
-  delivery: createCoreAgent({
-    id: "delivery",
-    slash: "/delivery",
-    kind: "persona",
-    label: "Delivery Agent",
-    role: "你是 delivery_agent，負責交付進度、阻塞與對外交付風險。",
-    goal: "輸出以交付為中心的狀態與風險。",
-    outputContract: "輸出四段：交付狀態 / 阻塞 / 風險 / 建議行動。",
-  }),
-  ops: createCoreAgent({
-    id: "ops",
-    slash: "/ops",
-    kind: "persona",
-    label: "Ops Agent",
-    role: "你是 ops_agent，負責營運流程、SOP 與日常運營問題。",
-    goal: "把問題整理成營運可執行步驟。",
-    outputContract: "輸出四段：現況 / SOP 建議 / 例外處理 / 下一步。",
-  }),
-  tech: createCoreAgent({
-    id: "tech",
-    slash: "/tech",
-    kind: "persona",
-    label: "Tech Agent",
-    role: "你是 tech_agent，負責技術架構、實作風險與工程決策。",
-    goal: "給出工程可執行的技術建議。",
-    outputContract: "輸出四段：技術判斷 / 方案 / 風險 / 建議執行順序。",
-  }),
+  ...Object.fromEntries(
+    legacyPersonaAgentConfigs.map((config) => [config.id, createCoreAgent(config)]),
+  ),
   "knowledge-audit": createCoreAgent({
     id: "knowledge-audit",
     slash: "/knowledge",
@@ -225,6 +148,16 @@ export const agentRegistry = Object.freeze({
   }),
 });
 
+const PUBLIC_REGISTERED_AGENT_IDS = Object.freeze([
+  "generalist",
+  "planner_agent",
+  "company_brain_agent",
+]);
+
+const LEGACY_AGENT_ALIAS_MAP = Object.freeze({
+  ...Object.fromEntries(legacyPersonaAgentIds.map((agentId) => [agentId, "generalist"])),
+});
+
 export const knowledgeAgentSubcommands = Object.freeze(
   Object.values(agentRegistry)
     .filter((agent) => agent.kind === "knowledge" && cleanText(agent.subcommand))
@@ -232,7 +165,9 @@ export const knowledgeAgentSubcommands = Object.freeze(
 );
 
 function listRegisteredCoreAgents() {
-  return Object.values(agentRegistry).filter((agent) => agent.kind !== "knowledge");
+  return PUBLIC_REGISTERED_AGENT_IDS
+    .map((agentId) => agentRegistry[agentId])
+    .filter(Boolean);
 }
 
 function findRegisteredSlashMentionIndex(text = "", slash = "") {
@@ -246,6 +181,28 @@ function findRegisteredSlashMentionIndex(text = "", slash = "") {
 
 export function listRegisteredAgents() {
   return listRegisteredCoreAgents();
+}
+
+export function canonicalizeRegisteredAgentId(agentId = "") {
+  const normalizedAgentId = cleanText(agentId);
+  if (!normalizedAgentId) {
+    return "";
+  }
+  if (LEGACY_AGENT_ALIAS_MAP[normalizedAgentId]) {
+    return LEGACY_AGENT_ALIAS_MAP[normalizedAgentId];
+  }
+  return agentRegistry[normalizedAgentId] ? normalizedAgentId : "";
+}
+
+export function resolveKnownRegisteredAgentId(agentId = "") {
+  const normalizedAgentId = cleanText(agentId);
+  if (!normalizedAgentId) {
+    return "";
+  }
+  if (agentRegistry[normalizedAgentId]) {
+    return normalizedAgentId;
+  }
+  return canonicalizeRegisteredAgentId(normalizedAgentId);
 }
 
 export function listAgentCapabilityMatrix() {
@@ -273,7 +230,8 @@ export function getAgentGraphContract(agentId = "") {
 }
 
 export function getRegisteredAgent(agentId = "") {
-  return agentRegistry[cleanText(agentId)];
+  const normalizedAgentId = cleanText(agentId);
+  return normalizedAgentId ? agentRegistry[normalizedAgentId] || null : null;
 }
 
 function resolveKnowledgeAgentBySubcommand(subcommand = "") {
@@ -327,14 +285,24 @@ export function parseRegisteredAgentCommand(text = "", {
     };
   }
 
-  const agent = listRegisteredCoreAgents()
+  const directAgent = listRegisteredCoreAgents()
     .find((item) => cleanText(item?.slash || "").toLowerCase() === slashName);
-  if (!agent) {
+  if (directAgent) {
+    return {
+      agent: directAgent,
+      body: rawRemainder,
+      raw: normalized,
+    };
+  }
+
+  const aliasMatch = Object.entries(LEGACY_AGENT_ALIAS_MAP)
+    .find(([legacyAgentId]) => cleanText(agentRegistry[legacyAgentId]?.slash || "").toLowerCase() === slashName);
+  if (!aliasMatch) {
     return null;
   }
 
   return {
-    agent,
+    agent: agentRegistry[aliasMatch[1]] || agentRegistry.generalist,
     body: rawRemainder,
     raw: normalized,
   };
@@ -373,10 +341,21 @@ export function resolveRegisteredAgentFamilyRequest(text = "", {
   }
 
   if (includeSlashCommand) {
-    const embeddedSlashMatch = listRegisteredCoreAgents()
-      .map((agent, order) => ({
+    const embeddedSlashMatch = [
+      ...listRegisteredCoreAgents().map((agent, order) => ({
         agent,
         order,
+        slash: agent?.slash || "",
+      })),
+      ...Object.keys(LEGACY_AGENT_ALIAS_MAP).map((legacyAgentId, order) => ({
+        agent: agentRegistry.generalist,
+        order: order + listRegisteredCoreAgents().length,
+        slash: agentRegistry[legacyAgentId]?.slash || "",
+      })),
+    ]
+      .map((agent, order) => ({
+        agent: agent.agent,
+        order: agent.order ?? order,
         index: findRegisteredSlashMentionIndex(normalized, agent?.slash || ""),
       }))
       .filter((item) => item.index >= 0)
@@ -393,27 +372,23 @@ export function resolveRegisteredAgentFamilyRequest(text = "", {
 
   if (includePersonaStyleMention) {
     const personaMentionRules = [
-      { id: "consult", pattern: /\bconsult(?:\s+agent)?\b/i },
-      { id: "product", pattern: /\bproduct(?:\s+agent)?\b/i },
-      { id: "cmo", pattern: /\bcmo(?:\s+agent)?\b/i },
-      { id: "tech", pattern: /\btech(?:\s+agent)?\b/i },
-      { id: "ceo", pattern: /\bceo(?:\s+agent)?\b/i },
-      { id: "ops", pattern: /\bops(?:\s+agent)?\b/i },
-      { id: "cdo", pattern: /\bcdo(?:\s+agent)?\b/i },
-      { id: "delivery", pattern: /\bdelivery(?:\s+agent)?\b/i },
-      { id: "prd", pattern: /\bprd(?:\s+agent)?\b/i },
+      /\bconsult(?:\s+agent)?\b/i,
+      /\bproduct(?:\s+agent)?\b/i,
+      /\bcmo(?:\s+agent)?\b/i,
+      /\btech(?:\s+agent)?\b/i,
+      /\bceo(?:\s+agent)?\b/i,
+      /\bops(?:\s+agent)?\b/i,
+      /\bcdo(?:\s+agent)?\b/i,
+      /\bdelivery(?:\s+agent)?\b/i,
+      /\bprd(?:\s+agent)?\b/i,
     ];
-    const matchedRule = personaMentionRules.find((rule) => rule.pattern.test(normalized));
-    if (matchedRule) {
-      const agent = getRegisteredAgent(matchedRule.id);
-      if (agent) {
-        return {
-          agent,
-          body: normalized,
-          raw: normalized,
-          surface: "persona_style",
-        };
-      }
+    if (personaMentionRules.some((pattern) => pattern.test(normalized))) {
+      return {
+        agent: agentRegistry.generalist,
+        body: normalized,
+        raw: normalized,
+        surface: "persona_style_alias",
+      };
     }
   }
 

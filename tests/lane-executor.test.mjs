@@ -35,7 +35,9 @@ const {
   shouldUsePlannerFirstPersonalDM,
   looksLikeAgentStandbyStatusRequest,
   buildAgentStandbyStatusReply,
+  buildRecentDialogueContextForGeneralAssistant,
   buildImageAnalysisReply,
+  looksLikeGeneralAssistantRecentContextFollowUp,
   shouldFallbackScanooCompareToDocsSearch,
   shouldFallbackScanooDiagnoseToOfficialRead,
   shouldPreferActiveExecutiveTask,
@@ -593,6 +595,89 @@ test("maybeBuildModelBackedGeneralAssistantReply still uses the primary text mod
 
   assert.equal(called, 1);
   assert.match(reply?.text || "", /先把目標收斂成一個本輪驗證重點/);
+});
+
+test("maybeBuildModelBackedGeneralAssistantReply injects recent dialogue context for deictic follow-up", async () => {
+  let capturedPrompt = "";
+  const reply = await maybeBuildModelBackedGeneralAssistantReply("請告訴我這個有沒有什麼問題，幫我做壓力測試", {
+    recentContextText: [
+      "最近對話上下文（僅用來理解這一輪『這個／上面／剛剛』指的是什麼，不代表已查外部資料）：",
+      "使用者：這是一份宗教場域商機驗證專案的完整定位文件。",
+      "助手：核心目標是把法會人流轉化成可跟進的名單與成交機會。",
+    ].join("\n"),
+    generateTextFn: async ({ prompt }) => {
+      capturedPrompt = prompt;
+      return [
+        "結論",
+        "這份內容方向是對的，但現在還缺壓力測試視角下的反證與風險拆解。",
+        "",
+        "重點",
+        "- 目標清楚，但驗證門檻還不夠量化。",
+        "- 成本與轉化假設需要再拆細。",
+        "",
+        "下一步",
+        "- 我可以直接幫你補一版『反對者會挑什麼問題』。",
+      ].join("\n");
+    },
+  });
+
+  assert.match(capturedPrompt, /最近對話上下文/);
+  assert.match(capturedPrompt, /宗教場域商機驗證專案/);
+  assert.match(capturedPrompt, /本輪使用者訊息：請告訴我這個有沒有什麼問題/);
+  assert.match(reply?.text || "", /缺壓力測試視角下的反證與風險拆解/);
+});
+
+test("general assistant recent-context follow-up detection matches deictic critique asks", () => {
+  assert.equal(
+    looksLikeGeneralAssistantRecentContextFollowUp("請告訴我這個有沒有什麼問題，幫我做壓力測試"),
+    true,
+  );
+  assert.equal(
+    looksLikeGeneralAssistantRecentContextFollowUp("幫我總結最近對話"),
+    false,
+  );
+  assert.equal(
+    looksLikeGeneralAssistantRecentContextFollowUp("幫我看這份文件重點"),
+    false,
+  );
+});
+
+test("buildRecentDialogueContextForGeneralAssistant formats recent DM turns oldest-first and skips current message", async () => {
+  const contextText = await buildRecentDialogueContextForGeneralAssistant({
+    accessToken: "u_access_token",
+    chatId: "oc_dm_follow_up_context",
+    currentMessageId: "msg_current",
+    listMessagesFn: async () => ({
+      items: [
+        {
+          message_id: "msg_current",
+          text: "請告訴我這個有沒有什麼問題",
+          sender: { sender_type: "user" },
+        },
+        {
+          message_id: "msg_assistant",
+          text: "這是一份宗教場域商機驗證專案的完整定位文件。",
+          sender: { sender_type: "app" },
+        },
+        {
+          message_id: "msg_user_prev",
+          text: "請告訴我這個有沒有什麼問題 請對我做壓力測試",
+          sender: { sender_type: "user" },
+        },
+      ],
+    }),
+    logger: {
+      warn() {},
+      compactError(error) {
+        return error instanceof Error ? error.message : String(error);
+      },
+    },
+  });
+
+  assert.match(contextText, /最近對話上下文/);
+  assert.doesNotMatch(contextText, /msg_current/);
+  assert.match(contextText, /使用者：請告訴我這個有沒有什麼問題 請對我做壓力測試/);
+  assert.match(contextText, /助手：這是一份宗教場域商機驗證專案的完整定位文件/);
 });
 
 test("planModelFirstDMIngress keeps longform text critique on personal_assistant without asking router model", async () => {

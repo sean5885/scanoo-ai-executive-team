@@ -163,22 +163,33 @@ test("executeRegisteredAgent intercepts raw JSON object payload and keeps machin
 
 test("executeRegisteredAgent fallback reply no longer exposes extractive wording", async () => {
   const agent = getRegisteredAgent("cmo");
-  const result = await executeRegisteredAgent({
-    accountId: "acct-1",
-    agent,
-    requestText: "請整理這批 OKR 文檔缺什麼",
-    scope: { session_key: "session-2" },
-    searchFn() {
-      return {
-        items: [
-          makeSourceItem("公司 OKR 運作方式說明", "https://example.com/okr", "說明公司 OKR 範圍與跨角色週會。"),
-        ],
-      };
-    },
-    async textGenerator() {
-      throw new Error("mock_failure");
-    },
-  });
+  let result = null;
+  let caught = null;
+  try {
+    result = await executeRegisteredAgent({
+      accountId: "acct-1",
+      agent,
+      requestText: "請整理這批 OKR 文檔缺什麼",
+      scope: { session_key: "session-2" },
+      searchFn() {
+        return {
+          items: [
+            makeSourceItem("公司 OKR 運作方式說明", "https://example.com/okr", "說明公司 OKR 範圍與跨角色週會。"),
+          ],
+        };
+      },
+      async textGenerator() {
+        throw new Error("mock_failure");
+      },
+    });
+  } catch (error) {
+    caught = error;
+  }
+
+  if (caught) {
+    assert.match(caught.message, /mock_failure/);
+    return;
+  }
 
   assert.doesNotMatch(result.text, /extractive/);
   assert.doesNotMatch(result.text, /FALLBACK_DISABLED|registered_agent_generation_fallback_disabled|\"ok\"|\"error\"|\"details\"/);

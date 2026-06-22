@@ -1,6 +1,10 @@
 import { executeRegisteredAgent } from "./agent-dispatcher.mjs";
 import { createHash } from "node:crypto";
-import { getRegisteredAgent, parseRegisteredAgentCommand } from "./agent-registry.mjs";
+import {
+  getRegisteredAgent,
+  parseRegisteredAgentCommand,
+  resolveKnownRegisteredAgentId,
+} from "./agent-registry.mjs";
 import { runDocumentReviewTriageWorkflow } from "./document-review-triage-workflow.mjs";
 import {
   buildTaskInitialization,
@@ -483,21 +487,22 @@ async function runWithSessionCoordination({
 }
 
 function resolveWorkPlanPrimaryAgentId(task = null, decision = null) {
-  const decisionPrimary = cleanText(decision?.next_agent_id || decision?.primary_agent_id || "");
-  if (decisionPrimary && getRegisteredAgent(decisionPrimary)) {
+  const decisionPrimary = resolveKnownRegisteredAgentId(decision?.next_agent_id || decision?.primary_agent_id || "");
+  if (decisionPrimary) {
     return decisionPrimary;
   }
-  const taskPrimary = cleanText(task?.current_agent_id || task?.primary_agent_id || "");
-  if (taskPrimary && getRegisteredAgent(taskPrimary)) {
+  const taskPrimary = resolveKnownRegisteredAgentId(task?.current_agent_id || task?.primary_agent_id || "");
+  if (taskPrimary) {
     return taskPrimary;
   }
   return "generalist";
 }
 
 function deriveSupportingAgentIds(workPlan = [], primaryAgentId = "") {
+  const normalizedPrimaryAgentId = resolveKnownRegisteredAgentId(primaryAgentId) || "generalist";
   return (Array.isArray(workPlan) ? workPlan : [])
-    .map((item) => cleanText(item?.agent_id || ""))
-    .filter((agentId) => agentId && agentId !== primaryAgentId)
+    .map((item) => resolveKnownRegisteredAgentId(item?.agent_id || ""))
+    .filter((agentId) => agentId && agentId !== normalizedPrimaryAgentId)
     .slice(0, EXECUTIVE_MAX_SUPPORTING_ROLES);
 }
 
@@ -880,9 +885,7 @@ export function normalizeWorkPlan(task = null, decision = null, requestText = ""
   const seen = new Set();
   for (const item of plan) {
     const requestedAgentId = cleanText(item?.agent_id || item?.agent || "");
-    const agentId = requestedAgentId && getRegisteredAgent(requestedAgentId)
-      ? requestedAgentId
-      : primaryAgentId;
+    const agentId = resolveKnownRegisteredAgentId(requestedAgentId) || primaryAgentId;
     const work = cleanText(item?.task || requestText);
     if (!agentId || !work || seen.has(agentId)) {
       continue;

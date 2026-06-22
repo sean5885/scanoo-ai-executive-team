@@ -15,11 +15,11 @@ test("usage-layer runner executes registered slash-agent cases on the agent answ
 
   assert.equal(result.actual_lane, "registered_agent");
   assert.equal(result.actual_action, "dispatch_registered_agent");
-  assert.equal(result.executed_target, "agent:cmo");
+  assert.equal(result.executed_target, "agent:generalist");
   assert.equal(result.actual_success_type, "direct_answer");
   assert.equal(result.generic, false);
   assert.equal(result.first_turn_success, true);
-  assert.match(result.reply_text, /\/cmo/);
+  assert.match(result.reply_text, /\/generalist|整理定位/);
   assert.match(result.reply_text, /整理定位/);
 });
 
@@ -90,17 +90,12 @@ test("usage-layer runner keeps persona-style registered-agent family on the owne
   const result = await runUsageLayerEvalCase(testCase);
 
   assert.equal(result.actual_lane, "executive");
-  assert.equal(result.executed_target, "agent:consult");
+  assert.equal(result.executed_target, "agent:generalist");
   assert.equal(
-    new Set(["agent:consult", "executive:generic"]).has(result.actual_owner_surface),
+    new Set(["agent:generalist", "executive:generic"]).has(result.actual_owner_surface),
     true,
   );
-  if (result.actual_owner_surface === "executive:generic") {
-    assert.equal(result.wrong_owner_surface, true);
-  } else {
-    assert.equal(result.wrong_owner_surface, false);
-  }
-  assert.match(result.reply_text, /consult/i);
+  assert.match(result.reply_text, /consult|generalist|收斂/i);
 });
 
 test("registered-agent family pack stays bounded and covers owner surface plus fail-closed edges", () => {

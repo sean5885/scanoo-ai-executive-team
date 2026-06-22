@@ -739,6 +739,12 @@ Current path:
 8. long pasted-text critique/editing asks (for example `告訴我這是什麼，有什麼需要修改的地方`) are deterministically forced back to `personal_assistant` before the ingress router model is queried, so these turns do not drift into planner/knowledge lookup
 9. even when model-first ingress tentatively proposes `knowledge_assistant`, the runtime now clamps that route back to `personal_assistant` unless the text was already an explicit doc/knowledge-routing ask or the expected owner was already `knowledge-assistant`
 10. after that ingress override, direct-message turns whose personal-lane plan would otherwise be `general_assistant_action` stay on `/Users/seanhan/Documents/Playground/src/lane-executor.mjs -> executePersonalAssistant(...)`, where the shared text-generation helper now attempts the primary text model first for essentially all non-empty text turns (except greeting / closing ack residuals) whenever the primary credential is available; local strategy / prioritization / execution-push / copy-draft templates remain only as fail-soft fallback when generation fails
+10A. the same personal-assistant direct-answer path now also has one bounded recent-dialogue continuity recovery for deictic short follow-ups (for example `這個有沒有問題`, `幫我做壓力測試`, `接下來怎麼改`):
+   - only in direct-message scope
+   - only when the lane plan is still `general_assistant_action`
+   - only when the text looks like a same-thread follow-up rather than a doc/knowledge/calendar/task request
+   - runtime reads up to a few recent DM turns through `listMessages(...)`, excludes the current message itself, and injects that bounded context into the primary text-model prompt
+   - this continuity is for resolving `這個 / 上面 / 剛剛` references only; it does not claim external lookup, file read, or tool execution
 11. before that personal direct-answer path, the runtime still gives one bounded local pre-pass to `/Users/seanhan/Documents/Playground/src/planner/personal-dm-skill-intent.mjs`, but only after a cheap lexical gate confirms the DM explicitly looks like `find/install/verify skill`
 11A. greeting/closing-only DM turns are excluded from that classifier pre-pass and stay on direct assistant greeting/ack replies to avoid unnecessary planner/classifier latency and style drift
 12. the older planner-first personal-DM branch is now effectively disabled for generic DM quality recovery; checked-in text-first behavior comes from `executePersonalAssistant(...)` + the shared text model instead of planner fallback

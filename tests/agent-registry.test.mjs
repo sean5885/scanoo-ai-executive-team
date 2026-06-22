@@ -29,13 +29,23 @@ test("parseRegisteredAgentCommand fail-closes knowledge without subcommand", () 
   assert.equal(parsed?.body, "請整理這批知識");
 });
 
-test("resolveRegisteredAgentFamilyRequest matches embedded slash and rejects old persona-style mentions", () => {
+test("resolveRegisteredAgentFamilyRequest matches embedded slash and folds old persona-style mentions into generalist", () => {
   const embeddedSlash = resolveRegisteredAgentFamilyRequest("把這輪改交給 /planner");
-  const personaStyle = resolveRegisteredAgentFamilyRequest("請 consult agent 做方案比較");
+  const personaStyle = resolveRegisteredAgentFamilyRequest("請 consult agent 做方案比較", {
+    includePersonaStyleMention: true,
+  });
 
   assert.equal(embeddedSlash?.agent?.id, "planner_agent");
   assert.equal(embeddedSlash?.surface, "slash_command");
-  assert.equal(personaStyle, null);
+  assert.equal(personaStyle?.agent?.id, "generalist");
+  assert.equal(personaStyle?.surface, "persona_style_alias");
+});
+
+test("parseRegisteredAgentCommand keeps legacy slash habits compatible but routes them to generalist", () => {
+  const parsed = parseRegisteredAgentCommand("/cmo 幫我整理定位");
+
+  assert.equal(parsed?.agent?.id, "generalist");
+  assert.equal(parsed?.body, "幫我整理定位");
 });
 
 test("registered future agents are also available", () => {

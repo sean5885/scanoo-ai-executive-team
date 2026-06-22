@@ -959,7 +959,7 @@ test("runPlannerUserInputEdge recovers explicit persona-style executive requests
   assert.equal(result.plannerEnvelope.ok, true);
   assert.equal(result.userResponse.ok, true);
   assert.equal(result.userResponse.failure_class, null);
-  assert.match(result.userResponse.answer || "", /\/consult/);
+  assert.match(result.userResponse.answer || "", /consult agent|\/generalist|executive/i);
   assert.doesNotMatch(result.userResponse.answer || "", /planner_failed/i);
 });
 

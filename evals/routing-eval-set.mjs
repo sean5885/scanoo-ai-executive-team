@@ -567,7 +567,7 @@ const mixedCases = [
   createCase("mixed", "001", "/cmo 幫我整理定位", {
     lane: "registered_agent",
     planner_action: "dispatch_registered_agent",
-    agent_or_tool: "agent:cmo",
+    agent_or_tool: "agent:generalist",
   }),
   createCase("mixed", "002", "/knowledge conflicts 找出 Scanoo 文件衝突", {
     lane: "registered_agent",
@@ -587,7 +587,7 @@ const mixedCases = [
   createCase("mixed", "005", "/tech 幫我看架構風險", {
     lane: "registered_agent",
     planner_action: "dispatch_registered_agent",
-    agent_or_tool: "agent:tech",
+    agent_or_tool: "agent:generalist",
   }),
   createCase("mixed", "006", "先請各個 agent 一起看這批文檔，最後再統一收斂建議", {
     lane: "executive",
@@ -597,22 +597,22 @@ const mixedCases = [
   createCase("mixed", "007", "把這輪改交給 /cmo", {
     lane: "executive",
     planner_action: "start",
-    agent_or_tool: "agent:cmo",
+    agent_or_tool: "agent:generalist",
   }),
   createCase("mixed", "008", "這個需要高層決策，請一起協作", {
     lane: "executive",
     planner_action: "start",
-    agent_or_tool: "agent:ceo",
+    agent_or_tool: "agent:generalist",
   }),
   createCase("mixed", "009", "請 consult agent 做方案比較", {
     lane: "executive",
     planner_action: "start",
-    agent_or_tool: "agent:consult",
+    agent_or_tool: "agent:generalist",
   }),
   createCase("mixed", "010", "請 product agent 從產品角度拆解這個任務", {
     lane: "executive",
     planner_action: "start",
-    agent_or_tool: "agent:product",
+    agent_or_tool: "agent:generalist",
   }),
   createCase("mixed", "011", "幫我搜尋 onboarding 文件並直接打開內容", {
     lane: "knowledge_assistant",

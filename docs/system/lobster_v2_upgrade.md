@@ -32,6 +32,7 @@ Key upgrades:
 
 ## Compatibility
 
-- existing slash agents remain compatible
+- existing slash agents remain compatible, but older persona-style slashes now collapse onto the slimmer core public surface while the internal persona definitions stay available for legacy executive work-plan compatibility
+- the checked-in implementation now also separates those legacy persona definitions into `/Users/seanhan/Documents/Playground/src/legacy-agent-personas.mjs`, reducing churn inside the main registry without changing runtime compatibility
 - existing meeting preview/confirm/doc-write flow remains compatible
 - knowledge writeback is safer because meeting outputs now enter pending proposal memory first

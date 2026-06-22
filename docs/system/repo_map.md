@@ -128,6 +128,15 @@ This file explains which directories are part of the current runtime, which are 
 - `/Users/seanhan/Documents/Playground/src/planner-ingress-contract.mjs`
 - `/Users/seanhan/Documents/Playground/src/user-response-normalizer.mjs`
 - `/Users/seanhan/Documents/Playground/src/answer-source-mapper.mjs`
+- Current truth:
+  - `/Users/seanhan/Documents/Playground/src/agent-registry.mjs` now keeps a slim public registered-agent catalog of only:
+    - `generalist`
+    - `planner_agent`
+    - `company_brain_agent`
+  - `/Users/seanhan/Documents/Playground/src/legacy-agent-personas.mjs`
+    - legacy persona definitions (`ceo/product/prd/cmo/consult/cdo/delivery/ops/tech`) extracted out of the main registry file
+  - legacy persona-style agent ids/slashes are compatibility aliases to `generalist` on the public entry surface, not separate first-class public agents
+  - legacy persona agent definitions are still kept in code for internal executive work-plan compatibility and historical artifact replay
 - `/Users/seanhan/Documents/Playground/src/usage-eval-runner.mjs`
   - evaluation-only runner for multi-turn usage-layer/decision-engine measurement (non-runtime control path)
 - `/Users/seanhan/Documents/Playground/src/answer-service.mjs`

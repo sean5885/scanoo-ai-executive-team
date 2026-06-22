@@ -1824,6 +1824,75 @@ function looksLikeAmbiguousDeicticDocumentRequest(text = "") {
     || /(?:打開|打开|讀|读|看|看看).{0,4}(?:這份|这份|這個|这个)/u.test(normalized);
 }
 
+const GENERAL_ASSISTANT_DEICTIC_FOLLOW_UP_PATTERN = /(這個|这个|這段|这段|這份|这份|上面|前面|剛剛|刚刚|上一段|上一條|上一条|上一則|上一则|上述|這裡|这里|這版|这版|延續|延续|接著|接着|繼續|继续)/i;
+const GENERAL_ASSISTANT_SHORT_FOLLOW_UP_ACTION_PATTERN = /(有沒有問題|有没有问题|對嗎|对吗|哪裡不對|哪里不对|哪裡要改|哪里要改|幫我看|帮我看|幫我改|帮我改|壓力測試|压力测试|挑問題|挑问题|風險|风险|還缺什麼|还缺什么|下一步|接下來|接下来|主要講的是什麼|主要讲的是什么|重點是什麼|重点是什么)/i;
+
+export function looksLikeGeneralAssistantRecentContextFollowUp(text = "") {
+  const normalized = cleanText(text);
+  if (!normalized) {
+    return false;
+  }
+  if (
+    looksLikeGreeting(normalized)
+    || looksLikeClosingAck(normalized)
+    || looksLikeRecentConversationSummaryRequest(normalized)
+    || looksLikeCalendarSummaryRequest(normalized)
+    || looksLikeTasksSummaryRequest(normalized)
+    || looksLikeExplicitDocOrKnowledgeRoutingRequest(normalized)
+    || looksLikeAmbiguousDeicticDocumentRequest(normalized)
+  ) {
+    return false;
+  }
+  if (GENERAL_ASSISTANT_DEICTIC_FOLLOW_UP_PATTERN.test(normalized)) {
+    return true;
+  }
+  return normalized.length <= 48 && GENERAL_ASSISTANT_SHORT_FOLLOW_UP_ACTION_PATTERN.test(normalized);
+}
+
+export async function buildRecentDialogueContextForGeneralAssistant({
+  accessToken = "",
+  chatId = "",
+  currentMessageId = "",
+  listMessagesFn = listMessages,
+  logger = noopLogger,
+} = {}) {
+  const normalizedChatId = cleanText(chatId);
+  const normalizedToken = cleanText(accessToken);
+  if (!normalizedChatId || !normalizedToken) {
+    return "";
+  }
+  try {
+    const recent = await listMessagesFn(normalizedToken, normalizedChatId, {
+      containerIdType: "chat",
+      pageSize: 8,
+    });
+    const currentId = cleanText(currentMessageId);
+    const lines = (Array.isArray(recent?.items) ? recent.items : [])
+      .filter((item) => cleanText(item?.message_id) !== currentId)
+      .filter((item) => cleanText(item?.text))
+      .slice(0, 4)
+      .reverse()
+      .map((item) => {
+        const senderType = cleanText(item?.sender?.sender_type).toLowerCase();
+        const role = /bot|app/.test(senderType) ? "助手" : "使用者";
+        return `${role}：${truncate(item?.text || "", 220)}`;
+      });
+    if (!lines.length) {
+      return "";
+    }
+    return [
+      "最近對話上下文（僅用來理解這一輪『這個／上面／剛剛』指的是什麼，不代表已查外部資料）：",
+      ...lines,
+    ].join("\n");
+  } catch (error) {
+    logger.warn("personal_dm_recent_context_failed", {
+      error: logger.compactError(error),
+      chat_id: formatIdentifierHint(normalizedChatId),
+    });
+    return "";
+  }
+}
+
 function buildLaneTrace({
   scope,
   chosenAction = null,
@@ -2120,6 +2189,7 @@ function buildGeneralAssistantReply(text = "") {
 }
 
 export async function maybeBuildModelBackedGeneralAssistantReply(text = "", {
+  recentContextText = "",
   generateTextFn = generateText,
 } = {}) {
   const normalized = cleanText(text);
@@ -2135,12 +2205,17 @@ export async function maybeBuildModelBackedGeneralAssistantReply(text = "", {
       systemPrompt: [
         "你是 Lobster 的 personal assistant。",
         "先直接回答，不要只回『我可以幫你』。",
+        "若提供最近對話上下文，優先把『這個／上面／剛剛』解析為同聊天室剛提過的內容。",
+        "若上下文只是文字內容，而使用者說『這個有沒有問題』『幫我壓力測試』『幫我挑問題』，先視為要你檢查內容品質、邏輯漏洞與可執行性，不要自動解讀成系統效能測試。",
         "不能假裝已讀文件、已查資料、已執行工具。",
         "若缺少文件、資料或權限，只能誠實說明限制並給下一步。",
         "固定輸出三段：結論、重點、下一步。",
         "保持簡潔、可執行、像高階助理。",
       ].join("\n"),
-      prompt: normalized,
+      prompt: [
+        cleanText(recentContextText),
+        `本輪使用者訊息：${normalized}`,
+      ].filter(Boolean).join("\n\n"),
       sessionIdSuffix: "personal-assistant-general-reply",
       temperature: 0.1,
     });
@@ -6548,11 +6623,30 @@ async function executePersonalAssistant({ event, scope, logger = noopLogger }) {
   }
 
   if (lanePlan.chosen_action === "general_assistant_action") {
-    const generatedReply = await maybeBuildModelBackedGeneralAssistantReply(text);
+    let recentContextText = "";
+    if (isDirectMessageScope(scope) && looksLikeGeneralAssistantRecentContextFollowUp(text)) {
+      recentContextText = await buildRecentDialogueContextForGeneralAssistant({
+        accessToken: context.token,
+        chatId,
+        currentMessageId: cleanText(event?.message?.message_id),
+        logger,
+      });
+      if (recentContextText) {
+        logger.info("personal_dm_recent_context_attached", {
+          chat_id: formatIdentifierHint(chatId),
+          message_id: formatIdentifierHint(cleanText(event?.message?.message_id)),
+          lane_action: "general_assistant_action",
+        });
+      }
+    }
+    const generatedReply = await maybeBuildModelBackedGeneralAssistantReply(text, {
+      recentContextText,
+    });
     if (isDirectMessageScope(scope)) {
       logger.info("personal_dm_path_selected", {
         selected_path: generatedReply ? "model_first" : "personal_fallback",
         lane_action: "general_assistant_action",
+        recent_context_attached: Boolean(recentContextText),
         fallback_reason: generatedReply ? null : "planner_first_not_active",
       });
     }
