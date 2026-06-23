@@ -1,5 +1,11 @@
 # 《Lobster AI Executive System Audit Report v1》
 
+> Historical snapshot note:
+> 這份報告反映的是 `2026-03-18` 當時的 audit 視角，不應直接當成目前 public surface 真相。
+> 以目前 checked-in code 為準，現行 first-class public slash-agent surface 已收斂為：
+> `/generalist`、`/planner`、`/company-brain`。
+> `/ceo`、`/cmo`、`/consult`、`/tech` 等舊 persona slash 目前只保留為 backward-compatibility aliases，公開入口會折疊回 `/generalist`。
+
 更新時間：2026-03-18  
 盤點範圍：`/Users/seanhan/Documents/Playground` checked-in code、`/Users/seanhan/Documents/Playground/docs/system` 技術鏡像、`/Users/seanhan/Library/Logs/lark-kb-http.log` 近 7 天 log、根層規則文件  
 方法說明：本報告以 code 與 checked-in docs 為準；若 docs 與 code 不一致，以 code 為現況，並在文中標記風險或衝突。
@@ -64,7 +70,7 @@ Lobster AI Executive Team 目前是一個本地運行的 Lark 國際版知識、
 - Drive / Wiki / Doc / Message / Calendar / Task / Bitable / Sheets / Reaction 讀寫
 - SQLite + FTS + local semantic sidecar hybrid retrieval
 - `/answer` 與 retrieval-grounded slash agents
-- checked-in slash agents：`/generalist`、`/planner`、`/company-brain`、`/ceo`、`/product`、`/prd`、`/cmo`、`/consult`、`/cdo`、`/delivery`、`/ops`、`/tech`
+- checked-in slash agents（audit 當時視角，非 current public surface）：`/generalist`、`/planner`、`/company-brain`、`/ceo`、`/product`、`/prd`、`/cmo`、`/consult`、`/cdo`、`/delivery`、`/ops`、`/tech`
 - checked-in knowledge subcommands inventory：`/knowledge audit|conflicts|distill`（generic parser default fail-closed，需由 caller 明確啟用 subcommand parsing）
 - meeting workflow：啟動、錄音、轉譯、總結、確認、寫文檔、knowledge writeback
 - executive closed loop：task lifecycle、evidence、verifier、reflection、improvement proposal、improvement approval/apply workflow

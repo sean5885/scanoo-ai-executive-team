@@ -212,10 +212,10 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 | `EU-06` | `routing-eval:doc-023a` | `把非 scanoo 的文檔摘出去` | `cloud_doc_workflow` | `rereview` | `workflow:cloud_doc_organization` | `true` | `workflow_update` | `workflow_progress` | `true` |
 | `EU-07` | `routing-eval:meeting-001` | `我要開會了` | `meeting_workflow` | `start_capture` | `workflow:meeting_agent` | `true` | `workflow_update` | `workflow_progress` | `true` |
 | `EU-08` | `routing-eval:meeting-010` | `請問在持續記錄中嗎` | `meeting_workflow` | `capture_status` | `workflow:meeting_agent` | `true` | `workflow_update` | `workflow_progress` | `true` |
-| `EU-09` | `routing-eval:mixed-001` | `/cmo 幫我整理定位` | `registered_agent` | `dispatch_registered_agent` | `agent:cmo` | `false` | `answer_first` | `direct_answer` | `true` |
+| `EU-09` | `routing-eval:mixed-001` | `/cmo 幫我整理定位` | `registered_agent` | `dispatch_registered_agent` | `agent:generalist` | `false` | `answer_first` | `direct_answer` | `true` |
 | `EU-10` | `routing-eval:mixed-003` | `/knowledge audit 盤點 OKR 文件缺口` | `registered_agent` | `dispatch_registered_agent` | `agent:knowledge-audit` | `false` | `answer_first` | `direct_answer` | `true` |
 | `EU-11` | `routing-eval:mixed-006` | `先請各個 agent 一起看這批文檔，最後再統一收斂建議` | `executive` | `start` | `agent:generalist` | `false` | `executive_brief` | `direct_answer` | `true` |
-| `EU-12` | `routing-eval:mixed-008` | `這個需要高層決策，請一起協作` | `executive` | `start` | `agent:ceo` | `false` | `executive_brief` | `direct_answer` | `true` |
+| `EU-12` | `routing-eval:mixed-008` | `這個需要高層決策，請一起協作` | `executive` | `start` | `agent:generalist` | `false` | `executive_brief` | `direct_answer` | `true` |
 | `EU-13` | `routing-eval:runtime-008` | `幫我總結最近對話` | `group_shared_assistant` | `summarize_recent_dialogue` | `tool:lark_messages_list` | `true` | `answer_first` | `direct_answer` | `true` |
 | `EU-14` | `routing-eval:runtime-010` | `晚點提醒我一下` | `personal_assistant` | `ROUTING_NO_MATCH` | `error:ROUTING_NO_MATCH` | `false` | `fail_soft` | `fail_soft` | `false` |
 
@@ -234,7 +234,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 | `ES-09` | `routing-eval:runtime-005` | `幫我看今天日程` | `personal_assistant` | `calendar_summary` | `tool:lark_calendar_primary` | `true` | `answer_first` | `direct_answer` | `true` |
 | `ES-10` | `routing-eval:runtime-006` | `幫我看目前任務` | `personal_assistant` | `tasks_summary` | `tool:lark_tasks_list` | `true` | `answer_first` | `direct_answer` | `true` |
 | `ES-11` | `routing-eval:runtime-007` | `幫我總結最近對話` | `personal_assistant` | `summarize_recent_dialogue` | `tool:lark_messages_list` | `true` | `answer_first` | `direct_answer` | `true` |
-| `ES-12` | `routing-eval:mixed-005` | `/tech 幫我看架構風險` | `registered_agent` | `dispatch_registered_agent` | `agent:tech` | `false` | `answer_first` | `direct_answer` | `true` |
+| `ES-12` | `routing-eval:mixed-005` | `/tech 幫我看架構風險` | `registered_agent` | `dispatch_registered_agent` | `agent:generalist` | `false` | `answer_first` | `direct_answer` | `true` |
 | `ES-13` | `routing-eval:meeting-008` | `/meeting confirm confirm-123` | `meeting_workflow` | `confirm` | `workflow:meeting_agent` | `true` | `workflow_update` | `workflow_progress` | `true` |
 | `ES-14` | `routing-eval:meeting-009` | `/meeting 客戶會議 參與人員：Sean、Amy TODO：Sean 整理 PRD` | `meeting_workflow` | `process` | `workflow:meeting_agent` | `true` | `workflow_update` | `workflow_progress` | `true` |
 
@@ -301,6 +301,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - CLI: `npm run eval:usage-layer:registered-agent-family`
 - case 數量固定維持 `15~20` 條
 - 覆蓋 slash command、persona-style owner phrasing、registered-agent success、`permission_denied`、`routing_no_match`、`fail_closed`
+- 這組 pack 仍保留 `/cmo`、`/tech`、`consult agent` 這類舊 persona 輸入，但它驗證的是 compatibility ingress 是否正確折疊回 slimmed public surface，而不是舊 persona 是否仍是 first-class public agent
 - 這組 pack 另外帶 optional `expected_owner_surface`，runner 會額外輸出 `actual_owner_surface`、`wrong_owner_surface`、`generic_owner_surface`，專門用來抓 explicit persona request 被 generic executive surface 吃掉的 regression
 
 這一輪另外補了一組 timeout-governance focused pack：
@@ -319,7 +320,7 @@ Back to [README.md](/Users/seanhan/Documents/Playground/README.md)
 - 既有 `failure_class` compatibility 仍保留：`routing_no_match`、`tool_omission`、`planner_failed`、`permission_denied`、`partial_success`、`generic_fallback`
 - runner 會優先讀這層 classification，再退回 `generic` / `clarify` / `partial_success` heuristic
 - summary 會輸出 `failure_breakdown` 與 top failure categories，避免所有 fail-soft case 都被誤壓成同一種 generic clarify
-- 若 case 有提供 `expected_owner_surface`，runner 也會把 owner surface 納入 fail reason，避免 `/cmo` 這類 explicit owner family 只剩 route 命中、但回答邊界退成 generic executive brief
+- 若 case 有提供 `expected_owner_surface`，runner 也會把 owner surface 納入 fail reason，避免 `/cmo` 這類 legacy explicit owner signal 沒有正確折疊到 `generalist`，或回答邊界退成 generic executive brief
 - `knowledge_assistant` case 會重用 checked-in route truth，直接驅動 deterministic executor path 再回到同一條 answer boundary；這是 eval runner 的 bounded executor fallback，用來隔離 planner JSON latency，不改 routing truth、public contract 或 write policy
 - personal-lane `partial_success / fail_closed` case 會直接走 checked-in answer boundary normalizer，而不是讓 eval 被 planner waiting 拖成 timeout
 - follow-up / multi-intent continuity pack 現在另外允許在 eval context 內預載 `planner.active_doc / active_candidates`，並可用 bounded `mock_planner_envelope` 驗證第二輪 answer boundary；這只用於 deterministic usage-layer judging，不改 public runtime contract

@@ -32,7 +32,8 @@ What now exists in current code:
 - closed-loop executive planner that can start, continue, or hand off between registered agents
 - shared executive task state for multi-turn continuation and agent-to-agent handoff
 - lifecycle state transitions that require evidence plus verifier pass before completion
-- checked-in slash-agent registry now includes core + persona surfaces: `/generalist`, `/planner`, `/company-brain`, `/ceo`, `/product`, `/prd`, `/cmo`, `/consult`, `/cdo`, `/delivery`, `/ops`, `/tech`
+- checked-in public slash-agent registry is now slimmed to three first-class surfaces only: `/generalist`, `/planner`, `/company-brain`
+- older persona-style slashes such as `/ceo`, `/cmo`, `/consult`, `/tech` are still accepted at ingress for backward compatibility, but they fold back to `/generalist` on the public entry surface
 - checked-in knowledge subcommand inventory exists for `/knowledge audit|conflicts|distill`; parser default remains fail-closed (`ROUTING_NO_MATCH`) unless caller explicitly enables knowledge-subcommand parsing
 - core-configured shared dispatcher that reuses retrieval grounding plus compact role prompts
 - image-bearing slash requests that first use the Nano Banana-oriented adapter, then pass compact structured image context into the text model only when needed
@@ -150,9 +151,9 @@ What now exists in current code:
   - route image-only and image+text requests through the image-understanding adapter before normal text-lane handling
   - also intercept `/meeting` as a command workflow before default lane replies
   - preflight shared Bitable links so the bot can inspect base/table structure without asking the user to copy tokens manually
-  - keep `personal-assistant` fail-soft, but direct-message turns that would otherwise degrade to `general_assistant_action` now hand off to the shared planner/model answer edge first when the primary text-model credential is available; deterministic personal catch-all remains only as a bounded residual path
+  - keep `personal-assistant` fail-soft, but direct-message turns that would otherwise degrade to `general_assistant_action` now stay on the direct personal-assistant answer path, which prefers the shared text model first and only falls back to bounded deterministic scaffolds when needed
   - when that primary credential is absent, the residual personal catch-all no longer waits on the OpenClaw text-generation path before answering
-  - the same lane now records DM path/health trace events and can temporarily open a local cooldown circuit when repeated planner-first failures prove the model path is currently unhealthy
+  - the same lane now records bounded DM path trace events (`personal_dm_path_decision`, `personal_dm_path_selected`, `model_first_dm_ingress_selected`) for request-level debugging
   - treat "整理會議" style wording as summary work before calendar lookup when the request is clearly asking for整理/摘要
   - keep fallback copy user-facing and avoid exposing routing/runtime/log wording in chat replies
 - Input:
@@ -180,17 +181,18 @@ What now exists in current code:
   - `/Users/seanhan/Documents/Playground/src/agent-registry.mjs`
   - `/Users/seanhan/Documents/Playground/src/agent-dispatcher.mjs`
 - Role:
-- define checked-in core/persona/knowledge agent IDs, slash commands, role prompts, and output contracts
+- define checked-in core/knowledge agent IDs, slash commands, role prompts, and output contracts
+- keep older persona definitions only as compatibility aliases plus internal executive-work-plan references, not as first-class public catalog entries
 - keep one checked-in registered-agent family resolver for slash command and embedded slash mentions (for example `把這輪改交給 /planner`) so caller modules do not maintain local maps
 - resolver keeps slash-first matching as default (direct slash + embedded slash), and only enables persona-style mention parsing when caller explicitly opts in
 - expose minimum capability contracts for governance and self-check
-- dispatch registered core/persona slash commands before generic lane fallback
+- dispatch registered core slash commands before generic lane fallback; legacy persona aliases normalize back to `/generalist` on the public answer surface
 - keep `/knowledge *` fail-closed by default at generic slash parsing boundaries, while allowing opt-in subcommand parsing in selected eval/recovery helpers
   - reuse retrieval grounding and compact workflow checkpoints for core-agent answers
   - when direct text-model credentials are absent, call the dedicated `lobster-backend` OpenClaw MiniMax text path before dropping to extractive retrieval-only output
   - keep chat-facing slash-agent fallback/no-match replies on the shared natural-language reply boundary instead of exposing raw error envelopes
   - reject JSON-like success payloads at the registered-agent output boundary and summarize them into visible natural language while keeping machine-readable fields in runtime data
-- when eval/runtime is already on the executive surface but the request carries one explicit owner signal (slash command or opted-in persona-style mention), checked-in recovery/eval helpers stay owner-aware and reuse the same registered-agent answer surface rather than falling back to a generic executive brief
+- when eval/runtime is already on the executive surface but the request carries one explicit owner signal (slash command or opted-in persona-style mention), checked-in recovery/eval helpers stay owner-aware and reuse the same registered-agent answer surface rather than falling back to a generic executive brief; for legacy persona signals this still resolves to the slimmed public `generalist` surface
 - Input:
   - slash command text
   - retrieved snippets
