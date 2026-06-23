@@ -755,7 +755,7 @@ Current path:
    - goal: reduce old executive-owner residue so ordinary DM review/critique requests can keep using the newer recent-dialogue + text-model path
 11. before that personal direct-answer path, the runtime still gives one bounded local pre-pass to `/Users/seanhan/Documents/Playground/src/planner/personal-dm-skill-intent.mjs`, but only after a cheap lexical gate confirms the DM explicitly looks like `find/install/verify skill`
 11A. greeting/closing-only DM turns are excluded from that classifier pre-pass and stay on direct assistant greeting/ack replies to avoid unnecessary planner/classifier latency and style drift
-12. the older planner-first personal-DM branch is now effectively disabled for generic DM quality recovery; checked-in text-first behavior comes from `executePersonalAssistant(...)` + the shared text model instead of planner fallback
+12. the older planner-first personal-DM branch is now removed from the live DM reply path; checked-in text-first behavior comes from `executePersonalAssistant(...)` + the shared text model instead of planner fallback
 13. the MiniMax text path classifies the DM into exactly one of:
    - `skill_find_request`
    - `skill_install_request`
@@ -785,7 +785,7 @@ Current truth:
 - `not_skill_task` keeps the existing hard boundaries (meeting / cloud-doc / modality / guarded write intents) unchanged, and generic direct-message turns now prefer the personal direct-model reply path over the old deterministic personal-lane catch-all
 - the same direct-message path now also has one model-first ingress override before deterministic attachment heuristics, so short follow-ups like `請全部讀完` can be routed back into recent PDF/image context even when local phrase matching would otherwise miss
 - when the primary text-model credential is absent, `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` now also skips the slow personal-lane OpenClaw text-generation attempt for `general_assistant_action`; the residual deterministic scaffold remains immediate instead of waiting on model timeout
-- the same DM entrypoint now emits local trace events `personal_dm_path_decision`, `personal_dm_path_selected`, `personal_dm_planner_health_observed`, and `model_first_dm_ingress_selected`, so request traces can distinguish attachment-ingress override vs direct-model reply vs skill_task vs fallback without pretending existing control diagnostics already cover conversation quality
+- the same DM entrypoint now emits local trace events `personal_dm_path_decision`, `personal_dm_path_selected`, and `model_first_dm_ingress_selected`, so request traces can distinguish attachment-ingress override vs direct-model reply vs skill_task vs fallback without pretending existing control diagnostics already cover conversation quality
 - `find-skills` remains an agent skill/spec in the Codex environment; this runtime path does not directly execute that skill as a generic task owner
 - this minimal version covers controlled skill find / install / verify and should not be described as a generic write-capable planner execution surface
 

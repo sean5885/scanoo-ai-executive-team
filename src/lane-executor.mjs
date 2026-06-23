@@ -2470,119 +2470,6 @@ function hasPrimaryPlannerTextModelAvailable() {
   return Boolean(cleanText(llmApiKey || ""));
 }
 
-const PERSONAL_DM_PLANNER_FAILURE_THRESHOLD = 2;
-const PERSONAL_DM_PLANNER_COOLDOWN_MS = 5 * 60 * 1000;
-const PERSONAL_DM_PLANNER_UNHEALTHY_ERROR_CODES = new Set([
-  "planner_failed",
-  "request_timeout",
-  "request_cancelled",
-  "runtime_exception",
-  "tool_executor_missing",
-]);
-const personalDMPlannerHealthState = {
-  consecutiveFailures: 0,
-  cooldownUntil: 0,
-  lastError: null,
-  lastStatus: "unknown",
-  lastFailureAt: 0,
-  lastSuccessAt: 0,
-};
-
-export function resetPersonalDMPlannerHealthForTests() {
-  personalDMPlannerHealthState.consecutiveFailures = 0;
-  personalDMPlannerHealthState.cooldownUntil = 0;
-  personalDMPlannerHealthState.lastError = null;
-  personalDMPlannerHealthState.lastStatus = "unknown";
-  personalDMPlannerHealthState.lastFailureAt = 0;
-  personalDMPlannerHealthState.lastSuccessAt = 0;
-}
-
-export function readPersonalDMPlannerHealth({
-  now = Date.now(),
-  primaryModelAvailable = hasPrimaryPlannerTextModelAvailable(),
-} = {}) {
-  if (!primaryModelAvailable) {
-    return {
-      available: false,
-      status: "unavailable",
-      reason_code: "primary_text_model_missing",
-      consecutive_failures: personalDMPlannerHealthState.consecutiveFailures,
-      cooldown_until: personalDMPlannerHealthState.cooldownUntil || null,
-      last_error: personalDMPlannerHealthState.lastError,
-    };
-  }
-  if (personalDMPlannerHealthState.cooldownUntil > now) {
-    return {
-      available: false,
-      status: "cooldown",
-      reason_code: "planner_first_recent_failures",
-      consecutive_failures: personalDMPlannerHealthState.consecutiveFailures,
-      cooldown_until: personalDMPlannerHealthState.cooldownUntil,
-      last_error: personalDMPlannerHealthState.lastError,
-    };
-  }
-  return {
-    available: true,
-    status: personalDMPlannerHealthState.lastStatus === "healthy" ? "healthy" : "ready",
-    reason_code: personalDMPlannerHealthState.lastStatus === "healthy"
-      ? "planner_first_recent_success"
-      : "planner_first_ready",
-    consecutive_failures: personalDMPlannerHealthState.consecutiveFailures,
-    cooldown_until: null,
-    last_error: personalDMPlannerHealthState.lastError,
-  };
-}
-
-export function notePersonalDMPlannerHealth({
-  ok = false,
-  errorCode = "",
-  now = Date.now(),
-  logger = noopLogger,
-  primaryModelAvailable = hasPrimaryPlannerTextModelAvailable(),
-} = {}) {
-  const normalizedErrorCode = cleanText(errorCode) || null;
-  if (ok) {
-    personalDMPlannerHealthState.consecutiveFailures = 0;
-    personalDMPlannerHealthState.cooldownUntil = 0;
-    personalDMPlannerHealthState.lastError = null;
-    personalDMPlannerHealthState.lastStatus = "healthy";
-    personalDMPlannerHealthState.lastSuccessAt = now;
-    return readPersonalDMPlannerHealth({ now, primaryModelAvailable });
-  }
-
-  if (!normalizedErrorCode || !PERSONAL_DM_PLANNER_UNHEALTHY_ERROR_CODES.has(normalizedErrorCode)) {
-    personalDMPlannerHealthState.lastStatus = "healthy";
-    return readPersonalDMPlannerHealth({ now, primaryModelAvailable });
-  }
-
-  personalDMPlannerHealthState.consecutiveFailures += 1;
-  personalDMPlannerHealthState.lastError = normalizedErrorCode;
-  personalDMPlannerHealthState.lastFailureAt = now;
-  personalDMPlannerHealthState.lastStatus = "degraded";
-
-  if (personalDMPlannerHealthState.consecutiveFailures >= PERSONAL_DM_PLANNER_FAILURE_THRESHOLD) {
-    personalDMPlannerHealthState.cooldownUntil = now + PERSONAL_DM_PLANNER_COOLDOWN_MS;
-    personalDMPlannerHealthState.lastStatus = "cooldown";
-    emitRateLimitedAlert({
-      code: "personal_dm_planner_first_cooldown",
-      scope: "lane_executor",
-      message: "Personal DM planner-first temporarily disabled after repeated planner failures.",
-      details: {
-        reason: normalizedErrorCode,
-        cooldown_until: new Date(personalDMPlannerHealthState.cooldownUntil).toISOString(),
-      },
-    });
-    logger.info("personal_dm_planner_health_state", {
-      status: "cooldown",
-      reason_code: normalizedErrorCode,
-      consecutive_failures: personalDMPlannerHealthState.consecutiveFailures,
-      cooldown_until: personalDMPlannerHealthState.cooldownUntil,
-    });
-  }
-
-  return readPersonalDMPlannerHealth({ now, primaryModelAvailable });
-}
-
 export function shouldUsePlannerFirstPersonalDM({
   event,
   scope,
@@ -6664,51 +6551,6 @@ async function executePersonalAssistant({ event, scope, logger = noopLogger }) {
   return generatedReply || buildGeneralAssistantReply(text);
 }
 
-async function executePlannerFirstDirectMessage({
-  event,
-  scope,
-  logger = noopLogger,
-  traceId = null,
-  signal = null,
-  requestSignal = null,
-  requestTimeoutMs = null,
-  runPlannerUserInputEdgeFn = runPlannerUserInputEdge,
-} = {}) {
-  return executePlannerBackedLane({
-    event,
-    scope: {
-      ...scope,
-      capability_lane: "knowledge-assistant",
-      lane_label: "知識助手",
-      lane_reason: "personal_dm_planner_first_ingress",
-      planner_ingress_surface: "personal_dm_model_first",
-    },
-    logger,
-    traceId,
-    signal,
-    requestSignal,
-    requestTimeoutMs,
-    handlerName: "executePlannerFirstDirectMessage",
-    runPlannerUserInputEdgeFn,
-    onPlannerEdgeResolved: async ({ plannedResult, userResponse }) => {
-      const errorCode = cleanText(plannedResult?.error || plannedResult?.execution_result?.error || "") || null;
-      const healthy = userResponse?.ok === true || (errorCode && !PERSONAL_DM_PLANNER_UNHEALTHY_ERROR_CODES.has(errorCode));
-      const health = notePersonalDMPlannerHealth({
-        ok: healthy,
-        errorCode,
-        logger,
-      });
-      logger.info("personal_dm_planner_health_observed", {
-        status: health.status,
-        available: health.available,
-        reason_code: health.reason_code,
-        consecutive_failures: health.consecutive_failures,
-        last_error: health.last_error,
-      });
-    },
-  });
-}
-
 async function executeGroupSharedAssistant({ event, scope, logger = noopLogger }) {
   const context = await resolveAuthContext(event, logger);
   if (!context) {
@@ -6939,13 +6781,9 @@ export async function executeCapabilityLane({
   }
 
   const lanePlan = resolveLaneExecutionPlan({ event, scope });
-  const plannerHealth = readPersonalDMPlannerHealth();
   if (lane === "personal-assistant" && isDirectMessageScope(scope)) {
     logger.info("personal_dm_path_decision", {
       lane_action: cleanText(lanePlan?.chosen_action || "") || null,
-      planner_health_status: plannerHealth.status,
-      planner_health_reason: plannerHealth.reason_code,
-      planner_available: plannerHealth.available === true,
     });
   }
   if (
@@ -6960,7 +6798,6 @@ export async function executeCapabilityLane({
     scope,
     routingDecision,
     lanePlan,
-    plannerHealth,
   })) {
     const personalDMSkillReply = await maybeExecutePersonalDMSkillTask({
       event,
@@ -6975,27 +6812,7 @@ export async function executeCapabilityLane({
       });
       return personalDMSkillReply;
     }
-    logger.info("personal_dm_planner_first_ingress", {
-      session_key: sessionKey || null,
-      chosen_action: cleanText(lanePlan?.chosen_action || "") || null,
-      precedence_source: cleanText(routingDecision?.precedence_source || "") || null,
-    });
-    logger.info("personal_dm_path_selected", {
-      selected_path: "planner_first",
-      lane_action: cleanText(lanePlan?.chosen_action || "") || null,
-      planner_health_status: plannerHealth.status,
-      planner_health_reason: plannerHealth.reason_code,
-    });
-    return executePlannerFirstDirectMessage({
-      event,
-      scope,
-      logger,
-      traceId,
-      signal,
-      requestSignal,
-      requestTimeoutMs,
-      runPlannerUserInputEdgeFn,
-    });
+    return executePersonalAssistant({ event, scope, logger });
   }
 
   if (lane === "knowledge-assistant") {
