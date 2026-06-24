@@ -1,5 +1,6 @@
 import http from "node:http";
 import process from "node:process";
+import { getRuntimeVersionSnapshot } from "./runtime-version.mjs";
 import {
   httpRequestTimeoutMs,
   larkDirectIngressPrimaryEnabled,
@@ -4460,6 +4461,7 @@ async function handleRuntimeInfo(res, requestUrl, body, logger = noopHttpLogger)
       node_pid: process.pid,
       cwd: process.cwd(),
       service_start_time: serviceStartTime,
+      ...getRuntimeVersionSnapshot(),
     };
 
     logger.info("runtime_info", {

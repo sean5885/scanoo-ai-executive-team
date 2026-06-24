@@ -1780,6 +1780,41 @@ function looksLikeExplicitDocOrKnowledgeRoutingRequest(text = "") {
   return looksLikePlannerIngressRequest(normalized) || cloudDocAction !== "none";
 }
 
+export function shouldClampKnowledgeLaneToPersonalDirectModel({
+  event = {},
+  scope = {},
+  lane = "",
+  expectedOwner = "",
+  normalizedText = "",
+} = {}) {
+  if (!isDirectMessageScope(scope)) {
+    return false;
+  }
+  if (lane !== "knowledge-assistant" && expectedOwner !== "knowledge-assistant") {
+    return false;
+  }
+  const text = cleanText(normalizedText || normalizeMessageText(event));
+  if (!text) {
+    return false;
+  }
+  if (looksLikeExplicitDocOrKnowledgeRoutingRequest(text)) {
+    return false;
+  }
+  if (/^\s*\//.test(text)) {
+    return false;
+  }
+  if (extractDocumentId(event)) {
+    return false;
+  }
+  if (extractAttachmentObjects(event).length > 0) {
+    return false;
+  }
+  if (extractBitableReference(event)) {
+    return false;
+  }
+  return true;
+}
+
 function looksLikeMeetingSummaryRequest(text = "") {
   const normalized = cleanText(text);
   if (!normalized) {
@@ -6792,6 +6827,29 @@ export async function executeCapabilityLane({
     && cleanText(lanePlan?.chosen_action || "") === "general_assistant_action"
   ) {
     return executePersonalAssistant({ event, scope, logger });
+  }
+
+  if (shouldClampKnowledgeLaneToPersonalDirectModel({
+    event,
+    scope,
+    lane,
+    expectedOwner,
+    normalizedText,
+  })) {
+    logger.info("knowledge_lane_clamped_to_personal_direct_model", {
+      lane,
+      expected_owner: expectedOwner,
+    });
+    return executePersonalAssistant({
+      event,
+      scope: {
+        ...scope,
+        capability_lane: "personal-assistant",
+        lane_label: "個人助理",
+        lane_reason: "knowledge_lane_clamped_to_personal_direct_model",
+      },
+      logger,
+    });
   }
 
   if (lane === "knowledge-assistant") {

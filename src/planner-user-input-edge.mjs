@@ -8,6 +8,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { resolveRegisteredAgentFamilyRequest } from "./agent-registry.mjs";
 import { parseMeetingCommand } from "./meeting-agent.mjs";
 import { cleanText } from "./message-intent-utils.mjs";
+import { resolvePlannerKnowledgeAssistantIngress } from "./planner-ingress-contract.mjs";
 import { retrieveExecutiveDecisionMemory } from "./executive-memory.mjs";
 import { ROUTING_NO_MATCH } from "./planner-error-codes.mjs";
 import { getPlannerSkillAction } from "./planner/skill-bridge.mjs";
@@ -41,6 +42,47 @@ import {
 } from "./decision-metrics-scoreboard.mjs";
 import { readAutonomyWorkerReadiness } from "./task-runtime/autonomy-job-store.mjs";
 import { enqueueAutonomyJob } from "./worker/enqueue-autonomy-job.mjs";
+
+function isExplicitPlannerDocumentSearch(requestText = "", execution = {}) {
+  const query = cleanText(
+    requestText
+    || execution?.match_reason
+    || execution?.title
+    || execution?.content_summary
+    || "",
+  );
+  if (!query) {
+    return false;
+  }
+  return Boolean(resolvePlannerKnowledgeAssistantIngress(query))
+    || /(交付|onboarding|導入|导入|sop|驗收|验收|checklist)/i.test(query);
+}
+
+function buildSearchResultFallback({ requestText = "", execution = {}, itemCount = 0 } = {}) {
+  const subject = cleanText(
+    execution?.match_reason
+    || requestText
+    || execution?.title
+    || "這輪查詢",
+  );
+  const wrappedSubject = subject ? `「${subject}」` : "這輪查詢";
+  if (itemCount > 0) {
+    return {
+      answer: `這輪先命中 ${itemCount} 份本地已索引文件，但 ${wrappedSubject} 比較像一般研究／外部分析，我不能直接把這些文件當成答案。`,
+      limitations: [
+        "如果你要的是外部公司、商業模式或估值分析，這輪應改走一般分析回覆，而不是文件檢索兜底。",
+        "如果你其實要查內部文件，請直接補「文件 / wiki / company brain / drive」範圍。",
+      ],
+    };
+  }
+  return {
+    answer: `目前沒有找到能直接回答 ${wrappedSubject} 的已索引文件；如果你要查的是外部主題，這輪不應假裝已從本地文件回答。`,
+    limitations: [
+      "如果你要的是外部研究，應直接走一般分析回覆。",
+      "如果你其實要查內部文件，請明確指出文件 / wiki / company brain / drive 範圍。",
+    ],
+  };
+}
 
 const REMINDER_REQUEST_PATTERNS = [
   /提醒/u,
@@ -1035,6 +1077,9 @@ function adaptPlannerResultForEdge(result = {}, { requestText = "" } = {}) {
       typeof legacyShape?.db_path === "string" && legacyShape.db_path ? `資料庫路徑在 ${legacyShape.db_path}。` : "",
       Number.isFinite(legacyShape?.node_pid) ? `目前 PID 是 ${legacyShape.node_pid}。` : "",
       typeof legacyShape?.cwd === "string" && legacyShape.cwd ? `工作目錄是 ${legacyShape.cwd}。` : "",
+      typeof legacyShape?.git_commit === "string" && legacyShape.git_commit
+        ? `目前程式版本是 ${legacyShape.git_commit}${legacyShape?.git_dirty === true ? "（含未提交變更）" : ""}。`
+        : "",
     ].filter(Boolean).join(" ");
     const limitations = [
       typeof legacyShape?.service_start_time === "string" && legacyShape.service_start_time
@@ -1053,7 +1098,20 @@ function adaptPlannerResultForEdge(result = {}, { requestText = "" } = {}) {
     : Array.isArray(execution?.items)
       ? execution.items
       : [];
+  const explicitDocumentSearch = isExplicitPlannerDocumentSearch(requestText, legacyShape || execution || {});
   if (kind === "search" && items.length > 0) {
+    if (!explicitDocumentSearch) {
+      const fallback = buildSearchResultFallback({
+        requestText,
+        execution: legacyShape || execution || {},
+        itemCount: items.length,
+      });
+      return withCanonicalExecutionData(result, {
+        answer: fallback.answer,
+        sources: items,
+        limitations: fallback.limitations,
+      });
+    }
     const matchReason = String(legacyShape?.match_reason || execution?.match_reason || "").trim();
     const subject = matchReason ? `「${matchReason}」` : "這輪查詢";
     return withCanonicalExecutionData(result, {
@@ -1064,6 +1122,18 @@ function adaptPlannerResultForEdge(result = {}, { requestText = "" } = {}) {
   }
 
   if (kind === "search") {
+    if (!explicitDocumentSearch) {
+      const fallback = buildSearchResultFallback({
+        requestText,
+        execution: legacyShape || execution || {},
+        itemCount: 0,
+      });
+      return withCanonicalExecutionData(result, {
+        answer: fallback.answer,
+        sources: [],
+        limitations: fallback.limitations,
+      });
+    }
     const matchReason = String(legacyShape?.match_reason || execution?.match_reason || requestText || "").trim();
     const subject = matchReason ? `「${matchReason}」` : "這輪查詢";
     const contentSummary = String(legacyShape?.content_summary || execution?.content_summary || "").trim();

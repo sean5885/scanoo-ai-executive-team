@@ -40,6 +40,7 @@ const {
   shouldFallbackImageTaskToTextLane,
   shouldBypassSessionScopedPersonalShortcut,
   shouldAttemptModelFirstDMIngress,
+  shouldClampKnowledgeLaneToPersonalDirectModel,
   shouldKeepOfficeFollowUpPending,
   shouldKeepPdfFollowUpPending,
   looksLikeOfficeContextualFollowUp,
@@ -753,6 +754,42 @@ test("planModelFirstDMIngress keeps longform text critique on personal_assistant
     needs_recent_context: false,
     reason: "longform_text_critique_stays_on_personal_assistant",
   });
+});
+
+test("shouldClampKnowledgeLaneToPersonalDirectModel clamps generic DM research back to personal", () => {
+  assert.equal(shouldClampKnowledgeLaneToPersonalDirectModel({
+    event: {
+      message_text: "幫我查詢一下 linktree 的商業模式以及變現方式",
+      message: {
+        content: JSON.stringify({ text: "幫我查詢一下 linktree 的商業模式以及變現方式" }),
+      },
+    },
+    scope: {
+      chat_type: "dm",
+      capability_lane: "knowledge-assistant",
+    },
+    lane: "knowledge-assistant",
+    expectedOwner: "knowledge-assistant",
+    normalizedText: "幫我查詢一下 linktree 的商業模式以及變現方式",
+  }), true);
+});
+
+test("shouldClampKnowledgeLaneToPersonalDirectModel keeps explicit document asks on knowledge lane", () => {
+  assert.equal(shouldClampKnowledgeLaneToPersonalDirectModel({
+    event: {
+      message_text: "幫我搜尋 company brain 裡的 onboarding 文件",
+      message: {
+        content: JSON.stringify({ text: "幫我搜尋 company brain 裡的 onboarding 文件" }),
+      },
+    },
+    scope: {
+      chat_type: "dm",
+      capability_lane: "knowledge-assistant",
+    },
+    lane: "knowledge-assistant",
+    expectedOwner: "knowledge-assistant",
+    normalizedText: "幫我搜尋 company brain 裡的 onboarding 文件",
+  }), false);
 });
 
 test("planModelFirstDMIngress accepts async recent PDF context readers", async () => {

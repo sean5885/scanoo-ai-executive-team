@@ -176,6 +176,7 @@ test("chat reply accepts canonical get_runtime_info kind without leaking machine
         db_path: "/tmp/runtime-normalizer.sqlite",
         node_pid: 4321,
         cwd: "/tmp/runtime-normalizer",
+        git_commit: "abc1234",
         service_start_time: "2026-03-27T15:00:00.000Z",
       },
     },
@@ -183,9 +184,34 @@ test("chat reply accepts canonical get_runtime_info kind without leaking machine
   const text = renderUserResponseText(userResponse);
 
   assert.equal(userResponse.ok, true);
-  assert.match(userResponse.answer || "", /runtime|PID|工作目錄|資料庫路徑/);
+  assert.match(userResponse.answer || "", /runtime|PID|工作目錄|資料庫路徑|程式版本/);
   assert.doesNotMatch(JSON.stringify(userResponse), /get_runtime_info|runtime_info/);
   assert.doesNotMatch(text, /get_runtime_info|runtime_info/);
+});
+
+test("generic external research search no longer pretends indexed docs are the answer", () => {
+  const userResponse = normalizeUserResponse({
+    plannerEnvelope: buildPlannerEnvelope({
+      action: "search_company_brain_docs",
+      executionOk: true,
+      formatted_output: {
+        kind: "search",
+        match_reason: "linktree 的商業模式以及變現方式",
+        items: [
+          {
+            title: "Planner Multi-Step Demo",
+            doc_id: "doc-planner-demo",
+            reason: "internal demo",
+          },
+        ],
+      },
+    }),
+  });
+
+  assert.equal(userResponse.ok, true);
+  assert.match(userResponse.answer || "", /一般研究|外部分析|不能直接把這些文件當成答案/);
+  assert.doesNotMatch(userResponse.answer || "", /我已先按目前已索引的文件/);
+  assert.match(userResponse.limitations.join(" "), /一般分析回覆|company brain|wiki|drive/);
 });
 
 test("payload accepts canonical top-level answer fields and maps sources through the shared answer source mapper", () => {

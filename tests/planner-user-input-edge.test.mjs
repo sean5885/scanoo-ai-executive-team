@@ -642,6 +642,35 @@ test("runPlannerUserInputEdge keeps planner execute -> envelope -> normalize on 
   ]);
 });
 
+test("runPlannerUserInputEdge canonical search fallback no longer pretends external research came from indexed docs", async () => {
+  const result = await runPlannerUserInputEdge({
+    text: "幫我查詢一下 linktree 的商業模式以及變現方式",
+    async plannerExecutor() {
+      return {
+        ok: true,
+        action: "search_company_brain_docs",
+        execution_result: {
+          ok: true,
+          kind: "search",
+          match_reason: "linktree 的商業模式以及變現方式",
+          items: [
+            {
+              title: "Planner Multi-Step Demo",
+              doc_id: "doc-planner-demo",
+              reason: "internal demo",
+            },
+          ],
+        },
+      };
+    },
+    workingMemoryWriter: null,
+  });
+
+  assert.equal(result?.userResponse?.ok, true);
+  assert.match(result?.userResponse?.answer || "", /一般研究|外部分析|不能直接把這些文件當成答案/);
+  assert.doesNotMatch(result?.userResponse?.answer || "", /我已先按目前已索引的文件/);
+});
+
 test("runPlannerUserInputEdge injects retrieved memory into planner decision context and surfaces used-rate", async () => {
   const accountId = `acct-edge-memory-${Date.now()}`;
   const sessionKey = `session-edge-memory-${Date.now()}`;

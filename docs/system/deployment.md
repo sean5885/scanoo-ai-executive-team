@@ -209,6 +209,7 @@ Observed on the current Mac after the latest Playground re-cutover work:
 - `com.seanhan.lark-kb-http` is the active long-connection runtime on this machine
 - that active LaunchAgent now pins the repo text-generation env directly in the plist (`LLM_BASE_URL`, `LLM_API_KEY`, `MINIMAX_TEXT_MODEL`) instead of relying only on `dotenv` side effects from the shell
 - `src/index.mjs` now runs a startup guard that disables known competing LaunchAgents such as `ai.openclaw.gateway`, `lobster.core`, `lobster.gateway`, and `lobster.worker` before the Playground long-connection listener starts
+- `src/index.mjs` startup logs now also include the repo git short SHA plus `git_dirty` state from `/Users/seanhan/Documents/Playground/src/runtime-version.mjs`, and `/runtime_info` exposes that same version tuple; local restart verification should compare the live PID + start time + git commit + dirty state instead of only checking one of them
 - `ai.openclaw.gateway` is currently disabled in `launchctl` on this machine to avoid dual-responder drift
 - the previous `ai-server` launch agents `lobster.core`, `lobster.gateway`, and `lobster.worker` must stay disabled; if they are re-enabled, they can still answer on the same machine and reintroduce dual-responder drift
 - the inactive `ai.openclaw.gateway.plist`, `lobster.core.plist`, `lobster.gateway.plist`, and `lobster.worker.plist` files were also moved out of `~/Library/LaunchAgents` into a local backup/archive directory, so they are no longer one accidental toggle away from re-entering the machine-local responder set

@@ -11,6 +11,7 @@ import {
   hasPlannerVisibleTelemetryEvent,
   updatePlannerVisibleTelemetryContext,
 } from "./planner-visible-live-telemetry-runtime.mjs";
+import { resolvePlannerKnowledgeAssistantIngress } from "./planner-ingress-contract.mjs";
 import { normalizeUserFacingAnswerSources } from "./answer-source-mapper.mjs";
 import { normalizeText } from "./text-utils.mjs";
 
@@ -956,6 +957,45 @@ function buildDeliverySearchFallbacks({
   ];
 }
 
+function isExplicitPlannerDocumentSearch(queryText = "", execution = {}) {
+  const query = normalizeText(
+    queryText
+    || execution?.match_reason
+    || execution?.title
+    || execution?.content_summary
+    || "",
+  );
+  if (!query) {
+    return false;
+  }
+  return Boolean(resolvePlannerKnowledgeAssistantIngress(query))
+    || isDeliveryKnowledgeQuery(query, execution);
+}
+
+function buildGenericIndexedSearchFallback({
+  queryText = "",
+  documentItems = [],
+} = {}) {
+  const query = normalizeText(queryText || "");
+  const subject = query ? `「${query}」` : "這輪查詢";
+  if (documentItems.length > 0) {
+    return {
+      answer: `這輪先命中 ${documentItems.length} 份本地已索引文件，但 ${subject} 比較像一般研究／外部分析，我不能直接把這些文件當成答案。`,
+      fallbacks: [
+        "如果你要的是外部公司、商業模式或估值分析，這輪應改走一般分析回覆，而不是文件檢索兜底。",
+        "如果你其實要查內部文件，請直接補「文件 / wiki / company brain / drive」範圍。",
+      ],
+    };
+  }
+  return {
+    answer: `目前沒有找到能直接回答 ${subject} 的已索引文件；如果你要查的是外部主題，這輪不應假裝已從本地文件回答。`,
+    fallbacks: [
+      "如果你要的是外部研究，應直接走一般分析回覆。",
+      "如果你其實要查內部文件，請明確指出文件 / wiki / company brain / drive 範圍。",
+    ],
+  };
+}
+
 function normalizePlannerSkillSources(items = []) {
   return (Array.isArray(items) ? items : [])
     .map((item) => ({
@@ -1262,6 +1302,9 @@ export function buildPlannerSuccessUserResponse(envelope = {}) {
       presentableExecution.db_path ? `資料庫路徑在 ${presentableExecution.db_path}。` : null,
       Number.isFinite(presentableExecution.node_pid) ? `目前 PID 是 ${presentableExecution.node_pid}。` : null,
       presentableExecution.cwd ? `工作目錄是 ${presentableExecution.cwd}。` : null,
+      presentableExecution.git_commit
+        ? `目前程式版本是 ${presentableExecution.git_commit}${presentableExecution.git_dirty === true ? "（含未提交變更）" : ""}。`
+        : null,
     ].filter(Boolean).join(" ");
     return {
       ok: true,
@@ -1288,6 +1331,7 @@ export function buildPlannerSuccessUserResponse(envelope = {}) {
 
   if (kind === "search") {
     const query = normalizeText(presentableExecution.match_reason || "");
+    const explicitDocumentSearch = isExplicitPlannerDocumentSearch(query, presentableExecution);
     const deliverySearchAnswer = isDeliveryKnowledgeQuery(query, presentableExecution) && documentItems.length > 0
       ? buildDeliverySearchAnswer({
           queryText: query,
@@ -1300,11 +1344,19 @@ export function buildPlannerSuccessUserResponse(envelope = {}) {
           documentItems,
         })
       : [];
+    const genericSearchFallback = !explicitDocumentSearch
+      ? buildGenericIndexedSearchFallback({
+          queryText: query,
+          documentItems,
+        })
+      : null;
     return {
       ok: true,
-      answer: deliverySearchAnswer || (documentItems.length > 0
-        ? `我已先按目前已索引的文件，標出和「${query || "這輪需求"}」最相關的 ${documentItems.length} 份文件。`
-        : normalizeText(presentableExecution.content_summary || "") || "目前沒有找到可直接對應的已索引文件。"),
+      answer: deliverySearchAnswer
+        || genericSearchFallback?.answer
+        || (documentItems.length > 0
+          ? `我已先按目前已索引的文件，標出和「${query || "這輪需求"}」最相關的 ${documentItems.length} 份文件。`
+          : normalizeText(presentableExecution.content_summary || "") || "目前沒有找到可直接對應的已索引文件。"),
       sources: evidenceSourceLines,
       limitations: buildPlannerNextSteps({
         envelope,
@@ -1313,6 +1365,8 @@ export function buildPlannerSuccessUserResponse(envelope = {}) {
         hasEvidence: documentItems.length > 0,
         fallbacks: deliverySearchFallbacks.length > 0
           ? deliverySearchFallbacks
+          : genericSearchFallback?.fallbacks?.length > 0
+          ? genericSearchFallback.fallbacks
           : documentItems.length > 0
           ? [
               "如果這是在做排除/重分配，也可以直接告訴我要保留或排除哪幾份。",

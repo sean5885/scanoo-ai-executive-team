@@ -738,7 +738,15 @@ Current path:
 7. when the ingress picks `pdf_task` / `image_task`, the lane forces recent attachment-context recovery even for short natural follow-ups such as `請全部讀完`, instead of requiring the local keyword gate to match first
 8. long pasted-text critique/editing asks (for example `告訴我這是什麼，有什麼需要修改的地方`) are deterministically forced back to `personal_assistant` before the ingress router model is queried, so these turns do not drift into planner/knowledge lookup
 9. even when model-first ingress tentatively proposes `knowledge_assistant`, the runtime now clamps that route back to `personal_assistant` unless the text was already an explicit doc/knowledge-routing ask or the expected owner was already `knowledge-assistant`
+9A. if the lane still resolves to `knowledge-assistant` after the model-first phase, `/Users/seanhan/Documents/Playground/src/lane-executor.mjs` now runs one final DM-only clamp before dispatch:
+   - plain DM text with no direct document id
+   - no attachment/file token
+   - no bitable reference
+   - no explicit doc/company-brain/wiki/drive/cloud-doc routing phrase
+   - no slash command
+   - under those conditions the runtime rewrites the turn back to `personal_assistant`, preventing generic company / market / business-model research from entering knowledge-doc fallback by mistake
 10. after that ingress override, direct-message turns whose personal-lane plan would otherwise be `general_assistant_action` stay on `/Users/seanhan/Documents/Playground/src/lane-executor.mjs -> executePersonalAssistant(...)`, where the shared text-generation helper now attempts the primary text model first for essentially all non-empty text turns whenever the primary credential is available, including short greetings / acknowledgements and ordinary follow-up turns; the older local strategy / prioritization / execution-push / copy-draft templates remain only as fail-soft fallback when generation fails
+10C. when planner/doc search still returns `kind=search`, the answer edge now checks whether the original ask was truly document-scoped; only explicit document/company-brain/wiki/drive lookup can return the indexed-doc wording, while broad external-research asks now answer fail-soft with the retrieved local-doc evidence kept only as bounded context rather than misrepresented as the answer itself
 10A. the same personal-assistant direct-answer path now also has one bounded recent-dialogue continuity recovery for deictic short follow-ups (for example `這個有沒有問題`, `幫我做壓力測試`, `接下來怎麼改`):
    - only in direct-message scope
    - only when the lane plan is still `general_assistant_action`

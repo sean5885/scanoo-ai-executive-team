@@ -17,6 +17,7 @@ import {
   startAutonomyRuntimeManager,
   stopAutonomyRuntimeManager,
 } from "./worker/autonomy-runtime-manager.mjs";
+import { runtimeGitCommitShort, runtimeGitDirty } from "./runtime-version.mjs";
 
 const runtimeLogger = createRuntimeLogger({ logger: console, component: "long_connection" });
 const messageEventDeduper = createMessageEventDeduper();
@@ -196,6 +197,8 @@ runtimeLogger.info("service_starting", {
   action: "service_start",
   bot_name: botName,
   status: "starting",
+  git_commit: runtimeGitCommitShort || null,
+  git_dirty: runtimeGitDirty === true,
 });
 await enforceSingleLarkResponderRuntime({ logger: runtimeLogger.child("runtime_guard") });
 wsClient.start({ eventDispatcher });
