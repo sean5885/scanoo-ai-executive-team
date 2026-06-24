@@ -29,7 +29,6 @@ const {
   resolveScanooLanePreTimeoutPlan,
   resolveReferencedDocumentId,
   shouldEscalatePersonalLaneToKnowledge,
-  shouldUsePlannerFirstPersonalDM,
   looksLikeAgentStandbyStatusRequest,
   buildAgentStandbyStatusReply,
   buildRecentDialogueContextForGeneralAssistant,
@@ -594,6 +593,28 @@ test("maybeBuildModelBackedGeneralAssistantReply still uses the primary text mod
   assert.match(reply?.text || "", /先把目標收斂成一個本輪驗證重點/);
 });
 
+test("maybeBuildModelBackedGeneralAssistantReply also answers greetings through the primary text model", async () => {
+  let called = 0;
+  const reply = await maybeBuildModelBackedGeneralAssistantReply("你好", {
+    generateTextFn: async () => {
+      called += 1;
+      return [
+        "結論",
+        "你好，我在，直接把要處理的內容丟給我就行。",
+        "",
+        "重點",
+        "- 我可以直接幫你分析、修改或拆解內容。",
+        "",
+        "下一步",
+        "- 你貼內容或直接說目標，我就接著做。",
+      ].join("\n");
+    },
+  });
+
+  assert.equal(called, 1);
+  assert.match(reply?.text || "", /你好，我在/);
+});
+
 test("maybeBuildModelBackedGeneralAssistantReply injects recent dialogue context for deictic follow-up", async () => {
   let capturedPrompt = "";
   const reply = await maybeBuildModelBackedGeneralAssistantReply("請告訴我這個有沒有什麼問題，幫我做壓力測試", {
@@ -627,6 +648,10 @@ test("maybeBuildModelBackedGeneralAssistantReply injects recent dialogue context
 test("general assistant recent-context follow-up detection matches deictic critique asks", () => {
   assert.equal(
     looksLikeGeneralAssistantRecentContextFollowUp("請告訴我這個有沒有什麼問題，幫我做壓力測試"),
+    true,
+  );
+  assert.equal(
+    looksLikeGeneralAssistantRecentContextFollowUp("這個還要補什麼，接下來怎麼改"),
     true,
   );
   assert.equal(
@@ -2148,81 +2173,6 @@ test("personal lane semantic mismatch escalates to knowledge assistant", () => {
   }), false);
 });
 
-test("planner-first personal DM stays disabled so direct-message text can prefer direct replies", () => {
-  const event = {
-    message: {
-      content: JSON.stringify({
-        text: "這個方案風險在哪裡，先給我三點",
-      }),
-    },
-  };
-  const scope = {
-    capability_lane: "personal-assistant",
-    chat_type: "p2p",
-  };
-  const lanePlan = resolveLaneExecutionPlan({ event, scope });
-
-  assert.equal(shouldUsePlannerFirstPersonalDM({
-    event,
-    scope,
-    lanePlan,
-    routingDecision: {
-      final_owner: "personal-assistant",
-      precedence_source: "lane_default",
-    },
-    plannerAvailable: true,
-  }), false);
-
-  assert.equal(shouldUsePlannerFirstPersonalDM({
-    event: {
-      message: {
-        content: JSON.stringify({
-          text: "你好",
-        }),
-      },
-    },
-    scope,
-    routingDecision: {
-      final_owner: "personal-assistant",
-      precedence_source: "lane_default",
-    },
-    plannerAvailable: true,
-  }), false);
-
-  assert.equal(shouldUsePlannerFirstPersonalDM({
-    event,
-    scope: {
-      ...scope,
-      chat_type: "group",
-    },
-    routingDecision: {
-      final_owner: "personal-assistant",
-      precedence_source: "lane_default",
-    },
-    plannerAvailable: true,
-  }), false);
-
-  assert.equal(shouldUsePlannerFirstPersonalDM({
-    event,
-    scope,
-    routingDecision: {
-      final_owner: "executive",
-      precedence_source: "same_session_same_workflow",
-    },
-    plannerAvailable: true,
-  }), false);
-
-  assert.equal(shouldUsePlannerFirstPersonalDM({
-    event,
-    scope,
-    lanePlan,
-    routingDecision: {
-      final_owner: "personal-assistant",
-      precedence_source: "lane_default",
-    },
-    plannerAvailable: false,
-  }), false);
-});
 
 test("lane execution plan treats meeting summary requests as summary work instead of calendar lookup", () => {
   const plan = resolveLaneExecutionPlan({

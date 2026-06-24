@@ -152,6 +152,7 @@ What now exists in current code:
   - also intercept `/meeting` as a command workflow before default lane replies
   - preflight shared Bitable links so the bot can inspect base/table structure without asking the user to copy tokens manually
   - keep `personal-assistant` fail-soft, but direct-message turns that would otherwise degrade to `general_assistant_action` now stay on the direct personal-assistant answer path, which prefers the shared text model first and only falls back to bounded deterministic scaffolds when needed
+  - for generic personal DM text, that direct personal-assistant answer path now stays model-first even when the auth context has fallen back to tenant/app scope; only actions that truly need user-private reads (recent dialogue, calendar, tasks) stay permission-gated
   - when that primary credential is absent, the residual personal catch-all no longer waits on the OpenClaw text-generation path before answering
   - the same lane now records bounded DM path trace events (`personal_dm_path_decision`, `personal_dm_path_selected`, `model_first_dm_ingress_selected`) for request-level debugging
   - treat "整理會議" style wording as summary work before calendar lookup when the request is clearly asking for整理/摘要

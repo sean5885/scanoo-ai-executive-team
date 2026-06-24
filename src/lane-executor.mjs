@@ -1846,7 +1846,12 @@ export function looksLikeGeneralAssistantRecentContextFollowUp(text = "") {
   if (GENERAL_ASSISTANT_DEICTIC_FOLLOW_UP_PATTERN.test(normalized)) {
     return true;
   }
-  return normalized.length <= 48 && GENERAL_ASSISTANT_SHORT_FOLLOW_UP_ACTION_PATTERN.test(normalized);
+  if (normalized.length <= 48 && GENERAL_ASSISTANT_SHORT_FOLLOW_UP_ACTION_PATTERN.test(normalized)) {
+    return true;
+  }
+  return normalized.length <= 96
+    && /(修改|補充|补充|延伸|繼續|继续|接下來|接下来|下一步|對嗎|对吗|有問題|有问题|哪裡|哪里|要改|重寫|重写)/i
+      .test(normalized);
 }
 
 export async function buildRecentDialogueContextForGeneralAssistant({
@@ -2193,7 +2198,7 @@ export async function maybeBuildModelBackedGeneralAssistantReply(text = "", {
   generateTextFn = generateText,
 } = {}) {
   const normalized = cleanText(text);
-  if (!normalized || looksLikeGreeting(normalized) || looksLikeClosingAck(normalized)) {
+  if (!normalized) {
     return null;
   }
   if (!hasPrimaryPlannerTextModelAvailable()) {
@@ -2205,6 +2210,7 @@ export async function maybeBuildModelBackedGeneralAssistantReply(text = "", {
       systemPrompt: [
         "你是 Lobster 的 personal assistant。",
         "先直接回答，不要只回『我可以幫你』。",
+        "即使只是問候、確認、簡短追問，也直接自然回答，不要退回固定話術模板。",
         "若提供最近對話上下文，優先把『這個／上面／剛剛』解析為同聊天室剛提過的內容。",
         "若上下文只是文字內容，而使用者說『這個有沒有問題』『幫我壓力測試』『幫我挑問題』，先視為要你檢查內容品質、邏輯漏洞與可執行性，不要自動解讀成系統效能測試。",
         "不能假裝已讀文件、已查資料、已執行工具。",
@@ -2468,17 +2474,6 @@ function looksLikeExplicitSkillTaskRequest(text = "") {
 
 function hasPrimaryPlannerTextModelAvailable() {
   return Boolean(cleanText(llmApiKey || ""));
-}
-
-export function shouldUsePlannerFirstPersonalDM({
-  event,
-  scope,
-  routingDecision = null,
-  lanePlan = null,
-  plannerAvailable = hasPrimaryPlannerTextModelAvailable(),
-  plannerHealth = null,
-} = {}) {
-  return false;
 }
 
 export function resolveLaneExecutionPlan({ event, scope } = {}) {
@@ -6435,21 +6430,26 @@ async function executePersonalAssistant({ event, scope, logger = noopLogger }) {
     return personalDMSkillTaskReply;
   }
 
-  if (context.tokenKind === "tenant") {
+  const requiresUserOAuth =
+    lanePlan.chosen_action === "summarize_recent_dialogue"
+    || looksLikeCalendarSummaryRequest(text)
+    || looksLikeTasksSummaryRequest(text);
+
+  if (context.tokenKind === "tenant" && requiresUserOAuth) {
     if (lanePlan.chosen_action === "summarize_recent_dialogue") {
       return buildLanePermissionDeniedReply();
     }
     return {
       text: [
         "結論",
-        "我先用本機會議/私聊保底模式接住這則訊息。",
+        "這題需要你的個人授權資料，我現在先不能直接代你讀取。",
         "",
         "重點",
         "- 目前你的 user OAuth refresh 有問題，所以我先不做需要個人授權的日程/任務讀取。",
-        "- 但像會議記錄、文檔建立、文字整理這類本機/應用側流程仍可繼續。",
+        "- 但一般文字分析、內容修改、策略拆解這類不依賴個人授權的內容，仍會直接走主模型回答。",
         "",
         "下一步",
-        "- 你可以直接說要我開始記錄會議、整理內容，或等會議結束後貼逐字內容給我。",
+        "- 你可以重新登入補權限，或直接改問純文字內容分析題，我可以馬上接著做。",
       ].join("\n"),
     };
   }
@@ -6791,27 +6791,6 @@ export async function executeCapabilityLane({
     && isDirectMessageScope(scope)
     && cleanText(lanePlan?.chosen_action || "") === "general_assistant_action"
   ) {
-    return executePersonalAssistant({ event, scope, logger });
-  }
-  if (shouldUsePlannerFirstPersonalDM({
-    event,
-    scope,
-    routingDecision,
-    lanePlan,
-  })) {
-    const personalDMSkillReply = await maybeExecutePersonalDMSkillTask({
-      event,
-      scope,
-      logger,
-      traceId,
-    });
-    if (personalDMSkillReply) {
-      logger.info("personal_dm_path_selected", {
-        selected_path: "skill_task",
-        lane_action: cleanText(lanePlan?.chosen_action || "") || null,
-      });
-      return personalDMSkillReply;
-    }
     return executePersonalAssistant({ event, scope, logger });
   }
 
