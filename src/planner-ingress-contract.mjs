@@ -7,21 +7,19 @@ import {
 const KNOWLEDGE_KEYWORDS = [
   "知識",
   "知识",
-  "查一下",
-  "查詢",
-  "查询",
-  "搜尋",
-  "搜索",
-  "整理一下資料",
   "根據文件",
   "根据文件",
   "根據知識",
   "根据知识",
-  "search",
-  "answer",
   "wiki 空間",
   "drive",
+  "company_brain",
+  "company brain",
 ];
+
+const DOCUMENT_SEARCH_VERB_PATTERN = /(查(?:一下|詢|询)?|搜尋|搜索|search|找)/i;
+const DOCUMENT_SEARCH_SCOPE_PATTERN = /(文件|文檔|文档|\bdoc\b|wiki|雲文檔|云文档|雲文件|云文件|知識庫|知识库|company[_ ]brain|drive)/i;
+const LEGACY_LEARNING_DOC_PATTERN = /(learn this doc|update learning state|learning state)/i;
 
 const RUNTIME_INFO_KEYWORDS = [
   "runtime",
@@ -107,6 +105,14 @@ function looksLikePlannerDeicticDocDetailIntent(input = {}) {
   return DEICTIC_DOC_REFERENCE_PATTERN.test(text) && DEICTIC_DOC_DETAIL_CUE_PATTERN.test(text);
 }
 
+function looksLikePlannerDocumentSearchIntent(input = {}) {
+  const text = normalizePlannerIngressText(input);
+  if (!text) {
+    return false;
+  }
+  return DOCUMENT_SEARCH_VERB_PATTERN.test(text) && DOCUMENT_SEARCH_SCOPE_PATTERN.test(text);
+}
+
 export function resolvePlannerKnowledgeAssistantIngress(input = {}) {
   const text = normalizePlannerIngressText(input);
   if (!text) {
@@ -176,6 +182,18 @@ export function resolvePlannerKnowledgeAssistantIngress(input = {}) {
       lane_label: "知識助手",
       lane_reason: "message_mentions_deictic_document_detail",
       planner_ingress_surface: "document_deictic_detail",
+    };
+  }
+
+  if (looksLikePlannerDocumentSearchIntent(text) || LEGACY_LEARNING_DOC_PATTERN.test(text)) {
+    if (longformPastedText || directTextCritiqueIntent) {
+      return null;
+    }
+    return {
+      capability_lane: "knowledge-assistant",
+      lane_label: "知識助手",
+      lane_reason: "message_mentions_document_search_lookup",
+      planner_ingress_surface: "document_search",
     };
   }
 

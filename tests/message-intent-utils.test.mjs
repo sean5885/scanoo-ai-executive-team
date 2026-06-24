@@ -135,6 +135,22 @@ test("文件整理需求會進 knowledge-assistant 而不是沿用最近對話 l
   assert.equal(lane.capability_lane, "knowledge-assistant");
 });
 
+test("文件搜尋需求仍會進 knowledge-assistant", () => {
+  const lane = resolveCapabilityLane(
+    { chat_type: "p2p" },
+    {
+      message: {
+        content: JSON.stringify({
+          text: "幫我搜尋提案文件",
+        }),
+      },
+    },
+  );
+
+  assert.equal(lane.capability_lane, "knowledge-assistant");
+  assert.equal(lane.lane_reason, "message_mentions_document_search_lookup");
+});
+
 test("company_brain 語意會直接進 knowledge-assistant", () => {
   const lane = resolveCapabilityLane(
     { chat_type: "p2p" },
@@ -217,6 +233,22 @@ test("PRD 驗收條件問句不會被 delivery knowledge ingress 誤吸進 knowl
       message: {
         content: JSON.stringify({
           text: "幫我整理 PRD 驗收條件",
+        }),
+      },
+    },
+  );
+
+  assert.equal(lane.capability_lane, "personal-assistant");
+  assert.equal(lane.lane_reason, "direct_message_default_lane");
+});
+
+test("外部商業研究查詢不會因『查詢』字樣誤吸進 knowledge-assistant", () => {
+  const lane = resolveCapabilityLane(
+    { chat_type: "p2p" },
+    {
+      message: {
+        content: JSON.stringify({
+          text: "幫我查詢一下linktree的商業模式以及變現方式，還有他的估值邏輯",
         }),
       },
     },

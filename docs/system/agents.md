@@ -118,7 +118,7 @@ What now exists in current code:
   - `/Users/seanhan/Documents/Playground/src/capability-lane.mjs`
 - Role:
   - map peer scope plus message intent into one practical assistant lane
-  - only promote high-confidence document / company-brain / runtime reads into `knowledge-assistant`; generic wording such as standalone "整理" or "風險" no longer hard-routes by itself
+  - only promote high-confidence document / company-brain / runtime reads into `knowledge-assistant`; generic wording such as standalone "整理", "風險", or broad research verbs like "查詢 / 搜尋" no longer hard-route by itself
 - Input:
   - chat type
   - session scope
