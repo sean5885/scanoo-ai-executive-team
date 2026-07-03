@@ -2241,6 +2241,7 @@ export async function maybeBuildModelBackedGeneralAssistantReply(text = "", {
   }
 
   try {
+    const prefersAnalysisOverCapabilityLead = looksLikeExternalResearchAnalysisRequest(normalized);
     const rawText = await generateTextFn({
       systemPrompt: [
         "你是 Lobster 的 personal assistant。",
@@ -2250,9 +2251,18 @@ export async function maybeBuildModelBackedGeneralAssistantReply(text = "", {
         "若上下文只是文字內容，而使用者說『這個有沒有問題』『幫我壓力測試』『幫我挑問題』，先視為要你檢查內容品質、邏輯漏洞與可執行性，不要自動解讀成系統效能測試。",
         "不能假裝已讀文件、已查資料、已執行工具。",
         "若缺少文件、資料或權限，只能誠實說明限制並給下一步。",
+        prefersAnalysisOverCapabilityLead
+          ? "若使用者在問外部公司、競品、市場、商業模式、估值或策略判斷，而且這輪沒有要求已驗證的最新數字，先直接做歸納分析與條件判斷，不要把『我不能上網』當成開場白。"
+          : "",
+        prefersAnalysisOverCapabilityLead
+          ? "這類題目可先用常見商業框架回答，例如產品差異、分發、轉換、網路效應、遷移成本、資本效率；把未驗證處放進限制或下一步，不要整段只講能力邊界。"
+          : "",
+        prefersAnalysisOverCapabilityLead
+          ? "只有在使用者明確要求即時新聞、最新融資、當前員工數、精確營收等時，才需要明說缺少即時查證；即便如此，也先提供可用的分析骨架。"
+          : "",
         "固定輸出三段：結論、重點、下一步。",
         "保持簡潔、可執行、像高階助理。",
-      ].join("\n"),
+      ].filter(Boolean).join("\n"),
       prompt: [
         cleanText(recentContextText),
         `本輪使用者訊息：${normalized}`,
@@ -2321,6 +2331,16 @@ function looksLikeLongformTextCritiqueRequest(text = "") {
   }
   return /(有什麼需要修改的地方|有什么需要修改的地方|哪裡需要修改|哪里需要修改|怎麼修改|怎么修改|怎麼改|怎么改|要改什麼|要改什么|幫我修改|帮我修改|幫我優化|帮我优化|幫我潤色|帮我润色|給我修改建議|给我修改建议|告訴我這是什麼|告诉我这是什么)/i
     .test(normalized);
+}
+
+function looksLikeExternalResearchAnalysisRequest(text = "") {
+  const normalized = cleanText(String(text || ""));
+  if (!normalized) {
+    return false;
+  }
+  const subjectPattern = /(公司|企業|企业|品牌|產品|产品|市場|市场|競品|竞品|商業模式|商业模式|變現|变现|估值|融資|融资|策略|護城河|护城河|用戶|用户|linktree|scanoo)/i;
+  const analysisPattern = /(查(?:一下|詢|询)?|搜尋|搜索|search|分析|評估|评估|判斷|判断|比較|比较|研究|歸納|归纳|總結|总结|拆解|壓力測試|压力测试|有沒有能力|能不能|是否有機會|会不会|能否吃下|搶走|抢走)/i;
+  return subjectPattern.test(normalized) && analysisPattern.test(normalized);
 }
 
 export function shouldEscalatePersonalLaneToKnowledge(lanePlan = {}) {

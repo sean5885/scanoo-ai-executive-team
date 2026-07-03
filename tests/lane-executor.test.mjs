@@ -616,6 +616,30 @@ test("maybeBuildModelBackedGeneralAssistantReply also answers greetings through 
   assert.match(reply?.text || "", /你好，我在/);
 });
 
+test("maybeBuildModelBackedGeneralAssistantReply nudges external research asks toward direct synthesis", async () => {
+  let capturedSystemPrompt = "";
+  const reply = await maybeBuildModelBackedGeneralAssistantReply("幫我查 scanoo 是什麼樣的公司，是否有能力吃下 linktree 的用戶", {
+    generateTextFn: async ({ systemPrompt }) => {
+      capturedSystemPrompt = systemPrompt;
+      return [
+        "結論",
+        "如果只看策略結構，scanoo 要吃到 Linktree 的用戶，前提是它不只是連結工具，而是能把轉化效率做得更高。",
+        "",
+        "重點",
+        "- 關鍵不是做出另一個 Linktree，而是把導購、預約、CRM 或內容分發效率做出明顯差距。",
+        "- 真正門檻會在遷移成本、創作者既有分發習慣，以及它是否有足夠資本把新用戶教育做起來。",
+        "",
+        "下一步",
+        "- 如果你要，我可以再把這題拆成產品、增長、資本三個維度做壓力測試。",
+      ].join("\n");
+    },
+  });
+
+  assert.match(capturedSystemPrompt, /先直接做歸納分析與條件判斷/);
+  assert.match(capturedSystemPrompt, /不要把『我不能上網』當成開場白/);
+  assert.match(reply?.text || "", /吃到 Linktree 的用戶/);
+});
+
 test("maybeBuildModelBackedGeneralAssistantReply injects recent dialogue context for deictic follow-up", async () => {
   let capturedPrompt = "";
   const reply = await maybeBuildModelBackedGeneralAssistantReply("請告訴我這個有沒有什麼問題，幫我做壓力測試", {
